@@ -418,6 +418,16 @@ export class ProviderModelCatalog {
       throw new ProviderUnavailableError()
   }
 
+  removeUnavailableModel(providerId: string, modelId: string): void {
+    const current = this.#models.find(providerId, modelId)
+    if (!current || current.available)
+      throw new ProviderUnavailableError()
+    this.#models.remove(providerId, modelId)
+    const provider = this.#configs.findById(providerId)
+    if (provider)
+      this.registerCustomProvider(provider)
+  }
+
   resolve(providerId: string, modelId: string): Model<Api> {
     const model = this.#modelRuntime.getModels(providerId).find(candidate => candidate.id === modelId)
     if (!model || model.provider !== providerId)

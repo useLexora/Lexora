@@ -123,6 +123,70 @@ describe('provider settings prop reactivity', () => {
     await request
     expect(navigated).toBe(false)
   })
+
+  it('surfaces an unavailable model through its info icon and clears it from the row', async () => {
+    const store = createStore('Alpha')
+    store.registeredModels.value = [{
+      ...model('Retired'),
+      available: false,
+      enabled: false,
+      modelId: 'retired-model',
+    }]
+    const cleared: Array<[string, string]> = []
+    store.removeModel = async (providerId, modelId) => {
+      cleared.push([providerId, modelId])
+      store.registeredModels.value = []
+      return true
+    }
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderDetail, { providerId: 'service', providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const row = root.querySelector('.desktop-provider-detail__model-row')
+    expect(row?.querySelector('.desktop-provider-detail__warning')).toBeNull()
+    expect(row?.querySelector('.n-switch')).toBeNull()
+    expect(row?.textContent).not.toContain(translateBuddy('zh-CN', 'desktop.providers.manage'))
+    const availabilityIcon = row?.querySelector('.desktop-provider-detail__model-availability')
+    expect(availabilityIcon).not.toBeNull()
+    availabilityIcon?.dispatchEvent(new MouseEvent('mouseenter'))
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(document.body.textContent).toContain(translateBuddy('zh-CN', 'desktop.providers.modelUnavailableHint'))
+
+    const clearButton = row?.querySelector<HTMLButtonElement>('[aria-label="清理不可用模型"]')
+    expect(clearButton).not.toBeNull()
+    clearButton?.click()
+    await nextTick()
+    expect(cleared).toEqual([['service', 'retired-model']])
+    expect(root.querySelector('.desktop-provider-detail__model-row')).toBeNull()
+  })
+
+  it('keeps manage and enable controls on available models', async () => {
+    const store = createStore('Alpha')
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderDetail, { providerId: 'service', providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const row = root.querySelector('.desktop-provider-detail__model-row')
+    expect(row?.querySelector('.n-switch')).not.toBeNull()
+    expect(row?.textContent).toContain(translateBuddy('zh-CN', 'desktop.providers.manage'))
+    expect(row?.querySelector('.desktop-provider-detail__model-availability')).toBeNull()
+  })
 })
 
 describe('provider wizard ownership', () => {
@@ -329,6 +393,10 @@ function createStore(name: string, locale: BuddyLocale = 'zh-CN') {
     logoutProvider: succeed,
     openModelSnapshotDirectory: succeed,
     rememberModelSelection: succeed,
+    removeModel: async (providerId, modelId) => {
+      registeredModels.value = registeredModels.value.filter(item => !(item.providerId === providerId && item.modelId === modelId))
+      return true
+    },
     removeProvider: succeed,
     refreshModelSnapshot: succeed,
     respondToAuth: succeed,

@@ -40,6 +40,7 @@ export interface ModelProvidersStore {
   logoutProvider: (providerId: string) => Promise<boolean>
   openModelSnapshotDirectory: () => Promise<boolean>
   rememberModelSelection: (value: LocalDefaultModel | null) => Promise<boolean>
+  removeModel: (providerId: string, modelId: string) => Promise<boolean>
   removeProvider: (providerId: string) => Promise<boolean>
   respondToAuth: (challengeId: string, value: string) => Promise<boolean>
   refreshModelSnapshot: () => Promise<boolean>

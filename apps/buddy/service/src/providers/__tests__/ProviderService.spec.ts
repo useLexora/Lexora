@@ -754,6 +754,53 @@ describe('providerService', () => {
     })
     database.close()
   })
+
+  it('clears only models that left the synced catalog and releases their default selection', async () => {
+    const runtime = new FakeModelRuntime()
+    let definitions = [{ id: 'current-model' }, { id: 'retired-model' }]
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const service = createProviderServiceForTest({
+      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      modelRuntime: runtime,
+      providers: createProviderRepository(database),
+      modelDiscovery: createTestModelDiscovery(async () => definitions),
+    })
+    await service.upsertCustomProvider({
+      api: 'openai-completions',
+      baseUrl: 'https://relay.example.test/v1',
+      displayName: 'Relay',
+      enabled: true,
+      id: 'relay',
+      models: [],
+    })
+    runtime.credentials = [{ providerId: 'relay', type: 'api_key' } as CredentialInfo]
+    runtime.models = [model('relay', 'retired-model')]
+    await service.syncModels('relay')
+    await service.setModelEnabled('relay', 'retired-model', true)
+    await service.setDefaultModel({ modelId: 'retired-model', providerId: 'relay', reasoning: null })
+
+    definitions = [{ id: 'current-model' }]
+    await service.syncModels('relay')
+    expect(await service.listModels('relay')).toEqual([
+      expect.objectContaining({ available: true, id: 'current-model' }),
+      expect.objectContaining({ available: false, id: 'retired-model' }),
+    ])
+
+    await expect(service.removeModel('relay', 'current-model')).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+    })
+    expect(await service.getDefaultModel()).toMatchObject({ modelId: 'retired-model' })
+
+    await service.removeModel('relay', 'retired-model')
+    expect(await service.listModels('relay')).toEqual([
+      expect.objectContaining({ id: 'current-model' }),
+    ])
+    expect(await service.getDefaultModel()).toBeNull()
+    await expect(service.removeModel('relay', 'retired-model')).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+    })
+    database.close()
+  })
 })
 
 type ProviderServiceTestOptions

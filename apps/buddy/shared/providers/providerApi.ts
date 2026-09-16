@@ -294,6 +294,7 @@ export const providersRpc = {
   remove: { method: 'providers.remove', input: providersRequestSchemas.providerId, response: validationResponseSchemas.mutation },
   setEnabled: { method: 'providers.setEnabled', input: providersRequestSchemas.providerEnabled, response: providersResponseSchemas.provider },
   setModelEnabled: { method: 'providers.setModelEnabled', input: providersRequestSchemas.providerModelEnabled, response: providersResponseSchemas.model },
+  removeModel: { method: 'providers.removeModel', input: providersRequestSchemas.providerModel, response: validationResponseSchemas.mutation },
   setModelParameters: { method: 'providers.setModelParameters', input: providersRequestSchemas.providerModelParameters, response: providersResponseSchemas.model },
   setModelCapabilities: { method: 'providers.setModelCapabilities', input: providersRequestSchemas.providerModelCapabilities, response: providersResponseSchemas.model },
   setModelCatalogSource: { method: 'providers.setModelCatalogSource', input: providersRequestSchemas.providerModelCatalogSource, response: providersResponseSchemas.model },

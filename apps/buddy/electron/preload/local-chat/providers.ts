@@ -37,6 +37,10 @@ export function createProvidersApi(): Pick<LocalChatApi, 'providers'> {
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.providersLogout, { providerId }),
       remove: providerId =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.providersRemove, { providerId }),
+      removeModel: (providerId, modelId) => ipcRenderer.invoke(
+        LOCAL_CHAT_IPC_CHANNELS.providersRemoveModel,
+        { modelId, providerId },
+      ),
       setDefaultModel: model => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.providersSetDefaultModel,
         { model },

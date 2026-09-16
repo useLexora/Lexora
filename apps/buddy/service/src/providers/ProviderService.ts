@@ -329,6 +329,12 @@ export class ProviderService {
     return next
   }
 
+  async removeModel(providerId: string, modelId: string): Promise<void> {
+    this.#assertModelIdle(providerId, modelId)
+    this.#modelCatalog.removeUnavailableModel(providerId, modelId)
+    this.#clearDefaultIfMatches(providerId, modelId)
+  }
+
   async setProviderEnabled(providerId: string, enabled: boolean): Promise<BuddyProvider> {
     const current = this.#states.findByProviderId(providerId)
     if (!current)
