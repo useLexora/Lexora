@@ -46,6 +46,7 @@ export default {
   'desktop.update.currentVersion': 'Current version',
   'desktop.update.failed': 'Unable to check for updates',
   'desktop.update.latest': 'Lexora Buddy is up to date',
+  'desktop.update.latestTag': 'Up to date',
   'desktop.update.latestVersion': 'Latest version',
   'desktop.update.openRelease': 'View release',
   'desktop.update.title': 'Check for updates',

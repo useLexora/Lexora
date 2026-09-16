@@ -9,12 +9,13 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { getDesktopCommand } from '@buddy-electron/shared/desktopCommands'
 import { useMessage } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
-import DesktopAboutDialog from '@/app/shell/window/DesktopAboutDialog.vue'
+import { useRouter } from 'vue-router'
 import DesktopFeedbackDialog from '@/app/shell/window/DesktopFeedbackDialog.vue'
 import DesktopUpdateDialog from '@/app/shell/window/DesktopUpdateDialog.vue'
 import DesktopWindowMenuBar from '@/app/shell/window/DesktopWindowMenuBar.vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
+import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
@@ -27,9 +28,9 @@ const emit = defineEmits<{
 }>()
 
 const desktopApi = requireDesktopApi()
+const router = useRouter()
 const isAlwaysOnTop = shallowRef(false)
 const isMaximized = shallowRef(false)
-const showAbout = shallowRef(false)
 const showFeedback = shallowRef(false)
 const showUpdate = shallowRef(false)
 const updateResult = shallowRef<DesktopUpdateCheckResult | null>(null)
@@ -45,7 +46,7 @@ const pinLabel = computed(() => isAlwaysOnTop.value
 let windowStateVersion = 0
 
 const rendererCommandHandlers = {
-  'app.about': () => showAbout.value = true,
+  'app.about': () => router.push(desktopRouteLocations.settings('about')),
   'app.checkUpdates': checkForUpdates,
   'help.feedback': () => showFeedback.value = true,
 } satisfies Partial<Record<DesktopCommandId, () => void>>
@@ -214,11 +215,6 @@ function applyWindowState(state: DesktopWindowState) {
       </div>
     </div>
 
-    <DesktopAboutDialog
-      v-model:show="showAbout"
-      :app-info="appInfo"
-      :language="language"
-    />
     <DesktopFeedbackDialog
       v-model:show="showFeedback"
       :language="language"

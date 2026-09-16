@@ -2,7 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 
 export type DesktopView = 'automations' | 'settings' | 'tasks'
 export type DesktopAutomationSection = 'history' | 'plans'
-export type DesktopSettingsCategory = 'mcp' | 'app' | 'models' | 'skills' | 'pet' | 'web' | 'logs' | 'usage'
+export type DesktopSettingsCategory = 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'usage' | 'web' | 'proxy' | 'logs' | 'about'
 
 export const DESKTOP_ROUTE_NAMES = {
   automations: 'desktop.automations',
@@ -12,6 +12,10 @@ export const DESKTOP_ROUTE_NAMES = {
   automationsPlans: 'desktop.automations.plans',
   settingsMcp: 'desktop.settings.mcp',
   settingsApp: 'desktop.settings.app',
+  settingsAppearance: 'desktop.settings.appearance',
+  settingsNotifications: 'desktop.settings.notifications',
+  settingsProxy: 'desktop.settings.proxy',
+  settingsAbout: 'desktop.settings.about',
   settingsSkills: 'desktop.settings.skills',
   settingsLogs: 'desktop.settings.logs',
   settingsUsage: 'desktop.settings.usage',
@@ -29,7 +33,10 @@ const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
 
 const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
   mcp: DESKTOP_ROUTE_NAMES.settingsMcp,
-  app: DESKTOP_ROUTE_NAMES.settingsApp,
+  appearance: DESKTOP_ROUTE_NAMES.settingsAppearance,
+  notifications: DESKTOP_ROUTE_NAMES.settingsNotifications,
+  proxy: DESKTOP_ROUTE_NAMES.settingsProxy,
+  about: DESKTOP_ROUTE_NAMES.settingsAbout,
   skills: DESKTOP_ROUTE_NAMES.settingsSkills,
   logs: DESKTOP_ROUTE_NAMES.settingsLogs,
   usage: DESKTOP_ROUTE_NAMES.settingsUsage,
@@ -53,7 +60,7 @@ export const desktopRouteLocations = {
     name: DESKTOP_ROUTE_NAMES.settingsProvider,
     params: { providerId },
   }),
-  settings: (category: DesktopSettingsCategory = 'app'): RouteLocationRaw => ({
+  settings: (category: DesktopSettingsCategory = 'appearance'): RouteLocationRaw => ({
     name: SETTINGS_ROUTE_NAMES[category],
   }),
   skills: (spaceId: string | null = null): RouteLocationRaw => ({

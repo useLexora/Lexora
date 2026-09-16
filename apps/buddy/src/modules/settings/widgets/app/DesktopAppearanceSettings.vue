@@ -1,26 +1,21 @@
 <script setup lang="ts">
 import type {
-  DesktopAppInfo,
   DesktopChatWelcomePreference,
   LexoraConfigPatch,
 } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from './typing'
-import { NSelect, NSpin, NSwitch } from 'naive-ui'
+import { NSelect, NSpin } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopNotificationsSettings from '@/modules/settings/widgets/app/DesktopNotificationsSettings.vue'
-import DesktopProxySettings from '@/modules/settings/widgets/app/DesktopProxySettings.vue'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
 
-type GeneralSettingField = 'language' | 'theme' | 'welcomeVariant' | 'autostart' | 'developerTools'
+type AppearanceSettingField = 'language' | 'theme' | 'welcomeVariant'
 
-const props = defineProps<ApplicationSettingsProps & {
-  appInfo: DesktopAppInfo | null
-}>()
+const props = defineProps<ApplicationSettingsProps>()
 
 const { languageOptions, t } = useBuddyI18n(() => props.language)
-const pendingFields = shallowRef<ReadonlySet<GeneralSettingField>>(new Set())
-const failedField = shallowRef<GeneralSettingField | null>(null)
+const pendingFields = shallowRef<ReadonlySet<AppearanceSettingField>>(new Set())
+const failedField = shallowRef<AppearanceSettingField | null>(null)
 const pendingWelcomePreference = shallowRef<DesktopChatWelcomePreference | null>(null)
 const themeOptions = computed(() => [
   { label: t('desktop.settings.themeSystem'), value: 'system' },
@@ -33,7 +28,7 @@ const activeWelcomePreference = computed(() => (
   ?? 'random'
 ))
 
-async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatch) {
+async function updateSetting(field: AppearanceSettingField, patch: LexoraConfigPatch) {
   pendingFields.value = new Set([...pendingFields.value, field])
   const succeeded = await props.updateSettings(patch)
   pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
@@ -103,58 +98,6 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
         </div>
       </div>
     </section>
-
-    <DesktopNotificationsSettings :config="config" :error="error" :language="language" :update-settings="updateSettings" />
-
-    <DesktopProxySettings :config="config" :error="error" :language="language" :update-settings="updateSettings" />
-
-    <section class="desktop-general-settings__section">
-      <h2>{{ t('desktop.settings.system') }}</h2>
-      <div class="desktop-general-settings__group">
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('settings.autostart') }}</strong>
-            <small>{{ t('desktop.settings.autostartDescription') }}</small>
-          </div>
-          <div class="desktop-settings-row__control is-compact">
-            <NSwitch
-              :round="false"
-              :value="config.desktop.launchAtLogin"
-              @update:value="updateSetting('autostart', { desktop: { launchAtLogin: $event } })"
-            />
-            <NSpin v-if="pendingFields.has('autostart')" size="small" />
-            <small v-else-if="failedField === 'autostart'" class="is-error">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
-          </div>
-        </div>
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('desktop.settings.developerTools') }}</strong>
-            <small>{{ t('desktop.settings.developerToolsDescription') }}</small>
-          </div>
-          <div class="desktop-settings-row__control is-compact">
-            <NSwitch
-              :round="false"
-              :value="config.desktop.developerToolsEnabled"
-              @update:value="updateSetting('developerTools', { desktop: { developerToolsEnabled: $event } })"
-            />
-            <NSpin v-if="pendingFields.has('developerTools')" size="small" />
-            <small v-else-if="failedField === 'developerTools'" class="is-error">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
-          </div>
-        </div>
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('settings.appVersion') }}</strong>
-          </div>
-          <div class="desktop-settings-row__value">
-            {{ appInfo?.version ?? '-' }}
-          </div>
-        </div>
-      </div>
-    </section>
   </section>
 </template>
 
@@ -219,21 +162,9 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
   gap: 0.55rem;
 }
 
-.desktop-settings-row__control.is-compact {
-  grid-template-columns: auto auto;
-  justify-content: end;
-}
-
 .desktop-settings-row__control .is-error {
   grid-column: 1 / -1;
   color: var(--buddy-status-danger-text);
-  text-align: right;
-}
-
-.desktop-settings-row__value {
-  color: var(--buddy-text-secondary);
-  font-family: var(--buddy-font-mono);
-  font-size: 0.75rem;
   text-align: right;
 }
 
