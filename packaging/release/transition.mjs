@@ -18,10 +18,7 @@ const commitPattern = /^[a-f\d]{40}$/
 
 export const lexoraReleaseTransitionPaths = Object.freeze([
   'package.json',
-  'apps/agent/package.json',
-  'apps/api/package.json',
   'apps/buddy/package.json',
-  'apps/web/package.json',
   'apps/buddy/buddy.version.json',
   'apps/buddy/native/pet/Cargo.toml',
   'apps/buddy/native/Cargo.lock',

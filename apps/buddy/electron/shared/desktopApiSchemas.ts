@@ -19,6 +19,7 @@ import {
   DESKTOP_BROWSER_SECURITY_KINDS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
 } from './desktopApi'
+import { isLexoraReleaseUrl } from './productLinks'
 
 const browserConversationIdSchema = z.string().trim().min(1).max(128)
 const browserSessionIdSchema = z.uuid()
@@ -149,12 +150,7 @@ export const clipboardWriteTextInputSchema = z.object({
 }).strict()
 
 export const releasePageInputSchema = z.object({
-  url: z.url().refine((value) => {
-    const url = new URL(value)
-    return url.protocol === 'https:'
-      && url.hostname === 'github.com'
-      && url.pathname.startsWith('/haohaoxue-site/Lexora/releases/')
-  }),
+  url: z.url().refine(isLexoraReleaseUrl),
 }).strict()
 
 export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({

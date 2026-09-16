@@ -6,10 +6,10 @@
 
 | 产物 | 命令 |
 | --- | --- |
-| Ubuntu deb | `pnpm --filter @lexora/buddy package:deb` |
-| Arch Linux pacman | `pnpm --filter @lexora/buddy package:arch` |
-| Windows x64 NSIS | `pnpm --filter @lexora/buddy package:windows` |
-| Linux 独立桌宠 | `pnpm --filter @lexora/buddy package:pet` |
+| Ubuntu deb | `pnpm --filter @uselexora/lexora-buddy package:deb` |
+| Arch Linux pacman | `pnpm --filter @uselexora/lexora-buddy package:arch` |
+| Windows x64 NSIS | `pnpm --filter @uselexora/lexora-buddy package:windows` |
+| Linux 独立桌宠 | `pnpm --filter @uselexora/lexora-buddy package:pet` |
 
 产物写入 `apps/buddy/.output/artifacts/`。桌面安装包内置 fd、ripgrep 与原生组件，Linux 还内置 Shell 沙箱 helper。构建需要 Rust 工具链；Linux 还需要 C 编译器、Meson、Ninja、libcap 开发包，运行沙箱需要 socat，包校验需要 `bsdtar`。Windows 构建需要 MSVC C++ Build Tools 与 Windows SDK。各平台安装包在对应系统构建和验证。
 
@@ -17,9 +17,9 @@
 
 ```bash
 pnpm release:version:check
-pnpm --filter @lexora/buddy lint
-pnpm --filter @lexora/buddy type-check
-pnpm --filter @lexora/buddy test
+pnpm --filter @uselexora/lexora-buddy lint
+pnpm --filter @uselexora/lexora-buddy type-check
+pnpm --filter @uselexora/lexora-buddy test
 pnpm check:buddy
 ```
 

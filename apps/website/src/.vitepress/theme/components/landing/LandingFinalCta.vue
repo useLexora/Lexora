@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LandingContent } from './landingContent'
 import { withBase } from 'vitepress'
-import { downloadUrl, repositoryUrl } from './landingContent'
+import { downloadUrl, repositoryUrl } from '../../../productLinks'
 import LandingIcon from './LandingIcon.vue'
 
 defineProps<{ content: LandingContent['final'], english: boolean }>()

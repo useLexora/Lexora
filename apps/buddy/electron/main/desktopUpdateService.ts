@@ -1,4 +1,5 @@
 import type { DesktopUpdateCheckResult } from '../shared/desktopApi'
+import { isLexoraReleaseUrl, RELEASES_API_URL } from '../shared/productLinks'
 
 export interface CheckForDesktopUpdateOptions {
   currentVersion: string
@@ -12,8 +13,6 @@ interface GithubRelease {
   tag_name: string
 }
 
-const RELEASES_API_URL
-  = 'https://api.github.com/repos/haohaoxue-site/Lexora/releases?per_page=100'
 const RELEASE_TAG_PREFIX = 'v'
 const SEMVER_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/
 
@@ -112,16 +111,4 @@ function compareVersions(left: readonly number[], right: readonly number[]): num
       return difference
   }
   return 0
-}
-
-function isLexoraReleaseUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:'
-      && url.hostname === 'github.com'
-      && url.pathname.startsWith('/haohaoxue-site/Lexora/releases/')
-  }
-  catch {
-    return false
-  }
 }

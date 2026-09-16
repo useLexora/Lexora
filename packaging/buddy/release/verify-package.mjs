@@ -80,8 +80,9 @@ export function verifyLinuxPackage(target, artifact, cwd = repoRoot) {
     const { version } = readBuddyReleaseMetadata(cwd)
     verifyLinuxMetadata(target, metadata, version)
     const result = verifyDesktopDirectory(join(directory, 'opt/lexora-buddy'), 'linux', cwd)
-    const desktop = readFileSync(join(directory, 'usr/share/applications/site.haohaoxue.LexoraBuddy.desktop'), 'utf8')
-    for (const entry of ['Name=Lexora Buddy', 'Exec=/opt/lexora-buddy/lexora-buddy %U', 'Icon=lexora-buddy', 'StartupWMClass=site.haohaoxue.LexoraBuddy']) {
+    const { desktopName, productName } = JSON.parse(readFileSync(join(cwd, 'apps/buddy/package.json'), 'utf8'))
+    const desktop = readFileSync(join(directory, `usr/share/applications/${desktopName}.desktop`), 'utf8')
+    for (const entry of [`Name=${productName}`, 'Exec=/opt/lexora-buddy/lexora-buddy %U', 'Icon=lexora-buddy', `StartupWMClass=${desktopName}`]) {
       if (!desktop.split(/\r?\n/).includes(entry))
         throw new Error(`Desktop entry is missing ${entry}`)
     }

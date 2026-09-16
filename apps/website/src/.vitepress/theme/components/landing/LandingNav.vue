@@ -2,7 +2,7 @@
 import type { LandingContent } from './landingContent'
 import { useData, withBase } from 'vitepress'
 import { onMounted, shallowRef } from 'vue'
-import { downloadUrl, repositoryUrl } from './landingContent'
+import { downloadUrl, repositoryUrl } from '../../../productLinks'
 import LandingIcon from './LandingIcon.vue'
 
 defineProps<{ content: LandingContent['nav'], english: boolean }>()

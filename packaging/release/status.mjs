@@ -11,10 +11,8 @@ export function formatLexoraReleaseStatus(state) {
   return [
     `Lexora ${state.productVersion} 发布状态`,
     `Buddy    ${state.applicationVersions.buddy}  可构建、可发布`,
-    `Web      ${state.applicationVersions.web}  仅版本管理，发布流程尚未启用`,
-    `API      ${state.applicationVersions.api}  仅版本管理，发布流程尚未启用`,
-    `Agent    ${state.applicationVersions.agent}  仅版本管理，发布流程尚未启用`,
     'Website  —      独立部署，不参与产品版本',
+    'Web / API / Agent 暂停版本联动，等待重构',
   ].join('\n')
 }
 

@@ -67,8 +67,8 @@ jobs:
           require_missing tag "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG"
           require_missing release "repos/$GITHUB_REPOSITORY/releases/tags/$TAG"
 
-  buddy-packages:
-    name: Buddy packages
+  packages:
+    name: Package verification
     needs: validate-release
     uses: ./.github/workflows/buddy-build.yml
     with:
@@ -76,7 +76,7 @@ jobs:
 
   publish-release:
     name: Publish Release
-    needs: [validate-release, buddy-packages]
+    needs: [validate-release, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: buddy-release

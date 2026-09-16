@@ -10,16 +10,16 @@ import { resolvePackagingPlatform } from './platform-definition.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 const qualitySteps = [
-  ['Desktop lint', 'pnpm', ['--filter', '@lexora/buddy', 'lint']],
-  ['Desktop type-check', 'pnpm', ['--filter', '@lexora/buddy', 'type-check']],
+  ['Lint workspace', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'lint']],
+  ['Type-check workspace', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'type-check']],
   ['Native components format', 'cargo', ['fmt', '--manifest-path', 'apps/buddy/native/Cargo.toml', '--all', '--', '--check']],
   ['Native components clippy', 'cargo', ['clippy', '--locked', '--manifest-path', 'apps/buddy/native/Cargo.toml', '--target-dir', 'apps/buddy/.output/build/native', '--workspace', '--all-targets', '--', '-D', 'warnings']],
   ['Native components tests', 'cargo', ['test', '--locked', '--manifest-path', 'apps/buddy/native/Cargo.toml', '--target-dir', 'apps/buddy/.output/build/native', '--workspace']],
 ]
 const packageSteps = {
-  deb: ['Ubuntu deb package', 'pnpm', ['--filter', '@lexora/buddy', 'package:deb']],
-  pacman: ['Arch Linux package', 'pnpm', ['--filter', '@lexora/buddy', 'package:arch']],
-  nsis: ['Windows NSIS package', 'pnpm', ['--filter', '@lexora/buddy', 'package:windows']],
+  deb: ['Ubuntu deb package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:deb']],
+  pacman: ['Arch Linux package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:arch']],
+  nsis: ['Windows NSIS package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:windows']],
 }
 
 export function createBuddyReleasePreflightSteps(stage = 'all', platformId = process.platform) {
@@ -33,7 +33,7 @@ export function createBuddyReleasePreflightSteps(stage = 'all', platformId = pro
   })
   const target = stage === 'all' ? platform.packageTargets[0] : stage === 'windows' ? 'nsis' : stage
   const steps = stage === 'all'
-    ? [...platformQualitySteps, packageSteps[target], ['Desktop tests', 'pnpm', ['--filter', '@lexora/buddy', 'test']]]
+    ? [...platformQualitySteps, packageSteps[target], ['Test workspace', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'test']]]
     : platform.packageTargets.includes(target)
       ? [packageSteps[target]]
       : undefined

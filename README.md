@@ -31,7 +31,7 @@
 
 Lexora 是一个以 Desktop 为核心的个人 AI 工作台。在你授权的范围内，它借助本地文件与工具，将对话中的想法付诸行动，让文字成为工作、创作与生活的起点。
 
-## 为工作与创作而构建的桌面 Agent
+## 你的桌面 Agent
 
 Lexora 将对话、本地上下文与工具执行整合到一个工作台中，支持资料研究、内容创作、代码编写与日常自动化。从读取文件、运行命令到生成产物，任务的执行过程与结果都清晰可见。
 
@@ -76,10 +76,10 @@ Vue + Electron 承载桌面体验，独立的 TypeScript Runtime 承载本地 Ag
 需要 Node.js 26+、pnpm 11.5+ 与 Rust 工具链；平台依赖见[构建说明](packaging/buddy/README.md)。在仓库根目录运行：
 
 ```bash
-pnpm install
-pnpm dev:buddy
+pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' --filter @uselexora/lexora-website install --frozen-lockfile
+pnpm dev
 
-# 构建官网
+# 启动官网开发服务
 pnpm dev:website
 ```
 

@@ -1,5 +1,6 @@
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
+import buddyPackage from '../../package.json'
 
 interface LinuxAutostartOptions {
   configDirectory: string
@@ -18,7 +19,7 @@ export function resolveLinuxConfigDirectory(
 
 export async function syncLinuxAutostart(options: LinuxAutostartOptions): Promise<void> {
   const autostartDirectory = join(options.configDirectory, 'autostart')
-  const entryPath = join(autostartDirectory, 'site.haohaoxue.LexoraBuddy.desktop')
+  const entryPath = join(autostartDirectory, `${buddyPackage.desktopName}.desktop`)
   if (!options.enabled) {
     await rm(entryPath, { force: true })
     return
@@ -34,7 +35,7 @@ export async function syncLinuxAutostart(options: LinuxAutostartOptions): Promis
     '[Desktop Entry]',
     'Type=Application',
     'Version=1.0',
-    'Name=Lexora Buddy',
+    `Name=${buddyPackage.productName}`,
     `TryExec=${executablePath}`,
     `Exec="${executablePath}" --background`,
     'Terminal=false',
