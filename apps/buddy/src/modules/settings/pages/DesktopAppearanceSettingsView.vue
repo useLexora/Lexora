@@ -2,23 +2,22 @@
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSettingsPageLayout from '@/modules/settings/layouts/DesktopSettingsPageLayout.vue'
 import { useSettingsContext } from '@/modules/settings/settingsContext'
-import DesktopGeneralSettingsTab from '@/modules/settings/widgets/app/DesktopGeneralSettingsTab.vue'
+import DesktopAppearanceSettings from '@/modules/settings/widgets/app/DesktopAppearanceSettings.vue'
 
-const { applicationSettings, appInfo } = useSettingsContext()
+const { applicationSettings } = useSettingsContext()
 const { t } = useBuddyI18n(applicationSettings.language)
 const { config, settingsError, language, updateSettings } = applicationSettings
 </script>
 
 <template>
-  <DesktopSettingsPageLayout>
+  <DesktopSettingsPageLayout :requires-runtime="false">
     <template #title>
-      {{ t('desktop.settings.category.app') }}
+      {{ t('desktop.settings.category.appearance') }}
     </template>
     <template #description>
-      {{ t('desktop.settings.categoryDescription.app') }}
+      {{ t('desktop.settings.categoryDescription.appearance') }}
     </template>
-    <DesktopGeneralSettingsTab
-      :app-info="appInfo"
+    <DesktopAppearanceSettings
       :config="config"
       :error="settingsError"
       :language="language"

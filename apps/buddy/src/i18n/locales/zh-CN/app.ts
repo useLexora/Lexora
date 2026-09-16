@@ -44,6 +44,7 @@ export default {
   'desktop.update.currentVersion': '当前版本',
   'desktop.update.failed': '暂时无法检查更新',
   'desktop.update.latest': '已是最新版本',
+  'desktop.update.latestTag': '最新版',
   'desktop.update.latestVersion': '最新版本',
   'desktop.update.openRelease': '查看发布页',
   'desktop.update.title': '检查更新',

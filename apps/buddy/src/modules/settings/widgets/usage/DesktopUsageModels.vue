@@ -3,7 +3,6 @@ import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/provi
 import type { UsageModelTotals } from '../../model/usageAnalytics'
 import type { UsageChartOption } from '../../model/usageCharts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { color } from 'echarts/core'
 import { useThemeVars } from 'naive-ui'
 import { computed, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -23,6 +22,7 @@ const helpId = useId()
 const chart = useTemplateRef<HTMLDivElement>('chart')
 const theme = useThemeVars()
 const activeIndex = shallowRef<number | null>(null)
+const modelColors = ['#5479B5', '#D69B4C', '#439B8C', '#9472B7', '#CE788C', '#889CA6']
 const rows = computed(() => {
   const providers = new Map(props.providers.map(provider => [provider.id, provider.displayName]))
   const catalog = new Map(props.catalog.map(model => [usageModelKey(model), model.displayName]))
@@ -52,7 +52,6 @@ const option = computed<UsageChartOption>(() => {
   const colors = theme.value
   return {
     ...base,
-    color: [colors.primaryColor, ...[0.25, 0.5, 0.75, 0.35, 0.6].map((fraction, index) => color.lerp(fraction, [colors.primaryColor, index < 3 ? colors.textColor1 : colors.bodyColor])!)],
     tooltip: {
       trigger: 'item',
       formatter: (params) => {
@@ -65,6 +64,11 @@ const option = computed<UsageChartOption>(() => {
       label: { ...series.label, color: colors.textColor2 },
       labelLine: { ...series.labelLine, lineStyle: { color: colors.textColorDisabled, width: 1 } },
       emptyCircleStyle: { color: colors.actionColor },
+      data: series.data.map((item, index) => ({
+        ...item,
+        itemStyle: { color: modelColors[index % modelColors.length] },
+        labelLine: { lineStyle: { color: modelColors[index % modelColors.length] } },
+      })),
     })),
   }
 })

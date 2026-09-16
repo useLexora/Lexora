@@ -41,8 +41,31 @@ export const settingsRoutes: ReadonlyArray<RouteRecordRaw> = [
       {
         path: 'app',
         name: DESKTOP_ROUTE_NAMES.settingsApp,
-        component: () => import('./pages/DesktopAppSettingsView.vue'),
-        meta: { desktopView: 'settings', settingsCategory: 'app' },
+        redirect: desktopRouteLocations.settings('appearance'),
+      },
+      {
+        path: 'appearance',
+        name: DESKTOP_ROUTE_NAMES.settingsAppearance,
+        component: () => import('./pages/DesktopAppearanceSettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'appearance' },
+      },
+      {
+        path: 'notifications',
+        name: DESKTOP_ROUTE_NAMES.settingsNotifications,
+        component: () => import('./pages/DesktopNotificationsSettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'notifications' },
+      },
+      {
+        path: 'proxy',
+        name: DESKTOP_ROUTE_NAMES.settingsProxy,
+        component: () => import('./pages/DesktopProxySettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'proxy' },
+      },
+      {
+        path: 'about',
+        name: DESKTOP_ROUTE_NAMES.settingsAbout,
+        component: () => import('./pages/DesktopAboutSettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'about' },
       },
       {
         path: 'models',

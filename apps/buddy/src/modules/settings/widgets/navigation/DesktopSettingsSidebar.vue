@@ -3,13 +3,16 @@ import type { BuddyCapabilities } from '@buddy-shared/platform'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import {
+  Alert20Regular,
   AnimalCat20Regular,
-  Apps20Regular,
   Bot20Regular,
   DataHistogram20Regular,
   DocumentTextClock20Regular,
   Globe20Regular,
+  Info20Regular,
+  PaintBrush20Regular,
   PlugConnected20Regular,
+  Server20Regular,
 } from '@vicons/fluent'
 import { computed } from 'vue'
 
@@ -28,17 +31,41 @@ const props = defineProps<{
 }>()
 const route = useRoute()
 const { t } = useBuddyI18n(() => props.language)
-const categories = [
-  { icon: Apps20Regular, key: 'app' as const },
-  { icon: Bot20Regular, key: 'models' as const },
-  { icon: PlugConnected20Regular, key: 'mcp' as const },
-  { icon: SkillIcon, key: 'skills' as const },
-  { icon: Globe20Regular, key: 'web' as const },
-  { icon: AnimalCat20Regular, key: 'pet' as const },
-  { icon: DataHistogram20Regular, key: 'usage' as const },
-  { icon: DocumentTextClock20Regular, key: 'logs' as const },
-]
-const visibleCategories = computed(() => categories.filter(category => supportsSettingsCategory(props.capabilities, category.key)))
+const groups = [
+  {
+    key: 'personal',
+    categories: [
+      { icon: PaintBrush20Regular, key: 'appearance' },
+      { icon: Alert20Regular, key: 'notifications' },
+      { icon: AnimalCat20Regular, key: 'pet' },
+    ],
+  },
+  {
+    key: 'ai',
+    categories: [
+      { icon: Bot20Regular, key: 'models' },
+      { icon: PlugConnected20Regular, key: 'mcp' },
+      { icon: SkillIcon, key: 'skills' },
+      { icon: DataHistogram20Regular, key: 'usage' },
+    ],
+  },
+  {
+    key: 'integrations',
+    categories: [{ icon: Globe20Regular, key: 'web' }],
+  },
+  {
+    key: 'system',
+    categories: [
+      { icon: Server20Regular, key: 'proxy' },
+      { icon: DocumentTextClock20Regular, key: 'logs' },
+      { icon: Info20Regular, key: 'about' },
+    ],
+  },
+] as const
+const visibleGroups = computed(() => groups.map(group => ({
+  ...group,
+  categories: group.categories.filter(category => supportsSettingsCategory(props.capabilities, category.key)),
+})).filter(group => group.categories.length > 0))
 </script>
 
 <template>
@@ -51,15 +78,22 @@ const visibleCategories = computed(() => categories.filter(category => supportsS
     </header>
 
     <div class="desktop-settings-sidebar__content">
-      <RouterLink
-        v-for="category in visibleCategories"
-        :key="category.key"
-        :class="{ 'is-active': route.meta.settingsCategory === category.key }"
-        :to="desktopRouteLocations.settings(category.key)"
-      >
-        <DesktopIcon :component="category.icon" />
-        <span>{{ t(`desktop.settings.category.${category.key}`) }}</span>
-      </RouterLink>
+      <section v-for="group in visibleGroups" :key="group.key" class="desktop-settings-sidebar__group">
+        <h2 class="desktop-settings-sidebar__group-title">
+          {{ t(`desktop.settings.group.${group.key}`) }}
+        </h2>
+        <RouterLink
+          v-for="category in group.categories"
+          :key="category.key"
+          class="desktop-settings-sidebar__item"
+          :class="{ 'is-active': route.meta.settingsCategory === category.key }"
+          :aria-current="route.meta.settingsCategory === category.key ? 'page' : undefined"
+          :to="desktopRouteLocations.settings(category.key)"
+        >
+          <DesktopIcon :component="category.icon" />
+          <span>{{ t(`desktop.settings.category.${category.key}`) }}</span>
+        </RouterLink>
+      </section>
     </div>
   </nav>
 </template>
@@ -91,12 +125,28 @@ const visibleCategories = computed(() => categories.filter(category => supportsS
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 1.15rem;
   overflow-y: auto;
   padding: 0.9rem 0.7rem;
 }
 
-.desktop-settings-sidebar__content > a {
+.desktop-settings-sidebar__group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.desktop-settings-sidebar__group-title {
+  margin: 0 0 0.25rem;
+  padding: 0 0.65rem;
+  color: var(--buddy-text-muted);
+  font-size: var(--buddy-sidebar-section-font-size);
+  font-weight: var(--buddy-sidebar-section-font-weight);
+  line-height: 1.5;
+}
+
+.desktop-settings-sidebar__item {
   display: flex;
   width: 100%;
   align-items: center;
@@ -108,7 +158,7 @@ const visibleCategories = computed(() => categories.filter(category => supportsS
   font-size: var(--buddy-sidebar-item-font-size);
   font-weight: var(--buddy-sidebar-item-font-weight);
   line-height: 20px;
-  padding: 0.55rem 0.65rem;
+  padding: 0.4rem 0.65rem;
   text-align: left;
   text-decoration: none;
   transition:
@@ -116,21 +166,21 @@ const visibleCategories = computed(() => categories.filter(category => supportsS
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
 }
 
-.desktop-settings-sidebar__content > a:hover {
+.desktop-settings-sidebar__item:hover {
   background: var(--buddy-nav-hover);
 }
 
-.desktop-settings-sidebar__content > a:focus-visible {
+.desktop-settings-sidebar__item:focus-visible {
   outline: 2px solid var(--buddy-focus-ring);
   outline-offset: -2px;
 }
 
-.desktop-settings-sidebar__content > a.is-active {
+.desktop-settings-sidebar__item.is-active {
   background: var(--buddy-nav-selected);
   color: var(--buddy-nav-foreground);
 }
 
-.desktop-settings-sidebar__content > a.is-active:hover {
+.desktop-settings-sidebar__item.is-active:hover {
   background: var(--buddy-nav-pressed);
 }
 </style>
