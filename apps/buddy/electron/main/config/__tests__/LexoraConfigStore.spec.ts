@@ -16,6 +16,30 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults existing profiles to system proxy and preserves the custom address across mode changes', async () => {
+    const { configPath, store } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop]\nlanguage = "en-US"\n[future]\nvalue = true\n')
+    expect((await store.read()).proxy).toEqual({ mode: 'system', server: '' })
+    await store.update({ proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' } })
+    await store.update({ proxy: { mode: 'direct', server: 'http://127.0.0.1:7890' } })
+    expect((await store.read()).proxy).toEqual({ mode: 'direct', server: 'http://127.0.0.1:7890' })
+    expect(await readFile(configPath, 'utf8')).toContain('[future]')
+    expect((await store.read()).desktop.language).toBe('en-US')
+  })
+
+  it('restores the applied configuration when applying a setting fails without changing the saved profile', async () => {
+    const { store } = await createConfigStore()
+    const previous = await store.read()
+    let active = previous.proxy
+    await expect(store.update({ proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' } }, async (next) => {
+      active = next.proxy
+      if (next.proxy.mode === 'custom')
+        throw new Error('Proxy configuration unavailable')
+    })).rejects.toThrow('Proxy configuration unavailable')
+    expect(active).toEqual(previous.proxy)
+    expect(await store.read()).toEqual(previous)
+  })
   it('updates only requested settings and writes a private TOML file atomically', async () => {
     const { configPath, store } = await createConfigStore()
     await expect(store.read()).resolves.toMatchObject({

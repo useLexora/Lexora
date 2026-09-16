@@ -1,6 +1,16 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.settings.proxy.title': 'Network proxy',
+  'desktop.settings.proxy.mode': 'Connection mode',
+  'desktop.settings.proxy.description': 'Changes apply immediately. Active network requests may need to be retried.',
+  'desktop.settings.proxy.system': 'System proxy',
+  'desktop.settings.proxy.direct': 'Direct',
+  'desktop.settings.proxy.custom': 'Custom',
+  'desktop.settings.proxy.server': 'Proxy address',
+  'desktop.settings.proxy.serverHelp': 'Supports HTTP, HTTPS and SOCKS5 without credentials in the address. Local addresses connect directly by default.',
+  'desktop.settings.proxy.invalidServer': 'Enter a valid HTTP, HTTPS or SOCKS5 proxy address without credentials, a path or query parameters.',
+  'desktop.settings.proxy.save': 'Save and apply',
   'desktop.agent.agentsDescription': 'Only connected and currently available local agents are shown.',
   'desktop.agent.agentsTitle': 'Agents',
   'desktop.agent.back': 'Back to Agent overview',

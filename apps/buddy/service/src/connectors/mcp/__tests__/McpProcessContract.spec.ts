@@ -28,7 +28,7 @@ describe('mCP real stdio process contract', () => {
       vi.stubEnv(key, value)
     vi.stubEnv('OPENAI_API_KEY', 'synthetic-ambient-secret')
     vi.stubEnv('PI_TOOLS_DIR', '/fixture/bundled-tools')
-    const session = createSession({ credential: { type: 'stdio', env: { MCP_TOKEN: 'synthetic-connector-token' } } })
+    const session = createSession({ credential: { type: 'stdio', env: { MCP_TOKEN: 'synthetic-connector-token', https_proxy: 'http://override.invalid:1', NODE_USE_ENV_PROXY: '0', NO_PROXY: '*' } } })
     const runtime = await readRuntime(session)
     expect(runtime.environment).toEqual({
       LANG: 'zh_CN.UTF-8',

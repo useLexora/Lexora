@@ -18,7 +18,7 @@ export function createWindowsSandboxEnvironment(options: { shell: string, system
     LOCALAPPDATA: home,
     TEMP: temporary,
     TMP: temporary,
-    ...(options.proxyUrl ? { HTTP_PROXY: options.proxyUrl, HTTPS_PROXY: options.proxyUrl, ALL_PROXY: options.proxyUrl, NO_PROXY: '' } : {}),
+    ...(options.proxyUrl ? { HTTP_PROXY: options.proxyUrl, HTTPS_PROXY: options.proxyUrl, ALL_PROXY: options.proxyUrl, NO_PROXY: '', NODE_USE_ENV_PROXY: '1' } : {}),
   }
 }
 

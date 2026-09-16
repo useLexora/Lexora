@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { utilityProcess } from 'electron'
+import { createProxyEnvironment } from '../../../platform/process/proxyEnvironment'
 import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
@@ -12,6 +13,7 @@ import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
 
 export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
   buddyHome: string
+  proxyUrl?: string
   searchDirectory: string
   sandboxDirectory: string
   windowsSandbox?: string
@@ -59,7 +61,10 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
         controller.signal.throwIfAborted()
         child = utilityProcess.fork(sandboxProcessPath, [], {
           cwd: directory,
-          env: createSandboxEnvironment(process.env, directory),
+          env: {
+            ...createSandboxEnvironment(process.env, directory),
+            ...(options.proxyUrl ? createProxyEnvironment(options.proxyUrl) : {}),
+          },
           serviceName: 'Buddy Shell Sandbox',
           stdio: 'pipe',
         })

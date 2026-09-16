@@ -9,6 +9,7 @@ import { NSelect, NSpin, NSwitch } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopNotificationsSettings from '@/modules/settings/widgets/app/DesktopNotificationsSettings.vue'
+import DesktopProxySettings from '@/modules/settings/widgets/app/DesktopProxySettings.vue'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
 
 type GeneralSettingField = 'language' | 'theme' | 'welcomeVariant' | 'autostart' | 'developerTools'
@@ -104,6 +105,8 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
     </section>
 
     <DesktopNotificationsSettings :config="config" :error="error" :language="language" :update-settings="updateSettings" />
+
+    <DesktopProxySettings :config="config" :error="error" :language="language" :update-settings="updateSettings" />
 
     <section class="desktop-general-settings__section">
       <h2>{{ t('desktop.settings.system') }}</h2>

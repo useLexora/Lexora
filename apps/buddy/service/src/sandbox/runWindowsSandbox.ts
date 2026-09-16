@@ -3,6 +3,7 @@ import type { SandboxBackendInput } from '../../../shared/permissions/shellSandb
 import type { SandboxExecutionOptions } from './sandboxExecutionLifecycle'
 import { randomBytes } from 'node:crypto'
 import { createHttpProxyServer } from '@anthropic-ai/sandbox-runtime/dist/sandbox/http-proxy.js'
+import { resolveParentProxy } from '@anthropic-ai/sandbox-runtime/dist/sandbox/parent-proxy.js'
 import { createResolvedAddressGuard } from '@anthropic-ai/sandbox-runtime/dist/sandbox/resolved-address-guard.js'
 import { createWindowsSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { runWindowsSandboxProcess } from '../../../platform/process/windowsSandboxProcess'
@@ -18,6 +19,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<'windows-lpac
     filter: (port, host) => options.signal.aborted ? false : options.approveNetwork({ host, port }),
     lookupFor: port => guard.lookupFor(port),
     proxyAuthToken: token,
+    parentProxy: resolveParentProxy(),
   })
   proxy.on('connection', (socket) => {
     connections.add(socket)

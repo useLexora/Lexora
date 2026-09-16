@@ -25,7 +25,7 @@
       "packageTargets": ["deb", "pacman"],
       "environment": {
         "caseSensitive": true,
-        "names": ["HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP", "KDE_SESSION_VERSION", "DESKTOP_SESSION", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"]
+        "names": ["HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP", "KDE_SESSION_VERSION", "DESKTOP_SESSION", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY"]
       }
     },
     "win32": {
@@ -36,7 +36,7 @@
       "packageTargets": ["nsis"],
       "environment": {
         "caseSensitive": false,
-        "names": ["HOME", "HOMEDRIVE", "HOMEPATH", "USERNAME", "LANG", "LC_ALL", "PATH", "TZ", "http_proxy", "https_proxy", "no_proxy", "SystemRoot", "SystemDrive", "ProgramFiles", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]
+        "names": ["HOME", "HOMEDRIVE", "HOMEPATH", "USERNAME", "LANG", "LC_ALL", "PATH", "TZ", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "NODE_USE_ENV_PROXY", "SystemRoot", "SystemDrive", "ProgramFiles", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]
       }
     }
   }

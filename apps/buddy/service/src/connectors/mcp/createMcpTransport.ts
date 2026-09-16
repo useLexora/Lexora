@@ -19,7 +19,9 @@ export function createMcpTransport(config: McpServerConfig, credential: Connecto
       cwd: config.cwd ?? undefined,
       env: createChildProcessEnvironment({
         source: process.env,
-        additions: credential?.type === 'stdio' ? credential.env : {},
+        additions: credential?.type === 'stdio'
+          ? Object.fromEntries(Object.entries(credential.env).filter(([key]) => !/^(?:(?:https?|all|no)_proxy|NODE_USE_ENV_PROXY)$/i.test(key)))
+          : {},
       }),
       stderr: 'ignore',
       maxBufferSize: 32 * 1024 * 1024,

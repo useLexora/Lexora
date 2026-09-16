@@ -5,7 +5,7 @@ import type { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import type { DesktopWindowHost } from './DesktopWindowHost'
 import type { DesktopEnvironment } from './typing'
 import { homedir } from 'node:os'
-import { app, net, Notification, shell } from 'electron'
+import { app, Notification, shell } from 'electron'
 import { z } from 'zod'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
@@ -94,7 +94,7 @@ export class DesktopIntegrations {
     registerDesktopIpc({
       getSandboxStatus: () => this.#runtime.getSandboxStatus(),
       setupSandbox: () => this.#runtime.setupSandbox(),
-      checkForUpdates: () => checkForDesktopUpdate({ currentVersion: app.getVersion(), fetchRelease: net.fetch }),
+      checkForUpdates: () => checkForDesktopUpdate({ currentVersion: app.getVersion(), fetchRelease: runtime.network.get }),
       configPath: paths.configPath,
       configStore: runtime.configStore,
       executeCommand: this.executeCommand,

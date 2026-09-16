@@ -13,6 +13,7 @@ import type {
 } from './desktopApi'
 import { z } from 'zod'
 import { BROWSER_FAILURE_REASONS } from '../../shared/browser'
+import { proxySettingsSchema } from '../../shared/network/proxySettings'
 import {
   DESKTOP_BROWSER_ERROR_CODES,
   DESKTOP_BROWSER_PROFILE_MODES,
@@ -154,6 +155,7 @@ export const releasePageInputSchema = z.object({
 }).strict()
 
 export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
+  proxy: proxySettingsSchema.optional(),
   desktop: z.object({
     backgroundCloseNoticeShown: z.boolean().optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
