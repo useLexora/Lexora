@@ -1,6 +1,3 @@
-export const repositoryUrl = 'https://github.com/useLexora/Lexora'
-export const downloadUrl = `${repositoryUrl}/releases/latest`
-
 const zh = {
   nav: { product: '探索', capabilities: '超能力', guide: '使用指南', download: '下载 Lexora', menu: '打开导航', close: '关闭导航', skip: '跳至正文', darkMode: '深色外观' },
   hero: {

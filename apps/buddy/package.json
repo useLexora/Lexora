@@ -1,5 +1,5 @@
 {
-  "name": "@lexora/buddy",
+  "name": "@uselexora/lexora-buddy",
   "productName": "Lexora Buddy",
   "type": "module",
   "version": "0.6.6",
@@ -12,14 +12,14 @@
     "email": "864299347@qq.com"
   },
   "license": "AGPL-3.0-only",
-  "homepage": "https://github.com/haohaoxue-site/Lexora",
+  "homepage": "https://uselexora.app/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/haohaoxue-site/Lexora.git",
+    "url": "git+https://github.com/useLexora/Lexora.git",
     "directory": "apps/buddy"
   },
   "bugs": {
-    "url": "https://github.com/haohaoxue-site/Lexora/issues"
+    "url": "https://github.com/useLexora/Lexora/issues"
   },
   "main": "./.output/build/electron/main/index.js",
   "scripts": {

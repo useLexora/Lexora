@@ -1,4 +1,4 @@
-name: Buddy Package Verification
+name: Package verification
 
 on:
   workflow_call:
@@ -53,10 +53,10 @@ jobs:
             xvfb
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
       - name: Build Ubuntu package
-        run: pnpm --filter @lexora/buddy package:deb
+        run: pnpm --filter @uselexora/lexora-buddy package:deb
 
       - name: Install built Desktop deb
         id: install
@@ -111,10 +111,10 @@ jobs:
           toolchain: 1.98.0
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
       - name: Build first-party Arch package
-        run: pnpm --filter @lexora/buddy package:arch
+        run: pnpm --filter @uselexora/lexora-buddy package:arch
 
       - name: Install built Arch package
         id: install
@@ -181,10 +181,10 @@ jobs:
           toolchain: 1.98.0
 
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
       - name: Build Windows package
-        run: pnpm --filter @lexora/buddy package:windows
+        run: pnpm --filter @uselexora/lexora-buddy package:windows
 
       - name: Install built NSIS package
         id: install

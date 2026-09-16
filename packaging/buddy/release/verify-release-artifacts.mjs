@@ -17,15 +17,16 @@ export const desktopPackageTargets = {
 export function readBuddyReleaseMetadata(cwd = repoRoot) {
   const paths = resolveBuddyOutputPaths(cwd)
   const { version } = JSON.parse(readFileSync(join(paths.buddyRoot, 'buddy.version.json'), 'utf8'))
-  const { homepage } = JSON.parse(readFileSync(join(paths.buddyRoot, 'package.json'), 'utf8'))
+  const { repository } = JSON.parse(readFileSync(join(paths.buddyRoot, 'package.json'), 'utf8'))
+  const repositoryUrl = repository.url.replace(/^git\+/, '').replace(/\.git$/, '')
   if (!/^\d+\.\d+\.\d+$/.test(version))
     throw new Error('Buddy release requires a stable version')
-  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(homepage))
-    throw new Error('Buddy homepage must identify its GitHub repository')
+  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(repositoryUrl))
+    throw new Error('Buddy repository URL must identify its GitHub repository')
   return {
     version,
     releaseTag: `v${version}`,
-    releaseRepo: new URL(homepage).pathname.slice(1),
+    releaseRepo: new URL(repositoryUrl).pathname.slice(1),
     artifacts: Object.entries(desktopPackageTargets).map(([target, definition]) => {
       const name = `Lexora-Buddy-${version}-${definition.suffix}`
       return { ...definition, target, name, path: join(paths.artifacts[definition.directory], name) }

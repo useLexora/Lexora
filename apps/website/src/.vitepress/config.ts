@@ -1,9 +1,9 @@
 import process from 'node:process'
 import { defineConfig } from 'vitepress'
+import { downloadUrl, repositoryUrl } from './productLinks'
 
 const websiteBasePath = (process.env.WEBSITE_BASE_PATH ?? '').replace(/^\/+|\/+$/g, '')
 const websiteBase = websiteBasePath ? `/${websiteBasePath}/` : '/'
-const repositoryUrl = 'https://github.com/useLexora/Lexora'
 
 const guides = [
   { slug: 'what-is-lexora', zh: '认识 Lexora', en: 'Meet Lexora' },
@@ -36,7 +36,7 @@ export default defineConfig({
         nav: [
           { text: '探索', link: '/#playground' },
           { text: '使用指南', link: '/guide/quick-start' },
-          { text: '下载 Lexora', link: `${repositoryUrl}/releases/latest` },
+          { text: '下载 Lexora', link: downloadUrl },
         ],
         sidebar: [{
           text: '你的 Lexora 工作台',
@@ -59,7 +59,7 @@ export default defineConfig({
         nav: [
           { text: 'Explore', link: '/en/#playground' },
           { text: 'Guide', link: '/en/guide/quick-start' },
-          { text: 'Get Lexora', link: `${repositoryUrl}/releases/latest` },
+          { text: 'Get Lexora', link: downloadUrl },
         ],
         sidebar: [{
           text: 'Your Lexora workspace',

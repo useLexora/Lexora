@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { feedbackIssueInputSchema, lexoraConfigPatchSchema } from '../desktopApiSchemas'
+import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSchema } from '../desktopApiSchemas'
 
 describe('desktop Preload API contract', () => {
+  it('accepts release pages from the canonical repository', () => {
+    const url = 'https://github.com/useLexora/Lexora/releases/tag/v0.6.6'
+    expect(releasePageInputSchema.parse({ url })).toEqual({ url })
+  })
+
   it('limits feedback text before it crosses the desktop bridge', () => {
     expect(feedbackIssueInputSchema.parse({ feedback: '建议' })).toEqual({ feedback: '建议' })
     expect(() => feedbackIssueInputSchema.parse({ feedback: 'x'.repeat(4_001) })).toThrow()

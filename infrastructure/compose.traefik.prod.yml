@@ -56,7 +56,7 @@ services:
 
   migrate:
     container_name: lexora-migrate
-    image: haohaoxue/lexora-api:latest
+    image: ${IMAGE_NAMESPACE:-uselexora}/lexora-api:${IMAGE_TAG:-latest}
     restart: 'no'
     logging: *default-logging
     working_dir: /app/apps/api
@@ -69,7 +69,7 @@ services:
 
   api:
     container_name: lexora-api
-    image: haohaoxue/lexora-api:latest
+    image: ${IMAGE_NAMESPACE:-uselexora}/lexora-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     environment:
@@ -114,7 +114,7 @@ services:
 
   agent:
     container_name: lexora-agent
-    image: haohaoxue/lexora-agent:latest
+    image: ${IMAGE_NAMESPACE:-uselexora}/lexora-agent:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     environment:
@@ -143,7 +143,7 @@ services:
 
   web:
     container_name: lexora-web
-    image: haohaoxue/lexora-web:latest
+    image: ${IMAGE_NAMESPACE:-uselexora}/lexora-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -156,11 +156,11 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
       - "traefik.http.routers.lexora.entrypoints=web"
-      - "traefik.http.routers.lexora.rule=Host(`docs.haohaoxue.site`)"
+      - "traefik.http.routers.lexora.rule=Host(`${LEXORA_WEB_HOST:?Set LEXORA_WEB_HOST to the Web application hostname}`)"
       - "traefik.http.routers.lexora.middlewares=https-redirect@file"
       - "traefik.http.routers.lexora.service=lexora"
       - "traefik.http.routers.lexora-secure.entrypoints=websecure"
-      - "traefik.http.routers.lexora-secure.rule=Host(`docs.haohaoxue.site`)"
+      - "traefik.http.routers.lexora-secure.rule=Host(`${LEXORA_WEB_HOST:?Set LEXORA_WEB_HOST to the Web application hostname}`)"
       - "traefik.http.routers.lexora-secure.service=lexora"
       - "traefik.http.services.lexora.loadbalancer.server.port=80"
 

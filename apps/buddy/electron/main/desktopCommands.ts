@@ -9,6 +9,7 @@ import {
   matchesDesktopShortcut,
   resolveDesktopShortcuts,
 } from '../shared/desktopCommands'
+import { DOCUMENTATION_URL } from '../shared/productLinks'
 
 export interface DesktopCommandExecutorOptions {
   getWindow: () => BrowserWindow | null
@@ -20,8 +21,6 @@ export interface DesktopCommandExecutorOptions {
 }
 
 export type ExecuteDesktopCommand = (commandId: DesktopCommandId) => Promise<void>
-
-const DOCUMENTATION_URL = 'https://github.com/haohaoxue-site/Lexora'
 
 export function createDesktopCommandExecutor(
   options: DesktopCommandExecutorOptions,

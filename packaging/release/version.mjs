@@ -10,15 +10,10 @@ const repoRoot = resolve(import.meta.dirname, '../..')
 const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
 const releaseTagPattern = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
 const applicationPackagePaths = {
-  agent: 'apps/agent/package.json',
-  api: 'apps/api/package.json',
   buddy: 'apps/buddy/package.json',
-  web: 'apps/web/package.json',
 }
 const versionlessPackagePaths = [
   'apps/website/package.json',
-  'packages/contracts/package.json',
-  'packages/shared/package.json',
 ]
 const buddyMetadataPath = 'apps/buddy/buddy.version.json'
 const cargoManifestPath = 'apps/buddy/native/pet/Cargo.toml'

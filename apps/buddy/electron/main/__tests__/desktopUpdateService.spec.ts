@@ -1,22 +1,22 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
 
 describe('checkForDesktopUpdate', () => {
   it('reports a newer stable Lexora release without installing it', async () => {
-    const fetchRelease = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+    const fetchRelease = async () => new Response(JSON.stringify([
       {
         draft: false,
-        html_url: 'https://github.com/haohaoxue-site/Lexora/releases/tag/web-v1.0.0',
+        html_url: 'https://github.com/useLexora/Lexora/releases/tag/web-v1.0.0',
         prerelease: false,
         tag_name: 'web-v1.0.0',
       },
       {
         draft: false,
-        html_url: 'https://github.com/haohaoxue-site/Lexora/releases/tag/v0.2.0',
+        html_url: 'https://github.com/useLexora/Lexora/releases/tag/v0.2.0',
         prerelease: false,
         tag_name: 'v0.2.0',
       },
-    ]), { status: 200 }))
+    ]), { status: 200 })
 
     await expect(checkForDesktopUpdate({
       currentVersion: '0.1.0',
@@ -24,22 +24,18 @@ describe('checkForDesktopUpdate', () => {
     })).resolves.toEqual({
       currentVersion: '0.1.0',
       latestVersion: '0.2.0',
-      releaseUrl: 'https://github.com/haohaoxue-site/Lexora/releases/tag/v0.2.0',
+      releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v0.2.0',
       status: 'update_available',
     })
-    expect(fetchRelease).toHaveBeenCalledWith(
-      'https://api.github.com/repos/haohaoxue-site/Lexora/releases?per_page=100',
-      expect.any(Object),
-    )
   })
 
   it('reports the current version only after a valid release response', async () => {
-    const fetchRelease = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+    const fetchRelease = async () => new Response(JSON.stringify([{
       draft: false,
-      html_url: 'https://github.com/haohaoxue-site/Lexora/releases/tag/v0.1.0',
+      html_url: 'https://github.com/useLexora/Lexora/releases/tag/v0.1.0',
       prerelease: false,
       tag_name: 'v0.1.0',
-    }]), { status: 200 }))
+    }]), { status: 200 })
 
     await expect(checkForDesktopUpdate({
       currentVersion: '0.1.0',

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { LandingContent } from './landingContent'
-import { downloadUrl } from './landingContent'
+import { downloadUrl } from '../../../productLinks'
 import LandingIcon from './LandingIcon.vue'
 import LandingMascot from './LandingMascot.vue'
 

@@ -39,10 +39,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      buddy: ${{ steps.resolve.outputs.buddy }}
-      buddyRust: ${{ steps.resolve.outputs.buddyRust }}
+      workspace: ${{ steps.resolve.outputs.workspace }}
+      native: ${{ steps.resolve.outputs.native }}
       website: ${{ steps.resolve.outputs.website }}
-      webStack: ${{ steps.resolve.outputs.webStack }}
       repository: ${{ steps.resolve.outputs.repository }}
     steps:
       - name: Checkout
@@ -89,61 +88,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install Website dependencies
-        run: pnpm --filter @haohaoxue/lexora --filter @haohaoxue/lexora-website install --frozen-lockfile
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora --filter @uselexora/lexora-website install --frozen-lockfile
 
-      - name: Lint Website
-        run: pnpm --filter @haohaoxue/lexora-website lint
+      - name: Lint workspace
+        run: pnpm --filter @uselexora/lexora-website lint
 
-      - name: Type-check Website
-        run: pnpm --filter @haohaoxue/lexora-website type-check
-
-  web-stack-checks:
-    name: Web stack checks
-    needs: scope
-    if: github.event_name == 'pull_request' && needs.scope.outputs.webStack == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install Web stack dependencies
-        run: >-
-          pnpm --filter @haohaoxue/lexora
-          --filter '@haohaoxue/lexora-web...'
-          --filter '@haohaoxue/lexora-api...'
-          --filter '@haohaoxue/lexora-agent...'
-          install --frozen-lockfile
-
-      - name: Lint Web stack
-        run: pnpm exec eslint apps/agent apps/api apps/web packages/contracts packages/shared
-
-      - name: Type-check Web stack
-        run: >-
-          pnpm --filter '@haohaoxue/lexora-web...'
-          --filter '@haohaoxue/lexora-api...'
-          --filter '@haohaoxue/lexora-agent...'
-          --recursive --if-present type-check
-
-      - name: Test Web stack
-        run: >-
-          pnpm --filter '@haohaoxue/lexora-web...'
-          --filter '@haohaoxue/lexora-api...'
-          --filter '@haohaoxue/lexora-agent...'
-          --recursive --if-present test
+      - name: Type-check workspace
+        run: pnpm --filter @uselexora/lexora-website type-check
 
   repository-checks:
     name: Repository checks
@@ -167,18 +119,18 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install repository dependencies
-        run: pnpm --filter @haohaoxue/lexora install --frozen-lockfile
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora install --frozen-lockfile
 
       - name: Lint repository
         run: >-
           pnpm exec eslint eslint.config.js .github/scripts packages/assets packaging infrastructure/scripts
           --ignore-pattern 'packaging/buddy/**'
 
-  buddy-tests:
-    name: Buddy tests
-    needs: [scope, buddy-test-runtime]
-    if: github.event_name == 'pull_request' && needs.scope.outputs.buddy == 'true'
+  workspace-checks:
+    name: Workspace checks
+    needs: [scope, native-test-runtime]
+    if: github.event_name == 'pull_request' && needs.scope.outputs.workspace == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -197,22 +149,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install Buddy dependencies
-        run: pnpm --filter @haohaoxue/lexora --filter '@lexora/buddy...' install --frozen-lockfile
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
-      - name: Lint Buddy
+      - name: Lint workspace
         run: pnpm exec eslint apps/buddy packaging/buddy
 
-      - name: Type-check Buddy
-        run: pnpm --filter @lexora/buddy type-check
+      - name: Type-check workspace
+        run: pnpm --filter @uselexora/lexora-buddy type-check
 
-      - name: Download Buddy test runtime
+      - name: Download native test runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: buddy-test-runtime-linux
+          name: native-test-runtime-linux
           path: ${{ runner.temp }}/buddy-test-runtime
 
-      - name: Prepare Buddy test tools
+      - name: Prepare test tools
         run: |
           tar -xf "$RUNNER_TEMP/buddy-test-runtime/buddy-test-runtime.tar" -C apps/buddy
           node packaging/buddy/release/search-tools.mjs
@@ -222,13 +174,13 @@ jobs:
             printf 'abi <abi/4.0>,\nprofile lexora-buddy-test-shell "%s" flags=(unconfined) { userns, }\n' "$sandbox_binary" | sudo apparmor_parser --replace
           fi
 
-      - name: Test Buddy
-        run: pnpm --filter @lexora/buddy test
+      - name: Test workspace
+        run: pnpm --filter @uselexora/lexora-buddy test
 
-  buddy-test-runtime:
-    name: Buddy test runtime
+  native-test-runtime:
+    name: Native test runtime
     needs: scope
-    if: needs.scope.outputs.buddy == 'true'
+    if: needs.scope.outputs.workspace == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -264,19 +216,19 @@ jobs:
           sudo apt-get install -y libcap-dev meson ninja-build
           node .github/scripts/buddy-test-runtime.mjs "$RUNNER_TEMP/buddy-test-runtime.tar"
 
-      - name: Upload Buddy test runtime
+      - name: Upload native test runtime
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: buddy-test-runtime-linux
+          name: native-test-runtime-linux
           path: ${{ runner.temp }}/buddy-test-runtime.tar
           if-no-files-found: error
           retention-days: 1
 
-  buddy-rust-tests:
-    name: Buddy Rust tests (${{ matrix.platform }})
+  native-checks:
+    name: Native checks (${{ matrix.platform }})
     needs: scope
-    if: needs.scope.outputs.buddyRust == 'true'
+    if: needs.scope.outputs.native == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -310,9 +262,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             apps/buddy/.output/build/native
-          key: buddy-rust-tests-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/resources/icons/app-icon.png', 'packages/assets/buddy/pets/default/**') }}
+          key: native-checks-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/resources/icons/app-icon.png', 'packages/assets/buddy/pets/default/**') }}
           restore-keys: |
-            buddy-rust-tests-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
+            native-checks-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
@@ -341,10 +293,10 @@ jobs:
           -AdversaryExecutable ./apps/buddy/.output/build/native/x86_64-pc-windows-msvc/release/examples/sandbox-adversary.exe
           -InstallComponent
 
-  buddy-dependency-cache:
-    name: Buddy dependency cache
+  workspace-dependency-cache:
+    name: Workspace dependency cache
     needs: scope
-    if: github.event_name == 'push' && needs.scope.outputs.buddy == 'true'
+    if: github.event_name == 'push' && needs.scope.outputs.workspace == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -363,27 +315,25 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install Buddy dependencies
-        run: pnpm --filter @haohaoxue/lexora --filter '@lexora/buddy...' install --frozen-lockfile
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
   ci-gate:
     name: CI Gate
-    needs: [scope, website-quality, web-stack-checks, repository-checks, buddy-test-runtime, buddy-tests, buddy-rust-tests]
+    needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, native-checks]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require selected checks
         env:
-          BUDDY_REQUIRED: ${{ needs.scope.outputs.buddy }}
-          BUDDY_RESULT: ${{ needs.buddy-tests.result }}
-          RUNTIME_RESULT: ${{ needs.buddy-test-runtime.result }}
-          RUST_REQUIRED: ${{ needs.scope.outputs.buddyRust }}
-          RUST_RESULT: ${{ needs.buddy-rust-tests.result }}
+          WORKSPACE_REQUIRED: ${{ needs.scope.outputs.workspace }}
+          WORKSPACE_RESULT: ${{ needs.workspace-checks.result }}
+          RUNTIME_RESULT: ${{ needs.native-test-runtime.result }}
+          RUST_REQUIRED: ${{ needs.scope.outputs.native }}
+          RUST_RESULT: ${{ needs.native-checks.result }}
           WEBSITE_REQUIRED: ${{ needs.scope.outputs.website }}
           WEBSITE_RESULT: ${{ needs.website-quality.result }}
-          WEB_STACK_REQUIRED: ${{ needs.scope.outputs.webStack }}
-          WEB_STACK_RESULT: ${{ needs.web-stack-checks.result }}
           REPOSITORY_REQUIRED: ${{ needs.scope.outputs.repository }}
           REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
           SCOPE_RESULT: ${{ needs.scope.result }}
@@ -404,8 +354,7 @@ jobs:
           fi
 
           require_success "Website quality" "$WEBSITE_REQUIRED" "$WEBSITE_RESULT"
-          require_success "Web stack checks" "$WEB_STACK_REQUIRED" "$WEB_STACK_RESULT"
           require_success "Repository checks" "$REPOSITORY_REQUIRED" "$REPOSITORY_RESULT"
-          require_success "Buddy tests" "$BUDDY_REQUIRED" "$BUDDY_RESULT"
-          require_success "Buddy test runtime" "$BUDDY_REQUIRED" "$RUNTIME_RESULT"
-          require_success "Buddy Rust tests" "$RUST_REQUIRED" "$RUST_RESULT"
+          require_success "Workspace checks" "$WORKSPACE_REQUIRED" "$WORKSPACE_RESULT"
+          require_success "Native test runtime" "$WORKSPACE_REQUIRED" "$RUNTIME_RESULT"
+          require_success "Native checks" "$RUST_REQUIRED" "$RUST_RESULT"

@@ -1,0 +1,49 @@
+name: Web stack checks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-stack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-stack-checks:
+    name: Web stack checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: >-
+          pnpm --filter @uselexora/lexora
+          --filter '@haohaoxue/lexora-web...'
+          --filter '@haohaoxue/lexora-api...'
+          --filter '@haohaoxue/lexora-agent...'
+          install --frozen-lockfile
+
+      - name: Lint workspace
+        run: pnpm lint:web-stack
+
+      - name: Type-check workspace
+        run: pnpm type-check:web-stack
+
+      - name: Test workspace
+        run: pnpm test:web-stack

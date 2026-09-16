@@ -43,13 +43,13 @@ jobs:
         id: pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
-      - name: Install Website dependencies
-        run: pnpm --filter @haohaoxue/lexora --filter @haohaoxue/lexora-website install --frozen-lockfile
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora --filter @uselexora/lexora-website install --frozen-lockfile
 
       - name: Build Website
         env:
           WEBSITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-        run: pnpm --filter @haohaoxue/lexora-website build
+        run: pnpm --filter @uselexora/lexora-website build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

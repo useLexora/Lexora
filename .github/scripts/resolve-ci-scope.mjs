@@ -26,7 +26,7 @@ const rustPrefixes = [
   'apps/buddy/shared/platform/',
   'packages/assets/buddy/pets/default/',
 ]
-const globalBuddyInputs = new Set([
+const workspaceInputs = new Set([
   '.node-version',
   'package.json',
   'pnpm-lock.yaml',
@@ -42,7 +42,6 @@ const ignoredInputs = new Set([
   'packaging/buddy/README.md',
 ])
 const websitePrefixes = [
-  'apps/docs/',
   'apps/website/',
 ]
 const buddyPrefixes = [
@@ -50,14 +49,13 @@ const buddyPrefixes = [
   'packaging/buddy/',
   'patches/',
 ]
-const webStackPrefixes = [
+const inactivePrefixes = [
   'apps/agent/',
   'apps/api/',
   'apps/web/',
   'evals/',
   'packages/contracts/',
   'packages/shared/',
-  'packages/surfaces/',
 ]
 const repositoryPrefixes = [
   '.github/',
@@ -69,30 +67,28 @@ export function classifyCiScope(files) {
   if (files.length === 0)
     return fullScope()
 
-  let buddy = false
-  let buddyRust = false
+  let workspace = false
+  let native = false
   let website = false
-  let webStack = false
   let repository = false
 
   for (const input of files) {
     const path = normalizePath(input)
 
-    if (ignoredInputs.has(path))
+    if (ignoredInputs.has(path) || inactivePrefixes.some(prefix => path.startsWith(prefix)))
       continue
 
     if (ciInputs.has(path)) {
-      buddy = true
-      buddyRust = true
+      workspace = true
+      native = true
       website = true
-      webStack = true
       repository = true
       continue
     }
 
     if (rustInputs.has(path) || rustPrefixes.some(prefix => path.startsWith(prefix))) {
-      buddy = true
-      buddyRust = true
+      workspace = true
+      native = true
       if (path.startsWith('.github/') || path.startsWith('packages/assets/'))
         repository = true
       continue
@@ -103,26 +99,20 @@ export function classifyCiScope(files) {
       continue
     }
 
-    if (globalBuddyInputs.has(path)) {
-      buddy = true
-      webStack = true
+    if (workspaceInputs.has(path)) {
+      workspace = true
       repository = true
       continue
     }
 
     if (path.startsWith('packages/assets/')) {
-      buddy = true
+      workspace = true
       repository = true
       continue
     }
 
     if (buddyPrefixes.some(prefix => path.startsWith(prefix))) {
-      buddy = true
-      continue
-    }
-
-    if (webStackPrefixes.some(prefix => path.startsWith(prefix))) {
-      webStack = true
+      workspace = true
       continue
     }
 
@@ -131,13 +121,12 @@ export function classifyCiScope(files) {
       continue
     }
 
-    buddy = true
-    buddyRust = true
-    webStack = true
+    workspace = true
+    native = true
     repository = true
   }
 
-  return { buddy, buddyRust, website, webStack, repository }
+  return { workspace, native, website, repository }
 }
 
 export function listChangedFiles(base, head, cwd = repoRoot) {
@@ -161,10 +150,9 @@ export function resolveCiScope(base, head, cwd = repoRoot) {
 
 function fullScope() {
   return {
-    buddy: true,
-    buddyRust: true,
+    workspace: true,
+    native: true,
     website: false,
-    webStack: true,
     repository: true,
   }
 }

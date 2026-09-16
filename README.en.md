@@ -31,7 +31,7 @@
 
 Lexora is a personal AI workspace built around Desktop. Within the access you grant, it uses local files and tools to turn ideas from conversation into action, making words the starting point for work, creativity, and everyday life.
 
-## A desktop agent built for work and creation
+## Your desktop agent
 
 Lexora brings conversation, local context, and tool execution into one workspace for research, content creation, coding, and everyday automation. From reading files and running commands to producing deliverables, you can follow the work and inspect the results.
 
@@ -76,8 +76,8 @@ Switch models, add tools, and decide what Lexora can access. Product data stays 
 Requires Node.js 26+, pnpm 11.5+, and Rust. See the [build instructions](packaging/buddy/README.md) for platform dependencies. From the repository root:
 
 ```bash
-pnpm install
-pnpm dev:buddy
+pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' --filter @uselexora/lexora-website install --frozen-lockfile
+pnpm dev
 
 # for the Website
 pnpm dev:website

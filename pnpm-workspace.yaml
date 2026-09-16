@@ -1,4 +1,5 @@
 shellEmulator: true
+verifyDepsBeforeRun: false
 
 trustPolicy: no-downgrade
 trustPolicyExclude:

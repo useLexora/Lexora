@@ -1,4 +1,4 @@
-const FEEDBACK_ISSUE_URL = 'https://github.com/haohaoxue-site/Lexora/issues/new'
+import { FEEDBACK_ISSUE_URL } from '../shared/productLinks'
 
 export function createFeedbackIssueUrl(feedback: string): string {
   const body = feedback.trim()
