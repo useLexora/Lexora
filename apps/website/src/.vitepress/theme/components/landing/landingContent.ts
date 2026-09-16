@@ -1,414 +1,181 @@
-export interface LandingLink {
-  label: string
-  href: string
-  external?: boolean
-}
+export const repositoryUrl = 'https://github.com/useLexora/Lexora'
+export const downloadUrl = `${repositoryUrl}/releases/latest`
 
-export interface LandingHeroContent {
-  eyebrow: string
-  title: string
-  description: string
-  primaryAction: LandingLink
-  secondaryAction: LandingLink
-  note: string
-  preview: {
-    windowTitle: string
-    status: string
-    taskLabel: string
-    task: string
-    steps: string[]
-    scopeLabel: string
-    scope: string
-  }
-}
-
-export interface LandingSectionContent {
-  kicker: string
-  title: string
-  description: string
-}
-
-export interface LandingWorkflowContent extends LandingSectionContent {
-  steps: Array<{
-    title: string
-    description: string
-    meta: string
-  }>
-}
-
-export type LandingCapabilityVisual = 'context' | 'control' | 'automation' | 'extensible' | 'companion'
-
-export interface LandingCapabilitiesContent extends LandingSectionContent {
-  items: Array<{
-    title: string
-    description: string
-    label: string
-    visual: LandingCapabilityVisual
-  }>
-}
-
-export interface LandingDocumentContent extends LandingSectionContent {
-  points: Array<{
-    title: string
-    description: string
-  }>
-  primaryAction: LandingLink
-  secondaryAction: LandingLink
-  previewLabel: string
-  previewAlt: string
-}
-
-export interface LandingPrinciplesContent extends LandingSectionContent {
-  items: Array<{
-    title: string
-    description: string
-  }>
-}
-
-export interface LandingFinalContent {
-  eyebrow: string
-  title: string
-  description: string
-  primaryAction: LandingLink
-  primaryMeta: string
-  platformLabel: string
-  platforms: string[]
-  secondaryAction: LandingLink
-  footnote: string
-}
-
-export interface LandingContent {
-  hero: LandingHeroContent
-  ribbon: string[]
-  workflow: LandingWorkflowContent
-  capabilities: LandingCapabilitiesContent
-  document: LandingDocumentContent
-  principles: LandingPrinciplesContent
-  final: LandingFinalContent
-}
-
-const zh: LandingContent = {
+const zh = {
+  nav: { product: '探索', capabilities: '超能力', guide: '使用指南', download: '下载 Lexora', menu: '打开导航', close: '关闭导航', skip: '跳至正文', darkMode: '深色外观' },
   hero: {
-    eyebrow: 'LOCAL-FIRST · PERSONAL AI WORKSPACE',
-    title: '让文字成为工作、创作与生活的起点。',
-    description: 'Lexora 是一个以 Desktop 为核心的个人 AI 工作台。它在你授权的范围内使用本地文件与工具，让想法不只停在对话里：整理资料、推进任务、交付成果，想你所想，行你所行。',
-    primaryAction: {
-      label: '下载 Desktop',
-      href: 'https://github.com/haohaoxue-site/Lexora/releases/latest',
-      external: true,
-    },
-    secondaryAction: {
-      label: '看看它如何工作',
-      href: '#workflow',
-    },
-    note: '开源 · 本地运行 · 由你授权',
-    preview: {
-      windowTitle: 'Lexora Desktop',
-      status: '正在工作',
-      taskLabel: '当前任务',
-      task: '整理项目发布说明，并检查遗漏项',
-      steps: [
-        '读取变更记录与版本信息',
-        '核对发布资产',
-        '生成 release-note.md',
-      ],
-      scopeLabel: '本次授权范围',
-      scope: '~/Projects/Lexora',
-    },
+    eyebrow: '一点灵感，一点魔法，还有你。',
+    title: ['想你所想，', '行你所行。'],
+    description: '你的个人 AI 工作台。写东西、写代码、理资料，也聊聊不着边际的想法。正经事与奇思妙想，都有个搭子。',
+    primary: '带 Lexora 回家',
+    secondary: '看看它如何工作',
+    note: '开源 · 本地运行 · 自由选择模型',
+    greetings: ['嗨，做点什么，还是随便聊聊？', '灵感已收到，准备开工！', '小小魔法，大大可能。'],
+    petAction: '和 Lexora 打个招呼',
+    orbitTop: '灵感，就位。',
+    orbitBottom: '让想法长出翅膀',
+    artifact: '今天的灵感.md',
+    artifactStatus: '一个念头，正在变成作品',
+    scroll: '往下，还有更多可能',
   },
-  ribbon: ['本地上下文', '工具执行', '多模型', '自动化', '过程可见', '产物交付'],
-  workflow: {
-    kicker: 'ONE CONTINUOUS WORKFLOW',
-    title: '从一句话，到一个真正落地的结果。',
-    description: '许多 AI 产品止于答案；Lexora 把上下文、行动与产物留在同一条任务时间线上。',
-    steps: [
-      {
-        title: '说出要完成的事',
-        description: '用自然语言发起任务，不必先把真实工作拆成一串提示词。',
-        meta: 'INTENT',
-      },
-      {
-        title: '带上正确的上下文',
-        description: '按需授权本机目录，让文档、图片、代码和项目约定进入当前任务。',
-        meta: 'CONTEXT',
-      },
-      {
-        title: '让工具真正行动',
-        description: '连接 Skills、MCP 与本机工具；关键操作会在执行前向你确认。',
-        meta: 'ACTION',
-      },
-      {
-        title: '把结果留下来',
-        description: '文件、报告与运行过程都回到任务中，下一次可以接着做，而不是重新开始。',
-        meta: 'ARTIFACT',
-      },
+  models: { label: '喜欢哪个模型，就和谁聊聊、做点事。', more: '还有更多', note: '接入你自己的模型服务' },
+  demo: {
+    eyebrow: 'FROM “WHAT IF” TO “DONE”',
+    title: '想做的事，\n从一句话开始。',
+    description: '带上你的资料、想法和一点好奇心。\n让 Lexora 把接下来的步骤串起来。',
+    label: '交互演示',
+    task: '这次一起做',
+    activity: '工作过程',
+    result: '为你准备好了',
+    preview: '成果预览',
+    exampleNote: '轻量桌面交互示意 · 演示内容不调用模型，不会访问你的文件。',
+    completed: '已完成',
+    running: '正在演示…',
+    replay: '重新演示',
+    highlights: '要点速览',
+    openFile: '点击打开文件预览',
+    closeFile: '关闭文件预览',
+    composer: '还可以继续补充要求。先试试展开过程、打开成果。',
+    localDemo: '本地交互示意',
+    spaces: '空间',
+    workspace: '我的创作工作室',
+    sandbox: '周末实验室',
+    realApp: '查看真实应用截图',
+    scenarios: [
+      { id: 'research', name: '整理资料', icon: 'folder', prompt: '帮我把这些零散的会议记录，整理成一份清晰的行动清单。', steps: ['阅读会议记录', '提取决定与待办', '生成行动清单'], file: '下一步行动.md', resultTitle: '下一步，一目了然。', summary: '已经把讨论拆成决定、行动和待确认的问题。先把重要的事排清楚，再把每一步落到具体的人和时间。', lines: ['确认本周的三个优先事项', '把待办分配到具体负责人', '整理仍需讨论的问题'], accent: 'mint' },
+      { id: 'create', name: '创作内容', icon: 'spark', prompt: '我想做一期关于城市漫步的内容。帮我把这些灵感变成文章提纲。', steps: ['梳理你的灵感', '组织故事与章节', '写下创作提纲'], file: '城市漫步提纲.md', resultTitle: '走慢一点，看见更多。', summary: '这篇内容不必是一份景点攻略。从你熟悉的街道出发，用声音、气味和路边的小故事，把一次散步写成自己的观察。', lines: ['从一条熟悉的小路出发', '记录街角被忽略的细节', '留一个属于读者的结尾'], accent: 'gold' },
+      { id: 'code', name: '写点代码', icon: 'code', prompt: '搜索框一清空就报错。帮我看看这个项目，修好它，再补一个回归测试。', steps: ['阅读搜索组件与报错信息', '定位空值分支并修改代码', '补充测试并运行验证'], file: '修复记录.md', resultTitle: '小小 Bug，找到线索了。', summary: '问题出在空输入仍进入了结果解析。修改集中在搜索函数，保留正常检索行为，并为这次报错补上可重复的验证。', lines: ['原因：空搜索词进入了结果解析', '修改：为空输入增加提前返回', '验证：清空后恢复列表，回归测试通过'], accent: 'blue' },
+      { id: 'chat', name: '随便聊聊', icon: 'chat', prompt: '如果在月球开一家咖啡馆，菜单上会有什么？正经分析三秒，然后放开想。', steps: ['聊聊月球上的日常', '给想象加点不一样的配料', '一起脑暴一份太空菜单'], file: '月球咖啡馆的脑洞.md', resultTitle: '今日特调：少一点重力。', summary: '认真想三秒：低重力下的咖啡大概需要一个盖子。但既然都开到月球了，我们可以先让菜单飞起来。', lines: ['陨石拿铁：奶泡自带环形山', '地出美式：配一扇朝向地球的窗', '失重可颂：请系好你的早餐'], accent: 'gold' },
+      { id: 'routine', name: '重复工作', icon: 'clock', prompt: '每周五帮我整理工作记录，汇总本周完成的事项和下周计划。', steps: ['设置每周运行时间', '汇总本周工作记录', '生成周报与下周计划'], file: '这一周的小小进展.md', resultTitle: '把时间留给更想做的事。', summary: '把这一周的记录聚到一起，分清已经完成、值得留下和需要继续的事。下次回来，不必再从零回忆。', lines: ['本周完成：内容初稿与资料整理', '值得记住：两个新的创作灵感', '下周计划：修订文章，准备发布'], accent: 'blue' },
     ],
+  },
+  workbench: {
+    eyebrow: 'A PLACE FOR YOUR POSSIBILITIES',
+    title: '认真做事，\n也可以很有趣。',
+    description: '对话、文件、执行过程和成果，在同一个工作台相遇。随时看看进展，补充一个想法，再接着往前走。',
+    caption: 'Desktop 产品截图 · 点击图片放大',
+    enlarge: '放大查看应用界面',
+    close: '关闭预览',
   },
   capabilities: {
-    kicker: 'BUILT AROUND YOUR REAL WORK',
-    title: '不是更大的聊天框，\n而是一张可以工作的桌子。',
-    description: '围绕个人真实工作设计的上下文、控制、扩展与反馈，而不是一组孤立的 AI 功能。',
-    items: [
-      {
-        title: '本地上下文，按需进入',
-        description: '只读取你明确授权的目录；文档、图片、代码与项目约定都能成为当前任务的上下文。',
-        label: 'DIRECTORY GRANTS',
-        visual: 'context',
-      },
-      {
-        title: '关键动作，由你确认',
-        description: '涉及进程、服务与敏感工具时，先呈现明确的操作目标，再等待你的决定。',
-        label: 'HUMAN IN CONTROL',
-        visual: 'control',
-      },
-      {
-        title: '把重复工作交给时间',
-        description: '为每日、每周或一次性任务设定计划，并保留每次运行的过程与结果。',
-        label: 'AUTOMATIONS',
-        visual: 'automation',
-      },
-      {
-        title: '模型与工具，都不被锁死',
-        description: '连接多个模型服务商，通过 Skills、MCP 与本机工具继续扩展能力。',
-        label: 'MODELS · SKILLS · MCP',
-        visual: 'extensible',
-      },
-      {
-        title: '忙碌时看得见，完成时也看得见',
-        description: '系统通知与原生桌宠让任务状态不再藏在后台，陪伴是反馈方式，而不是功能噱头。',
-        label: 'VISIBLE FEEDBACK',
-        visual: 'companion',
-      },
-    ],
+    eyebrow: 'SMALL COMPANION. BIG POSSIBILITIES.',
+    title: '小小伙伴，\n不止一点本领。',
+    local: { label: 'LOCAL FIRST', title: '你的电脑，\n就是工作现场。', description: '带上本地文件与项目上下文，按任务需要授予访问权限。成果留在文件里，下次打开，还能继续。', folder: '我的工作空间', files: ['灵感与草稿', '项目资料', '这次的成果'] },
+    extensions: { label: 'MADE TO BE YOURS', title: '顺手的工具，\n都可以带上。', description: '选择模型，用 Skills 带上工作方法，通过 MCP 连接外部工具。让工作台越来越懂你的节奏。', core: '你的工作方式' },
+    automation: { label: 'A LITTLE LESS BUSYWORK', title: '重复的事，\n交给下一次准时。', description: '为任务安排时间，回到工作台查看每次运行和结果。应用在本机运行期间，计划会按时触发。', task: '整理本周的工作记录', time: '每周五 · 17:00', days: ['一', '二', '三', '四', '五', '六', '日'] },
   },
-  document: {
-    kicker: 'FROM ACTION TO KNOWLEDGE',
-    title: '做完的事，\n也应该沉淀下来。',
-    description: 'Web 工作台把 Desktop 的任务结果延伸到文档编辑、知识整理和公开发布。',
-    points: [
-      {
-        title: '写作，而不是填表',
-        description: '页面树、富文本块、表格、代码与数学公式，共同承载长期内容。',
-      },
-      {
-        title: '历史不会消失',
-        description: '自动保存当前内容，创建历史版本，并从快照恢复文档。',
-      },
-      {
-        title: '从个人笔记到公开资料站',
-        description: '把单篇文档或一组页面发布成独立、只读的公开内容。',
-      },
-    ],
-    primaryAction: {
-      label: '了解 Web 工作台',
-      href: '/guide/what-is-lexora',
-    },
-    secondaryAction: {
-      label: '自部署指南',
-      href: '/self-host/docker-compose',
-    },
-    previewLabel: 'LEXORA WEB · DOCUMENT WORKSPACE',
-    previewAlt: 'Lexora Web 文档工作台界面',
-  },
-  principles: {
-    kicker: 'YOUR SPACE, YOUR RULES',
-    title: '能力向外延伸，\n控制权始终向内收拢。',
-    description: '你决定目录、模型与工具如何进入工作流；Lexora 负责让边界清晰可见。',
+  faq: {
+    eyebrow: 'GOOD TO KNOW',
+    title: '开始之前，\n你可能想知道。',
     items: [
-      {
-        title: '本地优先',
-        description: 'Buddy 的产品数据与目录授权保存在本机，目录内容只在授权后进入任务上下文。',
-      },
-      {
-        title: '选择自由',
-        description: '模型请求发送给你选择的服务商，能力不与单一模型或平台绑定。',
-      },
-      {
-        title: '开放可审视',
-        description: '项目基于 AGPL-3.0-only 开源，可自行部署、检查并长期维护自己的工作空间。',
-      },
+      { question: '需要注册 Lexora 账号吗？', answer: '不需要。安装后，配置你选择的模型服务即可开始。模型服务可能需要 API Key 或相应的账号授权，其费用由该服务商收取。' },
+      { question: '本地运行，意味着完全离线吗？', answer: '不是。任务和工作台在你的电脑上运行，但使用在线模型或外部工具时，相关内容会发送到你选择的服务。请按任务需要授权文件访问，并留意服务商的数据政策。' },
+      { question: '支持哪些系统？也有桌宠吗？', answer: '目前提供 Windows x64、Ubuntu / Debian x64 和 Arch Linux x64 安装包。原生桌宠目前仅支持 Linux；Windows 可以使用完整的桌面工作台。' },
+      { question: '关掉应用以后，自动化还会运行吗？', answer: '自动化需要 Lexora 在这台电脑上保持运行。应用留在系统托盘时可以继续运行；完全退出应用或关闭电脑后，计划任务不会继续执行。' },
     ],
   },
   final: {
-    eyebrow: 'LEXORA DESKTOP',
-    title: '从桌面开始，\n让想法真正发生。',
-    description: '在自己的电脑上连接本地上下文、模型与工具，把一句话推进成看得见、带得走的结果。',
-    primaryAction: {
-      label: '下载 Lexora Desktop',
-      href: 'https://github.com/haohaoxue-site/Lexora/releases/latest',
-      external: true,
-    },
-    primaryMeta: '前往最新 GitHub Release',
-    platformLabel: '当前提供 Linux 桌面安装包',
-    platforms: ['Ubuntu / Debian', 'Arch Linux', 'x86_64'],
-    secondaryAction: {
-      label: '先了解 Desktop 如何工作',
-      href: '#workflow',
-    },
-    footnote: '开源 · 本地运行 · AGPL-3.0-only',
+    eyebrow: 'YOUR NEXT CHAPTER STARTS HERE',
+    title: '下一件想做的事，\n一起？',
+    description: '给灵感一个落脚点，也给自己一个小帮手。',
+    download: '下载 Lexora',
+    guide: '从第一个任务开始',
+    platforms: 'Windows · Ubuntu / Debian · Arch Linux',
+    note: 'x64 安装包 · 使用你自己的模型服务',
+    footer: '让文字成为工作、创作与生活的起点。',
+    source: '开放源代码',
+    license: 'AGPL-3.0-only',
+    back: '回到顶部',
   },
 }
 
-const en: LandingContent = {
+const en: typeof zh = {
+  nav: { product: 'Explore', capabilities: 'Superpowers', guide: 'Guide', download: 'Get Lexora', menu: 'Open menu', close: 'Close menu', skip: 'Skip to content', darkMode: 'Dark appearance' },
   hero: {
-    eyebrow: 'LOCAL-FIRST · PERSONAL AI WORKSPACE',
-    title: 'Let words be where work, creativity, and everyday life begin.',
-    description: 'Lexora is a personal AI workspace built around Desktop. Within the access you grant, it uses local files and tools to move ideas beyond conversation—organizing context, advancing tasks, and delivering results while acting on your intent.',
-    primaryAction: {
-      label: 'Download Desktop',
-      href: 'https://github.com/haohaoxue-site/Lexora/releases/latest',
-      external: true,
-    },
-    secondaryAction: {
-      label: 'See how it works',
-      href: '#workflow',
-    },
-    note: 'Open source · Runs locally · Authorized by you',
-    preview: {
-      windowTitle: 'Lexora Desktop',
-      status: 'Working',
-      taskLabel: 'Current task',
-      task: 'Prepare the project release notes and check for gaps',
-      steps: [
-        'Read changes and version metadata',
-        'Verify release assets',
-        'Create release-note.md',
-      ],
-      scopeLabel: 'Authorized for this task',
-      scope: '~/Projects/Lexora',
-    },
+    eyebrow: 'A little inspiration. A little magic. And you.',
+    title: ['Big ideas.', 'A little company.'],
+    description: 'Your personal AI workspace. Write a story, fix some code, sort your notes, or follow a wild tangent. A little company, whatever you’re into.',
+    primary: 'Bring Lexora home',
+    secondary: 'See it in action',
+    note: 'Open source · Runs locally · Your choice of model',
+    greetings: ['Hey, shall we make something or just chat?', 'Inspiration received. Let’s get to it!', 'Small companion. Big possibilities.'],
+    petAction: 'Say hello to Lexora',
+    orbitTop: 'An idea takes flight.',
+    orbitBottom: 'A little everyday magic',
+    artifact: 'today’s-ideas.md',
+    artifactStatus: 'A thought becoming something real',
+    scroll: 'More possibilities below',
   },
-  ribbon: ['Local context', 'Tool execution', 'Multiple models', 'Automations', 'Visible progress', 'Artifacts'],
-  workflow: {
-    kicker: 'ONE CONTINUOUS WORKFLOW',
-    title: 'From one sentence to a result you can actually use.',
-    description: 'Many AI products stop at an answer. Lexora keeps context, action, and artifacts on one continuous task timeline.',
-    steps: [
-      {
-        title: 'Describe the outcome',
-        description: 'Start in natural language without translating real work into a chain of elaborate prompts.',
-        meta: 'INTENT',
-      },
-      {
-        title: 'Bring the right context',
-        description: 'Grant local folders when needed, so documents, images, code, and project conventions can inform the task.',
-        meta: 'CONTEXT',
-      },
-      {
-        title: 'Let tools take action',
-        description: 'Connect Skills, MCP, and local tools. Critical operations ask for your approval before they run.',
-        meta: 'ACTION',
-      },
-      {
-        title: 'Keep the result',
-        description: 'Files, reports, and the run history return to the task, so the next session can continue instead of restarting.',
-        meta: 'ARTIFACT',
-      },
+  models: { label: 'Chat and create with the model you feel at home with.', more: 'And more', note: 'Connect your own model service' },
+  demo: {
+    eyebrow: 'FROM “WHAT IF” TO “DONE”',
+    title: 'One little prompt.\nSomething real.',
+    description: 'Bring your notes, your ideas, and a little curiosity.\nLet Lexora help with what comes next.',
+    label: 'Interactive demo',
+    task: 'LET’S WORK ON',
+    activity: 'IN THE MAKING',
+    result: 'READY FOR YOU',
+    preview: 'OUTPUT PREVIEW',
+    exampleNote: 'Lightweight desktop simulation · No model calls or access to your files.',
+    completed: 'Complete',
+    running: 'Playing…',
+    replay: 'Replay demo',
+    highlights: 'AT A GLANCE',
+    openFile: 'Open the file preview',
+    closeFile: 'Close file preview',
+    composer: 'There is always room for another thought. Try the activity and file preview.',
+    localDemo: 'Local simulation',
+    spaces: 'SPACES',
+    workspace: 'My creative studio',
+    sandbox: 'Weekend lab',
+    realApp: 'See the real app',
+    scenarios: [
+      { id: 'research', name: 'Make sense of notes', icon: 'folder', prompt: 'Turn these scattered meeting notes into a clear action plan I can actually follow.', steps: ['Read your meeting notes', 'Find decisions and next steps', 'Create an action plan'], file: 'next-steps.md', resultTitle: 'A clearer way forward.', summary: 'The discussion is now organized into decisions, actions, and open questions. Start with the priorities, then give each next step an owner and a time.', lines: ['Pick the three priorities for this week', 'Give each action a clear owner', 'Collect questions that still need answers'], accent: 'mint' },
+      { id: 'create', name: 'Create something', icon: 'spark', prompt: 'I’m writing about exploring the city on foot. Help me turn these ideas into an outline.', steps: ['Explore your ideas', 'Shape the story and sections', 'Draft your creative outline'], file: 'a-walk-through-the-city.md', resultTitle: 'Slow down. Notice more.', summary: 'This does not need to be a sightseeing guide. Start with a familiar street and let its sounds, smells, and small stories shape a personal observation.', lines: ['Start with a street you know by heart', 'Find the stories hiding on each corner', 'Leave a little room for the reader'], accent: 'gold' },
+      { id: 'code', name: 'Write some code', icon: 'code', prompt: 'Clearing the search box crashes this app. Find the cause, fix it, and add a regression test.', steps: ['Read the search component and error', 'Handle the empty-input case', 'Add and run a regression test'], file: 'fix-notes.md', resultTitle: 'A small bug. A clearer picture.', summary: 'An empty input was still reaching the result parser. The fix stays within the search function, preserves normal queries, and adds a repeatable check.', lines: ['Cause: an empty query reached the result parser', 'Fix: return early when the input is empty', 'Checked: clearing restores the list; tests pass'], accent: 'blue' },
+      { id: 'chat', name: 'Just chat', icon: 'chat', prompt: 'What would a café on the Moon serve? Be practical for three seconds, then let your imagination loose.', steps: ['Picture everyday life on the Moon', 'Add a few unlikely ingredients', 'Dream up a menu together'], file: 'moon-cafe-ideas.md', resultTitle: 'Today’s special: less gravity.', summary: 'Three practical seconds: low-gravity coffee probably needs a lid. But if we are opening on the Moon, the menu should get to have some fun.', lines: ['Meteor latte, with craters in the foam', 'Earthrise espresso, best served by the window', 'Zero-gravity croissant: buckle up your breakfast'], accent: 'gold' },
+      { id: 'routine', name: 'Make time for more', icon: 'clock', prompt: 'Every Friday, summarize my work notes into a weekly recap and a plan for next week.', steps: ['Set a weekly schedule', 'Gather the week’s work notes', 'Write a recap and next steps'], file: 'a-week-of-small-wins.md', resultTitle: 'More time for what matters.', summary: 'Bring the week into focus: what is finished, what is worth keeping, and what deserves another look. Pick up next time without starting from scratch.', lines: ['Done: first draft and research notes', 'Worth keeping: two fresh creative ideas', 'Up next: revise the story and get it ready'], accent: 'blue' },
     ],
+  },
+  workbench: {
+    eyebrow: 'A PLACE FOR YOUR POSSIBILITIES',
+    title: 'Real work.\nA little more wonder.',
+    description: 'Conversations, files, progress, and finished work, all in one place. Check in, add a thought, and keep going.',
+    caption: 'Desktop screenshots · Click to enlarge',
+    enlarge: 'Enlarge the app preview',
+    close: 'Close preview',
   },
   capabilities: {
-    kicker: 'BUILT AROUND YOUR REAL WORK',
-    title: 'Not a bigger chat box.\nA desk where work can happen.',
-    description: 'Context, control, extensibility, and feedback designed around personal work—not a collection of disconnected AI features.',
-    items: [
-      {
-        title: 'Local context, only when needed',
-        description: 'Lexora reads folders you explicitly authorize. Documents, images, code, and project conventions can all become task context.',
-        label: 'DIRECTORY GRANTS',
-        visual: 'context',
-      },
-      {
-        title: 'You approve critical actions',
-        description: 'For processes, services, and sensitive tools, Lexora shows the exact target and waits for your decision.',
-        label: 'HUMAN IN CONTROL',
-        visual: 'control',
-      },
-      {
-        title: 'Give recurring work a schedule',
-        description: 'Create daily, weekly, or one-time automations, with a trace of every run and result.',
-        label: 'AUTOMATIONS',
-        visual: 'automation',
-      },
-      {
-        title: 'Models and tools stay open',
-        description: 'Connect multiple model providers, then extend the workspace through Skills, MCP, and local tools.',
-        label: 'MODELS · SKILLS · MCP',
-        visual: 'extensible',
-      },
-      {
-        title: 'Progress you can see',
-        description: 'System notifications and the native desktop pet make task status visible without turning companionship into a gimmick.',
-        label: 'VISIBLE FEEDBACK',
-        visual: 'companion',
-      },
-    ],
+    eyebrow: 'SMALL COMPANION. BIG POSSIBILITIES.',
+    title: 'A familiar face.\nA capable companion.',
+    local: { label: 'LOCAL FIRST', title: 'Your computer.\nYour creative space.', description: 'Bring local files and project context. Grant access as needed. Keep your work in real files, ready to pick up next time.', folder: 'My workspace', files: ['Ideas & drafts', 'Project notes', 'Things we made'] },
+    extensions: { label: 'MADE TO BE YOURS', title: 'Your favorite tools,\nall invited.', description: 'Choose your model, bring your methods through Skills, and connect tools with MCP. Make the workspace feel like yours.', core: 'Your way of working' },
+    automation: { label: 'A LITTLE LESS BUSYWORK', title: 'Same time next week?\nAlready on it.', description: 'Schedule a task and check its runs and results. Scheduled work runs while Lexora is running on your computer.', task: 'Round up this week’s work', time: 'Every Friday · 17:00', days: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] },
   },
-  document: {
-    kicker: 'FROM ACTION TO KNOWLEDGE',
-    title: 'Finished work should become\nknowledge you can keep.',
-    description: 'The Web workspace carries Desktop results into document editing, knowledge organization, and public publishing.',
-    points: [
-      {
-        title: 'Write, rather than fill forms',
-        description: 'Page trees, rich-text blocks, tables, code, and math give long-lived content a proper home.',
-      },
-      {
-        title: 'History stays available',
-        description: 'Autosave current content, create historical versions, and restore documents from snapshots.',
-      },
-      {
-        title: 'From private notes to a public site',
-        description: 'Publish one document or a collection of pages as independent, read-only content.',
-      },
-    ],
-    primaryAction: {
-      label: 'Explore the Web workspace',
-      href: '/en/guide/what-is-lexora',
-    },
-    secondaryAction: {
-      label: 'Self-hosting guide',
-      href: '/en/self-host/docker-compose',
-    },
-    previewLabel: 'LEXORA WEB · DOCUMENT WORKSPACE',
-    previewAlt: 'Lexora Web document workspace interface',
-  },
-  principles: {
-    kicker: 'YOUR SPACE, YOUR RULES',
-    title: 'Capabilities reach outward.\nControl stays with you.',
-    description: 'You decide how folders, models, and tools enter the workflow. Lexora keeps those boundaries visible.',
+  faq: {
+    eyebrow: 'GOOD TO KNOW',
+    title: 'A few things\nbefore we begin.',
     items: [
-      {
-        title: 'Local first',
-        description: 'Buddy product data and directory grants stay on your machine. Folder contents only enter a task after authorization.',
-      },
-      {
-        title: 'Freedom to choose',
-        description: 'Model requests go to the provider you select, so the workspace is not tied to one model or platform.',
-      },
-      {
-        title: 'Open to inspection',
-        description: 'Lexora is open source under AGPL-3.0-only, ready to self-host, inspect, and maintain for the long term.',
-      },
+      { question: 'Do I need a Lexora account?', answer: 'No. Install the app and connect your chosen model service. That service may require an API key or account authorization, and its own charges may apply.' },
+      { question: 'Does running locally mean fully offline?', answer: 'No. The app and task execution run on your computer, but online models and external tools receive the content needed for their work. Grant file access as needed and review your chosen service’s data policy.' },
+      { question: 'Which platforms are supported? What about the pet?', answer: 'Installers are available for Windows x64, Ubuntu / Debian x64, and Arch Linux x64. The native desktop pet currently supports Linux only. The desktop workspace is available on Windows too.' },
+      { question: 'Will scheduled tasks run after I quit?', answer: 'Lexora needs to stay running on this computer. It can keep working from the system tray, but scheduled tasks do not run after you fully quit the app or shut down your computer.' },
     ],
   },
   final: {
-    eyebrow: 'LEXORA DESKTOP',
-    title: 'Start on your desktop.\nTurn ideas into action.',
-    description: 'Bring local context, models, and tools together on your own computer, then move one sentence toward a result you can see and keep.',
-    primaryAction: {
-      label: 'Download Lexora Desktop',
-      href: 'https://github.com/haohaoxue-site/Lexora/releases/latest',
-      external: true,
-    },
-    primaryMeta: 'Open the latest GitHub Release',
-    platformLabel: 'Linux desktop packages currently available',
-    platforms: ['Ubuntu / Debian', 'Arch Linux', 'x86_64'],
-    secondaryAction: {
-      label: 'See how Desktop works',
-      href: '#workflow',
-    },
-    footnote: 'Open source · Runs locally · AGPL-3.0-only',
+    eyebrow: 'YOUR NEXT CHAPTER STARTS HERE',
+    title: 'What shall we\nmake next?',
+    description: 'A place for your ideas. A companion for the making.',
+    download: 'Get Lexora',
+    guide: 'Start your first task',
+    platforms: 'Windows · Ubuntu / Debian · Arch Linux',
+    note: 'x64 installers · Bring your own model service',
+    footer: 'Where words become work, creativity, and everyday possibility.',
+    source: 'Open source',
+    license: 'AGPL-3.0-only',
+    back: 'Back to top',
   },
 }
 
-export const landingContent = { zh, en } satisfies Record<'zh' | 'en', LandingContent>
+export type LandingContent = typeof zh
+export const landingContent = { zh, en }

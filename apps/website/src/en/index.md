@@ -1,9 +1,7 @@
 ---
-layout: home
+layout: landing
 title: Lexora
-titleTemplate: Personal AI Workspace
-description: Lexora is a personal AI workspace built around Desktop. Within the access you grant, it uses local files and tools to think alongside you and act on your intent.
+titleTemplate: Your personal AI workspace
+description: Big ideas. A little company. Write a story, fix some code, sort your notes, or just chat. Lexora is your personal AI workspace for work and everything beyond it.
 markdownStyles: false
 ---
-
-<LandingPage />

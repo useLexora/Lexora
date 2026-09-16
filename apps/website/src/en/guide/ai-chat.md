@@ -1,25 +1,31 @@
-# AI Chat
+# Working with Lexora
 
-AI chat is one of the main Lexora surfaces. It is used for everyday questions, writing assistance, content organization, and document-aware conversations.
+A task can include several turns of conversation, local context, tool execution, and finished work. You do not need every detail figured out at the start.
 
-## Sessions and Models
+## Give your task a clear direction
 
-Each chat session belongs to the current personal workspace. You can use a default model or select another enabled model in the session.
+A useful starting point includes:
 
-Model configuration comes from `Settings -> Providers` and `Settings -> Default Models`. Administrators can also enable platform-level providers for the whole instance.
+- **The goal**: what you want to achieve.
+- **The material**: which content or files to use.
+- **The output**: the format and where it should go.
 
-## Streaming Generation
+For example: “Use these travel notes to draft a two-day weekend itinerary. Keep the sources and list anything that still needs checking.”
 
-Assistant replies stream into the UI. You can stop generation and retry failed replies. Run state, message content, and events are stored on the server so the session can be resumed after refresh.
+## Adjust as you go
 
-## Message Branches
+Follow conversations and tool activity to see what is happening. Add instructions or stop execution if the task needs a different direction.
 
-Lexora uses a message-tree model for chat. When you regenerate a reply or continue from an existing message, the UI displays branch navigation so you can switch between alternatives.
+While a task is running, additional input may be queued. Check the visible status; queued input has not necessarily been executed.
 
-Switching branches updates the active path of the session without deleting other branches.
+## Check before approving
 
-## Document-Aware Chat
+Tools can read or write files, run commands, and call external services. Review the operation and its arguments when an approval request appears.
 
-Inside a document page, the right-side chat panel can use current document references and selected text as context for the next AI run.
+Grant only the access needed for this task. Confirm targets and keep backups before operations that are difficult to undo.
 
-Document context is attached to the triggering run. It is not copied into the ordinary chat message body.
+## Keep what you make
+
+View files and artifacts in the workspace, then continue editing with your favorite tools. A model saying “saved” is not proof of a correct result: check the actual file.
+
+[Organize files and spaces →](./files-and-spaces)
