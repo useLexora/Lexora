@@ -91,6 +91,10 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     return new Intl.NumberFormat(providerSettings().language.value).format(value)
   }
 
+  async function removeUnavailableModel(modelId: string) {
+    await providerSettings().removeModel(providerId(), modelId)
+  }
+
   async function removeProvider() {
     const requestGeneration = generation
     if (await providerSettings().removeProvider(providerId()) && requestGeneration === generation)
@@ -113,6 +117,7 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     openManualModelDialog,
     openModelDetail,
     formatTokens,
+    removeUnavailableModel,
     removeProvider,
   }
 }

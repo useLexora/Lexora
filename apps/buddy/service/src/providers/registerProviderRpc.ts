@@ -91,6 +91,12 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     await options.sessions.invalidateAll()
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.removeModel, async (input) => {
+    await options.service.removeModel(input.providerId, input.modelId)
+    options.automations.blockPinnedModel(input.providerId, input.modelId)
+    await options.sessions.invalidateAll()
+    return ok()
+  }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelCatalogSource, async (input) => {
     const model = await options.service.setModelCatalogSource(input.providerId, input.modelId, input.source)
     await options.sessions.invalidateAll()

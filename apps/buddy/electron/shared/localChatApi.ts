@@ -143,6 +143,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   providersLogin: 'lexora:buddy:providers:login',
   providersLogout: 'lexora:buddy:providers:logout',
   providersRemove: 'lexora:buddy:providers:remove',
+  providersRemoveModel: 'lexora:buddy:providers:remove-model',
   providersRespondToAuth: 'lexora:buddy:providers:respond-to-auth',
   providersSetDefaultModel: 'lexora:buddy:providers:set-default-model',
   providersSetEnabled: 'lexora:buddy:providers:set-enabled',
@@ -248,6 +249,7 @@ export interface LocalChatApi {
     cancelAuth: (challengeId: string) => Promise<LocalMutationResult>
     logout: (providerId: string) => Promise<LocalMutationResult>
     remove: (providerId: string) => Promise<LocalMutationResult>
+    removeModel: (providerId: string, modelId: string) => Promise<LocalMutationResult>
     setDefaultModel: (
       model: LocalDefaultModel | null,
     ) => Promise<LocalDefaultModel | null>

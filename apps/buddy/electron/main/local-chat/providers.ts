@@ -31,6 +31,8 @@ export function registerProvidersIpc(context: LocalChatIpcContext): void {
 
   handle(LOCAL_CHAT_IPC_CHANNELS.providersRemove, (_event, input) => request(providersRpc.remove, providersRequestSchemas.providerId.parse(input)))
 
+  handle(LOCAL_CHAT_IPC_CHANNELS.providersRemoveModel, (_event, input) => request(providersRpc.removeModel, providersRequestSchemas.providerModel.parse(input)))
+
   handle(LOCAL_CHAT_IPC_CHANNELS.providersSetEnabled, (_event, input) => request(providersRpc.setEnabled, providersRequestSchemas.providerEnabled.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.providersSetModelEnabled, (_event, input) => request(providersRpc.setModelEnabled, providersRequestSchemas.providerModelEnabled.parse(input)))

@@ -223,6 +223,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     return mutateProvider(providerId, () => options.api.clearCredential(providerId))
   }
 
+  async function removeModel(providerId: string, modelId: string) {
+    return mutateProvider(providerId, () => options.api.removeModel(providerId, modelId))
+  }
+
   async function removeProvider(providerId: string) {
     return mutateProvider(providerId, () => options.api.remove(providerId))
   }
@@ -433,6 +437,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     openModelSnapshotDirectory,
     providers: readonly(providers),
     registeredModels: readonly(registeredModels),
+    removeModel,
     removeProvider,
     renameProvider,
     refreshModelSnapshot,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
-import { Add20Regular } from '@vicons/fluent'
+import { Add20Regular, Delete20Regular, Info20Regular } from '@vicons/fluent'
 import { NButton, NPopconfirm, NSpace, NSwitch, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -37,6 +37,7 @@ const {
   openManualModelDialog,
   openModelDetail,
   formatTokens,
+  removeUnavailableModel,
   removeProvider,
 } = useProviderDetail(() => props.providerSettings, () => props.providerId, () => emit('back'))
 </script>
@@ -153,20 +154,53 @@ const {
               }) }}
             </small>
             <DesktopModelCapabilityTags :language="language" :model="model" />
-            <span v-if="!model.available" class="desktop-provider-detail__warning">
-              {{ t('desktop.providers.notFoundInLastSync') }}
-            </span>
           </div>
-          <NButton size="small" @click="openModelDetail(model.modelId)">
-            {{ t('desktop.providers.manage') }}
-          </NButton>
-          <NSwitch
-            class="desktop-provider-detail__model-switch"
-            :round="false"
-            :value="model.enabled"
-            :disabled="provider.activeRunCount > 0 || !model.available"
-            @update:value="providerSettings.setProviderModelEnabled(provider.id, model.modelId, $event)"
-          />
+          <div class="desktop-provider-detail__model-actions">
+            <template v-if="model.available">
+              <NButton size="small" @click="openModelDetail(model.modelId)">
+                {{ t('desktop.providers.manage') }}
+              </NButton>
+              <NSwitch
+                :round="false"
+                :value="model.enabled"
+                :disabled="provider.activeRunCount > 0"
+                @update:value="providerSettings.setProviderModelEnabled(provider.id, model.modelId, $event)"
+              />
+            </template>
+            <template v-else>
+              <NTooltip>
+                <template #trigger>
+                  <span
+                    class="desktop-provider-detail__model-availability"
+                    role="img"
+                    :aria-label="t('desktop.providers.notFoundInLastSync')"
+                  >
+                    <DesktopIcon :component="Info20Regular" :size="18" />
+                  </span>
+                </template>
+                {{ t('desktop.providers.modelUnavailableHint') }}
+              </NTooltip>
+              <NTooltip>
+                <template #trigger>
+                  <span>
+                    <NButton
+                      class="buddy-icon-button"
+                      quaternary
+                      size="small"
+                      :disabled="provider.activeRunCount > 0 || providerSettings.mutatingProviderId.value === provider.id"
+                      :aria-label="t('desktop.providers.removeUnavailableModel')"
+                      @click="removeUnavailableModel(model.modelId)"
+                    >
+                      <template #icon>
+                        <DesktopIcon :component="Delete20Regular" :size="16" />
+                      </template>
+                    </NButton>
+                  </span>
+                </template>
+                {{ t('desktop.providers.removeUnavailableModel') }}
+              </NTooltip>
+            </template>
+          </div>
         </div>
       </div>
     </section>
@@ -247,9 +281,21 @@ const {
   gap: 0.2rem;
 }
 
-.desktop-provider-detail__model-switch {
+.desktop-provider-detail__model-actions {
+  display: flex;
   flex: none;
+  align-items: center;
   margin-left: auto;
+  gap: 0.4rem;
+}
+
+.desktop-provider-detail__model-availability {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  place-items: center;
+  color: var(--buddy-status-warning-text);
 }
 
 .desktop-provider-detail__model-parameters {
@@ -301,11 +347,6 @@ const {
 
 .desktop-provider-detail__row:last-child {
   border-bottom: 0;
-}
-
-.desktop-provider-detail__warning {
-  color: var(--buddy-status-warning-text);
-  font-size: 0.68rem;
 }
 
 .desktop-provider-detail__section-heading {
