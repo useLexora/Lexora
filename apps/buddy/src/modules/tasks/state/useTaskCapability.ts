@@ -211,6 +211,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     createSpace,
     deleteSpace,
     activateSpaceDraft,
+    openSpaceDirectory,
     selectSpaceDirectory,
     updateSpace,
   } = taskSpaces
@@ -412,6 +413,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     spaces: readonly(spaces),
     refresh: refreshTaskIndex,
     renameTask: renameConversation,
+    openSpaceDirectory,
     selectSpaceDirectory,
     tasks: readonly(conversations),
     updateSpace,

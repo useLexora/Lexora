@@ -39,6 +39,7 @@ export default {
   'desktop.tasks.pin': '置顶',
   'desktop.tasks.pinnedSection': '置顶',
   'desktop.tasks.spaceWorkingDirectory': '工作目录',
+  'desktop.tasks.openSpaceWorkingDirectory': '打开工作目录',
   'desktop.tasks.spaceWorkingDirectoryDescription': '决定任务的默认工作位置，并加载目录中的上下文。',
   'desktop.tasks.selectSpaceWorkingDirectory': '选择目录',
   'desktop.tasks.spaceManagedWorkspace': '使用空间自有工作区',

@@ -4,7 +4,7 @@ import type { Ref } from 'vue'
 import type { TaskSpaceInput } from '../../state/task-index/typing'
 import { computed, shallowRef, watch } from 'vue'
 
-export type TaskSpaceMenuAction = 'delete' | 'edit' | 'new-task'
+export type TaskSpaceMenuAction = 'delete' | 'edit' | 'new-task' | 'open-directory'
 
 export interface TaskIndexManagementOptions {
   spaces: Readonly<Ref<readonly LocalSpace[]>>
@@ -13,6 +13,7 @@ export interface TaskIndexManagementOptions {
   onDeleteTask: (conversationId: string) => void
   onDeleteSpace: (spaceId: string) => void
   onNewTask: (spaceId: string) => void
+  onOpenSpaceDirectory: (spaceId: string) => void
   onRenameTask: (conversationId: string, title: string) => void
   onUpdateSpace: (input: TaskSpaceInput & { spaceId: string }) => Promise<boolean>
 }
@@ -72,6 +73,10 @@ export function useTaskIndexManagement(options: TaskIndexManagementOptions) {
   }
 
   function selectSpaceMenuAction(space: LocalSpace, action: TaskSpaceMenuAction) {
+    if (action === 'open-directory') {
+      options.onOpenSpaceDirectory(space.id)
+      return
+    }
     if (action === 'new-task') {
       options.onNewTask(space.id)
       return

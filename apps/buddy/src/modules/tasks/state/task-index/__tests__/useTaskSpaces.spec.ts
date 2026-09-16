@@ -20,7 +20,7 @@ function fixture() {
   const persistWorkspaceState = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
   const errors: unknown[] = []
   const owner = scope.run(() => useTaskSpaces({
-    api: { create: () => creation.promise, update: async () => space(), delete: async () => ({ ok: true }), selectDirectory: async () => null },
+    api: { create: () => creation.promise, update: async () => space(), delete: async () => ({ ok: true }), selectDirectory: async () => null, revealFile: async () => {} },
     activateDraftScope: (id) => {
       spaceId.value = id
       draftId.value = `${id}-draft`

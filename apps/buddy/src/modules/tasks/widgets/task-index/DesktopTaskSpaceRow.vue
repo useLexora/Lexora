@@ -10,6 +10,7 @@ import {
   ChevronRight16Regular,
   Delete20Regular,
   Edit20Regular,
+  FolderOpen20Regular,
   MoreHorizontal20Regular,
 } from '@vicons/fluent'
 import { NDropdown } from 'naive-ui'
@@ -45,27 +46,38 @@ const { t } = useBuddyI18n(() => props.language)
 const router = useRouter()
 const menuOptions = computed<DropdownOption[]>(() => [
   {
-    icon: () => h(DesktopIcon, { name: 'navigationTask' }),
+    icon: () => h(DesktopIcon, { name: 'navigationTask', size: 14 }),
     key: 'new-task',
     label: t('desktop.tasks.newTask'),
   },
+  {
+    icon: () => h(DesktopIcon, { component: FolderOpen20Regular, size: 14 }),
+    key: 'open-directory',
+    label: t('desktop.tasks.openSpaceWorkingDirectory'),
+    show: Boolean(props.space.primaryDirectory),
+  },
   { key: 'task-management-divider', type: 'divider' },
   {
-    icon: () => h(DesktopIcon, { component: SkillIcon }),
+    icon: () => h(DesktopIcon, { component: SkillIcon, size: 14 }),
     key: 'skills',
     label: t('desktop.skills.manage'),
   },
   {
-    icon: () => h(DesktopIcon, { component: Edit20Regular }),
+    icon: () => h(DesktopIcon, { component: Edit20Regular, size: 14 }),
     key: 'edit',
     label: t('common.edit'),
   },
   {
-    icon: () => h(DesktopIcon, { component: Delete20Regular }),
+    icon: () => h(DesktopIcon, { component: Delete20Regular, size: 14 }),
     key: 'delete',
     label: t('common.delete'),
   },
 ])
+const menuThemeOverrides = {
+  fontSizeSmall: '13px',
+  optionIconPrefixWidthSmall: '28px',
+  optionSuffixWidthSmall: '12px',
+}
 const pinLabel = computed(() => props.pinMode === 'pin'
   ? t('desktop.tasks.pin')
   : t('desktop.tasks.unpin'))
@@ -75,7 +87,7 @@ function handleMenuAction(action: string | number): void {
     void router.push(desktopRouteLocations.skills(props.space.id))
     return
   }
-  if (action === 'new-task' || action === 'edit' || action === 'delete')
+  if (action === 'new-task' || action === 'open-directory' || action === 'edit' || action === 'delete')
     emit('menu', action)
 }
 
@@ -148,7 +160,9 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
       <NDropdown
         trigger="click"
         placement="bottom-start"
+        size="small"
         :options="menuOptions"
+        :theme-overrides="menuThemeOverrides"
         @select="handleMenuAction"
       >
         <button

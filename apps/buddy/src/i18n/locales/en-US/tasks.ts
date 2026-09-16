@@ -41,6 +41,7 @@ export default {
   'desktop.tasks.pin': 'Pin',
   'desktop.tasks.pinnedSection': 'Pinned',
   'desktop.tasks.spaceWorkingDirectory': 'Working directory',
+  'desktop.tasks.openSpaceWorkingDirectory': 'Open working directory',
   'desktop.tasks.spaceWorkingDirectoryDescription': 'Sets the default working location and loads context from the directory.',
   'desktop.tasks.selectSpaceWorkingDirectory': 'Select directory',
   'desktop.tasks.spaceManagedWorkspace': 'Use the Space-managed workspace',
