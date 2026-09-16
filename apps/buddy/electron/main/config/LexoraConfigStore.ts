@@ -6,6 +6,7 @@ import { dirname } from 'node:path'
 import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
+import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DESKTOP_CHAT_WELCOME_VARIANT_IDS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
@@ -51,6 +52,7 @@ const petConfigSchema = z.object({
 })
 
 const lexoraConfigFileSchema = z.object({
+  proxy: proxySettingsSchema.default(DEFAULT_PROXY_SETTINGS),
   desktop: desktopConfigSchema,
   pet: petConfigSchema,
 }).passthrough()
@@ -76,11 +78,19 @@ export class LexoraConfigStore {
     return decodeConfig(await this.#readFile())
   }
 
-  update(patch: LexoraConfigPatch): Promise<LexoraConfig> {
+  update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void): Promise<LexoraConfig> {
     const operation = this.#writeQueue.then(async () => {
       const file = await this.#readFile()
-      const next = mergeConfig(decodeConfig(file), patch)
-      await this.#write(mergeConfigFile(file, next))
+      const current = decodeConfig(file)
+      const next = mergeConfig(current, patch)
+      try {
+        await apply?.(next)
+        await this.#write(mergeConfigFile(file, next))
+      }
+      catch (error) {
+        await apply?.(current)
+        throw error
+      }
       return next
     })
 
@@ -146,6 +156,7 @@ function decodeConfig(value: unknown): LexoraConfig {
   }
 
   return {
+    proxy: config.proxy,
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
       taskSidebarPinnedItems: config.desktop.task_sidebar_pinned_items,
@@ -168,6 +179,7 @@ function decodeConfig(value: unknown): LexoraConfig {
 
 function encodeConfig(config: LexoraConfig) {
   return {
+    proxy: config.proxy,
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
       task_sidebar_pinned_items: config.desktop.taskSidebarPinnedItems,
@@ -190,6 +202,7 @@ function encodeConfig(config: LexoraConfig) {
 
 function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraConfig {
   return {
+    proxy: proxySettingsSchema.parse(patch.proxy ?? current.proxy),
     desktop: {
       ...current.desktop,
       ...patch.desktop,
@@ -214,6 +227,7 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   delete nextDesktop.chat_sidebar_pinned_items
   const next: Record<string, unknown> = {
     ...root,
+    proxy: encoded.proxy,
     desktop: nextDesktop,
     pet: {
       ...pet,

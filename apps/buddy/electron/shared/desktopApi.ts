@@ -214,6 +214,7 @@ export type DesktopChatWelcomeVariantId = typeof DESKTOP_CHAT_WELCOME_VARIANT_ID
 export type DesktopChatWelcomePreference = 'random' | DesktopChatWelcomeVariantId
 
 export interface LexoraConfig {
+  proxy: import('../../shared/network/proxySettings').ProxySettings
   desktop: {
     backgroundCloseNoticeShown: boolean
     taskSidebarPinnedItems: DesktopTaskPinnedItem[]
@@ -234,6 +235,7 @@ export interface LexoraConfig {
 }
 
 export interface LexoraConfigPatch {
+  proxy?: LexoraConfig['proxy']
   desktop?: Partial<LexoraConfig['desktop']>
   pet?: Partial<LexoraConfig['pet']>
 }

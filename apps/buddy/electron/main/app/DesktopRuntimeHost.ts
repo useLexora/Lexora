@@ -16,6 +16,7 @@ import { automationNotifications } from '../../../shared/automation/automationAp
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
+import { DesktopNetwork } from '../network/DesktopNetwork'
 import { registerWebHostRpc } from '../network/registerWebHostRpc'
 import { createDesktopFeatures } from '../platform/desktopFeatures'
 import { installRendererProtocol } from '../rendererProtocol'
@@ -34,6 +35,7 @@ export class DesktopRuntimeHost {
   #config: LexoraConfig | null = null
   #features: DesktopFeature[] = []
   #service: BuddyServiceSupervisor | null = null
+  #network: DesktopNetwork | null = null
   #windowsPowerShell: string | undefined
   readonly #subscriptions: Array<() => void> = []
   #sandboxCheck: ReturnType<typeof checkSandboxEnvironment> | null = null
@@ -51,6 +53,12 @@ export class DesktopRuntimeHost {
 
   get language(): LexoraConfig['desktop']['language'] {
     return this.#config?.desktop.language ?? 'zh-CN'
+  }
+
+  get network(): DesktopNetwork {
+    if (!this.#network)
+      throw new Error('Desktop network is not prepared')
+    return this.#network
   }
 
   get windowsPowerShell(): string | undefined {
@@ -102,6 +110,8 @@ export class DesktopRuntimeHost {
     this.#credentials = credentials
     const config = await this.configStore.read()
     this.#config = config
+    this.#network = new DesktopNetwork()
+    await this.#network.start(config.proxy)
     this.#windowsPowerShell = currentPlatform.shell === 'powershell'
       ? await resolveWindowsPowerShell()
       : undefined
@@ -119,9 +129,10 @@ export class DesktopRuntimeHost {
       },
       bindPeer: (peer) => {
         const disposers = [
-          registerWebHostRpc(peer),
+          registerWebHostRpc(peer, this.#network!.authenticateProxy),
           registerSandboxHostRpc(peer, {
             buddyHome: environment.paths.buddyHome,
+            proxyUrl: this.#network!.sandboxProxyUrl,
             ...this.#sandboxOptions(),
           }),
           registerBrowserHostRpc(peer, {
@@ -136,7 +147,7 @@ export class DesktopRuntimeHost {
       diagnosticOutput: environment.diagnostics.createWritable('local-service', { event: 'runtime.supervisor', level: 'error' }),
       spawnService: (onFatalError, sourceId) => forkBuddyServiceProcess({
         env: {
-          ...createBuddyServiceEnvironment(process.env, environment.paths.buddyHome),
+          ...createBuddyServiceEnvironment(process.env, environment.paths.buddyHome, process.platform, this.#network!.proxyUrl),
           ...createBuddyNativeEnvironment(nativePaths),
           ...(this.#windowsPowerShell ? { PI_POWERSHELL_PATH: this.#windowsPowerShell } : {}),
           PI_TOOLS_DIR: resolveBuddySearchToolsDirectory(nativePaths),
@@ -150,6 +161,7 @@ export class DesktopRuntimeHost {
   }
 
   async applyConfig(config: LexoraConfig): Promise<void> {
+    await this.#network?.apply(config.proxy)
     this.#config = config
     await Promise.all(this.#features.map(feature => feature.applyConfig(config)))
     if (app.isPackaged && !this.#environment.isSmokeTest)
@@ -190,6 +202,7 @@ export class DesktopRuntimeHost {
     const failures: unknown[] = []
     for (const cleanup of [
       () => this.#service?.stop(),
+      () => this.#network?.stop(),
       ...this.#features.map(feature => () => feature.stop()),
       ...this.#subscriptions.splice(0),
     ]) {

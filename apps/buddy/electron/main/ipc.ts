@@ -91,9 +91,7 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.settingsUpdate, async (event, input: unknown) => {
     assertTrustedSender(event, options.getWindow())
-    const config = await options.configStore.update(lexoraConfigPatchSchema.parse(input))
-    await options.onConfigUpdated(config)
-    return config
+    return options.configStore.update(lexoraConfigPatchSchema.parse(input), options.onConfigUpdated)
   })
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.windowGetState, (event) => {

@@ -1,8 +1,10 @@
-import type { Session } from 'electron'
+import type { AuthInfo, Session } from 'electron'
 import type { WebNetworkRequest } from '../../../shared/network/webProtocol'
 import { WebError } from '../../../shared/network/webProtocol'
 
-export async function requestThroughHost(session: Session, input: Pick<WebNetworkRequest, 'body' | 'headers' | 'method' | 'url'>, signal: AbortSignal): Promise<Response> {
+export type ProxyAuthenticator = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void) => boolean
+
+export async function requestThroughHost(session: Session, input: Pick<WebNetworkRequest, 'body' | 'headers' | 'method' | 'url'>, signal: AbortSignal, authenticateProxy?: ProxyAuthenticator): Promise<Response> {
   const { net } = await import('electron')
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {
@@ -26,7 +28,10 @@ export async function requestThroughHost(session: Session, input: Pick<WebNetwor
     }
     signal.addEventListener('abort', abort, { once: true })
     request.on('error', fail)
-    request.on('login', (_auth, callback) => callback())
+    request.on('login', (auth, callback) => {
+      if (!authenticateProxy?.(auth, callback))
+        callback()
+    })
     request.on('redirect', (status, _method, target) => {
       ended = true
       cleanup()

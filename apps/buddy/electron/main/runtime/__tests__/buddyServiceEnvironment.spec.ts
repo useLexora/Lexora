@@ -14,6 +14,15 @@ import {
 const executeFile = promisify(execFile)
 
 describe('buddyServiceEnvironment', () => {
+  it('replaces all inherited proxy and bypass settings with the application gateway', () => {
+    const gateway = 'http://lexora:fixture@127.0.0.1:3128'
+    const env = createBuddyServiceEnvironment({ http_proxy: 'http://old.invalid:1', HTTPS_PROXY: 'http://old.invalid:2', NO_PROXY: '*' }, '/tmp/buddy', 'linux', gateway)
+    expect(new URL(env.http_proxy!).username).toBe('lexora-http')
+    expect(env.HTTPS_PROXY).toBe(`${gateway}/`)
+    expect(env.NO_PROXY).toBe('')
+    expect(env.no_proxy).toBe('')
+    expect(env.NODE_USE_ENV_PROXY).toBe('1')
+  })
   it.each([
     ['linux', '/repo/apps/buddy', '/opt/buddy/resources', '/opt/buddy/resources/search-tools', '/repo/apps/buddy/.output/build/search-tools/linux-x64'],
     ['win32', 'C:\\源码 空格\\buddy', 'C:\\Apps\\Buddy\\resources', 'C:\\Apps\\Buddy\\resources\\search-tools', 'C:\\源码 空格\\buddy\\.output\\build\\search-tools\\win32-x64'],

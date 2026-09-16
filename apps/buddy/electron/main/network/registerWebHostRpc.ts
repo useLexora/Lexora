@@ -1,16 +1,18 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
+import type { ProxyAuthenticator } from './requestThroughHost'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { session } from 'electron'
 import { WebError, webError, webNetworkRequestSchema, webRenderCancelSchema, webRenderInputSchema } from '../../../shared/network/webProtocol'
 import { HostWebNetwork } from './HostWebNetwork'
+import { requestThroughHost } from './requestThroughHost'
 import { renderWebDocument } from './WebRenderHost'
 
-export function registerWebHostRpc(peer: RuntimeRpcPeerContract): () => void {
+export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticateProxy?: ProxyAuthenticator): () => void {
   const isolated = session.fromPartition(`buddy-web-network:${randomUUID()}`, { cache: false })
   isolated.setPermissionCheckHandler(() => false)
   isolated.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  const network = new HostWebNetwork(isolated)
+  const network = new HostWebNetwork(isolated, (session, input, signal) => requestThroughHost(session, input, signal, authenticateProxy))
   const active = new Map<string, AbortController>()
   let renders = 0
   let disposed = false
