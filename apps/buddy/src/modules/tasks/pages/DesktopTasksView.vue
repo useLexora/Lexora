@@ -111,6 +111,7 @@ const {
         @delete-space="indexActions.deleteSpace"
         @delete-task="indexActions.deleteTask"
         @new-task="startTask"
+        @open-space-directory="indexActions.openSpaceDirectory"
         @open-task="openTask"
         @rename-task="indexActions.renameTask"
         @update-pinned-items="indexActions.setPinnedItems"

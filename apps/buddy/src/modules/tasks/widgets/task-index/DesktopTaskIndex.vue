@@ -42,6 +42,7 @@ const emit = defineEmits<{
   deleteSpace: [spaceId: string]
   deleteTask: [conversationId: string]
   newTask: [spaceId: string | null]
+  openSpaceDirectory: [spaceId: string]
   openTask: [conversationId: string]
   renameTask: [conversationId: string, title: string]
   updatePinnedItems: [items: DesktopTaskPinnedItem[]]
@@ -106,6 +107,7 @@ const {
   onDeleteTask: conversationId => emit('deleteTask', conversationId),
   onDeleteSpace: spaceId => emit('deleteSpace', spaceId),
   onNewTask: spaceId => emit('newTask', spaceId),
+  onOpenSpaceDirectory: spaceId => emit('openSpaceDirectory', spaceId),
   onRenameTask: (conversationId, title) => emit('renameTask', conversationId, title),
   onUpdatePinnedItems: items => emit('updatePinnedItems', items),
   onUpdateSpace: input => props.updateSpace(input),

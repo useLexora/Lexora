@@ -8,7 +8,7 @@ import { computed, onScopeDispose, readonly, watch } from 'vue'
 
 interface UseTaskSpacesOptions {
   activateDraftScope: (spaceId: string | null) => void
-  api: Pick<LexoraDesktopApi['localChat']['spaces'], 'create' | 'update' | 'delete' | 'selectDirectory'>
+  api: Pick<LexoraDesktopApi['localChat']['spaces'], 'create' | 'update' | 'delete' | 'selectDirectory' | 'revealFile'>
   drafts: Pick<ChatDrafts, 'discard'>
   draftId: Readonly<Ref<string>>
   applySpace: (space: LocalSpace) => void
@@ -128,11 +128,32 @@ export function useTaskSpaces(options: UseTaskSpacesOptions) {
     }
   }
 
+  async function openSpaceDirectory(spaceId: string): Promise<boolean> {
+    const space = options.spaces.value.find(item => item.id === spaceId && item.revokedAt === null)
+    const directory = space?.primaryDirectory
+    if (!directory || directory.revokedAt)
+      return false
+    try {
+      await options.api.revealFile({
+        spaceId,
+        directoryId: directory.id,
+        revision: directory.revision,
+        path: '',
+      })
+      return true
+    }
+    catch (error) {
+      options.onError(error)
+      return false
+    }
+  }
+
   return {
     activeSpace: readonly(activeSpace),
     createSpace,
     deleteSpace,
     activateSpaceDraft,
+    openSpaceDirectory,
     selectSpaceDirectory,
     updateSpace,
   }

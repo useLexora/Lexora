@@ -22,6 +22,7 @@ describe('task index presentation', () => {
       onDeleteTask() {},
       onDeleteSpace() {},
       onNewTask() {},
+      onOpenSpaceDirectory() {},
       onRenameTask() {},
       onUpdatePinnedItems: (items) => { pins.value = items },
       onUpdateSpace: async () => true,
