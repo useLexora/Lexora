@@ -1,106 +1,32 @@
 import process from 'node:process'
-
 import { defineConfig } from 'vitepress'
 
 const websiteBasePath = (process.env.WEBSITE_BASE_PATH ?? '').replace(/^\/+|\/+$/g, '')
 const websiteBase = websiteBasePath ? `/${websiteBasePath}/` : '/'
+const repositoryUrl = 'https://github.com/useLexora/Lexora'
 
-const zhGuideSidebar = [
-  {
-    text: '介绍',
-    items: [
-      { text: '什么是 Lexora', link: '/guide/what-is-lexora' },
-      { text: '快速开始', link: '/guide/quick-start' },
-    ],
-  },
-  {
-    text: '指南',
-    items: [
-      { text: 'AI 对话', link: '/guide/ai-chat' },
-      { text: '文档页面', link: '/guide/documents' },
-      { text: '公开发布', link: '/guide/publication' },
-      { text: '个人设置与模型', link: '/guide/settings-and-models' },
-    ],
-  },
-]
-
-const zhSelfHostSidebar = [
-  {
-    text: '自部署',
-    items: [
-      { text: 'Docker Compose 部署', link: '/self-host/docker-compose' },
-      { text: '环境变量', link: '/self-host/env-vars' },
-      { text: '存储与服务依赖', link: '/self-host/storage-and-dependencies' },
-      { text: '更新与维护', link: '/self-host/update-and-maintenance' },
-      { text: '常见问题', link: '/self-host/faq' },
-    ],
-  },
-  {
-    text: '后台管理',
-    items: [
-      { text: '管理员初始化', link: '/self-host/admin/initial-admin' },
-      { text: '用户管理', link: '/self-host/admin/users' },
-      { text: '模型服务商', link: '/self-host/admin/model-providers' },
-      { text: '邮件与登录', link: '/self-host/admin/email-and-login' },
-      { text: '审计', link: '/self-host/admin/audit' },
-    ],
-  },
-]
-
-const enGuideSidebar = [
-  {
-    text: 'Introduction',
-    items: [
-      { text: 'What is Lexora', link: '/en/guide/what-is-lexora' },
-      { text: 'Quick Start', link: '/en/guide/quick-start' },
-    ],
-  },
-  {
-    text: 'Guide',
-    items: [
-      { text: 'AI Chat', link: '/en/guide/ai-chat' },
-      { text: 'Document Pages', link: '/en/guide/documents' },
-      { text: 'Public Publishing', link: '/en/guide/publication' },
-      { text: 'Settings and Models', link: '/en/guide/settings-and-models' },
-    ],
-  },
-]
-
-const enSelfHostSidebar = [
-  {
-    text: 'Self-hosting',
-    items: [
-      { text: 'Docker Compose', link: '/en/self-host/docker-compose' },
-      { text: 'Environment Variables', link: '/en/self-host/env-vars' },
-      { text: 'Storage and Dependencies', link: '/en/self-host/storage-and-dependencies' },
-      { text: 'Updates and Maintenance', link: '/en/self-host/update-and-maintenance' },
-      { text: 'FAQ', link: '/en/self-host/faq' },
-    ],
-  },
-  {
-    text: 'Admin',
-    items: [
-      { text: 'Initial Admin', link: '/en/self-host/admin/initial-admin' },
-      { text: 'User Management', link: '/en/self-host/admin/users' },
-      { text: 'Model Providers', link: '/en/self-host/admin/model-providers' },
-      { text: 'Email and Login', link: '/en/self-host/admin/email-and-login' },
-      { text: 'Audit', link: '/en/self-host/admin/audit' },
-    ],
-  },
+const guides = [
+  { slug: 'what-is-lexora', zh: '认识 Lexora', en: 'Meet Lexora' },
+  { slug: 'quick-start', zh: '第一个任务', en: 'Your first task' },
+  { slug: 'ai-chat', zh: '与 Lexora 一起做事', en: 'Working with Lexora' },
+  { slug: 'files-and-spaces', zh: '文件与空间', en: 'Files and spaces' },
+  { slug: 'automations', zh: '自动化', en: 'Automations' },
+  { slug: 'settings-and-models', zh: '模型与工具', en: 'Models and tools' },
 ]
 
 export default defineConfig({
   title: 'Lexora',
-  description: 'Lexora 是一个以 Desktop 为核心的个人 AI 工作台，在授权范围内使用本地文件与工具，想你所想，行你所行。',
+  description: '想你所想，行你所行。你的个人 AI 工作台，陪你写作、写代码、聊想法，把好奇心变成可能。',
   base: websiteBase,
   cleanUrls: true,
+  appearance: 'dark',
   outDir: '../dist',
   cacheDir: '../.vitepress/cache',
   head: [
-    ['link', { rel: 'icon', type: 'image/png', href: `${websiteBase}logo.png` }],
-    ['link', { rel: 'shortcut icon', type: 'image/png', href: `${websiteBase}logo.png` }],
-    ['meta', { name: 'theme-color', content: '#fafaf8', media: '(prefers-color-scheme: light)' }],
-    ['meta', { name: 'theme-color', content: '#202422', media: '(prefers-color-scheme: dark)' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '512x512', href: `${websiteBase}favicon.png` }],
+    ['meta', { name: 'theme-color', content: '#111724' }],
+    ['meta', { property: 'og:site_name', content: 'Lexora' }],
+    ['meta', { property: 'og:type', content: 'website' }],
   ],
   locales: {
     root: {
@@ -108,54 +34,56 @@ export default defineConfig({
       lang: 'zh-CN',
       themeConfig: {
         nav: [
-          {
-            text: '产品',
-            items: [
-              { text: '工作方式', link: '/#workflow' },
-              { text: '核心能力', link: '/#capabilities' },
-              { text: 'Web 工作台', link: '/#web-workspace' },
-            ],
-          },
-          { text: '指南', link: '/guide/what-is-lexora' },
-          { text: '自部署', link: '/self-host/docker-compose' },
+          { text: '探索', link: '/#playground' },
+          { text: '使用指南', link: '/guide/quick-start' },
+          { text: '下载 Lexora', link: `${repositoryUrl}/releases/latest` },
         ],
-        sidebar: {
-          '/self-host/': zhSelfHostSidebar,
-          '/': zhGuideSidebar,
-        },
+        sidebar: [{
+          text: '你的 Lexora 工作台',
+          items: guides.map(guide => ({ text: guide.zh, link: `/guide/${guide.slug}` })),
+        }],
+        outline: { label: '本页内容' },
+        docFooter: { prev: '上一篇', next: '下一篇' },
+        returnToTopLabel: '回到顶部',
+        sidebarMenuLabel: '目录',
+        darkModeSwitchLabel: '外观',
+        lightModeSwitchTitle: '切换至亮色外观',
+        darkModeSwitchTitle: '切换至深色外观',
       },
     },
     en: {
       label: 'English',
       lang: 'en-US',
-      description: 'A personal AI workspace built around Desktop that uses local files and tools within the access you grant to act on your intent',
+      description: 'Your personal AI workspace. Write, code, explore ideas, or just chat. A little company for whatever comes next.',
       themeConfig: {
         nav: [
-          {
-            text: 'Product',
-            items: [
-              { text: 'How it works', link: '/en/#workflow' },
-              { text: 'Capabilities', link: '/en/#capabilities' },
-              { text: 'Web workspace', link: '/en/#web-workspace' },
-            ],
-          },
-          { text: 'Guide', link: '/en/guide/what-is-lexora' },
-          { text: 'Self-hosting', link: '/en/self-host/docker-compose' },
+          { text: 'Explore', link: '/en/#playground' },
+          { text: 'Guide', link: '/en/guide/quick-start' },
+          { text: 'Get Lexora', link: `${repositoryUrl}/releases/latest` },
         ],
-        sidebar: {
-          '/en/self-host/': enSelfHostSidebar,
-          '/en/': enGuideSidebar,
-        },
+        sidebar: [{
+          text: 'Your Lexora workspace',
+          items: guides.map(guide => ({ text: guide.en, link: `/en/guide/${guide.slug}` })),
+        }],
       },
     },
   },
   themeConfig: {
-    logo: '/logo.png',
+    aside: false,
+    logo: '/favicon.png',
     search: {
       provider: 'local',
+      options: {
+        locales: {
+          root: {
+            translations: {
+              button: { buttonText: '搜索文档', buttonAriaLabel: '搜索文档' },
+              modal: { noResultsText: '没有找到相关内容', resetButtonTitle: '清除搜索', footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' } },
+            },
+          },
+        },
+      },
     },
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/haohaoxue-site/Lexora' },
-    ],
+    socialLinks: [{ icon: 'github', link: repositoryUrl }],
   },
 })

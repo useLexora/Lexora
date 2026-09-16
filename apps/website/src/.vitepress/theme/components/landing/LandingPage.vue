@@ -3,93 +3,64 @@ import { useData } from 'vitepress'
 import { computed } from 'vue'
 import LandingCapabilities from './LandingCapabilities.vue'
 import { landingContent } from './landingContent'
-import LandingDocumentBridge from './LandingDocumentBridge.vue'
+import LandingFaq from './LandingFaq.vue'
 import LandingFinalCta from './LandingFinalCta.vue'
 import LandingHero from './LandingHero.vue'
-import LandingPrinciples from './LandingPrinciples.vue'
-import LandingWorkflow from './LandingWorkflow.vue'
+import LandingNav from './LandingNav.vue'
+import LandingPlayground from './LandingPlayground.vue'
+import LandingWorkbench from './LandingWorkbench.vue'
 
 const { lang } = useData()
-const content = computed(() => landingContent[lang.value.startsWith('en') ? 'en' : 'zh'])
+const english = computed(() => lang.value.startsWith('en'))
+const content = computed(() => landingContent[english.value ? 'en' : 'zh'])
 </script>
 
 <template>
-  <main class="landing-page">
-    <LandingHero :content="content.hero" />
-
-    <div class="capability-ribbon" aria-hidden="true">
-      <div class="capability-ribbon__track">
-        <div v-for="set in 2" :key="set" class="capability-ribbon__set">
-          <template v-for="item in content.ribbon" :key="`${set}-${item}`">
-            <span>{{ item }}</span>
-            <i />
-          </template>
+  <div id="top" class="landing-page">
+    <div class="sky-dust" aria-hidden="true" />
+    <LandingNav :content="content.nav" :english="english" />
+    <main id="main">
+      <LandingHero :content="content.hero" />
+      <section class="model-strip site-container" :aria-label="content.models.label">
+        <div class="model-strip-heading">
+          <span>{{ content.models.label }}</span><span>{{ content.models.note }}</span>
         </div>
-      </div>
-    </div>
-
-    <LandingWorkflow :content="content.workflow" />
-    <LandingCapabilities :content="content.capabilities" />
-    <LandingDocumentBridge :content="content.document" />
-    <LandingPrinciples :content="content.principles" />
-    <LandingFinalCta :content="content.final" />
-  </main>
+        <div class="model-names">
+          <span class="model-claude"><i aria-hidden="true">✳</i>Claude</span><span class="model-openai"><i aria-hidden="true">◎</i>OpenAI</span><span class="model-gemini"><i aria-hidden="true">✦</i>Gemini</span><span class="model-deepseek">deepseek</span><span class="model-more">{{ content.models.more }} ↗</span>
+        </div>
+      </section>
+      <LandingPlayground :content="content.demo" />
+      <LandingWorkbench :content="content.workbench" :english="english" />
+      <LandingCapabilities :content="content.capabilities" />
+      <LandingFaq :content="content.faq" />
+      <LandingFinalCta :content="content.final" :english="english" />
+    </main>
+  </div>
 </template>
 
 <style scoped>
-.landing-page {
-  overflow: hidden;
-  color: var(--landing-ink);
-  font-family: var(--landing-font-body);
-}
-
-.capability-ribbon {
-  overflow: hidden;
-  border-top: 1px solid var(--landing-dark-border);
-  border-bottom: 1px solid var(--landing-dark-border);
-  background: var(--landing-dark-canvas);
-  color: var(--landing-dark-muted);
-}
-
-.capability-ribbon__track {
-  display: flex;
-  width: max-content;
-  animation: ribbon-scroll 34s linear infinite;
-}
-
-.capability-ribbon__set {
-  display: flex;
-  height: 54px;
-  align-items: center;
-  gap: 28px;
-  padding-right: 28px;
-}
-
-.capability-ribbon span {
-  font-family: var(--landing-font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.capability-ribbon i {
-  width: 5px;
-  height: 5px;
-  border: 1px solid var(--landing-highlight);
-  border-radius: 50%;
-}
-
-@keyframes ribbon-scroll {
-  to {
-    transform: translateX(-50%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .capability-ribbon__track {
-    animation: none;
-  }
+.landing-page { background: var(--site-bg); color: var(--site-ink); font-family: var(--site-font); position: relative; isolation: isolate; overflow: clip; }
+.sky-dust { position: absolute; pointer-events: none; inset: 0 0 auto; height: 850px; z-index: -1; background-image: radial-gradient(circle at 10% 20%, color-mix(in srgb, var(--site-gold) 30%, transparent) 0 1px, transparent 1.5px), radial-gradient(circle at 80% 40%, var(--site-line) 0 1px, transparent 1.5px), radial-gradient(circle at 40% 70%, var(--site-line) 0 1px, transparent 1.5px); background-size: 287px 311px, 419px 383px, 199px 217px; mask-image: linear-gradient(#000, #000a 75%, transparent); }
+.model-strip { border-top: 1px solid var(--site-line); border-bottom: 1px solid var(--site-line); padding-top: 23px; padding-bottom: 30px; margin-bottom: 105px; }
+.model-strip-heading { display: flex; justify-content: space-between; gap: 20px; font-size: 10px; color: var(--site-faint); }
+.model-strip-heading > span:last-child { font-size: 9px; }
+.model-names { display: flex; justify-content: space-between; align-items: center; gap: 30px; margin-top: 24px; color: var(--site-muted); }
+.model-names > span { display: flex; align-items: center; gap: 7px; font-family: var(--site-display); font-size: 23px; letter-spacing: -.6px; white-space: nowrap; }
+.model-names i { font-style: normal; }
+.model-claude { font-family: Georgia, serif !important; }
+.model-claude i { font-size: 31px; font-weight: 400; }
+.model-openai { font-weight: 600; }
+.model-gemini { font-weight: 400; }
+.model-gemini i { font-size: 27px; }
+.model-deepseek { font-weight: 700; letter-spacing: -.9px !important; }
+.model-names > .model-more { font-family: var(--site-font); font-size: 11px; color: var(--site-faint); letter-spacing: 0; }
+@media (max-width: 760px) {
+  .model-strip { margin-bottom: 65px; padding-top: 20px; padding-bottom: 24px; }
+  .model-strip-heading { justify-content: center; font-size: 10px; text-align: center; }
+  .model-strip-heading > span:last-child { display: none; }
+  .model-names { flex-wrap: wrap; justify-content: center; column-gap: 25px; row-gap: 18px; margin-top: 20px; }
+  .model-names > span { font-size: 19px; }
+  .model-names i { font-size: 22px; }
+  .model-names > .model-more { font-size: 10px; }
 }
 </style>

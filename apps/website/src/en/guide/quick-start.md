@@ -1,25 +1,41 @@
-# Quick Start
+# Your first task
 
-This page is for users who already have access to a Lexora instance. To deploy your own instance, start with [Docker Compose](/en/self-host/docker-compose).
+Start small and specific. For example: “Turn these meeting notes into an action plan.”
 
-## 1. Sign In
+## 1. Install Lexora
 
-Open the instance URL and sign in with one of the enabled login methods. On self-hosted instances, available login methods are configured by the administrator.
+Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and choose the package for your system:
 
-## 2. Configure Models
+| System | Package |
+| --- | --- |
+| Windows x64 | Windows installer |
+| Ubuntu / Debian x64 | .deb |
+| Arch Linux x64 | .pkg.tar.zst |
 
-Open `Settings -> Providers` and add or enable an AI provider. Providers can come from presets or from OpenAI-Compatible / Anthropic-Compatible endpoints.
+There is currently no macOS installer. The native Linux pet is optional company, not a requirement for completing tasks.
 
-Then open `Settings -> Default Models` and choose default models for chat and document AI. AI entries may not run until a usable default model is configured.
+## 2. Connect a model
 
-## 3. Start an AI Chat
+Open settings, add your model service, and enter its API key or complete account authorization as required. Then choose an available model.
 
-Open `Chat` from the left navigation. You can create a session, choose a model, and send a prompt. Chat supports streaming generation, stopping, retrying, and switching between message branches.
+Lexora does not include a free model allowance. Availability and costs depend on your chosen provider.
 
-## 4. Create a Document
+[About models and tools →](./settings-and-models)
 
-Open `Documents` and create a page. Document pages are rich text documents designed for notes, specs, guides, and knowledge. Changes are autosaved, and pending edits are flushed before switching documents.
+## 3. Start a task
 
-## 5. Publish a Public Page
+Create a task and describe your goal, source material, and desired output. Choose a working directory or a space if you need to work with local files.
 
-Use publication settings when a document needs to be visible to outside visitors. Lexora supports single-page and site publishing. Public pages are always read-only.
+For example:
+
+> Read these meeting notes. Extract confirmed decisions, owners, and open questions. Save a Markdown action plan in the current working directory.
+
+You can also start with a simple conversation that needs no files.
+
+## 4. Follow along and review
+
+Lexora shows its work as it progresses. When asked for permission, check what a tool will access or do before approving.
+
+Open the resulting file or artifact preview and check the facts, format, and location. Then add a follow-up, such as “Sort the actions by priority.”
+
+Back up important files before changing them. AI-generated results need your review.

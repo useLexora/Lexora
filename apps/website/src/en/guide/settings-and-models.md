@@ -1,27 +1,29 @@
-# Settings and Models
+# Models and tools
 
-Personal settings manage the current account, preferences, and AI model usage.
+Lexora is your workspace. You choose the models, working methods, and external tools.
 
-## Account
+## Model services
 
-Account settings include profile information, email binding, password changes, and OAuth bindings. Available login methods depend on the instance admin configuration.
+Configure your provider in settings, then choose a model for a task. Services may require an API key or account authorization, and support different models and capabilities.
 
-## Preferences
+Choose a model that fits the work. Simple summaries may need a lighter model; complex reasoning and tool use need suitable capabilities. Images and other modalities depend on the particular model and tools.
 
-Preferences control the current user's UI language, appearance, and local experience. They do not change what other users see.
+Providers manage their own fees and quotas. For connection errors, check credentials, service URL, model name, and network access first.
 
-## Providers
+## Skills: bring your methods
 
-Providers connect AI models to Lexora. Current provider options include presets and compatible providers such as OpenAI-Compatible or Anthropic-Compatible endpoints.
+Skills provide reusable methods and instructions, such as a research or writing workflow. Review their source and content, and enable only what you trust and need.
 
-After adding a provider, configure its API endpoint, authentication mode, key, and model list.
+Skills are not a permission sandbox. File and tool operations remain subject to the relevant authorization process.
 
-## Default Models
+## MCP: connect your tools
 
-Default models decide which model each AI entry uses. The current defaults cover chat and document AI generation or rewriting.
+MCP connects external tools and services. Add a connection in settings, check its status and available tools, and use it where needed.
 
-If an entry has no usable default model, the UI will ask you to finish model configuration first.
+External tools may read data, run programs, or send content to third parties. Review their source and permissions, and keep unnecessary sensitive information out of task context.
 
-## Difference from Self-hosted Admin Providers
+## Data and permissions
 
-Personal settings affect the current user or user-owned providers. Self-hosted admin model providers are platform-level and require system administrator permissions.
+A local workspace does not mean every piece of data stays on your computer. Content sent to online models, tool results, and data submitted to external services are handled by those services.
+
+Provide only the material needed and check the scope before granting access.

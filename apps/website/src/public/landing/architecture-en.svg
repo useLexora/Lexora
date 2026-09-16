@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1150" viewBox="0 0 1200 1150" role="img" aria-labelledby="title desc">
+  <title id="title">Lexora Desktop architecture</title>
+  <desc id="desc">Vue Renderer connects to Electron Main through Preload IPC. Main connects to an independent Agent Runtime over MessagePort JSON-RPC. Lexora Harness owns product state and execution; Pi owns the agent loop. Tool calls pass through authorization. Runtime connects to models, storage, and Rust Host and Image helpers. Main supervises Rust Pet.</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".8" fill="#7e94b1" opacity=".12"/></pattern>
+    <linearGradient id="runtime" x2="1" y2="1"><stop stop-color="#1d2939"/><stop offset="1" stop-color="#141e2d"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#90a5bf" stroke-width="1.6"/></marker>
+    <marker id="gold-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#dfbc7e" stroke-width="1.6"/></marker>
+    <style>
+      text { font-family: 'Avenir Next', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif; fill: #e8edf3; }
+      .eyebrow { font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 14px; letter-spacing: 2px; fill: #a6b8ce; }
+      .title { font-size: 29px; font-weight: 650; letter-spacing: -.5px; }
+      .heading { font-size: 23px; font-weight: 600; }
+      .body { font-size: 19px; fill: #bac8d9; }
+      .small { font-size: 16px; fill: #95a9c1; }
+      .mono { font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 15px; fill: #a6b8ce; }
+      .gold { fill: #edcc91; }
+      .teal { fill: #a4d5c3; }
+      .card { fill: #172131; stroke: #35465b; stroke-width: 1.2; }
+      .edge { fill: none; stroke: #90a5bf; stroke-width: 1.5; marker-end: url(#arrow); }
+      .flow { fill: none; stroke: #dfbc7e; stroke-width: 1.7; marker-end: url(#gold-arrow); }
+    </style>
+  </defs>
+  <rect width="1200" height="1150" rx="24" fill="#101724"/>
+  <rect x="1" y="1" width="1198" height="1148" rx="23" fill="url(#grid)" stroke="#35465b"/>
+  <text x="40" y="45" class="eyebrow gold">LEXORA / UNDER THE HOOD</text>
+  <text x="40" y="88" class="title">A desktop experience. A local agent system beneath it.</text>
+  <text x="40" y="119" class="body">Three process layers. One agent loop. Explicit ownership and permissions.</text>
+
+  <g id="renderer">
+    <rect x="40" y="158" width="458" height="128" rx="16" class="card"/>
+    <rect x="40" y="179" width="3" height="84" rx="1.5" fill="#91b5e0"/>
+    <text x="64" y="188" class="eyebrow">01 / RENDERER</text>
+    <text x="64" y="221" class="heading">Vue 3 · TypeScript · Naive UI</text>
+    <text x="64" y="256" class="body">Workspace UI / ephemeral view state</text>
+  </g>
+  <path d="M511 228H687" class="edge" marker-start="url(#arrow)"/>
+  <text x="600" y="208" class="mono" text-anchor="middle">Preload / IPC</text>
+  <text x="600" y="255" class="small" text-anchor="middle">Typed API</text>
+  <g id="main">
+    <rect x="700" y="158" width="460" height="128" rx="16" class="card"/>
+    <rect x="700" y="179" width="3" height="84" rx="1.5" fill="#a4d5c3"/>
+    <text x="724" y="188" class="eyebrow teal">02 / ELECTRON MAIN</text>
+    <text x="724" y="221" class="heading">Windows / secrets / supervision</text>
+    <text x="724" y="256" class="body">safeStorage · OS integration</text>
+  </g>
+  <path d="M930 296V336" class="edge" marker-start="url(#arrow)"/>
+  <text x="908" y="320" class="mono" text-anchor="end">MessagePort / versioned JSON-RPC</text>
+  <path d="M1160 222H1180V1036H1135" class="edge" stroke-dasharray="5 5"/>
+  <text x="1158" y="320" class="mono teal" text-anchor="end">Pet supervisor</text>
+
+  <g id="agent-runtime">
+    <rect x="40" y="348" width="1120" height="466" rx="18" fill="url(#runtime)" stroke="#9b8259" stroke-width="1.4"/>
+    <text x="64" y="381" class="eyebrow gold">03 / AGENT RUNTIME</text>
+    <text x="1136" y="381" class="mono" text-anchor="end">ELECTRON UTILITY PROCESS / TYPESCRIPT</text>
+    <g id="harness">
+      <rect x="64" y="406" width="1072" height="151" rx="12" fill="#1d2a3b" stroke="#40516a"/>
+      <text x="86" y="438" class="heading gold">Lexora Harness Core</text>
+      <text x="1114" y="437" class="small" text-anchor="end">Product state &amp; execution lifecycle</text>
+      <path d="M416 463V535M776 463V535" stroke="#40516a"/>
+      <text x="86" y="485" class="heading">Conversation / Run</text>
+      <text x="86" y="519" class="body">Scheduling / recovery / run events</text>
+      <text x="442" y="485" class="heading">Context / Skills</text>
+      <text x="442" y="519" class="body">Context / on-demand resources</text>
+      <text x="802" y="485" class="heading">Automation / Provider</text>
+      <text x="802" y="519" class="body">Schedules / models / usage</text>
+    </g>
+    <path d="M208 557V580" class="flow"/>
+    <text x="234" y="578" class="mono gold">session + extension factories</text>
+    <g id="pi-loop">
+      <rect x="64" y="592" width="300" height="118" rx="12" fill="#22334b" stroke="#6682a5"/>
+      <text x="86" y="626" class="heading">Pi Agent Loop</text>
+      <text x="86" y="657" class="mono">AgentSession / Tool Registry</text>
+      <text x="86" y="688" class="body">Model + tool-call loop</text>
+    </g>
+    <path d="M370 648H408" class="flow"/>
+    <g id="authorization">
+      <rect x="416" y="592" width="398" height="118" rx="12" fill="#332e27" stroke="#a78c60"/>
+      <text x="438" y="626" class="heading gold">Tool Authorization</text>
+      <text x="438" y="657" class="mono">PermissionEngine / ApprovalService</text>
+      <text x="438" y="688" class="body">Policy → approval → revalidation</text>
+    </g>
+    <path d="M820 648H852" class="flow"/>
+    <g id="execution">
+      <rect x="860" y="592" width="276" height="118" rx="12" fill="#19322f" stroke="#547d70"/>
+      <text x="880" y="626" class="heading teal">Tool Execution</text>
+      <text x="880" y="657" class="mono">Files / Shell / MCP</text>
+      <text x="880" y="688" class="body">Execution / tool results</text>
+    </g>
+    <path d="M998 710V741H208V716" class="flow"/>
+    <text x="600" y="769" class="mono gold" text-anchor="middle">tool results → session → next model turn</text>
+    <text x="64" y="795" class="small">Pi owns the tool registry; Lexora owns authorization, lifecycle, and artifact projection.</text>
+  </g>
+
+  <path d="M212 814V871" class="edge" marker-start="url(#arrow)"/>
+  <text x="230" y="849" class="mono">Model I/O</text>
+  <path d="M600 814V871" class="edge" marker-start="url(#arrow)"/>
+  <text x="618" y="849" class="mono">Persistence</text>
+  <path d="M988 814V871" class="edge"/>
+  <text x="969" y="849" class="mono" text-anchor="end">Host / Image helpers</text>
+
+  <g id="models">
+    <rect x="40" y="884" width="344" height="178" rx="14" class="card"/>
+    <text x="62" y="916" class="eyebrow">PROVIDER APIs</text>
+    <text x="62" y="950" class="heading">Model services</text>
+    <text x="62" y="985" class="body">OpenAI Codex / Anthropic</text>
+    <text x="62" y="1020" class="body">DeepSeek / custom providers</text>
+  </g>
+  <g id="storage">
+    <rect x="428" y="884" width="344" height="178" rx="14" class="card"/>
+    <text x="450" y="916" class="eyebrow">LOCAL PERSISTENCE</text>
+    <text x="450" y="950" class="heading">SQLite / product state</text>
+    <text x="450" y="985" class="body">Run events · JSONL</text>
+    <text x="450" y="1020" class="body">Pi journal / session continuity</text>
+  </g>
+  <g id="native">
+    <rect x="816" y="884" width="344" height="178" rx="14" class="card"/>
+    <text x="838" y="916" class="eyebrow teal">RUST / NATIVE COMPONENTS</text>
+    <text x="838" y="950" class="body">Host / files, processes, system</text>
+    <text x="838" y="985" class="body">Image / validation, transforms</text>
+    <path d="M838 1003H1138" stroke="#35465b"/>
+    <text x="838" y="1036" class="body teal">Pet / Linux desktop companion</text>
+  </g>
+  <path d="M40 1091H1160" stroke="#35465b"/>
+  <circle cx="48" cy="1119" r="4" fill="#a4d5c3"/>
+  <text x="64" y="1125" class="small">Runtime owns policy. Main owns secrets. Native helpers do not own sessions.</text>
+  <text x="1160" y="1125" class="eyebrow" text-anchor="end">LOCAL FIRST.</text>
+</svg>

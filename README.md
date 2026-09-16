@@ -1,119 +1,94 @@
 <p align="center">
-  <img src="packages/assets/brand/lexora-avatar.png" width="160" alt="Lexora Logo" />
+  <img src="packages/assets/brand/lexora-avatar.png" width="128" alt="Lexora" />
 </p>
 
-<h1 align="center">Lexora 文灵</h1>
+<h1 align="center">Lexora</h1>
+
+<p align="center">想你所想，行你所行。</p>
 
 <p align="center">
   <strong>中文</strong> · <a href="./README.en.md">English</a>
 </p>
 
 <p align="center">
-  让文字成为工作、创作与生活的起点。
+  <a href="https://github.com/useLexora/Lexora/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/useLexora/Lexora/ci.yml?branch=master&amp;style=flat&amp;label=CI&amp;labelColor=232b35" /></a>
+  <a href="./LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-927442?style=flat&amp;labelColor=232b35" /></a>
 </p>
 
 <p align="center">
-  <img alt="Pi" src="https://img.shields.io/badge/Pi-Agent-6f42c1">
-  <a href="https://github.com/haohaoxue-site/Lexora/blob/master/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-2f6f68"></a>
-  <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883">
-  <img alt="NestJS" src="https://img.shields.io/badge/NestJS-11-e0234e">
-  <img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-Agent-1f6feb">
+  <a href="https://github.com/useLexora/Lexora/releases"><img alt="Release asset downloads" src="https://img.shields.io/github/downloads/useLexora/Lexora/total?style=flat&amp;label=downloads&amp;labelColor=232b35&amp;color=4f8a78" /></a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/useLexora/Lexora?style=flat&amp;logo=github&amp;label=release&amp;labelColor=232b35&amp;color=927442" /></a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Desktop: Windows and Linux" src="https://img.shields.io/badge/desktop-Windows%20%7C%20Linux-607fa5?style=flat&amp;labelColor=232b35" /></a>
 </p>
 
 <p align="center">
-  <a href="https://haohaoxue-site.github.io/Lexora/">文档</a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest">下载 Lexora</a>
   ·
-  <a href="https://github.com/haohaoxue-site/Lexora/releases/latest">下载 Lexora 桌面版</a>
+  <a href="https://uselexora.app/">官网</a>
   ·
-  <a href="https://docs.haohaoxue.site/">网站</a>
+  <a href="https://uselexora.app/guide/quick-start">使用指南</a>
 </p>
 
-Lexora 是一个以 Desktop 为核心的个人 AI 工作台。在你授权的范围内使用本地文件与工具，想你所想，行你所行。
+Lexora 是一个以 Desktop 为核心的个人 AI 工作台。在你授权的范围内，它借助本地文件与工具，将对话中的想法付诸行动，让文字成为工作、创作与生活的起点。
 
-## Desktop
+## 为工作与创作而构建的桌面 Agent
 
-Desktop 在本地运行，以任务为中心，将对话、本地上下文、工具执行、自动化和产物集中在同一个工作台中。
+Lexora 将对话、本地上下文与工具执行整合到一个工作台中，支持资料研究、内容创作、代码编写与日常自动化。从读取文件、运行命令到生成产物，任务的执行过程与结果都清晰可见。
 
-![Lexora Desktop 界面预览](apps/website/src/public/buddy-ui.png)
+模型由你选择，文件与工具的访问由你授权。无论是推进一个项目，还是验证一个突发奇想，都可以从一次对话开始。
 
-### 核心能力
+<table>
+  <tr>
+    <td width="50%"><img src="apps/website/src/public/landing/screenshots/tasks-zh.webp" alt="生图任务与图片预览" /></td>
+    <td width="50%"><img src="apps/website/src/public/landing/screenshots/artifacts-zh.webp" alt="边聊边看文件" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="apps/website/src/public/landing/screenshots/automations-zh.webp" alt="安排定时任务" /></td>
+    <td width="50%"><img src="apps/website/src/public/landing/screenshots/models-zh.webp" alt="连接自己的模型" /></td>
+  </tr>
+</table>
 
-| 能力 | 描述 |
-| --- | --- |
-| 任务工作台 | 通过自然语言发起任务，持续呈现执行过程、运行历史与生成产物。 |
-| 本地上下文 | 在授权目录中理解和处理文档、图片、文件与代码。 |
-| 工具与控制 | 连接多种模型，使用 Skills、MCP 与本机工具，并在关键操作前请求确认。 |
-| 自动化 | 创建定时与重复任务，记录每次执行过程与结果。 |
-| 桌面反馈 | 通过通知和原生桌宠呈现任务状态。 |
+- **不止给答案，也动手做。** 读取资料、编写文件、修改代码，把对话继续成看得见的结果。
+- **模型和工具，按你习惯来。** 连接自己的模型，用 Skills 带上熟悉的做事方法，通过 MCP 接入更多工具。
+- **琐事排进日程，脑子留给灵感。** 让定时任务整理工作记录、生成周报，把重复的步骤交给自动化。
+- **桌面上，还有一点可爱。** 小小的桌宠，陪你开工，也带来任务反馈。
 
-### 技术栈
+## 开始使用
 
-| 层级 | 技术 |
-| --- | --- |
-| Desktop | Electron、Vue 3、TypeScript、Vite、Naive UI、UnoCSS |
-| Agent Runtime | Pi SDK、MCP SDK、Node.js、SQLite、JSONL |
-| Native Pet | Rust、GTK、Cairo、GDK Pixbuf |
+1. [下载安装包](https://github.com/useLexora/Lexora/releases/latest)：目前支持 Windows x64、Ubuntu / Debian x64、Arch Linux x64。
+2. 在设置中连接模型服务，按服务商要求配置 API Key 或账号授权。
+3. 新建任务，给 Lexora 一个目标；需要处理文件时，再选择工作目录。
 
-### 本地开发
+无需注册 Lexora 账号。模型服务的使用条件与费用以服务商为准；自动化需要应用在本机保持运行。重要文件记得备份，AI 生成的结果也请核对。
+
+详细步骤见[使用指南](https://uselexora.app/guide/quick-start)。
+
+## 桌面之下
+
+Vue + Electron 承载桌面体验，独立的 TypeScript Runtime 承载本地 Agent。Lexora 管理任务、上下文、授权与产物；Pi 提供 Agent Loop，Rust 处理原生能力。
+
+[![Lexora 底层架构：Renderer、Electron Main、独立 Agent Runtime、Pi 执行循环、权限审批、存储与 Rust 原生组件](apps/website/src/public/landing/architecture-zh.svg)](apps/website/src/public/landing/architecture-zh.svg)
+
+模型可以换，工具可以扩展，文件与工具的访问权限由你决定。产品数据保存在本机；使用在线模型或外部工具时，相关内容会发送给你选择的服务。
+
+## 本地开发
+
+需要 Node.js 26+、pnpm 11.5+ 与 Rust 工具链；平台依赖见[构建说明](packaging/buddy/README.md)。在仓库根目录运行：
 
 ```bash
 pnpm install
 pnpm dev:buddy
+
+# 构建官网
+pnpm dev:website
 ```
 
-## Web
-
-Web 将逐步成为 Desktop 在文档编辑、知识沉淀与公开发布方面的内容延伸。目前仍独立运行，并支持自部署。
-
-![Lexora Web 界面预览](apps/website/src/public/ui.png)
-
-### 核心能力
-
-页面树、富文本编辑、文档 AI、历史版本、单页发布和站点发布。
-
-### 技术栈
-
-| 层级 | 技术 |
-| --- | --- |
-| Web | Vue 3、TypeScript、Vite、Vue Router、Pinia、Element Plus、UnoCSS |
-| Editor | Tiptap、ProseMirror |
-| API | NestJS、Fastify、Prisma、PostgreSQL、Redis、BullMQ |
-| Agent | LangGraph、LangChain、PostgreSQL Checkpointer、Redis Streams |
-| Infrastructure | Docker Compose、Nginx、RustFS |
-
-### 本地开发
-
-```bash
-pnpm install
-cp infrastructure/.env.dev.example infrastructure/.env
-pnpm dev:infra
-pnpm dev:db:sync
-pnpm dev
-```
-
-`infrastructure/.env` 是本地开发配置真源。`pnpm dev` 会先按白名单生成 `apps/api/.env` 和 `apps/agent/.env`；这些生成文件可以临时手改，但下一次运行 `pnpm dev` 会被覆盖。
-
-## 项目结构
-
-```txt
-lexora/
-├── apps/
-│   ├── web/         # Vue 3 前端应用
-│   ├── api/         # NestJS API 服务
-│   ├── agent/       # LangGraph AI 运行服务
-│   ├── buddy/       # Lexora Desktop
-│   └── website/     # 产品落地页与文档站点
-├── packages/
-│   ├── assets/      # 跨应用品牌与运行时资产
-│   ├── contracts/   # 共享契约层：schema、endpoint、常量、领域类型
-│   └── shared/      # 共享函数层
-└── infrastructure/  # docker 及环境配置
-```
+遇到问题，或有个值得一试的点子？欢迎[提个 Issue](https://github.com/useLexora/Lexora/issues)，也欢迎通过 PR 一起把 Lexora 打磨得更顺手。
 
 ## 许可证
 
-Lexora 使用 [AGPL-3.0-only](LICENSE) 许可证。
+[AGPL-3.0-only](LICENSE)
 
 ## 友情链接
 
-- [LINUX DO - 新的理想型社区](https://linux.do/)
+[LINUX DO — 新的理想型社区](https://linux.do/)

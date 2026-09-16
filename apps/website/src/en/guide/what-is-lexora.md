@@ -1,23 +1,29 @@
-# What is Lexora
+# Meet Lexora
 
-Lexora is a document-driven AI workspace for individuals. It brings AI chat, document editing, knowledge capture, and public publishing into one workspace.
+Big ideas. A little company.
 
-## Current Capabilities
+Lexora is a personal AI workspace that runs on your computer. Write, code, organize notes, or talk about everyday life and far-fetched ideas. When it is time to act, bring your files and tools along.
 
-- AI chat: create sessions, select models, stream replies, switch message branches, and retry answers.
-- Document pages: create a page tree and edit rich text content with tables, code blocks, and math.
-- History and restore: autosave current content, create version snapshots, and restore a document from history.
-- Public publishing: publish a document as a `/p/*` page or organize documents into a `/s/*` site.
-- Personal settings: manage account details, preferences, model providers, and default models.
-- Buddy desktop companion: work with documents, files, and code in authorized local directories, connect tools, and show task status through a desktop pet.
-- Self-hosting and admin: run the full service and manage users, email, login policy, model providers, and audit records.
+## Start with something you want to do
 
-## Lexora Buddy
+- **Find clarity in notes**: turn research, meeting records, or project files into summaries and next steps.
+- **Create something**: develop an outline, refine a draft, and save the result as a real file.
+- **Write some code**: explore a project, investigate an error, edit code, or script a small chore.
+- **Just chat**: learn something, plan the weekend, or dream up an unlikely idea. Not every conversation needs a deliverable.
+- **Make room for more**: schedule repetitive work and review the results of each run.
 
-Lexora Buddy is a local personal AI companion alongside the Lexora web workspace. It provides local conversations, project context, general task execution, permission review, and visible progress. The desktop pet is one way Buddy interacts with the user.
+These are examples, not fixed templates. Results depend on the context you provide, the model you choose, and the tools you connect.
 
-Buddy keeps its product data and directory grants on the local machine. Model requests are sent to the provider selected by the user, and directory content enters task context only after authorization.
+## Your workspace, your choices
 
-## Who It Is For
+Tasks bring conversations, execution, and results together. Spaces organize related tasks and can connect them to local working directories. Lexora accesses files and tools within the permissions you grant.
 
-Lexora is for individuals who want control over their documents, model providers, knowledge base, public content, and deployment.
+Choose your model service, bring reusable methods through Skills, and connect external tools through MCP. No Lexora account is required.
+
+Local execution does not mean fully offline: online models and external services receive the content needed for their work.
+
+## A little personality, too
+
+Linux includes a native desktop pet for company and visual feedback. Windows currently provides the desktop workspace without the native pet.
+
+[Start your first task →](./quick-start)
