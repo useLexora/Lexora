@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { ArtifactService } from '../../../artifacts/ArtifactService'
+import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from '../../../storage/__tests__/migrationFixture'
 import { createArtifactRepository } from '../../../storage/artifactRepository'
 import { createConnectorRepository } from '../../../storage/connectorRepository'
 import { openBuddyDatabase } from '../../../storage/database'
@@ -16,7 +16,7 @@ describe('mCP persisted data', () => {
   it('upgrades a version 17 database while retaining connector identity, execution confirmation and secret reference', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buddy-mcp-upgrade-'))
     const path = join(directory, 'buddy.sqlite3')
-    const previous = new DatabaseSync(path)
+    const previous = openMigrationFixtureDatabase(path)
     try {
       for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 17))
         previous.exec(migration.sql)
@@ -35,7 +35,7 @@ describe('mCP persisted data', () => {
       upgraded.close()
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, MIGRATION_TEST_TIMEOUT)
 
   it('publishes distinct result files and registers resolvable conversation artifacts', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'buddy-mcp-output-'))

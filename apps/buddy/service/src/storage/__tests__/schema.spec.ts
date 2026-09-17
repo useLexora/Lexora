@@ -2,7 +2,6 @@ import type { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createComposerResourceRepository } from '../composerResourceRepository'
@@ -10,6 +9,7 @@ import { openBuddyDatabase } from '../database'
 import { BUDDY_V15_CAPABILITY_OVERRIDES_SCHEMA_SQL, BUDDY_V15_CATALOG_MODEL_ID_SCHEMA_SQL, BUDDY_V15_CATALOG_SELECTION_SCHEMA_SQL, BUDDY_V15_MODEL_SERVICES_SCHEMA_SQL, BUDDY_V15_PROVIDER_INSTANCES_SCHEMA_SQL, BUDDY_V15_REQUEST_HEADERS_SCHEMA_SQL } from '../migrations/v15ModelServices'
 import { BUDDY_SCHEMA_MIGRATIONS, BUDDY_SCHEMA_VERSION } from '../schema'
 import { createUsageRepository } from '../usageRepository'
+import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from './migrationFixture'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -75,12 +75,12 @@ function seedRun(
   `)
 }
 
-describe('buddy schema', () => {
+describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
   it('upgrades v18 without rewriting legacy sources and permits independent local reference identities', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-local-reference-migration-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const previous = new NodeDatabaseSync(databasePath)
+    const previous = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 18))
       previous.exec(migration.sql)
     previous.exec('PRAGMA user_version = 18')
@@ -102,7 +102,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-skills-migration-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const previous = new NodeDatabaseSync(databasePath)
+    const previous = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 16))
       previous.exec(migration.sql)
     previous.exec('PRAGMA user_version = 16')
@@ -122,7 +122,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-provider-instances-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 14))
       legacy.exec(migration.sql)
     if (version === 15) {
@@ -170,7 +170,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-space-appearance-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 10)) {
       legacy.exec(migration.sql)
       legacy.exec(`PRAGMA user_version = ${migration.version}`)
@@ -208,7 +208,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-tree-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 9)) {
       legacy.exec(migration.sql)
       legacy.exec(`PRAGMA user_version = ${migration.version}`)
@@ -284,7 +284,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-model-catalog-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 14)) {
       legacy.exec(migration.sql)
       legacy.exec(`PRAGMA user_version = ${migration.version}`)
@@ -339,7 +339,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const database = new NodeDatabaseSync(databasePath)
+    const database = openMigrationFixtureDatabase(databasePath)
     database.exec(`PRAGMA user_version = ${BUDDY_SCHEMA_VERSION + 1}`)
     database.close()
 
@@ -350,7 +350,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const database = new NodeDatabaseSync(databasePath)
+    const database = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 8)) {
       database.exec(migration.sql)
       database.exec(`PRAGMA user_version = ${migration.version}`)
@@ -365,7 +365,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     legacy.exec('PRAGMA foreign_keys = ON')
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 8)) {
       legacy.exec(migration.sql)
@@ -415,7 +415,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     legacy.exec('PRAGMA foreign_keys = ON')
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 5)) {
       legacy.exec(migration.sql)
@@ -488,7 +488,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     legacy.exec('PRAGMA foreign_keys = ON')
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 4)) {
       legacy.exec(migration.sql)
@@ -526,7 +526,7 @@ describe('buddy schema', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const database = new NodeDatabaseSync(databasePath)
+    const database = openMigrationFixtureDatabase(databasePath)
     database.exec('CREATE TABLE spaces (id TEXT PRIMARY KEY)')
     database.close()
 

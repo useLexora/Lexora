@@ -2,9 +2,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
+import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from '../../storage/__tests__/migrationFixture'
 import { openBuddyDatabase } from '../../storage/database'
 import { BUDDY_V1_INITIAL_SCHEMA_SQL } from '../../storage/migrations/v1Initial'
 import { BUDDY_V2_CHANGE_SCHEMA_SQL } from '../../storage/migrations/v2Change'
@@ -191,7 +191,7 @@ describe('spaceService', () => {
     const directory = await mkdtemp(join(tmpdir(), 'lexora-buddy-space-migration-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     legacy.exec(BUDDY_V1_INITIAL_SCHEMA_SQL)
     legacy.exec(BUDDY_V2_CHANGE_SCHEMA_SQL)
     legacy.exec(BUDDY_V3_SPACE_SCHEMA_SQL)
@@ -222,7 +222,7 @@ describe('spaceService', () => {
     `).get() as { resources_trusted_at: string | null }
 
     expect(binding.resources_trusted_at).toBe('2026-09-01T00:00:00.000Z')
-  })
+  }, MIGRATION_TEST_TIMEOUT)
 })
 
 async function createFixture() {

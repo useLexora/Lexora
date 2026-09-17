@@ -2,7 +2,6 @@ import type { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SYSTEM_UNREAD_MARK_ID } from '../../../../shared/conversation/taskMarkApi'
 import { createConversationRepository } from '../conversationRepository'
@@ -10,6 +9,7 @@ import { openBuddyDatabase } from '../database'
 import { createRunRepository } from '../runRepository'
 import { BUDDY_SCHEMA_MIGRATIONS } from '../schema'
 import { createTaskMarkRepository } from '../taskMarkRepository'
+import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from './migrationFixture'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -179,7 +179,7 @@ describe('task marks and reading state', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-task-marks-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const legacy = new NodeDatabaseSync(databasePath)
+    const legacy = openMigrationFixtureDatabase(databasePath)
     for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(item => item.version <= 11)) {
       legacy.exec(migration.sql)
       legacy.exec(`PRAGMA user_version = ${migration.version}`)
@@ -199,5 +199,5 @@ describe('task marks and reading state', () => {
     databases.push(reopened)
     expect(createTaskMarkRepository(reopened).getState('a')).toMatchObject({ markId: custom.id, unread: true })
     expect(reopened.prepare('SELECT * FROM conversations').all()).toEqual(history)
-  })
+  }, MIGRATION_TEST_TIMEOUT)
 })
