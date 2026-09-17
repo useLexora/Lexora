@@ -8,11 +8,22 @@ Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and
 
 | System | Package |
 | --- | --- |
-| Windows x64 | Windows installer |
-| Ubuntu / Debian x64 | .deb |
+| Windows x64 / ARM64 | .exe for your architecture |
+| Ubuntu / Debian x64 / ARM64 | .deb for your architecture |
 | Arch Linux x64 | .pkg.tar.zst |
+| macOS 26+, Apple Silicon (ARM64) | .dmg |
 
-There is currently no macOS installer. The native Linux pet is optional company, not a requirement for completing tasks.
+Choose `x64` (`amd64` for .deb) for Intel / AMD computers, or `arm64` for ARM computers. The native Linux pet is optional company, not a requirement for completing tasks.
+
+### First macOS installation
+
+Open the DMG and drag `lexora-buddy.app` into Applications. The app uses an ad-hoc signature and is not notarized by Apple. After confirming you downloaded it from the official Release above, run this in Terminal:
+
+```bash
+xattr -r -d com.apple.quarantine "/Applications/lexora-buddy.app"
+```
+
+Then open Lexora from Applications. This command removes the quarantine attribute only from this app. Repeat it after an update if macOS blocks the app again.
 
 ## 2. Connect a model
 

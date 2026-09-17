@@ -6,14 +6,16 @@ import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import sandbox from '../../../apps/buddy/platform/native/shellSandbox.json' with { type: 'json' }
+import { OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
 import { assertNativeExecutable } from './native-host.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
+import { requireNativeBuildTarget, resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyShellSandboxFiles(readEntry) {
-  assertNativeExecutable(readEntry('bwrap'), 'linux', 'shell sandbox')
+export function verifyShellSandboxFiles(readEntry, target) {
+  assertNativeExecutable(readEntry('bwrap'), target, 'shell sandbox')
   if (createHash('sha256').update(readEntry(sandbox.archive)).digest('hex') !== sandbox.sha256)
     throw new Error('Shell sandbox source checksum mismatch')
   if (!readEntry('COPYING').length)
@@ -21,14 +23,14 @@ export function verifyShellSandboxFiles(readEntry) {
 }
 
 export async function prepareShellSandbox({ cwd = repoRoot, platformId = process.platform, architecture = process.arch } = {}) {
-  if (platformId !== 'linux')
+  if (platformId !== OPERATING_SYSTEM.Linux)
     return
-  if (architecture !== 'x64' || process.platform !== 'linux')
-    throw new Error('Shell sandbox must be built on Linux x64')
+  const target = resolveBuildTarget(`${platformId}-${architecture}`)
+  requireNativeBuildTarget(target)
   const paths = resolveBuddyOutputPaths(cwd)
-  const output = join(paths.buddyRoot, sandbox.resource.from)
+  const output = join(paths.buddyRoot, sandbox.resource.from, target.id)
   const verify = (directory) => {
-    verifyShellSandboxFiles(entry => readFileSync(join(directory, entry)))
+    verifyShellSandboxFiles(entry => readFileSync(join(directory, entry)), target)
     const binary = join(directory, 'bwrap')
     if ((statSync(binary).mode & 0o6000) !== 0)
       throw new Error('Shell sandbox must not be setuid or setgid')

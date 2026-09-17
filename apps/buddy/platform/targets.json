@@ -1,0 +1,32 @@
+{
+  "linux-x64": {
+    "platform": "linux",
+    "architecture": "x64",
+    "rustTarget": "x86_64-unknown-linux-gnu",
+    "nativeComponents": ["fileReader", "processControl", "imageTransform"]
+  },
+  "linux-arm64": {
+    "platform": "linux",
+    "architecture": "arm64",
+    "rustTarget": "aarch64-unknown-linux-gnu",
+    "nativeComponents": ["fileReader", "processControl", "imageTransform"]
+  },
+  "win32-x64": {
+    "platform": "win32",
+    "architecture": "x64",
+    "rustTarget": "x86_64-pc-windows-msvc",
+    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "imageTransform"]
+  },
+  "win32-arm64": {
+    "platform": "win32",
+    "architecture": "arm64",
+    "rustTarget": "aarch64-pc-windows-msvc",
+    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "imageTransform"]
+  },
+  "darwin-arm64": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "rustTarget": "aarch64-apple-darwin",
+    "nativeComponents": ["fileReader", "imageTransform"]
+  }
+}

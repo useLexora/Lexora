@@ -16,6 +16,8 @@ const rustInputs = new Set([
   '.github/workflows/buddy-build.yml',
   'apps/buddy/resources/icons/app-icon.png',
   'packaging/buddy/release/native-host.mjs',
+  'packaging/buddy/release/targets.mjs',
+  'apps/buddy/platform/targets.json',
   'packaging/buddy/release/preflight.mjs',
   'packaging/buddy/release/verify-windows-sandbox.ps1',
 ])

@@ -1,0 +1,103 @@
+name: macOS package verification
+
+on:
+  workflow_call:
+    inputs:
+      signing:
+        type: string
+        required: false
+        default: ad-hoc
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: Ad-hoc packages need xattr on first install; Developer ID requires Apple credentials
+        type: choice
+        options: [ad-hoc, developer-id]
+        default: ad-hoc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-verification-${{ github.workflow }}-${{ github.ref }}-${{ inputs.signing }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: macOS ARM64 install
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      LEXORA_MACOS_SIGNING: ${{ inputs.signing }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Resolve macOS target
+        id: target
+        run: |
+          node packaging/buddy/release/targets.mjs --target darwin-arm64 --github-output "$GITHUB_OUTPUT"
+          node packaging/buddy/release/artifacts.mjs --format dmg --github-output "$GITHUB_OUTPUT"
+
+      - name: Install workspace dependencies
+        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
+
+      - name: Test native components
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ steps.target.outputs.minimum-system-version }}
+        run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --workspace ${{ steps.target.outputs.cargo-args }}
+
+      - name: Verify shell isolation
+        run: |
+          node packaging/buddy/release/search-tools.mjs
+          pnpm --filter @uselexora/lexora-buddy test:runtime service/src/sandbox/__tests__/macosSandbox.spec.ts
+
+      - name: Build macOS package
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CSC_LINK: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ inputs.signing == 'developer-id' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ inputs.signing == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          if [[ "$LEXORA_MACOS_SIGNING" == 'ad-hoc' ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          pnpm --filter @uselexora/lexora-buddy package:macos
+
+      - name: Verify platform runtime
+        run: pnpm --filter @uselexora/lexora-buddy test:platform
+
+      - name: Install DMG and verify first launch
+        timeout-minutes: 5
+        run: node packaging/buddy/ci/verify-macos-install.mjs
+
+      - name: Upload verified macOS package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.target.outputs.artifact }}
+          path: |
+            ${{ steps.target.outputs.path }}
+            apps/buddy/.output/artifacts/macos/SHA256SUMS.txt
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 7

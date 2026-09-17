@@ -9,7 +9,27 @@ const MAX_UNIX_SOCKET_PATH_BYTES = 100
 
 export const runtimePathLayouts = {
   linux: { path: posix, resolveDirectories: resolveLinuxDirectories },
+  darwin: { path: posix, resolveDirectories: resolveMacDirectories },
   win32: { path: { ...win32, normalize: validateWindowsFilePath }, resolveDirectories: resolveWindowsDirectories },
+}
+
+function resolveMacDirectories(identity: BuddyRuntimeIdentity, lexoraHome: string, options: BuddyRuntimePathOptions) {
+  const library = join(options.userHome, 'Library')
+  const runtimeRoot = identity.profile === 'test'
+    ? join(lexoraHome, '.runtime')
+    : join(library, 'Application Support', identity.namespace)
+  const socketId = createHash('sha256').update(`${options.userHome}\0${lexoraHome}\0${identity.namespace}`).digest('hex').slice(0, 24)
+  return {
+    browserAdapterSocket: join('/private/tmp', `${identity.namespace}-${options.userId}-${socketId}`, 'browser.sock'),
+    nativePetSocket: null,
+    sessionData: identity.profile === 'test'
+      ? join(runtimeRoot, 'cache', 'chromium')
+      : join(library, 'Caches', identity.namespace, 'chromium'),
+    stateRoot: join(runtimeRoot, 'state'),
+    userData: identity.profile === 'stable'
+      ? requireAbsolutePath(options.defaultUserData, 'Electron userData')
+      : join(runtimeRoot, 'electron'),
+  }
 }
 
 function resolveWindowsDirectories(identity: BuddyRuntimeIdentity, lexoraHome: string, options: BuddyRuntimePathOptions) {

@@ -3,7 +3,7 @@ import { resolveBuddyPlatform } from '../../../shared/platform'
 import { createChildProcessEnvironment } from '../childProcessEnvironment'
 
 describe('child process environment', () => {
-  it.each(['linux', 'win32'])('allows ambient platform inputs and only explicitly provided secrets on %s', (platform) => {
+  it.each(['linux', 'win32', 'darwin'])('allows ambient platform inputs and only explicitly provided secrets on %s', (platform) => {
     expect(createChildProcessEnvironment({
       platform: resolveBuddyPlatform(platform),
       source: { LANG: 'zh_CN.UTF-8', OPENAI_API_KEY: 'synthetic-ambient', LEXORA_BUDDY_HOME: '/fixture/buddy' },

@@ -6,13 +6,17 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import searchTools from '../../../apps/buddy/platform/native/searchTools.json' with { type: 'json' }
+import { OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
+import { assertNativeExecutable } from './native-host.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
+import { resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function resolveSearchTools(platformId, architecture = 'x64') {
+export function resolveSearchTools(platformId, architecture) {
   const target = `${platformId}-${architecture}`
+  resolveBuildTarget(target)
   return Object.entries(searchTools.tools).map(([name, tool]) => {
     if (!Object.hasOwn(tool.targets, target))
       throw new Error(`Unsupported search tools target: ${target}`)
@@ -20,9 +24,12 @@ export function resolveSearchTools(platformId, architecture = 'x64') {
   })
 }
 
-export function verifySearchToolFiles(readEntry, platformId, architecture = 'x64') {
+export function verifySearchToolFiles(readEntry, platformId, architecture, { signed = false } = {}) {
   for (const tool of resolveSearchTools(platformId, architecture)) {
-    assertSha256(readEntry(tool.binary), tool.binarySha256, tool.binary)
+    const bytes = readEntry(tool.binary)
+    assertNativeExecutable(bytes, resolveBuildTarget(`${platformId}-${architecture}`), tool.binary)
+    if (!signed || platformId !== OPERATING_SYSTEM.MacOS)
+      assertSha256(bytes, tool.binarySha256, tool.binary)
     for (const license of tool.licenses) {
       const entry = `licenses/${tool.name}/${license}`
       if (!readEntry(entry).length)
@@ -102,6 +109,7 @@ async function prepareArchive(tool, cache) {
 
 function extractEntry(archive, entry) {
   const extractors = {
+    darwin: () => ['tar', ['-xOf', archive, entry]],
     linux: () => archive.endsWith('.zip')
       ? ['unzip', ['-p', archive, entry]]
       : ['tar', ['-xOf', archive, entry]],
@@ -121,9 +129,10 @@ function assertSha256(content, expected, name) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2)
-  if (args.length && (args.length !== 2 || args[0] !== '--platform'))
-    throw new Error('Usage: search-tools.mjs [--platform linux|win32]')
-  void prepareSearchTools({ platformId: args[1] ?? process.platform }).then(writeOutput).catch((error) => {
+  if (args.length && (args.length !== 2 || args[0] !== '--target'))
+    throw new Error('Usage: search-tools.mjs [--target <os-architecture>]')
+  const target = resolveBuildTarget(args[1])
+  void prepareSearchTools({ platformId: target.platform, architecture: target.architecture }).then(writeOutput).catch((error) => {
     writeError(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
   })

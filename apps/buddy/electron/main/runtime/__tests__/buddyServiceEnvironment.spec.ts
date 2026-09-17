@@ -30,8 +30,10 @@ describe('buddyServiceEnvironment', () => {
     const options = { platform, appPath, resourcesPath, architecture: 'x64' }
     expect(resolveBuddySearchToolsDirectory({ ...options, isPackaged: true })).toBe(packaged)
     expect(resolveBuddySearchToolsDirectory({ ...options, isPackaged: false })).toBe(development)
-    expect(() => resolveBuddySearchToolsDirectory({ ...options, architecture: 'arm64', isPackaged: true }))
-      .toThrow('Unsupported search tools target')
+    expect(resolveBuddySearchToolsDirectory({ ...options, architecture: 'arm64', isPackaged: true })).toBe(packaged)
+    expect(resolveBuddySearchToolsDirectory({ ...options, architecture: 'arm64', isPackaged: false })).toBe(development.replace('-x64', '-arm64'))
+    expect(() => resolveBuddySearchToolsDirectory({ ...options, architecture: 'ia32', isPackaged: true }))
+      .toThrow('Unsupported Buddy target')
   })
 
   it('normalizes Windows environment names without leaking credentials', () => {

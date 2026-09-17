@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { checkSandboxEnvironment } from '../sandboxDependencies'
 
 describe('sandbox environment status', () => {
-  it.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('checks the packaged components and a real read-only namespace probe', async () => {
+  it.skipIf(process.platform !== 'linux')('checks the packaged components and a real read-only namespace probe', async () => {
     await expect(checkSandboxEnvironment({
-      sandboxDirectory: resolve('.output/build/shell-sandbox/linux-x64'),
-      searchDirectory: resolve('.output/build/search-tools/linux-x64'),
+      sandboxDirectory: resolve(`.output/build/shell-sandbox/linux-${process.arch}`),
+      searchDirectory: resolve(`.output/build/search-tools/linux-${process.arch}`),
     })).resolves.toBe('available')
   })
 
@@ -15,6 +15,6 @@ describe('sandbox environment status', () => {
     await expect(checkSandboxEnvironment({
       sandboxDirectory: resolve('.output/missing-sandbox-components'),
       searchDirectory: resolve('.output/missing-search-components'),
-    })).resolves.toBe(process.platform === 'linux' ? 'unavailable' : 'unsupported')
+    })).resolves.toBe('unavailable')
   })
 })

@@ -2,11 +2,11 @@ import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 import { writeError } from '../../shared/cli-output.mjs'
 import { prepareNativeHost } from './native-host.mjs'
-import { resolvePackagingPlatform } from './platform-definition.mjs'
 import { prepareSearchTools } from './search-tools.mjs'
 import { prepareShellSandbox } from './shell-sandbox.mjs'
+import { resolveBuildTarget } from './targets.mjs'
 
-const platform = resolvePackagingPlatform(process.platform)
+const platform = resolveBuildTarget()
 const release = process.argv.includes('--release')
 const builders = {
   nativePet() {

@@ -1,6 +1,7 @@
 import type { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import process from 'node:process'
+import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
 import { BoundedFileReadError } from './boundedFileError'
 import { filePaths } from './filePaths'
 
@@ -17,7 +18,7 @@ export async function readNativeBoundedFile(root: string, path: string, maxBytes
   return new Promise((resolve, reject) => {
     const child = execFile(filePaths.resolveInput(executable), [], {
       encoding: 'buffer',
-      env: process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {},
+      env: process.platform === OPERATING_SYSTEM.Windows ? { SystemRoot: process.env.SystemRoot } : {},
       maxBuffer: maxBytes + 4096,
       timeout: 30_000,
       killSignal: 'SIGKILL',

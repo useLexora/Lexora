@@ -4,7 +4,9 @@ import { filePathAdapters } from '../../../platform/filesystem/filePaths'
 import searchTools from '../../../platform/native/searchTools.json'
 import { createChildProcessEnvironment } from '../../../platform/process/childProcessEnvironment'
 import { createProxyEnvironment } from '../../../platform/process/proxyEnvironment'
+import { resolveBuddyTarget } from '../../../platform/target'
 import { resolveBuddyPlatform } from '../../../shared/platform'
+import { isWindows } from '../../../shared/platform/identifiers'
 
 export function resolveBuddySearchToolsDirectory(options: {
   appPath: string
@@ -14,7 +16,7 @@ export function resolveBuddySearchToolsDirectory(options: {
   architecture?: string
 }): string {
   const platform = resolveBuddyPlatform(options.platform ?? process.platform)
-  const target = `${platform.id}-${options.architecture ?? process.arch}`
+  const { id: target } = resolveBuddyTarget(platform.id, options.architecture ?? process.arch)
   if (!Object.values(searchTools.tools).every(tool => Object.hasOwn(tool.targets, target)))
     throw new Error(`Unsupported search tools target: ${target}`)
   return filePathAdapters[platform.id].resolveInput(
@@ -30,7 +32,7 @@ export function createBuddyServiceEnvironment(
   proxyUrl?: string,
 ): NodeJS.ProcessEnv {
   const targetPlatform = resolveBuddyPlatform(platform)
-  const environmentSource = targetPlatform.id === 'linux' && !source.HOME
+  const environmentSource = !isWindows(targetPlatform.id) && !source.HOME
     ? { ...source, HOME: homedir() }
     : source
   const environment = createChildProcessEnvironment({

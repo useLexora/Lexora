@@ -12,9 +12,11 @@ import { createBuddyNativeEnvironment, resolveBuddyShellSandbox } from '../../..
 import shellSandbox from '../../../platform/native/shellSandbox.json'
 import { checkSandboxEnvironment } from '../../../platform/process/sandboxDependencies'
 import { setupWindowsSandbox } from '../../../platform/process/windowsSandbox'
+import { currentTarget } from '../../../platform/target'
 import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
+import { isLinux } from '../../../shared/platform/identifiers'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
@@ -27,6 +29,7 @@ import { createBuddyServiceEnvironment, resolveBuddySearchToolsDirectory } from 
 import { forkBuddyServiceProcess } from '../runtime/buddyServiceProcess'
 import { BuddyServiceSupervisor } from '../runtime/BuddyServiceSupervisor'
 import { registerSandboxHostRpc } from '../sandbox/registerSandboxHostRpc'
+import { verifySandboxInstallation } from '../sandbox/verifySandboxInstallation'
 import { createCredentialVault } from '../secrets/CredentialVault'
 import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
 
@@ -86,6 +89,12 @@ export class DesktopRuntimeHost {
     return this.#sandboxCheck
   }
 
+  async verifyInstallation(): Promise<void> {
+    if (!this.#environment.isSmokeTest)
+      throw new Error('Installation verification requires an isolated smoke launch')
+    await verifySandboxInstallation({ ...this.#sandboxOptions(), buddyHome: this.#environment.paths.buddyHome })
+  }
+
   setupSandbox(): ReturnType<typeof setupWindowsSandbox> {
     this.#sandboxSetup ??= setupWindowsSandbox(this.#sandboxExecutable()).finally(() => {
       this.#sandboxSetup = null
@@ -101,7 +110,9 @@ export class DesktopRuntimeHost {
   #sandboxOptions() {
     return {
       searchDirectory: resolveBuddySearchToolsDirectory({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
-      sandboxDirectory: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : shellSandbox.resource.from),
+      sandboxDirectory: isLinux(currentTarget.platform)
+        ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`)
+        : undefined,
       windowsSandbox: this.#sandboxExecutable(),
       windowsShell: this.#windowsPowerShell,
     }

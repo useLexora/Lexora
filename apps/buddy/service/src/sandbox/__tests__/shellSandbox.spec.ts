@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
 import { runSandboxCommand } from '../runSandboxCommand'
 
@@ -16,18 +17,19 @@ const originalEnvironment = { ...process.env }
 const originalHome = homedir()
 const quote = (value: string) => `'${value.replaceAll('\'', '\'\\\'\'')}'`
 
-describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux shell enforcement', () => {
+describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
   let directory: string
   let workspace: string
   let outside: string
+  let privateRoot: string
   let input: SandboxProcessInput
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'lexora-sandbox-test-'))
     workspace = join(directory, 'workspace')
     outside = join(directory, 'outside')
-    const privateRoot = join(directory, 'private')
-    await Promise.all([workspace, outside, join(privateRoot, 'home'), join(privateRoot, 'tmp')].map(path => mkdir(path, { recursive: true })))
+    privateRoot = await createSandboxDirectory()
+    await Promise.all([workspace, outside].map(path => mkdir(path, { recursive: true })))
     await writeFile(join(outside, 'preserved'), 'outside-preserved')
     const environment = createSandboxEnvironment(originalEnvironment, privateRoot)
     for (const key of new Set([...Object.keys(process.env), ...Object.keys(environment)]))
@@ -46,8 +48,8 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux s
       requestId: randomUUID(),
       roots: [workspace],
       workspaceRoots: [workspace],
-      backend: { kind: 'srt', sandboxDirectory: resolve(buddyRoot, '.output/build/shell-sandbox/linux-x64') },
-      searchDirectory: resolve(buddyRoot, '.output/build/search-tools/linux-x64'),
+      backend: { kind: 'linux-srt', sandboxDirectory: resolve(buddyRoot, `.output/build/shell-sandbox/linux-${process.arch}`) },
+      searchDirectory: resolve(buddyRoot, `.output/build/search-tools/linux-${process.arch}`),
       timeout: 5,
     }
   })
@@ -55,7 +57,7 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux s
   afterEach(async () => {
     process.chdir(buddyRoot)
     vi.unstubAllEnvs()
-    await rm(directory, { force: true, recursive: true })
+    await Promise.all([directory, privateRoot].map(path => rm(path, { force: true, recursive: true })))
   })
 
   async function execute(command: string, options: Partial<Parameters<typeof runSandboxCommand>[1]> = {}, overrides: Partial<SandboxProcessInput> = {}) {
@@ -227,7 +229,7 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux s
   }, 15_000)
 
   it('fails closed when the packaged helper is missing', async () => {
-    const { result } = await execute('touch must-not-run', {}, { backend: { kind: 'srt', sandboxDirectory: join(directory, 'missing') } })
+    const { result } = await execute('touch must-not-run', {}, { backend: { kind: 'linux-srt', sandboxDirectory: join(directory, 'missing') } })
     expect(result).toEqual({ ok: false, code: 'SANDBOX_UNAVAILABLE' })
     await expect(access(join(workspace, 'must-not-run'))).rejects.toThrow()
   })

@@ -1,11 +1,19 @@
 const process = require('node:process')
-const { platformResources, resolvePackagingPlatform } = require('../../packaging/buddy/release/platform-definition.mjs')
+const { desktopArtifactName } = require('../../packaging/buddy/release/artifacts.mjs')
+const { macosSigningMode } = require('../../packaging/buddy/release/macos.mjs')
+const { excludedDependencyFiles, platformResources } = require('../../packaging/buddy/release/platform-definition.mjs')
+const { resolveBuildTarget } = require('../../packaging/buddy/release/targets.mjs')
+const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
+
+const target = resolveBuildTarget()
+const resources = platformResources(target)
 const { sourceDateEpoch } = require('./buddy.version.json')
 const { desktopName, productName: displayName } = require('./package.json')
 
 process.env.SOURCE_DATE_EPOCH ??= String(sourceDateEpoch)
 
 const macro = name => `$${`{${name}}`}`
+const signedMacos = macosSigningMode() === 'developer-id'
 
 module.exports = {
   appId: desktopName,
@@ -20,6 +28,7 @@ module.exports = {
     runAsNode: false,
   },
   npmRebuild: false,
+  forceCodeSigning: target.platform === OPERATING_SYSTEM.MacOS && signedMacos,
   directories: {
     output: '.output/package/desktop',
   },
@@ -28,13 +37,32 @@ module.exports = {
     'package.json',
     'resources/icons/app-icon.png',
     '!**/__tests__/**',
+    ...excludedDependencyFiles(target),
   ],
+  mac: {
+    extraResources: (target.platform === OPERATING_SYSTEM.MacOS ? resources : []),
+    target: [{ target: 'dmg', arch: ['arm64'] }],
+    category: 'public.app-category.productivity',
+    minimumSystemVersion: target.minimumSystemVersion,
+    icon: 'resources/icons/app-icon.png',
+    identity: signedMacos ? undefined : '-',
+    hardenedRuntime: signedMacos,
+    notarize: signedMacos,
+    entitlements: '../../packaging/buddy/macos/entitlements.plist',
+    entitlementsInherit: '../../packaging/buddy/macos/entitlements.plist',
+    binaries: (target.platform === OPERATING_SYSTEM.MacOS ? resources : [])
+      .filter(resource => resource.to.startsWith('native-'))
+      .map(resource => `Contents/Resources/${resource.to}`)
+      .concat(['Contents/Resources/search-tools/fd', 'Contents/Resources/search-tools/rg']),
+  },
+  dmg: {
+    sign: signedMacos,
+  },
   win: {
-    extraResources: platformResources(resolvePackagingPlatform('win32')),
-    artifactName: `Lexora-Buddy-${macro('version')}-windows-x64.exe`,
+    extraResources: (target.platform === OPERATING_SYSTEM.Windows ? resources : []),
     executableName: displayName,
     icon: 'resources/icons/app-icon.png',
-    target: [{ target: 'nsis', arch: ['x64'] }],
+    target: [{ target: 'nsis', arch: [target.architecture] }],
   },
   nsis: {
     include: '../../packaging/buddy/windows/installer.nsh',
@@ -48,7 +76,7 @@ module.exports = {
     deleteAppDataOnUninstall: false,
   },
   linux: {
-    extraResources: platformResources(resolvePackagingPlatform('linux')),
+    extraResources: (target.platform === OPERATING_SYSTEM.Linux ? resources : []),
     category: 'Utility',
     desktop: {
       entry: {
@@ -121,8 +149,9 @@ module.exports = {
       'socat',
       'systemd-libs',
       'util-linux-libs',
+      'which',
       'xdg-utils',
     ],
   },
-  artifactName: `Lexora-Buddy-${macro('version')}-${macro('os')}-${macro('arch')}.${macro('ext')}`,
+  artifactName: desktopArtifactName(target, target.packageFormats[0], macro('version')),
 }

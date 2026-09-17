@@ -124,11 +124,14 @@ class DesktopApplication {
       showLegacyPowerShellNotice(window, () => this.#runtime.language, this.#environment)
     if (this.#environment.isSmokeTest) {
       await checkDesktopSmokeBridge(window)
+      await this.#runtime.verifyInstallation()
       await this.#quit.request()
     }
   }
 
   async handleStartupFailure(error: unknown): Promise<void> {
+    if (this.#environment.isSmokeTest)
+      process.stderr.write(`Desktop installation verification failed: ${error instanceof Error ? error.stack : String(error)}\n`)
     this.#environment.startup.failed(error)
     try {
       await this.#dispose()

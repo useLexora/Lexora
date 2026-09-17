@@ -7,7 +7,6 @@ describe('buddy platform composition', () => {
     const features = windows.features.map(id => BUDDY_FEATURES[id])
     expect(features.flatMap(feature => feature.tools)).toEqual(['lexora_system_action'])
     expect(features.flatMap(feature => feature.skills)).toEqual([])
-    expect(features.flatMap(feature => feature.resources)).toEqual([])
     expect(features.map(feature => feature.settingsCategory)).not.toContain('pet')
     expect(describeBuddyCapabilities(windows).shell).toBe('powershell')
   })

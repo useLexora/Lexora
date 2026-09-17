@@ -1,5 +1,6 @@
 import type { NativeCommandResult } from '../native/nativeCommand'
 import process from 'node:process'
+import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
 import { filePaths } from '../filesystem/filePaths'
 import { runNativeCommand } from '../native/nativeCommand'
 
@@ -15,7 +16,7 @@ export async function runNativeProcessControl(input: ProcessControlRequest, sign
   if (!executable)
     throw new Error('Native process control helper is unavailable')
   return runNativeCommand(filePaths.resolveInput(executable), [], input, {
-    env: process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {},
+    env: process.platform === OPERATING_SYSTEM.Windows ? { SystemRoot: process.env.SystemRoot } : {},
     maxBytes: 1024 * 1024,
     signal,
   })

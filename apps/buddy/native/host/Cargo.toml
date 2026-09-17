@@ -43,6 +43,10 @@ name = "bounded-file-linux"
 path = "__tests__/bounded_file_linux.rs"
 
 [[test]]
+name = "bounded-file-macos"
+path = "__tests__/bounded_file_macos.rs"
+
+[[test]]
 name = "process-control-linux"
 path = "__tests__/process_control_linux.rs"
 
@@ -73,6 +77,9 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1.1", features = [ "fs" ] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [

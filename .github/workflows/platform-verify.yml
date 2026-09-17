@@ -1,0 +1,27 @@
+name: Platform verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'verify/platforms/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    name: Linux and Windows packages
+    uses: ./.github/workflows/buddy-build.yml
+    with:
+      upload-artifacts: true
+
+  macos:
+    name: macOS ARM64 package
+    uses: ./.github/workflows/macos-verify.yml
+    with:
+      signing: ad-hoc

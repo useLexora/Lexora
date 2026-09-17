@@ -41,7 +41,7 @@ describe('isolated shell permissions', () => {
     })
   })
 
-  it.each(['linux', 'win32'] as const)('describes the same shell and boundary that tools use on %s', (platform) => {
+  it.each(['linux', 'win32', 'darwin'] as const)('describes the same shell and boundary that tools use on %s', (platform) => {
     for (const executionProfile of ['read_only', 'workspace_write', 'full_access'] as const) {
       const execution = resolveShellExecution(executionProfile, platform)
       const prompt = createBuddySystemPrompt({ executionProfile, platform, approvalPolicy: 'policy' })

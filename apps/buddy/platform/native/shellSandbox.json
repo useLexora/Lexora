@@ -4,7 +4,7 @@
   "release": "https://github.com/containers/bubblewrap/releases/download/v0.12.0",
   "sha256": "9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314",
   "resource": {
-    "from": ".output/build/shell-sandbox/linux-x64",
+    "from": ".output/build/shell-sandbox",
     "to": "shell-sandbox"
   }
 }

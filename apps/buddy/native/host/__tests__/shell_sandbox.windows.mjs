@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import * as nativeTest from 'node:test'
-import { fileURLToPath } from 'node:url'
 
 const executable = join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Lexora Buddy Sandbox', 'lexora-buddy-sandbox.exe')
 const quote = value => `'${value.replaceAll('\'', '\'\'')}'`
@@ -71,6 +70,8 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing 
 }
 
 nativeTest.test('Windows LPAC enforcement', { skip: process.platform !== 'win32', timeout: 300_000 }, async (t) => {
+  const adversaryExecutable = process.env.BUDDY_SANDBOX_TEST_ADVERSARY
+  assert.ok(adversaryExecutable, 'Windows acceptance requires its target-specific adversary executable')
   const state = process.env.BUDDY_SANDBOX_TEST_DIRECTORY ?? tmpdir()
   await mkdir(state, { recursive: true })
   const preparedRoot = process.env.BUDDY_SANDBOX_TEST_ROOT
@@ -134,7 +135,7 @@ try { Remove-Item -LiteralPath ${quote(join(workspace, 'result.txt'))}; $r.remov
     })
     await t.test('does not let descendants discard the enforcement identity', async () => {
       const adversary = join(workspace, 'sandbox-adversary.exe')
-      await copyFile(process.env.BUDDY_SANDBOX_TEST_ADVERSARY ?? fileURLToPath(new URL('../../../.output/build/native/x86_64-pc-windows-msvc/release/examples/sandbox-adversary.exe', import.meta.url)), adversary)
+      await copyFile(adversaryExecutable, adversary)
       const attack = await execute({ command: `$info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=${quote(adversary)};$info.Arguments=${quote(`"${secret}"`)};$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true;$info.CreateNoWindow=$true;try {$child=[Diagnostics.Process]::Start($info);$output=$child.StandardOutput.ReadToEnd();$errors=$child.StandardError.ReadToEnd();$child.WaitForExit();$r=@{output=$output;code=$child.ExitCode;errors=$errors}}catch{$r=@{errors=$_.Exception.ToString()}};[Console]::Out.Write(($r|ConvertTo-Json -Compress))`, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
       await writeFile(join(root, 'token-restriction.json'), JSON.stringify(attack, null, 2))
       assert.equal(attack.exitCode, 0, JSON.stringify(attack))
@@ -157,7 +158,7 @@ try { Remove-Item -LiteralPath ${quote(join(workspace, 'result.txt'))}; $r.remov
     })
     await t.test('does not expose ancestor contents or mutation rights to native children', async () => {
       const adversary = join(workspace, 'volume-probe.exe')
-      await copyFile(process.env.BUDDY_SANDBOX_TEST_ADVERSARY ?? fileURLToPath(new URL('../../../.output/build/native/x86_64-pc-windows-msvc/release/examples/sandbox-adversary.exe', import.meta.url)), adversary)
+      await copyFile(adversaryExecutable, adversary)
       const ancestors = []
       for (let current = dirname(workspace); ; current = dirname(current)) {
         ancestors.push(current)

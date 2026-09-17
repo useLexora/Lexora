@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { containsCanonicalPath, filePaths } from '../../../platform/filesystem/filePaths'
 import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
+import { SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { createSensitivePathMatcher, resolveSensitivePathRoots } from '../permissions/sensitivePaths'
 import { validateSandboxDirectory } from './SandboxDirectoryPermissions'
 
@@ -48,7 +49,7 @@ export async function createSandboxFilesystemPolicy(input: SandboxProcessInput, 
   const resources = (input.resourceReadRoots ?? []).filter(root => !input.roots.some(parent => containsCanonicalPath(parent, root)))
   const roots = [...new Set([...input.roots, ...input.additionalDirectories.map(grant => grant.path), ...resources])]
   const workspaces = input.workspaceRoots.filter(root => input.roots.includes(root))
-  const sensitiveOptions = { home: input.home, environment: input.backend.kind === 'windows-lpac' ? { SystemRoot: input.backend.systemRoot } : {} }
+  const sensitiveOptions = { home: input.home, environment: input.backend.kind === SHELL_SANDBOX_BACKEND.Windows ? { SystemRoot: input.backend.systemRoot } : {} }
   const sensitiveRoots = resolveSensitivePathRoots(sensitiveOptions)
   const sensitive = createSensitivePathMatcher(sensitiveOptions)
   const grants: SandboxFilesystemGrant[] = []

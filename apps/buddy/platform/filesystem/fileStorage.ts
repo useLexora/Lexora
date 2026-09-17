@@ -8,20 +8,23 @@ export interface FileStorage {
   syncDirectory: (path: string) => Promise<void>
 }
 
-export const fileStorageAdapters: Record<BuddyPlatformId, FileStorage> = {
-  linux: {
-    durability: 'file-and-directory-sync',
-    replace: rename,
-    async syncDirectory(path) {
-      const directory = await open(path, 'r')
-      try {
-        await directory.sync()
-      }
-      finally {
-        await directory.close()
-      }
-    },
+const posixFileStorage: FileStorage = {
+  durability: 'file-and-directory-sync',
+  replace: rename,
+  async syncDirectory(path) {
+    const directory = await open(path, 'r')
+    try {
+      await directory.sync()
+    }
+    finally {
+      await directory.close()
+    }
   },
+}
+
+export const fileStorageAdapters: Record<BuddyPlatformId, FileStorage> = {
+  linux: posixFileStorage,
+  darwin: posixFileStorage,
   win32: {
     durability: 'file-sync',
     replace: rename,

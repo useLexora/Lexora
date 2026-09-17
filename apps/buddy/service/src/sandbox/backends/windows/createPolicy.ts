@@ -1,9 +1,10 @@
-import type { SandboxBackendInput } from '../../../shared/permissions/shellSandbox'
+import type { SandboxBackendInput } from '../../../../../shared/permissions/shellSandbox'
+import type { SHELL_SANDBOX_BACKEND } from '../../../../../shared/platform/identifiers'
 import { dirname, join } from 'node:path'
-import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
-import { createSandboxFilesystemPolicy, existingSandboxPaths, inspectSandboxPath, SANDBOX_TOOLCHAIN_PATHS } from './sandboxFilesystemPolicy'
+import { containsCanonicalPath } from '../../../../../platform/filesystem/filePaths'
+import { createSandboxFilesystemPolicy, existingSandboxPaths, inspectSandboxPath, SANDBOX_TOOLCHAIN_PATHS } from '../../sandboxFilesystemPolicy'
 
-export async function createWindowsSandboxPolicy(input: SandboxBackendInput<'windows-lpac'>, signal: AbortSignal) {
+export async function createWindowsSandboxPolicy(input: SandboxBackendInput<typeof SHELL_SANDBOX_BACKEND.Windows>, signal: AbortSignal) {
   const grants = await createSandboxFilesystemPolicy(input, join(input.searchDirectory, 'rg.exe'), signal)
   const toolchains = await existingSandboxPaths(SANDBOX_TOOLCHAIN_PATHS.map(path => join(input.home, path)))
   const runtime = [...toolchains, input.searchDirectory]

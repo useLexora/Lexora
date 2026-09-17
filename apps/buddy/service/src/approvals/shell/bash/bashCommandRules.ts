@@ -1,5 +1,6 @@
 import type { ShellCommandClassification } from '../shellCommandClassification'
 import { MAX_TARGET_PATHS } from '../../../../../shared/permissions/approvalReviewPayload'
+import { OPERATING_SYSTEM } from '../../../../../shared/platform/identifiers'
 import { classifyGitCommand } from '../gitCommandRules'
 import { requireShellApproval } from '../shellCommandClassification'
 
@@ -92,7 +93,7 @@ export function classifyBashSimpleCommand(
   if (!command || !/^[\w.+-]+$/.test(command))
     return requireShellApproval('unsupported-syntax')
   const arguments_ = words.slice(commandIndex + 1)
-  if (command === 'git' || (platform === 'win32' && command === 'git.exe'))
+  if (command === 'git' || (platform === OPERATING_SYSTEM.Windows && command === 'git.exe'))
     return classifyGitCommand(arguments_)
   if (command === 'true' || command === 'false')
     return arguments_.length === 0 ? { type: 'auto-approve' } : requireShellApproval('unsafe-arguments')
@@ -103,7 +104,7 @@ export function classifyBashSimpleCommand(
   }
   if (command === 'cat' || command === 'ls')
     return classifyFileQuery(command, arguments_)
-  if (command === 'rm' && (platform === 'linux' || platform === 'darwin'))
+  if (command === 'rm' && (platform === OPERATING_SYSTEM.Linux || platform === OPERATING_SYSTEM.MacOS))
     return classifyFileDeletion(arguments_)
   const validator = platformCommandValidators(platform).get(command)
     ?? commonCommandValidators.get(command)
@@ -161,9 +162,9 @@ function classifyFileQuery(command: 'cat' | 'ls', arguments_: readonly string[])
 function platformCommandValidators(
   platform: NodeJS.Platform,
 ): ReadonlyMap<string, CommandValidator> {
-  if (platform === 'linux')
+  if (platform === OPERATING_SYSTEM.Linux)
     return linuxCommandValidators
-  if (platform === 'darwin')
+  if (platform === OPERATING_SYSTEM.MacOS)
     return darwinCommandValidators
   return new Map()
 }

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { writeOutput } from '../../shared/cli-output.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
-import { resolvePackagingPlatform } from './platform-definition.mjs'
+import { resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 const qualitySteps = [
@@ -17,13 +17,14 @@ const qualitySteps = [
   ['Native components tests', 'cargo', ['test', '--locked', '--manifest-path', 'apps/buddy/native/Cargo.toml', '--target-dir', 'apps/buddy/.output/build/native', '--workspace']],
 ]
 const packageSteps = {
+  dmg: ['macOS DMG package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:macos']],
   deb: ['Ubuntu deb package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:deb']],
   pacman: ['Arch Linux package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:arch']],
   nsis: ['Windows NSIS package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:windows']],
 }
 
-export function createBuddyReleasePreflightSteps(stage = 'all', platformId = process.platform) {
-  const platform = resolvePackagingPlatform(platformId)
+export function createBuddyReleasePreflightSteps(stage = 'all', targetId = `${process.platform}-${process.arch}`) {
+  const platform = resolveBuildTarget(targetId)
   const platformQualitySteps = qualitySteps.map(([label, command, args]) => {
     if (command !== 'cargo' || !args.includes('--workspace') || platform.features.includes('nativePet'))
       return [label, command, args]
@@ -31,10 +32,10 @@ export function createBuddyReleasePreflightSteps(stage = 'all', platformId = pro
     const position = separator < 0 ? args.length : separator
     return [label, command, [...args.slice(0, position), '--exclude', 'lexora-buddy-pet', ...args.slice(position)]]
   })
-  const target = stage === 'all' ? platform.packageTargets[0] : stage === 'windows' ? 'nsis' : stage
+  const target = stage === 'all' ? platform.packageFormats[0] : stage === 'windows' ? 'nsis' : stage
   const steps = stage === 'all'
     ? [...platformQualitySteps, packageSteps[target], ['Test workspace', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'test']]]
-    : platform.packageTargets.includes(target)
+    : platform.packageFormats.includes(target)
       ? [packageSteps[target]]
       : undefined
 
@@ -65,6 +66,7 @@ export function createBuddyReleaseEnvironment(
 }
 
 const buildCommands = {
+  darwin: { node: { command: process.execPath } },
   linux: { node: { command: process.execPath } },
   win32: { node: { command: process.execPath }, pnpm: { command: 'pnpm.cmd', shell: true } },
 }
@@ -102,7 +104,7 @@ function readStage(args) {
     return 'all'
   if (args.length === 2 && args[0] === '--stage')
     return args[1]
-  throw new Error('Usage: preflight.mjs [--stage deb|pacman|windows]')
+  throw new Error('Usage: preflight.mjs [--stage deb|pacman|nsis|dmg]')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))

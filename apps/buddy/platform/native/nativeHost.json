@@ -5,94 +5,37 @@
     "shellSandbox": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-sandbox",
-      "targets": {
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-sandbox.exe",
-          "resource": "native-host/lexora-buddy-sandbox.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "runtimeGuard": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-runtime-guard",
-      "targets": {
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-runtime-guard.exe",
-          "resource": "native-host/lexora-buddy-runtime-guard.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "fileReader": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-file-reader",
-      "targets": {
-        "linux-x64": {
-          "triple": "x86_64-unknown-linux-gnu",
-          "executable": "lexora-buddy-file-reader",
-          "resource": "native-host/lexora-buddy-file-reader"
-        },
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-file-reader.exe",
-          "resource": "native-host/lexora-buddy-file-reader.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "serviceControl": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-service-control",
-      "targets": {
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-service-control.exe",
-          "resource": "native-host/lexora-buddy-service-control.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "processControl": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-process-control",
-      "targets": {
-        "linux-x64": {
-          "triple": "x86_64-unknown-linux-gnu",
-          "executable": "lexora-buddy-process-control",
-          "resource": "native-host/lexora-buddy-process-control"
-        },
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-process-control.exe",
-          "resource": "native-host/lexora-buddy-process-control.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "privateDirectories": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-private-directories",
-      "targets": {
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-private-directories.exe",
-          "resource": "native-host/lexora-buddy-private-directories.exe"
-        }
-      }
+      "directory": "native-host"
     },
     "imageTransform": {
       "package": "lexora-buddy-image-transform",
       "binary": "lexora-buddy-image-transform",
-      "targets": {
-        "linux-x64": {
-          "triple": "x86_64-unknown-linux-gnu",
-          "executable": "lexora-buddy-image-transform",
-          "resource": "native-image/lexora-buddy-image-transform"
-        },
-        "win32-x64": {
-          "triple": "x86_64-pc-windows-msvc",
-          "executable": "lexora-buddy-image-transform.exe",
-          "resource": "native-image/lexora-buddy-image-transform.exe"
-        }
-      }
+      "directory": "native-image"
     }
   }
 }

@@ -18,10 +18,12 @@ on:
       - apps/buddy/package.json
       - apps/buddy/native/**
       - apps/buddy/platform/native/**
+      - apps/buddy/platform/targets.json
       - apps/buddy/shared/platform/**
       - apps/buddy/resources/icons/app-icon.png
       - packages/assets/buddy/pets/default/**
       - packaging/buddy/release/native-host.mjs
+      - packaging/buddy/release/targets.mjs
 
 permissions:
   contents: read
@@ -206,7 +208,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             apps/buddy/.output/build/native
-          key: buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/platform/native/nativeHost.json', 'packaging/buddy/release/native-host.mjs') }}
+          key: buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/platform/native/nativeHost.json', 'apps/buddy/platform/targets.json', 'packaging/buddy/release/native-host.mjs', 'packaging/buddy/release/targets.mjs') }}
           restore-keys: |
             buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
 
@@ -226,19 +228,23 @@ jobs:
           retention-days: 1
 
   native-checks:
-    name: Native checks (${{ matrix.platform }})
+    name: Native checks (${{ matrix.target }})
     needs: scope
     if: needs.scope.outputs.native == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: Linux
+          - target: linux-x64
             runner: ubuntu-24.04
-            cargo-args: ''
-          - platform: Windows
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: win32-x64
             runner: windows-2025
-            cargo-args: --exclude lexora-buddy-pet
+          - target: win32-arm64
+            runner: windows-11-arm
+          - target: darwin-arm64
+            runner: macos-26
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
@@ -254,6 +260,16 @@ jobs:
         with:
           toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
           components: clippy, rustfmt
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Resolve native target
+        id: target
+        shell: bash
+        run: node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
 
       - name: Cache Rust tests
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -275,22 +291,22 @@ jobs:
         run: cargo fmt --manifest-path apps/buddy/native/Cargo.toml --all -- --check
 
       - name: Lint native components
-        run: cargo clippy --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ matrix.cargo-args }} --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ steps.target.outputs.cargo-args }} --all-targets -- -D warnings
 
       - name: Test native components
-        run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ matrix.cargo-args }}
+        run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ steps.target.outputs.cargo-args }}
 
       - name: Build Windows sandbox acceptance runtime
         if: runner.os == 'Windows'
-        run: cargo build --locked --release --manifest-path apps/buddy/native/Cargo.toml --package lexora-buddy-host --bin lexora-buddy-sandbox --example sandbox-adversary --target x86_64-pc-windows-msvc
+        run: cargo build --locked --release --manifest-path apps/buddy/native/Cargo.toml --package lexora-buddy-host --bin lexora-buddy-sandbox --example sandbox-adversary --target ${{ steps.target.outputs.rust-target }}
 
       - name: Verify Windows sandbox with a non-administrator token
         if: runner.os == 'Windows'
         shell: pwsh
         run: >-
           ./packaging/buddy/release/verify-windows-sandbox.ps1
-          -SandboxExecutable ./apps/buddy/.output/build/native/x86_64-pc-windows-msvc/release/lexora-buddy-sandbox.exe
-          -AdversaryExecutable ./apps/buddy/.output/build/native/x86_64-pc-windows-msvc/release/examples/sandbox-adversary.exe
+          -SandboxExecutable ./apps/buddy/.output/build/native/${{ steps.target.outputs.rust-target }}/release/lexora-buddy-sandbox.exe
+          -AdversaryExecutable ./apps/buddy/.output/build/native/${{ steps.target.outputs.rust-target }}/release/examples/sandbox-adversary.exe
           -InstallComponent
 
   workspace-dependency-cache:

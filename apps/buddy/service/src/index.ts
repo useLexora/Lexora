@@ -6,6 +6,7 @@ import { establishWindowsRuntimeGuard } from '../../platform/windows/runtimeGuar
 import { APPLICATION_DIAGNOSTIC_METHOD, readDiagnosticErrorCode } from '../../shared/diagnostics/applicationDiagnostic'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
+import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
 import { toPublicRunEvent } from '../../shared/runs/publicRunEvent'
 import { runNotifications } from '../../shared/runs/runApi'
 import { buddyServiceFailureCodeSchema } from '../../shared/runtime/runtimeProtocol'
@@ -99,7 +100,7 @@ async function runBuddyService(): Promise<void> {
   process.once('exit', closeDatabase)
   try {
     const builtinSkillsDirectories = await host.step('runtime.guard', async () => {
-      if (process.platform === 'win32')
+      if (process.platform === OPERATING_SYSTEM.Windows)
         await establishWindowsRuntimeGuard()
       return z.array(z.string().min(1)).parse(JSON.parse(process.env.LEXORA_BUDDY_SKILLS_DIRS ?? '[]'))
     })
