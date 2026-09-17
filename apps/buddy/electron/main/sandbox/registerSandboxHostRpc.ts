@@ -1,10 +1,10 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import process from 'node:process'
 import { utilityProcess } from 'electron'
 import { createProxyEnvironment } from '../../../platform/process/proxyEnvironment'
+import { createSandboxDirectory } from '../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
@@ -61,8 +61,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
         if (isLinux(process.platform) && !options.sandboxDirectory)
           return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
-        directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-shell-')))
-        await Promise.all(['home', 'tmp'].map(path => mkdir(join(directory!, path), { mode: 0o700 })))
+        directory = await createSandboxDirectory()
         controller.signal.throwIfAborted()
         child = utilityProcess.fork(sandboxProcessPath, [], {
           cwd: directory,

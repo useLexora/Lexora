@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
 import { runSrtSandbox } from '../backends/srt/runSrtSandbox'
 import { runSandboxCommand } from '../runSandboxCommand'
@@ -21,14 +22,15 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
   let directory: string
   let workspace: string
   let outside: string
+  let privateRoot: string
   let input: SandboxProcessInput
 
   beforeEach(async () => {
     directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-macos-sandbox-')))
     workspace = join(directory, 'workspace')
     outside = join(directory, 'outside')
-    const privateRoot = join(directory, 'private')
-    await Promise.all([workspace, outside, join(privateRoot, 'home'), join(privateRoot, 'tmp')].map(path => mkdir(path, { recursive: true })))
+    privateRoot = await createSandboxDirectory()
+    await Promise.all([workspace, outside].map(path => mkdir(path, { recursive: true })))
     await writeFile(join(outside, 'preserved'), 'outside-preserved')
     const isolatedEnvironment = createSandboxEnvironment(environment, privateRoot)
     for (const key of new Set([...Object.keys(process.env), ...Object.keys(isolatedEnvironment)]))
@@ -56,7 +58,7 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
   afterEach(async () => {
     process.chdir(buddyRoot)
     vi.unstubAllEnvs()
-    await rm(directory, { recursive: true, force: true })
+    await Promise.all([directory, privateRoot].map(path => rm(path, { recursive: true, force: true })))
   })
 
   async function execute(command: string, overrides: Partial<SandboxProcessInput> = {}, options: Partial<Parameters<typeof runSandboxCommand>[1]> = {}) {
