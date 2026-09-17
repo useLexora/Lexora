@@ -1,4 +1,5 @@
 import type { LexoraConfig } from '../../shared/desktopApi'
+import type { BrowserIntegration } from '../browser/BrowserIntegration'
 import type { ExecuteDesktopCommand } from '../desktopCommands'
 import type { DesktopTrayController } from '../tray'
 import type { DesktopRuntimeHost } from './DesktopRuntimeHost'
@@ -30,14 +31,16 @@ export class DesktopIntegrations {
   readonly #environment: DesktopEnvironment
   readonly #runtime: DesktopRuntimeHost
   readonly #windows: DesktopWindowHost
+  readonly #browser: BrowserIntegration
   readonly #requestQuit: () => void
   readonly #subscriptions: Array<() => void> = []
   #tray: DesktopTrayController | null = null
 
-  constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, requestQuit: () => void) {
+  constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, browser: BrowserIntegration, requestQuit: () => void) {
     this.#environment = environment
     this.#runtime = runtime
     this.#windows = windows
+    this.#browser = browser
     this.#requestQuit = requestQuit
     this.executeCommand = createDesktopCommandExecutor({
       getWindow: () => windows.window,
@@ -53,6 +56,7 @@ export class DesktopIntegrations {
     this.#tray?.setLanguage(config.desktop.language)
     this.#windows.applyConfig(config)
     await this.#runtime.applyConfig(config)
+    await this.#browser.host?.updateActivity()
   }
 
   start(): void {
@@ -106,7 +110,9 @@ export class DesktopIntegrations {
       openReleasePage: url => shell.openExternal(url),
     })
     this.#subscriptions.push(registerBrowserDesktopIpc({
-      getHost: () => windows.browser,
+      data: this.#browser.data,
+      screenshots: this.#browser.screenshots,
+      getHost: () => this.#browser.host,
       getWindow: () => windows.window,
       resolveArtifactEntry: async input => browserArtifactEntrySchema.parse(await service.request('artifacts.resolveBrowserEntry', input)),
     }))

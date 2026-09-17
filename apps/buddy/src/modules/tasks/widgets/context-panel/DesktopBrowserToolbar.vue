@@ -29,6 +29,7 @@ import { computed, h, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { getBrowserToolbarMenuActions } from './browserToolbarMenu'
+import DesktopBrowserZoomControls from './DesktopBrowserZoomControls.vue'
 
 const props = defineProps<{
   busyAction: BrowserToolbarBusyAction | null
@@ -42,6 +43,7 @@ const emit = defineEmits<{
   navigate: []
   reload: []
   stop: []
+  zoom: [factor: number | null]
 }>()
 const address = defineModel<string>('address', { required: true })
 const addressId = useId()
@@ -86,7 +88,16 @@ const menuOptions = computed<DropdownOption[]>(() => {
     profileMode: props.state?.profileMode ?? 'default',
     url: props.state?.url ?? 'about:blank',
   })
-  return actions.flatMap((action, index): DropdownOption[] => [
+  return [{
+    key: 'browser-zoom',
+    type: 'render',
+    render: () => h(DesktopBrowserZoomControls, {
+      language: props.language,
+      zoomFactor: props.state?.zoomFactor ?? 1,
+      disabled: !props.state || props.busyAction !== null,
+      onZoom: factor => emit('zoom', factor),
+    }),
+  }, { key: 'browser-zoom-divider', type: 'divider' }, ...actions.flatMap((action, index): DropdownOption[] => [
     ...(index === 1
       ? [{ key: 'browser-profile-divider', type: 'divider' as const }]
       : []),
@@ -96,7 +107,7 @@ const menuOptions = computed<DropdownOption[]>(() => {
       key: action.key,
       label: t(action.labelKey),
     },
-  ])
+  ])]
 })
 
 function handleMenuAction(value: string | number): void {

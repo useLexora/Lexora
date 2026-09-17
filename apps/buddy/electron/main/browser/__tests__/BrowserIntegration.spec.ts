@@ -1,11 +1,12 @@
-import type { DesktopEnvironment } from '../typing'
 import { lstat, mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { describe, expect, it, vi } from 'vitest'
-import { DesktopWindowHost } from '../DesktopWindowHost'
+import { localTransports } from '../../../../platform/ipc/localTransport'
+import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
+import { BrowserIntegration } from '../BrowserIntegration'
 
 vi.mock('electron', () => ({ app: {}, BrowserWindow: {}, Menu: {}, nativeTheme: {}, screen: {}, shell: {} }))
 
@@ -19,7 +20,7 @@ describe.skipIf(process.platform !== 'linux')('desktop browser adapter ownership
       previousServer.listen(socket, resolve)
     })
     try {
-      const windows = new DesktopWindowHost(environment(socket))
+      const windows = new BrowserIntegration({ endpoint: localTransports.unix(socket), getPreferences: () => DEFAULT_BROWSER_PREFERENCES })
       await windows.stopAdapter()
       expect((await lstat(socket)).isSocket()).toBe(true)
     }
@@ -32,7 +33,7 @@ describe.skipIf(process.platform !== 'linux')('desktop browser adapter ownership
   it('releases a successfully acquired endpoint and permits repeated cleanup', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buddy-window-host-'))
     const socket = join(directory, 'adapter.sock')
-    const windows = new DesktopWindowHost(environment(socket))
+    const windows = new BrowserIntegration({ endpoint: localTransports.unix(socket), getPreferences: () => DEFAULT_BROWSER_PREFERENCES })
     try {
       await windows.startAdapter()
       expect((await lstat(socket)).isSocket()).toBe(true)
@@ -46,7 +47,3 @@ describe.skipIf(process.platform !== 'linux')('desktop browser adapter ownership
     }
   })
 })
-
-function environment(browserAdapterSocket: string): DesktopEnvironment {
-  return { paths: { browserAdapterSocket, profile: 'development' } } as DesktopEnvironment
-}

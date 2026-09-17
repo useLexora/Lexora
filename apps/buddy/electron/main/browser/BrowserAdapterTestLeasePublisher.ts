@@ -3,7 +3,7 @@ import type {
   BrowserAdapterIssueLeaseParams,
   BrowserAdapterLease,
 } from '../../../shared/browser/browserAdapterProtocol'
-import type { DesktopBrowserState } from '../../shared/desktopApi'
+import type { DesktopBrowserState } from '../../../shared/browser/browserDesktopApi'
 import { createConnection } from 'node:net'
 import { isAbsolute } from 'node:path'
 import { BROWSER_ADAPTER_MAX_LEASE_TTL_MS } from '../../../shared/browser/browserAdapterProtocol'

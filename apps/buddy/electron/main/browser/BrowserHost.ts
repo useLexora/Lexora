@@ -1,11 +1,9 @@
-import type { BrowserWindow, Event as ElectronEvent, Input, MouseInputEvent, WebPreferences } from 'electron'
+import type { BrowserWindow, Event as ElectronEvent, WebPreferences } from 'electron'
 import type {
   BrowserAcquireControlParams,
   BrowserAction,
   BrowserActParams,
   BrowserControlLease,
-  BrowserErrorCode,
-  BrowserFailureReason,
   BrowserObservation,
   BrowserObserveParams,
   BrowserReleaseControlParams,
@@ -18,26 +16,23 @@ import type {
   DesktopBrowserProfileMode,
   DesktopBrowserSetSurfaceInput,
   DesktopBrowserState,
-} from '../../shared/desktopApi'
-import type {
-  BrowserSecurityPage,
-  BrowserSecuritySession,
-} from './BrowserSecurityPolicy'
+} from '../../../shared/browser/browserDesktopApi'
+import type { BrowserPage } from './BrowserPageSession'
 import type { BrowserSessionTeardownReason } from './BrowserSessionRegistry'
-import type { SemanticBrowserScreenshot, SemanticBrowserScreenshotReference } from './SemanticBrowserDriver'
+import type { SemanticBrowserDriver, SemanticBrowserScreenshot, SemanticBrowserScreenshotReference } from './SemanticBrowserDriver'
 import { randomUUID } from 'node:crypto'
 import { BROWSER_WAIT_DEFAULT_QUIET_MS } from '../../../shared/browser'
+import { BrowserHostError } from './BrowserHostError'
+import { BrowserOperationGuard } from './BrowserOperationGuard'
+import { BrowserPageSession, snapshot } from './BrowserPageSession'
 import {
-  BrowserSecurityPolicy,
   BrowserSecurityPolicyError,
-  isLoopbackBrowserUrl,
 } from './BrowserSecurityPolicy'
 import {
   BrowserSessionRegistry,
   BrowserSessionRegistryError,
 } from './BrowserSessionRegistry'
 import {
-  SemanticBrowserDriver,
   SemanticBrowserDriverError,
 } from './SemanticBrowserDriver'
 
@@ -50,6 +45,10 @@ const BROWSER_WAIT_STATE_INTERVAL_MS = 50
 const BROWSER_WAIT_PROBE_INTERVAL_MS = 150
 
 interface BrowserHostOptions {
+  getFreezeDelay?: (visible: boolean) => number | null
+  onActivityError?: () => void
+  getDefaultZoomFactor?: () => number
+  operations?: BrowserOperationGuard
   createId?: () => string
   createPage?: (descriptor: DesktopBrowserGuestDescriptor) => BrowserPage
   onGuestSetChanged?: () => void
@@ -85,75 +84,11 @@ export interface BrowserPageScreenshot {
   title: string
 }
 
-interface BrowserPage extends BrowserSecurityPage {
-  capturePage: () => Promise<{
-    getSize: () => { height: number, width: number }
-    toPNG: () => Uint8Array
-  }>
-  close: () => void
-  focus: () => void
-  getTitle: () => string
-  getURL: () => string
-  isDestroyed: () => boolean
-  loadURL: (url: string) => Promise<unknown>
-  navigationHistory: {
-    canGoBack: () => boolean
-    canGoForward: () => boolean
-    getActiveIndex: () => number
-    getEntryAtIndex: (index: number) => { url: string } | null
-    goBack: () => void
-    goForward: () => void
-    removeEntryAtIndex: (index: number) => boolean
-  }
-  off: (event: string, listener: (...args: never[]) => void) => unknown
-  on: (event: string, listener: (...args: never[]) => void) => unknown
-  reload: () => void
-  session: BrowserSecuritySession
-  stop: () => void
-}
-
-type BrowserSessionState = Omit<DesktopBrowserState, 'security'>
-
-interface BrowserSession {
-  actionTail: Promise<void>
-  activeNavigationSequence: number | null
-  agentActionDepth: number
-  descriptor: DesktopBrowserGuestDescriptor
-  listeners: Array<() => void>
-  mainFrameCommitSequence: number | null
-  navigationSequence: number
-  page: BrowserPage | null
-  pageReady: BrowserPageDeferred
-  securityPolicy: BrowserSecurityPolicy | null
-  semanticDriver: SemanticBrowserDriver | null
-  shouldClearBootstrapHistory: boolean
-  state: BrowserSessionState
-  stoppedNavigationSequence: number | null
-}
-
-interface BrowserPageDeferred {
-  promise: Promise<BrowserPage>
-  reject: (error: Error) => void
-  resolve: (page: BrowserPage) => void
-}
-
-export class BrowserHostError extends Error {
-  readonly code: BrowserErrorCode
-  readonly reason: BrowserFailureReason | null
-
-  constructor(
-    code: BrowserErrorCode,
-    message: string,
-    reason: BrowserFailureReason | null = null,
-  ) {
-    super(message)
-    this.code = code
-    this.name = 'BrowserHostError'
-    this.reason = reason
-  }
-}
-
 export class BrowserHost {
+  readonly #getFreezeDelay: (visible: boolean) => number | null
+  readonly #onActivityError: () => void
+  readonly #getDefaultZoomFactor: () => number
+  readonly #operations: BrowserOperationGuard
   readonly #createId: () => string
   readonly #createPage: ((descriptor: DesktopBrowserGuestDescriptor) => BrowserPage) | null
   readonly #evictedConversationIds = new Set<string>()
@@ -164,7 +99,7 @@ export class BrowserHost {
 
   readonly #onStateChanged: (state: DesktopBrowserState) => void
   readonly #onGuestSetChanged: () => void
-  readonly #sessions: BrowserSessionRegistry<BrowserSession>
+  readonly #sessions: BrowserSessionRegistry<BrowserPageSession>
   readonly #window: BrowserWindow
   readonly #windowClosedListener: () => void
   readonly #willAttachWebviewListener: (
@@ -175,6 +110,10 @@ export class BrowserHost {
 
   #disposed = false
   constructor(options: BrowserHostOptions) {
+    this.#getFreezeDelay = options.getFreezeDelay ?? (() => null)
+    this.#onActivityError = options.onActivityError ?? (() => {})
+    this.#operations = options.operations ?? new BrowserOperationGuard()
+    this.#getDefaultZoomFactor = options.getDefaultZoomFactor ?? (() => 1)
     this.#createId = options.createId ?? randomUUID
     this.#createPage = options.createPage ?? null
     this.#onGuestSetChanged = options.onGuestSetChanged ?? (() => {})
@@ -197,6 +136,22 @@ export class BrowserHost {
     return this.#disposed
   }
 
+  hasAgentControl(): boolean {
+    return this.#sessions.values().some(session => session.state.controller === 'agent')
+  }
+
+  async updateActivity(): Promise<void> {
+    await Promise.all(this.#sessions.values().map(session => session.updateActivity()))
+  }
+
+  async setZoomFactor(sessionId: string, factor: number | null): Promise<DesktopBrowserState> {
+    this.#operations.assertCanMutate()
+    const session = this.#requireSession(sessionId)
+    await this.#waitForPage(session)
+    this.#requireSession(sessionId)
+    return session.setZoomFactor(factor)
+  }
+
   ensureSession(conversationId: string | null, tabId?: string): DesktopBrowserState {
     return this.#ensureSession(conversationId, 'default', tabId)
   }
@@ -205,6 +160,7 @@ export class BrowserHost {
     sessionId: string,
     profileMode: DesktopBrowserProfileMode,
   ): Promise<DesktopBrowserState> {
+    this.#operations.assertCanMutate()
     const current = this.#requireSession(sessionId)
     if (current.state.profileMode === profileMode)
       return snapshot(current.state)
@@ -218,6 +174,7 @@ export class BrowserHost {
     profileMode: DesktopBrowserProfileMode,
     tabId?: string,
   ): DesktopBrowserState {
+    this.#operations.assertCanMutate()
     this.#assertActive()
     let wasCreated = false
     try {
@@ -285,7 +242,7 @@ export class BrowserHost {
         'Browser session already has an attached guest',
       )
     }
-    this.#attachPage(session, page)
+    session.attach(page)
   }
 
   getGuestDescriptor(sessionId: string): DesktopBrowserGuestDescriptor {
@@ -293,6 +250,7 @@ export class BrowserHost {
   }
 
   acquireControl(input: BrowserAcquireControlParams): BrowserControlLease {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(input.sessionId)
     if (!session.state.conversationId)
       throw new BrowserHostError('BROWSER_CONTROL_REQUIRED', 'Standalone browser sessions remain under human control')
@@ -340,8 +298,8 @@ export class BrowserHost {
     this.#sessions.touch(input.sessionId)
     await this.#waitForPage(session)
     if (recoverablePageError)
-      this.#refreshPageState(session)
-    const observation = await this.#requireSemanticDriver(session).observe({
+      session.refreshPageState()
+    const observation = await session.runWhileActive(() => this.#requireSemanticDriver(session).observe({
       maxElements: input.maxElements,
       pageId: session.state.pageId,
       sessionId: session.state.sessionId,
@@ -350,7 +308,7 @@ export class BrowserHost {
         : session.state.status,
       title: session.state.title,
       url: session.state.url,
-    })
+    }))
     if (recoverablePageError) {
       session.state.error = null
       session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
@@ -379,6 +337,7 @@ export class BrowserHost {
   }
 
   async act(input: BrowserActParams): Promise<BrowserHostActionResult> {
+    this.#operations.assertCanMutate()
     const queuedSession = this.#requireSession(input.sessionId)
     const predecessor = queuedSession.actionTail
     let releaseQueue!: () => void
@@ -387,6 +346,7 @@ export class BrowserHost {
     })
     await predecessor
     try {
+      this.#operations.assertCanMutate()
       const session = this.#requireSession(input.sessionId)
       if (session !== queuedSession)
         throw this.#sessionNotFound(input.sessionId)
@@ -463,7 +423,7 @@ export class BrowserHost {
             session.agentActionDepth -= 1
           }
           semanticDriver.invalidateDocument()
-          this.#refreshPageState(session)
+          session.refreshPageState()
           this.#publish(session)
       }
 
@@ -497,9 +457,11 @@ export class BrowserHost {
 
   async captureScreenshot(sessionId: string): Promise<BrowserPageScreenshot> {
     const session = this.#requireSession(sessionId)
+    if (!session.state.visible)
+      throw new BrowserHostError('BROWSER_PAGE_FAILED', 'Screenshots require a visible browser page')
     const page = await this.#waitForPage(session)
     this.#sessions.touch(sessionId)
-    const screenshot = await page.capturePage()
+    const screenshot = await session.runWhileActive(() => page.capturePage())
     return {
       bytes: screenshot.toPNG(),
       title: page.getTitle().slice(0, 512),
@@ -507,8 +469,10 @@ export class BrowserHost {
   }
 
   async navigate(sessionId: string, rawUrl: string): Promise<DesktopBrowserState> {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
     await this.#waitForPage(session)
+    this.#operations.assertCanMutate()
     const navigationSequence = this.#beginPageAction(session)
     let url: string
     try {
@@ -537,7 +501,7 @@ export class BrowserHost {
 
   async #loadPage(
     sessionId: string,
-    session: BrowserSession,
+    session: BrowserPageSession,
     navigationSequence: number,
     url: string,
   ): Promise<DesktopBrowserState> {
@@ -552,8 +516,8 @@ export class BrowserHost {
         return snapshot(session.state)
       session.stoppedNavigationSequence = null
       this.#finishPageAction(session, navigationSequence)
-      this.#removeBootstrapHistory(session)
-      this.#refreshPageState(session)
+      session.removeBootstrapHistory()
+      session.refreshPageState()
       session.state.status = 'ready'
       this.#publish(session)
       return snapshot(session.state)
@@ -570,7 +534,7 @@ export class BrowserHost {
         this.#finishPageAction(session, navigationSequence)
         session.state.error = null
         session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
-        this.#refreshPageState(session)
+        session.refreshPageState()
         this.#publish(session)
         return snapshot(session.state)
       }
@@ -585,7 +549,7 @@ export class BrowserHost {
 
   async #waitForNavigationSettlement(
     sessionId: string,
-    session: BrowserSession,
+    session: BrowserPageSession,
     navigationSequence: number,
     loadError: unknown,
   ): Promise<DesktopBrowserState> {
@@ -606,7 +570,7 @@ export class BrowserHost {
         this.#finishPageAction(session, navigationSequence)
         session.state.error = null
         session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
-        this.#refreshPageState(session)
+        session.refreshPageState()
         this.#publish(session)
         return snapshot(session.state)
       }
@@ -667,8 +631,9 @@ export class BrowserHost {
   }
 
   goBack(sessionId: string): void {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
-    const history = this.#requirePage(session).navigationHistory
+    const history = session.requirePage().navigationHistory
     if (!history.canGoBack())
       return
     this.#beginPageAction(session)
@@ -676,8 +641,9 @@ export class BrowserHost {
   }
 
   goForward(sessionId: string): void {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
-    const history = this.#requirePage(session).navigationHistory
+    const history = session.requirePage().navigationHistory
     if (!history.canGoForward())
       return
     this.#beginPageAction(session)
@@ -685,11 +651,12 @@ export class BrowserHost {
   }
 
   reload(sessionId: string): void {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
     if (session.state.url === 'about:blank')
       return
     this.#beginPageAction(session)
-    this.#requirePage(session).reload()
+    session.requirePage().reload()
   }
 
   stop(sessionId: string): void {
@@ -698,8 +665,8 @@ export class BrowserHost {
       return
     session.stoppedNavigationSequence = session.navigationSequence
     this.#finishPageAction(session, session.navigationSequence)
-    this.#requirePage(session).stop()
-    this.#refreshPageState(session)
+    session.requirePage().stop()
+    session.refreshPageState()
     session.state.error = null
     session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
     this.#publish(session)
@@ -709,8 +676,10 @@ export class BrowserHost {
     sessionId: string,
     grant: BrowserLocalFileGrant,
   ): Promise<DesktopBrowserState> {
+    this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
     await this.#waitForPage(session)
+    this.#operations.assertCanMutate()
     const navigationSequence = this.#beginPageAction(session)
     let url: string
     try {
@@ -740,7 +709,7 @@ export class BrowserHost {
   }
 
   async #replaceSessionProfile(
-    current: BrowserSession,
+    current: BrowserPageSession,
     profileMode: DesktopBrowserProfileMode,
   ): Promise<DesktopBrowserState> {
     const conversationId = current.state.conversationId
@@ -782,12 +751,13 @@ export class BrowserHost {
     this.#sessions.setProtected(session.state.sessionId, 'surface', true)
     if (!session.state.visible) {
       session.state.visible = true
+      session.markActive()
       this.#publish(session)
     }
   }
 
   async #waitForActionCondition(
-    session: BrowserSession,
+    session: BrowserPageSession,
     action: BrowserWaitAction,
     controlEpoch: number,
     reference: { documentRevision: number, observationId: string },
@@ -808,7 +778,7 @@ export class BrowserHost {
     const session = this.#requireSession(sessionId)
     await this.#waitForPage(session)
     const startedAt = Date.now()
-    const satisfied = await this.#pollWaitCondition(session, spec, {})
+    const satisfied = await session.runWhileActive(() => this.#pollWaitCondition(session, spec, {}))
     return {
       condition: spec.condition,
       elapsedMs: Date.now() - startedAt,
@@ -817,7 +787,7 @@ export class BrowserHost {
   }
 
   async #pollWaitCondition(
-    session: BrowserSession,
+    session: BrowserPageSession,
     spec: BrowserWaitRequest,
     options: {
       controlEpoch?: number
@@ -856,7 +826,7 @@ export class BrowserHost {
   }
 
   async #evaluateWaitCondition(
-    session: BrowserSession,
+    session: BrowserPageSession,
     spec: BrowserWaitRequest,
     initialUrl: string,
     reference: { documentRevision: number, observationId: string } | undefined,
@@ -904,7 +874,7 @@ export class BrowserHost {
   }
 
   async #waitForPostActionSettlement(
-    session: BrowserSession,
+    session: BrowserPageSession,
     detectNavigation: boolean,
   ): Promise<void> {
     if (detectNavigation)
@@ -964,27 +934,26 @@ export class BrowserHost {
     conversationId: string | null,
     sessionId: string,
     profileMode: DesktopBrowserProfileMode,
-  ): BrowserSession {
+  ): BrowserPageSession {
     const descriptor: DesktopBrowserGuestDescriptor = {
       partition: profileMode === 'default'
         ? BROWSER_DEFAULT_PARTITION
         : `buddy-browser-incognito:${sessionId}`,
       sessionId,
     }
-    const session: BrowserSession = {
-      actionTail: Promise.resolve(),
-      activeNavigationSequence: null,
-      agentActionDepth: 0,
+    const session: BrowserPageSession = new BrowserPageSession({
+      getFreezeDelay: this.#getFreezeDelay,
+      onActivityError: this.#onActivityError,
       descriptor,
-      listeners: [],
-      mainFrameCommitSequence: null,
-      navigationSequence: 0,
-      page: null,
-      pageReady: createBrowserPageDeferred(),
-      securityPolicy: null,
-      semanticDriver: null,
-      shouldClearBootstrapHistory: true,
+      createId: this.#createId,
+      getDefaultZoomFactor: this.#getDefaultZoomFactor,
+      operations: this.#operations,
+      onStateChanged: this.#onStateChanged,
+      onGuestSetChanged: this.#onGuestSetChanged,
+      onHumanInput: () => this.#acceptHumanPageInput(session),
+      isCurrent: () => this.#sessions.get(sessionId) === session,
       state: {
+        zoomFactor: this.#getDefaultZoomFactor(),
         canGoBack: false,
         canGoForward: false,
         controller: 'human',
@@ -999,59 +968,15 @@ export class BrowserHost {
         url: 'about:blank',
         visible: false,
       },
-      stoppedNavigationSequence: null,
-    }
+    })
     const page = this.#createPage?.(descriptor)
     if (page)
-      this.#attachPage(session, page)
+      session.attach(page)
     return session
   }
 
-  #attachPage(session: BrowserSession, page: BrowserPage): void {
-    session.page = page
-    session.semanticDriver = new SemanticBrowserDriver({
-      createId: this.#createId,
-      page,
-    })
-    session.securityPolicy = new BrowserSecurityPolicy({
-      onCertificateError: ({ error, url }) => {
-        session.state.error = {
-          code: 'BROWSER_CERTIFICATE_ERROR',
-          message: error,
-        }
-        session.state.status = 'error'
-        session.state.url = normalizeBrowserUrl(url) ?? session.state.url
-        this.#publish(session)
-      },
-      onPermissionDenied: () => {
-        session.state.error = {
-          code: 'BROWSER_PERMISSION_DENIED',
-          message: 'Browser permission request was denied',
-        }
-        this.#publish(session)
-      },
-      onRequestBlocked: (details) => {
-        if (details.resourceType !== 'mainFrame')
-          return
-        session.state.error = {
-          code: 'BROWSER_NAVIGATION_BLOCKED',
-          message: 'Browser navigation was blocked by network policy',
-          reason: 'NETWORK_POLICY_BLOCKED',
-        }
-        session.state.status = 'error'
-        this.#publish(session)
-      },
-      page,
-      session: page.session,
-    })
-    this.#configureSession(session, page)
-    session.pageReady.resolve(page)
-    this.#refreshPageState(session)
-    this.#publish(session)
-  }
-
   #teardownSession(
-    session: BrowserSession,
+    session: BrowserPageSession,
     reason: BrowserSessionTeardownReason,
   ): void {
     if (reason === 'evicted') {
@@ -1067,224 +992,23 @@ export class BrowserHost {
     session.state.visible = false
     this.#onSessionClosed(snapshot(session.state), reason)
     const page = session.page
-    this.#releasePage(session)
+    session.releasePage()
     session.pageReady.reject(this.#sessionNotFound(session.state.sessionId))
     if (page && !page.isDestroyed())
       page.close()
     this.#onGuestSetChanged()
   }
 
-  #configureSession(session: BrowserSession, page: BrowserPage): void {
-    this.#listen(
-      session,
-      page,
-      'before-input-event',
-      (_event: { preventDefault: () => void }, input: Input) => {
-        if (session.agentActionDepth > 0)
-          return
-        if (input.type === 'keyDown' || input.type === 'rawKeyDown')
-          this.#acceptHumanPageInput(session)
-      },
-    )
-    this.#listen(
-      session,
-      page,
-      'before-mouse-event',
-      (_event: unknown, input: MouseInputEvent) => {
-        if (
-          session.agentActionDepth === 0
-          && ['contextMenu', 'mouseDown', 'mouseWheel'].includes(input.type)
-        ) {
-          this.#acceptHumanPageInput(session)
-        }
-      },
-    )
-    this.#listen(session, page, 'did-start-loading', () => {
-      const isIndependentNavigation = session.activeNavigationSequence === null
-      if (isIndependentNavigation) {
-        session.navigationSequence += 1
-        session.activeNavigationSequence = session.navigationSequence
-        session.semanticDriver?.invalidateDocument()
-        session.stoppedNavigationSequence = null
-      }
-      if (isIndependentNavigation)
-        session.state.error = null
-      if (!session.state.error)
-        session.state.status = 'loading'
-      this.#refreshPageState(session)
-      this.#publish(session)
-    })
-    this.#listen(session, page, 'did-stop-loading', () => {
-      this.#removeBootstrapHistory(session)
-      const isPreparingInitialNavigation = session.state.status === 'loading'
-        && session.state.url === 'about:blank'
-      if (
-        !isPreparingInitialNavigation
-        && (!session.state.error || session.state.error.code === 'BROWSER_PERMISSION_DENIED')
-      ) {
-        session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
-      }
-      if (!isPreparingInitialNavigation)
-        session.activeNavigationSequence = null
-      this.#refreshPageState(session)
-      this.#publish(session)
-    })
-    this.#listen(session, page, 'page-title-updated', (_event, title: string) => {
-      session.state.title = title.slice(0, 512)
-      this.#publish(session)
-    })
-    const updateNavigation = (_event: unknown, url: string) => {
-      const normalizedUrl = normalizeBrowserUrl(url)
-      if (!normalizedUrl)
-        return
-      session.mainFrameCommitSequence = session.navigationSequence
-      this.#refreshPageState(session)
-      session.state.url = normalizedUrl
-      if (session.state.error?.code === 'BROWSER_PAGE_FAILED') {
-        session.state.error = null
-        session.state.status = 'loading'
-      }
-      this.#publish(session)
-    }
-    this.#listen(session, page, 'did-navigate', updateNavigation)
-    this.#listen(
-      session,
-      page,
-      'did-frame-navigate',
-      (
-        _event: unknown,
-        _url: string,
-        _httpResponseCode: number,
-        _httpStatusText: string,
-        isMainFrame: boolean,
-      ) => {
-        if (isMainFrame)
-          return
-        session.semanticDriver?.invalidateDocument()
-        this.#publish(session)
-      },
-    )
-    this.#listen(
-      session,
-      page,
-      'did-navigate-in-page',
-      (_event: unknown, url: string, isMainFrame: boolean) => {
-        session.semanticDriver?.invalidateDocument()
-        if (isMainFrame)
-          updateNavigation(_event, url)
-        else
-          this.#publish(session)
-      },
-    )
-    const blockUnsafeNavigation = (event: { preventDefault: () => void }, url: string) => {
-      if (normalizeBrowserUrl(url))
-        return
-      event.preventDefault()
-      session.state.error = {
-        code: 'BROWSER_NAVIGATION_BLOCKED',
-        message: 'Browser navigation only supports HTTP, HTTPS, and authorized local files',
-        reason: 'UNSUPPORTED_PROTOCOL',
-      }
-      session.state.status = 'error'
-      this.#publish(session)
-    }
-    this.#listen(session, page, 'will-navigate', blockUnsafeNavigation)
-    this.#listen(session, page, 'will-redirect', blockUnsafeNavigation)
-    this.#listen(
-      session,
-      page,
-      'did-fail-load',
-      (
-        _event,
-        errorCode: number,
-        errorDescription: string,
-        validatedUrl: string,
-        isMainFrame: boolean,
-      ) => {
-        if (!isMainFrame || errorCode === -3)
-          return
-        const failedUrl = normalizeBrowserUrl(validatedUrl)
-        if (
-          failedUrl
-          && session.state.url !== 'about:blank'
-          && session.state.url !== failedUrl
-        ) {
-          return
-        }
-        session.state.error = {
-          code: 'BROWSER_PAGE_FAILED',
-          message: errorDescription.slice(0, 1_024),
-        }
-        session.state.status = 'error'
-        session.state.url = failedUrl ?? session.state.url
-        this.#publish(session)
-      },
-    )
-    this.#listen(session, page, 'render-process-gone', () => {
-      session.semanticDriver?.invalidateDocument()
-      session.state.error = {
-        code: 'BROWSER_PAGE_CRASHED',
-        message: 'Browser page renderer exited',
-      }
-      session.state.status = 'error'
-      this.#publish(session)
-    })
-    this.#listen(session, page, 'unresponsive', () => {
-      session.state.error = {
-        code: 'BROWSER_PAGE_UNRESPONSIVE',
-        message: 'Browser page is not responding',
-      }
-      session.state.status = 'error'
-      this.#publish(session)
-    })
-    this.#listen(session, page, 'responsive', () => {
-      if (session.state.error?.code !== 'BROWSER_PAGE_UNRESPONSIVE')
-        return
-      session.state.error = null
-      session.state.status = 'ready'
-      this.#refreshPageState(session)
-      this.#publish(session)
-    })
-    this.#listen(session, page, 'destroyed', () => {
-      if (this.#sessions.get(session.state.sessionId) !== session || session.page !== page)
-        return
-      this.#releasePage(session)
-      session.pageReady = createBrowserPageDeferred()
-      session.shouldClearBootstrapHistory = true
-      session.state.canGoBack = false
-      session.state.canGoForward = false
-      session.state.error = {
-        code: 'BROWSER_PAGE_CRASHED',
-        message: 'Browser guest was detached from the Desktop renderer',
-      }
-      session.state.pageId = this.#createId()
-      session.state.status = 'error'
-      session.state.title = ''
-      session.state.url = 'about:blank'
-      this.#publish(session)
-      this.#onGuestSetChanged()
-    })
-  }
-
-  #hide(session: BrowserSession): void {
+  #hide(session: BrowserPageSession): void {
     this.#sessions.setProtected(session.state.sessionId, 'surface', false)
     if (session.state.visible) {
       session.state.visible = false
+      session.markActive()
       this.#publish(session)
     }
   }
 
-  #listen(
-    session: BrowserSession,
-    page: BrowserPage,
-    event: string,
-    listener: (...args: never[]) => void,
-  ): void {
-    page.on(event, listener)
-    session.listeners.push(() => page.off(event, listener))
-  }
-
-  #beginPageAction(session: BrowserSession): number {
+  #beginPageAction(session: BrowserPageSession): number {
     this.#sessions.touch(session.state.sessionId)
     session.navigationSequence += 1
     session.activeNavigationSequence = session.navigationSequence
@@ -1296,57 +1020,26 @@ export class BrowserHost {
     return session.navigationSequence
   }
 
-  #isCurrentPageAction(session: BrowserSession, navigationSequence: number): boolean {
+  #isCurrentPageAction(session: BrowserPageSession, navigationSequence: number): boolean {
     return session.navigationSequence === navigationSequence
   }
 
-  #finishPageAction(session: BrowserSession, navigationSequence: number): void {
+  #finishPageAction(session: BrowserPageSession, navigationSequence: number): void {
     if (session.activeNavigationSequence === navigationSequence)
       session.activeNavigationSequence = null
   }
 
-  #shouldContinuePageAction(session: BrowserSession, navigationSequence: number): boolean {
+  #shouldContinuePageAction(session: BrowserPageSession, navigationSequence: number): boolean {
     return this.#isCurrentPageAction(session, navigationSequence)
       && session.stoppedNavigationSequence !== navigationSequence
   }
 
-  #publish(session: BrowserSession): void {
-    this.#onStateChanged(snapshot(session.state))
-  }
-
-  #removeBootstrapHistory(session: BrowserSession): void {
-    if (!session.shouldClearBootstrapHistory)
-      return
-    const page = session.page
-    if (!page || page.isDestroyed())
-      return
-    const history = page.navigationHistory
-    const firstEntry = history.getEntryAtIndex(0)
-    if (!firstEntry)
-      return
-    if (firstEntry.url !== 'about:blank') {
-      session.shouldClearBootstrapHistory = false
-      return
-    }
-    if (history.getActiveIndex() > 0 && history.removeEntryAtIndex(0))
-      session.shouldClearBootstrapHistory = false
-  }
-
-  #refreshPageState(session: BrowserSession): void {
-    const page = session.page
-    if (!page || page.isDestroyed())
-      return
-    session.state.canGoBack = page.navigationHistory.canGoBack()
-    session.state.canGoForward = page.navigationHistory.canGoForward()
-    session.state.title = page.getTitle().slice(0, 512)
-    const pageUrl = page.getURL()
-    const normalizedPageUrl = normalizeBrowserUrl(pageUrl)
-    if (normalizedPageUrl)
-      session.state.url = normalizedPageUrl
+  #publish(session: BrowserPageSession): void {
+    session.publish()
   }
 
   #assertCurrentPage(
-    session: BrowserSession,
+    session: BrowserPageSession,
     pageId: string,
     operation: string,
   ): void {
@@ -1358,7 +1051,7 @@ export class BrowserHost {
     )
   }
 
-  #assertAgentControl(session: BrowserSession, controlEpoch: number): void {
+  #assertAgentControl(session: BrowserPageSession, controlEpoch: number): void {
     if (
       session.state.controller === 'agent'
       && session.state.controlEpoch === controlEpoch
@@ -1371,7 +1064,7 @@ export class BrowserHost {
     )
   }
 
-  #advanceControlEpoch(session: BrowserSession): void {
+  #advanceControlEpoch(session: BrowserPageSession): void {
     if (session.state.controlEpoch >= Number.MAX_SAFE_INTEGER) {
       throw new BrowserHostError(
         'BROWSER_PAGE_FAILED',
@@ -1381,7 +1074,7 @@ export class BrowserHost {
     session.state.controlEpoch += 1
   }
 
-  #acceptHumanPageInput(session: BrowserSession): void {
+  #acceptHumanPageInput(session: BrowserPageSession): void {
     if (!session.state.visible)
       return
     this.#sessions.touch(session.state.sessionId)
@@ -1393,7 +1086,7 @@ export class BrowserHost {
   }
 
   #returnHumanControl(
-    session: BrowserSession,
+    session: BrowserPageSession,
     invalidateObservation = false,
   ): DesktopBrowserState {
     this.#advanceControlEpoch(session)
@@ -1435,39 +1128,7 @@ export class BrowserHost {
     } satisfies WebPreferences)
   }
 
-  #releasePage(session: BrowserSession): void {
-    try {
-      session.securityPolicy?.dispose()
-    }
-    catch {}
-    session.securityPolicy = null
-    try {
-      session.semanticDriver?.dispose()
-    }
-    catch {}
-    session.semanticDriver = null
-    for (const removeListener of session.listeners) {
-      try {
-        removeListener()
-      }
-      catch {}
-    }
-    session.listeners = []
-    session.page = null
-  }
-
-  #requirePage(session: BrowserSession): BrowserPage {
-    const page = session.page
-    if (!page || page.isDestroyed()) {
-      throw new BrowserHostError(
-        'BROWSER_PAGE_FAILED',
-        'Browser guest is not attached',
-      )
-    }
-    return page
-  }
-
-  #requireSemanticDriver(session: BrowserSession): SemanticBrowserDriver {
+  #requireSemanticDriver(session: BrowserPageSession): SemanticBrowserDriver {
     const driver = session.semanticDriver
     if (!driver) {
       throw new BrowserHostError(
@@ -1478,15 +1139,19 @@ export class BrowserHost {
     return driver
   }
 
-  async #waitForPage(session: BrowserSession): Promise<BrowserPage> {
+  async #waitForPage(session: BrowserPageSession): Promise<BrowserPage> {
     const page = session.page
-    if (page && !page.isDestroyed())
+    if (page && !page.isDestroyed()) {
+      await session.resumePage()
       return page
+    }
     this.#onGuestSetChanged()
-    return waitForBrowserPage(session.pageReady.promise)
+    const attached = await waitForBrowserPage(session.pageReady.promise)
+    await session.resumePage()
+    return attached
   }
 
-  #requireSession(sessionId: string): BrowserSession {
+  #requireSession(sessionId: string): BrowserPageSession {
     this.#assertActive()
     const session = this.#sessions.get(sessionId)
     if (!session)
@@ -1499,18 +1164,6 @@ export class BrowserHost {
       'BROWSER_SESSION_NOT_FOUND',
       `Browser session is unavailable: ${sessionId}`,
     )
-  }
-}
-
-function normalizeBrowserUrl(rawUrl: string): string | null {
-  try {
-    const url = new URL(rawUrl)
-    if (!['file:', 'http:', 'https:'].includes(url.protocol))
-      return null
-    return url.toString()
-  }
-  catch {
-    return null
   }
 }
 
@@ -1536,45 +1189,6 @@ function swallowDriverProbeFailure(error: unknown): false {
   throw error
 }
 
-function snapshot(state: BrowserSessionState): DesktopBrowserState {
-  return {
-    ...state,
-    error: state.error ? { ...state.error } : null,
-    security: projectSecurityState(state.url, state.error?.code),
-  }
-}
-
-function projectSecurityState(
-  rawUrl: string,
-  errorCode: BrowserErrorCode | undefined,
-): DesktopBrowserState['security'] {
-  if (rawUrl === 'about:blank')
-    return { kind: 'blank', origin: null }
-  const url = new URL(rawUrl)
-  const origin = url.origin
-  if (errorCode === 'BROWSER_CERTIFICATE_ERROR')
-    return { kind: 'certificate-error', origin }
-  if (url.protocol === 'file:')
-    return { kind: 'local', origin: 'file://' }
-  if (isLoopbackBrowserUrl(rawUrl))
-    return { kind: 'local', origin }
-  return {
-    kind: url.protocol === 'https:' ? 'secure' : 'insecure',
-    origin,
-  }
-}
-
-function createBrowserPageDeferred(): BrowserPageDeferred {
-  let reject!: (error: Error) => void
-  let resolve!: (page: BrowserPage) => void
-  const promise = new Promise<BrowserPage>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  void promise.catch(() => {})
-  return { promise, reject, resolve }
-}
-
 function waitForBrowserPage(promise: Promise<BrowserPage>): Promise<BrowserPage> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -1596,3 +1210,5 @@ function waitForBrowserPage(promise: Promise<BrowserPage>): Promise<BrowserPage>
 function wait(durationMs: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, durationMs))
 }
+
+export { BrowserHostError } from './BrowserHostError'

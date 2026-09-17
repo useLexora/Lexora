@@ -18,7 +18,7 @@ import type {
   BrowserAdapterResponse,
   BrowserAdapterSuccessResult,
 } from '../../../shared/browser/browserAdapterProtocol'
-import type { DesktopBrowserState } from '../../shared/desktopApi'
+import type { DesktopBrowserState } from '../../../shared/browser/browserDesktopApi'
 import type { BrowserHostActionResult } from './BrowserHost'
 import { Buffer } from 'node:buffer'
 import { createHash, randomBytes } from 'node:crypto'
@@ -35,7 +35,7 @@ import {
   browserAdapterResponseSchema,
 } from '../../../shared/browser/browserAdapterProtocol'
 import { redactBrowserRuntimeUrl } from './browserPrivacy'
-import { projectBrowserState } from './registerBrowserHostRpc'
+import { projectBrowserState } from './browserRuntimeProjection'
 
 interface BrowserAdapterHostPort {
   acquireControl: (input: BrowserAcquireControlParams) => BrowserControlLease

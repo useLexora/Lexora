@@ -234,6 +234,7 @@ async function createFixture(options: { now?: () => number } = {}) {
   temporaryDirectories.push(directory)
   const socketPath = join(directory, 'browser-adapter.sock')
   const state: DesktopBrowserState = {
+    zoomFactor: 1,
     canGoBack: false,
     canGoForward: false,
     controller: 'human',

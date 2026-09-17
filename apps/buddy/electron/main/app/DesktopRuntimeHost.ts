@@ -1,4 +1,5 @@
 import type { LexoraConfig } from '../../shared/desktopApi'
+import type { BrowserIntegration } from '../browser/BrowserIntegration'
 import type { DesktopFeature } from '../platform/desktopFeatures'
 import type { CredentialVault } from '../secrets/CredentialVault'
 import type { DesktopWindowHost } from './DesktopWindowHost'
@@ -34,6 +35,7 @@ export class DesktopRuntimeHost {
   readonly configStore: LexoraConfigStore
   readonly #environment: DesktopEnvironment
   readonly #windows: DesktopWindowHost
+  readonly #browser: BrowserIntegration
   #credentials: CredentialVault | null = null
   #config: LexoraConfig | null = null
   #features: DesktopFeature[] = []
@@ -44,9 +46,10 @@ export class DesktopRuntimeHost {
   #sandboxCheck: ReturnType<typeof checkSandboxEnvironment> | null = null
   #sandboxSetup: ReturnType<typeof setupWindowsSandbox> | null = null
 
-  constructor(environment: DesktopEnvironment, windows: DesktopWindowHost) {
+  constructor(environment: DesktopEnvironment, windows: DesktopWindowHost, browser: BrowserIntegration) {
     this.#environment = environment
     this.#windows = windows
+    this.#browser = browser
     this.configStore = new LexoraConfigStore({ configPath: environment.paths.configPath })
     this.contextPanel = new ContextPanelHost(async (operation) => {
       try {
@@ -151,8 +154,8 @@ export class DesktopRuntimeHost {
             ...this.#sandboxOptions(),
           }),
           registerBrowserHostRpc(peer, {
-            createAdapterLease: input => this.#windows.adapter.issueLease(input),
-            getHost: () => this.#windows.browser,
+            createAdapterLease: input => this.#browser.adapter.issueLease(input),
+            getHost: () => this.#browser.host,
           }),
           registerCredentialHostRpc(peer, credentials),
           ...this.#features.map(feature => feature.bindPeer(peer)),

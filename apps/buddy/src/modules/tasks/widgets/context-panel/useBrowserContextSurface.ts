@@ -3,6 +3,7 @@ import type {
   DesktopBrowserProfileMode,
   DesktopBrowserState,
 } from '@buddy-electron/shared/desktopApi'
+import type { BrowserScreenshotResult } from '@buddy-shared/browser/browserDesktopApi'
 import type { Ref } from 'vue'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { computed, onBeforeUnmount, onMounted, readonly, shallowRef, watch } from 'vue'
@@ -10,9 +11,9 @@ import { normalizeBrowserAddress } from './browserAddress'
 import { useBrowserSurface } from './useBrowserSurface'
 
 interface UseBrowserContextSurfaceOptions {
-  sessionReady?: (state: DesktopBrowserState, tabId?: string) => void
-  state?: Readonly<Ref<DesktopBrowserState | null>>
-  updateState?: (state: DesktopBrowserState) => void
+  sessionReady: (state: DesktopBrowserState, tabId?: string) => void
+  state: Readonly<Ref<DesktopBrowserState | null>>
+  updateState: (state: DesktopBrowserState) => void
   enabled?: Readonly<Ref<boolean>>
   visible?: Readonly<Ref<boolean>>
   tabId?: Readonly<Ref<string | undefined>>
@@ -23,22 +24,11 @@ interface UseBrowserContextSurfaceOptions {
 }
 
 export function useBrowserContextSurface(options: UseBrowserContextSurfaceOptions) {
-  const localState = shallowRef<DesktopBrowserState | null>(null)
-  const state = computed({
-    get: () => options.state?.value ?? localState.value,
-    set: (value: DesktopBrowserState | null) => {
-      if (options.state) {
-        if (value)
-          options.updateState?.(value)
-      }
-      else {
-        localState.value = value
-      }
-    },
-  })
+  const state = options.state
   const failed = shallowRef(false)
   const isLoading = computed(() => state.value?.status === 'loading')
   const isCapturingScreenshot = shallowRef(false)
+  const isSettingZoom = shallowRef(false)
   const isOpeningExternal = shallowRef(false)
   const isShowingFileInFolder = shallowRef(false)
   const isSwitchingProfile = shallowRef(false)
@@ -47,25 +37,19 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
   let mounted = false
   let stateRequest = 0
   let stateVersion = 0
-  let stopStateChanged: (() => void) | null = null
+  watch(options.state, () => {
+    stateVersion += 1
+  }, { flush: 'sync' })
 
   onMounted(() => {
     mounted = true
     const currentLifecycle = ++lifecycle
-    stopStateChanged = options.api.onStateChanged((nextState) => {
-      if (!mounted || nextState.sessionId !== state.value?.sessionId)
-        return
-      stateVersion += 1
-      state.value = nextState
-    })
     void ensureSession(currentLifecycle)
   })
 
   onBeforeUnmount(() => {
     mounted = false
     lifecycle += 1
-    stopStateChanged?.()
-    stopStateChanged = null
   })
 
   useBrowserSurface({
@@ -77,8 +61,8 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
   })
   watch([options.conversationId, () => options.tabId?.value, () => options.enabled?.value], () => {
     lifecycle += 1
-    state.value = null
     isCapturingScreenshot.value = false
+    isSettingZoom.value = false
     isOpeningExternal.value = false
     isShowingFileInFolder.value = false
     isSwitchingProfile.value = false
@@ -95,11 +79,11 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     const tabId = options.tabId?.value
     try {
       const nextState = await options.api.ensureSession(options.conversationId.value, tabId)
-      options.sessionReady?.(nextState, tabId)
+      options.sessionReady(nextState, tabId)
       if (!mounted || lifecycle !== currentLifecycle)
         return
       if (stateVersion === version)
-        state.value = nextState
+        options.updateState(nextState)
     }
     catch {
       if (mounted && lifecycle === currentLifecycle)
@@ -122,22 +106,40 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     }
   }
 
-  async function captureScreenshot(): Promise<boolean> {
+  async function captureScreenshot(): Promise<BrowserScreenshotResult | 'failed'> {
     const sessionId = state.value?.sessionId
     if (!sessionId || isCapturingScreenshot.value)
-      return false
+      return 'canceled'
     const currentLifecycle = lifecycle
     isCapturingScreenshot.value = true
     try {
-      const saved = await options.api.captureScreenshot(sessionId)
-      return mounted && lifecycle === currentLifecycle && saved
+      const result = await options.api.captureScreenshot(sessionId)
+      return mounted && lifecycle === currentLifecycle ? result : 'canceled'
+    }
+    catch {
+      return mounted && lifecycle === currentLifecycle ? 'failed' : 'canceled'
+    }
+    finally {
+      if (mounted && lifecycle === currentLifecycle)
+        isCapturingScreenshot.value = false
+    }
+  }
+
+  async function setZoomFactor(factor: number | null): Promise<boolean> {
+    const sessionId = state.value?.sessionId
+    if (!sessionId || isSettingZoom.value)
+      return false
+    const currentLifecycle = lifecycle
+    isSettingZoom.value = true
+    try {
+      return await updateSessionState(sessionId, () => options.api.setZoomFactor(sessionId, factor))
     }
     catch {
       return false
     }
     finally {
       if (mounted && lifecycle === currentLifecycle)
-        isCapturingScreenshot.value = false
+        isSettingZoom.value = false
     }
   }
 
@@ -258,12 +260,13 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     const version = stateVersion
     const tabId = options.tabId?.value
     const nextState = await command()
+    const current = mounted && lifecycle === currentLifecycle && request === stateRequest && state.value?.sessionId === sessionId
     if (nextState.sessionId !== sessionId)
-      options.sessionReady?.(nextState, tabId)
-    if (!mounted || lifecycle !== currentLifecycle || request !== stateRequest || state.value?.sessionId !== sessionId)
+      options.sessionReady(nextState, tabId)
+    if (!current)
       return false
     if (version === stateVersion)
-      state.value = nextState
+      options.updateState(nextState)
     return true
   }
 
@@ -273,6 +276,7 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     goBack,
     goForward,
     isCapturingScreenshot: readonly(isCapturingScreenshot),
+    isSettingZoom: readonly(isSettingZoom),
     isLoading: readonly(isLoading),
     isOpeningExternal: readonly(isOpeningExternal),
     isShowingFileInFolder: readonly(isShowingFileInFolder),
@@ -282,6 +286,7 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     openExternal,
     reload,
     setProfileMode,
+    setZoomFactor,
     showFileInFolder,
     state: readonly(state),
     stop,

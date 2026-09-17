@@ -3,6 +3,7 @@ import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
 async function createConfigStore() {
@@ -16,6 +17,26 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('migrates browser preferences with defaults and preserves unrelated settings across updates', async () => {
+    const { configPath, store } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop]\nlanguage = "en-US"\n[browser]\nfuture = true\n')
+    expect((await store.read()).browser).toEqual(DEFAULT_BROWSER_PREFERENCES)
+    await store.update({ browser: { screenshotDestination: 'clipboard' } })
+    await store.update({ browser: { defaultZoomFactor: 1.25 } })
+    await store.update({ browser: { freezeForeground: true, freezeDelaySeconds: 120 } })
+    await store.update({ browser: { freezeBackground: false } })
+    const restarted = new LexoraConfigStore({ configPath })
+    expect((await restarted.read()).browser).toEqual({ ...DEFAULT_BROWSER_PREFERENCES, screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 })
+    expect((await restarted.read()).desktop.language).toBe('en-US')
+    expect(await readFile(configPath, 'utf8')).toContain('future = true')
+    const saved = await readFile(configPath, 'utf8')
+    await expect(store.update({ browser: { defaultZoomFactor: 0 } })).rejects.toThrow()
+    for (const freezeDelaySeconds of [0, 4, 3601, 10.5])
+      await expect(store.update({ browser: { freezeDelaySeconds } })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+  })
+
   it('defaults existing profiles to system proxy and preserves the custom address across mode changes', async () => {
     const { configPath, store } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })

@@ -1,9 +1,10 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import type { BrowserDataService } from './BrowserDataService'
 import type { BrowserHost } from './BrowserHost'
-import { writeFile } from 'node:fs/promises'
+import type { BrowserScreenshotService } from './BrowserScreenshotService'
 import { fileURLToPath } from 'node:url'
-import { dialog, ipcMain, session, shell, webContents } from 'electron'
-import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
+import { ipcMain, session, shell, webContents } from 'electron'
+import { browserClearDataInputSchema, browserClearDataResultSchema, browserDataSummarySchema } from '../../../shared/browser/browserData'
 import {
   browserAttachGuestInputSchema,
   browserEnsureSessionInputSchema,
@@ -12,12 +13,16 @@ import {
   browserSessionInputSchema,
   browserSetProfileModeInputSchema,
   browserSetSurfaceInputSchema,
+  browserSetZoomFactorInputSchema,
   desktopBrowserGuestDescriptorsSchema,
   desktopBrowserStateSchema,
-} from '../../shared/desktopApiSchemas'
+} from '../../../shared/browser/browserDesktopSchemas'
+import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { assertTrustedSender } from '../ipc'
 
 export interface RegisterBrowserDesktopIpcOptions {
+  data: Pick<BrowserDataService, 'clear' | 'getSummary'>
+  screenshots: Pick<BrowserScreenshotService, 'capture'>
   getHost: () => BrowserHost | null
   getWindow: () => BrowserWindow | null
   resolveArtifactEntry: (input: {
@@ -55,22 +60,23 @@ export function registerBrowserDesktopIpc(
     const descriptor = host.getGuestDescriptor(sessionId)
     if (guest.session !== session.fromPartition(descriptor.partition))
       throw new Error('Browser guest does not belong to the requested session')
-    host.attachGuest(sessionId, guest as never)
+    host.attachGuest(sessionId, guest)
   })
   handle(DESKTOP_IPC_CHANNELS.browserCaptureScreenshot, async (host, input) => {
     const { sessionId } = browserSessionInputSchema.parse(input)
     const window = options.getWindow()
     if (!window)
       throw new Error('Browser window is unavailable')
-    const screenshot = await host.captureScreenshot(sessionId)
-    const result = await dialog.showSaveDialog(window, {
-      defaultPath: createScreenshotFileName(screenshot.title),
-      filters: [{ extensions: ['png'], name: 'PNG image' }],
-    })
-    if (result.canceled || !result.filePath)
-      return false
-    await writeFile(result.filePath, screenshot.bytes)
-    return true
+    return options.screenshots.capture(window, () => host.captureScreenshot(sessionId))
+  })
+  handle(DESKTOP_IPC_CHANNELS.browserGetDataSummary, async () => browserDataSummarySchema.parse(await options.data.getSummary()))
+  handle(DESKTOP_IPC_CHANNELS.browserClearData, async (_host, input) => (
+    browserClearDataResultSchema.parse(await options.data.clear(browserClearDataInputSchema.parse(input)))
+  ))
+  handle(DESKTOP_IPC_CHANNELS.browserSetZoomFactor, async (host, input) => {
+    const { sessionId, zoomFactor } = browserSetZoomFactorInputSchema.parse(input)
+    takeHumanControl(host, sessionId)
+    return desktopBrowserStateSchema.parse(await host.setZoomFactor(sessionId, zoomFactor))
   })
   handle(DESKTOP_IPC_CHANNELS.browserEnsureSession, (host, input) => {
     const { conversationId, tabId } = browserEnsureSessionInputSchema.parse(input)
@@ -167,16 +173,4 @@ function requireBrowserHost(host: BrowserHost | null): BrowserHost {
 function takeHumanControl(host: BrowserHost, sessionId: string): void {
   if (host.getState(sessionId).controller === 'agent')
     host.takeControl(sessionId)
-}
-
-function createScreenshotFileName(title: string): string {
-  const base = [...title]
-    .filter(character => (character.codePointAt(0) ?? 0) > 31)
-    .join('')
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/[. ]+$/g, '')
-    .trim()
-    .slice(0, 80)
-  return `${base || 'browser-screenshot'}.png`
 }

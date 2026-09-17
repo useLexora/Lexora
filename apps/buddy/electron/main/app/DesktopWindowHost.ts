@@ -4,12 +4,7 @@ import type { ExecuteDesktopCommand } from '../desktopCommands'
 import type { DesktopEnvironment } from './typing'
 import process from 'node:process'
 import { app, nativeTheme, screen } from 'electron'
-import { currentPlatform } from '../../../platform/currentPlatform'
-import { localTransports } from '../../../platform/ipc/localTransport'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
-import { BrowserAdapterServer } from '../browser/BrowserAdapterServer'
-import { BrowserAdapterTestLeasePublisher } from '../browser/BrowserAdapterTestLeasePublisher'
-import { BrowserHost } from '../browser/BrowserHost'
 import { DesktopWindowManager } from '../DesktopWindowManager'
 import { DesktopWindowStateStore, resolveVisibleWindowPlacement } from '../desktopWindowState'
 import { resolveDevelopmentRendererUrl } from '../security/navigationPolicy'
@@ -20,44 +15,19 @@ interface WindowBindings {
   executeCommand: ExecuteDesktopCommand
   isQuitting: () => boolean
   onHidden: () => void
+  onWindowCreated: (window: BrowserWindow) => void
 }
 
 export class DesktopWindowHost {
-  readonly adapter: BrowserAdapterServer
   readonly #environment: DesktopEnvironment
-  #adapterStarted = false
   #manager: DesktopWindowManager | null = null
-  #browser: BrowserHost | null = null
-  #testLeasePublisher: BrowserAdapterTestLeasePublisher | null = null
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
-    this.adapter = new BrowserAdapterServer({
-      getHost: () => this.browser,
-      endpoint: localTransports[currentPlatform.transport](environment.paths.browserAdapterSocket),
-    })
-  }
-
-  get browser(): BrowserHost | null {
-    return this.#browser
   }
 
   get window(): BrowserWindow | null {
     return this.#manager?.window ?? null
-  }
-
-  async startAdapter(): Promise<void> {
-    await this.adapter.start()
-    this.#adapterStarted = true
-    const brokerSocketPath = this.#environment.paths.profile === 'test'
-      ? process.env.LEXORA_BUDDY_BROWSER_ADAPTER_TEST_BROKER_SOCKET
-      : undefined
-    if (brokerSocketPath) {
-      this.#testLeasePublisher = new BrowserAdapterTestLeasePublisher({
-        brokerSocketPath,
-        issueLease: input => this.adapter.issueLease(input),
-      })
-    }
   }
 
   async initialize(bindings: WindowBindings): Promise<BrowserWindow> {
@@ -104,20 +74,7 @@ export class DesktopWindowHost {
           environment.events.publish({ level: 'warn', event: 'window.unresponsive' })
         })
         observeRendererDiagnostics(handle.window.webContents, event => environment.events.publish(event))
-        this.#browser?.dispose()
-        this.#browser = new BrowserHost({
-          onGuestSetChanged() {
-            if (!handle.window.isDestroyed())
-              handle.window.webContents.send(DESKTOP_IPC_CHANNELS.browserGuestsChanged)
-          },
-          onSessionClosed: state => this.adapter.revokeSession(state.sessionId),
-          onStateChanged: (state) => {
-            this.#testLeasePublisher?.publish(state)
-            if (!handle.window.isDestroyed())
-              handle.window.webContents.send(DESKTOP_IPC_CHANNELS.browserStateChanged, state)
-          },
-          window: handle.window,
-        })
+        bindings.onWindowCreated(handle.window)
         return handle
       },
     })
@@ -154,18 +111,7 @@ export class DesktopWindowHost {
   }
 
   close(): void {
-    this.#browser?.dispose()
-    this.#browser = null
     this.#manager?.dispose()
     this.#manager = null
-  }
-
-  async stopAdapter(): Promise<void> {
-    this.#testLeasePublisher?.dispose()
-    this.#testLeasePublisher = null
-    if (this.#adapterStarted) {
-      this.#adapterStarted = false
-      await this.adapter.dispose()
-    }
   }
 }

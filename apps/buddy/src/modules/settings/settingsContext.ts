@@ -1,4 +1,4 @@
-import type { DesktopAppInfo } from '@buddy-electron/shared/desktopApi'
+import type { DesktopAppInfo, DesktopBrowserApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyCapabilities } from '@buddy-shared/platform'
 import type { Ref } from 'vue'
 import type { ApplicationSettings } from './contracts'
@@ -9,6 +9,7 @@ import type { ModelProvidersStore } from '@/modules/models'
 import { createInjectionState } from '@vueuse/core'
 
 export interface SettingsContext {
+  browser: Pick<DesktopBrowserApi, 'clearData' | 'getDataSummary'>
   appInfo: Readonly<Ref<DesktopAppInfo | null>>
   applicationSettings: ApplicationSettings
   dataSettings: DesktopDataSettingsCapability

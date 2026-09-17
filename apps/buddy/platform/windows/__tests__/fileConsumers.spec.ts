@@ -137,9 +137,6 @@ describe('windows file consumers with simulated filesystem', () => {
 
 function createPolicy() {
   const session: BrowserSecuritySession = {
-    clearCache: async () => {},
-    clearStorageData: async () => {},
-    flushStorageData: () => {},
     off: () => {},
     on: () => {},
     setPermissionCheckHandler: () => {},
@@ -148,6 +145,8 @@ function createPolicy() {
   }
   return new BrowserSecurityPolicy({
     page: {
+      on: () => {},
+      off: () => {},
       id: 1,
       debugger: { attach: () => {}, detach: () => {}, isAttached: () => true, sendCommand: async () => ({}) },
       getURL: () => 'about:blank',

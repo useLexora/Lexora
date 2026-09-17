@@ -2,7 +2,7 @@ import type { ChangeOverviewRequest, LocalChangeOverview, LocalChangeSetDetail }
 import type { Ref } from 'vue'
 import type { ChangeFilePresentation } from './changeContextPresentation'
 import type { TaskChangesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
-import { computed, shallowReactive, watch } from 'vue'
+import { computed, onScopeDispose, shallowReactive, watch, watchEffect } from 'vue'
 import { buildChangeFileTree, presentChangeFiles } from './changeContextPresentation'
 
 interface ChangesView {
@@ -22,11 +22,19 @@ interface ChangesView {
 }
 
 export function useContextChanges(options: {
+  hasTab: (id: string) => boolean
   tab: Readonly<Ref<TaskChangesContextTab | null>>
   getOverview: (input: ChangeOverviewRequest) => Promise<LocalChangeOverview>
   getChangeSet: (id: string) => Promise<LocalChangeSetDetail>
 }) {
   const views = shallowReactive(new Map<string, ChangesView>())
+  watchEffect(() => {
+    for (const id of views.keys()) {
+      if (!options.hasTab(id))
+        views.delete(id)
+    }
+  })
+  onScopeDispose(() => views.clear())
   const current = computed(() => options.tab.value ? views.get(options.tab.value.id) ?? null : null)
   watch(options.tab, (tab) => {
     if (!tab)

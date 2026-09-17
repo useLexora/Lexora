@@ -1,10 +1,11 @@
 import type { BrowserFailureReason } from '../../../shared/browser'
-import type { DesktopBrowserErrorCode } from '../../shared/desktopApi'
+import type { DesktopBrowserErrorCode } from '../../../shared/browser/browserDesktopApi'
 import { isIP } from 'node:net'
 import { extname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { resolveFilePath } from '../../../platform/filesystem/resolveFilePath'
+import { BrowserDebugger } from './BrowserDebugger'
 
 export interface BrowserSecurityPage {
   id: number
@@ -20,16 +21,15 @@ export interface BrowserSecurityPage {
   getURL: () => string
   loadURL: (url: string) => Promise<unknown>
   setWindowOpenHandler: (handler: () => { action: 'deny' }) => void
+  on: (event: 'certificate-error', listener: CertificateErrorListener) => unknown
+  off: (event: 'certificate-error', listener: CertificateErrorListener) => unknown
 }
 
 export interface BrowserSecuritySession {
-  clearCache: () => Promise<void>
-  clearStorageData: () => Promise<void>
-  flushStorageData: () => void
-  off: ((event: 'certificate-error', listener: CertificateErrorListener) => unknown) & ((event: 'will-download', listener: DownloadListener) => unknown)
-  on: ((event: 'certificate-error', listener: CertificateErrorListener) => unknown) & ((event: 'will-download', listener: DownloadListener) => unknown)
+  off: (event: 'will-download', listener: DownloadListener) => unknown
+  on: (event: 'will-download', listener: DownloadListener) => unknown
   setPermissionCheckHandler: (
-    handler: null | ((...args: never[]) => boolean),
+    handler: null | (() => boolean),
   ) => void
   setPermissionRequestHandler: (
     handler: null | ((
@@ -47,6 +47,7 @@ export interface BrowserSecuritySession {
 }
 
 interface BrowserSecurityPolicyOptions {
+  connection?: BrowserDebugger
   onCertificateError?: (details: BrowserCertificateErrorDetails) => void
   onPermissionDenied?: () => void
   onRequestBlocked?: (details: BrowserRequestDetails) => void
@@ -57,7 +58,7 @@ interface BrowserSecurityPolicyOptions {
 interface BrowserRequestDetails {
   resourceType: string
   url: string
-  webContentsId: number
+  webContentsId?: number
 }
 
 interface BrowserCertificateErrorDetails {
@@ -77,7 +78,6 @@ type DownloadListener = (
 
 type CertificateErrorListener = (
   event: unknown,
-  webContents: unknown,
   url: string,
   error: string,
   certificate: unknown,
@@ -92,7 +92,6 @@ type BeforeRequestListener = (
 
 interface BrowserSecurityRoute {
   isRequestAllowed: (details: BrowserRequestDetails) => Promise<boolean>
-  onCertificateError: (details: BrowserCertificateErrorDetails) => void
   onPermissionDenied: () => void
   onRequestBlocked: (details: BrowserRequestDetails) => void
 }
@@ -104,7 +103,6 @@ const sessionSecurityCoordinators = new WeakMap<
 
 class BrowserSecuritySessionCoordinator {
   readonly #beforeRequestListener: BeforeRequestListener
-  readonly #certificateErrorListener: CertificateErrorListener
   readonly #downloadListener: DownloadListener
   readonly #routes = new Map<number, BrowserSecurityRoute>()
   readonly #session: BrowserSecuritySession
@@ -112,7 +110,7 @@ class BrowserSecuritySessionCoordinator {
   constructor(session: BrowserSecuritySession) {
     this.#session = session
     this.#beforeRequestListener = (details, callback) => {
-      const route = this.#routes.get(details.webContentsId)
+      const route = details.webContentsId === undefined ? undefined : this.#routes.get(details.webContentsId)
       if (!route) {
         callback({ cancel: true })
         return
@@ -126,20 +124,6 @@ class BrowserSecuritySessionCoordinator {
         callback({ cancel: true })
       })
     }
-    this.#certificateErrorListener = (
-      _event,
-      webContents,
-      url,
-      error,
-      _certificate,
-      callback,
-      isMainFrame,
-    ) => {
-      callback(false)
-      const route = this.#routes.get(readWebContentsId(webContents))
-      if (route && isMainFrame)
-        route.onCertificateError({ error: error.slice(0, 1_024), url })
-    }
     this.#downloadListener = event => event.preventDefault()
     this.#session.setPermissionCheckHandler(() => false)
     this.#session.setPermissionRequestHandler((webContents, _permission, callback) => {
@@ -150,7 +134,6 @@ class BrowserSecuritySessionCoordinator {
       { urls: ['*://*/*', 'file://*/*'] },
       this.#beforeRequestListener,
     )
-    this.#session.on('certificate-error', this.#certificateErrorListener)
     this.#session.on('will-download', this.#downloadListener)
   }
 
@@ -165,7 +148,6 @@ class BrowserSecuritySessionCoordinator {
       this.#session.setPermissionCheckHandler(null)
       this.#session.setPermissionRequestHandler(null)
       this.#session.webRequest.onBeforeRequest(null)
-      this.#session.off('certificate-error', this.#certificateErrorListener)
       this.#session.off('will-download', this.#downloadListener)
       return true
     }
@@ -211,6 +193,7 @@ export class BrowserSecurityPolicyError extends Error {
 }
 
 export class BrowserSecurityPolicy {
+  readonly #certificateErrorListener: CertificateErrorListener
   readonly #onCertificateError: (details: BrowserCertificateErrorDetails) => void
   readonly #onPermissionDenied: () => void
   readonly #onRequestBlocked: (details: BrowserRequestDetails) => void
@@ -220,24 +203,32 @@ export class BrowserSecurityPolicy {
   #disposed = false
   #fileChooserGuardPromise: Promise<void> | null = null
   #localFileRoot: string | null = null
-  #ownsDebugger = false
+  readonly #connection: BrowserDebugger
+  readonly #ownsConnection: boolean
 
   constructor(options: BrowserSecurityPolicyOptions) {
     this.#onCertificateError = options.onCertificateError ?? (() => {})
     this.#onPermissionDenied = options.onPermissionDenied ?? (() => {})
     this.#onRequestBlocked = options.onRequestBlocked ?? (() => {})
     this.#page = options.page
+    this.#connection = options.connection ?? new BrowserDebugger(options.page.debugger)
+    this.#ownsConnection = !options.connection
     this.#session = options.session
     this.#releaseSessionPolicy = registerBrowserSecurityRoute(
       this.#session,
       this.#page.id,
       {
         isRequestAllowed: details => this.#isRequestAllowed(details),
-        onCertificateError: details => this.#onCertificateError(details),
         onPermissionDenied: () => this.#onPermissionDenied(),
         onRequestBlocked: details => this.#onRequestBlocked(details),
       },
     )
+    this.#certificateErrorListener = (_event, url, error, _certificate, callback, isMainFrame) => {
+      callback(false)
+      if (isMainFrame)
+        this.#onCertificateError({ error: error.slice(0, 1_024), url })
+    }
+    this.#page.on('certificate-error', this.#certificateErrorListener)
     this.#page.setWindowOpenHandler(() => ({ action: 'deny' }))
   }
 
@@ -293,9 +284,9 @@ export class BrowserSecurityPolicy {
       return
     this.#disposed = true
     this.#releaseSessionPolicy()
-    if (this.#ownsDebugger && this.#page.debugger.isAttached())
-      this.#page.debugger.detach()
-    this.#ownsDebugger = false
+    this.#page.off('certificate-error', this.#certificateErrorListener)
+    if (this.#ownsConnection)
+      this.#connection.dispose()
     this.#localFileRoot = null
   }
 
@@ -311,9 +302,8 @@ export class BrowserSecurityPolicy {
       await this.#fileChooserGuardPromise
     }
     catch {
-      if (this.#ownsDebugger && this.#page.debugger.isAttached())
-        this.#page.debugger.detach()
-      this.#ownsDebugger = false
+      if (this.#ownsConnection)
+        this.#connection.dispose()
       throw new BrowserSecurityPolicyError(
         'FILE_CHOOSER_GUARD_UNAVAILABLE',
         'Browser file chooser guard is unavailable',
@@ -324,12 +314,9 @@ export class BrowserSecurityPolicy {
   async #installFileChooserGuard(): Promise<void> {
     if (!this.#page.getURL())
       await this.#page.loadURL('about:blank')
-    if (!this.#page.debugger.isAttached()) {
-      this.#page.debugger.attach('1.3')
-      this.#ownsDebugger = true
-    }
-    await this.#page.debugger.sendCommand('Page.enable')
-    await this.#page.debugger.sendCommand(
+    this.#connection.ensureAttached()
+    await this.#connection.sendCommand('Page.enable')
+    await this.#connection.sendCommand(
       'Page.setInterceptFileChooserDialog',
       { cancel: true, enabled: true },
     )
