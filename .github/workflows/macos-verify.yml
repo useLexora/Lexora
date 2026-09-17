@@ -66,6 +66,7 @@ jobs:
 
       - name: Build macOS package
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           CSC_LINK: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ inputs.signing == 'developer-id' && secrets.APPLE_ID || '' }}

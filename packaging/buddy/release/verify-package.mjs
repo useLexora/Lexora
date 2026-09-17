@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, normalize, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { CPU_ARCHITECTURE, OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
@@ -51,7 +51,7 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
   if (entries.some(entry => entry.split('/').includes('__tests__')))
     throw new Error('Desktop archive contains test files')
   for (const entry of entries.filter(entry => entry.endsWith('.node')))
-    assertNativeExecutable(asar.extractFile(archive, entry), platform, entry)
+    assertNativeExecutable(asar.extractFile(archive, normalize(entry)), platform, entry)
   if (platformId === OPERATING_SYSTEM.Linux) {
     const seccomp = join(resources, `app.asar.unpacked/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/${platform.architecture}/apply-seccomp`)
     assertNativeExecutable(readFileSync(seccomp), platform, 'shell seccomp helper')
