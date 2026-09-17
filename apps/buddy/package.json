@@ -2,7 +2,7 @@
   "name": "@uselexora/lexora-buddy",
   "productName": "Lexora Buddy",
   "type": "module",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "packageManager": "pnpm@11.5.0",
   "description": "Lexora Buddy local personal AI companion",
