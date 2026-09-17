@@ -1,3 +1,4 @@
+import type { ContextPanelOperation } from '@buddy-shared/context-panel/contextPanel'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentation'
 
@@ -6,6 +7,7 @@ import type { ToolFailureCode } from '@buddy-shared/runs/toolFailure'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 import type { ChatAgentCompactionNode } from './chatRunCompaction'
 import type { ChatProjectionReducer } from './chatRunEventProjection'
+import { contextPanelOperationSchema } from '@buddy-shared/context-panel/contextPanel'
 import { approvalReviewPayloadSchema } from '@buddy-shared/permissions/approvalReviewPayload'
 import { buddyRunProgressSchema } from '@buddy-shared/runs/runProgress'
 import { isToolFailureCode } from '@buddy-shared/runs/toolFailure'
@@ -48,11 +50,18 @@ export interface ChatAgentToolNode {
   toolLabel?: string
 }
 
+export interface ChatAgentPanelNode extends ContextPanelOperation {
+  id: string
+  kind: 'panel'
+  status: 'completed'
+}
+
 export type ChatAgentTurnNode
   = | ChatAgentCompactionNode
     | ChatAgentNarrationNode
     | ChatAgentReasoningNode
     | ChatAgentToolNode
+    | ChatAgentPanelNode
 
 export interface ChatAgentTurn {
   branchId: string
@@ -106,6 +115,7 @@ export function createChatAgentTurnReducer(
   const tools = new Map<string, ChatAgentToolNode>()
   const approvalTools = new Map<string, string>()
   const text = new Map<string, ChatAgentNarrationNode>()
+  const panels = new Map<string, ChatAgentPanelNode>()
   const nodeOrder = new Map<string, number>()
   const nodeStartedAt = new Map<string, string>()
   const messageStartedAt = new Map<string, string>()
@@ -128,6 +138,15 @@ export function createChatAgentTurnReducer(
     const payload = readPayload(event.payload)
     if (!payload)
       return
+    if (event.type === 'desktop.panel.changed') {
+      const operation = contextPanelOperationSchema.safeParse(payload)
+      if (operation.success) {
+        const id = `panel:${run.id}:${event.sequence}`
+        rememberNode(id, event)
+        panels.set(id, { ...operation.data, id, kind: 'panel', status: 'completed' })
+      }
+      return
+    }
     if (event.type === 'message.started') {
       const messageId = readString(payload.messageId)
       if (messageId && messageId !== finalMessageId)
@@ -464,7 +483,7 @@ export function createChatAgentTurnReducer(
       nodeOrder.set(node.id, sequence)
       return node
     })
-    const nodes = [...reasoningNodes, ...narrationNodes, ...tools.values(), ...compactionNodes]
+    const nodes = [...reasoningNodes, ...narrationNodes, ...tools.values(), ...compactionNodes, ...panels.values()]
       .sort((left, right) => readNodeOrder(left) - readNodeOrder(right))
       .map((node) => {
         if (
@@ -516,6 +535,7 @@ function canAffectChatAgentTurn(event: LocalRunEvent): boolean {
       || (payload.kind === 'text' && readAssistantTextPhase(payload.phase) === 'commentary')
   }
   return event.type === 'run.failed'
+    || event.type === 'desktop.panel.changed'
     || event.type === 'usage.recorded'
     || event.type === 'run.progress'
     || event.type.startsWith('context.compaction.')

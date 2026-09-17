@@ -7,7 +7,6 @@ import {
   ChevronDown20Regular,
   ChevronUp20Regular,
   Dismiss20Regular,
-  PanelRight20Regular,
   Search20Regular,
 } from '@vicons/fluent'
 import { NInput } from 'naive-ui'
@@ -18,13 +17,11 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 const props = defineProps<{
   viewMode?: 'chat' | 'canvas'
   activeSearchIndex: number
-  artifactCount: number
   canSearchConversation: boolean
   conversationSearchLoading: boolean
   conversationSearchOpen: boolean
   conversationSearchQuery: string
   conversationSearchResultCount: number
-  contextOpen: boolean
   language: BuddyLocale
   title: string
 }>()
@@ -34,7 +31,6 @@ const emit = defineEmits<{
   nextConversationSearchResult: []
   openConversationSearch: []
   previousConversationSearchResult: []
-  toggleContext: []
   updateConversationSearch: [query: string]
 }>()
 
@@ -47,9 +43,6 @@ const searchPosition = computed(() => {
     return '0 / 0'
   return `${props.activeSearchIndex + 1} / ${props.conversationSearchResultCount}`
 })
-const contextButtonLabel = computed(() => props.artifactCount
-  ? t('desktop.context.openWithCount', { count: props.artifactCount })
-  : t('desktop.context.open'))
 
 watch(
   () => props.conversationSearchOpen,
@@ -139,16 +132,6 @@ watch(
             <path d="M3 21c7.5-4.7 13.1-7.9 18.1-7 2.4.3-.9 7-5.9 7Z" />
           </svg>
         </DesktopIcon>
-      </button>
-      <button
-        v-if="!contextOpen"
-        class="desktop-chat-workspace-header__icon-button"
-        data-testid="task-context-toggle"
-        type="button"
-        :aria-label="contextButtonLabel"
-        @click="emit('toggleContext')"
-      >
-        <DesktopIcon :component="PanelRight20Regular" />
       </button>
     </div>
   </header>

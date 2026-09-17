@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { ChatAgentTurnNode } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { PanelRight20Regular } from '@vicons/fluent'
 import { computed, shallowReactive } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { createChatAgentActivityProjector } from '../../model/transcript/chatAgentActivities'
 import BuddyChatActivityGroup from './BuddyChatActivityGroup.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
@@ -50,6 +52,10 @@ defineExpose({ revealActivity })
       <p v-else-if="row.kind === 'text'" class="buddy-chat-agent-turn__text">
         {{ row.text }}
       </p>
+      <p v-else-if="row.kind === 'panel'" class="buddy-chat-agent-turn__panel-operation" data-testid="context-panel-operation">
+        <DesktopIcon :component="PanelRight20Regular" />
+        <span>{{ t(row.actor === 'harness' ? 'desktop.chat.panelActorSystem' : 'desktop.chat.panelActorUser') }} · {{ t(row.action === 'open' ? 'desktop.chat.panelOpened' : 'desktop.chat.panelClosed') }}</span>
+      </p>
     </template>
     <p v-if="failureDetailText" class="buddy-chat-agent-turn__failure-detail">
       <span>{{ t('desktop.chat.failureDetail') }}</span>
@@ -85,6 +91,22 @@ defineExpose({ revealActivity })
   span {
     color: var(--buddy-chat-process-color);
     font-weight: 600;
+  }
+}
+
+.buddy-chat-agent-turn__panel-operation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  color: var(--buddy-chat-process-color);
+  font-size: var(--buddy-chat-meta-font-size);
+  line-height: var(--buddy-chat-meta-line-height);
+
+  svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
   }
 }
 </style>

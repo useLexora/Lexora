@@ -1,6 +1,6 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
-import type { ArtifactViewMode } from './taskContextPanel'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
 
 export function resolveFileType(artifact: LocalArtifact): string {
   const extension = artifact.name.split('.').at(-1)

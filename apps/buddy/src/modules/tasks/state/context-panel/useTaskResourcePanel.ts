@@ -1,7 +1,8 @@
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { UseTaskContextPanelOptions } from './typing'
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
-import { browserTabId, isBrowserArtifact } from './taskContextPanel'
+import { browserTabId, isBrowserArtifact } from '../../model/context-panel/taskContextPanel'
 import { useTaskContextPanel } from './useTaskContextPanel'
 
 interface TaskResourcePanelOptions extends UseTaskContextPanelOptions {
@@ -27,8 +28,12 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
   })
   let operation = 0
   let disposed = false
-  watch(options.activeConversationId, () => {
+  watch(() => taskContext.activeTab.value?.id, () => {
     operation += 1
+  }, { flush: 'sync' })
+  watch(taskContext.isOpen, (open) => {
+    if (!open)
+      operation += 1
   }, { flush: 'sync' })
   onScopeDispose(() => {
     stopBrowserState()
@@ -59,9 +64,8 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
   function currentOperation() {
     const version = operation
     const activeTabId = taskContext.activeTab.value?.id
-    const open = taskContext.isOpen.value
     return () => !disposed && version === operation
-      && taskContext.activeTab.value?.id === activeTabId && taskContext.isOpen.value === open
+      && taskContext.activeTab.value?.id === activeTabId
   }
 
   async function closeTab(tabId: string): Promise<boolean> {
@@ -88,26 +92,27 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     }
   }
 
-  async function openArtifact(artifactId: string): Promise<void> {
-    const artifact = options.runOutputs.value.flatMap(output => output.artifacts)
-      .find(item => item.artifactId === artifactId)
-    const conversationId = options.activeConversationId.value
-    if (!artifact || !conversationId || artifact.conversationId !== conversationId)
+  async function openArtifact(target: string | LocalArtifact): Promise<void> {
+    const artifact = typeof target === 'string'
+      ? options.runOutputs.value.flatMap(output => output.artifacts).find(item => item.artifactId === target)
+      : target
+    if (!artifact)
       return
+    const conversationId = artifact.conversationId
     if (!isBrowserArtifact(artifact)) {
-      act(() => taskContext.openArtifact(artifactId))
+      act(() => taskContext.openArtifact(artifact))
       return
     }
-    act(taskContext.openBrowser)
+    act(() => taskContext.openBrowser({ conversationId, runId: artifact.runId }))
     const isCurrent = currentOperation()
     try {
       const state = await options.browser.ensureSession(conversationId)
       if (isCurrent())
-        await options.browser.openArtifact(state.sessionId, artifactId)
+        await options.browser.openArtifact(state.sessionId, artifact.artifactId)
     }
     catch {
       if (isCurrent())
-        taskContext.openArtifact(artifactId)
+        taskContext.openArtifact(artifact)
     }
   }
 
@@ -121,9 +126,19 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
     previewFile: (path: string) => act(() => taskContext.previewFile(path)),
     closeTab,
+    discardConversation: (id: string) => act(() => {
+      const removedIds = new Set(taskContext.discardConversation(id).map(tab => tab.id))
+      browserStates.value = Object.fromEntries(Object.entries(browserStates.value).filter(([tabId, state]) => {
+        if (!removedIds.has(tabId) && state.conversationId !== id)
+          return true
+        if (state.conversationId === null)
+          void options.browser.close(state.sessionId).catch(options.onError)
+        return false
+      }))
+    }),
     openArtifact,
     openBrowser: () => act(taskContext.openBrowser),
-    openChanges: (id?: string) => act(() => taskContext.openChanges(id)),
+    openChanges: (target?: Parameters<typeof taskContext.openChanges>[0]) => act(() => taskContext.openChanges(target)),
     selectTab: (id: string) => act(() => taskContext.selectTab(id)),
     toggle: () => act(taskContext.toggle),
   }

@@ -45,6 +45,8 @@ export interface UseTaskCapabilityOptions {
   applicationSettings: ApplicationSettings
   modelProviders: ModelProvidersStore
   runtimeSupervisor: RuntimeSupervisorStore
+  onTaskDeleted?: (conversationId: string) => void
+  onDraftCommitted?: (draftId: string, conversationId: string) => void
 }
 
 export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapability {
@@ -168,6 +170,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     clearError: () => errorMessage.value = null,
     drafts,
     onError: setError,
+    onDeleted: options.onTaskDeleted,
     persistWorkspaceState,
     restoreConversationModelSelection: draftModelBinding.restoreScope,
     runSync,
@@ -288,6 +291,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     persistWorkspaceState,
     modelSelection: taskModels,
     onActionCommandRunStarted: composerInteractions.trackActionCommand,
+    onDraftCommitted: options.onDraftCommitted,
     refreshBranches,
     selectComposerSource: composerResources.selectSource,
     runSync,

@@ -1,3 +1,4 @@
+import type { ContextPanelCommand, ContextPanelState } from '../../shared/context-panel/contextPanel'
 import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
 import type { ApplicationLogQuery } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
@@ -7,8 +8,17 @@ import { ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
-export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'settings' | 'window'> {
+export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'window'> {
   return {
+    contextPanel: Object.freeze({
+      getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.contextPanelGetState),
+      execute: (command: ContextPanelCommand) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.contextPanelExecute, {
+        action: command.action,
+        source: command.source ? { ...command.source } : null,
+        ...(command.action === 'open' ? { target: command.target ? { kind: command.target.kind, source: { ...command.target.source } } : null } : {}),
+      }),
+      onStateChanged: (listener: (state: ContextPanelState) => void) => subscribe(DESKTOP_IPC_CHANNELS.contextPanelStateChanged, listener),
+    }),
     app: Object.freeze({
       logs: Object.freeze({
         query: (input: ApplicationLogQuery) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsQuery, {
@@ -72,7 +82,6 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       minimize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowMinimize),
       onStateChanged: (listener: (state: DesktopWindowState) => void) =>
         subscribe(DESKTOP_IPC_CHANNELS.windowStateChanged, listener),
-      toggleAlwaysOnTop: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowToggleAlwaysOnTop),
       toggleMaximize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowToggleMaximize),
     }),
   }

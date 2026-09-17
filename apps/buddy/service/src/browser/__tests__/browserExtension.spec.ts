@@ -3,8 +3,10 @@ import type {
   BrowserObservation,
   BrowserStateSnapshot,
 } from '../../../../shared/browser'
+import type { ContextPanelOperationRecord } from '../../../../shared/context-panel/contextPanel'
 import { Check } from 'typebox/value'
 import { describe, expect, it, vi } from 'vitest'
+import { ContextPanelHost } from '../../../../electron/main/context-panel/ContextPanelHost'
 import { createBrowserExtension } from '../browserExtension'
 
 const SESSION_ID = '6f828cc1-6549-4245-b26e-43b2917c9281'
@@ -58,6 +60,33 @@ const POST_ACTION_OBSERVATION: BrowserObservation = {
 }
 
 describe('browserExtension', () => {
+  it('presents a successful browser through the desktop without changing the model result', async () => {
+    const operations: ContextPanelOperationRecord[] = []
+    const host = new ContextPanelHost(async (operation) => {
+      operations.push(operation)
+    })
+    const source = { conversationId: 'conversation-1', runId: 'run-1' }
+    const fixture = createFixture(async () => {
+      await host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+    })
+    fixture.service.open.mockResolvedValue({ ok: true, state: READY_STATE })
+    fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
+    const open = requireTool(fixture.tools, 'lexora_browser_open')
+    const first = await execute(open, { kind: 'url', url: READY_STATE.url })
+    expect(host.getState()).toMatchObject({ open: true, target: { kind: 'browser', source } })
+    expect(readContent(first)).toEqual(OBSERVATION)
+    const second = await execute(open, { kind: 'url', url: READY_STATE.url })
+    expect(second).toEqual(first)
+    expect(operations.map(({ action, actor }) => ({ action, actor }))).toEqual([{ action: 'open', actor: 'harness' }])
+    await host.execute({ action: 'close', source })
+    await execute(requireTool(fixture.tools, 'lexora_browser_snapshot'), {})
+    expect(host.getState().open).toBe(false)
+    fixture.service.open.mockResolvedValue({ ok: false, error: { code: 'BROWSER_SESSION_NOT_FOUND', reason: null, recovery: 'open_again' } })
+    expect((await execute(open, { kind: 'url', url: READY_STATE.url })).isError).toBe(true)
+    expect(host.getState().open).toBe(false)
+    expect(operations.map(operation => operation.action)).toEqual(['open', 'close'])
+  })
+
   it('registers strict open, snapshot, and act tools', () => {
     const { tools } = createFixture()
     const act = requireTool(tools, 'lexora_browser_act')
@@ -413,7 +442,7 @@ describe('browserExtension', () => {
   })
 })
 
-function createFixture() {
+function createFixture(onOpened?: () => Promise<void>) {
   const service = {
     act: vi.fn(),
     observe: vi.fn(),
@@ -421,7 +450,7 @@ function createFixture() {
   }
   const tools = new Map<string, ToolDefinition>()
   let toolResultHandler: BrowserToolResultHandler | null = null
-  createBrowserExtension({ service: service as never }).factory({
+  createBrowserExtension({ service: service as never, onOpened }).factory({
     on(event: string, handler: (event: Record<string, unknown>) => unknown) {
       if (event === 'tool_result')
         toolResultHandler = handler

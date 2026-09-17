@@ -8,6 +8,7 @@ import { homedir } from 'node:os'
 import { app, Notification, shell } from 'electron'
 import { z } from 'zod'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
+import { registerContextPanelIpc } from '../context-panel/registerContextPanelIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
 import { DesktopNotificationService } from '../DesktopNotificationService'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
@@ -59,6 +60,7 @@ export class DesktopIntegrations {
     const runtime = this.#runtime
     const windows = this.#windows
     const service = runtime.service
+    this.#subscriptions.push(registerContextPanelIpc(runtime.contextPanel, () => windows.window))
     this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window, this.#environment.events))
     this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window))
     this.#tray = createDesktopTray({

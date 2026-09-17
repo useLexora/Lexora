@@ -17,8 +17,10 @@ import {
 } from './desktopWorkbenchLayout'
 
 interface UseDesktopWorkbenchResizeOptions {
+  workspaceMinimumWidth?: () => number
   container: Readonly<Ref<HTMLElement | null>>
   context: Readonly<Ref<HTMLElement | null>>
+  contextVisible?: () => boolean
   sidebar: Readonly<Ref<HTMLElement | null>>
   sidebarResizable: () => boolean
   sidebarVisible: () => boolean
@@ -43,8 +45,9 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
   let resizeFrame: number | null = null
   let sidebarWidthTouched = false
 
-  const contextVisible = computed(() => options.context.value !== null)
+  const contextVisible = computed(() => options.context.value !== null && (options.contextVisible?.() ?? true))
   const widths = computed(() => resolveDesktopWorkbenchWidths({
+    workspaceMinimumWidth: options.workspaceMinimumWidth?.(),
     containerWidth: containerWidth.value,
     contextVisible: contextVisible.value,
     preferredContextWidth: preferredContextWidth.value
@@ -76,12 +79,13 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
       resizeBounds = bounds
     if (preferredSidebarWidth.value === null && options.sidebar.value)
       preferredSidebarWidth.value = options.sidebar.value.getBoundingClientRect().width
-    if (preferredContextWidth.value === null && options.context.value)
+    if (preferredContextWidth.value === null && contextVisible.value && options.context.value)
       preferredContextWidth.value = options.context.value.getBoundingClientRect().width
   }
 
   function resolvePanelRange(panel: DesktopWorkbenchResizablePanel) {
     return resolveDesktopWorkbenchPanelRange(panel, {
+      workspaceMinimumWidth: options.workspaceMinimumWidth?.(),
       containerWidth: containerWidth.value,
       contextVisible: contextVisible.value,
       contextWidth: widths.value.contextWidth,
@@ -124,8 +128,8 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
     measureLayout()
     preferredSidebarWidth.value = options.sidebar.value?.getBoundingClientRect().width
       ?? preferredSidebarWidth.value
-    preferredContextWidth.value = options.context.value?.getBoundingClientRect().width
-      ?? preferredContextWidth.value
+    if (contextVisible.value && options.context.value)
+      preferredContextWidth.value = options.context.value.getBoundingClientRect().width
     activePanel.value = panel
     resizeBounds = options.container.value?.getBoundingClientRect() ?? null
     activePointerId = event.pointerId
@@ -227,9 +231,12 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
     },
   )
 
-  watch(options.context, async (context) => {
-    if (!context || preferredContextWidth.value !== null)
+  watch(contextVisible, async (visible) => {
+    if (!visible) {
+      if (activePanel.value === 'context')
+        finishResize()
       return
+    }
     await nextTick()
     measureLayout()
   }, { flush: 'post' })

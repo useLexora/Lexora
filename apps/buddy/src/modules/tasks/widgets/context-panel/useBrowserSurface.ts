@@ -8,9 +8,10 @@ export function useBrowserSurface(options: {
   guestHost: DesktopBrowserGuestSurfaceHost
   sessionId: Readonly<Ref<string | null>>
   element: Readonly<Ref<HTMLElement | null>>
+  visible?: Readonly<Ref<boolean>>
 }) {
-  watch([options.sessionId, options.element], async ([sessionId, element], _previous, onCleanup) => {
-    if (!sessionId || !element)
+  watch([options.sessionId, options.element, () => options.visible?.value ?? true], async ([sessionId, element, visible], _previous, onCleanup) => {
+    if (!sessionId || !element || !visible)
       return
     let active = true
     onCleanup(() => {

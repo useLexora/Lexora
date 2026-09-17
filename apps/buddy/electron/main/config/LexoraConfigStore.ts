@@ -33,6 +33,8 @@ const taskSidebarConfigSchema = z.object({
 
 const desktopConfigSchema = z.object({
   background_close_notice_shown: z.boolean().default(false),
+  context_panel_mode: z.enum(['task', 'independent']).default('task'),
+  context_panel_global: z.boolean().default(false),
   task_sidebar_pinned_items: z.array(taskSidebarPinnedItemSchema)
     .max(500)
     .refine(items => new Set(items.map(item => `${item.kind}:${item.id}`)).size === items.length)
@@ -48,6 +50,8 @@ const desktopConfigSchema = z.object({
   welcome_variant: z.enum(['random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).catch('random'),
 }).passthrough().default({
   background_close_notice_shown: false,
+  context_panel_mode: 'task',
+  context_panel_global: false,
   task_sidebar_pinned_items: [],
   task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
   developer_tools_enabled: false,
@@ -178,6 +182,8 @@ function decodeConfig(value: unknown): LexoraConfig {
     proxy: config.proxy,
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
+      contextPanelMode: config.desktop.context_panel_mode,
+      contextPanelGlobal: config.desktop.context_panel_global,
       taskSidebarPinnedItems: config.desktop.task_sidebar_pinned_items,
       taskSidebar: {
         collapsed: config.desktop.task_sidebar.collapsed,
@@ -207,6 +213,8 @@ function encodeConfig(config: LexoraConfig) {
     proxy: config.proxy,
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
+      context_panel_mode: config.desktop.contextPanelMode,
+      context_panel_global: config.desktop.contextPanelGlobal,
       task_sidebar_pinned_items: config.desktop.taskSidebarPinnedItems,
       task_sidebar: {
         collapsed: config.desktop.taskSidebar.collapsed,

@@ -13,9 +13,11 @@ import { checkSandboxEnvironment } from '../../../platform/process/sandboxDepend
 import { setupWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
+import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
+import { ContextPanelHost } from '../context-panel/ContextPanelHost'
 import { DesktopNetwork } from '../network/DesktopNetwork'
 import { registerWebHostRpc } from '../network/registerWebHostRpc'
 import { createDesktopFeatures } from '../platform/desktopFeatures'
@@ -28,6 +30,7 @@ import { createCredentialVault } from '../secrets/CredentialVault'
 import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
 
 export class DesktopRuntimeHost {
+  readonly contextPanel: ContextPanelHost
   readonly configStore: LexoraConfigStore
   readonly #environment: DesktopEnvironment
   readonly #windows: DesktopWindowHost
@@ -45,6 +48,14 @@ export class DesktopRuntimeHost {
     this.#environment = environment
     this.#windows = windows
     this.configStore = new LexoraConfigStore({ configPath: environment.paths.configPath })
+    this.contextPanel = new ContextPanelHost(async (operation) => {
+      try {
+        await this.service.request(contextPanelRpc.recordOperation, operation)
+      }
+      catch (error) {
+        environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'context_panel.record.failed', error })
+      }
+    })
   }
 
   get config(): LexoraConfig | null {
@@ -129,6 +140,10 @@ export class DesktopRuntimeHost {
       },
       bindPeer: (peer) => {
         const disposers = [
+          peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
+            const source = contextPanelSourceSchema.parse(params)
+            return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+          }),
           registerWebHostRpc(peer, this.#network!.authenticateProxy),
           registerSandboxHostRpc(peer, {
             buddyHome: environment.paths.buddyHome,

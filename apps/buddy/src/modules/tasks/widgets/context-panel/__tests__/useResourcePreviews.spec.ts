@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { LocalArtifact, LocalArtifactText } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetDetail, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
-import type { TaskChangesContextTab } from '../taskContextPanel'
+import type { TaskChangesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, shallowRef } from 'vue'
 import { deferred } from '../../../../../../__tests__/deferred'
@@ -97,7 +97,7 @@ describe('resource previews', () => {
     const changeSet = shallowRef<LocalChangeSetSummary>(createChanges('set-a'))
     const refresh = deferred<LocalChangeSetDetail>()
     const getDetail = vi.fn().mockResolvedValueOnce(createChanges('set-a')).mockReturnValueOnce(refresh.promise)
-    const { state } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value })), branchId: shallowRef('branch'), revision: computed(() => changeSet.value.updatedAt), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
+    const { state } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
     await nextTick()
     state.current.value!.selectedFileId = 'second'
     changeSet.value = { ...changeSet.value, updatedAt: '2026-09-09T00:00:00.000Z' }
@@ -116,7 +116,7 @@ describe('resource previews', () => {
     const pending = deferred<LocalChangeSetDetail>()
     const changeSet = shallowRef<LocalChangeSetSummary>(createChanges('a'))
     const getDetail = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(createChanges('current'))
-    const { state, stop } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value })), branchId: shallowRef('branch'), revision: computed(() => changeSet.value.updatedAt), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
+    const { state, stop } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
     changeSet.value = createChanges('b')
     changeSet.value = createChanges('a')
     await nextTick()
@@ -134,10 +134,9 @@ describe('resource previews', () => {
   })
 
   it('keeps file, tree and total counts consistent when captured content refreshes', async () => {
-    const tab = shallowRef<TaskChangesContextTab>({ id: 'changes:conversation', conversationId: 'conversation', kind: 'changes', changeSet: createChanges('a') })
-    const revision = shallowRef('1')
+    const tab = shallowRef<TaskChangesContextTab>({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: createChanges('a'), branchId: 'branch', revision: '1' })
     const getDetail = vi.fn().mockResolvedValue(createChanges('a'))
-    const { state } = own(() => useContextChanges({ tab, branchId: shallowRef('branch'), revision, getChangeSet: getDetail, getOverview: getDetail }))
+    const { state } = own(() => useContextChanges({ tab, getChangeSet: getDetail, getOverview: getDetail }))
     await nextTick()
     expect(state.counts.value).toEqual({ added: 2, deleted: 2 })
     const next = createChanges('a')
@@ -145,7 +144,7 @@ describe('resource previews', () => {
       ...next,
       files: next.files.map((file, index) => index === 0 ? { ...file, afterText: 'updated\nextra\n' } : file),
     })
-    revision.value = '2'
+    tab.value = { ...tab.value, revision: '2' }
     await nextTick()
     expect(state.current.value?.detail?.files.map(file => file.lineCounts)).toEqual([{ added: 2, deleted: 1 }, { added: 1, deleted: 1 }])
     expect(state.nodes.value.map(node => node.lineCounts)).toEqual([{ added: 2, deleted: 1 }, { added: 1, deleted: 1 }])

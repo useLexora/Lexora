@@ -92,7 +92,6 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
     }, 250)
   }
 
-  window.on('always-on-top-changed', publishWindowState)
   window.on('maximize', publishWindowState)
   window.on('unmaximize', publishWindowState)
   window.on('maximize', publishPlacement)
@@ -167,7 +166,6 @@ export function applyDesktopWindowAppearance(window: BrowserWindow, dark: boolea
 
 export function readDesktopWindowState(window: BrowserWindow): DesktopWindowState {
   return {
-    isAlwaysOnTop: window.isAlwaysOnTop(),
     isMaximized: window.isMaximized(),
   }
 }

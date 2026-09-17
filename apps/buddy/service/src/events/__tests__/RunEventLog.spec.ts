@@ -4,10 +4,13 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { contextPanelRpc } from '../../../../shared/context-panel/contextPanel'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { registerContextPanelRpc } from '../../context-panel/registerContextPanelRpc'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { createRunRepository } from '../../storage/runRepository'
 import { createRunEventLog } from '../createRunEventLog'
 import { RunEventProjector } from '../RunEventProjector'
 
@@ -21,6 +24,29 @@ afterEach(async () => {
 })
 
 describe('runEventLog', () => {
+  it('persists desktop operations after completion and replays them without creating model messages', async () => {
+    const fixture = await createFixture()
+    await fixture.log.append({ runId: 'run-1', type: 'run.completed', payload: {} })
+    let recordOperation: ((input: unknown) => unknown) | undefined
+    const dispose = registerContextPanelRpc({
+      rpc: { onRequest: (method, handler) => {
+        expect(method).toBe(contextPanelRpc.recordOperation)
+        recordOperation = handler
+        return () => {}
+      } },
+      runs: createRunRepository(fixture.database),
+      events: fixture.log,
+    })
+    const operation = { action: 'close', actor: 'user', source: { runId: 'run-1', conversationId: 'conversation-1' }, createdAt: '2026-09-17T00:00:00.000Z' }
+    await expect(recordOperation!(operation)).resolves.toEqual({ recorded: true })
+    await expect(recordOperation!({ ...operation, source: { ...operation.source, conversationId: 'other' } })).resolves.toEqual({ recorded: false })
+    await fixture.log.compactTerminalRun('run-1')
+    await fixture.log.replay('run-1')
+    expect((await fixture.log.list('run-1')).at(-1)).toMatchObject({ type: 'desktop.panel.changed', payload: { action: 'close', actor: 'user' } })
+    expect(fixture.database.prepare('SELECT count(*) AS count FROM messages').get()?.count).toBe(1)
+    dispose()
+  })
+
   it('repairs an incomplete tail before assigning the next sequence', async () => {
     const fixture = await createFixture()
     await fixture.log.append({ payload: {}, runId: 'run-1', type: 'run.started' })

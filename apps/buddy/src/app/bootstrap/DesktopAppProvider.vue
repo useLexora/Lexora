@@ -2,13 +2,13 @@
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { useMessage } from 'naive-ui'
-import { onScopeDispose, provide, toRef, useTemplateRef, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onScopeDispose, provide, toRef, useTemplateRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
 import { useProvideSettingsContext } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
-import { useProvideTaskContext, useTaskCapability } from '@/modules/tasks'
+import { useProvideTaskContext, useTaskCapability, useTaskResourcePanel } from '@/modules/tasks'
 import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.vue'
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
@@ -29,6 +29,7 @@ defineSlots<{ default: (props: { shell: DesktopShellBindings }) => unknown }>()
 
 const api = requireDesktopApi()
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 const appState = useDesktopAppState({ api })
 const { stores } = appState
@@ -37,8 +38,33 @@ const tasks = useTaskCapability({
   applicationSettings: stores.applicationSettings,
   modelProviders: stores.modelProviders,
   runtimeSupervisor: stores.runtimeSupervisor,
+  onTaskDeleted,
+  onDraftCommitted,
+})
+const resources = useTaskResourcePanel({
+  activeConversationId: tasks.workspace.session.activeConversationId,
+  activeDraftId: tasks.workspace.composer.draftId,
+  activeBranchId: tasks.workspace.session.activeBranchId,
+  activeRunId: computed(() => tasks.workspace.execution.activeRun.value?.id
+    ?? tasks.workspace.transcript.runs.value.findLast(run => run.branchId === tasks.workspace.session.activeBranchId.value
+      && run.purpose !== 'conversation.compaction')?.id ?? null),
+  activeSpace: tasks.session.activeSpace,
+  spaces: tasks.index.spaces,
+  mode: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelMode ?? 'task'),
+  taskVisible: computed(() => route.meta.desktopView === 'tasks'),
+  control: api.contextPanel,
+  browser: api.browser,
+  changeSets: tasks.workspace.transcript.changeSets,
+  runOutputs: tasks.workspace.transcript.runOutputs,
+  onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.context.controlFailed')),
 })
 const capabilities = createDesktopCapabilities({ api, stores, tasks, onAutomationRunFailure: error => message.error(error) })
+function onTaskDeleted(id: string) {
+  resources.discardConversation(id)
+}
+function onDraftCommitted(draftId: string, conversationId: string) {
+  resources.adoptDraft(draftId, conversationId)
+}
 watch(tasks.workspace.status.errorMessage, (error) => {
   if (!error)
     return
@@ -77,6 +103,9 @@ const browserGuests = useBrowserGuestHost(browserGuestHost)
 const toggleAppSidebar = () => void shell.setAppSidebarCollapsed(!shell.appSidebarCollapsed.value)
 
 const shellBindings: DesktopShellBindings = {
+  contextPanelGlobal: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelGlobal ?? false),
+  resources,
+  resourceContext: tasks.workspace.context,
   lifecycle,
   appInfo: shell.appInfo,
   navigation,
@@ -90,6 +119,7 @@ useProvideDesktopUi({
   appSidebarCollapsed: shell.appSidebarCollapsed,
 })
 useProvideTaskContext({
+  resources,
   browser: api.browser,
   browserGuests,
   clipboard: api.clipboard,

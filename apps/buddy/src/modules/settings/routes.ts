@@ -41,7 +41,13 @@ export const settingsRoutes: ReadonlyArray<RouteRecordRaw> = [
       {
         path: 'app',
         name: DESKTOP_ROUTE_NAMES.settingsApp,
-        redirect: desktopRouteLocations.settings('appearance'),
+        redirect: desktopRouteLocations.settings(),
+      },
+      {
+        path: 'general',
+        name: DESKTOP_ROUTE_NAMES.settingsGeneral,
+        component: () => import('./pages/DesktopGeneralSettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'general' },
       },
       {
         path: 'appearance',

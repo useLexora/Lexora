@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { ContextPanelTab } from './taskContextPanel'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { Add20Regular, Code16Regular, Dismiss16Regular, Folder20Regular, Globe16Regular, PanelRight20Regular } from '@vicons/fluent'
+import type { ContextPanelTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import { Add20Regular, Code16Regular, Dismiss16Regular, Folder20Regular, Globe16Regular } from '@vicons/fluent'
 import { NPopover } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -11,13 +11,13 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 const props = defineProps<{
   activeTabId: string | null
   canAddChanges: boolean
+  canAddFiles: boolean
   language: BuddyLocale
   tabs: readonly ContextPanelTab[]
 }>()
 const emit = defineEmits<{
   add: [kind: 'changes' | 'files' | 'browser']
   closeTab: [tabId: string]
-  collapse: []
   selectTab: [tabId: string]
 }>()
 defineSlots<{ default?: () => unknown, toolbar?: () => unknown }>()
@@ -26,7 +26,7 @@ const menuOpen = shallowRef(false)
 const tabsScrollRoot = useTemplateRef<HTMLElement>('tabsScrollRoot')
 const entries = computed(() => [
   ...(props.canAddChanges ? [{ kind: 'changes' as const, label: t('desktop.context.changes'), icon: Code16Regular }] : []),
-  { kind: 'files' as const, label: t('desktop.context.files'), icon: Folder20Regular },
+  ...(props.canAddFiles ? [{ kind: 'files' as const, label: t('desktop.context.files'), icon: Folder20Regular }] : []),
   { kind: 'browser' as const, label: t('desktop.context.browser'), icon: Globe16Regular },
 ])
 function open(kind: 'changes' | 'files' | 'browser') {
@@ -78,9 +78,6 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
           </button>
         </div>
       </NPopover>
-      <button class="desktop-task-context-panel__collapse" data-testid="task-context-collapse" type="button" :aria-label="t('desktop.context.collapse')" @click="emit('collapse')">
-        <DesktopIcon :component="PanelRight20Regular" />
-      </button>
     </header>
     <div v-if="$slots.toolbar" class="desktop-task-context-panel__toolbar">
       <slot name="toolbar" />
@@ -212,14 +209,12 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
 }
 
 .desktop-task-context-panel__tab-select:focus-visible,
-.desktop-task-context-panel__tab-close:focus-visible,
-.desktop-task-context-panel__collapse:focus-visible {
+.desktop-task-context-panel__tab-close:focus-visible {
   outline: 2px solid var(--buddy-focus-ring);
   outline-offset: -2px;
 }
 
-.desktop-task-context-panel__tab-close,
-.desktop-task-context-panel__collapse {
+.desktop-task-context-panel__tab-close {
   display: grid;
   flex: none;
   place-items: center;
@@ -236,27 +231,13 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
   margin-right: 0.25rem;
 }
 
-.desktop-task-context-panel__collapse {
-  width: 2rem;
-  height: 2rem;
-  align-self: center;
-  margin: 0 0.375rem 0 auto;
-}
-
-.desktop-task-context-panel__collapse :deep(.n-icon) {
-  width: 1.25rem;
-  height: 1.25rem;
-  font-size: 1.25rem;
-}
-
 .desktop-task-context-panel__tab-close :deep(.n-icon) {
   width: 0.875rem;
   height: 0.875rem;
   font-size: 0.875rem;
 }
 
-.desktop-task-context-panel__tab-close:hover,
-.desktop-task-context-panel__collapse:hover {
+.desktop-task-context-panel__tab-close:hover {
   background: var(--buddy-state-hover);
   color: var(--buddy-text-strong);
 }

@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { publicRunEventSchema, toPublicRunEvent } from '../publicRunEvent'
 
 describe('public run event projection', () => {
+  it('publishes bounded panel operation records independently of tool presentations', () => {
+    const published = toPublicRunEvent(event('desktop.panel.changed', { action: 'open', actor: 'harness', privateTarget: '/private/file' }))
+    expect(published.payload).toEqual({ action: 'open', actor: 'harness' })
+    expect(publicRunEventSchema.safeParse(published).success).toBe(true)
+    expect(project('desktop.panel.changed', { action: 'toggle', actor: 'harness' })).toEqual({})
+  })
+
   it.each(['PATH_NOT_FOUND', 'INVALID_PATH', 'VALIDATION_FAILED'])('publishes %s without private failure details', (errorCode) => {
     const published = toPublicRunEvent(event('tool.failed', {
       errorCode,

@@ -2,7 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 
 export type DesktopView = 'automations' | 'settings' | 'tasks'
 export type DesktopAutomationSection = 'history' | 'plans'
-export type DesktopSettingsCategory = 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'usage' | 'web' | 'proxy' | 'logs' | 'about'
+export type DesktopSettingsCategory = 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'usage' | 'web' | 'proxy' | 'logs' | 'about'
 
 export const DESKTOP_ROUTE_NAMES = {
   automations: 'desktop.automations',
@@ -12,6 +12,7 @@ export const DESKTOP_ROUTE_NAMES = {
   automationsPlans: 'desktop.automations.plans',
   settingsMcp: 'desktop.settings.mcp',
   settingsApp: 'desktop.settings.app',
+  settingsGeneral: 'desktop.settings.general',
   settingsAppearance: 'desktop.settings.appearance',
   settingsNotifications: 'desktop.settings.notifications',
   settingsProxy: 'desktop.settings.proxy',
@@ -32,6 +33,7 @@ const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
 }
 
 const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
+  general: DESKTOP_ROUTE_NAMES.settingsGeneral,
   mcp: DESKTOP_ROUTE_NAMES.settingsMcp,
   appearance: DESKTOP_ROUTE_NAMES.settingsAppearance,
   notifications: DESKTOP_ROUTE_NAMES.settingsNotifications,
@@ -60,7 +62,7 @@ export const desktopRouteLocations = {
     name: DESKTOP_ROUTE_NAMES.settingsProvider,
     params: { providerId },
   }),
-  settings: (category: DesktopSettingsCategory = 'appearance'): RouteLocationRaw => ({
+  settings: (category: DesktopSettingsCategory = 'general'): RouteLocationRaw => ({
     name: SETTINGS_ROUTE_NAMES[category],
   }),
   skills: (spaceId: string | null = null): RouteLocationRaw => ({

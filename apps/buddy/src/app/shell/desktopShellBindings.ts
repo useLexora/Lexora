@@ -3,9 +3,12 @@ import type { Ref } from 'vue'
 import type { useDesktopLifecycle } from '../bootstrap/useDesktopLifecycle'
 import type { DesktopNavigation } from '../bootstrap/useDesktopNavigation'
 import type { NotificationCenterStore } from '@/modules/notifications'
-import type { TaskIndex } from '@/modules/tasks/contracts'
+import type { TaskChatWorkspace, TaskIndex, TaskResourcePanel } from '@/modules/tasks/contracts'
 
 export interface DesktopShellBindings {
+  contextPanelGlobal: Readonly<Ref<boolean>>
+  resources: TaskResourcePanel
+  resourceContext: TaskChatWorkspace['context']
   lifecycle: ReturnType<typeof useDesktopLifecycle>
   appInfo: Readonly<Ref<DesktopAppInfo | null>>
   navigation: Pick<DesktopNavigation, 'navigate' | 'openNotification' | 'openSpace' | 'openTask'>

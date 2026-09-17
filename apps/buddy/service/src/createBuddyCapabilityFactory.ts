@@ -1,3 +1,4 @@
+import type { ContextPanelSource } from '../../shared/context-panel/contextPanel'
 import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
 import type { ArtifactService } from './artifacts/ArtifactService'
@@ -28,6 +29,7 @@ export interface BuddyCapabilityServices {
   attachmentService: ImageGenerationServiceOptions['attachmentService']
   automationService: CreateAutomationToolOptions['service']
   browserHost: BrowserCapabilityHost
+  presentBrowser: (source: ContextPanelSource) => Promise<void>
   connectorService: Pick<McpConnectorService, 'getTools'>
   imageGenerationGateway: ImageGenerationGateway
   imageTransformService: Pick<ImageTransformService, 'removeChroma'>
@@ -62,6 +64,13 @@ export function createBuddyCapabilityFactory(
         getGrants: () => context.grants,
         getExecutionGrants: context.getExecutionGrants,
         host: services.browserHost,
+        onOpened: context.sessionMode === 'interactive'
+          ? async () => {
+            const runId = context.getRunId()
+            if (runId)
+              await services.presentBrowser({ conversationId: context.conversationId, runId })
+          }
+          : undefined,
       }),
       createWebCapability({ service: services.webService, conversationId: context.conversationId }),
       createImageGenerationCapability({

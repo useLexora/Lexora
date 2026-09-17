@@ -1,6 +1,7 @@
 export type DesktopWorkbenchResizablePanel = 'context' | 'sidebar'
 
 export interface DesktopWorkbenchPreferredWidths {
+  workspaceMinimumWidth?: number
   containerWidth: number
   contextVisible: boolean
   preferredContextWidth: number
@@ -15,6 +16,7 @@ export interface DesktopWorkbenchPanelWidths {
 }
 
 export interface DesktopWorkbenchPanelRangeInput {
+  workspaceMinimumWidth?: number
   containerWidth: number
   contextVisible: boolean
   contextWidth: number
@@ -60,7 +62,7 @@ export function resolveDesktopWorkbenchWidths(
     0,
     sidebarWidth
     + contextWidth
-    - Math.max(0, input.containerWidth - DESKTOP_WORKBENCH_WIDTH_LIMITS.workspace.minimum),
+    - Math.max(0, input.containerWidth - (input.workspaceMinimumWidth ?? DESKTOP_WORKBENCH_WIDTH_LIMITS.workspace.minimum)),
   )
 
   if (input.contextVisible && overflow > 0) {
@@ -72,7 +74,7 @@ export function resolveDesktopWorkbenchWidths(
     overflow -= contextReduction
   }
 
-  if (overflow > 0) {
+  if (input.sidebarVisible && overflow > 0) {
     const sidebarReduction = Math.min(
       overflow,
       sidebarWidth - DESKTOP_WORKBENCH_WIDTH_LIMITS.sidebar.minimum,
@@ -98,7 +100,7 @@ export function resolveDesktopWorkbenchPanelRange(
       ? input.sidebarWidth
       : 0
   const availableWidth = input.containerWidth
-    - DESKTOP_WORKBENCH_WIDTH_LIMITS.workspace.minimum
+    - (input.workspaceMinimumWidth ?? DESKTOP_WORKBENCH_WIDTH_LIMITS.workspace.minimum)
     - otherPanelWidth
   const maximum = panel === 'sidebar'
     ? Math.min(DESKTOP_WORKBENCH_WIDTH_LIMITS.sidebar.maximum, availableWidth)

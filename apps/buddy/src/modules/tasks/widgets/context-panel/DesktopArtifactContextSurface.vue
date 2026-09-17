@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocalArtifact, LocalArtifactText } from '@buddy-shared/artifacts/artifactApi'
-import type { ArtifactViewMode } from './taskContextPanel'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { NSpin } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'

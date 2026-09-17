@@ -32,6 +32,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     language: options.language,
     modelSelection: options.modelSelection,
     onActionCommandRunStarted: options.onActionCommandRunStarted,
+    onDraftCommitted: options.onDraftCommitted,
     persistWorkspaceState: options.persistWorkspaceState,
     runSync: options.runSync,
     runtimeSupervisor: options.runtimeSupervisor,

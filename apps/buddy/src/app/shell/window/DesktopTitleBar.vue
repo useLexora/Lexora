@@ -7,6 +7,7 @@ import type {
 import type { DesktopCommandId } from '@buddy-electron/shared/desktopCommands'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { getDesktopCommand } from '@buddy-electron/shared/desktopCommands'
+import { PanelRight20Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
@@ -21,15 +22,17 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 const props = defineProps<{
   appInfo: DesktopAppInfo | null
   appSidebarCollapsed: boolean
+  contextAvailable: boolean
+  contextOpen: boolean
   language: BuddyLocale
 }>()
 const emit = defineEmits<{
   toggleAppSidebar: []
+  toggleContext: []
 }>()
 
 const desktopApi = requireDesktopApi()
 const router = useRouter()
-const isAlwaysOnTop = shallowRef(false)
 const isMaximized = shallowRef(false)
 const showFeedback = shallowRef(false)
 const showUpdate = shallowRef(false)
@@ -40,9 +43,6 @@ const platform = computed(() => props.appInfo?.platform ?? 'linux')
 const maximizeLabel = computed(() => isMaximized.value
   ? t('desktop.window.restore')
   : t('desktop.window.maximize'))
-const pinLabel = computed(() => isAlwaysOnTop.value
-  ? t('desktop.window.unpin')
-  : t('desktop.window.pin'))
 let windowStateVersion = 0
 
 const rendererCommandHandlers = {
@@ -86,10 +86,6 @@ async function executeDesktopCommand(commandId: DesktopCommandId) {
     console.error(`Lexora Buddy Desktop command ${commandId} failed`, error)
     message.error(t('desktop.command.failed'))
   }
-}
-
-async function toggleAlwaysOnTop() {
-  await runWindowAction(() => desktopApi.window.toggleAlwaysOnTop())
 }
 
 async function toggleMaximize() {
@@ -147,7 +143,6 @@ async function runWindowAction(action: () => Promise<DesktopWindowState>) {
 }
 
 function applyWindowState(state: DesktopWindowState) {
-  isAlwaysOnTop.value = state.isAlwaysOnTop
   isMaximized.value = state.isMaximized
 }
 </script>
@@ -170,14 +165,16 @@ function applyWindowState(state: DesktopWindowState) {
         @pointerdown.stop
       >
         <button
-          :aria-label="pinLabel"
-          :aria-pressed="isAlwaysOnTop"
+          v-if="contextAvailable"
+          :aria-label="t(contextOpen ? 'desktop.context.collapse' : 'desktop.context.open')"
+          :aria-expanded="contextOpen"
           class="desktop-title-bar__control"
-          :class="{ 'is-active': isAlwaysOnTop }"
+          :class="{ 'is-active': contextOpen }"
+          data-testid="context-panel-toggle"
           type="button"
-          @click="toggleAlwaysOnTop"
+          @click="emit('toggleContext')"
         >
-          <DesktopIcon data-window-control-icon="pin" name="windowPin" />
+          <DesktopIcon :component="PanelRight20Regular" />
         </button>
         <button
           :aria-label="t('desktop.window.minimize')"

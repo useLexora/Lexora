@@ -15,6 +15,7 @@ import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
 import { automationNotifications } from '../../shared/automation/automationApi'
+import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ApplicationEvents as EventPublisher } from '../../shared/observability/ApplicationEvents'
 import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
@@ -62,6 +63,7 @@ import {
   McpConnectorService,
 } from './connectors/mcp/McpConnectorService'
 import { registerMcpConnectorRpc } from './connectors/mcp/registerMcpConnectorRpc'
+import { registerContextPanelRpc } from './context-panel/registerContextPanelRpc'
 import { ContextUsageSnapshotService } from './context/ContextUsageSnapshotService'
 import { registerContextRpc } from './context/registerContextRpc'
 import { ConversationLifecycleService } from './conversations/ConversationLifecycleService'
@@ -77,8 +79,8 @@ import { registerNotificationRpc } from './notifications/registerNotificationRpc
 import { createProviderService } from './providers/createProviderService'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
-import { BuddyServiceError } from './rpc/runtimeRequest'
 
+import { BuddyServiceError } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunLifecycleService } from './runs/RunLifecycleService'
 import { RunRecoveryService } from './runs/RunRecoveryService'
@@ -392,6 +394,14 @@ export async function startBuddyService(
         attachmentService,
         automationService,
         browserHost,
+        presentBrowser: async (source) => {
+          try {
+            contextPanelStateSchema.parse(await options.rpc.request(contextPanelRpc.presentBrowser, source))
+          }
+          catch {
+            record({ event: 'context_panel.presentation.failed', level: 'warn', errorCode: 'CONTEXT_PANEL_UNAVAILABLE' })
+          }
+        },
         connectorService,
         imageGenerationGateway,
         imageTransformService,
@@ -611,6 +621,7 @@ export async function startBuddyService(
           rpc: options.rpc,
         }),
       )
+      register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
       register(
         registerAttachmentRpc({
           rpc: options.rpc,
