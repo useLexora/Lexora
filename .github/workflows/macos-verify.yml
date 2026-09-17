@@ -72,7 +72,11 @@ jobs:
           APPLE_ID: ${{ inputs.signing == 'developer-id' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ inputs.signing == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
-        run: pnpm --filter @uselexora/lexora-buddy package:macos
+        run: |
+          if [[ "$LEXORA_MACOS_SIGNING" == 'ad-hoc' ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          pnpm --filter @uselexora/lexora-buddy package:macos
 
       - name: Verify shell isolation
         run: pnpm --filter @uselexora/lexora-buddy test:runtime service/src/sandbox/__tests__/macosSandbox.spec.ts

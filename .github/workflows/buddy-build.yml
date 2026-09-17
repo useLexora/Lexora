@@ -105,10 +105,9 @@ jobs:
     timeout-minutes: 60
     container:
       image: archlinux:latest
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     steps:
-      - name: Install Arch build and GUI dependencies
-        run: pacman -Syu --noconfirm base-devel dbus git gtk3 libarchive libcap meson ninja libxcrypt-compat xorg-server-xvfb xorg-xauth
+      - name: Install Arch build dependencies
+        run: pacman -Syu --noconfirm base-devel git gtk3 libarchive libcap meson ninja libxcrypt-compat
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,30 +141,86 @@ jobs:
       - name: Build first-party Arch package
         run: pnpm --filter @uselexora/lexora-buddy package:arch
 
-      - name: Install built Arch package
-        id: install
-        run: pacman -U --noconfirm "${{ steps.package.outputs.path }}"
+      - name: Upload Arch package for installation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: arch-install-candidate
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
 
-      - name: Prepare smoke user
-        run: useradd -m buddy
+  verify-arch:
+    name: Arch install
+    needs: build-arch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Resolve package target
+        id: package
+        run: node packaging/buddy/release/artifacts.mjs --format pacman --github-output "$GITHUB_OUTPUT"
+
+      - name: Download Arch package for installation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: arch-install-candidate
+          path: apps/buddy/.output/artifacts/arch
+
+      - name: Install built Arch package in an isolated container
+        env:
+          ARCH_PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          printf 'abi <abi/4.0>,\nprofile lexora-arch-install flags=(unconfined) { userns, }\n' > "$RUNNER_TEMP/lexora-arch-install.apparmor"
+          sudo apparmor_parser --replace "$RUNNER_TEMP/lexora-arch-install.apparmor"
+          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          docker run --detach --name lexora-arch-install \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=lexora-arch-install \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
+            --volume "$node_root:/opt/node:ro" \
+            --workdir "$GITHUB_WORKSPACE" \
+            --env ARCH_PACKAGE \
+            --env PATH=/opt/node/bin:/usr/bin:/bin \
+            archlinux:latest sleep infinity
+          docker exec lexora-arch-install bash -euc '
+            pacman -Syu --noconfirm dbus xorg-server-xvfb xorg-xauth
+            pacman -U --noconfirm "$ARCH_PACKAGE"
+            useradd -m buddy
+            install -d -m 700 -o buddy -g buddy /home/buddy/runtime
+          '
 
       - name: Smoke installed Desktop and native pet
-        id: smoke
         timeout-minutes: 2
-        env:
-          LEXORA_GUI_SMOKE_NO_SANDBOX: '1'
-          LEXORA_BUDDY_PET_PATH: /opt/lexora-buddy/resources/native-pet/lexora-buddy-pet
-          LEXORA_DESKTOP_EXECUTABLE_PATH: /opt/lexora-buddy/lexora-buddy
         run: |
-          smoke_root="$RUNNER_TEMP/lexora-buddy-arch-smoke"
-          install -d -m 700 -o buddy -g buddy "$smoke_root" "$smoke_root/runtime"
-          runuser -u buddy -- env \
-            HOME=/home/buddy \
-            LEXORA_BUDDY_PET_PATH="$LEXORA_BUDDY_PET_PATH" \
-            LEXORA_DESKTOP_EXECUTABLE_PATH="$LEXORA_DESKTOP_EXECUTABLE_PATH" \
-            PATH="$PATH" \
-            XDG_RUNTIME_DIR="$smoke_root/runtime" \
+          docker exec --user buddy \
+            --env HOME=/home/buddy \
+            --env XDG_RUNTIME_DIR=/home/buddy/runtime \
+            --env LEXORA_GUI_SMOKE_NO_SANDBOX=1 \
+            --env LEXORA_BUDDY_PET_PATH=/opt/lexora-buddy/resources/native-pet/lexora-buddy-pet \
+            --env LEXORA_DESKTOP_EXECUTABLE_PATH=/opt/lexora-buddy/lexora-buddy \
+            lexora-arch-install \
             xvfb-run -a dbus-run-session -- node packaging/buddy/ci/run-gui-smoke.mjs
+
+      - name: Remove installation container and policy
+        if: always()
+        run: |
+          if docker container inspect lexora-arch-install > /dev/null 2>&1; then
+            docker rm --force lexora-arch-install
+          fi
+          if [[ -f "$RUNNER_TEMP/lexora-arch-install.apparmor" ]]; then
+            sudo apparmor_parser --remove "$RUNNER_TEMP/lexora-arch-install.apparmor"
+          fi
 
       - name: Upload verified Arch package
         if: inputs.upload-artifacts
@@ -240,7 +295,13 @@ jobs:
           $installer = Start-Process -FilePath '${{ steps.package.outputs.path }}' -ArgumentList '/S' -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed: $($installer.ExitCode)" }
           $directory = Join-Path $env:LOCALAPPDATA 'Programs\Lexora Buddy'
-          if (!(Test-Path -LiteralPath (Join-Path $directory 'Lexora Buddy.exe'))) { throw 'Installed Desktop is missing' }
+          if (!(Test-Path -LiteralPath (Join-Path $directory 'Lexora Buddy.exe'))) {
+            Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+              Where-Object DisplayName -Like '*Lexora*' |
+              Select-Object DisplayName, InstallLocation, UninstallString | Format-List
+            Get-ChildItem -LiteralPath $directory -ErrorAction SilentlyContinue | Select-Object Name, Length
+            throw "Installed Desktop is missing at $directory; NSIS exit code: $($installer.ExitCode)"
+          }
           "BUDDY_INSTALL_DIRECTORY=$directory" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Smoke installed Windows Desktop
