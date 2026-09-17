@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T extends Record<string, unknown>">
 import { NVirtualList } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, useTemplateRef } from 'vue'
 import DesktopTaskSidebarSectionHeader from '@/modules/tasks/widgets/task-index/DesktopTaskSidebarSectionHeader.vue'
 import {
   DESKTOP_TASK_SIDEBAR_LIST_PADDING_TOP,
@@ -13,11 +13,13 @@ const props = defineProps<{
   keyField: string
   label: string
   priority: number
+  scrollIndex?: number
   section: 'pinned' | 'spaces' | 'tasks'
   showAdd?: boolean
 }>()
 const emit = defineEmits<{
   add: []
+  scroll: [index: number]
 }>()
 defineSlots<{
   default: (props: { item: T }) => unknown
@@ -29,6 +31,32 @@ const layout = computed(() => resolveDesktopTaskSidebarSectionLayout({
   rowCount: props.items.length,
 }))
 const virtualItems = computed(() => [...props.items])
+const sectionElement = useTemplateRef<HTMLElement>('sectionElement')
+
+onMounted(async () => {
+  const index = props.scrollIndex ?? 0
+  if (index <= 0)
+    return
+  const target = DESKTOP_TASK_SIDEBAR_LIST_PADDING_TOP + index * DESKTOP_TASK_SIDEBAR_ROW_SIZE
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await nextTick()
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const list = sectionElement.value?.querySelector('.v-vl')
+    if (!(list instanceof HTMLElement))
+      continue
+    list.scrollTop = target
+    if (list.scrollTop > 0)
+      return
+  }
+})
+
+function handleScroll(event: Event): void {
+  const target = event.target
+  if (!(target instanceof HTMLElement))
+    return
+  const offset = Math.max(0, target.scrollTop - DESKTOP_TASK_SIDEBAR_LIST_PADDING_TOP)
+  emit('scroll', Math.floor(offset / DESKTOP_TASK_SIDEBAR_ROW_SIZE))
+}
 const sectionStyle = computed(() => ({
   '--buddy-task-sidebar-section-natural-size': layout.value.naturalSize,
   '--buddy-task-sidebar-section-priority': layout.value.priority,
@@ -37,6 +65,7 @@ const sectionStyle = computed(() => ({
 
 <template>
   <section
+    ref="sectionElement"
     class="desktop-task-sidebar__section"
     :class="[`is-${layout.mode}`, `desktop-task-sidebar__${section}`]"
     :style="sectionStyle"
@@ -54,6 +83,7 @@ const sectionStyle = computed(() => ({
       :item-size="DESKTOP_TASK_SIDEBAR_ROW_SIZE"
       :items="virtualItems"
       :key-field="keyField"
+      :on-scroll="handleScroll"
       :padding-top="DESKTOP_TASK_SIDEBAR_LIST_PADDING_TOP"
     >
       <template #default="{ item }">

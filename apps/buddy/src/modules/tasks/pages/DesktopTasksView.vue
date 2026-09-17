@@ -26,10 +26,17 @@ const {
 } = useTaskContext()
 const { language, appSidebarCollapsed } = useDesktopUi()
 const { workspace } = tasks
-const { pinnedItems, spaces, tasks: taskItems, ...indexActions } = tasks.index
+const { pinnedItems, sidebar: taskSidebar, spaces, tasks: taskItems, ...indexActions } = tasks.index
 const { activeSpace, activeTaskId, currentTitle, openTask, startTask } = tasks.session
 const chatSession = workspace.session
-const taskSidebarCollapsed = shallowRef(false)
+const sidebarCollapsed = computed({
+  get: () => taskSidebar.collapsed.value,
+  set: value => void taskSidebar.setCollapsed(value),
+})
+const sidebarWidth = computed({
+  get: () => taskSidebar.width.value,
+  set: value => void taskSidebar.setWidth(value),
+})
 const viewMode = shallowRef<'chat' | 'canvas'>('chat')
 const retainedOutputs = shallowRef<readonly LocalRunOutput[]>([])
 const retainedChanges = shallowRef<readonly LocalChangeSetSummary[]>([])
@@ -91,7 +98,8 @@ const {
 
 <template>
   <DesktopWorkbenchLayout
-    v-model:sidebar-collapsed="taskSidebarCollapsed"
+    v-model:sidebar-collapsed="sidebarCollapsed"
+    v-model:sidebar-width="sidebarWidth"
     :language="language"
     sidebar-collapsible
     sidebar-resizable
@@ -103,6 +111,7 @@ const {
         :app-sidebar-collapsed="appSidebarCollapsed"
         :language="language"
         :pinned-items="pinnedItems"
+        :sidebar="taskSidebar"
         :spaces="spaces"
         :select-space-directory="indexActions.selectSpaceDirectory"
         :tasks="taskItems"

@@ -19,6 +19,7 @@ defineSlots<{
   sidebar: () => unknown
 }>()
 const sidebarCollapsed = defineModel<boolean>('sidebarCollapsed', { default: false })
+const sidebarWidthPreference = defineModel<number | null>('sidebarWidth', { default: null })
 const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const context = useTemplateRef<HTMLElement>('context')
@@ -42,7 +43,11 @@ const {
 } = useDesktopWorkbenchResize({
   container,
   context,
+  onSidebarWidthCommit: (width) => {
+    sidebarWidthPreference.value = width
+  },
   sidebar,
+  sidebarPreferredWidth: () => sidebarWidthPreference.value,
   sidebarResizable: () => props.sidebarResizable,
   sidebarVisible: () => sidebarVisible.value,
 })

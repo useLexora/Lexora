@@ -7,12 +7,29 @@ import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
-import { DESKTOP_CHAT_WELCOME_VARIANT_IDS } from '../../shared/desktopApi'
+import { DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().min(1).max(128), kind: z.literal('conversation') }).strict(),
   z.object({ id: z.string().min(1).max(128), kind: z.literal('space') }).strict(),
 ])
+
+const taskSidebarConfigSchema = z.object({
+  collapsed: z.boolean().default(false),
+  collapsed_sections: z.array(z.enum(DESKTOP_TASK_SIDEBAR_SECTIONS))
+    .max(DESKTOP_TASK_SIDEBAR_SECTIONS.length)
+    .refine(sections => new Set(sections).size === sections.length)
+    .default([]),
+  collapsed_spaces: z.array(z.string().min(1).max(128))
+    .max(500)
+    .refine(ids => new Set(ids).size === ids.length)
+    .default([]),
+  width: z.number().int().min(0).max(10_000).optional(),
+}).passthrough().default({
+  collapsed: false,
+  collapsed_sections: [],
+  collapsed_spaces: [],
+})
 
 const desktopConfigSchema = z.object({
   background_close_notice_shown: z.boolean().default(false),
@@ -20,6 +37,7 @@ const desktopConfigSchema = z.object({
     .max(500)
     .refine(items => new Set(items.map(item => `${item.kind}:${item.id}`)).size === items.length)
     .default([]),
+  task_sidebar: taskSidebarConfigSchema,
   developer_tools_enabled: z.boolean().default(false),
   language: z.enum(['zh-CN', 'en-US']).default('zh-CN'),
   launch_at_login: z.boolean().default(false),
@@ -31,6 +49,7 @@ const desktopConfigSchema = z.object({
 }).passthrough().default({
   background_close_notice_shown: false,
   task_sidebar_pinned_items: [],
+  task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
   developer_tools_enabled: false,
   language: 'zh-CN',
   launch_at_login: false,
@@ -160,6 +179,12 @@ function decodeConfig(value: unknown): LexoraConfig {
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
       taskSidebarPinnedItems: config.desktop.task_sidebar_pinned_items,
+      taskSidebar: {
+        collapsed: config.desktop.task_sidebar.collapsed,
+        collapsedSections: config.desktop.task_sidebar.collapsed_sections,
+        collapsedSpaces: config.desktop.task_sidebar.collapsed_spaces,
+        width: config.desktop.task_sidebar.width ?? null,
+      },
       developerToolsEnabled: config.desktop.developer_tools_enabled,
       language: config.desktop.language,
       launchAtLogin: config.desktop.launch_at_login,
@@ -183,6 +208,12 @@ function encodeConfig(config: LexoraConfig) {
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
       task_sidebar_pinned_items: config.desktop.taskSidebarPinnedItems,
+      task_sidebar: {
+        collapsed: config.desktop.taskSidebar.collapsed,
+        collapsed_sections: config.desktop.taskSidebar.collapsedSections,
+        collapsed_spaces: config.desktop.taskSidebar.collapsedSpaces,
+        ...(config.desktop.taskSidebar.width === null ? {} : { width: config.desktop.taskSidebar.width }),
+      },
       developer_tools_enabled: config.desktop.developerToolsEnabled,
       language: config.desktop.language,
       launch_at_login: config.desktop.launchAtLogin,
@@ -206,6 +237,10 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      taskSidebar: {
+        ...current.desktop.taskSidebar,
+        ...patch.desktop?.taskSidebar,
+      },
     },
     pet: {
       ...current.pet,
@@ -222,6 +257,10 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   const nextDesktop: Record<string, unknown> = {
     ...desktop,
     ...encoded.desktop,
+    task_sidebar: {
+      ...asRecord(desktop.task_sidebar),
+      ...asRecord(encoded.desktop.task_sidebar),
+    },
   }
   delete nextDesktop.chat_sidebar_section_order
   delete nextDesktop.chat_sidebar_pinned_items

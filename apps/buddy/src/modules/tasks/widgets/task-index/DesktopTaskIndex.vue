@@ -4,7 +4,7 @@ import type { LocalConversationSummary } from '@buddy-shared/conversation/conver
 
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
-import type { TaskMarks } from '../../contracts'
+import type { TaskIndex, TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
 import { Add16Regular, Tag20Regular } from '@vicons/fluent'
@@ -32,6 +32,7 @@ const props = defineProps<{
   appSidebarCollapsed: boolean
   language: BuddyLocale
   pinnedItems: ReadonlyArray<DesktopTaskPinnedItem>
+  sidebar: TaskIndex['sidebar']
   spaces: ReadonlyArray<LocalSpace>
   selectSpaceDirectory: () => Promise<string | null>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
@@ -77,18 +78,20 @@ const {
   enterPinnedDropTarget,
   getTaskTitle,
   getPinnedDropPosition,
+  isSectionExpanded,
   isSpaceExpanded,
   openSpaceCreator,
   pinTask,
   pinSpace,
   pinnedItems: visiblePinnedItems,
   pinnedRows,
-  pinnedSectionExpanded,
+  recordScrollAnchor,
+  scrollAnchors,
+  setSectionExpanded,
   spaceDeleteTarget,
   spaceDialogOpen,
   spaceEditTarget,
   spaceRows,
-  spacesSectionExpanded,
   relativeTimeNow,
   requestTaskDelete,
   requestTaskRename,
@@ -98,7 +101,6 @@ const {
   taskDeleteTarget,
   taskRenameTarget,
   taskTitleDraft,
-  tasksSectionExpanded,
   toggleSpace,
   unpinItem,
 } = useTaskIndexController({
@@ -112,6 +114,7 @@ const {
   onUpdatePinnedItems: items => emit('updatePinnedItems', items),
   onUpdateSpace: input => props.updateSpace(input),
   pinnedItems: toRef(props, 'pinnedItems'),
+  sidebar: () => props.sidebar,
   spaces: toRef(props, 'spaces'),
   tasks: toRef(props, 'tasks'),
 })
@@ -152,12 +155,15 @@ const {
       <nav :style="sidebarLayoutStyle">
         <DesktopTaskSidebarSection
           v-if="visiblePinnedItems.length > 0"
-          v-model:expanded="pinnedSectionExpanded"
+          :expanded="isSectionExpanded('pinned')"
           :items="pinnedRows"
           key-field="key"
           :label="t('desktop.tasks.pinnedSection')"
           :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.pinned"
+          :scroll-index="scrollAnchors.pinned"
           section="pinned"
+          @scroll="index => recordScrollAnchor('pinned', index)"
+          @update:expanded="value => setSectionExpanded('pinned', value)"
         >
           <template #default="{ item }">
             <div v-if="item.kind === 'space'" class="desktop-task-sidebar__space-item">
@@ -207,14 +213,17 @@ const {
         </DesktopTaskSidebarSection>
 
         <DesktopTaskSidebarSection
-          v-model:expanded="spacesSectionExpanded"
+          :expanded="isSectionExpanded('spaces')"
           :items="spaceRows"
           key-field="key"
           :label="t('desktop.tasks.spacesSection')"
           :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.spaces"
+          :scroll-index="scrollAnchors.spaces"
           section="spaces"
           show-add
           @add="openSpaceCreator"
+          @scroll="index => recordScrollAnchor('spaces', index)"
+          @update:expanded="value => setSectionExpanded('spaces', value)"
         >
           <template #default="{ item }">
             <div v-if="item.kind === 'space'" class="desktop-task-sidebar__space-item">
@@ -246,12 +255,15 @@ const {
         </DesktopTaskSidebarSection>
 
         <DesktopTaskSidebarSection
-          v-model:expanded="tasksSectionExpanded"
+          :expanded="isSectionExpanded('tasks')"
           :items="globalTasks"
           key-field="id"
           :label="t('desktop.tasks.tasksSection')"
           :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.tasks"
+          :scroll-index="scrollAnchors.tasks"
           section="tasks"
+          @scroll="index => recordScrollAnchor('tasks', index)"
+          @update:expanded="value => setSectionExpanded('tasks', value)"
         >
           <template #default="{ item: task }">
             <DesktopTaskRow

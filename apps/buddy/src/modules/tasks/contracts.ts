@@ -1,4 +1,4 @@
-import type { DesktopChatWelcomePreference, DesktopTaskPinnedItem } from '@buddy-electron/shared/desktopApi'
+import type { DesktopChatWelcomePreference, DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
@@ -46,6 +46,19 @@ export interface TaskIndex {
   marks: TaskMarks
   pinnedItems: State<readonly DesktopTaskPinnedItem[]>
   setPinnedItems: (items: DesktopTaskPinnedItem[]) => Promise<boolean>
+  sidebar: {
+    collapsed: State<boolean>
+    collapsedSections: State<ReadonlySet<DesktopTaskSidebarSection>>
+    collapsedSpaceIds: State<ReadonlySet<string>>
+    scrollAnchors: State<Readonly<Record<DesktopTaskSidebarSection, number>>>
+    width: State<number | null>
+    pruneSpaces: (validSpaceIds: ReadonlySet<string>) => void
+    recordScrollAnchor: (section: DesktopTaskSidebarSection, index: number) => void
+    setCollapsed: (collapsed: boolean) => Promise<boolean>
+    setSectionExpanded: (section: DesktopTaskSidebarSection, expanded: boolean) => Promise<boolean>
+    setSpaceExpanded: (spaceId: string, expanded: boolean) => Promise<boolean>
+    setWidth: (width: number | null) => Promise<boolean>
+  }
   spaces: State<readonly LocalSpace[]>
   tasks: State<readonly LocalConversationSummary[]>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>

@@ -23,6 +23,42 @@ describe('desktop Preload API contract', () => {
     })).toThrow()
   })
 
+  it('accepts task sidebar layout preferences and rejects duplicates and unknown sections', () => {
+    expect(lexoraConfigPatchSchema.parse({
+      desktop: {
+        taskSidebar: {
+          collapsed: true,
+          collapsedSections: ['tasks', 'spaces'],
+          collapsedSpaces: ['space-a'],
+          width: 336,
+        },
+      },
+    })).toEqual({
+      desktop: {
+        taskSidebar: {
+          collapsed: true,
+          collapsedSections: ['tasks', 'spaces'],
+          collapsedSpaces: ['space-a'],
+          width: 336,
+        },
+      },
+    })
+    expect(lexoraConfigPatchSchema.parse({ desktop: { taskSidebar: { width: null } } }))
+      .toEqual({ desktop: { taskSidebar: { width: null } } })
+    expect(() => lexoraConfigPatchSchema.parse({
+      desktop: { taskSidebar: { collapsedSections: ['tasks', 'tasks'] } },
+    })).toThrow()
+    expect(() => lexoraConfigPatchSchema.parse({
+      desktop: { taskSidebar: { collapsedSections: ['sidebar'] } },
+    })).toThrow()
+    expect(() => lexoraConfigPatchSchema.parse({
+      desktop: { taskSidebar: { collapsedSpaces: ['space-a', 'space-a'] } },
+    })).toThrow()
+    expect(() => lexoraConfigPatchSchema.parse({
+      desktop: { taskSidebar: { collapsed: 'yes' } },
+    })).toThrow()
+  })
+
   it('rejects unknown, secret-like, and lifecycle-breaking settings', () => {
     expect(() => lexoraConfigPatchSchema.parse({
       agent: {

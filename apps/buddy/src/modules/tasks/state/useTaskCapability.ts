@@ -37,6 +37,7 @@ import { useTaskModelSelection } from './drafts/useTaskModelSelection'
 import { useTaskWorkspacePersistence } from './drafts/useTaskWorkspacePersistence'
 import { useTaskMarks } from './task-index/useTaskMarks'
 import { useTaskPinnedItems } from './task-index/useTaskPinnedItems'
+import { useTaskSidebarPreferences } from './task-index/useTaskSidebarPreferences'
 import { useTaskLifecycle } from './useTaskLifecycle'
 
 export interface UseTaskCapabilityOptions {
@@ -55,6 +56,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   } = options
   const taskModels = useTaskModelSelection(modelProviders)
   const taskPins = useTaskPinnedItems(applicationSettings)
+  const taskSidebar = useTaskSidebarPreferences(applicationSettings)
   const taskIndexData = useTaskIndexData({ api: api.localChat })
   const {
     conversations,
@@ -407,6 +409,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     marks: taskMarks,
     pinnedItems: taskPins.pinnedItems,
     setPinnedItems: taskPins.setPinnedItems,
+    sidebar: taskSidebar,
     createSpace,
     deleteSpace,
     deleteTask: deleteConversation,
