@@ -209,9 +209,7 @@ async function copyContent() {
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
   font-weight: 400;
-  line-height: 1;
   padding-inline: 0.2rem;
-  transform: translateY(-0.5px);
   white-space: nowrap;
 }
 
