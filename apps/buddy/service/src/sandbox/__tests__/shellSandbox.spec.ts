@@ -16,7 +16,7 @@ const originalEnvironment = { ...process.env }
 const originalHome = homedir()
 const quote = (value: string) => `'${value.replaceAll('\'', '\'\\\'\'')}'`
 
-describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux shell enforcement', () => {
+describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
   let directory: string
   let workspace: string
   let outside: string
@@ -46,8 +46,8 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux s
       requestId: randomUUID(),
       roots: [workspace],
       workspaceRoots: [workspace],
-      backend: { kind: 'srt', sandboxDirectory: resolve(buddyRoot, '.output/build/shell-sandbox/linux-x64') },
-      searchDirectory: resolve(buddyRoot, '.output/build/search-tools/linux-x64'),
+      backend: { kind: 'linux-srt', sandboxDirectory: resolve(buddyRoot, `.output/build/shell-sandbox/linux-${process.arch}`) },
+      searchDirectory: resolve(buddyRoot, `.output/build/search-tools/linux-${process.arch}`),
       timeout: 5,
     }
   })
@@ -227,7 +227,7 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('linux s
   }, 15_000)
 
   it('fails closed when the packaged helper is missing', async () => {
-    const { result } = await execute('touch must-not-run', {}, { backend: { kind: 'srt', sandboxDirectory: join(directory, 'missing') } })
+    const { result } = await execute('touch must-not-run', {}, { backend: { kind: 'linux-srt', sandboxDirectory: join(directory, 'missing') } })
     expect(result).toEqual({ ok: false, code: 'SANDBOX_UNAVAILABLE' })
     await expect(access(join(workspace, 'must-not-run'))).rejects.toThrow()
   })

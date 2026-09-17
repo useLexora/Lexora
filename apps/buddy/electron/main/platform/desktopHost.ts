@@ -4,11 +4,16 @@ import { app } from 'electron'
 import { resolveLinuxConfigDirectory, syncLinuxAutostart } from '../linuxAutostart'
 
 interface DesktopHost {
-  setIdentity: (desktopName: string) => void
+  setIdentity?: (desktopName: string) => void
   setAutostart: (enabled: boolean) => Promise<void>
 }
 
 export const desktopHosts: Record<BuddyPlatformId, DesktopHost> = {
+  darwin: {
+    async setAutostart(enabled) {
+      app.setLoginItemSettings({ openAtLogin: enabled })
+    },
+  },
   linux: {
     setIdentity: name => app.setDesktopName(name),
     setAutostart: enabled => syncLinuxAutostart({

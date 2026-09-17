@@ -8,11 +8,22 @@
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows x64 | Windows 安装程序 |
-| Ubuntu / Debian x64 | .deb |
+| Windows x64 / ARM64 | 对应架构的 .exe |
+| Ubuntu / Debian x64 / ARM64 | 对应架构的 .deb |
 | Arch Linux x64 | .pkg.tar.zst |
+| macOS 26+，Apple Silicon（ARM64） | .dmg |
 
-目前没有 macOS 安装包。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
+Intel / AMD 电脑选择 `x64`（.deb 标为 `amd64`），ARM 电脑选择 `arm64`。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
+
+### macOS 首次安装
+
+打开 DMG，将 `lexora-buddy.app` 拖入「应用程序」。当前安装包使用 ad-hoc 签名，尚未经过 Apple 公证；确认来自上方官方 Release 后，在终端执行：
+
+```bash
+xattr -r -d com.apple.quarantine "/Applications/lexora-buddy.app"
+```
+
+然后从「应用程序」打开 Lexora。命令只移除这个应用的隔离属性；更新后如再次被系统阻止，重新执行即可。
 
 ## 2. 连接模型
 

@@ -1,5 +1,5 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -9,16 +9,19 @@ import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvir
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
 import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema } from '../../../shared/permissions/shellSandbox'
+import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
 
-export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
+export interface SandboxHostOptions {
   buddyHome: string
   proxyUrl?: string
   searchDirectory: string
-  sandboxDirectory: string
+  sandboxDirectory?: string
   windowsSandbox?: string
   windowsShell?: string
-}): () => void {
+}
+
+export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: SandboxHostOptions): () => void {
   const active = new Map<string, AbortController>()
   let disposed = false
   const disposers = [
@@ -31,7 +34,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
     }),
     peer.onRequest('host.sandbox.exec', async (params) => {
       const input = sandboxCommandSchema.parse(params)
-      if (!['linux', 'win32'].includes(process.platform))
+      if (!Object.values<string>(OPERATING_SYSTEM).includes(process.platform))
         return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
       if (disposed || active.has(input.requestId) || active.size >= 8)
         return { ok: false, code: 'SANDBOX_BUSY' }
@@ -52,11 +55,13 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
       }
       controller.signal.addEventListener('abort', cancel, { once: true })
       try {
-        const windowsSandbox = process.platform === 'win32' ? await resolveWindowsSandbox(options.windowsSandbox) : undefined
+        const windowsSandbox = isWindows(process.platform) ? await resolveWindowsSandbox(options.windowsSandbox) : undefined
         const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT
-        if (process.platform === 'win32' && (!windowsSandbox || !options.windowsShell || !systemRoot))
+        if (isWindows(process.platform) && (!windowsSandbox || !options.windowsShell || !systemRoot))
           return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
-        directory = await mkdtemp(join(tmpdir(), 'lexora-shell-'))
+        if (isLinux(process.platform) && !options.sandboxDirectory)
+          return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
+        directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-shell-')))
         await Promise.all(['home', 'tmp'].map(path => mkdir(join(directory!, path), { mode: 0o700 })))
         controller.signal.throwIfAborted()
         child = utilityProcess.fork(sandboxProcessPath, [], {
@@ -98,8 +103,10 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: {
           protectedRoots: [options.buddyHome],
           searchDirectory: options.searchDirectory,
           backend: windowsSandbox
-            ? { kind: 'windows-lpac', executable: windowsSandbox, shell: options.windowsShell, systemRoot }
-            : { kind: 'srt', sandboxDirectory: options.sandboxDirectory },
+            ? { kind: SHELL_SANDBOX_BACKEND.Windows, executable: windowsSandbox, shell: options.windowsShell, systemRoot }
+            : isLinux(process.platform)
+              ? { kind: SHELL_SANDBOX_BACKEND.Linux, sandboxDirectory: options.sandboxDirectory }
+              : { kind: SHELL_SANDBOX_BACKEND.MacOS },
         }, SANDBOX_RPC_TIMEOUT_MS)
       }
       catch {

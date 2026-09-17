@@ -6,6 +6,8 @@ import process from 'node:process'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { ShellSandboxError } from '../../shared/permissions/shellSandbox'
+import { isWindows } from '../../shared/platform/identifiers'
+import { currentTarget } from '../target'
 import { createWindowsHostEnvironment, resolveWindowsPowerShell } from '../windows/powerShell'
 import { probeWindowsSandbox } from './probeWindowsSandbox'
 
@@ -38,7 +40,7 @@ async function healthy(executable: string, status: z.infer<typeof statusSchema>)
 }
 
 export async function checkWindowsSandbox(executable: string | undefined): Promise<SandboxEnvironmentStatus> {
-  if (!executable || process.platform !== 'win32' || process.arch !== 'x64')
+  if (!executable || !isWindows(currentTarget.platform))
     return 'unavailable'
   try {
     const status = await inspect(executable)
@@ -63,7 +65,7 @@ export async function resolveWindowsSandbox(executable: string | undefined): Pro
 }
 
 export async function setupWindowsSandbox(executable: string | undefined): Promise<SandboxSetupResult> {
-  if (!executable || process.platform !== 'win32' || process.arch !== 'x64')
+  if (!executable || !isWindows(currentTarget.platform))
     return 'failed'
   try {
     await execute(executable, ['setup'], {

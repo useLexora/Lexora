@@ -17,6 +17,7 @@ import {
   getBrowserActionRef,
   getBrowserObservationTextByteLength,
 } from '../../../shared/browser'
+import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { browserTargetActionabilitySchema, cdpAxTreeSchema, cdpBoxModelSchema, cdpDocumentSchema, cdpDomSnapshotSchema, cdpLayoutMetricsSchema, cdpResolveNodeSchema, cdpRuntimeResultSchema } from './browserCdpSchemas'
 import { BrowserDebugger } from './BrowserDebugger'
 import { collectDomFieldMetadata, collectFrameIds, collectViewportNodeIds, containsSensitiveFieldMetadata, createScreenshotRef, createTruncation, deduplicateAccessibilityNodes, getScreenshotFallbackReasons, hasPngSignature, hasVisualContent, MAX_OBSERVED_FRAMES, normalizeElementLimit, projectElements, scopeAccessibilityNodes } from './browserObservationProjection'
@@ -753,7 +754,7 @@ export class SemanticBrowserDriver {
   }
 
   async #selectAllAndDelete(): Promise<void> {
-    const modifier = platform === 'darwin' ? 4 : 2
+    const modifier = platform === OPERATING_SYSTEM.MacOS ? 4 : 2
     await this.#dispatchKey({ code: 'KeyA', key: 'a', modifiers: modifier })
     await this.#dispatchKey({ code: 'Backspace', key: 'Backspace' })
   }

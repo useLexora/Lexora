@@ -19,6 +19,24 @@ const BASE_OPTIONS = {
 } as const
 
 describe('resolveBuddyRuntimePaths', () => {
+  it('isolates macOS profiles and bounds Unix socket paths independently of long temporary paths', () => {
+    const options = { ...BASE_OPTIONS, platform: 'darwin', userHome: '/Users/lexora', defaultUserData: '/Users/lexora/Library/Application Support/Lexora Buddy', temporaryDirectory: `/private/var/folders/${'a'.repeat(120)}` } as const
+    const stable = resolveBuddyRuntimePaths({ ...options, isPackaged: true })
+    const development = resolveBuddyRuntimePaths(options)
+    const firstTest = resolveBuddyRuntimePaths({ ...options, smokeTest: true, lexoraHomeOverride: '/private/tmp/first' })
+    const secondTest = resolveBuddyRuntimePaths({ ...options, smokeTest: true, lexoraHomeOverride: '/private/tmp/second' })
+    expect(stable.userData).toBe(options.defaultUserData)
+    expect(stable.sessionData).toBe('/Users/lexora/Library/Caches/lexora-buddy/chromium')
+    expect(new Set([stable, development, firstTest, secondTest].map(paths => paths.browserAdapterSocket)).size).toBe(4)
+    for (const paths of [stable, development, firstTest, secondTest]) {
+      expect(Buffer.byteLength(paths.browserAdapterSocket, 'utf8')).toBeLessThanOrEqual(100)
+      expect(paths.nativePetSocket).toBeNull()
+    }
+    expect(development.userData).not.toBe(stable.userData)
+    expect(firstTest.sessionData).toBe('/private/tmp/first/.runtime/cache/chromium')
+    expect(firstTest.logs).toBe('/private/tmp/first/.runtime/state/logs')
+  })
+
   it('isolates interactive development from the installed application', () => {
     expect(resolveBuddyRuntimePaths(BASE_OPTIONS)).toEqual({
       agentDirectory: '/home/lexora/.lexora-dev/buddy/agent',

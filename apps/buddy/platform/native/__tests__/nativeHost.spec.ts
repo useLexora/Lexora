@@ -21,3 +21,17 @@ describe('native reader environment', () => {
     })
   })
 })
+
+describe('aRM64 native resources', () => {
+  it('selects Linux ARM64 helpers from the target triple', () => {
+    const environment = createBuddyNativeEnvironment({ platform: 'linux', architecture: 'arm64', appPath: '/app', resourcesPath: '/resources', isPackaged: false })
+    expect(environment.LEXORA_BUDDY_FILE_READER).toBe('/app/.output/build/native/aarch64-unknown-linux-gnu/release/lexora-buddy-file-reader')
+    expect(environment.LEXORA_BUDDY_PROCESS_CONTROL).toBe('/app/.output/build/native/aarch64-unknown-linux-gnu/release/lexora-buddy-process-control')
+  })
+
+  it('selects Windows ARM64 helpers without x64 emulation', () => {
+    const environment = createBuddyNativeEnvironment({ platform: 'win32', architecture: 'arm64', appPath: 'C:\\app', resourcesPath: 'C:\\resources', isPackaged: false })
+    expect(environment.LEXORA_BUDDY_FILE_READER).toContain('aarch64-pc-windows-msvc')
+    expect(environment.LEXORA_BUDDY_RUNTIME_GUARD).toContain('aarch64-pc-windows-msvc')
+  })
+})

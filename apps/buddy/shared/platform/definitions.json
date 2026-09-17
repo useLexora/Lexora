@@ -1,43 +1,124 @@
 {
   "features": {
     "nativePet": {
-      "tools": ["lexora_buddy_pet"],
+      "tools": [
+        "lexora_buddy_pet"
+      ],
       "settingsCategory": "pet",
-      "skills": ["lexora-buddy-animation"],
-      "resources": [
-        { "from": ".output/build/native/release/lexora-buddy-pet", "to": "native-pet/lexora-buddy-pet" },
-        { "from": "service/resources/skills/lexora-buddy-animation", "to": "service/resources/skills/lexora-buddy-animation" }
+      "skills": [
+        "lexora-buddy-animation"
       ]
     },
     "systemActions": {
-      "tools": ["lexora_system_action"],
+      "tools": [
+        "lexora_system_action"
+      ],
       "settingsCategory": null,
-      "skills": [],
-      "resources": []
+      "skills": []
     }
   },
   "platforms": {
     "linux": {
-      "features": ["nativePet", "systemActions"],
+      "features": [
+        "nativePet",
+        "systemActions"
+      ],
       "shell": "bash",
       "transport": "unix",
-      "builderPlatform": "linux",
-      "packageTargets": ["deb", "pacman"],
       "environment": {
         "caseSensitive": true,
-        "names": ["HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP", "KDE_SESSION_VERSION", "DESKTOP_SESSION", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY"]
-      }
+        "names": [
+          "HOME",
+          "USER",
+          "LOGNAME",
+          "LANG",
+          "LC_ALL",
+          "PATH",
+          "TMPDIR",
+          "TZ",
+          "DBUS_SESSION_BUS_ADDRESS",
+          "XDG_CONFIG_HOME",
+          "XDG_DATA_HOME",
+          "XDG_RUNTIME_DIR",
+          "XDG_CURRENT_DESKTOP",
+          "KDE_SESSION_VERSION",
+          "DESKTOP_SESSION",
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "NO_PROXY",
+          "no_proxy",
+          "NODE_USE_ENV_PROXY"
+        ]
+      },
+      "sandbox": "linux-srt"
     },
     "win32": {
-      "features": ["systemActions"],
+      "features": [
+        "systemActions"
+      ],
       "shell": "powershell",
       "transport": "namedPipe",
-      "builderPlatform": "win",
-      "packageTargets": ["nsis"],
       "environment": {
         "caseSensitive": false,
-        "names": ["HOME", "HOMEDRIVE", "HOMEPATH", "USERNAME", "LANG", "LC_ALL", "PATH", "TZ", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "NODE_USE_ENV_PROXY", "SystemRoot", "SystemDrive", "ProgramFiles", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]
-      }
+        "names": [
+          "HOME",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "USERNAME",
+          "LANG",
+          "LC_ALL",
+          "PATH",
+          "TZ",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "no_proxy",
+          "NODE_USE_ENV_PROXY",
+          "SystemRoot",
+          "SystemDrive",
+          "ProgramFiles",
+          "ComSpec",
+          "PATHEXT",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+          "APPDATA",
+          "LOCALAPPDATA"
+        ]
+      },
+      "sandbox": "windows-lpac"
+    },
+    "darwin": {
+      "features": [],
+      "shell": "bash",
+      "transport": "unix",
+      "environment": {
+        "caseSensitive": true,
+        "names": [
+          "HOME",
+          "USER",
+          "LOGNAME",
+          "LANG",
+          "LC_ALL",
+          "PATH",
+          "TMPDIR",
+          "TZ",
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "NO_PROXY",
+          "no_proxy",
+          "NODE_USE_ENV_PROXY"
+        ]
+      },
+      "sandbox": "macos-srt"
     }
   }
 }

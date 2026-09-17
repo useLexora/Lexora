@@ -12,6 +12,7 @@ import stableDesktopIconPath from '../../../resources/icons/app-icon.png?asset'
 import developmentTrayIconPath from '../../../resources/icons/tray-icon-dev.png?asset'
 import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
+import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { registerAttachmentSchemePrivileges } from '../attachmentProtocol'
 import { DesktopDiagnosticLogger } from '../desktopDiagnostics'
 import { resolveBuddyRuntimePaths } from '../paths'
@@ -60,7 +61,7 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
     events,
     startup,
     desktopIconPath: paths.iconVariant === 'development' ? developmentDesktopIconPath : stableDesktopIconPath,
-    initialLaunchIntent: resolveDesktopLaunchIntent(process.argv),
+    initialLaunchIntent: resolveDesktopLaunchIntent(process.argv, currentPlatform.id === OPERATING_SYSTEM.MacOS && app.getLoginItemSettings().wasOpenedAtLogin),
     isSmokeTest,
     paths,
     windowStateAvailable: true,
@@ -105,7 +106,7 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
     registerAttachmentSchemePrivileges()
     registerRendererSchemePrivileges()
   })
-  bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity(paths.desktopName))
+  bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity?.(paths.desktopName))
 }
 
 function privateDirectoriesExecutable(): string | undefined {

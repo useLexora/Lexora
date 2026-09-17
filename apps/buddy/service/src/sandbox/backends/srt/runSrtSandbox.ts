@@ -1,12 +1,12 @@
 import type { ChildProcess } from 'node:child_process'
-import type { SandboxBackendInput } from '../../../shared/permissions/shellSandbox'
-import type { SandboxExecutionOptions } from './sandboxExecutionLifecycle'
+import type { SrtSandboxInput } from '../../../../../shared/permissions/shellSandbox'
+import type { SandboxExecutionOptions } from '../../sandboxExecutionLifecycle'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { createSandboxPolicy } from './createSandboxPolicy'
+import { createSandboxPolicy } from './createPolicy'
 
-export async function runLinuxSandbox(input: SandboxBackendInput<'srt'>, options: SandboxExecutionOptions): Promise<number | null> {
+export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExecutionOptions): Promise<number | null> {
   let child: ChildProcess | undefined
   const kill = () => killProcessGroup(child?.pid)
   options.signal.addEventListener('abort', kill, { once: true })

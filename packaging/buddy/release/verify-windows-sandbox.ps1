@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory)][string]$SandboxExecutable,
   [Parameter(Mandatory)][string]$AdversaryExecutable,
+  [string]$InstallerExecutable,
   [switch]$InstallComponent
 )
 
@@ -36,6 +37,18 @@ try {
   Copy-Item -LiteralPath (Get-Command node.exe -ErrorAction Stop).Source -Destination (Join-Path $payload 'node.exe')
   Copy-Item -LiteralPath $adversary -Destination (Join-Path $payload 'sandbox-adversary.exe')
   Copy-Item -LiteralPath $fixture -Destination (Join-Path $payload 'shell_sandbox.windows.mjs')
+  $desktopAcceptance = ''
+  if ($InstallerExecutable) {
+    Copy-Item -LiteralPath (Resolve-Path -LiteralPath $InstallerExecutable).Path -Destination (Join-Path $payload 'desktop-installer.exe')
+    $desktopVerifier = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../ci/verify-windows-install.mjs')).Path.Replace("'", "''")
+    $desktopAcceptance = @"
+  `$installer = Start-Process -FilePath (Join-Path `$PWD 'payload\desktop-installer.exe') -ArgumentList '/S' -Wait -PassThru
+  if (`$installer.ExitCode -ne 0) { throw "Standard user NSIS installation failed: `$(`$installer.ExitCode)" }
+  `$installed = Join-Path `$env:LOCALAPPDATA 'Programs\Lexora Buddy'
+  & (Join-Path `$PWD 'payload\node.exe') '$desktopVerifier' `$installed --require-sandbox >> 'result.log' 2>&1
+  if (`$LASTEXITCODE -ne 0) { throw "Installed standard user Desktop verification failed: `$LASTEXITCODE" }
+"@
+  }
   $script = @"
 `$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath '$($directory.Replace("'", "''"))'
@@ -55,7 +68,9 @@ try {
   `$env:TMP = `$env:TEMP
   `$env:BUDDY_SANDBOX_TEST_ADVERSARY = Join-Path `$PWD 'payload\sandbox-adversary.exe'
   & `$env:ComSpec /d /c '"payload\node.exe" --test --test-reporter=tap "payload\shell_sandbox.windows.mjs" >> "result.log" 2>&1'
-  exit `$LASTEXITCODE
+  if (`$LASTEXITCODE -ne 0) { throw "Sandbox acceptance failed: `$LASTEXITCODE" }
+$desktopAcceptance
+  exit 0
 }
 catch {
   `$_ | Out-String | Add-Content -LiteralPath 'result.log' -Encoding UTF8
@@ -66,7 +81,7 @@ catch {
   Set-Content -LiteralPath $scriptPath -Value $script -Encoding UTF8
   $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
   $child = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`"" -WorkingDirectory $directory -Credential $credential -LoadUserProfile -WindowStyle Hidden -PassThru
-  if (-not $child.WaitForExit(360000)) { throw 'Windows sandbox acceptance timed out.' }
+  if (-not $child.WaitForExit($(if ($InstallerExecutable) { 540000 } else { 360000 }))) { throw 'Windows sandbox acceptance timed out.' }
   if ($child.ExitCode -ne 0) { throw "Windows sandbox acceptance failed: $($child.ExitCode). Report: $log" }
   if (-not (Test-Path -LiteralPath $log)) { throw 'Windows sandbox acceptance did not produce a report.' }
 }

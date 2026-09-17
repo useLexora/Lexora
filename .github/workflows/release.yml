@@ -74,9 +74,16 @@ jobs:
     with:
       upload-artifacts: true
 
+  macos:
+    name: macOS package verification
+    needs: validate-release
+    uses: ./.github/workflows/macos-verify.yml
+    with:
+      signing: ad-hoc
+
   publish-release:
     name: Publish Release
-    needs: [validate-release, packages]
+    needs: [validate-release, packages, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: buddy-release
@@ -103,6 +110,12 @@ jobs:
           name: lexora-buddy-ubuntu
           path: apps/buddy/.output/artifacts/desktop
 
+      - name: Download verified Ubuntu ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-ubuntu-arm64
+          path: apps/buddy/.output/artifacts/desktop
+
       - name: Download verified Arch package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -114,6 +127,18 @@ jobs:
         with:
           name: lexora-buddy-windows
           path: apps/buddy/.output/artifacts/windows
+
+      - name: Download verified Windows ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-windows-arm64
+          path: apps/buddy/.output/artifacts/windows
+
+      - name: Download verified macOS ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-macos-arm64
+          path: apps/buddy/.output/artifacts/macos
 
       - name: Reconstruct release metadata and checksums
         run: |
@@ -145,6 +170,7 @@ jobs:
             ${{ github.workspace }}/apps/buddy/.output/artifacts/desktop/*.deb
             ${{ github.workspace }}/apps/buddy/.output/artifacts/arch/*.pkg.tar.zst
             ${{ github.workspace }}/apps/buddy/.output/artifacts/windows/*.exe
+            ${{ github.workspace }}/apps/buddy/.output/artifacts/macos/*.dmg
             ${{ github.workspace }}/apps/buddy/.output/artifacts/SHA256SUMS.txt
 
       - name: Create immutable release tag
@@ -191,8 +217,11 @@ jobs:
         run: |
           gh release upload "$LEXORA_BUDDY_RELEASE_TAG" \
             "$LEXORA_BUDDY_DEB_PATH#$LEXORA_BUDDY_DEB_ASSET_NAME" \
+            "$LEXORA_BUDDY_DEB_ARM64_PATH#$LEXORA_BUDDY_DEB_ARM64_ASSET_NAME" \
             "$LEXORA_BUDDY_ARCH_PATH#$LEXORA_BUDDY_ARCH_ASSET_NAME" \
             "$LEXORA_BUDDY_WINDOWS_PATH#$LEXORA_BUDDY_WINDOWS_ASSET_NAME" \
+            "$LEXORA_BUDDY_WINDOWS_ARM64_PATH#$LEXORA_BUDDY_WINDOWS_ARM64_ASSET_NAME" \
+            "$LEXORA_BUDDY_MACOS_ARM64_PATH#$LEXORA_BUDDY_MACOS_ARM64_ASSET_NAME" \
             "$LEXORA_BUDDY_CHECKSUM_PATH#$LEXORA_BUDDY_CHECKSUM_ASSET_NAME" \
             --repo "$LEXORA_BUDDY_RELEASE_REPO"
 
@@ -229,6 +258,12 @@ jobs:
           name: lexora-buddy-ubuntu
           path: apps/buddy/.output/artifacts/desktop
 
+      - name: Download verified Ubuntu ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-ubuntu-arm64
+          path: apps/buddy/.output/artifacts/desktop
+
       - name: Download verified Arch package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -241,6 +276,18 @@ jobs:
           name: lexora-buddy-windows
           path: apps/buddy/.output/artifacts/windows
 
+      - name: Download verified Windows ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-windows-arm64
+          path: apps/buddy/.output/artifacts/windows
+
+      - name: Download verified macOS ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lexora-buddy-macos-arm64
+          path: apps/buddy/.output/artifacts/macos
+
       - name: Reconstruct expected public asset metadata
         run: |
           node packaging/buddy/release/verify-release-artifacts.mjs --github-env "$GITHUB_ENV"
@@ -250,8 +297,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh attestation verify "$LEXORA_BUDDY_DEB_PATH" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$LEXORA_BUDDY_DEB_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
           gh attestation verify "$LEXORA_BUDDY_ARCH_PATH" --repo "$GITHUB_REPOSITORY"
           gh attestation verify "$LEXORA_BUDDY_WINDOWS_PATH" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$LEXORA_BUDDY_WINDOWS_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$LEXORA_BUDDY_MACOS_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
           gh attestation verify "$LEXORA_BUDDY_CHECKSUM_PATH" --repo "$GITHUB_REPOSITORY"
 
       - name: Verify public packages and checksums

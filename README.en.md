@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://github.com/useLexora/Lexora/releases"><img alt="Release asset downloads" src="https://img.shields.io/github/downloads/useLexora/Lexora/total?style=flat&amp;label=downloads&amp;labelColor=232b35&amp;color=4f8a78" /></a>
   <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/useLexora/Lexora?style=flat&amp;logo=github&amp;label=release&amp;labelColor=232b35&amp;color=927442" /></a>
-  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Desktop: Windows and Linux" src="https://img.shields.io/badge/desktop-Windows%20%7C%20Linux-607fa5?style=flat&amp;labelColor=232b35" /></a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Desktop: Windows, Linux and macOS" src="https://img.shields.io/badge/desktop-Windows%20%7C%20Linux%20%7C%20macOS-607fa5?style=flat&amp;labelColor=232b35" /></a>
 </p>
 
 <p align="center">
@@ -55,13 +55,13 @@ You choose the models and authorize access to files and tools. Whether you're mo
 
 ## Get started
 
-1. [Download the app](https://github.com/useLexora/Lexora/releases/latest) for Windows x64, Ubuntu / Debian x64, or Arch Linux x64.
+1. [Download the app](https://github.com/useLexora/Lexora/releases/latest) for Windows or Ubuntu / Debian on x64 and ARM64, Arch Linux on x64, or macOS 26+ on Apple Silicon.
 2. Connect a model service in settings using its API key or account authorization.
 3. Start a task and give Lexora a goal. Choose a working directory when you want to work with files.
 
 No Lexora account is required. Model services have their own terms and charges. Automations need the app to stay running on your computer. Back up important files and review AI-generated results.
 
-See the [guide](https://uselexora.app/en/guide/quick-start) for a walkthrough.
+See the [guide](https://uselexora.app/en/guide/quick-start) for a walkthrough. The first macOS installation requires the `xattr` command shown in the guide.
 
 ## Under the hood
 

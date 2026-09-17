@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SHELL_SANDBOX_BACKEND } from '../platform/identifiers'
 
 const pathSchema = z.string().min(1).max(4_096).refine(path => /^(?:\/|[a-z]:\\)/i.test(path) && !path.includes('\0'))
 
@@ -58,8 +59,9 @@ export const sandboxProcessInputSchema = sandboxCommandSchema.extend({
   protectedRoots: z.array(pathSchema).max(32),
   searchDirectory: pathSchema,
   backend: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('srt'), sandboxDirectory: pathSchema }).strict(),
-    z.object({ kind: z.literal('windows-lpac'), executable: pathSchema, shell: pathSchema, systemRoot: pathSchema }).strict(),
+    z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.Linux), sandboxDirectory: pathSchema }).strict(),
+    z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.MacOS) }).strict(),
+    z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.Windows), executable: pathSchema, shell: pathSchema, systemRoot: pathSchema }).strict(),
   ]),
   path: z.string().max(32_768),
 })
@@ -67,6 +69,8 @@ export type SandboxProcessInput = z.infer<typeof sandboxProcessInputSchema>
 export type SandboxBackendInput<Kind extends SandboxProcessInput['backend']['kind']> = Omit<SandboxProcessInput, 'backend'> & {
   backend: Extract<SandboxProcessInput['backend'], { kind: Kind }>
 }
+
+export type SrtSandboxInput = SandboxBackendInput<typeof SHELL_SANDBOX_BACKEND.Linux | typeof SHELL_SANDBOX_BACKEND.MacOS>
 
 export const sandboxNetworkTargetSchema = z.object({
   host: z.string().min(1).max(253).regex(/^[\w.:[\]-]+$/),

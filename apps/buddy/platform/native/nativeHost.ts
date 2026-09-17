@@ -1,5 +1,7 @@
 import { posix, win32 } from 'node:path'
 import process from 'node:process'
+import { isWindows } from '../../shared/platform/identifiers'
+import { resolveBuddyTarget } from '../target'
 import nativeHost from './nativeHost.json'
 
 interface NativeHostPaths {
@@ -16,7 +18,7 @@ export function createBuddyNativeEnvironment(options: NativeHostPaths): Record<s
   const processControl = resolveBuddyProcessControl(options)
   const runtimeGuard = resolveNativeComponent('runtimeGuard', options)
   return {
-    ...(reader ? { LEXORA_BUDDY_FILE_READER: reader } : {}),
+    LEXORA_BUDDY_FILE_READER: reader,
     ...(serviceControl ? { LEXORA_BUDDY_SERVICE_CONTROL: serviceControl } : {}),
     ...(processControl ? { LEXORA_BUDDY_PROCESS_CONTROL: processControl } : {}),
     ...(runtimeGuard ? { LEXORA_BUDDY_RUNTIME_GUARD: runtimeGuard } : {}),
@@ -24,8 +26,8 @@ export function createBuddyNativeEnvironment(options: NativeHostPaths): Record<s
   }
 }
 
-export function resolveBuddyFileReader(options: NativeHostPaths): string | undefined {
-  return resolveNativeComponent('fileReader', options)
+export function resolveBuddyFileReader(options: NativeHostPaths): string {
+  return requireNativeComponent('fileReader', options)
 }
 
 export function resolveBuddyServiceControl(options: NativeHostPaths): string | undefined {
@@ -45,23 +47,26 @@ export function resolveBuddyShellSandbox(options: NativeHostPaths): string | und
 }
 
 export function resolveBuddyImageTransformer(options: NativeHostPaths): string {
-  const executable = resolveNativeComponent('imageTransform', options)
+  return requireNativeComponent('imageTransform', options)
+}
+
+function requireNativeComponent(name: keyof typeof nativeHost.components, options: NativeHostPaths): string {
+  const executable = resolveNativeComponent(name, options)
   if (!executable)
-    throw new Error('Unsupported Buddy image transformer platform')
+    throw new Error(`Missing required Buddy native component: ${name}`)
   return executable
 }
 
 function resolveNativeComponent(name: keyof typeof nativeHost.components, options: NativeHostPaths): string | undefined {
   const platform = options.platform ?? process.platform
   const architecture = options.architecture ?? process.arch
-  if (!['linux', 'win32'].includes(platform) || architecture !== 'x64')
-    throw new Error('Unsupported Buddy native component platform')
+  const target = resolveBuddyTarget(platform, architecture)
   const component = nativeHost.components[name]
-  const target = Object.entries(component.targets).find(([id]) => id === `${platform}-${architecture}`)?.[1]
-  if (!target)
+  if (!target.nativeComponents.includes(name))
     return undefined
-  const paths = platform === 'win32' ? win32 : posix
+  const executable = `${component.binary}${isWindows(platform) ? '.exe' : ''}`
+  const paths = isWindows(platform) ? win32 : posix
   return options.isPackaged
-    ? paths.join(options.resourcesPath, target.resource)
-    : paths.join(options.appPath, nativeHost.directory, target.triple, 'release', target.executable)
+    ? paths.join(options.resourcesPath, component.directory, executable)
+    : paths.join(options.appPath, nativeHost.directory, target.rustTarget, 'release', executable)
 }

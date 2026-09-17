@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -58,6 +60,8 @@ pub fn read_bounded_file(request: &ReadRequest) -> Result<Vec<u8>, ReadError> {
     return windows::read(request);
     #[cfg(target_os = "linux")]
     return linux::read(request);
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    return macos::read(request);
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     Err(ReadError::Unavailable)
 }

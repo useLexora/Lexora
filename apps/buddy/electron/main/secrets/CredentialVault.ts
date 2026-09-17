@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { safeStorage } from 'electron'
+import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 
 const SECRET_FILE_SUFFIX = '.credential'
 
@@ -143,7 +144,7 @@ export function createSafeStorageCipher(): SecretCipher {
   const platform = process.platform
   return {
     available: () => isSafeStorageBackendSecure({
-      backend: platform === 'linux' ? safeStorage.getSelectedStorageBackend() : 'unknown',
+      backend: platform === OPERATING_SYSTEM.Linux ? safeStorage.getSelectedStorageBackend() : 'unknown',
       encryptionAvailable: safeStorage.isEncryptionAvailable(),
       platform,
     }),
@@ -158,7 +159,7 @@ export function isSafeStorageBackendSecure(input: {
   platform: NodeJS.Platform
 }): boolean {
   return input.encryptionAvailable
-    && !(input.platform === 'linux' && input.backend === 'basic_text')
+    && !(input.platform === OPERATING_SYSTEM.Linux && input.backend === 'basic_text')
 }
 
 function assertAvailable(cipher: SecretCipher): void {

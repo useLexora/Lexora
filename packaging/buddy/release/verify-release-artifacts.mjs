@@ -4,35 +4,12 @@ import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
+import { readBuddyReleaseMetadata } from './artifacts.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 
+export { readBuddyReleaseMetadata } from './artifacts.mjs'
+
 const repoRoot = resolve(import.meta.dirname, '../../..')
-
-export const desktopPackageTargets = {
-  deb: { platform: 'linux', directory: 'desktop', suffix: 'linux-amd64.deb', key: 'DEB', artifact: 'lexora-buddy-ubuntu' },
-  pacman: { platform: 'linux', directory: 'arch', suffix: 'arch-x86_64.pkg.tar.zst', key: 'ARCH', artifact: 'lexora-buddy-arch' },
-  nsis: { platform: 'win32', directory: 'windows', suffix: 'windows-x64.exe', key: 'WINDOWS', artifact: 'lexora-buddy-windows' },
-}
-
-export function readBuddyReleaseMetadata(cwd = repoRoot) {
-  const paths = resolveBuddyOutputPaths(cwd)
-  const { version } = JSON.parse(readFileSync(join(paths.buddyRoot, 'buddy.version.json'), 'utf8'))
-  const { repository } = JSON.parse(readFileSync(join(paths.buddyRoot, 'package.json'), 'utf8'))
-  const repositoryUrl = repository.url.replace(/^git\+/, '').replace(/\.git$/, '')
-  if (!/^\d+\.\d+\.\d+$/.test(version))
-    throw new Error('Buddy release requires a stable version')
-  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(repositoryUrl))
-    throw new Error('Buddy repository URL must identify its GitHub repository')
-  return {
-    version,
-    releaseTag: `v${version}`,
-    releaseRepo: new URL(repositoryUrl).pathname.slice(1),
-    artifacts: Object.entries(desktopPackageTargets).map(([target, definition]) => {
-      const name = `Lexora-Buddy-${version}-${definition.suffix}`
-      return { ...definition, target, name, path: join(paths.artifacts[definition.directory], name) }
-    }),
-  }
-}
 
 export function verifyBuddyReleaseArtifacts({ cwd = repoRoot, checksumPath } = {}) {
   const metadata = readBuddyReleaseMetadata(cwd)

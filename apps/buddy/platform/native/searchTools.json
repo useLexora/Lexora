@@ -1,10 +1,16 @@
 {
-  "resource": { "from": ".output/build/search-tools", "to": "search-tools" },
+  "resource": {
+    "from": ".output/build/search-tools",
+    "to": "search-tools"
+  },
   "tools": {
     "fd": {
       "version": "10.5.0",
       "release": "https://github.com/sharkdp/fd/releases/download/v10.5.0",
-      "licenses": ["LICENSE-APACHE", "LICENSE-MIT"],
+      "licenses": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ],
       "targets": {
         "linux-x64": {
           "archive": "fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz",
@@ -17,13 +23,35 @@
           "sha256": "a227701b8551c35a9931d9f6da75503cf86d88e182d71fb849a70864c5d57cd7",
           "binary": "fd.exe",
           "binarySha256": "d67d27a8e375ed7e9bca2b506a9dd5082bc24547aeba908b863f6f8b8ab0c3b9"
+        },
+        "darwin-arm64": {
+          "archive": "fd-v10.5.0-aarch64-apple-darwin.tar.gz",
+          "sha256": "b67e1836c468e42e411984b56e52fa7abec08c2bd22c867398e7cc134aac5e12",
+          "binary": "fd",
+          "binarySha256": "cf3bde435da174f41cf9589a2efeaf03804df7c250fc15e8b8a1e9bfc66ebc9a"
+        },
+        "linux-arm64": {
+          "archive": "fd-v10.5.0-aarch64-unknown-linux-musl.tar.gz",
+          "sha256": "d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4",
+          "binary": "fd",
+          "binarySha256": "90dab774d92889926d75a85b47c4b2dc4c9adfa792cd3a6ccfcb98b0eabc9b94"
+        },
+        "win32-arm64": {
+          "archive": "fd-v10.5.0-aarch64-pc-windows-msvc.zip",
+          "sha256": "a2bcddcfd259b05357a77bbc6cd671fdb30f63fd266a0e748305890a8c5ceaa6",
+          "binary": "fd.exe",
+          "binarySha256": "a88cc8920168968eff917f387062ebd8cdb230d8717fb5058eae5e365c759b14"
         }
       }
     },
     "rg": {
       "version": "15.2.0",
       "release": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0",
-      "licenses": ["LICENSE-MIT", "UNLICENSE", "COPYING"],
+      "licenses": [
+        "LICENSE-MIT",
+        "UNLICENSE",
+        "COPYING"
+      ],
       "targets": {
         "linux-x64": {
           "archive": "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
@@ -36,6 +64,24 @@
           "sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
           "binary": "rg.exe",
           "binarySha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680"
+        },
+        "darwin-arm64": {
+          "archive": "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+          "sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+          "binary": "rg",
+          "binarySha256": "a326a1fb48074202e9ad41e4cd1e389eeea372c8c6f7d7e80da81176d5d9430e"
+        },
+        "linux-arm64": {
+          "archive": "ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+          "sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+          "binary": "rg",
+          "binarySha256": "c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a"
+        },
+        "win32-arm64": {
+          "archive": "ripgrep-15.2.0-aarch64-pc-windows-msvc.zip",
+          "sha256": "e4abca10c3a64ebea742667dd7009449d49403db5460dd6873e389fa2945360f",
+          "binary": "rg.exe",
+          "binarySha256": "d33a29a9ef03c9f4c03be9e8d88498e6e2d2e566d64cdbdef97f9afc8f13120c"
         }
       }
     }

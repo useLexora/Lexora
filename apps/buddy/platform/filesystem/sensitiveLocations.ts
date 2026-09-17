@@ -14,6 +14,12 @@ interface SensitiveLocations {
 const WINDOWS_CREDENTIAL_DIRECTORIES = ['Microsoft/Credentials', 'Microsoft/Protect', 'Microsoft/Vault']
 
 const locations: Record<BuddyPlatformId, SensitiveLocations> = {
+  darwin: {
+    absolute: ['/private/etc/sudoers', '/Library/Keychains', '/private/var/db/dslocal'],
+    environment: [
+      { key: 'HOME', homeFallback: '.', paths: ['Library/Keychains', 'Library/Safari', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Chromium', 'Library/Application Support/Firefox', '.config/gcloud'] },
+    ],
+  },
   linux: {
     absolute: ['/etc/shadow', '/etc/sudoers'],
     environment: [

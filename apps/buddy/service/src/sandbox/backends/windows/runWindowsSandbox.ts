@@ -1,16 +1,17 @@
 import type { Socket } from 'node:net'
-import type { SandboxBackendInput } from '../../../shared/permissions/shellSandbox'
-import type { SandboxExecutionOptions } from './sandboxExecutionLifecycle'
+import type { SandboxBackendInput } from '../../../../../shared/permissions/shellSandbox'
+import type { SHELL_SANDBOX_BACKEND } from '../../../../../shared/platform/identifiers'
+import type { SandboxExecutionOptions } from '../../sandboxExecutionLifecycle'
 import { randomBytes } from 'node:crypto'
 import { createHttpProxyServer } from '@anthropic-ai/sandbox-runtime/dist/sandbox/http-proxy.js'
 import { resolveParentProxy } from '@anthropic-ai/sandbox-runtime/dist/sandbox/parent-proxy.js'
 import { createResolvedAddressGuard } from '@anthropic-ai/sandbox-runtime/dist/sandbox/resolved-address-guard.js'
-import { createWindowsSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
-import { runWindowsSandboxProcess } from '../../../platform/process/windowsSandboxProcess'
-import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
-import { createWindowsSandboxPolicy } from './windowsSandboxPolicy'
+import { createWindowsSandboxEnvironment } from '../../../../../platform/process/sandboxEnvironment'
+import { runWindowsSandboxProcess } from '../../../../../platform/process/windowsSandboxProcess'
+import { ShellSandboxError } from '../../../../../shared/permissions/shellSandbox'
+import { createWindowsSandboxPolicy } from './createPolicy'
 
-export async function runWindowsSandbox(input: SandboxBackendInput<'windows-lpac'>, options: SandboxExecutionOptions): Promise<number | null> {
+export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_SANDBOX_BACKEND.Windows>, options: SandboxExecutionOptions): Promise<number | null> {
   const { grants, path } = await createWindowsSandboxPolicy(input, options.signal)
   const token = randomBytes(32).toString('hex')
   const guard = createResolvedAddressGuard({ deniedResolvedAddresses: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', 'fc00::/7'] })

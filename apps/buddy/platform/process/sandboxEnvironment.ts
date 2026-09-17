@@ -1,5 +1,6 @@
 import { delimiter, dirname, join } from 'node:path'
 import process from 'node:process'
+import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
 
 export function createWindowsSandboxEnvironment(options: { shell: string, systemRoot: string, privateRoot: string, path: string, proxyUrl?: string }): Record<string, string> {
   const home = join(options.privateRoot, 'home')
@@ -23,7 +24,7 @@ export function createWindowsSandboxEnvironment(options: { shell: string, system
 }
 
 export function createSandboxEnvironment(source: NodeJS.ProcessEnv, directory: string): NodeJS.ProcessEnv {
-  if (process.platform === 'win32') {
+  if (process.platform === OPERATING_SYSTEM.Windows) {
     const systemRoot = source.SystemRoot ?? source.SYSTEMROOT
     if (!systemRoot)
       throw new Error('Windows system directory is unavailable')

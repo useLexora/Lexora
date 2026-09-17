@@ -11,6 +11,7 @@ interface FilePathAdapter {
 
 export const filePathAdapters: Record<BuddyPlatformId, FilePathAdapter> = {
   linux: { path: posix, resolveInput: resolvePosixFilePath, sensitiveKey: path => path },
+  darwin: { path: posix, resolveInput: resolvePosixFilePath, sensitiveKey: path => path },
   win32: { path: win32, resolveInput: resolveWindowsFilePath, sensitiveKey: path => path.toLowerCase() },
 }
 

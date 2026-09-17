@@ -5,18 +5,20 @@ import { fileURLToPath } from 'node:url'
 import shellSandbox from '../../apps/buddy/platform/native/shellSandbox.json' with { type: 'json' }
 import { nativeHostResources, prepareNativeHost } from '../../packaging/buddy/release/native-host.mjs'
 import { prepareShellSandbox } from '../../packaging/buddy/release/shell-sandbox.mjs'
+import { resolveBuildTarget } from '../../packaging/buddy/release/targets.mjs'
 
 const archive = process.argv[2]
 if (!archive || process.argv.length !== 3)
   throw new Error('Usage: buddy-test-runtime.mjs <archive>')
 
-prepareNativeHost()
+const target = resolveBuildTarget()
+prepareNativeHost(target)
 await prepareShellSandbox()
 execFileSync('tar', [
   '-cf',
   resolve(archive),
   '-C',
   fileURLToPath(new URL('../../apps/buddy/', import.meta.url)),
-  ...nativeHostResources(process.platform, process.arch).map(resource => resource.from),
-  ...(process.platform === 'linux' ? [shellSandbox.resource.from] : []),
+  ...nativeHostResources(target).map(resource => resource.from),
+  ...(process.platform === 'linux' ? [`${shellSandbox.resource.from}/${target.id}`] : []),
 ], { stdio: 'inherit' })

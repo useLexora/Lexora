@@ -1,5 +1,6 @@
 import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
+import process from 'node:process'
 import { isLocalNamedPipe } from '../../shared/platform/localEndpoint'
 
 export interface LocalEndpoint {
@@ -26,7 +27,11 @@ function createUnixEndpoint(address: string): LocalEndpoint {
   return {
     address,
     async prepare() {
-      await mkdir(dirname(address), { mode: 0o700, recursive: true })
+      const parent = dirname(address)
+      await mkdir(parent, { mode: 0o700, recursive: true })
+      const directory = await lstat(parent)
+      if (!directory.isDirectory() || directory.isSymbolicLink() || directory.uid !== process.getuid?.() || (directory.mode & 0o077) !== 0)
+        throw new Error('Local socket parent must be a private directory owned by the current user')
       const metadata = await socketMetadata(address)
       if (!metadata)
         return

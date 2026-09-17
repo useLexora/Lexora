@@ -124,6 +124,7 @@ class DesktopApplication {
       showLegacyPowerShellNotice(window, () => this.#runtime.language, this.#environment)
     if (this.#environment.isSmokeTest) {
       await checkDesktopSmokeBridge(window)
+      await this.#runtime.verifyInstallation()
       await this.#quit.request()
     }
   }
