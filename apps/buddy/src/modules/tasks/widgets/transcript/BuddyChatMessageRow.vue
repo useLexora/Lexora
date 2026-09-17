@@ -212,8 +212,6 @@ const messageText = computed(() => getChatMessageDisplayText(
 
   &.has-usage {
     position: static;
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .buddy-chat-message:hover &,
