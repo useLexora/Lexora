@@ -19,6 +19,7 @@ import {
   DESKTOP_BROWSER_PROFILE_MODES,
   DESKTOP_BROWSER_SECURITY_KINDS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
+  DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
 import { isLexoraReleaseUrl } from './productLinks'
 
@@ -142,6 +143,23 @@ const taskSidebarPinnedItemsSchema = z.array(taskSidebarPinnedItemSchema)
   .max(500)
   .refine(items => new Set(items.map(item => `${item.kind}:${item.id}`)).size === items.length)
 
+const taskSidebarCollapsedSectionsSchema = z.array(z.enum(DESKTOP_TASK_SIDEBAR_SECTIONS))
+  .max(DESKTOP_TASK_SIDEBAR_SECTIONS.length)
+  .refine(sections => new Set(sections).size === sections.length)
+
+const taskSidebarCollapsedSpacesSchema = z.array(z.string().min(1).max(128))
+  .max(500)
+  .refine(ids => new Set(ids).size === ids.length)
+
+const taskSidebarWidthSchema = z.number().int().min(0).max(10_000).nullable()
+
+const taskSidebarPreferencesSchema = z.object({
+  collapsed: z.boolean().optional(),
+  collapsedSections: taskSidebarCollapsedSectionsSchema.optional(),
+  collapsedSpaces: taskSidebarCollapsedSpacesSchema.optional(),
+  width: taskSidebarWidthSchema.optional(),
+}).strict()
+
 export const feedbackIssueInputSchema = z.object({
   feedback: z.string().max(4_000),
 }).strict()
@@ -159,6 +177,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
   desktop: z.object({
     backgroundCloseNoticeShown: z.boolean().optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
+    taskSidebar: taskSidebarPreferencesSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
     language: z.enum(['zh-CN', 'en-US']).optional(),
     launchAtLogin: z.boolean().optional(),

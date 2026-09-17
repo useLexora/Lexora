@@ -58,6 +58,12 @@ describe('lexoraConfigStore', () => {
     expect(updated.desktop).toEqual({
       backgroundCloseNoticeShown: false,
       taskSidebarPinnedItems: [],
+      taskSidebar: {
+        collapsed: false,
+        collapsedSections: [],
+        collapsedSpaces: [],
+        width: null,
+      },
       developerToolsEnabled: false,
       language: 'zh-CN',
       launchAtLogin: false,
@@ -87,6 +93,65 @@ describe('lexoraConfigStore', () => {
 
     await expect(access(`${configPath}.tmp`, constants.F_OK)).rejects.toMatchObject({
       code: 'ENOENT',
+    })
+  })
+
+  it('restores the task sidebar layout preferences across restarts', async () => {
+    const { configPath, store } = await createConfigStore()
+
+    await expect(store.read()).resolves.toMatchObject({
+      desktop: {
+        taskSidebar: {
+          collapsed: false,
+          collapsedSections: [],
+          collapsedSpaces: [],
+          width: null,
+        },
+      },
+    })
+
+    await store.update({
+      desktop: {
+        taskSidebar: {
+          collapsed: true,
+          collapsedSections: ['tasks'],
+          collapsedSpaces: ['space-a'],
+          width: 336,
+        },
+      },
+    })
+
+    const restarted = new LexoraConfigStore({ configPath })
+    await expect(restarted.read()).resolves.toMatchObject({
+      desktop: {
+        taskSidebar: {
+          collapsed: true,
+          collapsedSections: ['tasks'],
+          collapsedSpaces: ['space-a'],
+          width: 336,
+        },
+      },
+    })
+    const content = await readFile(configPath, 'utf8')
+    expect(content).toContain('task_sidebar')
+    expect(content).toContain('collapsed = true')
+    expect(content).toContain('collapsed_sections')
+    expect(content).toContain('"tasks"')
+    expect(content).toContain('collapsed_spaces')
+    expect(content).toContain('"space-a"')
+    expect(content).toContain('width = 336')
+
+    await expect(store.update({
+      desktop: { taskSidebar: { collapsedSpaces: ['space-b'] } },
+    })).resolves.toMatchObject({
+      desktop: {
+        taskSidebar: {
+          collapsed: true,
+          collapsedSections: ['tasks'],
+          collapsedSpaces: ['space-b'],
+          width: 336,
+        },
+      },
     })
   })
 

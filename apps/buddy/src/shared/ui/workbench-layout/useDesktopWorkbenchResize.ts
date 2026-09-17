@@ -22,6 +22,8 @@ interface UseDesktopWorkbenchResizeOptions {
   sidebar: Readonly<Ref<HTMLElement | null>>
   sidebarResizable: () => boolean
   sidebarVisible: () => boolean
+  sidebarPreferredWidth?: () => number | null
+  onSidebarWidthCommit?: (width: number) => void
 }
 
 const KEYBOARD_RESIZE_STEP = 16
@@ -39,6 +41,7 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
   let resizeBounds: Pick<DOMRect, 'left' | 'right'> | null = null
   let pendingClientX: number | null = null
   let resizeFrame: number | null = null
+  let sidebarWidthTouched = false
 
   const contextVisible = computed(() => options.context.value !== null)
   const widths = computed(() => resolveDesktopWorkbenchWidths({
@@ -89,10 +92,13 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
 
   function setPanelWidth(panel: DesktopWorkbenchResizablePanel, width: number): void {
     const nextWidth = clampDesktopWorkbenchPanelWidth(width, resolvePanelRange(panel))
-    if (panel === 'sidebar')
+    if (panel === 'sidebar') {
       preferredSidebarWidth.value = nextWidth
-    else
+      sidebarWidthTouched = true
+    }
+    else {
       preferredContextWidth.value = nextWidth
+    }
   }
 
   function resizeFromClientX(panel: DesktopWorkbenchResizablePanel, clientX: number): void {
@@ -162,6 +168,8 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
     ) {
       activePointerTarget.releasePointerCapture(activePointerId)
     }
+    if (activePanel.value === 'sidebar' && sidebarWidthTouched && preferredSidebarWidth.value !== null)
+      options.onSidebarWidthCommit?.(preferredSidebarWidth.value)
     activePanel.value = null
     activePointerId = null
     activePointerTarget = null
@@ -195,15 +203,29 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
     if (nextWidth === null)
       return
     setPanelWidth(panel, nextWidth)
+    if (panel === 'sidebar' && preferredSidebarWidth.value !== null)
+      options.onSidebarWidthCommit?.(preferredSidebarWidth.value)
     event.preventDefault()
   }
 
   onMounted(() => {
+    const preferred = options.sidebarPreferredWidth?.() ?? null
+    if (preferred !== null)
+      preferredSidebarWidth.value = preferred
     measureLayout()
     resizeObserver = new ResizeObserver(measureLayout)
     if (options.container.value)
       resizeObserver.observe(options.container.value)
   })
+
+  watch(
+    () => options.sidebarPreferredWidth?.() ?? null,
+    (width) => {
+      if (width === null || sidebarWidthTouched || activePanel.value !== null)
+        return
+      preferredSidebarWidth.value = width
+    },
+  )
 
   watch(options.context, async (context) => {
     if (!context || preferredContextWidth.value !== null)

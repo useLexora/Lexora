@@ -210,6 +210,18 @@ export const DESKTOP_CHAT_WELCOME_VARIANT_IDS = [
   'orchestrating',
 ] as const
 
+export const DESKTOP_TASK_SIDEBAR_SECTIONS = ['pinned', 'spaces', 'tasks'] as const
+
+export type DesktopTaskSidebarSection = typeof DESKTOP_TASK_SIDEBAR_SECTIONS[number]
+
+/** 任务 Workspace sidebar 的布局偏好，随页面卸载重建后从配置恢复。 */
+export interface DesktopTaskSidebarPreferences {
+  collapsed: boolean
+  collapsedSections: DesktopTaskSidebarSection[]
+  collapsedSpaces: string[]
+  width: number | null
+}
+
 export type DesktopChatWelcomeVariantId = typeof DESKTOP_CHAT_WELCOME_VARIANT_IDS[number]
 export type DesktopChatWelcomePreference = 'random' | DesktopChatWelcomeVariantId
 
@@ -218,6 +230,7 @@ export interface LexoraConfig {
   desktop: {
     backgroundCloseNoticeShown: boolean
     taskSidebarPinnedItems: DesktopTaskPinnedItem[]
+    taskSidebar: DesktopTaskSidebarPreferences
     developerToolsEnabled: boolean
     language: 'zh-CN' | 'en-US'
     launchAtLogin: boolean
@@ -236,7 +249,9 @@ export interface LexoraConfig {
 
 export interface LexoraConfigPatch {
   proxy?: LexoraConfig['proxy']
-  desktop?: Partial<LexoraConfig['desktop']>
+  desktop?: Partial<Omit<LexoraConfig['desktop'], 'taskSidebar'>> & {
+    taskSidebar?: Partial<DesktopTaskSidebarPreferences>
+  }
   pet?: Partial<LexoraConfig['pet']>
 }
 
