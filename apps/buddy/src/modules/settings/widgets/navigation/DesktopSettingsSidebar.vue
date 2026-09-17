@@ -14,6 +14,7 @@ import {
   PlugConnected20Regular,
   Server20Regular,
   Settings20Regular,
+  Window20Regular,
 } from '@vicons/fluent'
 import { computed } from 'vue'
 
@@ -53,7 +54,7 @@ const groups = [
   },
   {
     key: 'integrations',
-    categories: [{ icon: Globe20Regular, key: 'web' }],
+    categories: [{ icon: Globe20Regular, key: 'web' }, { icon: Window20Regular, key: 'browser' }],
   },
   {
     key: 'system',

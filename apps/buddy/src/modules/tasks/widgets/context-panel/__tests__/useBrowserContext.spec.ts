@@ -11,27 +11,34 @@ const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
 function browserState(url = 'https://example.com/'): DesktopBrowserState {
-  return { canGoBack: false, canGoForward: false, controller: 'human', controlEpoch: 0, conversationId: 'conversation', error: null, pageId: 'page', profileMode: 'default', security: { kind: 'blank', origin: null }, sessionId: 'session', status: 'ready', title: '', url, visible: true }
+  return { zoomFactor: 1, canGoBack: false, canGoForward: false, controller: 'human', controlEpoch: 0, conversationId: 'conversation', error: null, pageId: 'page', profileMode: 'default', security: { kind: 'blank', origin: null }, sessionId: 'session', status: 'ready', title: '', url, visible: true }
 }
 
 function mountBrowser() {
-  let listener: ((state: DesktopBrowserState) => void) | null = null
+  const state = shallowRef<DesktopBrowserState | null>(null)
   let hook!: ReturnType<typeof useBrowserContextSurface>
   const api = {
     ensureSession: vi.fn().mockResolvedValue(browserState()),
-    onStateChanged: (next: typeof listener) => {
-      listener = next
-      return () => {
-        listener = null
-      }
-    },
     navigate: vi.fn(),
     takeControl: vi.fn(),
     setProfileMode: vi.fn(),
     setSurface: vi.fn().mockResolvedValue(undefined),
   }
   const app = createApp({ setup() {
-    hook = useBrowserContextSurface({ api: api as unknown as DesktopBrowserApi, conversationId: shallowRef('conversation'), guestHost: { show() {}, hide() {} }, surfaceElement: shallowRef(document.createElement('div')) })
+    hook = useBrowserContextSurface({
+      state,
+      sessionReady: (next) => {
+        if (state.value?.sessionId !== next.sessionId)
+          state.value = next
+      },
+      updateState: (next) => {
+        state.value = next
+      },
+      api: api as unknown as DesktopBrowserApi,
+      conversationId: shallowRef('conversation'),
+      guestHost: { show() {}, hide() {} },
+      surfaceElement: shallowRef(document.createElement('div')),
+    })
     return () => h('div')
   } })
   app.mount(document.createElement('div'))
@@ -43,10 +50,21 @@ function mountBrowser() {
     }
   }
   cleanups.push(stop)
-  return { api, hook, stop, publish: (state: DesktopBrowserState) => listener?.(state) }
+  return { api, hook, stop, publish: (next: DesktopBrowserState) => {
+    state.value = next
+  } }
 }
 
 describe('browser context ownership', () => {
+  it('accepts a profile replacement adopted by the resource owner', async () => {
+    const { api, hook } = mountBrowser()
+    await nextTick()
+    const replacement = { ...browserState(), sessionId: 'private-session', pageId: 'private-page', profileMode: 'incognito' as const }
+    api.setProfileMode.mockResolvedValue(replacement)
+    expect(await hook.setProfileMode('incognito')).toBe(true)
+    expect(hook.state.value).toEqual(replacement)
+  })
+
   it('keeps the newest navigation result when commands finish out of order', async () => {
     const { api, hook } = mountBrowser()
     await nextTick()

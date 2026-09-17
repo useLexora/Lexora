@@ -1,4 +1,5 @@
 import type { DesktopBrowserGuestDescriptor } from '../../../shared/desktopApi'
+import type { BrowserOperationGuard } from '../BrowserOperationGuard'
 import { EventEmitter } from 'node:events'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { vi } from 'vitest'
 import { BrowserHost } from '../BrowserHost'
 
-export function createFixture() {
+export function createFixture(options: { operations?: BrowserOperationGuard, getDefaultZoomFactor?: () => number, getFreezeDelay?: (visible: boolean) => number | null } = {}) {
   const ids = Array.from({ length: 16 }, (_, index) => (
     `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`
   ))
@@ -22,6 +23,7 @@ export function createFixture() {
   const onStateChanged = vi.fn()
   const onSessionClosed = vi.fn()
   const host = new BrowserHost({
+    ...options,
     createId: () => ids.shift()!,
     createPage: createPage as never,
     onSessionClosed,
@@ -71,6 +73,16 @@ class FakeWebContents extends EventEmitter {
   currentUrl = 'about:blank'
   debuggerAttached = false
   title = ''
+  audible = false
+  lifecycleState: 'active' | 'frozen' = 'active'
+  isCurrentlyAudible = () => this.audible
+  backgroundThrottling = true
+  getBackgroundThrottling = () => this.backgroundThrottling
+  setBackgroundThrottling = (allowed: boolean) => { this.backgroundThrottling = allowed }
+  zoomFactor = 1
+  getZoomFactor = () => this.zoomFactor
+  setZoomFactor = (factor: number) => { this.zoomFactor = factor }
+  setZoomMode = vi.fn()
   readonly close = vi.fn()
   readonly capturePage = vi.fn(async () => ({
     getSize: () => ({ height: 600, width: 800 }),
@@ -88,7 +100,11 @@ class FakeWebContents extends EventEmitter {
     sendCommand: vi.fn<(
       method: string,
       commandParams?: Record<string, unknown>,
-    ) => Promise<unknown>>(async () => ({})),
+    ) => Promise<unknown>>(async (method, params) => {
+      if (method === 'Page.setWebLifecycleState')
+        this.lifecycleState = params?.state as 'active' | 'frozen'
+      return {}
+    }),
   }
 
   readonly focus = vi.fn()

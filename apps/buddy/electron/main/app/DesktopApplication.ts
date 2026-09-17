@@ -2,8 +2,12 @@ import type { Event } from 'electron'
 import type { DesktopEnvironment } from './typing'
 import process from 'node:process'
 import { app, nativeTheme } from 'electron'
+import { currentPlatform } from '../../../platform/currentPlatform'
+import { localTransports } from '../../../platform/ipc/localTransport'
+import { DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ServiceHost } from '../../../shared/lifecycle/ServiceHost'
+import { BrowserIntegration } from '../browser/BrowserIntegration'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { confirmDesktopQuit, showBackgroundCloseNotice, showDesktopStartupFailure, showLegacyPowerShellNotice } from './desktopDialogs'
 import { DesktopIntegrations } from './DesktopIntegrations'
@@ -18,6 +22,7 @@ import { checkDesktopCoreDirectories, initializeDesktopEnvironment, prepareDeskt
 class DesktopApplication {
   readonly #environment: DesktopEnvironment
   readonly #windows: DesktopWindowHost
+  readonly #browser: BrowserIntegration
   readonly #runtime: DesktopRuntimeHost
   readonly #integrations: DesktopIntegrations
   readonly #host: ServiceHost
@@ -28,7 +33,14 @@ class DesktopApplication {
     this.#environment = environment
     this.#host = new ServiceHost(environment.events)
     this.#windows = new DesktopWindowHost(environment)
-    this.#runtime = new DesktopRuntimeHost(environment, this.#windows)
+    this.#browser = new BrowserIntegration({
+      isTaskLinked: () => this.#runtime.config?.desktop.contextPanelMode === 'task',
+      onActivityError: () => environment.events.publish({ level: 'warn', event: 'browser.activity.failed', errorCode: 'BROWSER_ACTIVITY_FAILED' }),
+      endpoint: localTransports[currentPlatform.transport](environment.paths.browserAdapterSocket),
+      getPreferences: () => this.#runtime.config?.browser ?? DEFAULT_BROWSER_PREFERENCES,
+      testBrokerSocketPath: environment.paths.profile === 'test' ? process.env.LEXORA_BUDDY_BROWSER_ADAPTER_TEST_BROKER_SOCKET : undefined,
+    })
+    this.#runtime = new DesktopRuntimeHost(environment, this.#windows, this.#browser)
     this.#quit = createDesktopQuitLifecycle({
       events: environment.events,
       confirm: options => confirmDesktopQuit({
@@ -43,7 +55,7 @@ class DesktopApplication {
       },
       quit: () => app.quit(),
     })
-    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, () => this.#requestQuit())
+    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, this.#browser, () => this.#requestQuit())
   }
 
   bindEvents(): void {
@@ -83,8 +95,8 @@ class DesktopApplication {
       await host.step('desktop.electron', () => app.whenReady())
       await host.step('desktop.environment', () => prepareDesktopReady(this.#environment), ['desktop.electron'])
       await host.start('desktop.browser_adapter', ({ defer }) => {
-        defer(() => this.#windows.stopAdapter())
-        return this.#windows.startAdapter()
+        defer(() => this.#browser.stopAdapter())
+        return this.#browser.startAdapter()
       }, ['desktop.environment'])
       const config = await host.start('desktop.runtime', ({ defer }) => {
         defer(() => this.#runtime.stop())
@@ -99,8 +111,10 @@ class DesktopApplication {
       }, ['desktop.runtime'])
       return host.start('desktop.window', ({ defer }) => {
         defer(() => this.#windows.close())
+        defer(() => this.#browser.closeWindow())
         return this.#windows.initialize({
           executeCommand: this.#integrations.executeCommand,
+          onWindowCreated: window => this.#browser.bindWindow(window),
           isQuitting: () => this.#quit.quitting,
           onHidden: () => { void showBackgroundCloseNotice(this.#runtime.configStore) },
         })

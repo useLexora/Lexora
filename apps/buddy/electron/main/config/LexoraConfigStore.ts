@@ -6,6 +6,7 @@ import { dirname } from 'node:path'
 import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
+import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
@@ -75,6 +76,13 @@ const petConfigSchema = z.object({
 })
 
 const lexoraConfigFileSchema = z.object({
+  browser: z.object({
+    screenshot_destination: browserPreferencesSchema.shape.screenshotDestination.default(DEFAULT_BROWSER_PREFERENCES.screenshotDestination),
+    default_zoom_factor: browserPreferencesSchema.shape.defaultZoomFactor.default(DEFAULT_BROWSER_PREFERENCES.defaultZoomFactor),
+    freeze_background: browserPreferencesSchema.shape.freezeBackground.default(DEFAULT_BROWSER_PREFERENCES.freezeBackground),
+    freeze_foreground: browserPreferencesSchema.shape.freezeForeground.default(DEFAULT_BROWSER_PREFERENCES.freezeForeground),
+    freeze_delay_seconds: browserPreferencesSchema.shape.freezeDelaySeconds.default(DEFAULT_BROWSER_PREFERENCES.freezeDelaySeconds),
+  }).passthrough().prefault({}),
   proxy: proxySettingsSchema.default(DEFAULT_PROXY_SETTINGS),
   desktop: desktopConfigSchema,
   pet: petConfigSchema,
@@ -179,6 +187,13 @@ function decodeConfig(value: unknown): LexoraConfig {
   }
 
   return {
+    browser: {
+      screenshotDestination: config.browser.screenshot_destination,
+      defaultZoomFactor: config.browser.default_zoom_factor,
+      freezeBackground: config.browser.freeze_background,
+      freezeForeground: config.browser.freeze_foreground,
+      freezeDelaySeconds: config.browser.freeze_delay_seconds,
+    },
     proxy: config.proxy,
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
@@ -210,6 +225,13 @@ function decodeConfig(value: unknown): LexoraConfig {
 
 function encodeConfig(config: LexoraConfig) {
   return {
+    browser: {
+      screenshot_destination: config.browser.screenshotDestination,
+      default_zoom_factor: config.browser.defaultZoomFactor,
+      freeze_background: config.browser.freezeBackground,
+      freeze_foreground: config.browser.freezeForeground,
+      freeze_delay_seconds: config.browser.freezeDelaySeconds,
+    },
     proxy: config.proxy,
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
@@ -241,6 +263,7 @@ function encodeConfig(config: LexoraConfig) {
 
 function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraConfig {
   return {
+    browser: browserPreferencesSchema.parse({ ...current.browser, ...patch.browser }),
     proxy: proxySettingsSchema.parse(patch.proxy ?? current.proxy),
     desktop: {
       ...current.desktop,
@@ -274,6 +297,7 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   delete nextDesktop.chat_sidebar_pinned_items
   const next: Record<string, unknown> = {
     ...root,
+    browser: { ...asRecord(root.browser), ...encoded.browser },
     proxy: encoded.proxy,
     desktop: nextDesktop,
     pet: {

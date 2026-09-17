@@ -1,6 +1,7 @@
 import type {
   SemanticBrowserDriverError,
 } from '../SemanticBrowserDriver'
+import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SemanticBrowserDriver,
@@ -810,6 +811,40 @@ describe('semanticBrowserDriver', () => {
       observationId: second.observationId,
       ref: 'e1',
     })).toMatchObject({ backendDOMNodeId: 4 })
+  })
+
+  it('bounds cached screenshots by total bytes while keeping recent observations usable', async () => {
+    const fixture = createFixture()
+    const bytes = new Uint8Array(16 * 1024 * 1024)
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10])
+    fixture.capturePage.mockResolvedValue({ getSize: () => ({ height: 600, width: 800 }), toPNG: () => bytes.slice() })
+    const ids = [OBSERVATION_ID, SECOND_OBSERVATION_ID, THIRD_OBSERVATION_ID]
+    const driver = new SemanticBrowserDriver({ page: fixture.page, createId: () => ids.shift()! })
+    try {
+      const first = await driver.observe({ ...createObservationInput(), maxElements: 2 })
+      const second = await driver.observe({ ...createObservationInput(), maxElements: 2 })
+      const third = await driver.observe({ ...createObservationInput(), maxElements: 2 })
+      expect(() => driver.resolveScreenshot({ ...first, screenshotId: first.screenshot!.screenshotId }))
+        .toThrow(expect.objectContaining({ code: 'BROWSER_TARGET_STALE' }))
+      for (const observation of [second, third]) {
+        expect(driver.resolveScreenshot({ ...observation, screenshotId: observation.screenshot!.screenshotId }).bytes.byteLength).toBe(bytes.byteLength)
+        expect(driver.resolveTarget({ ...observation, ref: 'e1' })).toMatchObject({ backendDOMNodeId: 4 })
+      }
+    }
+    finally { driver.dispose() }
+  })
+
+  it('rejects an observation finishing after disposal without retaining its screenshot', async () => {
+    const fixture = createFixture()
+    const pending = deferred<Awaited<ReturnType<typeof fixture.capturePage>>>()
+    fixture.capturePage.mockReturnValue(pending.promise)
+    const driver = new SemanticBrowserDriver({ page: fixture.page })
+    const observing = driver.observe({ ...createObservationInput(), maxElements: 2 })
+    const rejected = expect(observing).rejects.toMatchObject({ code: 'BROWSER_PAGE_FAILED' })
+    await vi.waitFor(() => expect(fixture.capturePage).toHaveBeenCalledOnce())
+    driver.dispose()
+    pending.resolve({ getSize: () => ({ height: 600, width: 800 }), toPNG: () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]) })
+    await rejected
   })
 
   it('fails closed when CDP returns a malformed accessibility response', async () => {

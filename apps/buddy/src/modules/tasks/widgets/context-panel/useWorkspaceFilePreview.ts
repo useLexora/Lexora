@@ -3,7 +3,7 @@ import type { LocalSpaceFilePreview } from '@buddy-shared/spaces/spaceFileApi'
 import type { TreeOption } from 'naive-ui'
 import type { Ref } from 'vue'
 import type { TaskFilesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
-import { computed, shallowReactive, watch } from 'vue'
+import { computed, onScopeDispose, shallowReactive, watch, watchEffect } from 'vue'
 
 export type WorkspaceFilesApi = Pick<LocalChatApi['spaces'], 'listDirectory' | 'readFile' | 'revealFile'>
 interface FileView {
@@ -18,8 +18,19 @@ interface FileView {
   preview: LocalSpaceFilePreview | null
 }
 
-export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | null>>, api: WorkspaceFilesApi) {
+export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | null>>, api: WorkspaceFilesApi, hasTab: (id: string) => boolean) {
   const views = shallowReactive(new Map<string, FileView>())
+  let disposed = false
+  watchEffect(() => {
+    for (const id of views.keys()) {
+      if (!hasTab(id))
+        views.delete(id)
+    }
+  })
+  onScopeDispose(() => {
+    disposed = true
+    views.clear()
+  })
   const current = computed(() => tab.value ? views.get(tab.value.id) ?? null : null)
   watch(tab, async (value, previous, onCleanup) => {
     if (!value)
@@ -33,10 +44,12 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
       view = shallowReactive<FileView>({ nodes: [], expandedKeys: [], treeVisible: true, treeWidth: 220, wrap: false, loading: false, failed: false, treeFailed: false, preview: null })
       views.set(value.id, view)
       const newView = view
-      void readNodes(value, '').then((nodes) => {
-        newView.nodes = nodes
+      void readNodes(value, '', newView).then((nodes) => {
+        if (retained(value.id, newView))
+          newView.nodes = nodes
       }).catch(() => {
-        newView.treeFailed = true
+        if (retained(value.id, newView))
+          newView.treeFailed = true
       })
     }
     if (value.target === previous?.target && value.id === previous.id)
@@ -61,11 +74,17 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     }
   }, { immediate: true, flush: 'sync' })
 
-  async function readNodes(value: TaskFilesContextTab, path: string): Promise<TreeOption[]> {
+  function retained(id: string, view: FileView): boolean {
+    return !disposed && hasTab(id) && views.get(id) === view
+  }
+
+  async function readNodes(value: TaskFilesContextTab, path: string, view: FileView): Promise<TreeOption[]> {
     const nodes: TreeOption[] = []
     let cursor: string | undefined
     do {
       const page = await api.listDirectory({ ...value.target, path, cursor })
+      if (!retained(value.id, view))
+        return []
       nodes.push(...page.entries.map(entry => ({
         key: entry.path,
         label: entry.name,
@@ -84,12 +103,15 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     if (!value || !view)
       return
     try {
-      const children = await readNodes(value, String(node.key))
-      view.nodes = replaceChildren(view.nodes, node.key!, children)
-      view.treeFailed = false
+      const children = await readNodes(value, String(node.key), view)
+      if (retained(value.id, view)) {
+        view.nodes = replaceChildren(view.nodes, node.key!, children)
+        view.treeFailed = false
+      }
     }
     catch {
-      view.treeFailed = true
+      if (retained(value.id, view))
+        view.treeFailed = true
     }
   }
 

@@ -1,7 +1,9 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { BrowserHost } from '../BrowserHost'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { DESKTOP_IPC_CHANNELS } from '../../../shared/desktopApi'
+import { BrowserScreenshotService } from '../BrowserScreenshotService'
 import { registerBrowserDesktopIpc } from '../registerBrowserDesktopIpc'
 
 const electron = vi.hoisted(() => ({
@@ -55,6 +57,7 @@ describe('registerBrowserDesktopIpc', () => {
   it('validates trusted Renderer requests before forwarding them to BrowserHost', async () => {
     const sessionId = 'd86be868-6a84-45da-90aa-ff61f3c88f85'
     const state = {
+      zoomFactor: 1,
       canGoBack: false,
       canGoForward: false,
       controller: 'human',
@@ -98,6 +101,8 @@ describe('registerBrowserDesktopIpc', () => {
     const webContents = { mainFrame: {} }
     const window = { webContents } as unknown as BrowserWindow
     registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
       getHost: () => host,
       getWindow: () => window,
       resolveArtifactEntry: async () => { throw new Error('unused') },
@@ -195,6 +200,8 @@ describe('registerBrowserDesktopIpc', () => {
     electron.fromId.mockReturnValue(guest)
     electron.fromPartition.mockReturnValue(expectedSession)
     registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
       getHost: () => host,
       getWindow: () => ({ webContents: hostWebContents }) as unknown as BrowserWindow,
       resolveArtifactEntry: async () => { throw new Error('unused') },
@@ -272,6 +279,8 @@ describe('registerBrowserDesktopIpc', () => {
     const webContents = { mainFrame: {} }
     const window = { webContents } as unknown as BrowserWindow
     registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
       getHost: () => host,
       getWindow: () => window,
       resolveArtifactEntry: async () => { throw new Error('unused') },
@@ -295,6 +304,7 @@ describe('registerBrowserDesktopIpc', () => {
   it('opens the current page externally, saves a PNG, and reveals local files', async () => {
     const sessionId = 'd86be868-6a84-45da-90aa-ff61f3c88f85'
     const state = {
+      zoomFactor: 1,
       canGoBack: false,
       canGoForward: false,
       controller: 'human',
@@ -326,6 +336,8 @@ describe('registerBrowserDesktopIpc', () => {
       filePath: '/saved/Example page.png',
     })
     registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
       getHost: () => host,
       getWindow: () => window,
       resolveArtifactEntry: async () => { throw new Error('unused') },
@@ -344,7 +356,7 @@ describe('registerBrowserDesktopIpc', () => {
 
     await expect(invoke(DESKTOP_IPC_CHANNELS.browserCaptureScreenshot, trustedEvent, {
       sessionId,
-    })).resolves.toBe(true)
+    })).resolves.toBe('saved')
     expect(electron.showSaveDialog).toHaveBeenCalledExactlyOnceWith(window, {
       defaultPath: 'Example page.png',
       filters: [{ extensions: ['png'], name: 'PNG image' }],
@@ -379,6 +391,7 @@ describe('registerBrowserDesktopIpc', () => {
   it('resolves an HTML artifact with its local resource root', async () => {
     const sessionId = 'd86be868-6a84-45da-90aa-ff61f3c88f85'
     const state = {
+      zoomFactor: 1,
       canGoBack: false,
       canGoForward: false,
       controller: 'human',
@@ -406,6 +419,8 @@ describe('registerBrowserDesktopIpc', () => {
     const webContents = { mainFrame: {} }
     const window = { webContents } as unknown as BrowserWindow
     registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
       getHost: () => host,
       getWindow: () => window,
       resolveArtifactEntry,

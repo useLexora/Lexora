@@ -1,3 +1,5 @@
+import type { BrowserClearDataInput } from '../../shared/browser/browserData'
+import type { BrowserScreenshotResult } from '../../shared/browser/browserDesktopApi'
 import type { DesktopBrowserGuestDescriptor, DesktopBrowserProfileMode, DesktopBrowserSetSurfaceInput, DesktopBrowserState, LexoraDesktopApi } from '../shared/desktopApi'
 import { ipcRenderer } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
@@ -10,9 +12,18 @@ export function createBrowserApi(): Pick<LexoraDesktopApi, 'browser'> {
         DESKTOP_IPC_CHANNELS.browserAttachGuest,
         { sessionId, webContentsId },
       ),
-      captureScreenshot: (sessionId: string): Promise<boolean> => ipcRenderer.invoke(
+      captureScreenshot: (sessionId: string): Promise<BrowserScreenshotResult> => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.browserCaptureScreenshot,
         { sessionId },
+      ),
+      clearData: (input: BrowserClearDataInput) => ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.browserClearData,
+        { cache: input.cache, siteData: input.siteData },
+      ),
+      getDataSummary: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.browserGetDataSummary),
+      setZoomFactor: (sessionId: string, zoomFactor: number | null) => ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.browserSetZoomFactor,
+        { sessionId, zoomFactor },
       ),
       close: (sessionId: string) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.browserClose,

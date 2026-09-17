@@ -4,6 +4,16 @@ import * as desktopApiSchemas from '../desktopApiSchemas'
 const SESSION_ID = '6f828cc1-6549-4245-b26e-43b2917c9281'
 
 describe('desktop browser API contract', () => {
+  it('preserves independent browser preference patches without inserting defaults', () => {
+    const schema = desktopApiSchemas.lexoraConfigPatchSchema
+    expect(schema.parse({ browser: { defaultZoomFactor: 1.25 } }))
+      .toEqual({ browser: { defaultZoomFactor: 1.25 } })
+    expect(schema.parse({ browser: { screenshotDestination: 'clipboard' } }))
+      .toEqual({ browser: { screenshotDestination: 'clipboard' } })
+    for (const defaultZoomFactor of [0, -1, 3.1, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(schema.safeParse({ browser: { defaultZoomFactor } }).success).toBe(false)
+  })
+
   it('requires an independent tab identity for a browser without a conversation', () => {
     const schema = desktopApiSchemas.browserEnsureSessionInputSchema
     expect(schema.parse({ conversationId: null, tabId: 'manual-tab' }))

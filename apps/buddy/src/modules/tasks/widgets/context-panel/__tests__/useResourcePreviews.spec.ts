@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import type { LocalArtifact, LocalArtifactText } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetDetail, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
-import type { TaskChangesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import type { TaskChangesContextTab, TaskFilesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, shallowRef } from 'vue'
 import { deferred } from '../../../../../../__tests__/deferred'
 import { isMarkdownArtifact, resolveArtifactDisplayMode } from '../artifactContextPresentation'
 import { useArtifactPreview } from '../useArtifactPreview'
 import { useContextChanges } from '../useContextChanges'
+import { useWorkspaceFilePreview } from '../useWorkspaceFilePreview'
 
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => scopes.splice(0).forEach(scope => scope.stop()))
@@ -18,6 +19,48 @@ function own<T>(setup: () => T) {
 }
 
 describe('resource previews', () => {
+  it('releases closed preview views while retaining another task tab', async () => {
+    const first: TaskChangesContextTab = { id: 'changes:first', scope: 'task:first', conversationId: 'first', kind: 'changes', changeSet: createChanges('first'), branchId: 'branch', revision: '1' }
+    const second: TaskChangesContextTab = { ...first, id: 'changes:second', scope: 'task:second', conversationId: 'second', changeSet: createChanges('second') }
+    const tab = shallowRef<TaskChangesContextTab | null>(first)
+    const retained = shallowRef(new Set([first.id, second.id]))
+    const { state } = own(() => useContextChanges({ hasTab: id => retained.value.has(id), tab, getChangeSet: async id => createChanges(id), getOverview: async () => createChanges('all') }))
+    await nextTick()
+    const previous = state.current.value!
+    previous.treeWidth = 350
+    tab.value = second
+    await nextTick()
+    retained.value = new Set([second.id])
+    await nextTick()
+    expect(state.current.value?.source.id).toBe(second.id)
+    retained.value = new Set([first.id, second.id])
+    tab.value = first
+    await nextTick()
+    expect(state.current.value).not.toBe(previous)
+    expect(state.current.value?.treeWidth).toBe(220)
+  })
+
+  it('stops directory pagination after its tab closes and discards late results', async () => {
+    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const retained = shallowRef(true)
+    const page = deferred<{ entries: [], nextCursor: string | null }>()
+    const listDirectory = vi.fn().mockReturnValueOnce(page.promise).mockResolvedValue({ entries: [], nextCursor: null })
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => retained.value))
+    const previous = state.current.value!
+    tab.value = null
+    retained.value = false
+    await nextTick()
+    page.resolve({ entries: [], nextCursor: 'another-page' })
+    await nextTick()
+    expect(listDirectory).toHaveBeenCalledTimes(1)
+    retained.value = true
+    tab.value = value
+    await nextTick()
+    expect(state.current.value).not.toBe(previous)
+    expect(state.current.value?.nodes).toEqual([])
+  })
+
   it.each([
     ['report.md', 'text/markdown', 'file', true],
     ['REPORT.MD', 'text/plain', 'file', true],
@@ -97,7 +140,7 @@ describe('resource previews', () => {
     const changeSet = shallowRef<LocalChangeSetSummary>(createChanges('set-a'))
     const refresh = deferred<LocalChangeSetDetail>()
     const getDetail = vi.fn().mockResolvedValueOnce(createChanges('set-a')).mockReturnValueOnce(refresh.promise)
-    const { state } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
+    const { state } = own(() => useContextChanges({ hasTab: () => true, tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
     await nextTick()
     state.current.value!.selectedFileId = 'second'
     changeSet.value = { ...changeSet.value, updatedAt: '2026-09-09T00:00:00.000Z' }
@@ -116,7 +159,7 @@ describe('resource previews', () => {
     const pending = deferred<LocalChangeSetDetail>()
     const changeSet = shallowRef<LocalChangeSetSummary>(createChanges('a'))
     const getDetail = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(createChanges('current'))
-    const { state, stop } = own(() => useContextChanges({ tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
+    const { state, stop } = own(() => useContextChanges({ hasTab: () => true, tab: computed<TaskChangesContextTab>(() => ({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: changeSet.value, branchId: 'branch', revision: changeSet.value.updatedAt })), getChangeSet: getDetail, getOverview: async () => createChanges('all') }))
     changeSet.value = createChanges('b')
     changeSet.value = createChanges('a')
     await nextTick()
@@ -130,13 +173,13 @@ describe('resource previews', () => {
     stop()
     last.resolve(createChanges('last'))
     await nextTick()
-    expect(state.current.value?.detail).toBeNull()
+    expect(state.current.value).toBeNull()
   })
 
   it('keeps file, tree and total counts consistent when captured content refreshes', async () => {
     const tab = shallowRef<TaskChangesContextTab>({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: createChanges('a'), branchId: 'branch', revision: '1' })
     const getDetail = vi.fn().mockResolvedValue(createChanges('a'))
-    const { state } = own(() => useContextChanges({ tab, getChangeSet: getDetail, getOverview: getDetail }))
+    const { state } = own(() => useContextChanges({ hasTab: () => true, tab, getChangeSet: getDetail, getOverview: getDetail }))
     await nextTick()
     expect(state.counts.value).toEqual({ added: 2, deleted: 2 })
     const next = createChanges('a')

@@ -40,9 +40,10 @@ const activeTab = computed(() => props.panel.activeTab.value)
 const fileTab = computed(() => activeTab.value?.kind === 'files' ? activeTab.value : null)
 const changeTab = computed(() => activeTab.value?.kind === 'changes' ? activeTab.value : null)
 const browserTab = computed(() => activeTab.value?.kind === 'browser' ? activeTab.value : null)
-const filePreview = useWorkspaceFilePreview(fileTab, props.context.files)
+const filePreview = useWorkspaceFilePreview(fileTab, props.context.files, id => props.panel.hasTab(id))
 const fileView = filePreview.current
 const changes = useContextChanges({
+  hasTab: id => props.panel.hasTab(id),
   tab: changeTab,
   getOverview: input => props.context.getChangeOverview(input),
   getChangeSet: id => props.context.getChangeSet(id),
@@ -81,7 +82,7 @@ const busyAction = computed<BrowserToolbarBusyAction | null>(() => browserView.i
     ? 'screenshot'
     : browserView.isOpeningExternal.value
       ? 'external'
-      : browserView.isShowingFileInFolder.value ? 'folder' : null)
+      : browserView.isShowingFileInFolder.value ? 'folder' : browserView.isSettingZoom.value ? 'zoom' : null)
 const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) => {
   if (tab.kind === 'artifact')
     return { id: tab.id, title: tab.artifact.name, icon: tab.artifact.kind === 'directory' ? 'folder' : 'file', fileName: tab.artifact.name }
@@ -123,9 +124,20 @@ async function selectChangeFile(id: string) {
   await nextTick()
   changeList.value?.reveal(id)
 }
+async function captureScreenshot() {
+  const result = await browserView.captureScreenshot()
+  if (result === 'saved' || result === 'copied')
+    message.success(t(result === 'saved' ? 'desktop.browser.screenshotSaved' : 'desktop.browser.screenshotCopied'))
+  else if (result === 'failed')
+    message.error(t('desktop.browser.screenshotFailed'))
+}
+async function setZoom(factor: number | null) {
+  if (!await browserView.setZoomFactor(factor))
+    message.error(t('desktop.browser.zoomFailed'))
+}
 function browserMenu(action: BrowserToolbarMenuActionKey) {
   if (action === 'capture-screenshot')
-    void browserView.captureScreenshot()
+    void captureScreenshot()
   else if (action === 'enter-incognito')
     void browserView.setProfileMode('incognito')
   else if (action === 'exit-incognito')
@@ -143,7 +155,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
     <template v-if="activeTab" #toolbar>
       <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @reveal="revealFile" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible" />
       <DesktopChangeToolbar v-else-if="changeTab && changeView" v-model:range="changeView.range" :language="language" :added="changes.counts.value.added" :deleted="changes.counts.value.deleted" :can-show-turn="Boolean(changeTab.changeSet)" :all-collapsed="allCollapsed" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" :tree-visible="changeView.treeVisible" @toggle-all="changes.toggleAll" @toggle-wrap="changeView.wrap = !changeView.wrap" @toggle-layout="changeView.sideBySide = !changeView.sideBySide" @toggle-tree="changeView.treeVisible = !changeView.treeVisible" />
-      <DesktopBrowserToolbar v-else-if="browserTab" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" />
+      <DesktopBrowserToolbar v-else-if="browserTab" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" />
       <DesktopArtifactToolbar v-else-if="activeTab?.kind === 'artifact'" :artifact="activeTab.artifact" :language="language" :view-mode="activeTab.viewMode" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
     </template>
     <DesktopContextSplit v-if="fileTab && fileView" v-model:width="fileView.treeWidth" :tree-visible="fileView.treeVisible">

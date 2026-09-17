@@ -1,8 +1,51 @@
 import { deferred as createDeferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
+import { BrowserOperationGuard } from '../BrowserOperationGuard'
 import { configureSemanticObservation, configureSensitiveSemanticObservation, createFixture } from './browserHostFixture'
 
 describe('browserHost control and semantic actions', () => {
+  it('invalidates an approved target when page zoom changes', async () => {
+    const fixture = createFixture()
+    const state = fixture.host.ensureSession('conversation')
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(state.sessionId, 'https://example.com/')
+    const observation = await fixture.host.observe({ sessionId: state.sessionId, pageId: state.pageId })
+    const reference = {
+      action: { kind: 'click', ref: 'e1' } as const,
+      sessionId: state.sessionId,
+      pageId: state.pageId,
+      frameId: 'main-frame',
+      documentRevision: observation.documentRevision,
+      observationId: observation.observationId,
+    }
+    expect(() => fixture.host.validateAction(reference)).not.toThrow()
+    await fixture.host.setZoomFactor(state.sessionId, 1.5)
+    expect(() => fixture.host.validateAction(reference)).toThrowError(expect.objectContaining({ code: 'BROWSER_TARGET_STALE' }))
+    fixture.host.dispose()
+  })
+
+  it('keeps lifecycle reads available during maintenance and rejects page mutations', async () => {
+    const operations = new BrowserOperationGuard()
+    const { host } = createFixture({ operations })
+    const state = host.ensureSession('clear-data-conversation')
+    const input = { sessionId: state.sessionId, pageId: state.pageId }
+    const clearing = createDeferred<void>()
+    const operation = operations.runMaintenance(() => clearing.promise)
+    expect(host.getState(state.sessionId).sessionId).toBe(state.sessionId)
+    expect(host.listGuests()).toHaveLength(1)
+    expect(() => host.acquireControl(input)).toThrow('maintenance')
+    expect(() => host.ensureSession('another-conversation')).toThrow('maintenance')
+    await expect(host.setZoomFactor(state.sessionId, 1.5)).rejects.toMatchObject({ code: 'BROWSER_IN_USE' })
+    host.setSurface({ sessionId: state.sessionId, visible: true })
+    clearing.resolve()
+    await operation
+    await expect(operations.runMaintenance(async () => {
+      throw new Error('disk failure')
+    })).rejects.toThrow('disk failure')
+    expect(host.acquireControl(input).controller).toBe('agent')
+    host.dispose()
+  })
+
   it('leaves Escape with the page while treating it as human input', () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')

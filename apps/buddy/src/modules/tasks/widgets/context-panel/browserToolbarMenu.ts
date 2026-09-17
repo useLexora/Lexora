@@ -1,7 +1,7 @@
 import type { DesktopBrowserProfileMode } from '@buddy-electron/shared/desktopApi'
 import type { BuddyI18nKey } from '@/i18n/buddyI18n'
 
-export type BrowserToolbarBusyAction = 'external' | 'folder' | 'profile' | 'screenshot'
+export type BrowserToolbarBusyAction = 'external' | 'folder' | 'profile' | 'screenshot' | 'zoom'
 
 export type BrowserToolbarMenuActionKey
   = | 'capture-screenshot'

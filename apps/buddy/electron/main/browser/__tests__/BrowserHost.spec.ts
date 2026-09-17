@@ -5,6 +5,40 @@ import { BrowserHostError } from '../BrowserHost'
 import { configureSemanticObservation, createFixture, createLocalSite } from './browserHostFixture'
 
 describe('browserHost sessions and navigation', () => {
+  it('reads the current default zoom only for new pages and explicit reset', async () => {
+    let defaultZoomFactor = 1.25
+    const fixture = createFixture({ getDefaultZoomFactor: () => defaultZoomFactor })
+    const first = fixture.host.ensureSession(null, 'first')
+    expect(first.zoomFactor).toBe(1.25)
+    defaultZoomFactor = 1.5
+    const second = fixture.host.ensureSession(null, 'second')
+    expect(second.zoomFactor).toBe(1.5)
+    expect(fixture.host.getState(first.sessionId).zoomFactor).toBe(1.25)
+    expect((await fixture.host.setZoomFactor(first.sessionId, 2)).zoomFactor).toBe(2)
+    expect(fixture.host.getState(second.sessionId).zoomFactor).toBe(1.5)
+    expect((await fixture.host.setZoomFactor(first.sessionId, null)).zoomFactor).toBe(1.5)
+    await expect(fixture.host.setZoomFactor(first.sessionId, 10)).rejects.toThrow()
+    expect(fixture.host.getState(first.sessionId).zoomFactor).toBe(1.5)
+    fixture.host.dispose()
+  })
+
+  it('releases a shared debugger connection and page listeners when the page closes', async () => {
+    const fixture = createFixture()
+    const state = fixture.host.ensureSession('conversation')
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(state.sessionId, 'https://example.com/')
+    await fixture.host.observe({ sessionId: state.sessionId, pageId: state.pageId })
+    expect(fixture.webContents.debuggerAttached).toBe(true)
+    fixture.host.close(state.sessionId)
+    expect(fixture.webContents.debuggerAttached).toBe(false)
+    expect(fixture.webContents.eventNames()).toEqual([])
+    expect(fixture.webContents.session.eventNames()).toEqual([])
+    fixture.onStateChanged.mockClear()
+    fixture.webContents.emit('did-navigate', {}, 'https://obsolete.example/')
+    expect(fixture.onStateChanged).not.toHaveBeenCalled()
+    fixture.host.dispose()
+  })
+
   it('keeps standalone tabs independent through conversation and profile changes', async () => {
     const fixture = createFixture()
     const first = fixture.host.ensureSession(null, 'manual-1')
@@ -517,10 +551,9 @@ describe('browserHost sessions and navigation', () => {
     const session = fixture.host.ensureSession('conversation-1')
     const callback = vi.fn()
 
-    fixture.webContents.session.emit(
+    fixture.webContents.emit(
       'certificate-error',
       {},
-      fixture.webContents,
       'https://expired.example/',
       'net::ERR_CERT_DATE_INVALID',
       {},
@@ -529,6 +562,9 @@ describe('browserHost sessions and navigation', () => {
     )
 
     expect(callback).toHaveBeenCalledExactlyOnceWith(false)
+    fixture.webContents.currentUrl = 'chrome-error://chromewebdata/'
+    fixture.webContents.emit('did-fail-load', {}, -201, 'ERR_CERT_DATE_INVALID', 'https://expired.example/', true)
+    fixture.webContents.emit('did-stop-loading')
     expect(fixture.host.getState(session.sessionId)).toMatchObject({
       error: {
         code: 'BROWSER_CERTIFICATE_ERROR',

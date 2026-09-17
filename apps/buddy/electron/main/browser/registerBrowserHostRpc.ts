@@ -1,5 +1,4 @@
 import type {
-  BrowserErrorCode,
   BrowserObservation,
   BrowserRecoveryAction,
   BrowserWaitSpec,
@@ -9,7 +8,6 @@ import type {
   BrowserAdapterLease,
 } from '../../../shared/browser/browserAdapterProtocol'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
-import type { DesktopBrowserState } from '../../shared/desktopApi'
 import type { BrowserHost } from './BrowserHost'
 import {
   BROWSER_WAIT_DEFAULT_QUIET_MS,
@@ -29,7 +27,6 @@ import {
   browserReleaseControlResultSchema,
   browserSessionParamsSchema,
   browserStateResultSchema,
-  browserStateSnapshotSchema,
   browserValidateActionParamsSchema,
   browserValidateActionResultSchema,
 } from '../../../shared/browser'
@@ -38,6 +35,7 @@ import {
   browserAdapterLeaseSchema,
 } from '../../../shared/browser/browserAdapterProtocol'
 import { redactBrowserRuntimeUrl } from './browserPrivacy'
+import { browserRecovery, projectBrowserState } from './browserRuntimeProjection'
 
 interface BrowserResultSchema {
   parse: (value: unknown) => unknown
@@ -202,24 +200,6 @@ async function runBrowserHostOperation<T>(
   }
 }
 
-export function projectBrowserState(state: DesktopBrowserState) {
-  return browserStateSnapshotSchema.parse({
-    ...state,
-    error: state.error
-      ? {
-          code: state.error.code,
-          reason: state.error.reason ?? null,
-          recovery: browserRecovery(
-            state.error.code,
-            'read_again',
-          ),
-        }
-      : null,
-    profileMode: state.profileMode,
-    url: redactBrowserRuntimeUrl(state.url),
-  })
-}
-
 function browserFailure(
   error: unknown,
   fallbackRecovery: BrowserRecoveryAction | null,
@@ -244,31 +224,6 @@ function browserFailure(
     },
     ok: false,
   } as const
-}
-
-function browserRecovery(
-  code: BrowserErrorCode,
-  fallback: BrowserRecoveryAction | null,
-): BrowserRecoveryAction | null {
-  switch (code) {
-    case 'BROWSER_CONTROL_REQUIRED':
-    case 'BROWSER_DIALOG_PENDING':
-    case 'BROWSER_HUMAN_INPUT_REQUIRED':
-      return 'request_human_control'
-    case 'BROWSER_PAGE_CRASHED':
-    case 'BROWSER_SESSION_EVICTED':
-    case 'BROWSER_SESSION_NOT_FOUND':
-      return 'open_again'
-    case 'BROWSER_PAGE_UNRESPONSIVE':
-    case 'BROWSER_TARGET_STALE':
-      return 'read_again'
-    case 'BROWSER_NAVIGATION_BLOCKED':
-      return null
-    case 'BROWSER_PAGE_FAILED':
-      return fallback
-    default:
-      return null
-  }
 }
 
 function requireBrowserHost(host: BrowserHost | null): BrowserHost {

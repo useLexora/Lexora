@@ -127,6 +127,7 @@ useProvideTaskContext({
   tasks,
 })
 useProvideSettingsContext({
+  browser: api.browser,
   applicationSettings: stores.applicationSettings,
   appInfo: shell.appInfo,
   dataSettings: capabilities.dataSettings,
