@@ -8,7 +8,7 @@ import { OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifier
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
 import { resolveBuddyOutputPaths } from '../release/output-paths.mjs'
 import { resolveBuildTarget } from '../release/targets.mjs'
-import { verifyDesktopDirectory } from '../release/verify-package.mjs'
+import { verifyDesktopResources } from '../release/verify-package.mjs'
 import { runDesktopSmoke } from './run-gui-smoke.mjs'
 
 async function main() {
@@ -22,7 +22,7 @@ async function main() {
   if (resolve(directory).toLowerCase().startsWith(`${packageRoot.toLowerCase()}\\`))
     throw new Error('Install the NSIS package before running installed smoke')
 
-  const { executablePath, version } = verifyDesktopDirectory(directory, resolveBuildTarget().id)
+  const { executablePath } = verifyDesktopResources(directory, resolveBuildTarget().id)
   if (!existsSync(join(directory, 'Uninstall Lexora Buddy.exe')))
     throw new Error('NSIS uninstall entry is missing from the installed directory')
   const smokeRoot = await mkdtemp(join(tmpdir(), 'lexora-windows-smoke-'))
@@ -48,7 +48,7 @@ async function main() {
       database.close()
     }
     await runDesktopSmoke(executablePath, environment, 45_000)
-    writeOutput(`Installed Windows Desktop ${version}: startup, database, restart and shutdown passed`)
+    writeOutput('Installed Windows Desktop: startup, database, restart and shutdown passed')
   }
   finally {
     await rm(smokeRoot, { force: true, recursive: true })

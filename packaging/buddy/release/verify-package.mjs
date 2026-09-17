@@ -16,7 +16,7 @@ import { resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
+export function verifyDesktopResources(directory, targetId) {
   const platform = resolveBuildTarget(targetId)
   const platformId = platform.platform
   const executablePath = join(directory, platformId === OPERATING_SYSTEM.MacOS ? 'Contents/MacOS/lexora-buddy' : platformId === OPERATING_SYSTEM.Windows ? 'Lexora Buddy.exe' : 'lexora-buddy')
@@ -38,7 +38,12 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
     throw new Error(`${platformId} Desktop must not contain the Linux shell sandbox`)
   if (platform.features.includes('nativePet'))
     assertNativeExecutable(readFileSync(join(resources, 'native-pet/lexora-buddy-pet')), platform, 'native pet')
+  return { executablePath, resources }
+}
 
+export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
+  const platform = resolveBuildTarget(targetId)
+  const { executablePath, resources } = verifyDesktopResources(directory, targetId)
   const require = createRequire(join(cwd, 'apps/buddy/package.json'))
   const builder = createRequire(require.resolve('electron-builder'))
   const asar = createRequire(builder.resolve('app-builder-lib'))('@electron/asar')
@@ -52,7 +57,7 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
     throw new Error('Desktop archive contains test files')
   for (const entry of entries.filter(entry => entry.endsWith('.node')))
     assertNativeExecutable(asar.extractFile(archive, normalize(entry)), platform, entry)
-  if (platformId === OPERATING_SYSTEM.Linux) {
+  if (platform.platform === OPERATING_SYSTEM.Linux) {
     const seccomp = join(resources, `app.asar.unpacked/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/${platform.architecture}/apply-seccomp`)
     assertNativeExecutable(readFileSync(seccomp), platform, 'shell seccomp helper')
   }
@@ -118,7 +123,7 @@ export function verifyLinuxMetadata(target, content, version, buildTarget) {
   const dependencies = deb
     ? (fields.get('Depends') ?? []).flatMap(value => value.split(',').map(item => item.trim().split(/[ (]/)[0]))
     : fields.get('depend') ?? []
-  const required = deb ? ['git', 'libcap2', 'socat', 'libgtk-3-0', 'libgtk-layer-shell0', 'webp-pixbuf-loader'] : ['git', 'libcap', 'socat', 'gtk3', 'gtk-layer-shell']
+  const required = deb ? ['git', 'libcap2', 'socat', 'libgtk-3-0', 'libgtk-layer-shell0', 'webp-pixbuf-loader'] : ['git', 'libcap', 'socat', 'which', 'gtk3', 'gtk-layer-shell']
   for (const dependency of required) {
     if (!dependencies.includes(dependency))
       throw new Error(`${target} dependency is missing: ${dependency}`)

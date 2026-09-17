@@ -186,6 +186,7 @@ jobs:
           node_root="$(dirname "$(dirname "$(command -v node)")")"
           docker run --detach --name lexora-arch-install \
             --security-opt seccomp=unconfined \
+            --security-opt systempaths=unconfined \
             --security-opt apparmor=lexora-arch-install \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
             --volume "$node_root:/opt/node:ro" \

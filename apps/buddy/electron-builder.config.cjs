@@ -52,8 +52,8 @@ module.exports = {
     entitlementsInherit: '../../packaging/buddy/macos/entitlements.plist',
     binaries: (target.platform === OPERATING_SYSTEM.MacOS ? resources : [])
       .filter(resource => resource.to.startsWith('native-'))
-      .map(resource => `Resources/${resource.to}`)
-      .concat(['Resources/search-tools/fd', 'Resources/search-tools/rg']),
+      .map(resource => `Contents/Resources/${resource.to}`)
+      .concat(['Contents/Resources/search-tools/fd', 'Contents/Resources/search-tools/rg']),
   },
   dmg: {
     sign: signedMacos,
@@ -149,6 +149,7 @@ module.exports = {
       'socat',
       'systemd-libs',
       'util-linux-libs',
+      'which',
       'xdg-utils',
     ],
   },
