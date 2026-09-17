@@ -9,6 +9,7 @@ import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
+import { runSrtSandbox } from '../backends/srt/runSrtSandbox'
 import { runSandboxCommand } from '../runSandboxCommand'
 
 const buddyRoot = process.cwd()
@@ -74,11 +75,22 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
     await writeFile(join(workspace, '.git/config'), 'git-preserved')
     await writeFile(join(workspace, '.env'), 'synthetic-secret')
     await symlink(outside, join(workspace, 'escape'))
-    const run = await execute(`set -e; printf created > output; cat output; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${quote(join(outside, 'preserved'))}`)}`)
-    expect(run.result, run.output).toEqual({ ok: true, exitCode: 0 })
-    expect(run.output).toContain('created')
-    expect(run.output).not.toContain('synthetic-secret')
-    expect(run.output).not.toContain('outside-preserved')
+    const output: Buffer[] = []
+    const exitCode = await runSrtSandbox({
+      ...input,
+      backend: { kind: 'macos-srt' },
+      command: `set -e; printf created > output; cat output; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${quote(join(outside, 'preserved'))}`)}`,
+    }, {
+      signal: AbortSignal.timeout(10_000),
+      onStarted: () => {},
+      onData: data => output.push(data),
+      approveNetwork: async () => false,
+    })
+    const text = Buffer.concat(output).toString('utf8')
+    expect(exitCode, text).toBe(0)
+    expect(text).toContain('created')
+    expect(text).not.toContain('synthetic-secret')
+    expect(text).not.toContain('outside-preserved')
     expect(await readFile(join(outside, 'preserved'), 'utf8')).toBe('outside-preserved')
     expect(await readFile(join(workspace, '.git/config'), 'utf8')).toBe('git-preserved')
   }, 15_000)

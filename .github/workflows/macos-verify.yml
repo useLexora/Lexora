@@ -64,6 +64,11 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ steps.target.outputs.minimum-system-version }}
         run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --workspace ${{ steps.target.outputs.cargo-args }}
 
+      - name: Verify shell isolation
+        run: |
+          node packaging/buddy/release/search-tools.mjs
+          pnpm --filter @uselexora/lexora-buddy test:runtime service/src/sandbox/__tests__/macosSandbox.spec.ts
+
       - name: Build macOS package
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -77,9 +82,6 @@ jobs:
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
           pnpm --filter @uselexora/lexora-buddy package:macos
-
-      - name: Verify shell isolation
-        run: pnpm --filter @uselexora/lexora-buddy test:runtime service/src/sandbox/__tests__/macosSandbox.spec.ts
 
       - name: Verify platform runtime
         run: pnpm --filter @uselexora/lexora-buddy test:platform
