@@ -223,3 +223,4 @@ export interface TaskCapability {
   flushDrafts: () => Promise<boolean>
   dispose: () => void
 }
+export type { TaskResourcePanel } from './state/context-panel/useTaskResourcePanel'

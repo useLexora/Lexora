@@ -5,8 +5,10 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import DesktopStartupScreen from '@/app/bootstrap/DesktopStartupScreen.vue'
 import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
 import DesktopTitleBar from '@/app/shell/window/DesktopTitleBar.vue'
+import { DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
+import DesktopWorkbenchLayout from '@/shared/ui/workbench-layout/DesktopWorkbenchLayout.vue'
 
 const { bindings } = defineProps<{ bindings: DesktopShellBindings }>()
 const route = useRoute()
@@ -14,6 +16,7 @@ const router = useRouter()
 const { appSidebarCollapsed, language } = useDesktopUi()
 const startupVisible = computed(() => !bindings.lifecycle.state.value.hasBeenReady && route.meta.settingsCategory !== 'logs')
 const activeView = computed(() => route.meta.desktopView ?? 'tasks')
+const contextAvailable = computed(() => bindings.contextPanelGlobal.value || activeView.value === 'tasks')
 </script>
 
 <template>
@@ -22,6 +25,9 @@ const activeView = computed(() => route.meta.desktopView ?? 'tasks')
       :app-info="bindings.appInfo.value"
       :app-sidebar-collapsed="appSidebarCollapsed"
       :language="language"
+      :context-available="contextAvailable"
+      :context-open="bindings.resources.isOpen.value"
+      @toggle-context="bindings.resources.toggle"
       @toggle-app-sidebar="bindings.toggleAppSidebar"
     />
     <div class="desktop-shell__body">
@@ -49,7 +55,12 @@ const activeView = computed(() => route.meta.desktopView ?? 'tasks')
         </Transition>
 
         <div class="desktop-shell__workbench">
-          <RouterView />
+          <DesktopWorkbenchLayout :language="language" :workspace-minimum-width="480" :context-visible="contextAvailable">
+            <RouterView />
+            <template v-if="bindings.resources.isOpen.value" #context>
+              <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="contextAvailable" />
+            </template>
+          </DesktopWorkbenchLayout>
         </div>
       </div>
       <Transition name="desktop-startup-reveal">

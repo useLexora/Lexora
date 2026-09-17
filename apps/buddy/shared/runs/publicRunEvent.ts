@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { contextPanelOperationSchema } from '../context-panel/contextPanel'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../conversation/attachmentPolicy'
 import {
   MAX_BUDDY_MESSAGE_TEXT_LENGTH,
@@ -123,6 +124,10 @@ function publicPayload(type: string, value: unknown): Record<string, unknown> {
     return publicInterruptedMessage(source)
   if (type === 'run.progress')
     return publicRunProgress(source)
+  if (type === 'desktop.panel.changed') {
+    const operation = contextPanelOperationSchema.safeParse({ action: source.action, actor: source.actor })
+    return operation.success ? operation.data : {}
+  }
   if (type === 'output.produced') {
     const output = buddyRunOutputPayloadSchema.safeParse({
       artifactIds: source.artifactIds,

@@ -7,16 +7,20 @@ import { useDesktopWorkbenchResize } from './useDesktopWorkbenchResize'
 
 const props = withDefaults(defineProps<{
   language: BuddyLocale
+  contextVisible?: boolean
   sidebarCollapsible?: boolean
   sidebarResizable?: boolean
+  workspaceMinimumWidth?: number
 }>(), {
+  contextVisible: true,
   sidebarCollapsible: false,
   sidebarResizable: false,
+  workspaceMinimumWidth: 288,
 })
-defineSlots<{
+const slots = defineSlots<{
   context?: () => unknown
   default: () => unknown
-  sidebar: () => unknown
+  sidebar?: () => unknown
 }>()
 const sidebarCollapsed = defineModel<boolean>('sidebarCollapsed', { default: false })
 const sidebarWidthPreference = defineModel<number | null>('sidebarWidth', { default: null })
@@ -24,7 +28,7 @@ const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const context = useTemplateRef<HTMLElement>('context')
 const sidebar = useTemplateRef<HTMLElement>('sidebar')
-const sidebarVisible = computed(() => !props.sidebarCollapsible || !sidebarCollapsed.value)
+const sidebarVisible = computed(() => Boolean(slots.sidebar) && (!props.sidebarCollapsible || !sidebarCollapsed.value))
 const sidebarTransitioning = shallowRef(false)
 const sidebarToggleTop = shallowRef<string | null>(null)
 const sidebarToggleStyle = computed(() => sidebarToggleTop.value
@@ -43,6 +47,8 @@ const {
 } = useDesktopWorkbenchResize({
   container,
   context,
+  contextVisible: () => props.contextVisible,
+  workspaceMinimumWidth: () => props.workspaceMinimumWidth,
   onSidebarWidthCommit: (width) => {
     sidebarWidthPreference.value = width
   },
@@ -102,6 +108,7 @@ onBeforeUnmount(() => {
     :style="layoutStyle"
   >
     <div
+      v-if="$slots.sidebar"
       ref="sidebar"
       class="desktop-workbench-layout__sidebar"
       :class="{ 'is-collapsed': !sidebarVisible }"
@@ -152,7 +159,7 @@ onBeforeUnmount(() => {
       <slot />
     </main>
     <div
-      v-if="$slots.context"
+      v-if="$slots.context && contextVisible"
       class="desktop-workbench-layout__resizer"
       :class="{ 'is-active': activePanel === 'context' }"
       data-testid="workbench-context-resizer"
@@ -166,7 +173,7 @@ onBeforeUnmount(() => {
       @keydown="handleResizeKeydown('context', $event)"
       @pointerdown="beginResize('context', $event)"
     />
-    <aside v-if="$slots.context" ref="context" class="desktop-workbench-layout__context" :style="contextStyle">
+    <aside v-if="$slots.context" v-show="contextVisible" ref="context" class="desktop-workbench-layout__context" :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible">
       <slot name="context" />
     </aside>
     <div v-if="activePanel" class="desktop-workbench-layout__resize-shield" />

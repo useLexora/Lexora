@@ -2,7 +2,7 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalSpaceFilePreview } from '@buddy-shared/spaces/spaceFileApi'
 import type { TreeOption } from 'naive-ui'
 import type { Ref } from 'vue'
-import type { TaskFilesContextTab } from './taskContextPanel'
+import type { TaskFilesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { computed, shallowReactive, watch } from 'vue'
 
 export type WorkspaceFilesApi = Pick<LocalChatApi['spaces'], 'listDirectory' | 'readFile' | 'revealFile'>

@@ -13,6 +13,7 @@ import {
   PaintBrush20Regular,
   PlugConnected20Regular,
   Server20Regular,
+  Settings20Regular,
 } from '@vicons/fluent'
 import { computed } from 'vue'
 
@@ -35,6 +36,7 @@ const groups = [
   {
     key: 'personal',
     categories: [
+      { icon: Settings20Regular, key: 'general' },
       { icon: PaintBrush20Regular, key: 'appearance' },
       { icon: Alert20Regular, key: 'notifications' },
       { icon: AnimalCat20Regular, key: 'pet' },

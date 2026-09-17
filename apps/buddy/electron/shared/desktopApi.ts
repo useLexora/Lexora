@@ -8,6 +8,9 @@ import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
 import type { LocalChatApi } from './localChatApi'
 
 export const DESKTOP_IPC_CHANNELS = {
+  contextPanelGetState: 'lexora:context-panel:get-state',
+  contextPanelExecute: 'lexora:context-panel:execute',
+  contextPanelStateChanged: 'lexora:context-panel:state-changed',
   appLogsQuery: 'lexora:app:logs:query',
   appStartupGetState: 'lexora:app:startup:get-state',
   appStartupReport: 'lexora:app:startup:report',
@@ -47,7 +50,6 @@ export const DESKTOP_IPC_CHANNELS = {
   windowGetState: 'lexora:window:get-state',
   windowMinimize: 'lexora:window:minimize',
   windowStateChanged: 'lexora:window:state-changed',
-  windowToggleAlwaysOnTop: 'lexora:window:toggle-always-on-top',
   windowToggleMaximize: 'lexora:window:toggle-maximize',
 } as const
 
@@ -185,7 +187,6 @@ export interface DesktopOpenTarget {
 }
 
 export interface DesktopWindowState {
-  isAlwaysOnTop: boolean
   isMaximized: boolean
 }
 
@@ -224,11 +225,14 @@ export interface DesktopTaskSidebarPreferences {
 
 export type DesktopChatWelcomeVariantId = typeof DESKTOP_CHAT_WELCOME_VARIANT_IDS[number]
 export type DesktopChatWelcomePreference = 'random' | DesktopChatWelcomeVariantId
+export type DesktopContextPanelMode = 'task' | 'independent'
 
 export interface LexoraConfig {
   proxy: import('../../shared/network/proxySettings').ProxySettings
   desktop: {
     backgroundCloseNoticeShown: boolean
+    contextPanelMode: DesktopContextPanelMode
+    contextPanelGlobal: boolean
     taskSidebarPinnedItems: DesktopTaskPinnedItem[]
     taskSidebar: DesktopTaskSidebarPreferences
     developerToolsEnabled: boolean
@@ -256,6 +260,7 @@ export interface LexoraConfigPatch {
 }
 
 export interface LexoraDesktopApi {
+  contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi
   app: {
     logs: ApplicationLogApi
     startup: {
@@ -289,7 +294,6 @@ export interface LexoraDesktopApi {
     getState: () => Promise<DesktopWindowState>
     minimize: () => Promise<void>
     onStateChanged: (listener: (state: DesktopWindowState) => void) => () => void
-    toggleAlwaysOnTop: () => Promise<DesktopWindowState>
     toggleMaximize: () => Promise<DesktopWindowState>
   }
   localChat: LocalChatApi

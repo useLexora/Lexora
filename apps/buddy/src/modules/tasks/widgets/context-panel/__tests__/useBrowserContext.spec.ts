@@ -124,4 +124,50 @@ describe('browser context ownership', () => {
     scope.stop()
     expect(shown.size).toBe(0)
   })
+
+  it('hides and restores the same guest without changing the session or address draft', async () => {
+    const scope = effectScope()
+    cleanups.push(() => scope.stop())
+    const sessionId = shallowRef<string | null>('session')
+    const element = shallowRef<HTMLElement | null>(document.createElement('div'))
+    const visible = shallowRef(false)
+    const state = shallowRef<DesktopBrowserState | null>(browserState())
+    let shown: HTMLElement | null = null
+    let hostVisible = false
+    const host = {
+      show: (_id: string, target: HTMLElement) => { shown = target },
+      hide: () => { shown = null },
+    }
+    const api = {
+      setSurface: async (input: { sessionId: string, visible: boolean }) => {
+        hostVisible = input.visible
+      },
+    }
+    const address = scope.run(() => {
+      useBrowserSurface({ api, guestHost: host, sessionId, element, visible })
+      return useBrowserAddress(state, async () => true)
+    })!
+    address.updateAddress('unfinished.example')
+    await nextTick()
+    expect(shown).toBeNull()
+    expect(hostVisible).toBe(false)
+    visible.value = true
+    await nextTick()
+    expect(shown).toBe(element.value)
+    expect(hostVisible).toBe(true)
+    visible.value = false
+    await nextTick()
+    expect(shown).toBeNull()
+    expect(hostVisible).toBe(false)
+    visible.value = true
+    await nextTick()
+    expect(shown).toBe(element.value)
+    expect(hostVisible).toBe(true)
+    expect(state.value?.sessionId).toBe('session')
+    expect(state.value?.url).toBe('https://example.com/')
+    expect(address.address.value).toBe('unfinished.example')
+    scope.stop()
+    expect(shown).toBeNull()
+    expect(hostVisible).toBe(false)
+  })
 })

@@ -19,6 +19,19 @@ const {
 } = chatProjections
 
 describe('projectStreamingAssistantMessage', () => {
+  it('replays desktop panel actions as visible system records without model messages or tool counts', () => {
+    const events = [
+      event(1, 'desktop.panel.changed', { action: 'open', actor: 'harness' }),
+      event(2, 'desktop.panel.changed', { action: 'close', actor: 'user' }),
+    ]
+    const [turn] = projectChatAgentTurns(events, [run('completed')])
+    expect(turn?.nodes.map(node => ({ kind: node.kind, ...('action' in node ? { action: node.action, actor: node.actor } : {}) })))
+      .toEqual([{ kind: 'panel', action: 'open', actor: 'harness' }, { kind: 'panel', action: 'close', actor: 'user' }])
+    expect(createChatAgentActivityProjector().project(turn!.nodes).map(row => row.kind)).toEqual(['panel', 'panel'])
+    expect(projectStreamingAssistantMessage([], events, [run('completed')])).toBeNull()
+    expect(turn?.processMessageIds).toEqual([])
+  })
+
   it('does not resurrect a completed message from a terminal run outside the message page', () => {
     const events = [event(1, 'message.completed', {
       content: { text: 'Old completed answer' },

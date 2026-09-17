@@ -34,10 +34,6 @@ const electron = vi.hoisted(() => {
       return { height: 820, width: 1_280, x: 0, y: 0 }
     }
 
-    isAlwaysOnTop(): boolean {
-      return false
-    }
-
     isDestroyed(): boolean {
       return false
     }

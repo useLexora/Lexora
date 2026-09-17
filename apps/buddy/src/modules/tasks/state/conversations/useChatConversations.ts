@@ -13,6 +13,7 @@ interface UseChatConversationsOptions {
   clearError: () => void
   drafts: Pick<ChatDrafts, 'discardConversation'>
   onError: (error: unknown) => void
+  onDeleted?: (conversationId: string) => void
   persistWorkspaceState: () => Promise<boolean>
   runSync: Pick<ChatRunSync, 'clearConversationState' | 'refreshActiveConversation'>
   restoreConversationModelSelection: (
@@ -95,6 +96,7 @@ export function useChatConversations(options: UseChatConversationsOptions) {
   async function deleteConversation(conversationId: string) {
     try {
       await options.api.conversations.delete(conversationId)
+      options.onDeleted?.(conversationId)
       await options.drafts.discardConversation(conversationId)
       if (options.session.activeConversationId.value === conversationId) {
         activateDraftScope(null)

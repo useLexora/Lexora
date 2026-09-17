@@ -55,6 +55,7 @@ export interface UseChatTurnExecutionOptions {
   language: ValueRef<BuddyLocale>
   modelSelection: Pick<TaskModelSelection, 'selectedModel'>
   onActionCommandRunStarted: (runId: string) => void
+  onDraftCommitted?: (draftId: string, conversationId: string) => void
   persistWorkspaceState: () => Promise<boolean>
   runSync: Pick<ChatRunSync, 'applyRunStart' | 'upsertRuns' | 'refreshActiveConversation'>
   runtimeSupervisor: Pick<RuntimeSupervisorStore, 'runtimeState'>
@@ -146,6 +147,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       const targetScopeKey = `conversation:${result.conversationId}:${result.branchId}`
       const source = parseDraftScopeKey(confirmedDraft.targetKey)
       const acknowledged = options.composerTarget.complete(result.draftReceipt, targetScopeKey, sourceScopeKey)
+      options.onDraftCommitted?.(result.draftReceipt.draftId, result.conversationId)
       if (sourceViewIsCurrent && (acknowledged || sourceScopeKey === targetScopeKey)) {
         options.session.acceptTurn(result.conversationId, result.branchId)
         if (!options.session.branches.value.some(

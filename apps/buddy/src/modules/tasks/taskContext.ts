@@ -1,6 +1,6 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { Ref } from 'vue'
-import type { TaskCapability } from './contracts'
+import type { TaskCapability, TaskResourcePanel } from './contracts'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { createInjectionState } from '@vueuse/core'
 
@@ -10,6 +10,7 @@ export interface TaskContext {
   clipboard: LexoraDesktopApi['clipboard']
   notificationTargetMessageId: Readonly<Ref<string | null>>
   tasks: TaskCapability
+  resources: TaskResourcePanel
 }
 
 const [useProvideTaskContext, injectTaskContext] = createInjectionState(

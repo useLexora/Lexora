@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { BrowserToolbarBusyAction, BrowserToolbarMenuActionKey } from './browserToolbarMenu'
-import type { ContextPanelTab } from './taskContextPanel'
-import type { TaskResourcePanel } from './useTaskResourcePanel'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskChatWorkspace } from '@/modules/tasks/contracts'
+import type { ContextPanelTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import type { TaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
 import { Pause16Regular } from '@vicons/fluent'
 import { NSpin, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, toRef, useTemplateRef, watch } from 'vue'
@@ -29,9 +29,8 @@ import { useWorkspaceFilePreview } from './useWorkspaceFilePreview'
 const props = defineProps<{
   panel: TaskResourcePanel
   context: TaskChatWorkspace['context']
-  branchId: string | null
-  changeRevision: string
   language: BuddyLocale
+  visible: boolean
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
@@ -45,8 +44,6 @@ const filePreview = useWorkspaceFilePreview(fileTab, props.context.files)
 const fileView = filePreview.current
 const changes = useContextChanges({
   tab: changeTab,
-  branchId: toRef(() => props.branchId),
-  revision: toRef(() => props.changeRevision),
   getOverview: input => props.context.getChangeOverview(input),
   getChangeSet: id => props.context.getChangeSet(id),
 })
@@ -62,6 +59,7 @@ const browserView = useBrowserContextSurface({
   conversationId: computed(() => browserTab.value?.conversationId ?? null),
   tabId: computed(() => browserTab.value?.browserKey),
   enabled: computed(() => Boolean(browserTab.value)),
+  visible: toRef(() => props.visible),
   state: toRef(() => props.panel.activeBrowserState.value),
   updateState: state => props.panel.updateBrowserState(state),
   sessionReady: (state, key) => props.panel.retainBrowserSession(state, key),
@@ -94,11 +92,19 @@ const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) 
   return { id: tab.id, title: props.panel.browserStates.value[tab.id]?.title.trim() || t('desktop.context.browser'), icon: 'browser' }
 }))
 function add(kind: 'changes' | 'files' | 'browser') {
-  if (kind === 'files')
-    fileSpacePickerOpen.value = true
-  else if (kind === 'changes')
+  if (kind === 'files') {
+    const entry = props.panel.fileEntry.value
+    if (entry?.kind === 'space-picker')
+      fileSpacePickerOpen.value = true
+    else if (entry?.kind === 'directory')
+      props.panel.openFiles(entry.spaceId)
+  }
+  else if (kind === 'changes') {
     props.panel.openChanges()
-  else props.panel.addBrowser()
+  }
+  else {
+    props.panel.addBrowser()
+  }
 }
 async function revealFile() {
   if (!fileTab.value)
@@ -133,7 +139,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 
 <template>
   <DesktopFileSpacePicker v-model:show="fileSpacePickerOpen" :spaces="panel.fileSpaces.value" :language="language" @select="panel.openFiles" />
-  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab" @collapse="panel.toggle">
+  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" :can-add-files="Boolean(panel.fileEntry.value)" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
     <template v-if="activeTab" #toolbar>
       <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @reveal="revealFile" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible" />
       <DesktopChangeToolbar v-else-if="changeTab && changeView" v-model:range="changeView.range" :language="language" :added="changes.counts.value.added" :deleted="changes.counts.value.deleted" :can-show-turn="Boolean(changeTab.changeSet)" :all-collapsed="allCollapsed" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" :tree-visible="changeView.treeVisible" @toggle-all="changes.toggleAll" @toggle-wrap="changeView.wrap = !changeView.wrap" @toggle-layout="changeView.sideBySide = !changeView.sideBySide" @toggle-tree="changeView.treeVisible = !changeView.treeVisible" />

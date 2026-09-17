@@ -1,7 +1,7 @@
 import type { ChangeOverviewRequest, LocalChangeOverview, LocalChangeSetDetail } from '@buddy-shared/changes/changeApi'
 import type { Ref } from 'vue'
 import type { ChangeFilePresentation } from './changeContextPresentation'
-import type { TaskChangesContextTab } from './taskContextPanel'
+import type { TaskChangesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { computed, shallowReactive, watch } from 'vue'
 import { buildChangeFileTree, presentChangeFiles } from './changeContextPresentation'
 
@@ -23,8 +23,6 @@ interface ChangesView {
 
 export function useContextChanges(options: {
   tab: Readonly<Ref<TaskChangesContextTab | null>>
-  branchId: Readonly<Ref<string | null>>
-  revision: Readonly<Ref<string>>
   getOverview: (input: ChangeOverviewRequest) => Promise<LocalChangeOverview>
   getChangeSet: (id: string) => Promise<LocalChangeSetDetail>
 }) {
@@ -52,14 +50,21 @@ export function useContextChanges(options: {
       }))
     }
     else if (previous.source !== tab) {
-      previous.range = tab.changeSet ? 'turn' : 'all'
+      if (previous.source.changeSet?.changeSetId !== tab.changeSet?.changeSetId)
+        previous.range = tab.changeSet ? 'turn' : 'all'
       previous.source = tab
     }
   }, { immediate: true, flush: 'sync' })
-  watch([options.tab, options.branchId, options.revision, () => current.value?.range], async ([tab, branchId], _previous, onCleanup) => {
+  watch([options.tab, () => current.value?.range], async ([tab], _previous, onCleanup) => {
     const view = current.value
-    if (!tab || !view || !branchId)
+    if (!tab || !view)
       return
+    const branchId = tab.branchId
+    const changeSetId = view.range === 'turn' ? tab.changeSet?.changeSetId : null
+    if (!changeSetId && !branchId) {
+      view.loading = false
+      return
+    }
     let active = true
     onCleanup(() => {
       active = false
@@ -72,9 +77,9 @@ export function useContextChanges(options: {
     view.loading = !view.detail
     view.failed = false
     try {
-      const result = view.range === 'turn' && tab.changeSet
-        ? await options.getChangeSet(tab.changeSet.changeSetId)
-        : await options.getOverview({ conversationId: tab.conversationId, branchId })
+      const result = changeSetId
+        ? await options.getChangeSet(changeSetId)
+        : await options.getOverview({ conversationId: tab.conversationId, branchId: branchId! })
       if (!active)
         return
       view.detail = { ...result, files: presentChangeFiles(result.files, view.detail?.files ?? []) }

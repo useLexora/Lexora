@@ -1,4 +1,4 @@
-import type { ChatAgentCompactionNode, ChatAgentNarrationNode, ChatAgentReasoningNode, ChatAgentToolNode, ChatAgentTurnNode } from './chatAgentTurn'
+import type { ChatAgentCompactionNode, ChatAgentNarrationNode, ChatAgentPanelNode, ChatAgentReasoningNode, ChatAgentToolNode, ChatAgentTurnNode } from './chatAgentTurn'
 import type { ChatToolCategory, ChatToolIcon } from './chatToolRegistry'
 import { isChatToolIssue } from './chatToolDisplay'
 import { getChatToolRegistration } from './chatToolRegistry'
@@ -13,7 +13,7 @@ export interface ChatAgentActivityGroup {
   counts: ReadonlyArray<{ category: ChatToolCategory, count: number, files: number | null }>
 }
 
-export type ChatAgentActivityRow = ChatAgentActivityGroup | ChatAgentNarrationNode | ChatAgentCompactionNode
+export type ChatAgentActivityRow = ChatAgentActivityGroup | ChatAgentNarrationNode | ChatAgentCompactionNode | ChatAgentPanelNode
 
 export function createChatAgentActivityProjector() {
   let source: ReadonlyArray<ChatAgentTurnNode> | null = null

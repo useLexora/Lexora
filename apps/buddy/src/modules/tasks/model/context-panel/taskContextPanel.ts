@@ -1,11 +1,18 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
+import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 
 export type ArtifactViewMode = 'preview' | 'source'
+export type ContextPanelScope = `task:${string}` | `draft:${string}` | 'independent'
 
-export interface TaskArtifactContextTab {
+interface ContextTabSource {
+  scope: ContextPanelScope
+  source?: ContextPanelSource
+}
+
+export interface TaskArtifactContextTab extends ContextTabSource {
   artifact: LocalArtifact
   id: string
   kind: 'artifact'
@@ -13,21 +20,23 @@ export interface TaskArtifactContextTab {
   viewMode: ArtifactViewMode
 }
 
-export interface TaskChangesContextTab {
+export interface TaskChangesContextTab extends ContextTabSource {
+  branchId: string | null
+  revision: string
   changeSet: LocalChangeSetSummary | null
   conversationId: string
   id: string
   kind: 'changes'
 }
 
-export interface TaskBrowserContextTab {
+export interface TaskBrowserContextTab extends ContextTabSource {
   conversationId: string | null
   id: string
   kind: 'browser'
   browserKey?: string
 }
 
-export interface TaskFilesContextTab {
+export interface TaskFilesContextTab extends ContextTabSource {
   id: string
   kind: 'files'
   target: SpaceFileTarget
@@ -57,6 +66,7 @@ export function spaceTaskArtifactTabs(
   }
   return [...artifacts.values()].map(artifact => ({
     artifact,
+    scope: taskContextPanelScope(artifact.conversationId),
     id: artifactTabId(artifact.artifactId),
     kind: 'artifact',
     label: artifact.name,
@@ -82,6 +92,7 @@ export function spaceTaskBrowserTab(
   return conversationId
     ? {
         conversationId,
+        scope: taskContextPanelScope(conversationId),
         id: browserTabId(conversationId),
         kind: 'browser',
       }
@@ -95,4 +106,13 @@ export function browserTabId(conversationId: string | null, browserKey?: string)
 
 export function changeTabId(conversationId: string): string {
   return `changes:${conversationId}`
+}
+
+export function taskContextPanelScope(conversationId: string): ContextPanelScope {
+  return `task:${conversationId}`
+}
+
+export function contextTabSource(tab: TaskContextTab | null): ContextPanelSource | null {
+  const source = tab?.kind === 'artifact' ? tab.artifact : tab?.kind === 'changes' ? tab.changeSet ?? tab.source : tab?.source
+  return source ? { conversationId: source.conversationId, runId: source.runId } : null
 }

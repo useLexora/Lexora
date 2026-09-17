@@ -14,6 +14,7 @@ interface UseBrowserContextSurfaceOptions {
   state?: Readonly<Ref<DesktopBrowserState | null>>
   updateState?: (state: DesktopBrowserState) => void
   enabled?: Readonly<Ref<boolean>>
+  visible?: Readonly<Ref<boolean>>
   tabId?: Readonly<Ref<string | undefined>>
   api: DesktopBrowserApi
   conversationId: Readonly<Ref<string | null>>
@@ -70,6 +71,7 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
   useBrowserSurface({
     api: options.api,
     element: options.surfaceElement,
+    visible: options.visible,
     guestHost: options.guestHost,
     sessionId: computed(() => state.value?.sessionId ?? null),
   })

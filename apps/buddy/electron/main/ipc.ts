@@ -103,12 +103,6 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
     requireTrustedWindow(event, options.getWindow()).minimize()
   })
 
-  ipcMain.handle(DESKTOP_IPC_CHANNELS.windowToggleAlwaysOnTop, (event) => {
-    const window = requireTrustedWindow(event, options.getWindow())
-    window.setAlwaysOnTop(!window.isAlwaysOnTop())
-    return readDesktopWindowState(window)
-  })
-
   ipcMain.handle(DESKTOP_IPC_CHANNELS.windowToggleMaximize, (event) => {
     const window = requireTrustedWindow(event, options.getWindow())
     if (window.isMaximized())

@@ -2,8 +2,9 @@ import type { DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import { afterEach, describe, expect, it } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
+import { useTaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
 import { deferred } from '../../../../../../__tests__/deferred'
-import { useTaskResourcePanel } from '../useTaskResourcePanel'
+import { contextPanelFixture } from './contextPanelFixture'
 
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => scopes.splice(0).forEach(scope => scope.stop()))
@@ -25,7 +26,7 @@ function fixture() {
     sourceToolCallId: 'tool',
     artifacts: [{ artifactId: 'html', conversationId: 'conversation', createdAt: '2026-09-08T00:00:00.000Z', kind: 'file', mimeType: 'text/html', name: 'page.html', path: '/workspace/page.html', previewUrl: null, runId: 'run', sizeBytes: 10, sourceArtifactId: null, sourceToolCallId: 'tool', updatedAt: '2026-09-08T00:00:00.000Z' }],
   }])
-  const panel = scope.run(() => useTaskResourcePanel({ spaces: shallowRef([]), activeConversationId, activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runSignalEvents: shallowRef([]), runOutputs }))!
+  const panel = scope.run(() => useTaskResourcePanel({ ...contextPanelFixture({ activeConversationId }).options, spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs }))!
   const release = () => gate.resolve({ sessionId: 'session' } as DesktopBrowserState)
   return { activeConversationId, browser, panel, release, scope, sessionOpen: () => sessionOpen }
 }
@@ -47,6 +48,9 @@ describe('resource panel operations', () => {
     f.panel.retainBrowserSession(secondState, second.browserKey)
     f.panel.updateBrowserState({ ...firstState, title: 'Late first update' })
     await nextTick()
+    expect(f.panel.activeBrowserState.value).toBeNull()
+    expect(f.panel.tabs.value).toEqual([])
+    f.activeConversationId.value = null
     expect(f.panel.activeBrowserState.value).toEqual(secondState)
     f.panel.selectTab(first.id)
     expect(f.panel.activeBrowserState.value).toEqual(firstState)
@@ -69,7 +73,37 @@ describe('resource panel operations', () => {
     closing.reject(new Error('close failed'))
     expect(await result).toBe(false)
     expect(f.panel.activeTab.value).toEqual(selected)
-    expect(f.panel.tabs.value.map(tab => tab.id)).toContain(tab.id)
+    expect(f.panel.tabs.value.map(tab => tab.id)).not.toContain(tab.id)
+    f.activeConversationId.value = 'conversation'
+    expect(f.panel.activeTab.value?.id).toBe(tab.id)
+  })
+
+  it('releases task-owned manual sessions on deletion and rejects late results for the deleted task', async () => {
+    const f = fixture()
+    const sessions = new Set(['first-session', 'second-session', 'late-session'])
+    f.browser.close = async (id?: string) => {
+      sessions.delete(id!)
+    }
+    f.panel.addBrowser()
+    const first = f.panel.activeTab.value!
+    f.panel.addBrowser()
+    const late = f.panel.activeTab.value!
+    f.activeConversationId.value = 'other'
+    f.panel.addBrowser()
+    const second = f.panel.activeTab.value!
+    if (first.kind !== 'browser' || second.kind !== 'browser' || late.kind !== 'browser')
+      throw new Error('Expected browser tabs')
+    f.panel.retainBrowserSession({ conversationId: null, sessionId: 'first-session' } as DesktopBrowserState, first.browserKey)
+    f.panel.retainBrowserSession({ conversationId: null, sessionId: 'second-session' } as DesktopBrowserState, second.browserKey)
+    f.panel.discardConversation('conversation')
+    f.panel.retainBrowserSession({ conversationId: null, sessionId: 'late-session' } as DesktopBrowserState, late.browserKey)
+    f.panel.restoreTab(first)
+    await nextTick()
+    expect([...sessions]).toEqual(['second-session'])
+    expect(f.panel.tabs.value).toEqual([second])
+    expect(Object.keys(f.panel.browserStates.value)).toEqual([second.id])
+    f.activeConversationId.value = 'conversation'
+    expect(f.panel.tabs.value).toEqual([])
   })
 
   it('closes an uninitialized manual tab and releases its late session without restoring the tab', async () => {
@@ -107,7 +141,7 @@ describe('resource panel operations', () => {
     expect(f.panel.tabs.value.map(tab => tab.kind)).toEqual(['browser'])
   })
 
-  it('invalidates a close across A to B to A even before Vue renders', async () => {
+  it('finishes an explicit close across navigation when its tab has not been reopened', async () => {
     const f = fixture()
     f.panel.openBrowser()
     const closing = f.panel.closeTab('browser:conversation')
@@ -116,7 +150,7 @@ describe('resource panel operations', () => {
     f.release()
     await closing
     await nextTick()
-    expect(f.sessionOpen()).toBe(true)
+    expect(f.sessionOpen()).toBe(false)
     expect(f.panel.tabs.value).toEqual([])
   })
 

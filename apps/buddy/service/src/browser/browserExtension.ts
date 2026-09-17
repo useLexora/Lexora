@@ -59,12 +59,13 @@ const browserFailureRecoveryGuideline = [
 export interface CreateBrowserExtensionOptions {
   getExecutionGrants?: BrowserCapabilityServiceOptions['getExecutionGrants']
   service: BrowserExtensionService
+  onOpened?: () => Promise<void>
 }
 
-export function createBrowserCapability(options: BrowserCapabilityServiceOptions): BuddyCapability {
+export function createBrowserCapability(options: BrowserCapabilityServiceOptions & Pick<CreateBrowserExtensionOptions, 'onOpened'>): BuddyCapability {
   const service = new BrowserCapabilityService(options)
   return {
-    extension: createBrowserExtension({ service, getExecutionGrants: options.getExecutionGrants }),
+    extension: createBrowserExtension({ service, getExecutionGrants: options.getExecutionGrants, onOpened: options.onOpened }),
     classify: event => classifyBrowserTool(event, service),
     disclosure: {
       group: 'browser',
@@ -80,7 +81,7 @@ export function createBrowserExtension(
   return {
     name: 'lexora-browser',
     factory(pi) {
-      pi.registerTool(createBrowserOpenTool(options.service, options.getExecutionGrants))
+      pi.registerTool(createBrowserOpenTool(options))
       pi.registerTool(createBrowserSnapshotTool(options.service))
       pi.registerTool(createBrowserActTool(options.service))
       pi.on('tool_result', normalizeBrowserToolResult)
@@ -138,7 +139,7 @@ function createBrowserActTool(service: BrowserExtensionService) {
   })
 }
 
-function createBrowserOpenTool(service: BrowserExtensionService, getExecutionGrants?: CreateBrowserExtensionOptions['getExecutionGrants']) {
+function createBrowserOpenTool({ service, getExecutionGrants, onOpened }: CreateBrowserExtensionOptions) {
   return defineTool<TSchema, BrowserToolDetails>({
     description: `Open an HTTP(S) or granted local HTML page in the browser visible to the user. Use until to wait for semantic content on SPA pages. ${browserUntrustedDataNotice}`,
     async execute(toolCallId, input, signal) {
@@ -151,6 +152,8 @@ function createBrowserOpenTool(service: BrowserExtensionService, getExecutionGra
         executionSignal.throwIfAborted()
         if (!result.ok)
           return hostFailureResult('open', result.error)
+        await onOpened?.()
+        executionSignal.throwIfAborted()
         const observation = await service.observe()
         executionSignal.throwIfAborted()
         return observation.ok

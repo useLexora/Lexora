@@ -9,11 +9,11 @@ import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
 
-type AppearanceSettingField = 'language' | 'theme' | 'welcomeVariant'
+type AppearanceSettingField = 'theme' | 'welcomeVariant'
 
 const props = defineProps<ApplicationSettingsProps>()
 
-const { languageOptions, t } = useBuddyI18n(() => props.language)
+const { t } = useBuddyI18n(() => props.language)
 const pendingFields = shallowRef<ReadonlySet<AppearanceSettingField>>(new Set())
 const failedField = shallowRef<AppearanceSettingField | null>(null)
 const pendingWelcomePreference = shallowRef<DesktopChatWelcomePreference | null>(null)
@@ -43,26 +43,10 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
 </script>
 
 <template>
-  <section v-if="config" class="desktop-general-settings">
-    <section class="desktop-general-settings__section">
+  <section v-if="config" class="desktop-appearance-settings">
+    <section class="desktop-appearance-settings__section">
       <h2>{{ t('desktop.settings.appearance') }}</h2>
-      <div class="desktop-general-settings__group">
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('settings.language') }}</strong>
-          </div>
-          <div class="desktop-settings-row__control">
-            <NSelect
-              :options="languageOptions"
-              :value="config.desktop.language"
-              @update:value="updateSetting('language', { desktop: { language: $event } })"
-            />
-            <NSpin v-if="pendingFields.has('language')" size="small" />
-            <small v-else-if="failedField === 'language'" class="is-error">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
-          </div>
-        </div>
+      <div class="desktop-appearance-settings__group">
         <div class="desktop-settings-row">
           <div>
             <strong>{{ t('desktop.settings.theme') }}</strong>
@@ -102,22 +86,23 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
 </template>
 
 <style scoped lang="scss">
-.desktop-general-settings {
+.desktop-appearance-settings {
   display: grid;
   gap: 1.8rem;
+  container-type: inline-size;
 }
 
-.desktop-general-settings__section {
+.desktop-appearance-settings__section {
   display: grid;
   gap: 0.8rem;
 }
 
-.desktop-general-settings__section h2 {
+.desktop-appearance-settings__section h2 {
   margin: 0;
   font-size: 0.92rem;
 }
 
-.desktop-general-settings__group {
+.desktop-appearance-settings__group {
   overflow: hidden;
   border: 1px solid var(--buddy-border-subtle);
   border-radius: 0.65rem;
@@ -127,7 +112,7 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
 .desktop-settings-row {
   display: grid;
   min-height: 4rem;
-  grid-template-columns: minmax(9rem, 1fr) minmax(13rem, 19rem);
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 19rem);
   align-items: center;
   gap: 2rem;
   border-bottom: 1px solid var(--buddy-border-subtle);
@@ -168,11 +153,10 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
   text-align: right;
 }
 
-@media (max-width: 760px) {
+@container (max-width: 560px) {
   .desktop-settings-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.7rem;
-    padding: 0.9rem 0;
   }
 
 }

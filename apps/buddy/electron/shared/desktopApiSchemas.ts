@@ -176,6 +176,8 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
   proxy: proxySettingsSchema.optional(),
   desktop: z.object({
     backgroundCloseNoticeShown: z.boolean().optional(),
+    contextPanelMode: z.enum(['task', 'independent']).optional(),
+    contextPanelGlobal: z.boolean().optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
     taskSidebar: taskSidebarPreferencesSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
