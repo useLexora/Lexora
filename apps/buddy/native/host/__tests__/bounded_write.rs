@@ -1,10 +1,27 @@
 use lexora_buddy_host::file_writer::{WriteError, WriteRequest, write};
-use std::fs;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+fn canonical_directory(directory: &Path) -> PathBuf {
+    let path = fs::canonicalize(directory).unwrap();
+    #[cfg(windows)]
+    {
+        let path = path.to_str().unwrap();
+        if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{path}"));
+        }
+        PathBuf::from(path.strip_prefix(r"\\?\").unwrap())
+    }
+    #[cfg(not(windows))]
+    path
+}
 
 #[test]
 fn atomic_save_preserves_original_on_conflict() {
     let directory = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(directory.path()).unwrap();
+    let root = canonical_directory(directory.path());
     let path = root.join("note.md");
     fs::write(&path, "original\n").unwrap();
     let mut request = WriteRequest {
@@ -26,7 +43,7 @@ fn atomic_save_preserves_original_on_conflict() {
 fn rejects_symlink_targets_and_ancestors_without_writing_outside() {
     use std::os::unix::fs::symlink;
     let directory = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(directory.path()).unwrap();
+    let root = canonical_directory(directory.path());
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("note.md"), "original").unwrap();
     symlink(outside.path(), root.join("escape")).unwrap();
@@ -49,7 +66,7 @@ fn rejects_symlink_targets_and_ancestors_without_writing_outside() {
 #[test]
 fn refuses_oversized_content_without_changing_disk() {
     let directory = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(directory.path()).unwrap();
+    let root = canonical_directory(directory.path());
     let path = root.join("note");
     fs::write(&path, "original").unwrap();
     let request = WriteRequest {
@@ -68,7 +85,7 @@ fn preserves_permissions_and_attributes_and_refuses_hardlinks() {
     use rustix::fs::{XattrFlags, getxattr, setxattr};
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let directory = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(directory.path()).unwrap();
+    let root = canonical_directory(directory.path());
     let path = root.join("note.md");
     fs::write(&path, "original").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
@@ -102,4 +119,27 @@ fn preserves_permissions_and_attributes_and_refuses_hardlinks() {
     assert!(write(&request).is_err());
     assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
     assert_eq!(fs::read_to_string(root.join("linked")).unwrap(), "changed");
+}
+
+#[cfg(windows)]
+#[test]
+fn rejects_device_paths_without_changing_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_directory(directory.path());
+    let path = root.join("note.md");
+    fs::write(&path, "original").unwrap();
+    for (root, target) in [
+        (fs::canonicalize(&root).unwrap(), path.clone()),
+        (root.clone(), fs::canonicalize(&path).unwrap()),
+    ] {
+        let request = WriteRequest {
+            root: root.to_str().unwrap().into(),
+            path: target.to_str().unwrap().into(),
+            expected: "original".into(),
+            content: "wrong".into(),
+        };
+        assert!(matches!(write(&request), Err(WriteError::Failed)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    }
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
 }
