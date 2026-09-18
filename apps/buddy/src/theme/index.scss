@@ -12,12 +12,12 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --buddy-app-sidebar-width: 13rem;
-  --buddy-workspace-sidebar-width: 14rem;
-  --buddy-context-panel-width: clamp(28rem, 44vw, 52rem);
+  --buddy-app-sidebar-width: 11rem;
+  --buddy-workspace-sidebar-width: 15.5rem;
+  --buddy-context-panel-width: clamp(17rem, calc((100% - var(--buddy-workspace-sidebar-width)) * 0.4), 52rem);
   --buddy-context-toolbar-height: 2.5rem;
   --buddy-titlebar-height: 2rem;
-  --buddy-region-header-height: 3.75rem;
+  --buddy-region-header-height: 2.75rem;
   --buddy-chat-reading-width: 50rem;
   --buddy-chat-inline-gutter: 1rem;
   --buddy-chat-gap-tight: 0.25rem;

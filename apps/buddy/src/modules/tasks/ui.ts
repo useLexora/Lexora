@@ -1,2 +1,6 @@
 export { default as DesktopTaskResourcePanel } from './widgets/context-panel/DesktopTaskResourcePanel.vue'
 export { default as DesktopSpaceIcon } from './widgets/space/DesktopSpaceIcon.vue'
+export type { ChatReadingPositions } from './widgets/transcript/chatMessageViewport'
+export { default as DesktopTaskEditor } from './widgets/workspace/DesktopTaskEditor.vue'
+export { default as DesktopTaskIndexView } from './widgets/workspace/DesktopTaskIndexView.vue'
+export { default as DesktopTaskViewProvider } from './widgets/workspace/DesktopTaskViewProvider.vue'

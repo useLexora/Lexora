@@ -4,12 +4,13 @@ import type {
   LexoraConfigPatch,
 } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from './typing'
+import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '@buddy-electron/shared/desktopApi'
 import { NSelect, NSpin } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
 
-type AppearanceSettingField = 'theme' | 'welcomeVariant'
+type AppearanceSettingField = 'theme' | 'welcome' | 'outlinePosition'
 
 const props = defineProps<ApplicationSettingsProps>()
 
@@ -22,9 +23,13 @@ const themeOptions = computed(() => [
   { label: t('desktop.settings.themeLight'), value: 'light' },
   { label: t('desktop.settings.themeDark'), value: 'dark' },
 ])
+const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map(position => ({
+  label: t(`desktop.settings.outlinePosition.${position}`),
+  value: position,
+})))
 const activeWelcomePreference = computed(() => (
   pendingWelcomePreference.value
-  ?? props.config?.desktop.welcomeVariant
+  ?? props.config?.desktop.chat.welcome
   ?? 'random'
 ))
 
@@ -37,7 +42,7 @@ async function updateSetting(field: AppearanceSettingField, patch: LexoraConfigP
 
 async function updateWelcomePreference(preference: DesktopChatWelcomePreference) {
   pendingWelcomePreference.value = preference
-  await updateSetting('welcomeVariant', { desktop: { welcomeVariant: preference } })
+  await updateSetting('welcome', { desktop: { chat: { welcome: preference } } })
   pendingWelcomePreference.value = null
 }
 </script>
@@ -45,7 +50,7 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
 <template>
   <section v-if="config" class="desktop-appearance-settings">
     <section class="desktop-appearance-settings__section">
-      <h2>{{ t('desktop.settings.appearance') }}</h2>
+      <h2>{{ t('desktop.settings.applicationAppearance') }}</h2>
       <div class="desktop-appearance-settings__group">
         <div class="desktop-settings-row">
           <div>
@@ -63,6 +68,29 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
             </small>
           </div>
         </div>
+      </div>
+    </section>
+    <section class="desktop-appearance-settings__section">
+      <h2>{{ t('desktop.settings.conversationAppearance') }}</h2>
+      <div class="desktop-appearance-settings__group">
+        <div class="desktop-settings-row">
+          <div>
+            <strong>{{ t('desktop.settings.outlinePosition') }}</strong>
+            <small>{{ t('desktop.settings.outlinePositionDescription') }}</small>
+          </div>
+          <div class="desktop-settings-row__control">
+            <NSelect
+              :options="outlinePositionOptions"
+              :value="config.desktop.chat.outlinePosition"
+              :disabled="pendingFields.has('outlinePosition')"
+              @update:value="updateSetting('outlinePosition', { desktop: { chat: { outlinePosition: $event } } })"
+            />
+            <NSpin v-if="pendingFields.has('outlinePosition')" size="small" />
+            <small v-else-if="failedField === 'outlinePosition'" class="is-error" role="alert">
+              {{ error ?? t('desktop.settings.saveFailed') }}
+            </small>
+          </div>
+        </div>
         <div class="desktop-settings-row">
           <div>
             <strong>{{ t('desktop.settings.welcome') }}</strong>
@@ -70,12 +98,12 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
           <div class="desktop-settings-row__control">
             <DesktopWelcomePreferencePicker
               :language="language"
-              :pending="pendingFields.has('welcomeVariant')"
+              :pending="pendingFields.has('welcome')"
               :value="activeWelcomePreference"
               @select="updateWelcomePreference"
             />
-            <NSpin v-if="pendingFields.has('welcomeVariant')" size="small" />
-            <small v-else-if="failedField === 'welcomeVariant'" class="is-error">
+            <NSpin v-if="pendingFields.has('welcome')" size="small" />
+            <small v-else-if="failedField === 'welcome'" class="is-error">
               {{ error ?? t('desktop.settings.saveFailed') }}
             </small>
           </div>

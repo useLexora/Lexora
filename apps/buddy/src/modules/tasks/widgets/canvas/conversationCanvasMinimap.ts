@@ -1,3 +1,4 @@
+import type { Dom, Graph } from '@antv/x6'
 import { MiniMap, NodeView } from '@antv/x6'
 
 class ConversationOverviewNodeView extends NodeView {
@@ -18,6 +19,24 @@ class ConversationOverviewNodeView extends NodeView {
 
 class ConversationMiniMap extends MiniMap {
   private fitFrame = 0
+  private pointerPosition: { x: number, y: number } | null = null
+  private readonly capturePointer = (event: PointerEvent) => {
+    this.pointerPosition = this.targetGraph.clientToLocal(event.clientX, event.clientY)
+  }
+
+  init(graph: Graph) {
+    super.init(graph)
+    this.container.addEventListener('pointerdown', this.capturePointer)
+  }
+
+  protected scrollTo(event: Dom.MouseDownEvent) {
+    const point = this.pointerPosition
+    this.pointerPosition = null
+    if (point)
+      this.sourceGraph.centerPoint(point.x, point.y)
+    else
+      super.scrollTo(event)
+  }
 
   protected updatePaper(width: number, height: number): this
   protected updatePaper(size: { width: number, height: number }): this
@@ -51,6 +70,7 @@ class ConversationMiniMap extends MiniMap {
 
   dispose() {
     cancelAnimationFrame(this.fitFrame)
+    this.container.removeEventListener('pointerdown', this.capturePointer)
     super.dispose()
   }
 }

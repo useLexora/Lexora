@@ -17,10 +17,8 @@ export interface ChatOutlineItem {
 }
 
 interface CachedChatOutlineProjection {
-  currentMessages: ReadonlyArray<LocalMessage>
   items: ReadonlyArray<ChatOutlineItem>
   loadedMessages: ReadonlyArray<LocalMessage>
-  messageIndexByRowIndex: ReadonlyArray<number | null>
   outlineIndexByMessageId: ReadonlyMap<string, number>
   rows: ReadonlyArray<ChatTranscriptRow>
 }
@@ -33,6 +31,8 @@ export function createChatOutlineProjector() {
       projection: ChatTranscriptProjection,
       loadedMessages: ReadonlyArray<LocalMessage>,
     ): ReadonlyArray<ChatOutlineItem> {
+      if (cached?.rows === projection.rows && cached.loadedMessages === loadedMessages)
+        return cached.items
       const updated = cached && patchChatOutlineProjection(cached, projection, loadedMessages)
       if (updated) {
         cached = updated
@@ -43,10 +43,8 @@ export function createChatOutlineProjector() {
         mergeChatOutlineMessages(loadedMessages, currentMessages),
       )
       cached = {
-        currentMessages,
         items: outline.items,
         loadedMessages,
-        messageIndexByRowIndex: indexChatTranscriptMessages(projection.rows),
         outlineIndexByMessageId: outline.indexByMessageId,
         rows: projection.rows,
       }
@@ -128,28 +126,25 @@ function patchChatOutlineProjection(
     return null
   }
 
-  let currentMessages: LocalMessage[] | null = null
   let items: ChatOutlineItem[] | null = null
   for (const patch of projection.update.patches) {
     const previous = cached.rows[patch.index]
     const next = patch.rows[0]
     if (previous?.kind !== 'message' || next?.kind !== 'message')
       continue
-    const messageIndex = cached.messageIndexByRowIndex[patch.index]
-    if (messageIndex === null || messageIndex === undefined)
-      return null
-    currentMessages ??= [...cached.currentMessages]
-    currentMessages[messageIndex] = next.message
     const outlineIndex = cached.outlineIndexByMessageId.get(next.message.id)
     if (outlineIndex === undefined)
       continue
+    const item = toOutlineItem(next.message)
+    const previousItem = cached.items[outlineIndex]
+    if (item.text === previousItem.text && item.attachmentOnly === previousItem.attachmentOnly)
+      continue
     items ??= [...cached.items]
-    items[outlineIndex] = toOutlineItem(next.message)
+    items[outlineIndex] = item
   }
 
   return {
     ...cached,
-    currentMessages: currentMessages ?? cached.currentMessages,
     items: items ?? cached.items,
     rows: projection.rows,
   }
@@ -179,27 +174,33 @@ function projectChatTranscriptMessages(
   return rows.flatMap(row => row.kind === 'message' ? [row.message] : [])
 }
 
-function indexChatTranscriptMessages(
-  rows: ReadonlyArray<ChatTranscriptRow>,
-): Array<number | null> {
-  let messageIndex = 0
-  return rows.map((row) => {
-    if (row.kind !== 'message')
-      return null
-    return messageIndex++
-  })
-}
-
 function toOutlineItem(message: LocalMessage): ChatOutlineItem {
   const summary = getChatMessageText(message) || getChatMessageUserContent(message)?.userContent.quotes?.map(quote => quote.text).join('\n') || ''
-  const text = summary.replace(/\s+/g, ' ').trim()
+  const text = outlineSnippet(summary)
 
   return {
     attachmentOnly: text.length === 0,
     kind: message.role === 'user' ? 'input' : 'output',
     messageId: message.id,
-    text: text.length > CHAT_OUTLINE_SNIPPET_LENGTH
-      ? `${text.slice(0, CHAT_OUTLINE_SNIPPET_LENGTH).trimEnd()}…`
-      : text,
+    text,
   }
+}
+
+function outlineSnippet(summary: string): string {
+  let text = ''
+  let pendingSpace = false
+  for (let index = 0; index < summary.length; index += 1) {
+    const character = summary[index]
+    if (/\s/.test(character)) {
+      pendingSpace = text.length > 0
+      continue
+    }
+    if (pendingSpace)
+      text += ' '
+    text += character
+    if (text.length > CHAT_OUTLINE_SNIPPET_LENGTH)
+      return `${text.slice(0, CHAT_OUTLINE_SNIPPET_LENGTH).trimEnd()}…`
+    pendingSpace = false
+  }
+  return text
 }

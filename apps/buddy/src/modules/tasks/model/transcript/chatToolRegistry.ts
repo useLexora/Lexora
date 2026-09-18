@@ -66,6 +66,7 @@ const builtins: Readonly<Record<string, ChatToolRegistration>> = {
   lexora_system_action: cards.system,
   lexora_image_generate: cards.image,
   lexora_image_chroma_key: { ...cards.image, icon: 'image-edit', label: 'desktop.chat.processToolImageTransform' },
+  lexora_plugin_build: { category: 'other', icon: 'artifact', label: 'desktop.chat.processToolBuildPlugin' },
   lexora_output_present: { category: 'other', icon: 'artifact', label: 'desktop.chat.processToolPresent' },
   lexora_tool_search: { ...cards.search, label: 'desktop.chat.processToolDiscover' },
 }

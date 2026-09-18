@@ -61,6 +61,8 @@ export default {
       stateToPresentation: 'state 不能依赖展示层 {{dependency}}；业务状态与公共类型归 state/model，DOM 和编辑器交互归 widget。',
       sharedHost: 'apps/buddy/shared 是无宿主依赖的领域契约，不能依赖 {{dependency}}。',
       platformToHost: 'apps/buddy/platform 是进程共用的底层实现，不能反向依赖 {{dependency}}。',
+      workbenchToBusiness: 'workbench 通过注册表接收业务贡献，不能依赖 app 或 modules。',
+      workbenchCoreHost: 'workbench common/services 不依赖 UI 或宿主，通过接口注入能力。',
     },
   },
   create(context) {
@@ -103,6 +105,23 @@ export default {
       }
       if (!renderer)
         return
+      if (renderer[0] === 'workbench') {
+        if (['app', 'modules'].includes(targetRenderer?.[0])) {
+          report('workbenchToBusiness')
+          return
+        }
+        if (['common', 'services'].includes(renderer[1]) && (
+          ['vue', 'vue-router', 'naive-ui', 'electron'].includes(specifier)
+          || isBuiltin(specifier)
+          || ['electron', 'service', 'platform'].includes(target?.[0])
+          || (targetRenderer?.[0] === 'workbench' && targetRenderer[1] === 'browser')
+          || ['app', 'modules', 'platform', 'theme', 'i18n'].includes(targetRenderer?.[0])
+          || targetRenderer?.includes('ui')
+        )) {
+          report('workbenchCoreHost')
+          return
+        }
+      }
       if (module && targetRenderer?.[0] === 'app') {
         report('moduleToApp')
         return

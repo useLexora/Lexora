@@ -1,11 +1,9 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
 import type { DesktopWindowState } from '../shared/desktopApi'
-import type { ExecuteDesktopCommand } from './desktopCommands'
 import type { DesktopWindowPlacement } from './desktopWindowState'
 import { join } from 'node:path'
 import { BrowserWindow, Menu, shell } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
-import { registerDesktopCommandShortcuts } from './desktopCommands'
 import { createDesktopContextMenuTemplate } from './desktopContextMenu'
 import { isAllowedExternalUrl, isAllowedRendererNavigation } from './security/navigationPolicy'
 
@@ -13,7 +11,6 @@ export interface CreateDesktopWindowOptions {
   appName: string
   iconPath: string
   isQuitting: () => boolean
-  executeCommand: ExecuteDesktopCommand
   onHidden?: () => void
   onPlacementChanged?: (placement: DesktopWindowPlacement) => void
   placement?: DesktopWindowPlacement | null
@@ -64,7 +61,6 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
     callback(false)
   })
   window.removeMenu()
-  registerDesktopCommandShortcuts(window, options.executeCommand)
   let trustedRendererUrl = ''
 
   const publishWindowState = () => {

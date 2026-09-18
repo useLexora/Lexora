@@ -14,6 +14,7 @@ const featureResources = {
 
 export function platformResources(target) {
   return [
+    ...definitions.skills.map(name => ({ from: `service/resources/skills/${name}`, to: `service/resources/skills/${name}` })),
     ...nativeHostResources(target).map(({ from, to }) => ({ from, to })),
     { from: `${searchTools.resource.from}/${target.id}`, to: searchTools.resource.to },
     ...(target.platform === OPERATING_SYSTEM.Linux ? [{ from: `${shellSandbox.resource.from}/${target.id}`, to: shellSandbox.resource.to }] : []),
@@ -22,7 +23,7 @@ export function platformResources(target) {
 }
 
 export function platformSkills(target) {
-  return target.features.flatMap(id => definitions.features[id].skills)
+  return [...definitions.skills, ...target.features.flatMap(id => definitions.features[id].skills)]
 }
 
 export function excludedPlatformResources(target) {

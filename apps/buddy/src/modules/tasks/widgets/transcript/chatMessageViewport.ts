@@ -5,11 +5,14 @@ export interface ChatMessageScrollMetrics {
 }
 
 export interface ChatMessageScrollAnchor {
+  firstLoadedItemId?: string
   rowKey?: string
   messageId: string
   messageOffsetTop: number
   metrics: ChatMessageScrollMetrics
 }
+
+export type ChatReadingPositions = Map<string, ChatMessageScrollAnchor | null>
 
 interface ChatMessageViewportHandle {
   captureScrollAnchor: () => ChatMessageScrollAnchor | null

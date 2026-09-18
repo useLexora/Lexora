@@ -66,7 +66,7 @@ useTaskResultRead({
   root: pageRef,
   conversationId: computed(() => props.workspace.session.activeConversationId.value),
   marks: () => props.workspace.marks,
-  disabled: computed(() => isLoading.value || props.workspace.status.runtimeState.value.status !== 'ready'),
+  disabled: computed(() => isLoading.value || props.workspace.status.isClosing.value || props.workspace.status.runtimeState.value.status !== 'ready'),
 })
 
 async function focusComposer() {
@@ -168,9 +168,7 @@ function openDetailChanges(id: string) {
           ref="canvasRef"
           :active="viewMode === 'canvas'"
           :workspace="workspace"
-          :matches="matchingSearchMessageIds ?? []"
           :selected-node-id="selectedNodeId"
-          :search-message-id="activeSearchMessageId"
           @focus-composer="focusComposer"
           @open-node="nodeDetail.open"
           @open-quote="quoteNavigation.locateStored"
@@ -178,7 +176,7 @@ function openDetailChanges(id: string) {
           @open-node-artifact="nodeDetail.close(); emit('openNodeArtifact', $event)"
         />
         <DesktopChatWelcome
-          v-if="viewMode !== 'canvas' && isEmpty && !isLoading"
+          v-if="viewMode !== 'canvas' && isEmpty && !isLoading && welcomeVariant"
           :language="language"
           :variant="welcomeVariant"
         />
@@ -294,7 +292,7 @@ function openDetailChanges(id: string) {
   display: grid;
   grid-template-rows: auto auto;
   align-content: center;
-  padding-block: 1.5rem;
+  padding-block: 1.5rem 3.5rem;
 
   .desktop-chat-page__content {
     flex: none;
@@ -302,7 +300,7 @@ function openDetailChanges(id: string) {
   }
 
   .desktop-chat-page__composer-dock {
-    padding-top: 3rem;
+    padding-top: 1.75rem;
     padding-bottom: 0;
   }
 }
@@ -359,4 +357,21 @@ function openDetailChanges(id: string) {
 .desktop-chat-page__followup strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 400; color: var(--buddy-text-secondary); }
 .desktop-chat-page__followup button { flex: none; border: 0; border-radius: 6px; padding: 5px 8px; background: transparent; color: var(--buddy-text-secondary); font-size: 11px; cursor: pointer; }
 .desktop-chat-page__followup button:hover { background: var(--buddy-state-hover); }
+
+@container task-pane (max-height: 620px) {
+  .desktop-chat-page.is-empty {
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding-block: 1rem;
+
+    .desktop-chat-page__content {
+      justify-content: center;
+      overflow: hidden;
+      container: welcome-region / size;
+    }
+
+    .desktop-chat-page__composer-dock {
+      padding-top: 0.75rem;
+    }
+  }
+}
 </style>

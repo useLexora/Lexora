@@ -25,7 +25,12 @@ async function fixture(ready = Promise.resolve()) {
     spaceId.value = space
   }
   const markSeen = vi.fn(async (_value: LocalNotification) => true)
-  const getRun = vi.fn(async (id: string) => ({ conversationId: id, triggeringMessageId: `message-${id}` }))
+  const getRun = vi.fn(async (id: string) => ({ conversationId: id, branchId: `branch-${id}`, triggeringMessageId: `message-${id}` }))
+  const activeBranchId = shallowRef<string | null>(null)
+  const activateRunBranch = vi.fn(async (run: { branchId: string }) => {
+    activeBranchId.value = run.branchId
+    return true
+  })
   const openTask = vi.fn(async (id: string, signal?: AbortSignal) => {
     if (!signal?.aborted)
       select(id)
@@ -37,11 +42,12 @@ async function fixture(ready = Promise.resolve()) {
     router,
     ready,
     getRun,
+    activateRunBranch,
     notifications: { markSeen },
     onError: error => errors.push(error),
     session: { activeTaskId, spaceId, navigationVersion: () => version, openTask, startTask: async id => select(null, id) },
   }))!
-  return { activeTaskId, errors, getRun, markSeen, navigation, openTask, router, scope, select }
+  return { activeBranchId, activateRunBranch, activeTaskId, errors, getRun, markSeen, navigation, openTask, router, scope, select }
 }
 
 function notification(id: string): LocalNotification {
@@ -70,7 +76,7 @@ describe('desktop navigation intent', () => {
     marking.resolve(true)
     await nextTick()
     expect(f.activeTaskId.value).toBe('b')
-    expect(f.navigation.notificationTargetMessageId.value).toBe('message-b')
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', messageId: 'message-b' })
   })
 
   it('keeps only the latest target queued during initialization', async () => {
@@ -81,7 +87,7 @@ describe('desktop navigation intent', () => {
     ready.resolve()
     await Promise.all([a, b])
     expect(f.activeTaskId.value).toBe('b')
-    expect(f.navigation.notificationTargetMessageId.value).toBe('message-b')
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', messageId: 'message-b' })
   })
 
   it.each(['route', 'task', 'dispose'])('cancels a queued target after a newer %s operation', async (operation) => {
@@ -99,7 +105,7 @@ describe('desktop navigation intent', () => {
     ready.resolve()
     await opening
     expect(f.activeTaskId.value).toBe(operation === 'task' ? 'manual' : null)
-    expect(f.navigation.notificationTargetMessageId.value).toBeNull()
+    expect(f.navigation.notificationTarget.value).toBeNull()
     expect(f.errors).toEqual([])
   })
 
@@ -112,21 +118,62 @@ describe('desktop navigation intent', () => {
     ready.resolve()
     await opening
     expect(f.activeTaskId.value).toBe('a')
-    expect(f.navigation.notificationTargetMessageId.value).toBe('message-a')
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
   })
 
   it('discards an old run lookup after A to B to A selection', async () => {
     const f = await fixture()
-    const run = deferred<{ conversationId: string, triggeringMessageId: string }>()
+    const run = deferred<{ conversationId: string, branchId: string, triggeringMessageId: string }>()
     f.getRun.mockReturnValueOnce(run.promise)
     const a = f.navigation.openTask('a', 'a')
     await vi.waitFor(() => expect(f.activeTaskId.value).toBe('a'))
     await f.navigation.openTask('b')
     await f.navigation.openTask('a')
-    run.resolve({ conversationId: 'a', triggeringMessageId: 'old-message' })
+    run.resolve({ conversationId: 'a', branchId: 'old-branch', triggeringMessageId: 'old-message' })
     await a
     expect(f.activeTaskId.value).toBe('a')
-    expect(f.navigation.notificationTargetMessageId.value).toBeNull()
+    expect(f.navigation.notificationTarget.value).toBeNull()
+    expect(f.activeBranchId.value).toBeNull()
+  })
+
+  it('reveals the notification message only after its branch has loaded', async () => {
+    const f = await fixture()
+    const loading = deferred<boolean>()
+    f.activateRunBranch.mockImplementationOnce(async (run) => {
+      await loading.promise
+      f.activeBranchId.value = run.branchId
+      return true
+    })
+    f.activeBranchId.value = 'another-branch'
+    const opening = f.navigation.openNotification(notification('a'))
+    await vi.waitFor(() => expect(f.activeTaskId.value).toBe('a'))
+    expect(f.navigation.notificationTarget.value).toBeNull()
+    loading.resolve(true)
+    await opening
+    expect(f.activeBranchId.value).toBe('branch-a')
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
+  })
+
+  it('does not highlight a message when branch activation is unavailable', async () => {
+    const f = await fixture()
+    f.activeBranchId.value = 'running-branch'
+    f.activateRunBranch.mockResolvedValueOnce(false)
+    await f.navigation.openNotification(notification('a'))
+    expect(f.activeBranchId.value).toBe('running-branch')
+    expect(f.navigation.notificationTarget.value).toBeNull()
+  })
+
+  it('does not highlight an old branch after a newer navigation', async () => {
+    const f = await fixture()
+    const loading = deferred<boolean>()
+    f.activateRunBranch.mockReturnValueOnce(loading.promise)
+    const opening = f.navigation.openNotification(notification('a'))
+    await vi.waitFor(() => expect(f.activateRunBranch).toHaveBeenCalled())
+    await f.navigation.openTask('b')
+    loading.resolve(true)
+    await opening
+    expect(f.activeTaskId.value).toBe('b')
+    expect(f.navigation.notificationTarget.value).toBeNull()
   })
 
   it('aborts a pending task lookup when the user leaves the task route', async () => {

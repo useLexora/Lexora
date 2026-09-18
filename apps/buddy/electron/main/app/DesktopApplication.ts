@@ -113,7 +113,6 @@ class DesktopApplication {
         defer(() => this.#windows.close())
         defer(() => this.#browser.closeWindow())
         return this.#windows.initialize({
-          executeCommand: this.#integrations.executeCommand,
           onWindowCreated: window => this.#browser.bindWindow(window),
           isQuitting: () => this.#quit.quitting,
           onHidden: () => { void showBackgroundCloseNotice(this.#runtime.configStore) },

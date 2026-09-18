@@ -1,13 +1,14 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { TaskChatWorkspace, TaskComposer, TaskDraftRestoration, TaskExecution, TaskStatus } from '../../contracts'
+import type { ChatReadingPositions } from '../transcript/chatMessageViewport'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopSettingsCategory } from '@/shared/navigation/desktopRoutes'
 
 export interface ChatWorkspaceProps {
+  readingPositions?: ChatReadingPositions
   viewMode?: 'chat' | 'canvas'
-  activeSearchMessageId: string | null
-  matchingSearchMessageIds: readonly string[]
+  revealMessageId: string | null
   workspace: TaskChatWorkspace
 }
 

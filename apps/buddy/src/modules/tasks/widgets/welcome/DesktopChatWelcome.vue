@@ -59,8 +59,9 @@ const { t } = useBuddyI18n(() => props.language)
 }
 
 .desktop-chat-welcome__illustration {
-  width: clamp(14rem, 31vh, 19rem);
-  height: clamp(14rem, 31vh, 19rem);
+  width: clamp(5rem, min(26cqh, 54cqw), 16rem);
+  max-width: 100%;
+  aspect-ratio: 1;
   margin-bottom: var(--desktop-chat-welcome-illustration-offset-bottom);
   object-fit: contain;
   transform: translateX(var(--desktop-chat-welcome-illustration-offset-x));
@@ -77,7 +78,7 @@ const { t } = useBuddyI18n(() => props.language)
     margin: 0;
     color: var(--buddy-text-strong);
     font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", STSong, SimSun, serif;
-    font-size: clamp(1.75rem, 2.5vw, 2.15rem);
+    font-size: clamp(1.15rem, 4cqw, 2.15rem);
     font-weight: 600;
     letter-spacing: 0.01em;
     line-height: 1.3;
@@ -85,7 +86,7 @@ const { t } = useBuddyI18n(() => props.language)
   }
 }
 
-@media (max-height: 720px) {
+@container task-pane (max-height: 620px) {
   .desktop-chat-welcome {
     gap: 0.35rem;
   }
@@ -103,12 +104,23 @@ const { t } = useBuddyI18n(() => props.language)
   }
 
   .desktop-chat-welcome__illustration {
-    width: 13rem;
-    height: 13rem;
+    width: min(13rem, 60cqh);
   }
 
   .desktop-chat-welcome__heading h1 {
-    font-size: 1.6rem;
+    font-size: clamp(1.15rem, 4cqw, 1.6rem);
+  }
+}
+
+@container welcome-region (max-height: 120px) {
+  .desktop-chat-welcome__illustration {
+    display: none;
+  }
+}
+
+@container welcome-region (max-height: 64px) {
+  .desktop-chat-welcome {
+    display: none;
   }
 }
 </style>

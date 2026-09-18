@@ -78,7 +78,6 @@ describe('createDesktopWindow lifecycle', () => {
     const onHidden = vi.fn()
     createDesktopWindow({
       appName: 'Lexora Buddy Dev',
-      executeCommand: vi.fn(async () => {}),
       iconPath: '/tmp/icon.png',
       isQuitting: () => isQuitting,
       onHidden,

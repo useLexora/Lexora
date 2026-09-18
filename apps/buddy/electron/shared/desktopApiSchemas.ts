@@ -2,7 +2,9 @@ import type { LexoraConfigPatch } from './desktopApi'
 import { z } from 'zod'
 import { browserPreferencesSchema } from '../../shared/browser/browserPreferences'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
+import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
 import {
+  DESKTOP_CHAT_OUTLINE_POSITIONS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
   DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
@@ -51,8 +53,13 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
   proxy: proxySettingsSchema.optional(),
   desktop: z.object({
     backgroundCloseNoticeShown: z.boolean().optional(),
+    chat: z.object({
+      outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),
+      welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).optional(),
+    }).strict().optional(),
     contextPanelMode: z.enum(['task', 'independent']).optional(),
     contextPanelGlobal: z.boolean().optional(),
+    keybindings: keybindingsSchema.optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
     taskSidebar: taskSidebarPreferencesSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
@@ -62,7 +69,6 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),
     theme: z.enum(['system', 'light', 'dark']).optional(),
-    welcomeVariant: z.enum(['random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).optional(),
   }).strict().optional(),
   pet: z.object({
     alwaysOnTop: z.boolean().optional(),

@@ -1,30 +1,22 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
-import type { LocalConversation, LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
-import type { LocalWorkspaceDraft, LocalWorkspaceSetting, LocalWorkspaceStateValue } from '@buddy-shared/conversation/workspaceApi'
-import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
+import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { ChatDraftSnapshot, DraftRestorationConflict, DraftRestorationState } from './typing'
 
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import type { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
 import { computed, readonly, shallowRef } from 'vue'
-import { createDraftScopeKey, normalizeLegacyDraftScopeKey, parseDraftScopeKey } from '../../model/drafts/draftScope'
+import { parseDraftScopeKey } from '../../model/drafts/draftScope'
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
-
-interface ValueRef<T> {
-  readonly value: T
-}
 
 interface UseTaskWorkspacePersistenceOptions {
   beforePersist?: () => Promise<void>
-  api: Pick<LexoraDesktopApi['localChat'], 'composerDrafts' | 'workspaceState'>
-  conversations: ValueRef<ReadonlyArray<LocalConversationSummary>>
+  api: { composerDrafts: Pick<LexoraDesktopApi['localChat']['composerDrafts'], 'get' | 'open' | 'save'> }
   drafts: ReturnType<typeof useChatDrafts>
   getConversation: (conversationId: string) => LocalConversation | null
   onError: (error: unknown) => void
   onDraftRestored?: (targetKey: string) => void
   initialModelSelection?: (targetKey: string) => LocalComposerDraft['modelSelection']
-  spaces: ValueRef<ReadonlyArray<LocalSpace>>
   session: ChatSession
 }
 
@@ -39,9 +31,9 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     return local ? { ...current, local } : null
   })
   let restoration: Promise<boolean> | null = null
-  let initialNavigation: { generation: number, draft: ChatDraftSnapshot } | null = null
+  let hasCapturedInitialDrafts = false
+  const savedSpaces = new Map<string, string | null>()
   const initialDrafts = new Map<string, ChatDraftSnapshot>()
-  const importedLegacyScopes = new Set<string>()
   let disposed = false
   let requestedVersion = 0
   let confirmedVersion = 0
@@ -58,13 +50,10 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
       return Promise.resolve(true)
     if (restoration)
       return restoration
-    if (!initialNavigation) {
+    if (!hasCapturedInitialDrafts) {
       for (const snapshot of options.drafts.listSnapshots())
         initialDrafts.set(snapshot.targetKey, snapshot)
-      initialNavigation = {
-        generation: options.session.generation(),
-        draft: options.drafts.snapshot(currentTargetKey()),
-      }
+      hasCapturedInitialDrafts = true
     }
     restorationState.value = 'restoring'
     restoration = restoreWorkspace(navigationReady).finally(() => restoration = null)
@@ -73,37 +62,9 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
 
   async function restoreWorkspace(navigationReady: Promise<unknown>): Promise<boolean> {
     try {
-      const [setting] = await Promise.all([options.api.workspaceState.read(), navigationReady])
+      await navigationReady
       if (disposed)
         return false
-      const value = setting?.value ?? null
-      const baseline = initialNavigation!
-      if (options.session.isCurrent(baseline.generation) && options.drafts.isUnchanged(baseline.draft)) {
-        const conversation = options.conversations.value.find(item => item.id === value?.activeConversationId)
-        const space = options.spaces.value.find(item => item.id === value?.spaceId && item.revokedAt === null)
-        options.session.hydrate({
-          activeBranchId: conversation?.activeBranchId ?? null,
-          activeConversationId: conversation?.id ?? null,
-          spaceId: space?.id ?? null,
-        })
-      }
-
-      if (isLegacyWorkspaceStateValue(value)) {
-        for (const legacy of value.drafts) {
-          if (legacy.attachments.length)
-            throw new Error('Legacy attachment drafts require explicit migration')
-          const targetKey = normalizeLegacyDraftScopeKey(legacy, options.conversations.value)
-          if (!targetKey || importedLegacyScopes.has(targetKey))
-            continue
-          const initial = initialDrafts.get(targetKey)
-          const current = options.drafts.listSnapshots().find(draft => draft.targetKey === targetKey)
-          if (!current || (initial && options.drafts.isUnchanged(initial))) {
-            options.drafts.importLegacy(targetKey, legacy)
-            initialDrafts.set(targetKey, options.drafts.snapshot(targetKey))
-          }
-          importedLegacyScopes.add(targetKey)
-        }
-      }
 
       let unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null)
       while (unopened) {
@@ -113,7 +74,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
         unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null)
       }
       restorationState.value = 'ready'
-      if (isLegacyWorkspaceStateValue(value) || requestedVersion > confirmedVersion)
+      if (requestedVersion > confirmedVersion)
         return persist()
       return true
     }
@@ -180,7 +141,6 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
         const version = requestedVersion
         for (const snapshot of options.drafts.listSnapshots())
           await persistSnapshot(snapshot)
-        await writeWorkspaceState()
         confirmedVersion = version
       }
       return true
@@ -199,6 +159,11 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     let snapshot = options.drafts.snapshot(targetKey)
     if (snapshot.revision !== null)
       return snapshot
+    const navigation = options.session.generation()
+    const parsedScope = parseDraftScopeKey(targetKey)
+    const scope = targetKey.startsWith('draft:')
+      ? { kind: 'task' as const, draftId: snapshot.draftId, spaceId: options.session.spaceId.value }
+      : parsedScope
     const remote = await options.api.composerDrafts.open({
       draftId: snapshot.draftId,
       initialContent: snapshot.content,
@@ -207,8 +172,13 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
         executionProfile: snapshot.executionProfile,
       },
       initialModelSelection: snapshot.modelSelection ?? options.initialModelSelection?.(targetKey) ?? null,
-      scope: parseDraftScopeKey(targetKey),
+      scope,
     })
+    if (remote.scope.kind === 'task') {
+      savedSpaces.set(targetKey, remote.scope.spaceId)
+      if (restoring && !disposed && options.session.isCurrent(navigation) && options.drafts.targetKey.value === targetKey)
+        options.session.hydrate({ activeConversationId: null, activeBranchId: null, spaceId: remote.scope.spaceId })
+    }
     if (restoring && disposed)
       return snapshot
     const current = options.drafts.listSnapshots().find(draft => draft.targetKey === targetKey)
@@ -244,11 +214,13 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
         snapshot = options.drafts.snapshot(snapshot.targetKey)
       }
     }
-    if (options.drafts.isPersisted(snapshot))
+    const taskSpace = scope.kind === 'task' ? options.session.spaceId.value : undefined
+    if (options.drafts.isPersisted(snapshot) && (taskSpace === undefined || savedSpaces.get(snapshot.targetKey) === taskSpace))
       return
     const expectedRevision = requireRevision(snapshot.revision)
     try {
       const remote = await options.api.composerDrafts.save({
+        spaceId: taskSpace,
         content: snapshot.content,
         draftId: snapshot.draftId,
         executionConfig: {
@@ -258,37 +230,18 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
         expectedRevision,
         modelSelection: snapshot.modelSelection,
       })
+      if (remote.scope.kind === 'task')
+        savedSpaces.set(snapshot.targetKey, remote.scope.spaceId)
       options.drafts.confirmSave(snapshot, remote)
     }
     catch (error) {
       const remote = await options.api.composerDrafts.get(snapshot.draftId).catch(() => null)
-      if (!remote || remote.revision !== expectedRevision + 1 || !sameDraftValue(remote, snapshot))
+      if (!remote || remote.revision !== expectedRevision + 1 || (!sameDraftValue(remote, snapshot) || (taskSpace !== undefined && (remote.scope.kind !== 'task' || remote.scope.spaceId !== taskSpace))))
         throw error
+      if (remote.scope.kind === 'task')
+        savedSpaces.set(snapshot.targetKey, remote.scope.spaceId)
       options.drafts.confirmSave(snapshot, remote)
     }
-  }
-
-  async function writeWorkspaceState(): Promise<void> {
-    const value: LocalWorkspaceStateValue = {
-      activeConversationId: options.session.activeConversationId.value,
-      spaceId: options.session.spaceId.value,
-    }
-    try {
-      await options.api.workspaceState.write(value)
-    }
-    catch (error) {
-      const current = await options.api.workspaceState.read().catch(() => null)
-      if (!current || JSON.stringify(current.value) !== JSON.stringify(value))
-        throw error
-    }
-  }
-
-  function currentTargetKey(): string {
-    return createDraftScopeKey({
-      conversationId: options.session.activeConversationId.value,
-      branchId: options.session.activeBranchId.value,
-      spaceId: options.session.spaceId.value,
-    })
   }
 
   function cancelScheduledSave() {
@@ -326,12 +279,6 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     persist,
     persistIfHydrated,
   }
-}
-
-function isLegacyWorkspaceStateValue(
-  value: LocalWorkspaceSetting['value'] | null,
-): value is LocalWorkspaceStateValue & { drafts: ReadonlyArray<LocalWorkspaceDraft> } {
-  return Boolean(value && Array.isArray((value as { drafts?: unknown }).drafts))
 }
 
 function requireRevision(revision: number | null): number {

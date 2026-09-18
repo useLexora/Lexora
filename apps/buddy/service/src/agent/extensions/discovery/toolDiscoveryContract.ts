@@ -5,7 +5,7 @@ import { Type } from 'typebox'
 export const TOOL_SEARCH_NAME = 'lexora_tool_search'
 
 export interface BuddyToolDisclosurePolicy {
-  group: 'browser' | 'automation' | 'system' | 'image_generation' | 'image_transform' | 'mcp'
+  group: 'browser' | 'automation' | 'system' | 'image_generation' | 'image_transform' | 'mcp' | 'plugins'
   keywords: string
   toolNames: readonly string[]
   available?: (model: Model<Api> | undefined, toolName: string) => boolean

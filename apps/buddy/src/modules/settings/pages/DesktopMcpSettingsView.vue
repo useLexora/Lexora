@@ -100,18 +100,15 @@ function formatStdioTarget(connector: LocalConnector): string {
     </template>
     <template #actions>
       <div class="mcp-settings__actions">
-        <NButton :disabled="!!busyId" @click="importing = true">
+        <NButton size="small" :disabled="!!busyId" @click="importing = true">
           {{ t('desktop.mcp.import') }}
         </NButton>
-        <NButton type="primary" :disabled="!!busyId" @click="editor = { connector: null }">
+        <NButton size="small" type="primary" :disabled="!!busyId" @click="editor = { connector: null }">
           {{ t('desktop.mcp.add') }}
         </NButton>
       </div>
     </template>
     <section class="mcp-settings">
-      <p class="mcp-settings__note">
-        {{ t('desktop.mcp.note') }}
-      </p>
       <NAlert v-if="error" type="error" :show-icon="false">
         {{ error }}
       </NAlert>
@@ -147,7 +144,6 @@ function formatStdioTarget(connector: LocalConnector): string {
 <style scoped>
 .mcp-settings__actions { display: flex; gap: 0.5rem; }
 .mcp-settings { display: grid; gap: 1rem; }
-.mcp-settings__note { margin: 0 0 0.35rem; font-size: 0.83rem; line-height: 1.65; color: var(--buddy-text-secondary); }
 .mcp-settings__empty { padding: 4rem 1rem; }
 .mcp-settings__empty p { color: var(--buddy-text-secondary); font-size: 0.85rem; }
 .mcp-settings__target { overflow-wrap: anywhere; white-space: pre-wrap; padding: 0.8rem; background: var(--buddy-surface-subtle); border-radius: 0.5rem; }

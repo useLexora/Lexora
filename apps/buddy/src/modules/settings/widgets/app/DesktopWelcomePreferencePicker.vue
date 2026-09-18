@@ -21,7 +21,10 @@ const emit = defineEmits<{
 
 const { t } = useBuddyI18n(() => props.language)
 const panelOpen = shallowRef(false)
+const defaultPreferences = ['none', 'random'] as const
 const currentLabel = computed(() => {
+  if (props.value === 'none')
+    return t('desktop.settings.welcomeNone')
   if (props.value === 'random')
     return t('desktop.settings.welcomeRandom')
 
@@ -72,16 +75,20 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
         <strong>{{ t('desktop.settings.welcome') }}</strong>
       </header>
 
-      <button
-        class="desktop-welcome-preference-picker__random"
-        :class="{ 'is-selected': value === 'random' }"
-        type="button"
-        :aria-pressed="value === 'random'"
-        :disabled="pending"
-        @click="selectPreference('random')"
-      >
-        {{ t('desktop.settings.welcomeRandom') }}
-      </button>
+      <div class="desktop-welcome-preference-picker__modes">
+        <button
+          v-for="preference in defaultPreferences"
+          :key="preference"
+          class="desktop-welcome-preference-picker__mode"
+          :class="{ 'is-selected': value === preference }"
+          type="button"
+          :aria-pressed="value === preference"
+          :disabled="pending"
+          @click="selectPreference(preference)"
+        >
+          {{ t(preference === 'none' ? 'desktop.settings.welcomeNone' : 'desktop.settings.welcomeRandom') }}
+        </button>
+      </div>
 
       <div class="desktop-welcome-preference-picker__specific">
         <strong>{{ t('desktop.settings.welcomeSpecific') }}</strong>
@@ -179,7 +186,13 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
   }
 }
 
-.desktop-welcome-preference-picker__random {
+.desktop-welcome-preference-picker__modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.desktop-welcome-preference-picker__mode {
   width: 100%;
   min-height: 2.55rem;
   border: 1px solid var(--buddy-border-subtle);

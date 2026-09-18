@@ -2,7 +2,7 @@
 import type { ConversationCanvasDirection, ConversationCanvasNode } from '../../model/canvas/conversationCanvasLayout'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { getTeleport } from '@antv/x6-vue-shape'
-import { computed, provide, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, provide, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { conversationCanvasActions } from './conversationCanvasContext'
 import ConversationCanvasToolbar from './ConversationCanvasToolbar.vue'
@@ -16,9 +16,7 @@ const props = defineProps<{
   active: boolean
   loading: boolean
   error: string | null
-  matches: readonly string[]
   selectedNodeId: string | null
-  searchMessageId?: string | null
 }>()
 const emit = defineEmits<{
   followup: [id: string]
@@ -46,7 +44,6 @@ const canvas = useConversationCanvas({
   minimapVisible,
   canMutate: computed(() => props.canMutate),
   conversationId: computed(() => props.conversationId),
-  matches: computed(() => props.matches),
 })
 
 provide(conversationCanvasActions, {
@@ -65,14 +62,6 @@ defineExpose({
   focusNode(id: string) {
     canvas.focus(id)
   },
-})
-watch(() => props.searchMessageId, (id) => {
-  if (!id || !props.active)
-    return
-  const node = props.nodes.find(node => node.messageId === id)
-  if (node) {
-    canvas.focus(node.id)
-  }
 })
 </script>
 

@@ -15,6 +15,34 @@ afterEach(() => {
 })
 
 describe('composerDraftRepository', () => {
+  it('only discards the expected revision of an unstarted task and preserves other scopes', () => {
+    const repository = createComposerDraftRepository(createDatabase())
+    const first = repository.open({ ...createOpenInput(), scope: { kind: 'task', draftId: 'draft-1', spaceId: null } })
+    const saved = repository.save({ ...first, content: createBuddyUserContent('Changed before discard'), expectedRevision: 0, now: first.updatedAt })
+    expect(repository.discard({ draftId: first.draftId, expectedRevision: 0 })).toBe(false)
+    expect(repository.findById(first.draftId)).toEqual(saved)
+    const other = repository.open({ ...createOpenInput(), draftId: 'legacy' })
+    expect(repository.discard({ draftId: other.draftId, expectedRevision: 0 })).toBe(false)
+    expect(repository.discard({ draftId: saved.draftId, expectedRevision: 1 })).toBe(true)
+    expect(repository.discard({ draftId: saved.draftId, expectedRevision: 1 })).toBe(true)
+    expect(repository.findById(saved.draftId)).toBeNull()
+    expect(repository.findById(other.draftId)).toEqual(other)
+  })
+
+  it('keeps separate task drafts in one Space and changes their Space with a revision check', () => {
+    const database = createDatabase()
+    seedSpace(database)
+    const repository = createComposerDraftRepository(database)
+    const first = repository.open({ ...createOpenInput(), scope: { kind: 'task', draftId: 'draft-1', spaceId: 'space-1' } })
+    const second = repository.open({ ...createOpenInput(), draftId: 'draft-2', initialContent: createBuddyUserContent('Other task'), scope: { kind: 'task', draftId: 'draft-2', spaceId: 'space-1' } })
+    const saved = repository.save({ ...first, spaceId: null, expectedRevision: 0, now: first.updatedAt })
+    expect(saved.scope).toEqual({ kind: 'task', draftId: 'draft-1', spaceId: null })
+    expect(repository.findById('draft-2')).toEqual(second)
+    expect(repository.list()).toHaveLength(2)
+    expect(() => repository.save({ ...first, spaceId: 'space-1', expectedRevision: 0, now: first.updatedAt })).toThrow(ComposerDraftConflictError)
+    expect(() => repository.open({ ...createOpenInput(), scope: { kind: 'task', draftId: 'different-id', spaceId: null } })).toThrow(ComposerDraftConflictError)
+  })
+
   it('restores quote snapshots from SQLite without rewriting a legacy draft', () => {
     const database = createDatabase()
     const repository = createComposerDraftRepository(database)

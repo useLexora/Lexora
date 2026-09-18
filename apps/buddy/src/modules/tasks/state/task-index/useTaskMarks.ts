@@ -10,7 +10,7 @@ import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 interface TaskMarksOptions {
   api: LocalChatApi['taskMarks']
   conversations: Readonly<Ref<readonly LocalConversationSummary[]>>
-  activeConversationId: Readonly<Ref<string | null>>
+  activeConversationId?: Readonly<Ref<string | null>>
   ready: Readonly<Ref<boolean>>
   language: Readonly<Ref<BuddyLocale>>
 }
@@ -49,7 +49,7 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
     const current = ++generation
     const ids = [...new Set([
       ...options.conversations.value.map(item => item.id),
-      ...(options.activeConversationId.value ? [options.activeConversationId.value] : []),
+      ...(options.activeConversationId?.value ? [options.activeConversationId?.value] : []),
     ])]
     loading.value = true
     refreshPromise = Promise.all([options.api.list(), options.api.states(ids)])
@@ -195,7 +195,7 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
     }
   }
 
-  const stopWatch = watch([options.ready, options.conversations, options.activeConversationId], () => void refresh(), { immediate: true })
+  const stopWatch = watch([options.ready, options.conversations, () => options.activeConversationId?.value], () => void refresh(), { immediate: true })
   function dispose() {
     stopped = true
     generation += 1

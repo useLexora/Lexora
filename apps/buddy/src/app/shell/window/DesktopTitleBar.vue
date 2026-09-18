@@ -6,14 +6,15 @@ import type {
 } from '@buddy-electron/shared/desktopApi'
 import type { DesktopCommandId } from '@buddy-electron/shared/desktopCommands'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { getDesktopCommand } from '@buddy-electron/shared/desktopCommands'
+import { DESKTOP_COMMAND_REGISTRY, getDesktopCommand } from '@buddy-electron/shared/desktopCommands'
 import { PanelRight20Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onScopeDispose, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 import DesktopFeedbackDialog from '@/app/shell/window/DesktopFeedbackDialog.vue'
 import DesktopUpdateDialog from '@/app/shell/window/DesktopUpdateDialog.vue'
 import DesktopWindowMenuBar from '@/app/shell/window/DesktopWindowMenuBar.vue'
+import { useDesktopWorkbenchContext } from '@/app/workbench/desktopWorkbenchContext'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
@@ -25,6 +26,7 @@ const props = defineProps<{
   contextAvailable: boolean
   contextOpen: boolean
   language: BuddyLocale
+  shortcutBindings: Readonly<Record<string, readonly string[]>>
 }>()
 const emit = defineEmits<{
   toggleAppSidebar: []
@@ -69,6 +71,20 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(stopWindowState)
+
+const { controller } = useDesktopWorkbenchContext()
+onScopeDispose(controller.registry.register('lexora.desktopCommands', (scope) => {
+  for (const command of DESKTOP_COMMAND_REGISTRY) {
+    scope.command({
+      id: command.id,
+      get label() { return t(`desktop.command.${command.id}`) },
+      get keybinding() { return platform.value === 'darwin' ? command.macosKeybinding ?? command.keybinding : command.keybinding },
+      alternateKeybindings: command.alternateKeybindings,
+      shortcutScope: 'application',
+      execute: () => executeDesktopCommand(command.id),
+    })
+  }
+}))
 
 async function executeDesktopCommand(commandId: DesktopCommandId) {
   try {
@@ -153,6 +169,7 @@ function applyWindowState(state: DesktopWindowState) {
       <DesktopWindowMenuBar
         :app-sidebar-collapsed="appSidebarCollapsed"
         :language="language"
+        :shortcut-bindings="shortcutBindings"
         :platform="platform"
         @command="executeDesktopCommand"
         @toggle-app-sidebar="emit('toggleAppSidebar')"

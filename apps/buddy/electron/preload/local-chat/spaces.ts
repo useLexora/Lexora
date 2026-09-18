@@ -5,6 +5,8 @@ import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 export function createSpacesApi(): Pick<LocalChatApi, 'spaces'> {
   return {
     spaces: Object.freeze({
+      readDocument: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentRead, { ...input }),
+      saveDocument: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentSave, { ...input }),
       listDirectory: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesList, { ...input }),
       readFile: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesRead, { ...input }),
       revealFile: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesReveal, { ...input }),

@@ -6,6 +6,8 @@ import { browserTabId, isBrowserArtifact } from '../../model/context-panel/taskC
 import { useTaskContextPanel } from './useTaskContextPanel'
 
 interface TaskResourcePanelOptions extends UseTaskContextPanelOptions {
+  closeView?: (id: string) => Promise<boolean>
+  closeFiles?: (tabId: string) => Promise<boolean>
   browser: Pick<DesktopBrowserApi, 'ensureSession' | 'close' | 'openArtifact' | 'onStateChanged'>
 }
 
@@ -17,9 +19,9 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     return tab?.kind === 'browser' ? browserStates.value[tab.id] ?? null : null
   })
   function updateBrowserState(state: DesktopBrowserState) {
-    const tab = taskContext.activeTab.value
-    if (tab?.kind === 'browser' && browserStates.value[tab.id]?.sessionId === state.sessionId)
-      browserStates.value = { ...browserStates.value, [tab.id]: state }
+    const entry = Object.entries(browserStates.value).find(([, previous]) => previous.sessionId === state.sessionId)
+    if (entry)
+      browserStates.value = { ...browserStates.value, [entry[0]]: state }
   }
   const stopBrowserState = options.browser.onStateChanged((state) => {
     const entry = Object.entries(browserStates.value).find(([, previous]) => previous.sessionId === state.sessionId)
@@ -69,8 +71,12 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
   }
 
   async function closeTab(tabId: string): Promise<boolean> {
-    const tab = taskContext.tabs.value.find(item => item.id === tabId)
+    const tab = taskContext.allTabs.value.find(item => item.id === tabId)
     if (!tab)
+      return false
+    if (tab.kind === 'files' && options.closeFiles && !await options.closeFiles(tab.id))
+      return false
+    if (tab.kind === 'view' && options.closeView && !await options.closeView(tab.viewId))
       return false
     act(() => taskContext.closeTab(tabId))
     if (tab.kind !== 'browser' || (tab.browserKey && !browserStates.value[tab.id]))
@@ -126,6 +132,15 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
     previewFile: (path: string) => act(() => taskContext.previewFile(path)),
     closeTab,
+    discardDraft: (id: string) => {
+      operation += 1
+      const removedIds = new Set(taskContext.discardDraft(id).map(tab => tab.id))
+      const sessions = Object.entries(browserStates.value).filter(([tabId]) => removedIds.has(tabId))
+      browserStates.value = Object.fromEntries(Object.entries(browserStates.value).filter(([tabId]) => !removedIds.has(tabId)))
+      return async () => {
+        await Promise.all(sessions.map(([, state]) => options.browser.close(state.sessionId)))
+      }
+    },
     discardConversation: (id: string) => act(() => {
       const removedIds = new Set(taskContext.discardConversation(id).map(tab => tab.id))
       browserStates.value = Object.fromEntries(Object.entries(browserStates.value).filter(([tabId, state]) => {

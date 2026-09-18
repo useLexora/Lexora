@@ -5,16 +5,63 @@ import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
 import type { BuddyComposerResourceAccept } from '@buddy-shared/conversation/composerResource'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 
-import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
+import type { UseTaskCapabilityOptions } from '../useTaskCapability'
 import { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
+import { computed } from 'vue'
 import { createBuddyUserContent } from '../../../../../shared/conversation/buddyUserContent'
 
 import { useDesktopAppState } from '../../../../app/bootstrap/useDesktopAppState'
+import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
+  it('restores saved attachments when the new-task pane keeps the same draft identity', async () => {
+    const api = createDesktopApi()
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const draftId = 'stable-new-task'
+    const resource = { draftId, resourceId: 'saved-resource', state: 'ready' as const, kind: 'text' as const, attachmentId: 'saved-attachment', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 10, previewUrl: null }
+    await api.localChat.composerDrafts.open({ draftId, scope: { kind: 'task', draftId, spaceId: null }, initialContent: { ...createBuddyUserContent('Saved input'), panelResourceIds: [resource.resourceId] }, initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, initialModelSelection: null })
+    vi.mocked(api.localChat.composerResources.list).mockResolvedValue([resource])
+    const chat = createTestTask(api, { draftKey: draftId, conversationId: null, branchId: null, spaceId: null })
+    await chat.initialize()
+    expect(chat.workspace.composer.draftId.value).toBe(draftId)
+    await vi.waitFor(() => expect(chat.workspace.composer.resources.value.map(entry => entry.resource)).toEqual([resource]))
+    expect(await chat.flushDrafts()).toBe(true)
+    expect((await api.localChat.composerDrafts.get(draftId)).content.panelResourceIds).toEqual([resource.resourceId])
+    chat.dispose()
+  })
+
+  it('waits for the first submission receipt before closing and unlocks input when closing is cancelled', async () => {
+    const api = createDesktopApi()
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const chat = createTestTask(api)
+    await chat.initialize()
+    chat.workspace.composer.updateComposerContent('Keep this input', null)
+    const original = api.localChat.chat.startTurn.getMockImplementation() as LexoraDesktopApi['localChat']['chat']['startTurn']
+    const gate = deferred<void>()
+    vi.mocked(api.localChat.chat.startTurn).mockImplementation(async (input) => {
+      await gate.promise
+      return original(input)
+    })
+    const sending = chat.workspace.execution.send('Keep this input')
+    await vi.waitFor(() => expect(chat.workspace.execution.isSending.value).toBe(true))
+    const closing = chat.prepareClose()
+    expect(chat.workspace.status.isClosing.value).toBe(true)
+    expect(chat.workspace.execution.canSend.value).toBe(false)
+    gate.resolve()
+    expect(await sending).toBe(true)
+    expect(await closing).toBe(true)
+    expect(chat.workspace.session.activeConversationId.value).toBe('conversation-1')
+    chat.cancelClose()
+    chat.workspace.composer.updateComposerContent('Input after cancellation', null)
+    expect(chat.workspace.status.isClosing.value).toBe(false)
+    expect(await chat.flushDrafts()).toBe(true)
+    expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).content).toEqual(createBuddyUserContent('Input after cancellation'))
+    chat.dispose()
+  })
+
   it('initializes a confirmed model-less Draft when the first model becomes available', async () => {
     const api = createDesktopApi()
     const models = await api.localChat.providers.listModels()
@@ -110,13 +157,10 @@ describe('useTaskCapability', () => {
     expect(await chat.workspace.execution.send('saved input')).toBe(true)
   })
 
-  it.each(['read', 'open'] as const)('recovers a failed initial Draft %s on concurrent Runtime ready refreshes', async (operation) => {
+  it('recovers a failed initial Draft open on concurrent Runtime ready refreshes', async () => {
     const api = createDesktopApi()
     vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([])
-    if (operation === 'read')
-      vi.mocked(api.localChat.workspaceState.read).mockRejectedValueOnce(new Error('Runtime unavailable'))
-    else
-      vi.mocked(api.localChat.composerDrafts.open).mockRejectedValueOnce(new Error('Runtime unavailable'))
+    vi.mocked(api.localChat.composerDrafts.open).mockRejectedValueOnce(new Error('Runtime unavailable'))
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
     const chat = createTestTask(api)
     await chat.initialize()
@@ -133,36 +177,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.composer.draft.value).toBe('typed after Runtime failure')
     expect(await chat.flushDrafts()).toBe(true)
     expect(await chat.workspace.execution.send('typed after Runtime failure')).toBe(true)
-  })
-
-  it('refreshes background conversation activity from lifecycle events', async () => {
-    vi.useFakeTimers()
-    const api = createDesktopApi()
-    let runEventListener: (event: LocalRunEvent) => void = () => {
-      throw new Error('run event listener was not registered')
-    }
-    vi.mocked(api.localChat.chat.onRunEvent).mockImplementation((listener) => {
-      runEventListener = listener
-      return () => {}
-    })
-    vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValueOnce([conversationSummary('idle')]).mockResolvedValue([conversationSummary('awaiting_approval')])
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-
-    expect(chat.session.activeTaskId.value).toBeNull()
-    expect(chat.index.tasks.value[0]?.activity).toBe('idle')
-    runEventListener({
-      createdAt: '2026-08-20T00:00:00.000Z',
-      payload: {},
-      runId: 'background-run',
-      sequence: 1,
-      type: 'approval.requested',
-    })
-    await vi.advanceTimersByTimeAsync(100)
-
-    expect(api.localChat.conversations.list).toHaveBeenCalledTimes(2)
-    expect(chat.index.tasks.value[0]?.activity).toBe('awaiting_approval')
   })
 
   it('commits an accepted turn before collection refresh failures', async () => {
@@ -505,7 +519,7 @@ describe('useTaskCapability', () => {
   it('edits a visible user input on a new sibling branch', async () => {
     const api = createBranchingDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
     chat.workspace.composer.updateComposerContent('ordinary pending input', null)
     const ordinaryDraftId = chat.workspace.composer.draftId.value
@@ -540,7 +554,7 @@ describe('useTaskCapability', () => {
   it('commits an edited Draft only once when submit is triggered twice', async () => {
     const api = createBranchingDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
     await expect(chat.workspace.execution.editUserMessage('user-2')).resolves.toBe(true)
     const payload = {
@@ -569,7 +583,7 @@ describe('useTaskCapability', () => {
       return activate(input)
     })
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
 
     const activating = chat.workspace.transcript.activateBranch('branch-fork')
@@ -613,7 +627,7 @@ describe('useTaskCapability', () => {
     const selected = deferred<Awaited<ReturnType<typeof api.localChat.composerResources.selectSource>>>()
     vi.mocked(api.localChat.composerResources.selectSource).mockReturnValue(selected.promise)
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
     chat.workspace.composer.updateComposerContent('ordinary pending input', null)
     const ordinaryDraftId = chat.workspace.composer.draftId.value
@@ -646,7 +660,7 @@ describe('useTaskCapability', () => {
   it('commits a regenerated run on its new branch before background refreshes', async () => {
     const api = createBranchingDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
 
     await expect(chat.workspace.execution.regenerateAssistant('run-2')).resolves.toBe(true)
@@ -668,7 +682,7 @@ describe('useTaskCapability', () => {
     const setPermissionSettings = vi.mocked(api.localChat.conversations.setPermissionSettings)
     setPermissionSettings.mockImplementation(() => pendingPermissionSettings.promise)
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
     const pendingDraftSave = deferred<void>()
     const saveDraft = api.localChat.composerDrafts.save
@@ -734,7 +748,7 @@ describe('useTaskCapability', () => {
       runId: compactRun.id,
     }))
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
     chat.workspace.composer.updateComposerContent('/compact focus on decisions', null)
 
@@ -780,7 +794,7 @@ describe('useTaskCapability', () => {
       return { changeSets: [], items: branchTimeline('branch-root'), nextCursor: null, outputs: [], runEvents: [], runs: [] }
     })
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
 
     const activating = chat.workspace.transcript.activateBranch('branch-fork')
@@ -796,9 +810,9 @@ describe('useTaskCapability', () => {
   })
 })
 
-function createTestTask(api: ReturnType<typeof createDesktopApi>) {
+function createTestTask(api: ReturnType<typeof createDesktopApi>, initialTarget?: UseTaskCapabilityOptions['initialTarget']) {
   const appState = useDesktopAppState({ api })
-  const chat = createTaskCapability(api, appState)
+  const chat = createTaskCapability(api, appState, initialTarget)
 
   return {
     ...chat,
@@ -813,9 +827,13 @@ function createTestTask(api: ReturnType<typeof createDesktopApi>) {
 function createTaskCapability(
   api: ReturnType<typeof createDesktopApi>,
   appState: ReturnType<typeof useDesktopAppState>,
+  initialTarget: UseTaskCapabilityOptions['initialTarget'] = { conversationId: null, branchId: null, spaceId: null },
 ) {
+  const index = useTaskIndex({ api: api.localChat, applicationSettings: appState.stores.applicationSettings, ready: computed(() => appState.stores.runtimeSupervisor.runtimeState.value.status === 'ready') })
   return useTaskCapability({
     api,
+    index,
+    initialTarget,
     applicationSettings: appState.stores.applicationSettings,
     modelProviders: appState.stores.modelProviders,
     runtimeSupervisor: appState.stores.runtimeSupervisor,
@@ -845,15 +863,6 @@ function createBranchingDesktopApi() {
     { changeSets: [], items: branchTimeline(branchId ?? activeBranchId), nextCursor: null, outputs: [], runEvents: [], runs: [] }
   ))
   vi.mocked(api.localChat.runs.list).mockResolvedValue([])
-  vi.mocked(api.localChat.workspaceState.read).mockResolvedValue({
-    key: 'buddy.chat.workspace.v2',
-    updatedAt: '2026-08-14T00:00:00.000Z',
-    value: {
-      activeConversationId: 'conversation-1',
-      drafts: [],
-      spaceId: null,
-    },
-  })
   api.localChat.conversations.listBranches = vi.fn(async () => branches)
   api.localChat.conversations.activateBranch = vi.fn(async ({ branchId }) => {
     activeBranchId = branchId
@@ -1077,7 +1086,7 @@ function createDesktopApi() {
         accept: vi.fn(async (input: BuddyComposerResourceAccept) => input.resources.map(resource => ({ ...resource, draftId: input.draftId, kind: 'image', state: 'importing' }))),
         complete: vi.fn(),
         fail: vi.fn(),
-        list: vi.fn(async () => []),
+        list: vi.fn<LexoraDesktopApi['localChat']['composerResources']['list']>(async () => []),
         listSources: vi.fn(async () => ({ files: [] })),
         retry: vi.fn(),
         selectFiles: vi.fn(async () => []),

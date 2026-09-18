@@ -66,12 +66,12 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
   }
 
   onRequest(method: string, handler: RuntimeRequestHandler): () => void {
-    return this.#peer.onRequest(method, async (params) => {
+    return this.#peer.onRequest(method, async (params, signal) => {
       const operationId = crypto.randomUUID()
       const startedAt = performance.now()
       this.#record({ event: 'rpc.handler.started', level: 'debug', component: 'runtime.rpc', operationId, method })
       try {
-        const result = await handler(params)
+        const result = await handler(params, signal)
         this.#record({ event: 'rpc.handler.completed', level: 'debug', component: 'runtime.rpc', operationId, method, durationMs: Math.round(performance.now() - startedAt) })
         return result
       }
@@ -83,8 +83,8 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
     })
   }
 
-  request(method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
-    return this.#peer.request(method, params, timeoutMs)
+  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    return this.#peer.request(method, params, timeoutMs, signal)
   }
 
   close(reason: Error): void {

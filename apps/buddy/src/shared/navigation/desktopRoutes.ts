@@ -1,18 +1,22 @@
 import type { RouteLocationRaw } from 'vue-router'
 
-export type DesktopView = 'automations' | 'settings' | 'tasks'
+export type DesktopView = 'extension-page' | 'extensions' | 'automations' | 'settings' | 'tasks'
 export type DesktopAutomationSection = 'history' | 'plans'
-export type DesktopSettingsCategory = 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
+export type DesktopSettingsCategory = 'shortcuts' | 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'extensions' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
 
 export const DESKTOP_ROUTE_NAMES = {
+  extensions: 'desktop.extensions',
+  extensionPage: 'desktop.extension-page',
   automations: 'desktop.automations',
   automationsCreate: 'desktop.automations.create',
   automationsEdit: 'desktop.automations.edit',
   automationsHistory: 'desktop.automations.history',
   automationsPlans: 'desktop.automations.plans',
   settingsMcp: 'desktop.settings.mcp',
+  settingsExtensions: 'desktop.settings.extensions',
   settingsApp: 'desktop.settings.app',
   settingsGeneral: 'desktop.settings.general',
+  settingsShortcuts: 'desktop.settings.shortcuts',
   settingsAppearance: 'desktop.settings.appearance',
   settingsNotifications: 'desktop.settings.notifications',
   settingsProxy: 'desktop.settings.proxy',
@@ -34,6 +38,8 @@ const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
 }
 
 const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
+  shortcuts: DESKTOP_ROUTE_NAMES.settingsShortcuts,
+  extensions: DESKTOP_ROUTE_NAMES.settingsExtensions,
   general: DESKTOP_ROUTE_NAMES.settingsGeneral,
   mcp: DESKTOP_ROUTE_NAMES.settingsMcp,
   appearance: DESKTOP_ROUTE_NAMES.settingsAppearance,
@@ -50,6 +56,8 @@ const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
 }
 
 export const desktopRouteLocations = {
+  extensions: (): RouteLocationRaw => ({ name: DESKTOP_ROUTE_NAMES.extensions }),
+  extensionPage: (extensionId: string): RouteLocationRaw => ({ name: DESKTOP_ROUTE_NAMES.extensionPage, params: { extensionId } }),
   automationCreate: (): RouteLocationRaw => ({
     name: DESKTOP_ROUTE_NAMES.automationsCreate,
   }),

@@ -3,7 +3,6 @@ import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 import type { BuddyComposerDraft as LocalComposerDraft } from '@buddy-shared/conversation/composerDraft'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
-import type { LocalWorkspaceDraft } from '@buddy-shared/conversation/workspaceApi'
 import type { BuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { JSONContent } from '@tiptap/core'
@@ -47,7 +46,6 @@ export interface ChatDrafts {
   discard: (targetKey: string) => Promise<void>
   discardConversation: (conversationId: string) => Promise<void>
   hydrate: (values: ReadonlyArray<{ draft: LocalComposerDraft, targetKey: string }>) => void
-  importLegacy: (targetKey: string, value: LocalWorkspaceDraft) => void
   isEditorSessionCurrent: (value: Pick<ChatDraftState, 'draftId' | 'editorSessionId'>) => boolean
   isPersisted: (value: ChatDraftSnapshot) => boolean
   isUnchanged: (value: ChatDraftSnapshot) => boolean

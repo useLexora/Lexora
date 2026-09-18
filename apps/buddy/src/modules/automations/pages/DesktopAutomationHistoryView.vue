@@ -13,6 +13,8 @@ const { language } = useDesktopUi()
 const {
   automations,
   openTask: openTaskSession,
+  onTaskDeleted,
+  beforeTaskDelete,
   refreshTasks,
 } = useAutomationContext()
 const { t } = useBuddyI18n(language)
@@ -24,13 +26,19 @@ async function openTask(conversationId: string): Promise<void> {
 }
 
 async function deleteOccurrence(occurrenceId: string): Promise<void> {
+  const conversationId = automations.occurrences.value.items.find(item => item.id === occurrenceId)?.conversationId
+  if (conversationId && !await beforeTaskDelete(conversationId))
+    return
   const result = await automations.removeOccurrence(occurrenceId)
   if (result.status === 'failed') {
     message.error(result.error)
     return
   }
-  if (result.status === 'succeeded' && result.value)
+  if (result.status === 'succeeded' && result.value) {
+    if (conversationId)
+      onTaskDeleted(conversationId)
     await refreshTasks()
+  }
 }
 
 async function loadMore(): Promise<void> {

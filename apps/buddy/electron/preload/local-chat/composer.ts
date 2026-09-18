@@ -25,6 +25,9 @@ export function createComposerApi(): Pick<LocalChatApi, 'composerResources' | 'c
       ),
     }),
     composerDrafts: Object.freeze({
+      find: draftId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsFind, { draftId }),
+      discard: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsDiscard, input),
+      list: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsList),
       get: draftId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsGet, { draftId }),
       open: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsOpen, input),
       save: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsSave, input),

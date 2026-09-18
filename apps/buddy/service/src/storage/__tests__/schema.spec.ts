@@ -1,7 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createComposerResourceRepository } from '../composerResourceRepository'
@@ -203,6 +205,37 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
         .toThrow(TypeError)
     }
   })
+
+  it('recovers an interrupted v20 migration and preserves legacy draft identities and resources', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-task-drafts-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const legacy = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(({ version }) => version <= 19))
+      legacy.exec(migration.sql)
+    legacy.exec(`PRAGMA user_version = 19;
+      INSERT INTO composer_drafts VALUES (
+        'legacy-draft', 'global', NULL, NULL, NULL, NULL, 7,
+        '{"version":1,"body":[{"type":"paragraph","content":[{"type":"text","text":"Keep my draft"}]}],"panelResourceIds":["resource-1"]}',
+        NULL, 'policy', 'workspace_write', '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z'
+      );
+      INSERT INTO composer_resources (id, draft_id, name, mime_type, size_bytes, state, created_at, updated_at)
+      VALUES ('resource-1', 'legacy-draft', 'fixture.txt', 'text/plain', 1, 'importing', '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z');
+    `)
+    const draft = legacy.prepare('SELECT * FROM composer_drafts').get()
+    const resources = legacy.prepare('SELECT * FROM composer_resources').all()
+    legacy.close()
+    const migration = BUDDY_SCHEMA_MIGRATIONS.find(item => item.version === 20)!
+    const interrupted = spawnSync(process.execPath, ['--input-type=module', '-e', `import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(process.argv[1]); db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;'); db.exec(process.argv[2]); process.exit(23)`, databasePath, migration.sql], { encoding: 'utf8' })
+    expect(interrupted.status).toBe(23)
+    const recovered = openBuddyDatabase({ databasePath })
+    databases.push(recovered)
+    expect(recovered.prepare('SELECT * FROM composer_drafts').get()).toEqual({ ...draft, scope_kind: 'task' })
+    expect(recovered.prepare('SELECT * FROM composer_resources').all()).toEqual(resources)
+    expect(recovered.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    expect(recovered.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(recovered.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
+  }, MIGRATION_TEST_TIMEOUT)
 
   it('migrates v9 drafts and resources intact and adds independent followup scopes', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-tree-schema-'))

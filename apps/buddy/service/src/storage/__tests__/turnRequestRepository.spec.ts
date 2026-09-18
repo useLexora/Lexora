@@ -29,6 +29,8 @@ describe('turnRequestRepository', () => {
     `)
     const drafts = createComposerDraftRepository(database)
     const original = drafts.findById('draft-1')
+    expect(drafts.discard({ draftId: 'draft-1', expectedRevision: original!.revision })).toBe(false)
+    expect(drafts.findById('draft-1')).toEqual(original)
     drafts.open({
       ...createDraftInput(),
       draftId: 'followup-draft',

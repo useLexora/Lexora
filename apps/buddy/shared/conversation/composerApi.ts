@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { sessionIdentitySchema } from '../runtime/apiValidation'
 import { attachmentsResponseSchemas } from './attachmentApi'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from './attachmentPolicy'
-import { buddyComposerDraftOpenSchema, buddyComposerDraftSaveSchema, buddyComposerDraftSchema, buddyComposerDraftTargetSchema } from './composerDraft'
+import { buddyComposerDraftDiscardSchema, buddyComposerDraftOpenSchema, buddyComposerDraftSaveSchema, buddyComposerDraftSchema, buddyComposerDraftTargetSchema } from './composerDraft'
 import { buddyComposerResourceAcceptSchema, buddyComposerResourceCompleteSchema, buddyComposerResourceSchema, buddyComposerResourceTargetSchema, buddyComposerSourceListResponseSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from './composerResource'
 
 export const composerResourceIdsSchema = z.array(sessionIdentitySchema)
@@ -16,6 +16,7 @@ export type LocalComposerDraft = DeepReadonly<z.infer<typeof buddyComposerDraftS
 export type LocalComposerDraftOpen = z.input<typeof buddyComposerDraftOpenSchema>
 
 export type LocalComposerDraftSave = z.input<typeof buddyComposerDraftSaveSchema>
+export type LocalComposerDraftDiscard = z.input<typeof buddyComposerDraftDiscardSchema>
 
 export const composerRequestSchemas = {
   composerDraftOpen: buddyComposerDraftOpenSchema,
@@ -58,6 +59,9 @@ export const composerResourcesRpc = {
 } as const satisfies Record<string, RuntimeRequestContract>
 
 export const composerDraftsRpc = {
+  find: { method: 'composerDrafts.find', input: composerRequestSchemas.composerDraftTarget, response: composerResponseSchemas.composerDraft.nullable() },
+  discard: { method: 'composerDrafts.discard', input: buddyComposerDraftDiscardSchema, response: z.boolean() },
+  list: { method: 'composerDrafts.list', input: z.object({}).strict(), response: z.array(buddyComposerDraftSchema) },
   open: { method: 'composerDrafts.open', input: composerRequestSchemas.composerDraftOpen, response: composerResponseSchemas.composerDraft },
   get: { method: 'composerDrafts.get', input: composerRequestSchemas.composerDraftTarget, response: composerResponseSchemas.composerDraft },
   save: { method: 'composerDrafts.save', input: composerRequestSchemas.composerDraftSave, response: composerResponseSchemas.composerDraft },

@@ -18,11 +18,10 @@ function fixture() {
   const errors: unknown[] = []
   const persisted: (string | null)[] = []
   const owner = scope.run(() => useChatConversations({
-    api: { conversations: { get: () => lookup.promise, delete: async () => true, listBranches: async () => [], listMessages: async () => ({ items: [], nextCursor: null }), rename: async id => conversation(id) } },
+    api: { conversations: { get: () => lookup.promise, listBranches: async () => [], listMessages: async () => ({ items: [], nextCursor: null }) } },
     session,
     taskIndexData: { conversations: shallowRef([{ ...conversation('indexed'), activity: 'idle' as const, automationOccurrence: null }]), applyConversation() {}, refreshIndex: async () => {} },
     clearError() {},
-    drafts: { discardConversation: async () => {} },
     onError: error => errors.push(error),
     persistWorkspaceState: async () => {
       persisted.push(session.activeConversationId.value)

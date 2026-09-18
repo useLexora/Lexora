@@ -738,6 +738,8 @@ export class BrowserHost {
   }
 
   setSurface(input: DesktopBrowserSetSurfaceInput): void {
+    if (!input.visible && !this.#sessions.get(input.sessionId))
+      return
     const session = this.#requireSession(input.sessionId)
     if (!input.visible) {
       this.#hide(session)

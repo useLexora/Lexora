@@ -8,6 +8,7 @@ import { runtimeWireMessageSchema } from '../../shared/runtime/runtimeProtocol'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 interface PendingRequest {
+  dispose: () => void
   reject: (error: Error) => void
   resolve: (result: unknown) => void
   timeout: ReturnType<typeof setTimeout>
@@ -50,6 +51,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
   readonly #handlers = new Map<string, RuntimeRequestHandler>()
   readonly #notifications = new Set<(method: string, params: unknown) => void>()
   readonly #pending = new Map<string, PendingRequest>()
+  readonly #running = new Map<string, AbortController>()
   readonly #unsubscribe: () => void
   #closed = false
 
@@ -78,20 +80,46 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     return () => this.#handlers.delete(method)
   }
 
-  request(method: string, params: unknown, timeoutMs = this.#defaultTimeoutMs): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs = this.#defaultTimeoutMs, signal?: AbortSignal): Promise<unknown> {
     if (this.#closed)
       return Promise.reject(new Error('Runtime RPC peer is closed'))
+    if (signal?.aborted)
+      return Promise.reject(signal.reason)
 
     const id = randomUUID()
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (!this.#pending.delete(id))
+      const cancel = (reason: Error) => {
+        const pending = this.#pending.get(id)
+        if (!pending)
           return
-
-        reject(new RuntimeRequestTimeoutError(method))
+        this.#pending.delete(id)
+        pending.dispose()
+        reject(reason)
+        try {
+          this.notify('$/cancelRequest', { id })
+        }
+        catch {
+          this.#fail(new RuntimeProtocolError('Runtime cancellation delivery failed'))
+        }
+      }
+      const aborted = () => cancel(signal?.reason ?? new DOMException('Request cancelled', 'AbortError'))
+      const timeout = setTimeout(() => {
+        cancel(new RuntimeRequestTimeoutError(method))
       }, timeoutMs)
-      this.#pending.set(id, { reject, resolve, timeout })
-      this.#transport.postMessage({ jsonrpc: '2.0', id, method, params })
+      const dispose = () => {
+        clearTimeout(timeout)
+        signal?.removeEventListener('abort', aborted)
+      }
+      this.#pending.set(id, { reject, resolve, timeout, dispose })
+      signal?.addEventListener('abort', aborted, { once: true })
+      try {
+        this.#transport.postMessage({ jsonrpc: '2.0', id, method, params })
+      }
+      catch (error) {
+        this.#pending.delete(id)
+        dispose()
+        reject(error)
+      }
     })
   }
 
@@ -104,10 +132,13 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     this.#handlers.clear()
     this.#notifications.clear()
     for (const pending of this.#pending.values()) {
-      clearTimeout(pending.timeout)
+      pending.dispose()
       pending.reject(reason)
     }
     this.#pending.clear()
+    for (const running of this.#running.values())
+      running.abort(reason)
+    this.#running.clear()
   }
 
   #assertOpen(): void {
@@ -127,10 +158,17 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
 
     const wireMessage = parsed.data
     if ('method' in wireMessage) {
-      if ('id' in wireMessage)
-        void this.#handleRequest(wireMessage.id, wireMessage.method, wireMessage.params)
-      else
+      if ('id' in wireMessage) {
+        void this.#handleRequest(wireMessage.id, wireMessage.method, wireMessage.params).catch(() => this.#fail(new RuntimeProtocolError('Runtime response delivery failed')))
+      }
+      else if (wireMessage.method === '$/cancelRequest') {
+        const params = wireMessage.params
+        if (params && typeof params === 'object' && 'id' in params && typeof params.id === 'string')
+          this.#running.get(params.id)?.abort(new DOMException('Request cancelled', 'AbortError'))
+      }
+      else {
         this.#emitNotification(wireMessage.method, wireMessage.params)
+      }
       return
     }
 
@@ -138,6 +176,10 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
   }
 
   async #handleRequest(id: string, method: string, params: unknown): Promise<void> {
+    if (this.#running.has(id)) {
+      this.#fail(new RuntimeProtocolError('Duplicate runtime request ID'))
+      return
+    }
     const handler = this.#handlers.get(method)
     if (!handler) {
       this.#postFailure(id, -32_601, 'Lexora Buddy runtime method is unavailable', {
@@ -147,16 +189,23 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
       return
     }
 
+    const running = new AbortController()
+    this.#running.set(id, running)
     try {
-      const result = await handler(params)
-      if (!this.#closed)
+      const result = await handler(params, running.signal)
+      if (!this.#closed && !running.signal.aborted)
         this.#transport.postMessage({ jsonrpc: '2.0', id, result })
     }
     catch (error) {
-      this.#postFailure(id, -32_000, 'Lexora Buddy runtime request failed', {
-        code: readStableErrorCode(error),
-        retryable: false,
-      })
+      if (!running.signal.aborted) {
+        this.#postFailure(id, -32_000, 'Lexora Buddy runtime request failed', {
+          code: readStableErrorCode(error),
+          retryable: false,
+        })
+      }
+    }
+    finally {
+      this.#running.delete(id)
     }
   }
 
@@ -181,7 +230,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     if (!pending)
       return
 
-    clearTimeout(pending.timeout)
+    pending.dispose()
     this.#pending.delete(message.id)
     if ('result' in message) {
       pending.resolve(message.result)

@@ -8,6 +8,7 @@ const draftIdentitySchema = z.string().regex(/^[A-Z0-9][\w-]{0,127}$/i)
 const scopeIdentitySchema = z.string().trim().min(1).max(256)
 
 export const buddyComposerDraftScopeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('task'), draftId: draftIdentitySchema, spaceId: scopeIdentitySchema.nullable() }).strict().readonly(),
   z.object({
     kind: z.literal('message_followup'),
     branchId: draftIdentitySchema,
@@ -63,6 +64,7 @@ export const buddyComposerDraftOpenSchema = z.object({
 }).strict().readonly()
 
 export const buddyComposerDraftSaveSchema = z.object({
+  spaceId: scopeIdentitySchema.nullable().optional(),
   content: buddyUserContentV1Schema,
   draftId: draftIdentitySchema,
   executionConfig: buddyComposerDraftExecutionConfigSchema,
@@ -74,6 +76,11 @@ export const buddyComposerDraftTargetSchema = z.object({
   draftId: draftIdentitySchema,
 }).strict().readonly()
 
+export const buddyComposerDraftDiscardSchema = z.object({
+  draftId: draftIdentitySchema,
+  expectedRevision: z.number().int().nonnegative(),
+}).strict().readonly()
+
 export const buddyComposerDraftSendSchema = z.object({
   draftId: draftIdentitySchema,
   expectedRevision: z.number().int().nonnegative(),
@@ -81,6 +88,7 @@ export const buddyComposerDraftSendSchema = z.object({
 }).strict().readonly()
 
 export type BuddyComposerDraft = z.infer<typeof buddyComposerDraftSchema>
+export type BuddyComposerDraftDiscard = z.infer<typeof buddyComposerDraftDiscardSchema>
 export type BuddyComposerDraftExecutionConfig = z.infer<typeof buddyComposerDraftExecutionConfigSchema>
 export type BuddyComposerDraftModelSelection = z.infer<typeof buddyComposerDraftModelSelectionSchema>
 export type BuddyComposerDraftOpen = z.infer<typeof buddyComposerDraftOpenSchema>
@@ -90,6 +98,7 @@ export type BuddyComposerDraftSend = z.infer<typeof buddyComposerDraftSendSchema
 
 export function buddyComposerDraftScopeKey(scope: BuddyComposerDraftScope): string {
   switch (scope.kind) {
+    case 'task': return `draft:${scope.draftId}`
     case 'global': return 'global'
     case 'space': return `space:${scope.spaceId}`
     case 'conversation_branch': return `conversation:${scope.conversationId}:${scope.branchId}`

@@ -16,11 +16,11 @@ import { createChatTranscriptDisplayRowProjector } from '@/modules/tasks/model/t
 import { createChatRunTranscriptProjector } from '@/modules/tasks/model/transcript/chatRunTranscriptProjector'
 import { createChatTranscriptProjector } from '@/modules/tasks/model/transcript/chatTranscriptProjection'
 import BuddyChatMessageList from '@/modules/tasks/widgets/transcript/BuddyChatMessageList.vue'
+import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import { useConversationOutline } from '../workspace/useConversationOutline'
 
 const props = defineProps<{
   activeBranchId: string
-  activeSearchMessageId: string | null
   actionsDisabled: boolean
   branches: ReadonlyArray<LocalConversationBranch>
   changeSets: ReadonlyArray<LocalChangeSetSummary>
@@ -30,7 +30,6 @@ const props = defineProps<{
   isLoadingOlderMessages: boolean
   language: BuddyLocale
   loadOutlineMessages: () => Promise<ReadonlyArray<LocalMessage>>
-  matchingSearchMessageIds: ReadonlyArray<string>
   runEventBuckets: ChatRunEventBuckets
   runOutputs: ReadonlyArray<LocalRunOutput>
   runs: ReadonlyArray<LocalRun>
@@ -52,6 +51,7 @@ const emit = defineEmits<{
 }>()
 
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
+const { chat } = useDesktopUi()
 const activeBranchId = computed(() => props.activeBranchId)
 const activeConversationId = computed(() => props.conversationId)
 const runTranscriptProjector = createChatRunTranscriptProjector()
@@ -127,7 +127,6 @@ defineExpose<BuddyChatMessageListHandle>({
   <BuddyChatMessageList
     ref="messageList"
     :active-branch-id="activeBranchId"
-    :active-search-message-id="activeSearchMessageId"
     :actions-disabled="actionsDisabled"
     :branch-navigators="branchNavigators"
     :conversation-id="conversationId"
@@ -136,8 +135,8 @@ defineExpose<BuddyChatMessageListHandle>({
     :has-older-messages="hasOlderMessages"
     :is-loading-older-messages="isLoadingOlderMessages"
     :language="language"
-    :matching-search-message-ids="matchingSearchMessageIds"
     :outline-items="outlineItems"
+    :outline-position="chat.outlinePosition"
     :outline-loading="outlineLoading"
     :show-return-to-latest="showReturnToLatest"
     @activate-branch="emit('activateBranch', $event)"

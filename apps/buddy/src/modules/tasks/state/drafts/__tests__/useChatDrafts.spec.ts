@@ -49,6 +49,22 @@ describe('useChatDrafts', () => {
     expect(drafts.snapshot(targetKey.value).revision).toBe(1)
   })
 
+  it.each([false, true])('retargets an independent draft without recreating its committed identity, edited during send: %s', (edited) => {
+    const targetKey = ref('draft:independent')
+    const drafts = useChatDrafts({ targetKey: computed(() => targetKey.value), onChange: () => {} })
+    drafts.updateComposerContent('sent', createChatComposerContentFromText('sent'))
+    const submitted = drafts.snapshot(targetKey.value)
+    drafts.confirmOpen(submitted, runtimeDraft({ content: submitted.content, draftId: submitted.draftId, revision: 0 }))
+    if (edited)
+      drafts.updateComposerContent('next message', createChatComposerContentFromText('next message'))
+    expect(drafts.acknowledgeSend({ committedRevision: 1, draftId: submitted.draftId, sourceRevision: 0 }, 'conversation:one:branch')).toBe(!edited)
+    expect(drafts.draftId.value).toBe('independent')
+    expect(drafts.listSnapshots().map(snapshot => [snapshot.targetKey, snapshot.draftId])).toEqual([['conversation:one:branch', 'independent']])
+    targetKey.value = 'conversation:one:branch'
+    expect(drafts.draft.value).toBe(edited ? 'next message' : '')
+    expect(drafts.snapshot(targetKey.value).revision).toBe(1)
+  })
+
   it('confirms equal model selections despite different property insertion order', () => {
     const { drafts } = createFixture()
     const modelSelection = {

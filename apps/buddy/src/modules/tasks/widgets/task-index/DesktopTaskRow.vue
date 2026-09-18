@@ -18,15 +18,17 @@ import {
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { NDropdown, NTooltip } from 'naive-ui'
-import { computed, h } from 'vue'
+import { computed, h, useId, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskMarkOption from './DesktopTaskMarkOption.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
+import { useTaskHistoryDrag } from './useTaskHistoryDrag'
 import 'dayjs/locale/zh-cn'
 
 const props = defineProps<{
+  taskId: string
   active: boolean
   marks: readonly LocalTaskMark[]
   markState?: LocalTaskMarkState
@@ -126,42 +128,30 @@ function handleAction(action: string | number) {
     emit('delete')
 }
 
-function handleDragStart(event: DragEvent) {
-  if (!props.reorderable) {
-    event.preventDefault()
-    return
-  }
-  event.dataTransfer?.setData('text/plain', 'desktop-task-pinned-item')
-  if (event.dataTransfer)
-    event.dataTransfer.effectAllowed = 'move'
-  emit('dragStart')
-}
-
-function handleDragOver(event: DragEvent) {
-  if (!props.reorderTarget)
-    return
-  event.preventDefault()
-  if (event.dataTransfer)
-    event.dataTransfer.dropEffect = 'move'
-  emit('dragOver', resolveDropPosition(event))
-}
-
-function handleDrop(event: DragEvent) {
-  if (!props.reorderTarget)
-    return
-  event.preventDefault()
-  emit('drop', resolveDropPosition(event))
-}
-
-function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
-  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-}
+const dragId = useId()
+const element = useTemplateRef<HTMLElement>('row')
+const handle = useTemplateRef<HTMLElement>('handle')
+useTaskHistoryDrag({
+  id: () => dragId,
+  element,
+  handle,
+  type: 'workbench-task',
+  data: () => ({ title: props.title, resource: { scheme: 'task', id: props.taskId, data: {} } }),
+  disabled: () => false,
+  reorderable: () => !!props.reorderable,
+  reorderTarget: () => !!props.reorderTarget,
+  start: () => emit('dragStart'),
+  end: () => emit('dragEnd'),
+  over: position => emit('dragOver', position),
+  drop: position => emit('drop', position),
+})
 </script>
 
 <template>
   <div
+    ref="row"
     class="desktop-task-row"
+    :data-task-id="taskId"
     :class="{
       'is-active': active,
       'is-dragging': dragging,
@@ -170,11 +160,6 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
       'is-space-task': spaceTask,
       'is-reorderable': reorderable,
     }"
-    :draggable="reorderable"
-    @dragend="emit('dragEnd')"
-    @dragover="handleDragOver"
-    @dragstart="handleDragStart"
-    @drop="handleDrop"
   >
     <div
       class="desktop-task-row__surface"
@@ -193,6 +178,7 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
         <DesktopTaskMarkSwatch v-else compact />
       </span>
       <button
+        ref="handle"
         class="desktop-task-sidebar__task"
         :class="{ 'is-active': active }"
         type="button"
@@ -254,7 +240,7 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
   padding-left: var(--buddy-task-sidebar-scrollbar-gutter, 0);
 
   &.is-space-task {
-    padding-left: 2.25rem;
+    padding-left: 1.75rem;
   }
 
   &.is-reorderable {
@@ -299,7 +285,7 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
 
   &:hover,
   &:focus-within {
-    background: var(--buddy-nav-hover);
+    background: var(--buddy-state-hover);
   }
 
   &.is-active {
@@ -353,7 +339,6 @@ button {
 
   &.is-active {
     color: var(--buddy-nav-foreground);
-    font-weight: var(--buddy-sidebar-item-active-font-weight);
   }
 
   &:focus-visible {
@@ -395,7 +380,7 @@ button {
 
 .desktop-task-row__trailing {
   display: grid;
-  width: 4rem;
+  width: calc(2 * var(--buddy-task-sidebar-action-size, 1.75rem) + var(--buddy-task-sidebar-action-gap, 0.125rem) + var(--buddy-task-sidebar-action-inset, 0.25rem));
   flex: none;
   align-items: center;
   padding-right: var(--buddy-task-sidebar-action-inset, 0.25rem);

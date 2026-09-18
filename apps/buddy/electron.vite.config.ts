@@ -33,7 +33,7 @@ const electronCacheRoot = fileURLToPath(
 export default defineConfig({
   main: {
     cacheDir: join(electronCacheRoot, 'main'),
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['typescript'] })],
     build: {
       outDir: join(electronOutputRoot, 'main'),
       rollupOptions: {
@@ -41,6 +41,11 @@ export default defineConfig({
         input: {
           'index': fileURLToPath(new URL('./electron/main/index.ts', import.meta.url)),
           'buddy-service': fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
+          'extension-compiler': fileURLToPath(new URL('./electron/main/extensions/compilerProcess.ts', import.meta.url)),
+        },
+        output: {
+          format: 'es',
+          banner: chunk => chunk.name === 'extension-compiler' ? 'import { fileURLToPath as compilerFilePath } from "node:url"; import { dirname as compilerDirname } from "node:path"; const __filename = compilerFilePath(import.meta.url); const __dirname = compilerDirname(__filename);' : '',
         },
       },
     },
@@ -52,7 +57,10 @@ export default defineConfig({
       outDir: join(electronOutputRoot, 'preload'),
       rollupOptions: {
         external: ['electron'],
-        input: fileURLToPath(new URL('./electron/preload/index.ts', import.meta.url)),
+        input: {
+          index: fileURLToPath(new URL('./electron/preload/index.ts', import.meta.url)),
+          extensionHost: fileURLToPath(new URL('./electron/preload/extensionHost.ts', import.meta.url)),
+        },
         output: {
           format: 'cjs',
         },

@@ -2,7 +2,7 @@ import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { useDesktopShellState } from '../shell/useDesktopShellState'
 import type { DesktopAppState } from './useDesktopAppState'
 import type { AutomationCapability } from '@/modules/automations'
-import type { TaskCapability } from '@/modules/tasks'
+import type { TaskIndexController } from '@/modules/tasks'
 import { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import { computed, nextTick, onScopeDispose, shallowRef, watch } from 'vue'
@@ -14,17 +14,19 @@ interface DesktopLifecycleOptions {
   appState: DesktopAppState
   automations: AutomationCapability
   shell: ReturnType<typeof useDesktopShellState>
-  tasks: TaskCapability
+  taskIndex: TaskIndexController
   prepareSurface?: () => Promise<void>
+  flushSurface?: () => Promise<boolean>
+  refreshSurface?: () => Promise<void>
 }
 
 export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
-  const { api, appState, automations, shell, tasks } = options
+  const { api, appState, automations, shell, taskIndex } = options
   const { state, loaded, refresh } = useApplicationLifecycle(api.app.startup)
   const dataReady = shallowRef(false)
   const failed = shallowRef(false)
   let disposed = false
-  let tasksInitialized = false
+  let indexInitialized = false
   let initialAttemptSettled = false
   let resolveReady!: () => void
   const ready = new Promise<void>((resolve) => {
@@ -77,14 +79,14 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
           assertActive()
           const results = await Promise.allSettled([
             host.step('renderer.tasks', async () => {
-              if (tasksInitialized) {
-                await tasks.refreshRuntimeDependentState()
+              if (indexInitialized) {
+                await taskIndex.refresh()
+                await options.refreshSurface?.()
               }
               else {
-                tasksInitialized = true
-                await tasks.initialize()
+                await taskIndex.initialize()
+                indexInitialized = true
               }
-              requireInitialState(tasks.workspace.restoration.state.value === 'ready' && !tasks.workspace.status.errorMessage.value)
             }),
             host.step('renderer.automations', async () => requireInitialState(await (initialAttemptSettled ? automations.refresh() : automations.initialize()))),
           ])
@@ -141,15 +143,15 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
   }
 
   const stopHiddenListener = api.app.onHidden(() => {
-    if (tasksInitialized && !disposed)
-      void tasks.flushDrafts().catch(() => undefined)
+    if (indexInitialized && !disposed)
+      void Promise.resolve(options.flushSurface?.()).catch(() => undefined)
   })
   const stopBeforeQuitListener = api.app.onBeforeQuit(async () => {
-    if (!tasksInitialized)
+    if (!indexInitialized)
       return true
     try {
       await tail
-      return !disposed && await tasks.flushDrafts()
+      return !disposed && (await options.flushSurface?.() ?? true)
     }
     catch {
       return false
@@ -163,7 +165,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
     stopRuntimeWatch()
     resolveReady()
     automations.dispose()
-    tasks.dispose()
+    taskIndex.dispose()
     appState.dispose()
   })
 

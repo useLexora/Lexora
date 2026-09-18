@@ -2,18 +2,15 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalConversation, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
-import type { ChatDrafts } from '@/modules/tasks/state/drafts/typing'
 import type { ChatRunSync } from '@/modules/tasks/state/runs/typing'
 import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskIndexData'
 import { computed, onScopeDispose, readonly, shallowRef } from 'vue'
 
 interface UseChatConversationsOptions {
-  api: { conversations: Pick<LocalChatApi['conversations'], 'delete' | 'get' | 'listBranches' | 'listMessages' | 'rename'> }
+  api: { conversations: Pick<LocalChatApi['conversations'], 'get' | 'listBranches' | 'listMessages'> }
   taskIndexData: Pick<TaskIndexData, 'applyConversation' | 'conversations' | 'refreshIndex'>
   clearError: () => void
-  drafts: Pick<ChatDrafts, 'discardConversation'>
   onError: (error: unknown) => void
-  onDeleted?: (conversationId: string) => void
   persistWorkspaceState: () => Promise<boolean>
   runSync: Pick<ChatRunSync, 'clearConversationState' | 'refreshActiveConversation'>
   restoreConversationModelSelection: (
@@ -93,37 +90,6 @@ export function useChatConversations(options: UseChatConversationsOptions) {
     await options.persistWorkspaceState()
   }
 
-  async function deleteConversation(conversationId: string) {
-    try {
-      await options.api.conversations.delete(conversationId)
-      options.onDeleted?.(conversationId)
-      await options.drafts.discardConversation(conversationId)
-      if (options.session.activeConversationId.value === conversationId) {
-        activateDraftScope(null)
-        options.selectDefaultModel()
-      }
-      if (directlyOpenedConversation.value?.id === conversationId)
-        directlyOpenedConversation.value = null
-      await options.taskIndexData.refreshIndex()
-      await options.persistWorkspaceState()
-    }
-    catch (error) {
-      options.onError(error)
-    }
-  }
-
-  async function renameConversation(conversationId: string, title: string) {
-    try {
-      const conversation = await options.api.conversations.rename(conversationId, title)
-      applyConversation(conversation)
-      return true
-    }
-    catch (error) {
-      options.onError(error)
-      return false
-    }
-  }
-
   function applyConversation(conversation: LocalConversation) {
     options.taskIndexData.applyConversation(conversation)
     if (directlyOpenedConversation.value?.id === conversation.id)
@@ -176,10 +142,8 @@ export function useChatConversations(options: UseChatConversationsOptions) {
     activeConversation: readonly(activeConversation),
     activateGlobalDraft,
     applyConversation,
-    deleteConversation,
     listActiveConversationMessages,
     openConversation,
     refreshBranches,
-    renameConversation,
   }
 }

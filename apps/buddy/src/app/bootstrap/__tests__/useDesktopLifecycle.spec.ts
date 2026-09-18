@@ -87,11 +87,9 @@ function createFixture(options: { restore?: () => Promise<void>, failFirst?: boo
     },
     automations: { initialize: async () => true, refresh: async () => true, dispose: () => {} },
     shell: { initialize: async () => {} },
-    tasks: {
-      workspace: { restoration: { state: shallowRef('ready') }, status: { errorMessage: shallowRef(null) } },
+    taskIndex: {
       initialize: async () => options.restore?.(),
-      refreshRuntimeDependentState: async () => options.restore?.(),
-      flushDrafts: async () => true,
+      refresh: async () => options.restore?.(),
       dispose: () => {},
     },
   } as unknown as Parameters<typeof useDesktopLifecycle>[0]))!

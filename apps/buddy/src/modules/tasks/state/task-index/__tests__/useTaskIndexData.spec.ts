@@ -25,6 +25,20 @@ function fixture() {
 }
 
 describe('task index refresh', () => {
+  it('shares an initialized index across concurrent task consumers and retries failed initialization', async () => {
+    const f = fixture()
+    const failed = f.index.initialize()
+    f.pending[0]!.reject(new Error('runtime unavailable'))
+    await expect(failed).rejects.toThrow('runtime unavailable')
+    const first = f.index.initialize()
+    const second = f.index.initialize()
+    f.pending[1]!.resolve([space('shared')])
+    await Promise.all([first, second])
+    expect(f.index.spaces.value.map(item => item.name)).toEqual(['shared'])
+    await f.index.initialize()
+    expect(f.pending).toHaveLength(2)
+  })
+
   it.each(['resolve', 'reject'] as const)('retains the newer Space list when an earlier request finishes with %s', async (outcome) => {
     const f = fixture()
     const first = f.index.refreshIndex()

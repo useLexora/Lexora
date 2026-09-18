@@ -2,7 +2,7 @@
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 withDefaults(defineProps<{
-  size?: 'medium' | 'small'
+  size?: 'compact' | 'medium' | 'small'
 }>(), {
   size: 'small',
 })
@@ -27,6 +27,11 @@ withDefaults(defineProps<{
   background: var(--buddy-avatar-background);
   box-shadow: inset 0 0 0 1px var(--buddy-border-strong);
   color: var(--buddy-avatar-foreground);
+}
+
+.desktop-account-avatar.is-compact {
+  width: 28px;
+  height: 28px;
 }
 
 .desktop-account-avatar.is-small {

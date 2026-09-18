@@ -5,7 +5,7 @@ import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 
 export type ArtifactViewMode = 'preview' | 'source'
-export type ContextPanelScope = `task:${string}` | `draft:${string}` | 'independent'
+export type ContextPanelScope = `task:${string}` | `draft:${string}` | 'independent' | 'workspace'
 
 interface ContextTabSource {
   scope: ContextPanelScope
@@ -43,6 +43,13 @@ export interface TaskFilesContextTab extends ContextTabSource {
   rootName: string
 }
 
+export interface TaskViewContextTab extends ContextTabSource {
+  id: string
+  kind: 'view'
+  viewId: string
+  label: string
+}
+
 export interface ContextPanelTab {
   id: string
   title: string
@@ -54,6 +61,7 @@ export type TaskContextTab = TaskArtifactContextTab
   | TaskBrowserContextTab
   | TaskChangesContextTab
   | TaskFilesContextTab
+  | TaskViewContextTab
 
 export function spaceTaskArtifactTabs(
   outputs: ReadonlyArray<LocalRunOutput>,

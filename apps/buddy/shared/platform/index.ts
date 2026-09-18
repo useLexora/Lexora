@@ -31,6 +31,7 @@ export type BuddyCapabilities = z.infer<typeof buddyCapabilitiesSchema>
 export type BuddyPlatform = z.infer<typeof platformSchema> & { id: BuddyPlatformId }
 
 export const BUDDY_FEATURES = z.record(buddyFeatureIdSchema, featureSchema).parse(definitions.features)
+export const BUDDY_BUILTIN_SKILLS = definitions.skills
 const platforms = z.record(buddyPlatformIdSchema, platformSchema).parse(definitions.platforms)
 
 export function resolveBuddyPlatform(platform: string): BuddyPlatform {

@@ -4,7 +4,7 @@ export interface RuntimeRpcPeerContract {
   notify: (method: string, params: unknown) => void
   onNotification: (listener: (method: string, params: unknown) => void) => () => void
   onRequest: (method: string, handler: RuntimeRequestHandler) => () => void
-  request: (method: string, params: unknown, timeoutMs?: number) => Promise<unknown>
+  request: (method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal) => Promise<unknown>
   close: (reason: Error) => void
 }
 
@@ -19,4 +19,4 @@ export interface RuntimeRpcPeerOptions {
   onFatalError?: (error: Error) => void
 }
 
-export type RuntimeRequestHandler = (params: unknown) => Promise<unknown> | unknown
+export type RuntimeRequestHandler = (params: unknown, signal?: AbortSignal) => Promise<unknown> | unknown

@@ -15,6 +15,22 @@ export const spaceFileEntrySchema = fileEntrySchema
 export const spaceDirectoryPageSchema = directoryPageSchema
 export const spaceFilePreviewSchema = filePreviewSchema
 
+export const spaceTextDocumentSchema = z.object({
+  text: z.string().max(1024 * 1024),
+  etag: z.string().length(64),
+}).strict()
+export type SpaceTextDocument = z.infer<typeof spaceTextDocumentSchema>
+export const spaceSaveDocumentSchema = spaceFileTargetSchema.extend({
+  text: z.string().max(1024 * 1024),
+  etag: z.string().length(64),
+}).strict()
+export type SpaceSaveDocument = z.infer<typeof spaceSaveDocumentSchema>
+export const spaceSaveResultSchema = z.object({
+  status: z.enum(['saved', 'conflict']),
+  document: spaceTextDocumentSchema,
+}).strict()
+export type SpaceSaveResult = z.infer<typeof spaceSaveResultSchema>
+
 export const spaceFileLocationSchema = z.object({
   path: z.string().min(1),
   kind: z.enum(['directory', 'file']),
@@ -29,6 +45,8 @@ export type SpaceDirectoryRequest = z.infer<typeof spaceDirectoryRequestSchema>
 export const spaceDirectoryRequestSchema = spaceFileTargetSchema.extend({ cursor: z.string().max(512).optional() }).strict()
 
 export const spaceFilesRpc = {
+  readDocument: { method: 'spaceFiles.readDocument', input: spaceFileTargetSchema, response: spaceTextDocumentSchema },
+  saveDocument: { method: 'spaceFiles.saveDocument', input: spaceSaveDocumentSchema, response: spaceSaveResultSchema },
   list: { method: 'spaceFiles.list', input: spaceDirectoryRequestSchema, response: spaceDirectoryPageSchema },
   read: { method: 'spaceFiles.read', input: spaceFileTargetSchema, response: spaceFilePreviewSchema },
   locate: { method: 'spaceFiles.locate', input: spaceFileTargetSchema, response: spaceFileLocationSchema },

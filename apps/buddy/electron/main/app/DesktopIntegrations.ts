@@ -6,18 +6,25 @@ import type { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import type { DesktopWindowHost } from './DesktopWindowHost'
 import type { DesktopEnvironment } from './typing'
 import { homedir } from 'node:os'
+import process from 'node:process'
 import { app, Notification, shell } from 'electron'
 import { z } from 'zod'
+import buddyVersion from '../../../buddy.version.json'
+import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAuthoring'
+import { spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
 import { registerContextPanelIpc } from '../context-panel/registerContextPanelIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
 import { DesktopNotificationService } from '../DesktopNotificationService'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
+import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
 import { createDesktopTray } from '../tray'
+import { registerWorkbenchIpc } from '../workbench/registerWorkbenchIpc'
+import { WorkbenchStateStore } from '../workbench/WorkbenchStateStore'
 import { registerApplicationLogIpc } from './registerApplicationLogIpc'
 import { registerStartupIpc } from './registerStartupIpc'
 
@@ -33,7 +40,7 @@ export class DesktopIntegrations {
   readonly #windows: DesktopWindowHost
   readonly #browser: BrowserIntegration
   readonly #requestQuit: () => void
-  readonly #subscriptions: Array<() => void> = []
+  readonly #subscriptions: Array<() => void | Promise<void>> = []
   #tray: DesktopTrayController | null = null
 
   constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, browser: BrowserIntegration, requestQuit: () => void) {
@@ -64,6 +71,17 @@ export class DesktopIntegrations {
     const runtime = this.#runtime
     const windows = this.#windows
     const service = runtime.service
+    const extensions = registerExtensionIpc({
+      home: paths.buddyHome,
+      version: buddyVersion.version,
+      developmentDirectory: !app.isPackaged && process.env.LEXORA_BUDDY_PROFILE === 'test' && process.env.LEXORA_HOME ? process.env.LEXORA_EXTENSION_DEVELOPMENT_PATH : undefined,
+      getWindow: () => windows.window,
+      get: runtime.network.get,
+      notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
+      readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
+    })
+    this.#subscriptions.push(extensions.dispose)
+    this.#subscriptions.push(registerWorkbenchIpc(new WorkbenchStateStore(paths.buddyHome), () => windows.window))
     this.#subscriptions.push(registerContextPanelIpc(runtime.contextPanel, () => windows.window))
     this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window, this.#environment.events))
     this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window))
@@ -91,6 +109,14 @@ export class DesktopIntegrations {
       request: service.request.bind(service),
     })
     this.#subscriptions.push(service.onNotification((notification) => {
+      if (notification.method === EXTENSION_REVIEW_REQUEST) {
+        const input = z.object({ path: z.string().min(1).max(4096) }).strict().safeParse(notification.params)
+        if (input.success) {
+          void extensions.reviewPackage(input.data.path).catch((error) => {
+            diagnostics.record({ scope: 'desktop', level: 'warn', event: 'extension.review.failed', error })
+          })
+        }
+      }
       if (notification.method === 'desktop.open')
         windows.show()
       void notifications.handle(notification).catch((error) => {
@@ -142,9 +168,9 @@ export class DesktopIntegrations {
     }))
   }
 
-  stopSubscriptions(): void {
+  async stopSubscriptions(): Promise<void> {
     for (const stop of this.#subscriptions.splice(0))
-      stop()
+      await stop()
   }
 
   destroyTray(): void {

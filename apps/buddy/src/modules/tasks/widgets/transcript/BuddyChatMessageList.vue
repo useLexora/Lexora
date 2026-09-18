@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DesktopChatOutlinePosition } from '@buddy-electron/shared/desktopApi'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
@@ -13,7 +14,7 @@ import type {
 } from './chatMessageViewport'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NSpin } from 'naive-ui'
-import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
+import { onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import {
   formatChatDayDividerLabel,
@@ -27,7 +28,6 @@ import BuddyChatTranscriptViewport from './BuddyChatTranscriptViewport.vue'
 import { useChatActivityNavigation } from './useChatActivityNavigation'
 
 const props = defineProps<{
-  activeSearchMessageId?: string | null
   activeBranchId: string
   actionsDisabled?: boolean
   branchNavigators: ReadonlyMap<string, ChatMessageBranchNavigator>
@@ -37,9 +37,9 @@ const props = defineProps<{
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
   language: BuddyLocale
-  matchingSearchMessageIds?: ReadonlyArray<string>
   outlineItems: ReadonlyArray<ChatOutlineItem>
   outlineLoading: boolean
+  outlinePosition: DesktopChatOutlinePosition
   showReturnToLatest?: boolean
 }>()
 
@@ -64,7 +64,6 @@ const OUTLINE_HIGHLIGHT_DURATION_MS = 1_200
 const activeOutlineMessageId = shallowRef<string | null>(null)
 const highlightedOutlineMessageId = shallowRef<string | null>(null)
 let outlineHighlightTimer: number | null = null
-const matchingSearchMessageIds = computed(() => new Set(props.matchingSearchMessageIds ?? []))
 watch([() => props.conversationId, () => props.activeBranchId], () => {
   activeOutlineMessageId.value = null
   clearOutlineHighlight()
@@ -158,10 +157,12 @@ onBeforeUnmount(clearOutlineHighlight)
       <span>{{ t('desktop.chat.loadingOlder') }}</span>
     </div>
     <BuddyChatOutline
+      :key="`${conversationId}:${activeBranchId}`"
       :active-message-id="activeOutlineMessageId"
       :is-loading="outlineLoading"
       :items="outlineItems"
       :language="language"
+      :position="outlinePosition"
       @prepare="emit('prepareOutline')"
       @select="emit('selectOutlineMessage', $event)"
       @scroll-transcript="scrollTranscript"
@@ -190,7 +191,6 @@ onBeforeUnmount(clearOutlineHighlight)
           v-else-if="item.kind === 'message'"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
-          :active-search="item.message.id === activeSearchMessageId"
           :branch-navigator="branchNavigators.get(item.message.id) ?? null"
           class="buddy-chat-transcript-row" :class="[
             { 'is-outline-highlighted': item.message.id === highlightedOutlineMessageId },
@@ -201,7 +201,6 @@ onBeforeUnmount(clearOutlineHighlight)
           :editing="item.message.id === editingMessageId"
           :language="language"
           :message="item.message"
-          :search-match="matchingSearchMessageIds.has(item.message.id)"
           :streaming="item.streaming === true"
           :turn-outputs="item.turnOutputs"
           :turn-changes="item.turnChanges"

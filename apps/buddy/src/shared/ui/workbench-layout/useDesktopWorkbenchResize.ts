@@ -79,8 +79,13 @@ export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOpti
       resizeBounds = bounds
     if (preferredSidebarWidth.value === null && options.sidebar.value)
       preferredSidebarWidth.value = options.sidebar.value.getBoundingClientRect().width
-    if (preferredContextWidth.value === null && contextVisible.value && options.context.value)
-      preferredContextWidth.value = options.context.value.getBoundingClientRect().width
+    if (preferredContextWidth.value === null && contextVisible.value && options.context.value) {
+      const sidebarWidth = options.sidebarVisible() ? preferredSidebarWidth.value ?? 0 : 0
+      preferredContextWidth.value = Math.max(
+        DESKTOP_WORKBENCH_WIDTH_LIMITS.context.minimum,
+        (bounds.width - sidebarWidth) * 0.4,
+      )
+    }
   }
 
   function resolvePanelRange(panel: DesktopWorkbenchResizablePanel) {

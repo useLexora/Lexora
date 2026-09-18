@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BUDDY_SERVICE_PROTOCOL_VERSION = 15 as const
+export const BUDDY_SERVICE_PROTOCOL_VERSION = 16 as const
 
 export const BUDDY_SERVICE_FAILURE_CODES = [
   'EVENT_LOG_CORRUPTED',

@@ -6,7 +6,7 @@ import type { BuddyRuntimePaths } from '../paths'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { BUDDY_FEATURES } from '../../../shared/platform'
+import { BUDDY_BUILTIN_SKILLS, BUDDY_FEATURES } from '../../../shared/platform'
 import { reloadNativePetConfig } from '../pet/nativePetControlSocket'
 import { createNativePetProcessFactory, NativePetSupervisor } from '../pet/NativePetSupervisor'
 import { registerPetHostRpc } from '../pet/registerPetHostRpc'
@@ -38,7 +38,7 @@ export function createDesktopFeatures(platform: BuddyPlatform, context: DesktopF
   const resourceRoot = context.isPackaged ? context.resourcesPath : context.appPath
   return {
     features,
-    builtinSkillsDirectories: platform.features.flatMap(id => BUDDY_FEATURES[id].skills)
+    builtinSkillsDirectories: [...BUDDY_BUILTIN_SKILLS, ...platform.features.flatMap(id => BUDDY_FEATURES[id].skills)]
       .map(name => join(resourceRoot, 'service', 'resources', 'skills', name)),
   }
 }

@@ -83,6 +83,9 @@ function submit() {
           <NInput v-model:value="form.headers" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" :placeholder="t('desktop.mcp.entriesHint')" :input-props="{ autocomplete: 'off', spellcheck: false }" />
         </NFormItem>
       </template>
+      <p v-if="!connector" class="mcp-editor__hint">
+        {{ t('desktop.mcp.createHint') }}
+      </p>
       <p v-if="connector?.credentialConfigured" class="mcp-editor__hint">
         {{ t('desktop.mcp.secretHint') }}
       </p>

@@ -1,121 +1,33 @@
 <script setup lang="ts">
-import type { InputInst } from 'naive-ui'
-
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import {
-  Chat20Regular,
-  ChevronDown20Regular,
-  ChevronUp20Regular,
-  Dismiss20Regular,
-  Search20Regular,
-} from '@vicons/fluent'
-import { NInput } from 'naive-ui'
-import { computed, nextTick, useTemplateRef, watch } from 'vue'
+import { Chat20Regular } from '@vicons/fluent'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
   viewMode?: 'chat' | 'canvas'
-  activeSearchIndex: number
-  canSearchConversation: boolean
-  conversationSearchLoading: boolean
-  conversationSearchOpen: boolean
-  conversationSearchQuery: string
-  conversationSearchResultCount: number
+  canToggleCanvas: boolean
   language: BuddyLocale
   title: string
 }>()
 const emit = defineEmits<{
   toggleCanvas: []
-  closeConversationSearch: []
-  nextConversationSearchResult: []
-  openConversationSearch: []
-  previousConversationSearchResult: []
-  updateConversationSearch: [query: string]
 }>()
 
-const searchInput = useTemplateRef<InputInst>('searchInput')
 const { t } = useBuddyI18n(() => props.language)
-const searchPosition = computed(() => {
-  if (props.conversationSearchLoading)
-    return t('desktop.chat.searchLoading')
-  if (!props.conversationSearchResultCount)
-    return '0 / 0'
-  return `${props.activeSearchIndex + 1} / ${props.conversationSearchResultCount}`
-})
-
-watch(
-  () => props.conversationSearchOpen,
-  async (open) => {
-    if (!open)
-      return
-    await nextTick()
-    searchInput.value?.focus()
-  },
-)
 </script>
 
 <template>
   <header class="desktop-chat-workspace-header">
     <div class="desktop-chat-workspace-header__copy">
-      <strong>{{ title }}</strong>
+      <slot name="title">
+        <strong>{{ title }}</strong>
+      </slot>
     </div>
 
     <div class="desktop-chat-workspace-header__actions">
-      <div v-if="conversationSearchOpen" class="desktop-chat-workspace-header__search-control">
-        <NInput
-          ref="searchInput"
-          clearable
-          :input-props="{ 'aria-label': t('desktop.chat.searchOpen') }"
-          size="small"
-          :placeholder="t('desktop.chat.searchPlaceholder')"
-          :value="conversationSearchQuery"
-          @update:value="emit('updateConversationSearch', $event)"
-        >
-          <template #prefix>
-            <DesktopIcon :component="Search20Regular" />
-          </template>
-        </NInput>
-        <span class="desktop-chat-workspace-header__search-position">{{ searchPosition }}</span>
-        <button
-          class="desktop-chat-workspace-header__icon-button"
-          type="button"
-          :aria-label="t('desktop.chat.searchPrevious')"
-          :disabled="!conversationSearchResultCount"
-          @click="emit('previousConversationSearchResult')"
-        >
-          <DesktopIcon :component="ChevronUp20Regular" />
-        </button>
-        <button
-          class="desktop-chat-workspace-header__icon-button"
-          type="button"
-          :aria-label="t('desktop.chat.searchNext')"
-          :disabled="!conversationSearchResultCount"
-          @click="emit('nextConversationSearchResult')"
-        >
-          <DesktopIcon :component="ChevronDown20Regular" />
-        </button>
-        <button
-          class="desktop-chat-workspace-header__icon-button"
-          type="button"
-          :aria-label="t('desktop.chat.searchClose')"
-          @click="emit('closeConversationSearch')"
-        >
-          <DesktopIcon :component="Dismiss20Regular" />
-        </button>
-      </div>
-
       <button
-        v-else-if="canSearchConversation"
-        class="desktop-chat-workspace-header__icon-button"
-        type="button"
-        :aria-label="t('desktop.chat.searchOpen')"
-        @click="emit('openConversationSearch')"
-      >
-        <DesktopIcon :component="Search20Regular" />
-      </button>
-      <button
-        v-if="canSearchConversation"
+        v-if="canToggleCanvas"
         class="desktop-chat-workspace-header__icon-button"
         :class="{ 'is-active': viewMode === 'canvas' }"
         data-testid="conversation-canvas-toggle"
@@ -133,6 +45,7 @@ watch(
           </svg>
         </DesktopIcon>
       </button>
+      <slot name="actions" />
     </div>
   </header>
 </template>
@@ -147,12 +60,13 @@ watch(
   gap: 0.85rem;
   border-bottom: 1px solid var(--buddy-border-subtle);
   background: var(--buddy-surface-base);
-  padding: 0 0.9rem 0 1.1rem;
+  padding: 0 0.75rem 0 1rem;
 }
 
 .desktop-chat-workspace-header__copy {
   display: grid;
-  min-width: 5rem;
+  min-width: 0;
+  flex: 1;
   gap: 0.05rem;
 
   strong {
@@ -167,25 +81,12 @@ watch(
   }
 }
 
-.desktop-chat-workspace-header__actions,
-.desktop-chat-workspace-header__search-control {
+.desktop-chat-workspace-header__actions {
   display: flex;
   min-width: 0;
   flex: none;
   align-items: center;
   gap: 0.18rem;
-}
-
-.desktop-chat-workspace-header__search-control :deep(.n-input) {
-  width: clamp(10rem, 18vw, 16rem);
-}
-
-.desktop-chat-workspace-header__search-position {
-  min-width: 3.25rem;
-  color: var(--buddy-text-secondary);
-  font-size: 0.68rem;
-  text-align: center;
-  white-space: nowrap;
 }
 
 .desktop-chat-workspace-header__icon-button {

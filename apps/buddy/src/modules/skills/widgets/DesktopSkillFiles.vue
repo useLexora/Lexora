@@ -26,7 +26,7 @@ defineExpose({ open })
 <template>
   <div class="skill-files">
     <div class="skill-files__toolbar">
-      <DesktopFileToolbar :path="path" :root-name="skill.name" :language="language" :wrap="wrap" :tree-visible="treeVisible" :show-reveal="false" @toggle-wrap="wrap = !wrap" @toggle-tree="treeVisible = !treeVisible" />
+      <DesktopFileToolbar :path="path" :root-name="skill.name" :language="language" :wrap="wrap" :tree-visible="treeVisible" @toggle-wrap="wrap = !wrap" @toggle-tree="treeVisible = !treeVisible" />
     </div>
     <DesktopContextSplit v-model:width="treeWidth" :tree-visible="treeVisible">
       <div v-if="loading" class="skill-files__state">

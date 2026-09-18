@@ -1,7 +1,7 @@
 import type { AutomationModelTarget } from '../../../shared/automation'
 import type { ProviderExecutionModelResolver } from '../providers/ProviderExecutionModelResolver'
 import type { ProviderService } from '../providers/ProviderService'
-import type { ResolvedAutomationModel } from './AutomationDispatcher'
+import type { ResolvedAutomationModel } from './AgentTaskAutomationAction'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 
 export interface AutomationModelSelectionDependencies {

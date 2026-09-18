@@ -9,6 +9,7 @@ import { openBuddyDatabase } from '../../storage/database'
 import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createRunRepository } from '../../storage/runRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
+import { AgentTaskAutomationAction } from '../AgentTaskAutomationAction'
 import { AutomationDispatcher } from '../AutomationDispatcher'
 import { AutomationService } from '../AutomationService'
 
@@ -183,6 +184,40 @@ describe('automationDispatcher', () => {
       status: 'cancelled',
     })
   })
+
+  it('binds one conversation and run when the same occurrence is dispatched concurrently', async () => {
+    const fixture = createFixture()
+    const occurrence = fixture.queue({ model: { mode: 'default' } })
+    const modelReady = Promise.withResolvers<void>()
+    const resolvingModel = Promise.withResolvers<void>()
+    const dispatcher = fixture.dispatcher({
+      resolveModel: async () => {
+        resolvingModel.resolve()
+        await modelReady.promise
+        return { contextWindow: 200_000, maxTokens: 32_000, modelId: 'model-1', providerId: 'provider-1', reasoning: null }
+      },
+      launchTurn: async (runId) => {
+        fixture.runs.markRunning(runId, '2026-08-24T00:00:11.000Z')
+        fixture.runs.reconcileTerminal(runId, 'completed', '2026-08-24T00:00:20.000Z', null)
+        return { completion: Promise.resolve(fixture.runs.findById(runId)!), runId }
+      },
+    })
+
+    const first = dispatcher.dispatch(occurrence)
+    await resolvingModel.promise
+    const second = dispatcher.dispatch(occurrence)
+    modelReady.resolve()
+    await Promise.all([first, second])
+
+    expect(fixture.conversations.listRecent()).toHaveLength(1)
+    expect(fixture.runs.listRecent()).toHaveLength(1)
+    expect(fixture.runs.listRecent()[0]).toMatchObject({ status: 'completed', purpose: 'automation' })
+    expect(fixture.service.getOccurrence(occurrence.id)).toMatchObject({
+      conversationId: fixture.conversations.listRecent()[0]!.id,
+      runId: fixture.runs.listRecent()[0]!.id,
+      status: 'bound',
+    })
+  })
 })
 
 function createFixture() {
@@ -248,9 +283,9 @@ function createFixture() {
         providerId: string
         reasoning: null
       } | null>
-      resolveSpace?: ConstructorParameters<typeof AutomationDispatcher>[0]['resolveSpace']
+      resolveSpace?: ConstructorParameters<typeof AgentTaskAutomationAction>[0]['resolveSpace']
       runTimeoutMs?: number
-    }) => new AutomationDispatcher({
+    }) => new AutomationDispatcher(service, new AgentTaskAutomationAction({
       automationService: service,
       cancelRun: overrides.cancelRun,
       clock: { now: () => Temporal.Instant.from('2026-08-24T00:00:10.000Z') },
@@ -271,7 +306,7 @@ function createFixture() {
       }),
       runTimeoutMs: overrides.runTimeoutMs,
       turns: createAutomationTurnRepository(database),
-    }),
+    })),
     queue,
     runInputs,
     runs,

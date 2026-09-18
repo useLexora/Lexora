@@ -6,7 +6,6 @@ export interface ConversationCanvasData {
   message: ConversationCanvasNode
   direction: ConversationCanvasDirection
   canMutate: boolean
-  matched: boolean
 }
 
 export const conversationCanvasActions: InjectionKey<{

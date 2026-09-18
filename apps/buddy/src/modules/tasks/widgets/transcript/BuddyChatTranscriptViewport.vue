@@ -8,6 +8,7 @@ import { NScrollbar } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, useTemplateRef } from 'vue'
 import BuddyChatReturnToLatest from './BuddyChatReturnToLatest.vue'
 import { createChatFrameTask, resolvePrependedChatScrollTop } from './chatMessageViewport'
+import { createChatTranscriptDomIndex } from './chatTranscriptDomIndex'
 
 const props = defineProps<{
   hasOlderMessages: boolean
@@ -26,6 +27,7 @@ const content = useTemplateRef<HTMLElement>('content')
 const viewport = computed(() => content.value?.closest<HTMLElement>('.buddy-chat-transcript-viewport__scrollport') ?? null)
 let resizeObserver: ResizeObserver | null = null
 let viewportFrameTask: ReturnType<typeof createChatFrameTask> | null = null
+let domIndex: ReturnType<typeof createChatTranscriptDomIndex> | null = null
 
 function readScrollMetrics(): ChatMessageScrollMetrics | null {
   return viewport.value ? toScrollMetrics(viewport.value) : null
@@ -37,8 +39,7 @@ function captureScrollAnchor(): ChatMessageScrollAnchor | null {
   if (!scrollport || !metrics)
     return null
   const viewportTop = scrollport.getBoundingClientRect().top
-  const message = [...scrollport.querySelectorAll<HTMLElement>('[data-chat-row-key]')]
-    .find(element => element.getBoundingClientRect().bottom > viewportTop)
+  const message = domIndex?.firstRowBelow(viewportTop)
   if (!message?.dataset.chatRowKey)
     return null
   return {
@@ -54,8 +55,7 @@ function restoreScrollAnchor(anchor: ChatMessageScrollAnchor): ChatMessageScroll
   if (!scrollport)
     return null
   const anchorMessage = anchor.rowKey
-    ? [...scrollport.querySelectorAll<HTMLElement>('[data-chat-row-key]')]
-        .find(element => element.dataset.chatRowKey === anchor.rowKey)
+    ? domIndex?.findRow(anchor.rowKey)
     : findMessage(anchor.messageId)
   if (anchorMessage) {
     const currentOffset = anchorMessage.getBoundingClientRect().top
@@ -89,10 +89,11 @@ function scrollToMessage(
     ),
     Math.max(0, scrollport.scrollHeight - scrollport.clientHeight),
   )
-  const reducedMotion = behavior === 'smooth'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const animate = behavior === 'smooth'
+    && Math.abs(nextTop - scrollport.scrollTop) <= scrollport.clientHeight * 2
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
   scrollport.scrollTo({
-    behavior: reducedMotion ? 'auto' : behavior,
+    behavior: animate ? 'smooth' : 'auto',
     top: nextTop,
   })
   return {
@@ -115,9 +116,7 @@ function scrollBy(deltaY: number) {
 }
 
 function findMessage(messageId: string): HTMLElement | null {
-  return [...viewport.value?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []]
-    .find(element => element.dataset.messageId === messageId)
-    ?? null
+  return domIndex?.findMessage(messageId) ?? null
 }
 
 function readActiveMessageId(): string | null {
@@ -125,12 +124,10 @@ function readActiveMessageId(): string | null {
   if (!scrollport)
     return null
   const bounds = scrollport.getBoundingClientRect()
-  const message = [...scrollport.querySelectorAll<HTMLElement>('[data-message-id]')]
-    .find((element) => {
-      const messageBounds = element.getBoundingClientRect()
-      return messageBounds.bottom > bounds.top && messageBounds.top < bounds.bottom
-    })
-  return message?.dataset.messageId ?? null
+  const message = domIndex?.firstMessageBelow(bounds.top)
+  return message && message.getBoundingClientRect().top < bounds.bottom
+    ? message.dataset.messageId ?? null
+    : null
 }
 
 function scheduleActiveMessageChange() {
@@ -145,6 +142,8 @@ function handleScroll() {
 }
 
 onMounted(() => {
+  if (content.value)
+    domIndex = createChatTranscriptDomIndex(content.value)
   if (viewport.value) {
     viewport.value.tabIndex = 0
     viewport.value.dataset.chatScrollViewport = ''
@@ -169,6 +168,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  domIndex?.dispose()
   resizeObserver?.disconnect()
   viewportFrameTask?.cancel()
 })

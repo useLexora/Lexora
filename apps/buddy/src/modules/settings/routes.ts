@@ -9,6 +9,17 @@ export const settingsRoutes: ReadonlyArray<RouteRecordRaw> = [
     redirect: desktopRouteLocations.settings(),
     children: [
       {
+        path: 'shortcuts',
+        name: DESKTOP_ROUTE_NAMES.settingsShortcuts,
+        component: () => import('./pages/DesktopShortcutsSettingsView.vue'),
+        meta: { desktopView: 'settings', settingsCategory: 'shortcuts' },
+      },
+      {
+        path: 'extensions',
+        name: DESKTOP_ROUTE_NAMES.settingsExtensions,
+        redirect: desktopRouteLocations.extensions(),
+      },
+      {
         path: 'browser',
         name: DESKTOP_ROUTE_NAMES.settingsBrowser,
         component: () => import('./pages/DesktopBrowserSettingsView.vue'),

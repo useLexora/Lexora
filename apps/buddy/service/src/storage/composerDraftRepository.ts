@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type {
   BuddyComposerDraft,
+  BuddyComposerDraftDiscard,
   BuddyComposerDraftOpen,
   BuddyComposerDraftSave,
   BuddyComposerDraftScope,
@@ -24,6 +25,8 @@ interface ComposerDraftRow {
 }
 
 export interface ComposerDraftRepository {
+  discard: (input: BuddyComposerDraftDiscard) => boolean
+  list: () => BuddyComposerDraft[]
   findById: (draftId: string) => BuddyComposerDraft | null
   findByScope: (scope: BuddyComposerDraftScope) => BuddyComposerDraft | null
   open: (input: BuddyComposerDraftOpen & { now: string }) => BuddyComposerDraft
@@ -62,7 +65,8 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
   const save = database.prepare(`
     UPDATE composer_drafts
     SET revision = revision + 1, content_json = ?, model_selection_json = ?,
-      approval_policy = ?, execution_profile = ?, updated_at = ?
+      approval_policy = ?, execution_profile = ?, updated_at = ?,
+      space_id = CASE WHEN scope_kind = 'task' THEN ? ELSE space_id END
     WHERE id = ? AND revision = ?
   `)
 
@@ -72,6 +76,12 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
   }
 
   const findByScope = (scope: BuddyComposerDraftScope): BuddyComposerDraft | null => {
+    if (scope.kind === 'task') {
+      const draft = findById(scope.draftId)
+      if (draft && draft.scope.kind !== 'task')
+        throw new ComposerDraftConflictError()
+      return draft
+    }
     const row = scope.kind === 'global'
       ? findGlobal.get()
       : scope.kind === 'space'
@@ -83,10 +93,27 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
   }
 
   return {
+    discard(input) {
+      return withTransaction(database, () => {
+        const draft = findById(input.draftId)
+        if (!draft)
+          return true
+        if (draft.scope.kind !== 'task' || draft.revision !== input.expectedRevision)
+          return false
+        return Number(database.prepare(`
+          DELETE FROM composer_drafts WHERE id = ? AND scope_kind = 'task' AND revision = ?
+            AND NOT EXISTS (SELECT 1 FROM turn_requests WHERE draft_id = ?)
+            AND NOT EXISTS (SELECT 1 FROM command_requests WHERE draft_id = ?)
+        `).run(input.draftId, input.expectedRevision, input.draftId, input.draftId).changes) === 1
+      })
+    },
+    list: () => (database.prepare('SELECT * FROM composer_drafts WHERE scope_kind IN (\'task\', \'global\', \'space\') ORDER BY updated_at DESC').all() as unknown as ComposerDraftRow[]).map(toDraft),
     findById,
     findByScope,
     open(input) {
       return withTransaction(database, () => {
+        if (input.scope.kind === 'task' && input.scope.draftId !== input.draftId)
+          throw new ComposerDraftConflictError()
         const scoped = findByScope(input.scope)
         if (scoped)
           return scoped
@@ -111,12 +138,17 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
       })
     },
     save(input) {
+      const draft = requireDraft(findById(input.draftId))
+      if (input.spaceId !== undefined && draft.scope.kind !== 'task')
+        throw new ComposerDraftConflictError()
+      const spaceId = input.spaceId === undefined ? draft.scope.kind === 'task' ? draft.scope.spaceId : null : input.spaceId
       if (Number(save.run(
         JSON.stringify(input.content),
         input.modelSelection ? JSON.stringify(input.modelSelection) : null,
         input.executionConfig.approvalPolicy,
         input.executionConfig.executionProfile,
         input.now,
+        spaceId,
         input.draftId,
         input.expectedRevision,
       ).changes) !== 1) {
@@ -137,25 +169,27 @@ function toDraft(row: ComposerDraftRow): BuddyComposerDraft {
     },
     modelSelection: row.model_selection_json ? JSON.parse(row.model_selection_json) : null,
     revision: row.revision,
-    scope: row.scope_kind === 'global'
-      ? { kind: 'global' }
-      : row.scope_kind === 'space'
-        ? { kind: 'space', spaceId: requireValue(row.space_id) }
-        : {
-            branchId: requireValue(row.branch_id),
-            conversationId: requireValue(row.conversation_id),
-            ...(row.scope_kind === 'conversation_branch'
-              ? { kind: 'conversation_branch' as const }
-              : row.scope_kind === 'message_followup'
-                ? {
-                    kind: 'message_followup' as const,
-                    assistantMessageId: requireValue(row.source_message_id),
-                  }
-                : {
-                    kind: 'message_edit' as const,
-                    userMessageId: requireValue(row.source_message_id),
-                  }),
-          },
+    scope: row.scope_kind === 'task'
+      ? { kind: 'task', draftId: row.id, spaceId: row.space_id }
+      : row.scope_kind === 'global'
+        ? { kind: 'global' }
+        : row.scope_kind === 'space'
+          ? { kind: 'space', spaceId: requireValue(row.space_id) }
+          : {
+              branchId: requireValue(row.branch_id),
+              conversationId: requireValue(row.conversation_id),
+              ...(row.scope_kind === 'conversation_branch'
+                ? { kind: 'conversation_branch' as const }
+                : row.scope_kind === 'message_followup'
+                  ? {
+                      kind: 'message_followup' as const,
+                      assistantMessageId: requireValue(row.source_message_id),
+                    }
+                  : {
+                      kind: 'message_edit' as const,
+                      userMessageId: requireValue(row.source_message_id),
+                    }),
+            },
     updatedAt: row.updated_at,
   })
 }
@@ -163,6 +197,7 @@ function toDraft(row: ComposerDraftRow): BuddyComposerDraft {
 function toScopeBinding(scope: BuddyComposerDraftScope) {
   switch (scope.kind) {
     case 'global': return { branchId: null, conversationId: null, sourceMessageId: null, spaceId: null }
+    case 'task':
     case 'space': return { branchId: null, conversationId: null, sourceMessageId: null, spaceId: scope.spaceId }
     case 'conversation_branch': return {
       branchId: scope.branchId,

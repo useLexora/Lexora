@@ -2,11 +2,9 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalComposerDraft, LocalComposerDraftOpen, LocalComposerDraftSave } from '@buddy-shared/conversation/composerApi'
 import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/composerDraft'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
-import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '@buddy-shared/conversation/workspaceApi'
 import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 
 import { buddyComposerDraftModelSelectionSchema } from '@buddy-shared/conversation/composerDraft'
-import { LOCAL_WORKSPACE_STATE_KEY } from '@buddy-shared/conversation/workspaceApi'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { computed } from 'vue'
@@ -16,7 +14,7 @@ import { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
 import { useTaskWorkspacePersistence } from '../useTaskWorkspacePersistence'
 
 describe('workspace Draft persistence', () => {
-  it.each(['read', 'open'] as const)('retries a failed initial %s without writing an empty Draft or confirming exit', async (operation) => {
+  it.each(['ready', 'open'] as const)('retries a failed initial %s without writing an empty Draft or confirming exit', async (operation) => {
     let failing = true
     const failInitially = async () => {
       if (failing)
@@ -24,7 +22,7 @@ describe('workspace Draft persistence', () => {
     }
     const fixture = await createFixture({
       beforeOpen: operation === 'open' ? failInitially : undefined,
-      beforeRead: operation === 'read' ? failInitially : undefined,
+      beforeReady: operation === 'ready' ? failInitially : undefined,
       confirmedContent: 'saved before restart',
       hydrate: false,
     })
@@ -32,7 +30,6 @@ describe('workspace Draft persistence', () => {
     expect(await fixture.persistence.restore()).toBe(false)
     expect(fixture.persistence.restorationState.value).toBe('failed')
     expect(await fixture.persistence.flushPending()).toBe(false)
-    expect(fixture.workspaceWrites).toEqual([])
     expect(fixture.saves).toEqual([])
     expect(buddyUserContentToText(fixture.runtimeDraft('global')!.content)).toBe('saved before restart')
     failing = false
@@ -66,7 +63,7 @@ describe('workspace Draft persistence', () => {
 
   it('preserves navigation and both drafts when delayed restoration finds a different saved Draft', async () => {
     const reading = deferred<void>()
-    const fixture = await createFixture({ beforeRead: () => reading.promise, confirmedContent: 'unseen remote input', hydrate: false })
+    const fixture = await createFixture({ beforeReady: () => reading.promise, confirmedContent: 'unseen remote input', hydrate: false })
     const sourceId = fixture.drafts.draftId.value
     const restoring = fixture.persistence.restore()
     updateText(fixture.drafts, 'local source input')
@@ -85,7 +82,6 @@ describe('workspace Draft persistence', () => {
       remote: { draftId: 'runtime-confirmed-draft', content: createBuddyUserContent('unseen remote input') },
     })
     expect(fixture.saves).toEqual([])
-    expect(fixture.workspaceWrites).toEqual([])
   })
 
   it('keeps foreign-owned inline and panel resources until the user explicitly restores the saved Draft', async () => {
@@ -123,7 +119,7 @@ describe('workspace Draft persistence', () => {
     const reading = deferred<void>()
     const opening = deferred<void>()
     const fixture = await createFixture({
-      beforeRead: restoring ? () => reading.promise : undefined,
+      beforeReady: restoring ? () => reading.promise : undefined,
       beforeOpen: input => input.scope.kind === 'space' && input.scope.spaceId === 'space-1' ? opening.promise : Promise.resolve(),
       confirmedContent: 'unseen saved destination',
       confirmedScope: { kind: 'space', spaceId: 'space-1' },
@@ -155,7 +151,6 @@ describe('workspace Draft persistence', () => {
     })
     expect(await fixture.persistence.flushPending()).toBe(false)
     expect(fixture.saves).toEqual([])
-    expect(fixture.workspaceWrites).toEqual([])
 
     expect(await fixture.persistence.resolveRemote('space:space-1')).toBe(true)
     expect(fixture.session.spaceId.value).toBe('space-2')
@@ -185,11 +180,11 @@ describe('workspace Draft persistence', () => {
     expect(fixture.saves).toEqual([])
   })
 
-  it.each(['read', 'open'] as const)('does not apply a delayed %s or write during disposal before recovery', async (operation) => {
+  it.each(['ready', 'open'] as const)('does not apply a delayed %s or write during disposal before recovery', async (operation) => {
     const pending = deferred<void>()
     const fixture = await createFixture({
       beforeOpen: operation === 'open' ? () => pending.promise : undefined,
-      beforeRead: operation === 'read' ? () => pending.promise : undefined,
+      beforeReady: operation === 'ready' ? () => pending.promise : undefined,
       confirmedContent: 'remote input',
       hydrate: false,
     })
@@ -206,7 +201,6 @@ describe('workspace Draft persistence', () => {
     expect(fixture.drafts.draftId.value).toBe(localId)
     expect(fixture.drafts.draft.value).toBe('local input')
     expect(fixture.saves).toEqual([])
-    expect(fixture.workspaceWrites).toEqual([])
   })
 
   it('inherits permissions when opening a conversation Draft without changing the global Draft', async () => {
@@ -273,7 +267,6 @@ describe('workspace Draft persistence', () => {
 
     expect(fixture.saves.map(save => buddyUserContentToText(save.content))).toEqual(['abc'])
     expect(fixture.runtimeDraft('global')?.revision).toBe(1)
-    expect(fixture.workspaceWrites).toEqual([{ activeConversationId: null, spaceId: null }])
   })
 
   it('keeps one in-flight save and replaces pending edits across scopes', async () => {
@@ -362,7 +355,6 @@ describe('workspace Draft persistence', () => {
 
     expect(await fixture.persistence.persist()).toBe(false)
     expect(fixture.saves).toEqual([])
-    expect(fixture.workspaceWrites).toEqual([])
   })
 })
 
@@ -370,7 +362,7 @@ async function createFixture(options: {
   afterSave?: () => void
   beforeGet?: () => Promise<void>
   beforeOpen?: (input: LocalComposerDraftOpen) => Promise<void>
-  beforeRead?: () => Promise<void>
+  beforeReady?: () => Promise<void>
   beforePersist?: () => Promise<void>
   beforeSave?: () => Promise<void>
   hydrate?: boolean
@@ -382,9 +374,7 @@ async function createFixture(options: {
   const draftsById = new Map<string, LocalComposerDraft>()
   const saves: LocalComposerDraftSave[] = []
   const opens: LocalComposerDraftOpen[] = []
-  const workspaceWrites: LocalWorkspaceStateValue[] = []
   const errors: unknown[] = []
-  let workspace: LocalWorkspaceSetting | null = null
   let scheduleSave = () => {}
   const session = useChatSession()
   const drafts = useChatDrafts({
@@ -393,7 +383,8 @@ async function createFixture(options: {
       ? `conversation:${session.activeConversationId.value}:${session.activeBranchId.value}`
       : session.spaceId.value ? `space:${session.spaceId.value}` : 'global'),
   })
-  const composerDrafts: LocalChatApi['composerDrafts'] = {
+  const composerDrafts: Pick<LocalChatApi['composerDrafts'], 'list' | 'get' | 'open' | 'save'> = {
+    async list() { return [...draftsById.values()] },
     async get(draftId) {
       await options.beforeGet?.()
       const draft = draftsById.get(draftId)
@@ -446,32 +437,15 @@ async function createFixture(options: {
     draftsByScope.set(scopeKey(confirmed.scope), confirmed)
     draftsById.set(confirmed.draftId, confirmed)
   }
-  const workspaceState: LocalChatApi['workspaceState'] = {
-    async read() {
-      await options.beforeRead?.()
-      return structuredClone(workspace)
-    },
-    async write(value) {
-      const snapshot = structuredClone(value)
-      workspaceWrites.push(snapshot)
-      workspace = {
-        key: LOCAL_WORKSPACE_STATE_KEY,
-        updatedAt: '2026-09-06T00:00:01.000Z',
-        value: snapshot,
-      }
-      return structuredClone(workspace)
-    },
-  }
-  const persistence = useTaskWorkspacePersistence({
-    api: { composerDrafts, workspaceState },
+  const draftPersistence = useTaskWorkspacePersistence({
+    api: { composerDrafts },
     beforePersist: options.beforePersist,
-    conversations: { value: [] },
     getConversation: id => conversations.get(id) ?? null,
     drafts,
     onError: error => errors.push(error),
     session,
-    spaces: { value: [] },
   })
+  const persistence = { ...draftPersistence, restore: () => draftPersistence.restore(options.beforeReady?.()) }
   scheduleSave = persistence.persistIfHydrated
   if (options.hydrate !== false)
     await persistence.restore()
@@ -484,7 +458,6 @@ async function createFixture(options: {
     runtimeDraft: (key: string) => draftsByScope.get(key),
     saves,
     session,
-    workspaceWrites,
   }
 }
 
@@ -517,6 +490,7 @@ function openedDraft(input: LocalComposerDraftOpen): LocalComposerDraft {
 
 function scopeKey(scope: BuddyComposerDraftScope): string {
   switch (scope.kind) {
+    case 'task': return `draft:${scope.draftId}`
     case 'global': return 'global'
     case 'space': return `space:${scope.spaceId}`
     case 'conversation_branch': return `conversation:${scope.conversationId}:${scope.branchId}`

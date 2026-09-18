@@ -1,14 +1,7 @@
-import type { BrowserWindow, Event, Input } from 'electron'
+import type { BrowserWindow } from 'electron'
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import { mkdir } from 'node:fs/promises'
-import process from 'node:process'
-import { currentPlatform } from '../../platform/currentPlatform'
-import {
-  DESKTOP_COMMAND_REGISTRY,
-  getDesktopCommand,
-  matchesDesktopShortcut,
-  resolveDesktopShortcuts,
-} from '../shared/desktopCommands'
+import { getDesktopCommand } from '../shared/desktopCommands'
 import { DOCUMENTATION_URL } from '../shared/productLinks'
 
 export interface DesktopCommandExecutorOptions {
@@ -61,32 +54,4 @@ export function createDesktopCommandExecutor(
       throw new Error(`Desktop command has no main handler: ${commandId}`)
     await handler()
   }
-}
-
-export function registerDesktopCommandShortcuts(
-  window: BrowserWindow,
-  executeCommand: ExecuteDesktopCommand,
-): void {
-  const platform = currentPlatform.id
-  const shortcutCommands = DESKTOP_COMMAND_REGISTRY.filter(command => (
-    command.execution === 'main' && resolveDesktopShortcuts(command.id, platform).length > 0
-  ))
-
-  window.webContents.on('before-input-event', (event: Event, input: Input) => {
-    if (input.type !== 'keyDown')
-      return
-
-    const command = shortcutCommands.find((candidate) => {
-      const shortcuts = resolveDesktopShortcuts(candidate.id, platform)
-      return shortcuts.some(shortcut => matchesDesktopShortcut(input, shortcut))
-    })
-    if (!command)
-      return
-
-    event.preventDefault()
-    void executeCommand(command.id).catch((error) => {
-      const diagnostic = error instanceof Error ? error.name : 'unknown error'
-      process.stderr.write(`[Lexora Buddy Desktop] Command ${command.id} failed: ${diagnostic}\n`)
-    })
-  })
 }
