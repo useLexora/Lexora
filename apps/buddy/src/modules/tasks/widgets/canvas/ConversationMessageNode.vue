@@ -51,7 +51,7 @@ function open(event: MouseEvent) {
 <template>
   <article
     class="conversation-node"
-    :class="[message.kind, data.direction, { matched: data.matched, selected, busy }]"
+    :class="[message.kind, data.direction, { selected, busy }]"
     :data-node-id="message.id" :data-kind="message.kind" :data-status="message.status"
     tabindex="0" :aria-label="label" :aria-current="selected ? 'true' : undefined"
     @keydown.enter.self.prevent="actions.open(message.id)"
@@ -135,7 +135,7 @@ function open(event: MouseEvent) {
 .conversation-node:hover .conversation-node__card { border-color: var(--buddy-border-strong); }
 .conversation-node.selected .conversation-node__card { border-color: var(--buddy-focus-ring); box-shadow: 0 0 0 1px var(--buddy-focus-ring), 0 2px 8px rgb(0 0 0 / 3%); }
 .conversation-node:focus-visible { outline: none; }
-.conversation-node:focus-visible .conversation-node__card, .conversation-node.matched .conversation-node__card { outline: 2px solid var(--buddy-accent-border); outline-offset: 3px; }
+.conversation-node:focus-visible .conversation-node__card { outline: 2px solid var(--buddy-accent-border); outline-offset: 3px; }
 .conversation-node.draft .conversation-node__card { border: 1.5px dashed var(--buddy-accent-text); background: color-mix(in srgb, var(--buddy-accent-text) 4%, var(--buddy-surface-base)); box-shadow: none; }
 .conversation-node__header { display: flex; height: 44px; flex: none; align-items: center; gap: 8px; padding: 0 14px; cursor: grab; }
 .conversation-node__role { color: var(--buddy-text-secondary); font-size: 16px; }

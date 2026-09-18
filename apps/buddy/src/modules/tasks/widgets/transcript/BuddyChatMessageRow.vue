@@ -20,7 +20,6 @@ import { useChatContent } from './chatContentContext'
 
 const props = defineProps<{
   actionsDisabled: boolean
-  activeSearch: boolean
   branchNavigator: ChatMessageBranchNavigator | null
   editing: boolean
   isIntermediate?: boolean
@@ -28,7 +27,6 @@ const props = defineProps<{
   resultRunId?: string
   language: BuddyLocale
   message: LocalMessage
-  searchMatch: boolean
   streaming?: boolean
   turnChanges?: LocalChangeSetSummary | null
   turnUsage?: LocalRunTokenUsage
@@ -74,11 +72,9 @@ const messageText = computed(() => getChatMessageDisplayText(
     :class="[
       `is-${message.role}`,
       {
-        'is-search-active': activeSearch,
         'is-assistant-continuation': message.role === 'assistant' && showIdentity === false,
         'is-intermediate': isIntermediate,
         'is-editing': editing,
-        'is-search-match': searchMatch,
         'is-streaming': streaming,
       },
     ]"
@@ -175,24 +171,6 @@ const messageText = computed(() => getChatMessageDisplayText(
   .desktop-icon {
     font-size: 0.9rem;
   }
-}
-
-.buddy-chat-message.is-search-match :deep(.buddy-chat-message-content__text) {
-  border-radius: 0.6rem;
-  background: var(--buddy-status-warning-surface);
-  box-shadow: inset 2px 0 var(--buddy-status-warning-border);
-}
-
-.buddy-chat-message.is-search-active :deep(.buddy-chat-message-content__text) {
-  outline: 1px solid var(--buddy-status-warning-border);
-  outline-offset: 1px;
-}
-
-.buddy-chat-message.is-assistant.is-search-match :deep(.buddy-chat-message-content__text) {
-  width: fit-content;
-  max-width: 100%;
-  justify-self: start;
-  padding: 0.35rem 0.55rem;
 }
 
 .buddy-chat-message__interruption {

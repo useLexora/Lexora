@@ -12,17 +12,10 @@ import { composerResourcesRpc } from '../../shared/conversation/composerApi'
 const ATTACHMENT_PROTOCOL = 'lexora-attachment'
 const ARTIFACT_PROTOCOL = 'lexora-artifact'
 
-export function registerAttachmentSchemePrivileges(): void {
-  protocol.registerSchemesAsPrivileged([ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL].map(scheme => ({
-    scheme,
-    privileges: {
-      secure: true,
-      standard: true,
-      stream: true,
-      supportFetchAPI: true,
-    },
-  })))
-}
+export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL].map(scheme => ({
+  scheme,
+  privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true },
+}))
 
 export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () => void {
   const installPreviewProtocol = (

@@ -17,7 +17,7 @@ describe('registerComposerDraftRpc', () => {
           return () => handlers.delete(method)
         },
       },
-      service: new ComposerDraftService(createComposerDraftRepository(database)),
+      service: new ComposerDraftService(createComposerDraftRepository(database), async () => {}),
     })
     const initial = {
       draftId: 'draft-1',

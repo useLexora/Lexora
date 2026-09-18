@@ -22,7 +22,6 @@ export function useConversationCanvas(options: {
   minimapVisible: Readonly<Ref<boolean>>
   active: Readonly<Ref<boolean>>
   canMutate: Readonly<Ref<boolean>>
-  matches: Readonly<Ref<readonly string[]>>
 }) {
   const graph = shallowRef<Graph | null>(null)
   const zoom = shallowRef(100)
@@ -113,12 +112,11 @@ export function useConversationCanvas(options: {
     const positions = layoutConversationCanvas(options.nodes.value, options.direction.value)
     const ids = new Set(options.nodes.value.map(node => node.id))
     const desired = new Set(ids)
-    const matches = new Set(options.matches.value)
     for (const message of options.nodes.value) {
       const position = positions.get(message.id)!
       let node = value.getCellById(message.id)
       if (!node) {
-        const data = createNodeData(message, matches)
+        const data = createNodeData(message)
         node = value.addNode({ id: message.id, shape: 'buddy-conversation-message', ...position, data, attrs: { fo: { overflow: 'visible' } }, zIndex: 1 })
         nodeData.set(message.id, data)
       }
@@ -150,12 +148,11 @@ export function useConversationCanvas(options: {
     }
   }
 
-  function createNodeData(message: ConversationCanvasNode, matches: ReadonlySet<string>): ConversationCanvasData {
+  function createNodeData(message: ConversationCanvasNode): ConversationCanvasData {
     return {
       message,
       direction: options.direction.value,
       canMutate: options.canMutate.value,
-      matched: !!message.messageId && matches.has(message.messageId),
     }
   }
 
@@ -169,15 +166,14 @@ export function useConversationCanvas(options: {
   }
 
   function sameData(previous: ConversationCanvasData | undefined, next: ConversationCanvasData) {
-    return previous && previous.direction === next.direction && previous.canMutate === next.canMutate && previous.matched === next.matched
+    return previous && previous.direction === next.direction && previous.canMutate === next.canMutate
       && (previous.message === next.message || messageSignature(previous.message) === messageSignature(next.message))
   }
 
   function syncPresentation(value: Graph) {
-    const matches = new Set(options.matches.value)
     const byId = new Map(options.nodes.value.map(node => [node.id, node]))
     for (const message of options.nodes.value) {
-      const data = createNodeData(message, matches)
+      const data = createNodeData(message)
       if (!sameData(nodeData.get(message.id), data))
         value.getCellById(message.id)?.setData(data, { overwrite: true })
       nodeData.set(message.id, data)
@@ -330,7 +326,7 @@ export function useConversationCanvas(options: {
     sync()
   })
   watch([structure, options.conversationId, options.direction], scheduleLayout, { flush: 'post' })
-  watch([options.nodes, options.canMutate, options.matches], schedulePresentation, { flush: 'post' })
+  watch([options.nodes, options.canMutate], schedulePresentation, { flush: 'post' })
   function syncMinimap() {
     const value = graph.value
     if (!value)

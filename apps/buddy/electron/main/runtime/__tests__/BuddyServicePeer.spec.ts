@@ -54,7 +54,7 @@ describe('utilityRuntimePeer', () => {
     await timedOutExpectation
 
     const next = peer.request('runtime.localState', {})
-    const request = process.sent[1] as { id: string }
+    const request = process.sent.at(-1) as { id: string }
     process.emit('message', {
       jsonrpc: '2.0',
       id: request.id,

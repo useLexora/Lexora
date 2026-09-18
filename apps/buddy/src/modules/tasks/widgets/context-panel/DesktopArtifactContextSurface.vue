@@ -6,19 +6,19 @@ import { NSpin } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
-import DesktopMonacoFile from '@/shared/ui/files/DesktopMonacoFile.vue'
-import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
+import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 import { isMarkdownArtifact } from './artifactContextPresentation'
+import DesktopArtifactToolbar from './DesktopArtifactToolbar.vue'
 import { useArtifactPreview } from './useArtifactPreview'
 
 const props = defineProps<{
   artifact: LocalArtifact
   language: BuddyLocale
-  viewMode: ArtifactViewMode
   readArtifactText: (artifactId: string) => Promise<LocalArtifactText>
   writeClipboardText: (text: string) => Promise<void>
 }>()
+const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
 
 const markdown = computed(() => isMarkdownArtifact(props.artifact))
 const { t } = useBuddyI18n(() => props.language)
@@ -30,6 +30,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
 
 <template>
   <section class="desktop-artifact-context-surface">
+    <DesktopArtifactToolbar v-model:view-mode="viewMode" :artifact="artifact" :language="language" :text-available="!!textPreview" />
     <BuddyImagePreview
       v-model:current="previewIndex"
       v-model:show="previewOpen"
@@ -37,7 +38,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
       :sources="previewSources"
     />
 
-    <div class="desktop-artifact-context-surface__viewport" :class="{ 'desktop-artifact-context-surface__viewport--document': markdown && textPreview }">
+    <div class="desktop-artifact-context-surface__viewport" :class="{ 'desktop-artifact-context-surface__viewport--document': textPreview }">
       <button
         v-if="previewUrl"
         class="desktop-artifact-context-surface__preview-trigger"
@@ -56,18 +57,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
         <NSpin size="small" />
         <span>{{ t('common.loading') }}</span>
       </div>
-      <article v-else-if="markdown && textPreview && viewMode === 'preview'" class="desktop-artifact-context-surface__markdown">
-        <DesktopMarkdownContent :content="textPreview.text" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
-      </article>
-      <DesktopMonacoFile v-else-if="markdown && textPreview" :text="textPreview.text" :path="artifact.path" :wrap="true">
-        <template #error>
-          {{ t('desktop.context.sourceLoadFailed') }}
-        </template>
-      </DesktopMonacoFile>
-      <pre
-        v-else-if="textPreview"
-        class="desktop-artifact-context-surface__text"
-      ><code>{{ textPreview.text }}</code></pre>
+      <DesktopDocumentContent v-else-if="textPreview" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :language="language" :write-clipboard-text="writeClipboardText" />
       <div v-else class="desktop-artifact-context-surface__fallback">
         <FolderIcon
           v-if="artifact.kind === 'directory'"
@@ -106,22 +96,11 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
 }
 
 .desktop-artifact-context-surface__viewport--document {
-  display: block;
+  display: flex;
+  align-items: stretch;
   overflow: hidden;
   background: var(--buddy-surface-base);
   padding: 0;
-}
-
-.desktop-artifact-context-surface__markdown {
-  width: 100%;
-  height: 100%;
-  overflow: auto;
-  padding: 1.25rem 1.5rem 2rem;
-  color: var(--buddy-text-primary);
-  font-family: var(--buddy-font-ui);
-  overflow-wrap: anywhere;
-  --buddy-chat-final-font-size: 0.875rem;
-  --buddy-chat-final-line-height: 1.75;
 }
 
 .desktop-artifact-context-surface__preview-trigger {
@@ -175,23 +154,5 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
   max-width: 100%;
   font-family: var(--buddy-font-mono, ui-monospace, monospace);
   overflow-wrap: anywhere;
-}
-
-.desktop-artifact-context-surface__text {
-  align-self: stretch;
-  justify-self: stretch;
-  min-width: 0;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-primary);
-  font-family: var(--buddy-font-mono, ui-monospace, monospace);
-  font-size: 0.75rem;
-  line-height: 1.65;
-  padding: 0.875rem;
-  tab-size: 2;
-  white-space: pre;
 }
 </style>

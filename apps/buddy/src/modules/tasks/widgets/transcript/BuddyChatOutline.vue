@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import type { ChatOutlineItem } from '../../model/transcript/chatOutline'
+import type { DesktopChatOutlinePosition } from '@buddy-electron/shared/desktopApi'
+import type { VirtualListInst } from 'naive-ui'
 
+import type { ChatOutlineItem } from '../../model/transcript/chatOutline'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Keyboard20Regular, Wand20Regular } from '@vicons/fluent'
-import { computed, shallowRef, useTemplateRef } from 'vue'
+import { NVirtualList } from 'naive-ui'
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -13,6 +16,7 @@ const props = defineProps<{
   isLoading: boolean
   items: ReadonlyArray<ChatOutlineItem>
   language: BuddyLocale
+  position: DesktopChatOutlinePosition
 }>()
 
 const emit = defineEmits<{
@@ -22,10 +26,15 @@ const emit = defineEmits<{
 }>()
 
 const MAX_RAIL_ITEM_COUNT = 48
+const OUTLINE_ROW_HEIGHT = 32
 
 const { t } = useBuddyI18n(() => props.language)
 const root = useTemplateRef<HTMLElement>('root')
+const list = useTemplateRef<VirtualListInst>('list')
 const isExpanded = shallowRef(false)
+const scrollTop = shallowRef(0)
+const virtualItems = computed(() => [...props.items])
+const itemIndexes = computed(() => new Map(props.items.map((item, index) => [item.messageId, index])))
 const railItems = computed(() => {
   if (props.items.length <= MAX_RAIL_ITEM_COUNT)
     return props.items
@@ -33,7 +42,7 @@ const railItems = computed(() => {
   const indexes = Array.from({ length: MAX_RAIL_ITEM_COUNT }, (_, index) => (
     Math.round(index * (props.items.length - 1) / (MAX_RAIL_ITEM_COUNT - 1))
   ))
-  const activeIndex = props.items.findIndex(item => item.messageId === props.activeMessageId)
+  const activeIndex = itemIndexes.value.get(props.activeMessageId ?? '') ?? -1
   if (activeIndex >= 0 && !indexes.includes(activeIndex)) {
     let nearestIndex = 0
     for (let index = 1; index < indexes.length; index += 1) {
@@ -47,6 +56,42 @@ const railItems = computed(() => {
     .sort((left, right) => left - right)
     .map(index => props.items[index])
 })
+
+watch(list, async (value) => {
+  if (!value)
+    return
+  await nextTick()
+  value.scrollTo({ top: scrollTop.value })
+}, { flush: 'post' })
+
+function handleListScroll(event: Event) {
+  if (event.target instanceof HTMLElement)
+    scrollTop.value = event.target.scrollTop
+}
+
+async function handleListKeydown(event: KeyboardEvent, index: number) {
+  const scrollport = root.value?.querySelector<HTMLElement>('.v-vl')
+  const pageSize = Math.max(1, Math.floor((scrollport?.clientHeight ?? OUTLINE_ROW_HEIGHT) / OUTLINE_ROW_HEIGHT))
+  const targets: Record<string, number> = {
+    ArrowDown: index + 1,
+    ArrowUp: index - 1,
+    End: props.items.length - 1,
+    Home: 0,
+    PageDown: index + pageSize,
+    PageUp: index - pageSize,
+  }
+  const target = targets[event.key]
+  if (target === undefined || event.altKey || event.ctrlKey || event.metaKey)
+    return
+  event.preventDefault()
+  const nextIndex = Math.max(0, Math.min(props.items.length - 1, target))
+  root.value?.focus({ preventScroll: true })
+  list.value?.scrollTo({ index: nextIndex })
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  await nextTick()
+  if (isExpanded.value)
+    root.value?.querySelector<HTMLButtonElement>(`[data-outline-index="${nextIndex}"]`)?.focus({ preventScroll: true })
+}
 
 function expand() {
   isExpanded.value = true
@@ -104,38 +149,59 @@ function select(messageId: string) {
     v-if="items.length"
     ref="root"
     class="buddy-chat-outline"
+    :class="{ 'is-left': position.endsWith('left'), 'is-center': position.startsWith('center'), 'is-bottom': position.startsWith('bottom') }"
+    tabindex="-1"
     :aria-label="t('desktop.chat.outline')"
     @focusin="expand"
     @focusout="handleFocusOut"
     @mouseleave="collapse"
   >
-    <section v-if="isExpanded" class="buddy-chat-outline__panel">
+    <section
+      v-if="isExpanded"
+      class="buddy-chat-outline__panel"
+      :style="{ '--buddy-outline-content-height': `${items.length * OUTLINE_ROW_HEIGHT}px` }"
+    >
       <div v-if="isLoading" class="buddy-chat-outline__loading" role="status">
         {{ t('desktop.chat.outlineLoading') }}
       </div>
-      <ol class="buddy-chat-outline__list">
-        <li
-          v-for="item in items"
-          :key="item.messageId"
-          class="buddy-chat-outline__item"
-          :class="[`is-${item.kind}`, { 'is-active': item.messageId === activeMessageId }]"
-        >
-          <button
-            type="button"
-            class="buddy-chat-outline__item-button"
-            :aria-label="itemAriaLabel(item)"
-            :aria-current="item.messageId === activeMessageId ? 'location' : undefined"
-            @click="select(item.messageId)"
+      <NVirtualList
+        ref="list"
+        class="buddy-chat-outline__list"
+        :items="virtualItems"
+        :item-size="OUTLINE_ROW_HEIGHT"
+        :default-scroll-index="Math.floor(scrollTop / OUTLINE_ROW_HEIGHT)"
+        key-field="messageId"
+        visible-items-tag="ol"
+        :visible-items-props="{ class: 'buddy-chat-outline__visible-items' }"
+        @scroll="handleListScroll"
+      >
+        <template #default="{ item, index }">
+          <li
+            :key="item.messageId"
+            class="buddy-chat-outline__item"
+            :class="[`is-${item.kind}`, { 'is-active': item.messageId === activeMessageId }]"
+            :aria-posinset="index + 1"
+            :aria-setsize="items.length"
           >
-            <DesktopIcon
-              class="buddy-chat-outline__role-icon"
-              :component="roleIcon(item)"
-              aria-hidden="true"
-            />
-            <span class="buddy-chat-outline__text">{{ itemText(item) }}</span>
-          </button>
-        </li>
-      </ol>
+            <button
+              type="button"
+              class="buddy-chat-outline__item-button"
+              :data-outline-index="index"
+              :aria-label="itemAriaLabel(item)"
+              :aria-current="item.messageId === activeMessageId ? 'location' : undefined"
+              @click="select(item.messageId)"
+              @keydown="handleListKeydown($event, index)"
+            >
+              <DesktopIcon
+                class="buddy-chat-outline__role-icon"
+                :component="roleIcon(item)"
+                aria-hidden="true"
+              />
+              <span class="buddy-chat-outline__text">{{ itemText(item) }}</span>
+            </button>
+          </li>
+        </template>
+      </NVirtualList>
     </section>
 
     <ol class="buddy-chat-outline__rail" @wheel.prevent="handleRailWheel">
@@ -169,6 +235,47 @@ function select(messageId: string) {
   width: 14px;
   height: calc(100% - 2rem);
   pointer-events: none;
+
+  &.is-left {
+    right: auto;
+    left: 0.875rem;
+
+    .buddy-chat-outline__panel {
+      right: auto;
+      left: calc(100% + 0.5rem);
+
+      &::after {
+        right: auto;
+        left: -0.5rem;
+      }
+    }
+
+    .buddy-chat-outline__indicator-button {
+      justify-content: flex-start;
+    }
+  }
+
+  &.is-center {
+    .buddy-chat-outline__rail {
+      justify-content: center;
+    }
+
+    .buddy-chat-outline__panel {
+      top: 50%;
+      transform: translateY(-50%);
+    }
+  }
+
+  &.is-bottom {
+    .buddy-chat-outline__rail {
+      justify-content: flex-end;
+    }
+
+    .buddy-chat-outline__panel {
+      top: auto;
+      bottom: 0;
+    }
+  }
 }
 
 .buddy-chat-outline__panel {
@@ -178,6 +285,7 @@ function select(messageId: string) {
   box-sizing: border-box;
   display: flex;
   width: 15rem;
+  height: calc(var(--buddy-outline-content-height) + 1.25rem + 2px);
   max-height: 100%;
   flex-direction: column;
   gap: 0.25rem;
@@ -206,32 +314,43 @@ function select(messageId: string) {
 }
 
 .buddy-chat-outline__list {
-  display: grid;
   min-height: 0;
   flex: 1;
-  align-content: start;
-  gap: 0.125rem;
+
+  :deep(.v-vl) {
+    overscroll-behavior: contain;
+  }
+}
+
+:deep(.buddy-chat-outline__visible-items) {
   margin: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 0;
   list-style: none;
 }
 
 .buddy-chat-outline__item {
+  box-sizing: border-box;
+  height: 32px;
   min-width: 0;
   border-radius: var(--buddy-radius-micro);
   color: var(--buddy-text-primary);
+  padding-block: 2px;
 
-  &.is-active {
+  &.is-active .buddy-chat-outline__item-button {
     background: var(--buddy-accent-surface);
     color: var(--buddy-accent-on-surface);
+  }
+
+  &:not(.is-active) .buddy-chat-outline__item-button:hover {
+    background: var(--buddy-state-hover);
   }
 }
 
 .buddy-chat-outline__item-button {
+  box-sizing: border-box;
   display: grid;
   width: 100%;
+  height: 100%;
   min-width: 0;
   grid-template-columns: 1rem minmax(0, 1fr);
   align-items: center;
@@ -241,12 +360,8 @@ function select(messageId: string) {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 0.42rem 0.5rem;
+  padding: 0 0.5rem;
   text-align: left;
-
-  &:hover {
-    background: var(--buddy-state-hover);
-  }
 
   &:focus-visible {
     outline: 2px solid var(--buddy-focus-ring);
@@ -272,6 +387,7 @@ function select(messageId: string) {
 }
 
 .buddy-chat-outline__rail {
+  box-sizing: border-box;
   display: flex;
   width: 100%;
   height: 100%;

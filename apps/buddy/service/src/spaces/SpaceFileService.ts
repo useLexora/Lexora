@@ -1,7 +1,10 @@
-import type { LocalSpaceDirectoryPage, LocalSpaceFileEntry, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
+import type { LocalSpaceDirectoryPage, LocalSpaceFileEntry, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget, SpaceSaveDocument, SpaceSaveResult, SpaceTextDocument } from '../../../shared/spaces/spaceFileApi'
 import type { SpaceRepository } from '../storage/spaceRepository'
+import { createHash } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
+import { saveBoundedTextFile } from '../../../platform/filesystem/saveBoundedTextFile'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { readFilePreview } from '../files/readFilePreview'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
@@ -9,6 +12,7 @@ import { requireActiveSpace } from './requireActiveSpace'
 
 export class SpaceFileService {
   readonly #spaces: Pick<SpaceRepository, 'findById'>
+  readonly #saves = new Map<string, Promise<SpaceSaveResult>>()
 
   constructor(spaces: Pick<SpaceRepository, 'findById'>) {
     this.#spaces = spaces
@@ -55,6 +59,38 @@ export class SpaceFileService {
     if (!metadata.isDirectory() && !metadata.isFile())
       throw new BuddyServiceError('VALIDATION_FAILED')
     return { path: target.path, kind: metadata.isDirectory() ? 'directory' : 'file' }
+  }
+
+  async readDocument(input: SpaceFileTarget): Promise<SpaceTextDocument> {
+    const target = await this.resolve(input)
+    const bytes = await readBoundedFile(target.root, target.path, 1024 * 1024)
+    this.requireDirectory(input)
+    if (bytes.includes(0))
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+    return { text, etag: createHash('sha256').update(bytes).digest('hex') }
+  }
+
+  saveDocument(input: SpaceSaveDocument): Promise<SpaceSaveResult> {
+    const key = JSON.stringify([input.directoryId, input.revision, input.path])
+    const previous = this.#saves.get(key) ?? Promise.resolve()
+    const save = previous.catch(() => {}).then(async (): Promise<SpaceSaveResult> => {
+      const target = await this.resolve(input)
+      const current = await this.readDocument(input)
+      if (current.etag !== input.etag)
+        return { status: 'conflict', document: current }
+      this.requireDirectory(input)
+      const status = await saveBoundedTextFile({ ...target, expected: current.text, content: input.text })
+      this.requireDirectory(input)
+      return status === 'saved'
+        ? { status, document: { text: input.text, etag: createHash('sha256').update(input.text).digest('hex') } }
+        : { status, document: await this.readDocument(input) }
+    }).finally(() => {
+      if (this.#saves.get(key) === save)
+        this.#saves.delete(key)
+    })
+    this.#saves.set(key, save)
+    return save
   }
 
   private requireDirectory(input: SpaceFileTarget) {

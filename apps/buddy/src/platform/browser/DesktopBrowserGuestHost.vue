@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const hostElement = useTemplateRef<HTMLElement>('hostElement')
 const guests = new Map<string, BrowserGuestEntry>()
-let activeSurface: BrowserGuestSurface | null = null
+const surfaces = new Map<string, BrowserGuestSurface>()
 let animationFrame: number | null = null
 let mounted = false
 let refreshSequence = 0
@@ -57,37 +57,29 @@ onBeforeUnmount(() => {
 })
 
 function show(sessionId: string, element: HTMLElement): void {
-  if (
-    activeSurface?.sessionId === sessionId
-    && activeSurface.element === element
-  ) {
+  const previous = surfaces.get(sessionId)
+  if (previous?.element === element) {
     scheduleLayout()
     return
   }
-
-  if (activeSurface)
-    parkGuest(activeSurface.sessionId)
-  resizeObserver?.disconnect()
-  activeSurface = { element, sessionId }
-  resizeObserver = new ResizeObserver(scheduleLayout)
+  if (previous)
+    resizeObserver?.unobserve(previous.element)
+  resizeObserver ??= new ResizeObserver(scheduleLayout)
+  surfaces.set(sessionId, { sessionId, element })
   resizeObserver.observe(element)
   scheduleLayout()
 }
 
 function hide(sessionId: string, element?: HTMLElement): void {
-  if (
-    activeSurface?.sessionId !== sessionId
-    || (element && activeSurface.element !== element)
-  ) {
+  const current = surfaces.get(sessionId)
+  if (!current || (element && current.element !== element))
     return
-  }
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  activeSurface = null
+  resizeObserver?.unobserve(current.element)
+  surfaces.delete(sessionId)
   parkGuest(sessionId)
 }
 
-defineExpose({ hide, show })
+defineExpose({ hide, show, layout: scheduleLayout })
 
 function scheduleRefresh(): void {
   void refreshGuests(++refreshSequence)
@@ -189,26 +181,23 @@ function scheduleLayout(): void {
 }
 
 function updateLayout(): void {
-  const surface = activeSurface
-  if (!surface || !surface.element.isConnected)
-    return
-  const entry = guests.get(surface.sessionId)
-  if (!entry)
-    return
-  const rect = surface.element.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) {
-    parkElement(entry.element)
-    return
+  for (const [sessionId, entry] of guests) {
+    const surface = surfaces.get(sessionId)
+    const rect = surface?.element.isConnected ? surface.element.getBoundingClientRect() : null
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      parkElement(entry.element)
+      continue
+    }
+    Object.assign(entry.element.style, {
+      height: `${rect.height}px`,
+      left: `${rect.left}px`,
+      pointerEvents: 'auto',
+      position: 'absolute',
+      top: `${rect.top}px`,
+      visibility: 'visible',
+      width: `${rect.width}px`,
+    })
   }
-  Object.assign(entry.element.style, {
-    height: `${rect.height}px`,
-    left: `${rect.left}px`,
-    pointerEvents: 'auto',
-    position: 'absolute',
-    top: `${rect.top}px`,
-    visibility: 'visible',
-    width: `${rect.width}px`,
-  })
 }
 </script>
 

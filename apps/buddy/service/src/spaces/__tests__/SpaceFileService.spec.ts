@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -46,6 +46,24 @@ describe('space file browsing', () => {
     await writeFile(join(f.workspace, 'large.txt'), Buffer.alloc(1024 * 1024 + 1, 65))
     expect(await f.files.read({ ...f.target, path: 'large.txt' })).toMatchObject({ kind: 'oversized', text: null })
     expect(await f.files.locate({ ...f.target, path: 'file-001.ts' })).toEqual({ path: join(f.workspace, 'file-001.ts'), kind: 'file' })
+  })
+
+  it('saves UTF-8 content without changing its BOM, rejects stale etags and rechecks grants', async () => {
+    const f = await fixture()
+    const path = join(f.workspace, 'note.md')
+    await writeFile(path, '\uFEFFbase\r\n')
+    const target = { ...f.target, path: 'note.md' }
+    const original = await f.files.readDocument(target)
+    expect(original.text).toBe('\uFEFFbase\r\n')
+    const saved = await f.files.saveDocument({ ...target, etag: original.etag, text: '\uFEFFchanged\r\n' })
+    expect(saved.status).toBe('saved')
+    expect(await readFile(path, 'utf8')).toBe('\uFEFFchanged\r\n')
+    const conflict = await f.files.saveDocument({ ...target, etag: original.etag, text: 'stale overwrite' })
+    expect(conflict).toMatchObject({ status: 'conflict', document: { text: '\uFEFFchanged\r\n' } })
+    await expect(f.files.saveDocument({ ...target, revision: 99, etag: saved.document.etag, text: 'wrong grant' })).rejects.toThrow()
+    await f.spaces.delete(target.spaceId)
+    await expect(f.files.saveDocument({ ...target, etag: saved.document.etag, text: 'revoked grant' })).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe('\uFEFFchanged\r\n')
   })
 
   it('rejects escape paths and stale directory bindings without reading outside the workspace', async () => {

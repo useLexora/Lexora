@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
+import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '../../../shared/desktopApi'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
 async function createConfigStore() {
@@ -17,6 +18,24 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults existing profiles to the upper right and persists every outline position without changing other settings', async () => {
+    const { configPath, store } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop]\ntheme = "dark"\nwelcome_variant = "writing"\n[custom]\nkeep = true\n')
+    const original = await store.read()
+    expect(original.desktop.chat).toEqual({ outlinePosition: 'top-right', welcome: 'random' })
+    await store.update({ desktop: { chat: { welcome: 'none' } } })
+    for (const outlinePosition of DESKTOP_CHAT_OUTLINE_POSITIONS) {
+      await store.update({ desktop: { chat: { outlinePosition } } })
+      const restored = await new LexoraConfigStore({ configPath }).read()
+      expect(restored).toEqual({
+        ...original,
+        desktop: { ...original.desktop, chat: { outlinePosition, welcome: 'none' } },
+      })
+      expect(await readFile(configPath, 'utf8')).toContain('keep = true')
+    }
+  })
+
   it('migrates browser preferences with defaults and preserves unrelated settings across updates', async () => {
     const { configPath, store } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
@@ -35,6 +54,19 @@ describe('lexoraConfigStore', () => {
     for (const freezeDelaySeconds of [0, 4, 3601, 10.5])
       await expect(store.update({ browser: { freezeDelaySeconds } })).rejects.toThrow()
     expect(await readFile(configPath, 'utf8')).toBe(saved)
+  })
+
+  it('persists shortcut overrides, disabled commands and reset without losing unrelated settings', async () => {
+    const { store, configPath } = await createConfigStore()
+    expect((await store.read()).desktop.keybindings).toEqual({})
+    await store.update({ desktop: { keybindings: { 'task.new': 'Mod+Alt+N', 'view.close': '' }, theme: 'dark' } })
+    const reopened = new LexoraConfigStore({ configPath })
+    expect((await reopened.read()).desktop.keybindings).toEqual({ 'task.new': 'Mod+Alt+N', 'view.close': '' })
+    const before = await readFile(configPath, 'utf8')
+    await expect(reopened.update({ desktop: { keybindings: { 'task.new': 'not a shortcut' } } })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(before)
+    await reopened.update({ desktop: { keybindings: {} } })
+    expect((await reopened.read()).desktop).toMatchObject({ theme: 'dark', keybindings: {} })
   })
 
   it('defaults existing profiles to system proxy and preserves the custom address across mode changes', async () => {
@@ -87,14 +119,14 @@ describe('lexoraConfigStore', () => {
   it('updates only requested settings and writes a private TOML file atomically', async () => {
     const { configPath, store } = await createConfigStore()
     await expect(store.read()).resolves.toMatchObject({
-      desktop: { theme: 'system', welcomeVariant: 'random' },
+      desktop: { theme: 'system', chat: { outlinePosition: 'top-right', welcome: 'random' } },
       pet: { alwaysOnTop: true, enabled: true, rememberPosition: true },
     })
 
     const updated = await store.update({
       desktop: {
         theme: 'dark',
-        welcomeVariant: 'writing',
+        chat: { welcome: 'writing' },
       },
       pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
     })
@@ -102,7 +134,9 @@ describe('lexoraConfigStore', () => {
     expect(updated.desktop).toEqual({
       contextPanelMode: 'task',
       contextPanelGlobal: false,
+      keybindings: {},
       backgroundCloseNoticeShown: false,
+      chat: { outlinePosition: 'top-right', welcome: 'writing' },
       taskSidebarPinnedItems: [],
       taskSidebar: {
         collapsed: false,
@@ -117,7 +151,6 @@ describe('lexoraConfigStore', () => {
       notifyWhenFocused: false,
       sidebarCollapsed: false,
       theme: 'dark',
-      welcomeVariant: 'writing',
     })
     const content = await readFile(configPath, 'utf8')
     expect(content).toContain('[desktop]')
@@ -133,7 +166,8 @@ describe('lexoraConfigStore', () => {
     expect(content).toContain('notifications_enabled = true')
     expect(content).toContain('notify_when_focused = false')
     expect(content).toContain('sidebar_collapsed = false')
-    expect(content).toContain('welcome_variant = "writing"')
+    expect(content).toContain('[desktop.chat]')
+    expect(content).toContain('welcome = "writing"')
     expect(content).not.toContain('[agent.codex]')
     expect((await stat(configPath)).mode & 0o777).toBe(0o600)
 
@@ -234,17 +268,19 @@ describe('lexoraConfigStore', () => {
     expect(content).toContain('id = "conversation-a"')
   })
 
-  it('normalizes an unavailable welcome variant to random', async () => {
+  it('uses defaults for omitted chat preferences and preserves unknown preferences on updates', async () => {
     const { configPath, store } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop]\nwelcome_variant = "listening"\n')
+    await writeFile(configPath, '[desktop.chat]\nwelcome = "none"\nfuture = true\n')
 
     await expect(store.read()).resolves.toMatchObject({
-      desktop: { welcomeVariant: 'random' },
+      desktop: { chat: { outlinePosition: 'top-right', welcome: 'none' } },
     })
 
     await store.update({ desktop: { theme: 'dark' } })
-    expect(await readFile(configPath, 'utf8')).toContain('welcome_variant = "random"')
+    const saved = await readFile(configPath, 'utf8')
+    expect(saved).toContain('welcome = "none"')
+    expect(saved).toContain('future = true')
   })
 
   it('preserves config sections owned by future or remote capabilities', async () => {

@@ -1,4 +1,4 @@
-import type { BuddyChatMessageListHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics } from '../../transcript/chatMessageViewport'
+import type { BuddyChatMessageListHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics, ChatReadingPositions } from '../../transcript/chatMessageViewport'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
@@ -11,6 +11,7 @@ function createList() {
   const metrics: ChatMessageScrollMetrics = { clientHeight: 400, scrollHeight: 1_000, scrollTop: 20 }
   const highlights: string[] = []
   const revealed: string[] = []
+  const revealBehaviors: Array<ScrollBehavior | undefined> = []
   const geometry = { anchorTop: 20 }
   const handle: BuddyChatMessageListHandle = {
     captureScrollAnchor: () => ({ messageId: 'visible', messageOffsetTop: geometry.anchorTop - metrics.scrollTop, metrics: { ...metrics } }),
@@ -20,8 +21,9 @@ function createList() {
       metrics.scrollTop = geometry.anchorTop - anchor.messageOffsetTop
       return { ...metrics }
     },
-    scrollToMessage: (id) => {
+    scrollToMessage: (id, behavior) => {
       revealed.push(id)
+      revealBehaviors.push(behavior)
       metrics.scrollTop = id === 'new-target' ? 300 : 100
       return { ...metrics }
     },
@@ -30,19 +32,21 @@ function createList() {
       return { ...metrics }
     },
   }
-  return { geometry, handle, highlights, metrics, revealed }
+  return { geometry, handle, highlights, metrics, revealed, revealBehaviors }
 }
 
 function createViewport(loadOlderMessages: () => Promise<boolean>, initial: {
   isLoading?: boolean
   listMounted?: boolean
-  searchMessageId?: string
+  revealMessageId?: string
+  readingPositions?: ChatReadingPositions
 } = {}) {
   const original = createList()
   const options = {
+    readingPositions: initial.readingPositions,
     activeBranchId: shallowRef<string | null>('branch-1'),
     activeConversationId: shallowRef<string | null>('conversation-1'),
-    activeSearchMessageId: shallowRef<string | null>(initial.searchMessageId ?? null),
+    revealMessageId: shallowRef<string | null>(initial.revealMessageId ?? null),
     hasOlderMessages: shallowRef(true),
     isLoading: shallowRef(initial.isLoading ?? false),
     isLoadingOlderMessages: shallowRef(false),
@@ -89,6 +93,34 @@ async function invalidate(fixture: ReturnType<typeof createViewport>, reason: In
 }
 
 describe('chat viewport operations', () => {
+  it('restores a disposed task from its lightweight anchor after loading the required history', async () => {
+    const readingPositions: ChatReadingPositions = new Map()
+    const first = createViewport(async () => false, { readingPositions })
+    first.options.hasOlderMessages.value = false
+    first.options.timelineItems.value = [{ id: 'oldest', kind: 'message' }, { id: 'visible', kind: 'message' }]
+    first.original.metrics.scrollTop = 200
+    first.viewport.handleScroll(first.original.metrics)
+    first.scope.stop()
+
+    let loaded = 0
+    const reopened = createViewport(async () => {
+      loaded += 1
+      await prependHistory(reopened)
+      reopened.options.timelineItems.value = [{ id: 'oldest', kind: 'message' }, ...reopened.options.timelineItems.value]
+      return true
+    }, { listMounted: false, readingPositions })
+    reopened.options.list.value = reopened.original.handle
+    for (let tick = 0; tick < 10; tick += 1)
+      await nextTick()
+    expect(loaded).toBe(1)
+    expect(reopened.original.metrics.scrollTop).toBe(600)
+    expect(reopened.viewport.isPositioning.value).toBe(false)
+    expect(reopened.viewport.showReturnToLatest.value).toBe(true)
+    await reopened.viewport.returnToLatest()
+    reopened.scope.stop()
+    expect(readingPositions.get('conversation-1:branch-1')).toBeNull()
+  })
+
   it('fills an initially unscrollable transcript before revealing its latest position', async () => {
     let pages = 0
     const fixture = createViewport(async () => {
@@ -159,7 +191,7 @@ describe('chat viewport operations', () => {
     }, {
       isLoading: true,
       listMounted: false,
-      searchMessageId: 'old-target',
+      revealMessageId: 'old-target',
     })
     fixture.options.list.value = fixture.original.handle
     fixture.options.isLoading.value = false
@@ -175,7 +207,7 @@ describe('chat viewport operations', () => {
       pages += 1
       fixture.options.timelineItems.value = [{ id: 'new-target', kind: 'message' }]
       return true
-    }, { isLoading: true, listMounted: false, searchMessageId: 'new-target' })
+    }, { isLoading: true, listMounted: false, revealMessageId: 'new-target' })
     await nextTick()
     expect(pages).toBe(0)
     fixture.options.isLoading.value = false
@@ -189,12 +221,12 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(300)
   })
 
-  it.each(['before', 'after'] as const)('reveals a search target received before the list mounts %s initial loading finishes', async (mountOrder) => {
+  it.each(['before', 'after'] as const)('reveals a target received before the list mounts %s initial loading finishes', async (mountOrder) => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false
     fixture.options.isLoading.value = true
     fixture.options.list.value = null
-    fixture.options.activeSearchMessageId.value = 'new-target'
+    fixture.options.revealMessageId.value = 'new-target'
     await nextTick()
 
     const mounted = createList()
@@ -217,7 +249,7 @@ describe('chat viewport operations', () => {
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
-  it('reveals the current search on a replacement list without reviving an old outline request', async () => {
+  it('reveals the current target on a replacement list without reviving an old outline request', async () => {
     const pending = deferred<boolean>()
     const fixture = createViewport(() => pending.promise)
     const oldReveal = fixture.viewport.revealOutlineMessage('old-target')
@@ -225,7 +257,7 @@ describe('chat viewport operations', () => {
     fixture.options.activeBranchId.value = 'branch-2'
     fixture.options.list.value = null
     fixture.options.hasOlderMessages.value = false
-    fixture.options.activeSearchMessageId.value = 'new-target'
+    fixture.options.revealMessageId.value = 'new-target'
     await nextTick()
     const replacement = createList()
     fixture.options.timelineItems.value = [{ id: 'new-target', kind: 'message' }]
@@ -242,12 +274,12 @@ describe('chat viewport operations', () => {
     expect(replacement.metrics.scrollTop).toBe(300)
   })
 
-  it.each(['conversation', 'branch', 'reader-scroll', 'reader-layout', 'return-latest', 'clear-search', 'dispose'] as const)('cancels a pending search after %s instead of replaying it when the list mounts', async (reason) => {
+  it.each(['conversation', 'branch', 'reader-scroll', 'reader-layout', 'return-latest', 'clear-target', 'dispose'] as const)('cancels a pending reveal after %s instead of replaying it when the list mounts', async (reason) => {
     let pages = 0
     const fixture = createViewport(async () => {
       pages += 1
       return false
-    }, { isLoading: true, listMounted: false, searchMessageId: 'old-target' })
+    }, { isLoading: true, listMounted: false, revealMessageId: 'old-target' })
     if (reason === 'conversation')
       fixture.options.activeConversationId.value = 'conversation-2'
     else if (reason === 'branch')
@@ -258,8 +290,8 @@ describe('chat viewport operations', () => {
       fixture.viewport.handleReaderLayoutIntent()
     else if (reason === 'return-latest')
       await fixture.viewport.returnToLatest()
-    else if (reason === 'clear-search')
-      fixture.options.activeSearchMessageId.value = null
+    else if (reason === 'clear-target')
+      fixture.options.revealMessageId.value = null
     else
       fixture.scope.stop()
     const mounted = createList()
@@ -271,7 +303,7 @@ describe('chat viewport operations', () => {
     expect(pages).toBe(0)
     expect(mounted.revealed).toEqual([])
     expect(mounted.highlights).toEqual([])
-    fixture.options.activeSearchMessageId.value = null
+    fixture.options.revealMessageId.value = null
   })
 
   it.each<Invalidation>(['conversation', 'branch', 'list', 'dispose'])('discards an old pagination anchor after %s invalidation', async (reason) => {
@@ -337,6 +369,7 @@ describe('chat viewport operations', () => {
     expect(fixture.original.highlights).toEqual(['new-target'])
     expect(fixture.original.revealed).toEqual(['new-target'])
     expect(fixture.original.metrics.scrollTop).toBe(300)
+    expect(fixture.original.revealBehaviors).toEqual(['smooth'])
   })
 
   it('lets a new outline intent await the current history request instead of treating busy as exhausted history', async () => {
@@ -354,6 +387,7 @@ describe('chat viewport operations', () => {
     expect(fixture.original.highlights).toEqual(['new-target'])
     expect(fixture.original.revealed).toEqual(['new-target'])
     expect(fixture.original.metrics.scrollTop).toBe(300)
+    expect(fixture.original.revealBehaviors).toEqual(['auto'])
   })
 
   it('lets reader movement interrupt a deferred return to the latest message', async () => {

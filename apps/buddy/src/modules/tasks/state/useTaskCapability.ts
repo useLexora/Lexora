@@ -2,10 +2,12 @@ import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { JSONContent } from '@tiptap/core'
 import type { TaskCapability } from '../contracts'
+import type { TaskIndexController } from './task-index/useTaskIndex'
 import type { ModelProvidersStore } from '@/modules/models'
 import type { ApplicationSettings } from '@/modules/settings'
 import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
+import { until } from '@vueuse/core'
 import { computed, readonly, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { getChatComposerResourceIds } from '@/modules/prompt-input'
@@ -21,7 +23,6 @@ import { useChatApprovals } from '@/modules/tasks/state/runs/useChatApprovals'
 import { useChatContextUsage } from '@/modules/tasks/state/runs/useChatContextUsage'
 import { useChatExecution } from '@/modules/tasks/state/runs/useChatExecution'
 import { useChatRunSync } from '@/modules/tasks/state/runs/useChatRunSync'
-import { useTaskIndexData } from '@/modules/tasks/state/task-index/useTaskIndexData'
 import { useTaskSpaces } from '@/modules/tasks/state/task-index/useTaskSpaces'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { createDraftScopeKey } from '../model/drafts/draftScope'
@@ -35,17 +36,15 @@ import { useTaskModelPersistence } from './drafts/useTaskModelPersistence'
 import { useTaskModelSelection } from './drafts/useTaskModelSelection'
 
 import { useTaskWorkspacePersistence } from './drafts/useTaskWorkspacePersistence'
-import { useTaskMarks } from './task-index/useTaskMarks'
-import { useTaskPinnedItems } from './task-index/useTaskPinnedItems'
-import { useTaskSidebarPreferences } from './task-index/useTaskSidebarPreferences'
 import { useTaskLifecycle } from './useTaskLifecycle'
 
 export interface UseTaskCapabilityOptions {
+  index: TaskIndexController
+  initialTarget: { draftKey?: string, conversationId: string | null, branchId: string | null, spaceId: string | null }
   api: LexoraDesktopApi
   applicationSettings: ApplicationSettings
   modelProviders: ModelProvidersStore
   runtimeSupervisor: RuntimeSupervisorStore
-  onTaskDeleted?: (conversationId: string) => void
   onDraftCommitted?: (draftId: string, conversationId: string) => void
 }
 
@@ -57,15 +56,10 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     runtimeSupervisor,
   } = options
   const taskModels = useTaskModelSelection(modelProviders)
-  const taskPins = useTaskPinnedItems(applicationSettings)
-  const taskSidebar = useTaskSidebarPreferences(applicationSettings)
-  const taskIndexData = useTaskIndexData({ api: api.localChat })
-  const {
-    conversations,
-    spaces,
-    refreshIndex: refreshTaskIndex,
-  } = taskIndexData
+  const taskIndexData = options.index.data
+  const { conversations } = taskIndexData
   const chatSession = useChatSession()
+  chatSession.hydrate({ activeConversationId: options.initialTarget.conversationId, activeBranchId: options.initialTarget.branchId, spaceId: options.initialTarget.spaceId })
   const {
     activeBranchId,
     activeConversationId,
@@ -73,20 +67,15 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     spaceId,
   } = chatSession
   const isSelectingFiles = shallowRef(false)
+  const isClosing = shallowRef(false)
   const errorMessage = shallowRef<string | null>(null)
   const dismissedChatBlockerKind = shallowRef<ChatBlockerKind | null>(null)
   const { language } = applicationSettings
   const welcomePreference = computed(() => (
-    applicationSettings.config.value?.desktop.welcomeVariant ?? 'random'
+    applicationSettings.config.value?.desktop.chat.welcome ?? 'random'
   ))
   const { t } = useBuddyI18n(language)
-  const taskMarks = useTaskMarks({
-    api: api.localChat.taskMarks,
-    conversations,
-    activeConversationId,
-    language,
-    ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready'),
-  })
+  const taskMarks = options.index.index.marks
   const getRunTerminationMessage = (errorCode: string | null) =>
     errorCode === 'SESSION_STORAGE_UNAVAILABLE'
       ? t('desktop.chat.sessionStorageUnavailable')
@@ -126,6 +115,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     chatBlocker.value?.kind === dismissedChatBlockerKind.value ? null : chatBlocker.value
   ))
   const draftScopeKey = computed(() => createDraftScopeKey({
+    draftKey: options.initialTarget.draftKey,
     conversationId: activeConversationId.value,
     branchId: activeBranchId.value,
     spaceId: spaceId.value,
@@ -150,8 +140,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     onLimitExceeded: () => errorMessage.value = t('desktop.chat.attachmentLimit'),
     onRejected: drafts.rejectResources,
   })
-  watch(draftId, (id) => {
-    if (getChatComposerResourceIds(composerContent.value as JSONContent | null).length)
+  watch([draftId, () => getChatComposerResourceIds(composerContent.value as JSONContent | null).join('\0')], ([id, references]) => {
+    if (references)
       void composerResources.restore(id).catch(setError)
   }, { immediate: true })
   const {
@@ -159,18 +149,14 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     activateGlobalDraft,
     activeConversation,
     applyConversation,
-    deleteConversation,
     listActiveConversationMessages,
     openConversation,
     refreshBranches,
-    renameConversation,
   } = useChatConversations({
     api: api.localChat,
     taskIndexData,
     clearError: () => errorMessage.value = null,
-    drafts,
     onError: setError,
-    onDeleted: options.onTaskDeleted,
     persistWorkspaceState,
     restoreConversationModelSelection: draftModelBinding.restoreScope,
     runSync,
@@ -182,16 +168,15 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     onDraftRestored: draftModelBinding.restoreOpenedDraft,
     initialModelSelection: draftModelBinding.initialModelSelection,
     api: api.localChat,
-    conversations,
     drafts,
     getConversation: id => activeConversation.value?.id === id
       ? activeConversation.value
       : conversations.value.find(conversation => conversation.id === id) ?? null,
     onError: setError,
-    spaces,
     session: chatSession,
   })
   persistDraftChanges = workspacePersistence.persistIfHydrated
+  watch(spaceId, () => persistDraftChanges())
   function persistWorkspaceState() {
     return workspacePersistence.persist()
   }
@@ -200,26 +185,22 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   }
   const taskSpaces = useTaskSpaces({
     activateDraftScope,
-    api: api.localChat.spaces,
-    applySpace: taskIndexData.applySpace,
-    drafts,
+    index: options.index,
     draftId,
     onError: setError,
     persistWorkspaceState,
     spaceId,
-    spaces,
-    refreshIndex: refreshTaskIndex,
     selectDefaultModel: () => draftModelBinding.restoreScope(),
   })
   const {
     activeSpace,
     createSpace,
-    deleteSpace,
     activateSpaceDraft,
-    openSpaceDirectory,
-    selectSpaceDirectory,
-    updateSpace,
   } = taskSpaces
+  watch(activeSpace, (space, previous) => {
+    if (!activeConversationId.value && previous && !previous.revokedAt && (!space || space.revokedAt))
+      void activateGlobalDraft().catch(setError)
+  })
   const { listContextOptions } = useComposerContextOptions({
     activeBranchId,
     activeConversationId,
@@ -278,7 +259,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     activeRun,
     approvalPolicy: permissionSettingsState.approvalPolicy,
     api: api.localChat,
-    canSendDraft: computed(() => workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
+    canSendDraft: computed(() => !isClosing.value && workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
     taskIndexData,
     session: chatSession,
     drafts,
@@ -341,7 +322,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     api: api.localChat,
     activeConversation,
     clearError: () => errorMessage.value = null,
-    modelProviders,
     onError: setError,
     refreshBranches,
     runSync,
@@ -360,6 +340,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   })
 
   async function selectAttachments() {
+    if (isClosing.value)
+      return
     const source = drafts.load(draftScopeKey.value)
     await lifecycle.initialLoad
     if (draftId.value !== source.draftId || !drafts.isEditorSessionCurrent(source))
@@ -383,7 +365,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   }
 
   function dispose() {
-    taskMarks.dispose()
     lifecycle.dispose()
     workspacePersistence.dispose()
     draftModelBinding.dispose()
@@ -394,6 +375,20 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
 
   function flushDrafts(): Promise<boolean> {
     return workspacePersistence.flushPending()
+  }
+
+  async function prepareClose(): Promise<boolean> {
+    isClosing.value = true
+    await until(() => isSending.value || isMutatingBranch.value || isSelectingFiles.value).toBe(false)
+    if (!await flushDrafts()) {
+      isClosing.value = false
+      return false
+    }
+    await until(() => composerResources.resources.value.some(entry => entry.resource.state === 'importing')).toBe(false)
+    const saved = await flushDrafts()
+    if (!saved)
+      isClosing.value = false
+    return saved
   }
 
   function dismissChatBlocker() {
@@ -409,22 +404,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     await activateSpaceDraft(spaceId)
   }
 
-  const index = {
-    marks: taskMarks,
-    pinnedItems: taskPins.pinnedItems,
-    setPinnedItems: taskPins.setPinnedItems,
-    sidebar: taskSidebar,
-    createSpace,
-    deleteSpace,
-    deleteTask: deleteConversation,
-    spaces: readonly(spaces),
-    refresh: refreshTaskIndex,
-    renameTask: renameConversation,
-    openSpaceDirectory,
-    selectSpaceDirectory,
-    tasks: readonly(conversations),
-    updateSpace,
-  } as const
+  const index = { ...options.index.index, createSpace }
 
   const session = {
     navigationVersion: chatSession.generation,
@@ -475,7 +455,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       editorKey: readonly(drafts.editorKey),
       resources: composerResources.resources,
       rejectedResourceIds: composerResources.rejectedIds,
-      beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => lifecycle.hasCompletedInitialLoad.value ? composerResources.begin(files, origin) : [],
+      beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => !isClosing.value && lifecycle.hasCompletedInitialLoad.value ? composerResources.begin(files, origin) : [],
       selectSource: composerResources.selectSource,
       retryResource: composerResources.retry,
       canUpdatePermissionSettings: readonly(canUpdatePermissionSettings),
@@ -495,7 +475,10 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       setSelectedServiceTier: setChatServiceTier,
       permissionMode: permissionSettingsState.permissionMode,
       setPermissionMode,
-      updateComposerContent: drafts.updateComposerContent,
+      updateComposerContent: (text: string, content: JSONContent | null) => {
+        if (!isClosing.value)
+          drafts.updateComposerContent(text, content)
+      },
     },
     execution: {
       activeRun: readonly(activeRun),
@@ -531,6 +514,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       resolveRemote: workspacePersistence.resolveRemote,
     },
     status: {
+      isClosing: readonly(isClosing),
       canRestartRuntime: runtimeSupervisor.canRestartRuntime,
       dismissChatBlocker,
       dismissError: () => { errorMessage.value = null },
@@ -558,6 +542,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   } as const
 
   return {
+    prepareClose,
+    cancelClose: () => isClosing.value = false,
     dispose,
     flushDrafts,
     index,

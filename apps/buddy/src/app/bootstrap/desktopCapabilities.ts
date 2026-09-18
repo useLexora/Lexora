@@ -1,8 +1,9 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
+import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
+import type { Ref } from 'vue'
 import type { DesktopStores } from '@/app/bootstrap/useDesktopAppState'
 import type { AutomationCapability } from '@/modules/automations'
 import type { DesktopDataSettingsCapability, McpSettingsCapability, WebSettingsCapability } from '@/modules/settings'
-import type { TaskCapability } from '@/modules/tasks'
 import { useAutomationCapability } from '@/modules/automations'
 import { createDesktopDataSettingsCapability, useMcpSettingsCapability, useWebSettingsCapability } from '@/modules/settings'
 
@@ -16,7 +17,7 @@ export interface DesktopCapabilities {
 interface CreateDesktopCapabilitiesInput {
   api: LexoraDesktopApi
   stores: DesktopStores
-  tasks: TaskCapability
+  selectedModel: Readonly<Ref<LocalRuntimeModelOption | null>>
   onAutomationRunFailure: (message: string) => void
 }
 
@@ -33,7 +34,7 @@ export function createDesktopCapabilities(
     dataSettings: createDesktopDataSettingsCapability({
       api: input.api.localChat,
       applicationSettings: stores.applicationSettings,
-      selectedModel: input.tasks.workspace.composer.selectedModel,
+      selectedModel: input.selectedModel,
       runtimeSupervisor: stores.runtimeSupervisor,
       usage: stores.usage,
     }),

@@ -15,7 +15,7 @@ export interface UseTaskContextPanelOptions {
   spaces: Readonly<Ref<ReadonlyArray<LocalSpace>>>
   activeSpace?: Readonly<Ref<LocalSpace | null>>
   activeConversationId: Readonly<Ref<string | null>>
-  activeDraftId: Readonly<Ref<string>>
+  activeDraftId: Readonly<Ref<string | null>>
   changeSets: Readonly<Ref<ReadonlyArray<LocalChangeSetSummary>>>
   runOutputs: Readonly<Ref<ReadonlyArray<LocalRunOutput>>>
 }

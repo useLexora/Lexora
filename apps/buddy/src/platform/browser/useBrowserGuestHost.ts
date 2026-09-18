@@ -3,24 +3,24 @@ import type { DesktopBrowserGuestSurfaceHost } from './browserGuestSurface'
 import { shallowRef, watch } from 'vue'
 
 export function useBrowserGuestHost(host: Readonly<ShallowRef<DesktopBrowserGuestSurfaceHost | null>>): DesktopBrowserGuestSurfaceHost {
-  const activeSurface = shallowRef<{ element: HTMLElement, sessionId: string } | null>(null)
+  const surfaces = shallowRef(new Map<string, HTMLElement>())
 
   watch(host, (value) => {
-    const surface = activeSurface.value
-    if (value && surface)
-      value.show(surface.sessionId, surface.element)
+    for (const [sessionId, element] of surfaces.value)
+      value?.show(sessionId, element)
   })
 
   return {
+    layout: () => host.value?.layout?.(),
     show(sessionId, element) {
-      activeSurface.value = { element, sessionId }
+      surfaces.value.set(sessionId, element)
       host.value?.show(sessionId, element)
     },
     hide(sessionId, element) {
-      const surface = activeSurface.value
-      if (surface?.sessionId !== sessionId || (element && surface.element !== element))
+      const surface = surfaces.value.get(sessionId)
+      if (!surface || (element && surface !== element))
         return
-      activeSurface.value = null
+      surfaces.value.delete(sessionId)
       host.value?.hide(sessionId, element)
     },
   }

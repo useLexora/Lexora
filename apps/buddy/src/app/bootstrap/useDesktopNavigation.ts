@@ -13,14 +13,17 @@ interface DesktopNavigationOptions {
   ready: Promise<void>
   session: Pick<TaskSession, 'activeTaskId' | 'spaceId' | 'navigationVersion' | 'openTask' | 'startTask'>
   notifications: Pick<NotificationCenterStore, 'markSeen'>
-  getRun: (runId: string) => Promise<Pick<LocalRun, 'conversationId' | 'triggeringMessageId'> | null>
+  getRun: (runId: string) => Promise<RunTarget | null>
+  activateRunBranch: (run: RunTarget) => Promise<boolean>
   onError: (error: unknown) => void
 }
 
+type RunTarget = Pick<LocalRun, 'conversationId' | 'branchId' | 'triggeringMessageId'>
+
 export function useDesktopNavigation(options: DesktopNavigationOptions) {
   const { router, session } = options
-  const notificationTargetMessageId = shallowRef<string | null>(null)
-  const highlightTimer = useTimeoutFn(() => notificationTargetMessageId.value = null, 3_000, { immediate: false })
+  const notificationTarget = shallowRef<{ conversationId: string, messageId: string } | null>(null)
+  const highlightTimer = useTimeoutFn(() => notificationTarget.value = null, 3_000, { immediate: false })
   let pending: { controller: AbortController, taskId: string | null, spaceId?: string, version: number } | null = null
   let disposed = false
 
@@ -28,7 +31,7 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
     pending?.controller.abort()
     pending = null
     highlightTimer.stop()
-    notificationTargetMessageId.value = null
+    notificationTarget.value = null
   }
 
   const stopNavigationGuard = router.beforeEach((to) => {
@@ -66,7 +69,9 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
       const run = await options.getRun(runId)
       if (signal.aborted || session.activeTaskId.value !== conversationId || run?.conversationId !== conversationId)
         return
-      notificationTargetMessageId.value = run.triggeringMessageId
+      if (!await options.activateRunBranch(run) || signal.aborted || session.activeTaskId.value !== conversationId)
+        return
+      notificationTarget.value = { conversationId, messageId: run.triggeringMessageId }
       highlightTimer.start()
     })
   }
@@ -105,7 +110,7 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
     return openTask(target.conversationId, target.runId)
   }
 
-  return { navigate, notificationTargetMessageId: readonly(notificationTargetMessageId), openNotification, openSpace, openTarget, openTask }
+  return { navigate, notificationTarget: readonly(notificationTarget), openNotification, openSpace, openTarget, openTask }
 }
 
 export type DesktopNavigation = ReturnType<typeof useDesktopNavigation>

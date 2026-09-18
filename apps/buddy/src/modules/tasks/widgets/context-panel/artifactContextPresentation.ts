@@ -1,6 +1,7 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import { isMarkdownFile } from '@/shared/ui/files/fileDocumentPresentation'
 
 export function resolveFileType(artifact: LocalArtifact): string {
   const extension = artifact.name.split('.').at(-1)
@@ -18,7 +19,7 @@ export function formatDate(value: string, locale: BuddyLocale): string {
 
 export function isMarkdownArtifact(artifact: Pick<LocalArtifact, 'kind' | 'name' | 'mimeType'>): boolean {
   return artifact.kind === 'file'
-    && (artifact.mimeType === 'text/markdown' || /\.(?:md|markdown)$/i.test(artifact.name))
+    && (artifact.mimeType === 'text/markdown' || isMarkdownFile(artifact.name))
 }
 
 export function resolveArtifactDisplayMode(

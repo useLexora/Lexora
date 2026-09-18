@@ -1,46 +1,41 @@
 <script setup lang="ts">
-import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
-import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import {
-  Alert20Regular,
-  Search20Regular,
-} from '@vicons/fluent'
+import type { DesktopView } from '@/shared/navigation/desktopRoutes'
+import { Alert20Regular, VehicleShip20Regular } from '@vicons/fluent'
 import { NBadge, NButton, NPopover } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import DesktopAccountAvatar from '@/app/shell/DesktopAccountAvatar.vue'
 import DesktopAccountDialog from '@/app/shell/DesktopAccountDialog.vue'
-import DesktopGlobalSearchDialog from '@/app/shell/DesktopGlobalSearchDialog.vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopNotificationCenter } from '@/modules/notifications/ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 
 const props = defineProps<{
   appVersion: string | null
-  conversations: ReadonlyArray<LocalConversation>
   language: BuddyLocale
-  mode: 'automations' | 'settings' | 'tasks'
+  mode: DesktopView
+  extensionNavigation: ReadonlyArray<{ id: string, title: string, iconUrl?: string }>
+  activeExtension: string | null
   notificationItems: ReadonlyArray<LocalNotification>
   notificationLoading: boolean
   notificationUnseenCount: number
-  spaces: ReadonlyArray<LocalSpace>
 }>()
 const emit = defineEmits<{
   navigateAutomations: []
   navigateTasks: []
+  navigateExtensions: []
+  navigateExtensionPage: [id: string]
   navigateSettings: []
   markAllNotificationsSeen: []
   openNotification: [notification: LocalNotification]
-  openTask: [conversationId: string]
-  openSpace: [spaceId: string]
   refreshNotifications: []
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const versionLabel = computed(() => props.appVersion ? `v${props.appVersion}` : '')
 const showAccountDialog = shallowRef(false)
-const showGlobalSearchDialog = shallowRef(false)
 const showNotifications = shallowRef(false)
 const notificationPopoverThemeOverrides = { padding: '0' } as const
 
@@ -54,16 +49,6 @@ function openNotification(notification: LocalNotification) {
   showNotifications.value = false
   emit('openNotification', notification)
 }
-
-function openTask(conversationId: string) {
-  showGlobalSearchDialog.value = false
-  emit('openTask', conversationId)
-}
-
-function openSpace(spaceId: string) {
-  showGlobalSearchDialog.value = false
-  emit('openSpace', spaceId)
-}
 </script>
 
 <template>
@@ -72,17 +57,6 @@ function openSpace(spaceId: string) {
       <div class="desktop-app-sidebar__identity">
         <strong>Lexora Buddy</strong>
         <span>{{ versionLabel }}</span>
-      </div>
-      <div class="desktop-app-sidebar__header-actions">
-        <NButton
-          class="buddy-icon-button desktop-app-sidebar__search-trigger"
-          quaternary
-          @click="showGlobalSearchDialog = true"
-        >
-          <template #icon>
-            <DesktopIcon :component="Search20Regular" />
-          </template>
-        </NButton>
       </div>
     </header>
 
@@ -107,6 +81,12 @@ function openSpace(spaceId: string) {
         <DesktopIcon name="navigationAutomation" />
         <span>{{ t('desktop.navigation.automations') }}</span>
       </button>
+      <button v-for="item in extensionNavigation" :key="item.id" class="desktop-app-sidebar__nav-item" :class="{ 'is-active': mode === 'extension-page' && activeExtension === item.id }" :aria-current="mode === 'extension-page' && activeExtension === item.id ? 'page' : undefined" :data-extension-navigation="item.id" type="button" @click="emit('navigateExtensionPage', item.id)">
+        <DesktopPluginIcon :src="item.iconUrl" /><span>{{ item.title }}</span>
+      </button>
+      <button class="desktop-app-sidebar__nav-item" :class="{ 'is-active': mode === 'extensions' }" :aria-current="mode === 'extensions' ? 'page' : undefined" type="button" @click="emit('navigateExtensions')">
+        <DesktopIcon class="desktop-app-sidebar__extension-icon" :component="VehicleShip20Regular" /><span>{{ language === 'en-US' ? 'Plugins' : '插件' }}</span>
+      </button>
       <button
         class="desktop-app-sidebar__nav-item"
         :class="{ 'is-active': mode === 'settings' }"
@@ -126,7 +106,7 @@ function openSpace(spaceId: string) {
           type="button"
           @click="showAccountDialog = true"
         >
-          <DesktopAccountAvatar />
+          <DesktopAccountAvatar size="compact" />
           <strong>{{ t('desktop.account.signedOut') }}</strong>
         </button>
         <NPopover
@@ -175,14 +155,6 @@ function openSpace(spaceId: string) {
       </div>
     </footer>
 
-    <DesktopGlobalSearchDialog
-      v-model:show="showGlobalSearchDialog"
-      :conversations="conversations"
-      :language="language"
-      :spaces="spaces"
-      @open-task="openTask"
-      @open-space="openSpace"
-    />
     <DesktopAccountDialog
       v-model:show="showAccountDialog"
       :language="language"
@@ -211,13 +183,14 @@ function openSpace(spaceId: string) {
   justify-content: space-between;
   gap: 0.65rem;
   border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.75rem 0 0.9rem;
+  padding: 0 0.75rem;
 }
 
 .desktop-app-sidebar__identity {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 0.05rem;
+  align-items: baseline;
+  gap: 0.5rem;
 
   strong,
   span {
@@ -233,17 +206,10 @@ function openSpace(spaceId: string) {
   }
 
   span {
-    min-height: 1em;
+    flex: none;
     color: var(--buddy-text-muted);
-    font-size: 0.66rem;
+    font-size: 11px;
   }
-}
-
-.desktop-app-sidebar__header-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.08rem;
 }
 
 .desktop-app-sidebar__primary {
@@ -251,31 +217,33 @@ function openSpace(spaceId: string) {
   min-height: 0;
   flex: 1;
   align-content: start;
-  gap: 0.15rem;
-  padding: 0.8rem 0.75rem;
+  gap: 0.125rem;
+  padding: 0.5rem;
+  overflow-y: auto;
 }
 
 .desktop-app-sidebar__nav-item {
   display: flex;
   width: 100%;
-  min-height: 2.55rem;
+  min-height: 2.25rem;
   align-items: center;
-  gap: 0.7rem;
+  gap: 0.625rem;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--buddy-icon-button-radius);
   background: transparent;
   color: var(--buddy-text-primary);
   cursor: pointer;
   font-size: var(--buddy-sidebar-item-font-size);
   font-weight: var(--buddy-sidebar-item-font-weight);
-  padding: 0.55rem 0.7rem;
+  line-height: 20px;
+  padding: 0.5rem 0.625rem;
   text-align: left;
   transition:
     background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
 
   &:hover {
-    background: var(--buddy-nav-hover);
+    background: var(--buddy-state-hover);
     color: var(--buddy-text-strong);
   }
 
@@ -302,17 +270,26 @@ function openSpace(spaceId: string) {
   }
 }
 
+.desktop-app-sidebar__extension-icon {
+  flex: none;
+  transform: translateY(-0.025em) scale(1.12);
+  transform-origin: center;
+}
+
 .desktop-app-sidebar__footer {
-  display: grid;
-  gap: 0.65rem;
+  display: flex;
+  height: 3rem;
+  flex: none;
+  align-items: center;
   border-top: 1px solid var(--buddy-border-subtle);
-  padding: 0.75rem;
+  padding: 0 0.5rem;
 }
 
 .desktop-app-sidebar__account {
   display: flex;
+  width: 100%;
   min-width: 0;
-  min-height: 2.5rem;
+  min-height: 2rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
@@ -321,21 +298,21 @@ function openSpace(spaceId: string) {
 .desktop-app-sidebar__profile {
   display: flex;
   min-width: 0;
-  min-height: 44px;
+  min-height: 32px;
   flex: 1;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--buddy-icon-button-radius);
   background: transparent;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 2px 4px;
   text-align: left;
   transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
 
   &:hover {
-    background: var(--buddy-nav-hover);
+    background: var(--buddy-state-hover);
   }
 
   &:focus-visible {
@@ -354,11 +331,14 @@ function openSpace(spaceId: string) {
 }
 
 .desktop-app-sidebar :deep(.buddy-icon-button.n-button:hover) {
-  background: var(--buddy-nav-hover);
+  background: var(--buddy-state-hover);
 }
 
 .desktop-app-sidebar :deep(.desktop-app-sidebar__notification-trigger.n-button) {
-  border: 1px solid var(--buddy-border-subtle);
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border: 0;
   background: transparent;
   color: var(--buddy-text-primary);
   transition:

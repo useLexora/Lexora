@@ -67,6 +67,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
       attributes: {
         'aria-label': t('desktop.chat.messageInput'),
         'class': 'desktop-chat-composer__prosemirror',
+        'data-lexora-composer': '',
         'spellcheck': 'false',
       },
       handleKeyDown: (_view, event) => handleEditorKeydown(event),

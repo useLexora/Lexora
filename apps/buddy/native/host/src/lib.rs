@@ -1,4 +1,5 @@
 pub mod file_reader;
+pub mod file_writer;
 pub mod private_directories;
 pub mod process_control;
 #[cfg(windows)]

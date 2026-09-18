@@ -13,9 +13,9 @@ export interface RuntimeRpcRegistrar extends RuntimeRequestRegistrar {
 export function registerRuntimeRequest<Contract extends RuntimeRequestContract, Result>(
   rpc: RuntimeRequestRegistrar,
   contract: Contract,
-  handler: (input: z.output<Contract['input']>) => Result,
+  handler: (input: z.output<Contract['input']>, signal?: AbortSignal) => Result,
 ): () => void {
-  return rpc.onRequest(contract.method, params => handler(parse(contract.input, params) as z.output<Contract['input']>))
+  return rpc.onRequest(contract.method, (params, signal) => handler(parse(contract.input, params) as z.output<Contract['input']>, signal))
 }
 
 export type BuddyServiceErrorCode

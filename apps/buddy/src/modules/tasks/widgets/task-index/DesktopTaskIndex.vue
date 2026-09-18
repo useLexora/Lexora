@@ -7,12 +7,13 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { TaskIndex, TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
-import { Add16Regular, Tag20Regular } from '@vicons/fluent'
+import { Add20Regular, Tag20Regular } from '@vicons/fluent'
 import { NAlert, NButton, NInput, NModal, NTooltip } from 'naive-ui'
 import { shallowRef, toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceDialog from '@/modules/tasks/widgets/task-index/DesktopSpaceDialog.vue'
 import DesktopTaskRow from '@/modules/tasks/widgets/task-index/DesktopTaskRow.vue'
+import DesktopTaskSearchDialog from '@/modules/tasks/widgets/task-index/DesktopTaskSearchDialog.vue'
 import DesktopTaskSidebarSection from '@/modules/tasks/widgets/task-index/DesktopTaskSidebarSection.vue'
 import DesktopTaskSpaceRow from '@/modules/tasks/widgets/task-index/DesktopTaskSpaceRow.vue'
 import {
@@ -51,6 +52,7 @@ const emit = defineEmits<{
 
 const { t } = useBuddyI18n(() => props.language)
 const marksOpen = shallowRef(false)
+const searchOpen = shallowRef(false)
 function markBindings(conversationId: string) {
   return {
     marks: props.marks.items.value,
@@ -118,6 +120,16 @@ const {
   spaces: toRef(props, 'spaces'),
   tasks: toRef(props, 'tasks'),
 })
+
+function openSearchTask(conversationId: string) {
+  searchOpen.value = false
+  emit('openTask', conversationId)
+}
+
+function openSearchSpace(spaceId: string) {
+  searchOpen.value = false
+  emit('newTask', spaceId)
+}
 </script>
 
 <template>
@@ -129,8 +141,16 @@ const {
       />
       <NTooltip>
         <template #trigger>
+          <button class="desktop-task-sidebar__search-trigger" type="button" :aria-label="t('desktop.search.title')" @click="searchOpen = true">
+            <DesktopIcon name="toolSearch" :size="16" />
+          </button>
+        </template>
+        {{ t('desktop.search.title') }}
+      </NTooltip>
+      <NTooltip>
+        <template #trigger>
           <button class="desktop-task-sidebar__marks-trigger" type="button" :aria-label="t('desktop.marks.manage')" @click="marksOpen = true">
-            <DesktopIcon :component="Tag20Regular" />
+            <DesktopIcon :component="Tag20Regular" :size="16" />
           </button>
         </template>
         {{ t('desktop.marks.manage') }}
@@ -141,7 +161,7 @@ const {
         :aria-label="t('desktop.tasks.newTask')"
         @click="emit('newTask', null)"
       >
-        <DesktopIcon :component="Add16Regular" />
+        <DesktopIcon :component="Add20Regular" :size="16" />
       </button>
     </header>
 
@@ -187,6 +207,7 @@ const {
             </div>
             <DesktopTaskRow
               v-else
+              :task-id="item.task.id"
               :active="item.task.id === activeConversationId"
               :activity="item.task.activity"
               v-bind="markBindings(item.task.id)"
@@ -239,6 +260,7 @@ const {
             </div>
             <DesktopTaskRow
               v-else
+              :task-id="item.task.id"
               :active="item.task.id === activeConversationId"
               :activity="item.task.activity"
               :language="language"
@@ -267,6 +289,7 @@ const {
         >
           <template #default="{ item: task }">
             <DesktopTaskRow
+              :task-id="task.id"
               :active="task.id === activeConversationId"
               :activity="task.activity"
               v-bind="markBindings(task.id)"
@@ -284,6 +307,15 @@ const {
         </DesktopTaskSidebarSection>
       </nav>
     </div>
+
+    <DesktopTaskSearchDialog
+      v-model:show="searchOpen"
+      :conversations="tasks"
+      :language="language"
+      :spaces="spaces"
+      @open-task="openSearchTask"
+      @open-space="openSearchSpace"
+    />
 
     <DesktopTaskMarkManager v-model:show="marksOpen" :marks="marks" :language="language" />
 
@@ -401,14 +433,13 @@ const {
   flex: none;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.25rem;
   border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.75rem 0 0.8rem;
+  padding: 0 0.5rem 0 0.75rem;
 }
 
-.desktop-task-sidebar__marks-trigger { margin-left: auto; }
-
 .desktop-task-sidebar__new-trigger,
+.desktop-task-sidebar__search-trigger,
 .desktop-task-sidebar__marks-trigger {
   display: grid;
   width: 1.75rem;
@@ -416,6 +447,7 @@ const {
   flex: none;
   place-items: center;
   border: 0;
+  padding: 0;
   border-radius: var(--buddy-icon-button-radius);
   background: transparent;
   color: var(--buddy-text-secondary);
@@ -424,12 +456,8 @@ const {
     background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
 
-  .n-icon {
-    font-size: 16px;
-  }
-
   &:hover {
-    background: var(--buddy-nav-hover);
+    background: var(--buddy-state-hover);
     color: var(--buddy-text-strong);
   }
 

@@ -32,7 +32,7 @@ function fixture() {
 }
 
 describe('resource panel operations', () => {
-  it('retains late manual sessions across task changes without updating another tab', async () => {
+  it('updates the owning manual session across task changes without changing another tab', async () => {
     const f = fixture()
     f.activeConversationId.value = null
     f.panel.addBrowser()
@@ -53,7 +53,7 @@ describe('resource panel operations', () => {
     f.activeConversationId.value = null
     expect(f.panel.activeBrowserState.value).toEqual(secondState)
     f.panel.selectTab(first.id)
-    expect(f.panel.activeBrowserState.value).toEqual(firstState)
+    expect(f.panel.activeBrowserState.value).toEqual({ ...firstState, title: 'Late first update' })
     expect(f.sessionOpen()).toBe(true)
   })
 

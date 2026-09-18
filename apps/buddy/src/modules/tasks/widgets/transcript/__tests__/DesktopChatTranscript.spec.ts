@@ -5,6 +5,7 @@ import type { ChatOutlineItem } from '../../../model/transcript/chatOutline'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
+import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopChatTranscript from '../DesktopChatTranscript.vue'
 
 vi.mock('../BuddyChatMessageList.vue', async () => {
@@ -72,7 +73,6 @@ describe('desktopChatTranscript outline inputs', () => {
 function mountTranscript(loadOutlineMessages: () => Promise<readonly LocalMessage[]>) {
   const props = shallowRef({
     activeBranchId: 'branch-1',
-    activeSearchMessageId: null,
     actionsDisabled: false,
     branches: [],
     changeSets: [],
@@ -82,7 +82,6 @@ function mountTranscript(loadOutlineMessages: () => Promise<readonly LocalMessag
     isLoadingOlderMessages: false,
     language: 'zh-CN' as const,
     loadOutlineMessages,
-    matchingSearchMessageIds: [],
     runEventBuckets: new Map(),
     runOutputs: [],
     runs: [],
@@ -91,7 +90,17 @@ function mountTranscript(loadOutlineMessages: () => Promise<readonly LocalMessag
   })
   const root = document.createElement('div')
   document.body.append(root)
-  const app = createApp({ setup: () => () => h(DesktopChatTranscript, props.value) })
+  const app = createApp({
+    setup() {
+      useProvideDesktopUi({
+        language: shallowRef('zh-CN'),
+        isDark: shallowRef(false),
+        appSidebarCollapsed: shallowRef(false),
+        chat: shallowRef({ outlinePosition: 'top-right', welcome: 'random' }),
+      })
+      return () => h(DesktopChatTranscript, props.value)
+    },
+  })
   app.mount(root)
   cleanups.push(() => {
     app.unmount()

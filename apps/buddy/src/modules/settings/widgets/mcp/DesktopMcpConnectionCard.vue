@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocalConnector } from '@buddy-shared/connectors/connectorApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NButton, NPopconfirm, NSwitch, NTag } from 'naive-ui'
+import { NButton, NPopconfirm, NSwitch, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { maskConnectorUrl } from '../../model/desktopConnectorTarget'
@@ -27,7 +27,12 @@ const cachedTools = computed(() => props.connector.runtime.updatedAt !== null &&
           {{ t(`desktop.mcp.status.${connector.runtime.status}`) }}
         </NTag>
       </div>
-      <NSwitch :round="false" :value="connector.enabled" :disabled="busy" :aria-label="`${t('desktop.mcp.enabled')}: ${connector.name}`" @update:value="emit('toggle', $event)" />
+      <NTooltip>
+        <template #trigger>
+          <NSwitch :round="false" :value="connector.enabled" :disabled="busy" :aria-label="`${t('desktop.mcp.enabled')}: ${connector.name}`" @update:value="emit('toggle', $event)" />
+        </template>
+        {{ t(connector.enabled ? 'desktop.mcp.disableHint' : 'desktop.mcp.enableHint') }}
+      </NTooltip>
     </header>
     <p class="mcp-connection__target" :title="target">
       {{ target }}

@@ -21,6 +21,7 @@ import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
 import { ContextPanelHost } from '../context-panel/ContextPanelHost'
+import { registerExtensionAuthoringRpc } from '../extensions/registerExtensionAuthoringRpc'
 import { DesktopNetwork } from '../network/DesktopNetwork'
 import { registerWebHostRpc } from '../network/registerWebHostRpc'
 import { createDesktopFeatures } from '../platform/desktopFeatures'
@@ -154,6 +155,7 @@ export class DesktopRuntimeHost {
       },
       bindPeer: (peer) => {
         const disposers = [
+          registerExtensionAuthoringRpc(peer),
           peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
             const source = contextPanelSourceSchema.parse(params)
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')

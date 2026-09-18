@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSchema } from '../desktopApiSchemas'
 
 describe('desktop Preload API contract', () => {
+  it('rejects unknown outline positions before updating the application configuration', () => {
+    expect(() => lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'center' } } })).toThrow()
+    expect(lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'bottom-left', welcome: 'none' } } }))
+      .toEqual({ desktop: { chat: { outlinePosition: 'bottom-left', welcome: 'none' } } })
+  })
+
   it('accepts release pages from the canonical repository', () => {
     const url = 'https://github.com/useLexora/Lexora/releases/tag/v0.6.6'
     expect(releasePageInputSchema.parse({ url })).toEqual({ url })

@@ -8,6 +8,8 @@ import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
 import type { LocalChatApi } from './localChatApi'
 
 export const DESKTOP_IPC_CHANNELS = {
+  workbenchRead: 'lexora:workbench:read',
+  workbenchWrite: 'lexora:workbench:write',
   contextPanelGetState: 'lexora:context-panel:get-state',
   contextPanelExecute: 'lexora:context-panel:execute',
   contextPanelStateChanged: 'lexora:context-panel:state-changed',
@@ -106,16 +108,39 @@ export interface DesktopTaskSidebarPreferences {
 }
 
 export type DesktopChatWelcomeVariantId = typeof DESKTOP_CHAT_WELCOME_VARIANT_IDS[number]
-export type DesktopChatWelcomePreference = 'random' | DesktopChatWelcomeVariantId
+export type DesktopChatWelcomePreference = 'none' | 'random' | DesktopChatWelcomeVariantId
 export type DesktopContextPanelMode = 'task' | 'independent'
+
+export const DESKTOP_CHAT_OUTLINE_POSITIONS = [
+  'top-left',
+  'center-left',
+  'bottom-left',
+  'top-right',
+  'center-right',
+  'bottom-right',
+] as const
+
+export type DesktopChatOutlinePosition = typeof DESKTOP_CHAT_OUTLINE_POSITIONS[number]
+
+export interface DesktopChatPreferences {
+  outlinePosition: DesktopChatOutlinePosition
+  welcome: DesktopChatWelcomePreference
+}
+
+export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
+  outlinePosition: 'top-right',
+  welcome: 'random',
+}
 
 export interface LexoraConfig {
   browser: import('../../shared/browser/browserPreferences').BrowserPreferences
   proxy: import('../../shared/network/proxySettings').ProxySettings
   desktop: {
     backgroundCloseNoticeShown: boolean
+    chat: DesktopChatPreferences
     contextPanelMode: DesktopContextPanelMode
     contextPanelGlobal: boolean
+    keybindings: Record<string, string>
     taskSidebarPinnedItems: DesktopTaskPinnedItem[]
     taskSidebar: DesktopTaskSidebarPreferences
     developerToolsEnabled: boolean
@@ -125,7 +150,6 @@ export interface LexoraConfig {
     notifyWhenFocused: boolean
     sidebarCollapsed: boolean
     theme: 'system' | 'light' | 'dark'
-    welcomeVariant: DesktopChatWelcomePreference
   }
   pet: {
     alwaysOnTop: boolean
@@ -137,13 +161,16 @@ export interface LexoraConfig {
 export interface LexoraConfigPatch {
   browser?: Partial<LexoraConfig['browser']>
   proxy?: LexoraConfig['proxy']
-  desktop?: Partial<Omit<LexoraConfig['desktop'], 'taskSidebar'>> & {
+  desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar'>> & {
+    chat?: Partial<DesktopChatPreferences>
     taskSidebar?: Partial<DesktopTaskSidebarPreferences>
   }
   pet?: Partial<LexoraConfig['pet']>
 }
 
 export interface LexoraDesktopApi {
+  extensions: import('../../shared/extensions/extensionApi').ExtensionApi
+  workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi
   contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi
   app: {
     logs: ApplicationLogApi

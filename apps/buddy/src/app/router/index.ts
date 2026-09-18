@@ -7,6 +7,7 @@ import {
   createWebHashHistory,
 } from 'vue-router'
 import { automationsRoutes } from '@/modules/automations/routes'
+import { extensionsRoutes } from '@/modules/extensions/routes'
 import { settingsRoutes } from '@/modules/settings/routes'
 import { tasksRoutes } from '@/modules/tasks/routes'
 import { loadDesktopAppInfo, supportsSettingsCategory } from '@/platform/desktop/desktopCapabilities'
@@ -17,6 +18,7 @@ const routes: ReadonlyArray<RouteRecordRaw> = [
     path: '/',
     redirect: desktopRouteLocations.tasks(),
   },
+  ...extensionsRoutes,
   ...tasksRoutes,
   ...automationsRoutes,
   ...settingsRoutes,

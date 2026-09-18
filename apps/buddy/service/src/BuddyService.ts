@@ -39,6 +39,7 @@ import { AttachmentService } from './attachments/AttachmentService'
 import { ComposerResourceService } from './attachments/ComposerResourceService'
 import { registerAttachmentRpc } from './attachments/registerAttachmentRpc'
 import { registerComposerResourceRpc } from './attachments/registerComposerResourceRpc'
+import { AgentTaskAutomationAction } from './automations/AgentTaskAutomationAction'
 import { AutomationChangeCoordinator } from './automations/AutomationChangeCoordinator'
 import { AutomationDispatcher } from './automations/AutomationDispatcher'
 import { AutomationOccurrenceLifecycleService } from './automations/AutomationOccurrenceLifecycleService'
@@ -390,6 +391,7 @@ export async function startBuddyService(
       changeCaptureService,
       directoryGrants,
       createCapabilities: createBuddyCapabilityFactory(currentPlatform, {
+        pluginAuthoring: options.rpc,
         artifactService,
         attachmentService,
         automationService,
@@ -498,7 +500,7 @@ export async function startBuddyService(
       runs,
       turnLauncher,
     })
-    const composerDraftService = new ComposerDraftService(composerDrafts)
+    const composerDraftService = new ComposerDraftService(composerDrafts, draftId => composerResourceService.discard(draftId))
     const chatTurnService = new ChatTurnService({
       inputValidation: new ChatInputValidationService({
         attachments: attachmentService,
@@ -544,7 +546,7 @@ export async function startBuddyService(
       runs,
       sessionExtensionServices,
     })
-    const automationDispatcher = new AutomationDispatcher({
+    const automationDispatcher = new AutomationDispatcher(automationService, new AgentTaskAutomationAction({
       automationService,
       cancelRun: (runId, errorCode) => runner.cancel(runId, errorCode),
       clock: automationClock,
@@ -562,7 +564,7 @@ export async function startBuddyService(
         return { executionContext, id: space.id, status: 'ready' }
       },
       turns: automationTurns,
-    })
+    }))
     const scheduler = new AutomationScheduler({
       automationService,
       clock: automationClock,
@@ -630,6 +632,7 @@ export async function startBuddyService(
       )
       register(
         registerComposerResourceRpc({
+          drafts: composerDraftService,
           rpc: options.rpc,
           service: composerResourceService,
         }),
@@ -649,6 +652,7 @@ export async function startBuddyService(
       )
       register(
         registerChatRpc({
+          drafts: composerDraftService,
           commands: chatCommandService,
           rpc: options.rpc,
           runtime,

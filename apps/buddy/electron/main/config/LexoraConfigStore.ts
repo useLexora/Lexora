@@ -8,7 +8,8 @@ import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
-import { DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
+import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
+import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().min(1).max(128), kind: z.literal('conversation') }).strict(),
@@ -34,8 +35,13 @@ const taskSidebarConfigSchema = z.object({
 
 const desktopConfigSchema = z.object({
   background_close_notice_shown: z.boolean().default(false),
+  chat: z.object({
+    outline_position: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition),
+    welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome),
+  }).passthrough().prefault({}),
   context_panel_mode: z.enum(['task', 'independent']).default('task'),
   context_panel_global: z.boolean().default(false),
+  keybindings: keybindingsSchema.default({}),
   task_sidebar_pinned_items: z.array(taskSidebarPinnedItemSchema)
     .max(500)
     .refine(items => new Set(items.map(item => `${item.kind}:${item.id}`)).size === items.length)
@@ -48,11 +54,15 @@ const desktopConfigSchema = z.object({
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
   theme: z.enum(['system', 'light', 'dark']).default('system'),
-  welcome_variant: z.enum(['random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).catch('random'),
 }).passthrough().default({
   background_close_notice_shown: false,
+  chat: {
+    outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
+    welcome: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome,
+  },
   context_panel_mode: 'task',
   context_panel_global: false,
+  keybindings: {},
   task_sidebar_pinned_items: [],
   task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
   developer_tools_enabled: false,
@@ -62,7 +72,6 @@ const desktopConfigSchema = z.object({
   notify_when_focused: false,
   sidebar_collapsed: false,
   theme: 'system',
-  welcome_variant: 'random',
 })
 
 const petConfigSchema = z.object({
@@ -197,8 +206,13 @@ function decodeConfig(value: unknown): LexoraConfig {
     proxy: config.proxy,
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
+      chat: {
+        outlinePosition: config.desktop.chat.outline_position,
+        welcome: config.desktop.chat.welcome,
+      },
       contextPanelMode: config.desktop.context_panel_mode,
       contextPanelGlobal: config.desktop.context_panel_global,
+      keybindings: config.desktop.keybindings,
       taskSidebarPinnedItems: config.desktop.task_sidebar_pinned_items,
       taskSidebar: {
         collapsed: config.desktop.task_sidebar.collapsed,
@@ -213,7 +227,6 @@ function decodeConfig(value: unknown): LexoraConfig {
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
       theme: config.desktop.theme,
-      welcomeVariant: config.desktop.welcome_variant,
     },
     pet: {
       alwaysOnTop: config.pet.always_on_top,
@@ -235,8 +248,13 @@ function encodeConfig(config: LexoraConfig) {
     proxy: config.proxy,
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
+      chat: {
+        outline_position: config.desktop.chat.outlinePosition,
+        welcome: config.desktop.chat.welcome,
+      },
       context_panel_mode: config.desktop.contextPanelMode,
       context_panel_global: config.desktop.contextPanelGlobal,
+      keybindings: config.desktop.keybindings,
       task_sidebar_pinned_items: config.desktop.taskSidebarPinnedItems,
       task_sidebar: {
         collapsed: config.desktop.taskSidebar.collapsed,
@@ -251,7 +269,6 @@ function encodeConfig(config: LexoraConfig) {
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
       theme: config.desktop.theme,
-      welcome_variant: config.desktop.welcomeVariant,
     },
     pet: {
       always_on_top: config.pet.alwaysOnTop,
@@ -268,6 +285,11 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      chat: {
+        ...current.desktop.chat,
+        ...patch.desktop?.chat,
+      },
+      keybindings: keybindingsSchema.parse(patch.desktop?.keybindings ?? current.desktop.keybindings),
       taskSidebar: {
         ...current.desktop.taskSidebar,
         ...patch.desktop?.taskSidebar,
@@ -288,6 +310,10 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   const nextDesktop: Record<string, unknown> = {
     ...desktop,
     ...encoded.desktop,
+    chat: {
+      ...asRecord(desktop.chat),
+      ...asRecord(encoded.desktop.chat),
+    },
     task_sidebar: {
       ...asRecord(desktop.task_sidebar),
       ...asRecord(encoded.desktop.task_sidebar),

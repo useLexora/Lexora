@@ -41,7 +41,7 @@ export function createComposerDraftCommitter(database: DatabaseSync) {
       AND approval_policy = ? AND execution_profile = ?
       AND (
         (scope_kind = 'global' AND ? IS NULL)
-        OR (scope_kind = 'space' AND space_id = ?)
+        OR (scope_kind IN ('space', 'task') AND space_id IS ?)
         OR (
           scope_kind = 'conversation_branch'
           AND conversation_id = ? AND branch_id = ?

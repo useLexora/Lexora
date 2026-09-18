@@ -28,7 +28,11 @@ const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const context = useTemplateRef<HTMLElement>('context')
 const sidebar = useTemplateRef<HTMLElement>('sidebar')
-const sidebarVisible = computed(() => Boolean(slots.sidebar) && (!props.sidebarCollapsible || !sidebarCollapsed.value))
+function sidebarVisible() {
+  const collapsible = props.sidebarCollapsible
+  const collapsed = sidebarCollapsed.value
+  return Boolean(slots.sidebar) && (!collapsible || !collapsed)
+}
 const sidebarTransitioning = shallowRef(false)
 const sidebarToggleTop = shallowRef<string | null>(null)
 const sidebarToggleStyle = computed(() => sidebarToggleTop.value
@@ -55,7 +59,7 @@ const {
   sidebar,
   sidebarPreferredWidth: () => sidebarWidthPreference.value,
   sidebarResizable: () => props.sidebarResizable,
-  sidebarVisible: () => sidebarVisible.value,
+  sidebarVisible,
 })
 
 let sidebarTransitionTimer: number | null = null
@@ -111,15 +115,15 @@ onBeforeUnmount(() => {
       v-if="$slots.sidebar"
       ref="sidebar"
       class="desktop-workbench-layout__sidebar"
-      :class="{ 'is-collapsed': !sidebarVisible }"
-      :aria-hidden="!sidebarVisible"
-      :inert="!sidebarVisible"
+      :class="{ 'is-collapsed': !sidebarVisible() }"
+      :aria-hidden="!sidebarVisible()"
+      :inert="!sidebarVisible()"
       @transitionend="finishSidebarTransition"
     >
       <slot name="sidebar" />
     </div>
     <div
-      v-if="sidebarResizable && sidebarVisible"
+      v-if="sidebarResizable && sidebarVisible()"
       class="desktop-workbench-layout__resizer desktop-workbench-layout__sidebar-resizer"
       :class="{ 'is-active': activePanel === 'sidebar' }"
       data-testid="workbench-sidebar-resizer"
@@ -144,12 +148,12 @@ onBeforeUnmount(() => {
     <button
       v-if="sidebarResizable && sidebarCollapsible"
       class="desktop-workbench-layout__sidebar-toggle"
-      :class="{ 'is-collapsed': !sidebarVisible }"
+      :class="{ 'is-collapsed': !sidebarVisible() }"
       :style="sidebarToggleStyle"
       data-testid="workbench-sidebar-toggle"
       type="button"
-      :aria-label="t(sidebarVisible ? 'desktop.layout.collapseTaskSidebar' : 'desktop.layout.expandTaskSidebar')"
-      :aria-expanded="sidebarVisible"
+      :aria-label="t(sidebarVisible() ? 'desktop.layout.collapseTaskSidebar' : 'desktop.layout.expandTaskSidebar')"
+      :aria-expanded="sidebarVisible()"
       @click="toggleSidebar"
       @pointermove="updateSidebarTogglePosition"
     >
@@ -270,7 +274,7 @@ onBeforeUnmount(() => {
 
 .desktop-workbench-layout__sidebar-collapsed-boundary::before {
   left: 0;
-  width: 2rem;
+  width: 0.5rem;
 }
 
 .desktop-workbench-layout__sidebar-toggle {
@@ -300,7 +304,7 @@ onBeforeUnmount(() => {
 .desktop-workbench-layout__sidebar-toggle::before {
   position: absolute;
   top: 0;
-  right: -0.75rem;
+  right: 0;
   bottom: 0;
   left: 0;
   content: '';

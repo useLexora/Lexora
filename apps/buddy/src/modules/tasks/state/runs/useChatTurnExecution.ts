@@ -148,7 +148,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       const source = parseDraftScopeKey(confirmedDraft.targetKey)
       const acknowledged = options.composerTarget.complete(result.draftReceipt, targetScopeKey, sourceScopeKey)
       options.onDraftCommitted?.(result.draftReceipt.draftId, result.conversationId)
-      if (sourceViewIsCurrent && (acknowledged || sourceScopeKey === targetScopeKey)) {
+      if (sourceViewIsCurrent && (acknowledged || source.kind === 'task' || sourceScopeKey === targetScopeKey)) {
         options.session.acceptTurn(result.conversationId, result.branchId)
         if (!options.session.branches.value.some(
           branch => branch.id === result.branchId,

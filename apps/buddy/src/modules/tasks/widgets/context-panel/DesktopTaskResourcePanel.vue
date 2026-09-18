@@ -8,14 +8,12 @@ import { Pause16Regular } from '@vicons/fluent'
 import { NSpin, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, toRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { useTaskContext } from '@/modules/tasks/taskContext'
+import { useTaskEnvironment } from '@/modules/tasks/taskContext'
 import DesktopContextFileTree from '@/shared/ui/files/DesktopContextFileTree.vue'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
 import DesktopFileToolbar from '@/shared/ui/files/DesktopFileToolbar.vue'
-import DesktopMonacoFile from '@/shared/ui/files/DesktopMonacoFile.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopArtifactContextSurface from './DesktopArtifactContextSurface.vue'
-import DesktopArtifactToolbar from './DesktopArtifactToolbar.vue'
 import DesktopBrowserToolbar from './DesktopBrowserToolbar.vue'
 import DesktopChangeList from './DesktopChangeList.vue'
 import DesktopChangeToolbar from './DesktopChangeToolbar.vue'
@@ -35,7 +33,7 @@ const props = defineProps<{
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const fileSpacePickerOpen = shallowRef(false)
-const { browser, browserGuests, clipboard } = useTaskContext()
+const { browser, browserGuests, clipboard } = useTaskEnvironment()
 const activeTab = computed(() => props.panel.activeTab.value)
 const fileTab = computed(() => activeTab.value?.kind === 'files' ? activeTab.value : null)
 const changeTab = computed(() => activeTab.value?.kind === 'changes' ? activeTab.value : null)
@@ -69,6 +67,7 @@ const browserView = useBrowserContextSurface({
 })
 const { address, openAddress, updateAddress } = useBrowserAddress(browserView.state, browserView.navigate)
 const browserState = browserView.state
+const browserBlank = computed(() => browserState.value?.url === 'about:blank' && browserState.value.status !== 'loading')
 const controlAnnouncement = shallowRef('')
 watch(() => browserState.value?.controller, (controller, previous) => {
   if (controller === 'agent')
@@ -84,13 +83,19 @@ const busyAction = computed<BrowserToolbarBusyAction | null>(() => browserView.i
       ? 'external'
       : browserView.isShowingFileInFolder.value ? 'folder' : browserView.isSettingZoom.value ? 'zoom' : null)
 const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) => {
+  if (tab.kind === 'view')
+    return { id: tab.id, title: tab.label, icon: 'file' }
   if (tab.kind === 'artifact')
     return { id: tab.id, title: tab.artifact.name, icon: tab.artifact.kind === 'directory' ? 'folder' : 'file', fileName: tab.artifact.name }
   if (tab.kind === 'files')
-    return { id: tab.id, title: tab.target.path.split('/').at(-1) || t('desktop.context.files'), icon: tab.target.path ? 'file' : 'folder', fileName: tab.target.path }
+    return { id: tab.id, title: t('desktop.context.files'), icon: 'folder' }
   if (tab.kind === 'changes')
     return { id: tab.id, title: t('desktop.context.changes'), icon: 'changes' }
-  return { id: tab.id, title: props.panel.browserStates.value[tab.id]?.title.trim() || t('desktop.context.browser'), icon: 'browser' }
+  const state = props.panel.browserStates.value[tab.id]
+  const title = !state || state.url === 'about:blank'
+    ? t('desktop.context.browserNewTab')
+    : state.title.trim() || t('desktop.context.browser')
+  return { id: tab.id, title, icon: 'browser' }
 }))
 function add(kind: 'changes' | 'files' | 'browser') {
   if (kind === 'files') {
@@ -106,14 +111,6 @@ function add(kind: 'changes' | 'files' | 'browser') {
   else {
     props.panel.addBrowser()
   }
-}
-async function revealFile() {
-  if (!fileTab.value)
-    return
-  try {
-    await props.context.files.revealFile({ ...fileTab.value.target })
-  }
-  catch { message.error(t('desktop.context.fileRevealFailed')) }
 }
 async function selectChangeFile(id: string) {
   const view = changeView.value
@@ -152,29 +149,20 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 <template>
   <DesktopFileSpacePicker v-model:show="fileSpacePickerOpen" :spaces="panel.fileSpaces.value" :language="language" @select="panel.openFiles" />
   <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" :can-add-files="Boolean(panel.fileEntry.value)" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
-    <template v-if="activeTab" #toolbar>
-      <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @reveal="revealFile" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible" />
+    <template v-if="activeTab && activeTab.kind !== 'view' && activeTab.kind !== 'artifact'" #toolbar>
+      <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible">
+        <template v-if="fileTab.target.path" #default>
+          <slot name="file-toolbar" :tab="fileTab" />
+        </template>
+      </DesktopFileToolbar>
       <DesktopChangeToolbar v-else-if="changeTab && changeView" v-model:range="changeView.range" :language="language" :added="changes.counts.value.added" :deleted="changes.counts.value.deleted" :can-show-turn="Boolean(changeTab.changeSet)" :all-collapsed="allCollapsed" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" :tree-visible="changeView.treeVisible" @toggle-all="changes.toggleAll" @toggle-wrap="changeView.wrap = !changeView.wrap" @toggle-layout="changeView.sideBySide = !changeView.sideBySide" @toggle-tree="changeView.treeVisible = !changeView.treeVisible" />
       <DesktopBrowserToolbar v-else-if="browserTab" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" />
-      <DesktopArtifactToolbar v-else-if="activeTab?.kind === 'artifact'" :artifact="activeTab.artifact" :language="language" :view-mode="activeTab.viewMode" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
     </template>
-    <DesktopContextSplit v-if="fileTab && fileView" v-model:width="fileView.treeWidth" :tree-visible="fileView.treeVisible">
-      <div v-if="fileView.loading" class="context-resource-state">
-        <NSpin size="small" />
-      </div>
-      <div v-else-if="fileView.failed" class="context-resource-state">
-        {{ t('desktop.context.previewLoadFailed') }}
-      </div>
-      <DesktopMonacoFile v-else-if="fileView.preview?.kind === 'text'" :text="fileView.preview.text ?? ''" :path="fileTab.target.path" :wrap="fileView.wrap">
-        <template #error>
-          {{ t('desktop.context.editorLoadFailed') }}
-        </template>
-      </DesktopMonacoFile>
-      <div v-else-if="fileView.preview?.kind === 'image'" class="context-file-image">
-        <img :src="fileView.preview.imageUrl ?? ''" :alt="fileTab.target.path">
-      </div>
+    <slot v-if="activeTab?.kind === 'view'" name="view" :view-id="activeTab.viewId" />
+    <DesktopContextSplit v-else-if="fileTab && fileView" v-model:width="fileView.treeWidth" :tree-visible="fileView.treeVisible">
+      <slot v-if="fileTab.target.path" name="file" :tab="fileTab" :wrap="fileView.wrap" :set-wrap="(value: boolean) => fileView!.wrap = value" />
       <div v-else class="context-resource-state">
-        {{ t(fileView.preview ? 'desktop.context.previewUnavailable' : 'desktop.context.selectFile') }}
+        {{ t('desktop.context.selectFile') }}
       </div>
       <template #tree>
         <div v-if="fileView.treeFailed" class="context-tree-error">
@@ -245,16 +233,18 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
         data-testid="browser-guest-surface"
         role="group"
         :aria-label="t('desktop.context.browserViewport')"
-      />
+      >
+        <div v-if="browserBlank" class="desktop-browser-context-surface__empty">
+          <p>{{ t('desktop.context.browserStartBrowsing') }}</p>
+        </div>
+      </div>
     </section>
-    <DesktopArtifactContextSurface v-else-if="activeTab?.kind === 'artifact'" :key="activeTab.id" :artifact="activeTab.artifact" :language="language" :view-mode="activeTab.viewMode" :read-artifact-text="context.readArtifactText" :write-clipboard-text="clipboard.writeText" />
+    <DesktopArtifactContextSurface v-else-if="activeTab?.kind === 'artifact'" :key="activeTab.id" :artifact="activeTab.artifact" :language="language" :view-mode="activeTab.viewMode" :read-artifact-text="context.readArtifactText" :write-clipboard-text="clipboard.writeText" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
   </DesktopTaskContextPanel>
 </template>
 
 <style scoped>
 .context-resource-state { display: grid; flex: 1; min-width: 0; min-height: 0; place-content: center; padding: 20px; font-size: 12px; color: var(--buddy-text-muted); }
-.context-file-image { display: grid; width: 100%; height: 100%; overflow: auto; place-items: center; padding: 16px; }
-.context-file-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .context-tree-error { padding: 8px 12px; font-size: 11px; color: var(--buddy-text-muted); }
 .desktop-browser-context-surface {
   display: flex;
@@ -350,5 +340,23 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
   min-height: 0;
   flex: 1;
   background: var(--buddy-surface-base);
+}
+
+.desktop-browser-context-surface__empty {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--buddy-surface-base);
+  color: var(--buddy-text-muted);
+  padding: 24px;
+  pointer-events: none;
+  font-size: 13px;
+  text-align: center;
+}
+
+.desktop-browser-context-surface__empty p {
+  margin: 0;
 }
 </style>

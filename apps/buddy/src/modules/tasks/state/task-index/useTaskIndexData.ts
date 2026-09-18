@@ -17,6 +17,8 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   let conversationListGeneration = 0
   let spaceListGeneration = 0
   let disposed = false
+  let initialized = false
+  let initialization: Promise<void> | null = null
   onScopeDispose(() => {
     disposed = true
     conversationListGeneration += 1
@@ -27,6 +29,14 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
     if (disposed)
       return
     await Promise.all([refreshSpaces(), refreshConversations()])
+    initialized = true
+  }
+
+  function initialize(): Promise<void> {
+    if (initialized)
+      return Promise.resolve()
+    initialization ??= refreshIndex().finally(() => initialization = null)
+    return initialization
   }
 
   async function refreshSpaces() {
@@ -72,6 +82,7 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
       void refreshConversations().catch(() => {})
       return
     }
+    conversationListGeneration += 1
     conversations.value = conversations.value.map(item => item.id === conversation.id
       ? { ...item, ...conversation }
       : item)
@@ -82,12 +93,14 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
     branchId: string,
     updatedAt: string,
   ) {
+    conversationListGeneration += 1
     conversations.value = conversations.value.map(conversation => conversation.id === conversationId
       ? { ...conversation, activeBranchId: branchId, updatedAt }
       : conversation)
   }
 
   return {
+    initialize,
     applyConversation,
     applySpace,
     conversations: readonly(conversations),

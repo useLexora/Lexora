@@ -1,5 +1,4 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalSpaceFilePreview } from '@buddy-shared/spaces/spaceFileApi'
 import type { TreeOption } from 'naive-ui'
 import type { Ref } from 'vue'
 import type { TaskFilesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
@@ -12,10 +11,7 @@ interface FileView {
   treeVisible: boolean
   treeWidth: number
   wrap: boolean
-  loading: boolean
-  failed: boolean
   treeFailed: boolean
-  preview: LocalSpaceFilePreview | null
 }
 
 export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | null>>, api: WorkspaceFilesApi, hasTab: (id: string) => boolean) {
@@ -32,16 +28,12 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     views.clear()
   })
   const current = computed(() => tab.value ? views.get(tab.value.id) ?? null : null)
-  watch(tab, async (value, previous, onCleanup) => {
+  watch(tab, (value) => {
     if (!value)
       return
-    let active = true
-    onCleanup(() => {
-      active = false
-    })
     let view = views.get(value.id)
     if (!view) {
-      view = shallowReactive<FileView>({ nodes: [], expandedKeys: [], treeVisible: true, treeWidth: 220, wrap: false, loading: false, failed: false, treeFailed: false, preview: null })
+      view = shallowReactive<FileView>({ nodes: [], expandedKeys: [], treeVisible: true, treeWidth: 220, wrap: false, treeFailed: false })
       views.set(value.id, view)
       const newView = view
       void readNodes(value, '', newView).then((nodes) => {
@@ -51,26 +43,6 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
         if (retained(value.id, newView))
           newView.treeFailed = true
       })
-    }
-    if (value.target === previous?.target && value.id === previous.id)
-      return
-    view.failed = false
-    view.preview = null
-    view.loading = Boolean(value.target.path)
-    if (!value.target.path)
-      return
-    try {
-      const preview = await api.readFile({ ...value.target })
-      if (active)
-        view.preview = preview
-    }
-    catch {
-      if (active)
-        view.failed = true
-    }
-    finally {
-      if (active)
-        view.loading = false
     }
   }, { immediate: true, flush: 'sync' })
 

@@ -87,6 +87,17 @@ describe('resource panel ownership', () => {
     expect(panel.activeTab.value).toEqual(first)
   })
 
+  it('does not steal independent tabs when a background task presents a browser', async () => {
+    const f = contextPanelFixture({ mode: shallowRef('independent'), activeConversationId: shallowRef('first') })
+    const panel = f.scope.run(() => useTaskContextPanel(f.options))!
+    panel.addBrowser()
+    const selected = panel.activeTab.value
+    const source = { conversationId: 'second', runId: 'background-run' }
+    await f.host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+    expect(panel.activeTab.value).toEqual(selected)
+    expect(panel.allTabs.value).toContainEqual(expect.objectContaining({ id: 'browser:second', source }))
+  })
+
   it('retains independent resources without changing task selections or assigning them to the left task', () => {
     const activeConversationId = shallowRef<string | null>('first')
     const mode = shallowRef<'task' | 'independent'>('task')

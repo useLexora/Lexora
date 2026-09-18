@@ -9,8 +9,8 @@ import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import {
   getDesktopMenuCommands,
   isDesktopCommandId,
-  resolveDesktopShortcut,
 } from '@buddy-electron/shared/desktopCommands'
+import { formatKeybinding } from '@buddy-shared/shortcuts/keybinding'
 import {
   PanelLeft20Regular,
 } from '@vicons/fluent'
@@ -24,6 +24,7 @@ const props = defineProps<{
   appSidebarCollapsed: boolean
   language: BuddyLocale
   platform: DesktopPlatform
+  shortcutBindings: Readonly<Record<string, readonly string[]>>
 }>()
 const emit = defineEmits<{
   command: [commandId: DesktopCommandId]
@@ -65,13 +66,13 @@ function createMenuOptions(menu: DesktopCommandMenu): DropdownOption[] {
       })
     }
     currentSection = command.section
-    const shortcut = resolveDesktopShortcut(command.id, props.platform)
+    const shortcut = props.shortcutBindings[command.id]?.[0]
     options.push({
       key: command.id,
       label: () => h('span', { class: 'desktop-window-menu-option' }, [
         h('span', t(commandLabelKeys[command.id])),
         shortcut
-          ? h('kbd', { class: 'desktop-window-menu-option__shortcut' }, shortcut.label)
+          ? h('kbd', { class: 'desktop-window-menu-option__shortcut' }, formatKeybinding(shortcut, props.platform))
           : null,
       ]),
     })

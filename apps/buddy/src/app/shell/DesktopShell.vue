@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import type { DesktopShellBindings } from './desktopShellBindings'
 import { computed } from 'vue'
-import { RouterView, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import DesktopStartupScreen from '@/app/bootstrap/DesktopStartupScreen.vue'
 import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
 import DesktopTitleBar from '@/app/shell/window/DesktopTitleBar.vue'
-import { DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
-import DesktopWorkbenchLayout from '@/shared/ui/workbench-layout/DesktopWorkbenchLayout.vue'
+import WorkbenchHost from '@/workbench/browser/WorkbenchHost.vue'
+import DesktopWorkbenchArea from '../workbench/DesktopWorkbenchArea.vue'
+import DesktopWorkbenchView from '../workbench/DesktopWorkbenchView.vue'
 
 const { bindings } = defineProps<{ bindings: DesktopShellBindings }>()
 const route = useRoute()
@@ -16,16 +17,16 @@ const router = useRouter()
 const { appSidebarCollapsed, language } = useDesktopUi()
 const startupVisible = computed(() => !bindings.lifecycle.state.value.hasBeenReady && route.meta.settingsCategory !== 'logs')
 const activeView = computed(() => route.meta.desktopView ?? 'tasks')
-const contextAvailable = computed(() => bindings.contextPanelGlobal.value || activeView.value === 'tasks')
 </script>
 
 <template>
   <div class="desktop-shell">
     <DesktopTitleBar
       :app-info="bindings.appInfo.value"
+      :shortcut-bindings="bindings.shortcuts.bindings.value"
       :app-sidebar-collapsed="appSidebarCollapsed"
       :language="language"
-      :context-available="contextAvailable"
+      :context-available="bindings.contextPanelGlobal.value || activeView === 'tasks'"
       :context-open="bindings.resources.isOpen.value"
       @toggle-context="bindings.resources.toggle"
       @toggle-app-sidebar="bindings.toggleAppSidebar"
@@ -36,31 +37,31 @@ const contextAvailable = computed(() => bindings.contextPanelGlobal.value || act
           <DesktopAppSidebar
             v-if="!appSidebarCollapsed"
             :app-version="bindings.appInfo.value?.version ?? null"
-            :conversations="bindings.taskIndex.tasks.value"
             :language="language"
             :mode="activeView"
+            :extension-navigation="bindings.extensionNavigation.value"
+            :active-extension="typeof route.params.extensionId === 'string' ? route.params.extensionId : null"
             :notification-items="bindings.notifications.items.value"
             :notification-loading="bindings.notifications.isLoading.value"
             :notification-unseen-count="bindings.notifications.unseenCount.value"
-            :spaces="bindings.taskIndex.spaces.value"
             @navigate-tasks="bindings.navigation.navigate(desktopRouteLocations.tasks())"
             @navigate-automations="bindings.navigation.navigate(desktopRouteLocations.automations())"
+            @navigate-extensions="bindings.navigation.navigate(desktopRouteLocations.extensions())"
+            @navigate-extension-page="id => bindings.navigation.navigate(desktopRouteLocations.extensionPage(id))"
             @navigate-settings="bindings.navigation.navigate(desktopRouteLocations.settings())"
             @mark-all-notifications-seen="bindings.notifications.markAllSeen"
             @open-notification="bindings.navigation.openNotification"
-            @open-task="bindings.navigation.openTask"
-            @open-space="bindings.navigation.openSpace"
             @refresh-notifications="bindings.notifications.load"
           />
         </Transition>
 
         <div class="desktop-shell__workbench">
-          <DesktopWorkbenchLayout :language="language" :workspace-minimum-width="480" :context-visible="contextAvailable">
-            <RouterView />
-            <template v-if="bindings.resources.isOpen.value" #context>
-              <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="contextAvailable" />
+          <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="activeView === 'tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
+            <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="activeView === 'tasks'" />
+            <template #view="{ view, visible }">
+              <DesktopWorkbenchView :view="view" :visible="visible" />
             </template>
-          </DesktopWorkbenchLayout>
+          </WorkbenchHost>
         </div>
       </div>
       <Transition name="desktop-startup-reveal">
@@ -97,7 +98,7 @@ const contextAvailable = computed(() => bindings.contextPanelGlobal.value || act
 .desktop-startup-reveal-leave-to { opacity: 0; }
 
 .desktop-shell__workbench {
-  background: var(--buddy-surface-base);
+  background: var(--buddy-surface-canvas);
 }
 
 .desktop-app-sidebar-enter-active,

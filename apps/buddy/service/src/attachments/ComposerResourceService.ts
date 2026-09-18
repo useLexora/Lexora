@@ -51,7 +51,7 @@ import { validateResourceBytes } from './validateResourceBytes'
 
 export interface ComposerResourceServiceOptions {
   artifacts?: Pick<ArtifactService, 'listConversationArtifacts' | 'resolveConversationArtifactLocation'>
-  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'registerUploads' | 'release' | 'resolvePreview'>
+  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'registerUploads' | 'release' | 'releaseDraft' | 'resolvePreview'>
   conversationGrants?: Pick<ConversationDirectoryGrantRepository, 'listActive'>
   conversations?: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
   drafts?: Pick<ComposerDraftRepository, 'findById'>
@@ -644,6 +644,11 @@ export class ComposerResourceService {
     for (const [draftId, resourceIds] of removableByDraft)
       this.#repository.remove(draftId, resourceIds)
     return this.#attachments.cleanupDrafts(now, retainedAttachmentIds)
+  }
+
+  async discard(draftId: string): Promise<void> {
+    this.#repository.remove(draftId, this.#repository.listForDraft(draftId).map(resource => resource.resourceId))
+    await this.#attachments.releaseDraft(draftId)
   }
 
   #requireOwned(input: BuddyComposerResourceTarget): ComposerResourceRecord {

@@ -14,13 +14,14 @@ export function useChatWorkspace(
   const session = computed(() => workspace.value.session)
   const status = computed(() => workspace.value.status)
   const transcript = computed(() => workspace.value.transcript)
-  const activeSearchMessageId = computed(() => props.activeSearchMessageId)
+  const revealMessageId = computed(() => props.revealMessageId)
   const isEmpty = computed(() => session.value.activeConversationId.value === null)
   const welcomeVariant = shallowRef(selectDesktopChatWelcomeVariant(workspace.value.welcomePreference.value))
   const viewport = useChatViewport({
+    readingPositions: props.readingPositions,
     activeBranchId: computed(() => session.value.activeBranchId.value),
     activeConversationId: computed(() => session.value.activeConversationId.value),
-    activeSearchMessageId,
+    revealMessageId,
     hasOlderMessages: computed(() => transcript.value.hasOlderMessages.value),
     isLoading: computed(() => status.value.isLoading.value),
     isLoadingOlderMessages: computed(() => transcript.value.isLoadingOlderMessages.value),
@@ -53,8 +54,6 @@ export function useChatWorkspace(
     return {
       activeBranchId,
       conversationId,
-      activeSearchMessageId: activeSearchMessageId.value,
-      matchingSearchMessageIds: props.matchingSearchMessageIds,
       actionsDisabled: !currentExecution.canMutateBranch.value,
       editingMessageId: currentExecution.editingMessageId.value,
       branches: currentTranscript.branches.value,

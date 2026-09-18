@@ -1,5 +1,6 @@
 import type { ContextPanelSource } from '../../shared/context-panel/contextPanel'
 import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
+import type { RuntimeRpcPeerContract } from '../../shared/runtime/rpcPeer'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
 import type { ArtifactService } from './artifacts/ArtifactService'
 import type { CreateAutomationToolOptions } from './automations/createAutomationTool'
@@ -20,11 +21,13 @@ import { ImageGenerationService } from './images/ImageGenerationService'
 import { createImageTransformCapability } from './images/imageTransformExtension'
 import { PetActionService } from './pet/PetActionService'
 import { createPetCapability } from './pet/petExtension'
+import { createPluginAuthoringCapability } from './plugins/pluginAuthoringCapability'
 import { createSystemHost } from './system/createSystemHost'
 import { createSystemCapability } from './system/systemExtension'
 import { createWebCapability } from './web/webExtension'
 
 export interface BuddyCapabilityServices {
+  pluginAuthoring: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
   artifactService: ImageGenerationServiceOptions['artifactService'] & Pick<ArtifactService, 'presentOutputs'>
   attachmentService: ImageGenerationServiceOptions['attachmentService']
   automationService: CreateAutomationToolOptions['service']
@@ -90,6 +93,7 @@ export function createBuddyCapabilityFactory(
       ...supported.map(create => create(context)),
     ]
     if (context.sessionMode === 'interactive') {
+      capabilities.push(createPluginAuthoringCapability(context, services.pluginAuthoring))
       capabilities.push(createAutomationCapability({
         onChanged: services.onAutomationChanged,
         service: services.automationService,

@@ -62,15 +62,15 @@ async function refresh(): Promise<void> {
         </nav>
       </div>
       <div class="desktop-automation-workbench__header-actions">
-        <NButton secondary :loading="isRefreshing" @click="refresh">
+        <NButton size="small" secondary :loading="isRefreshing" @click="refresh">
           <template #icon>
-            <DesktopIcon :component="ArrowClockwise20Regular" />
+            <DesktopIcon :component="ArrowClockwise20Regular" :size="16" />
           </template>
           {{ t('desktop.automations.refresh') }}
         </NButton>
-        <NButton type="primary" @click="emit('add')">
+        <NButton size="small" type="primary" @click="emit('add')">
           <template #icon>
-            <DesktopIcon :component="Add20Regular" />
+            <DesktopIcon :component="Add20Regular" :size="16" />
           </template>
           {{ t('desktop.automations.add') }}
         </NButton>
@@ -124,18 +124,18 @@ async function refresh(): Promise<void> {
     display: flex;
     align-items: center;
     gap: 2px;
-    border-radius: 9px;
+    border-radius: 6px;
     background: var(--buddy-surface-subtle);
-    padding: 3px;
+    padding: 2px;
   }
 
   nav > a {
-    border-radius: 7px;
+    border-radius: 4px;
     color: var(--buddy-text-secondary);
     font-size: 13px;
     font-weight: 580;
     line-height: 1;
-    padding: 9px 14px;
+    padding: 7px 12px;
     text-decoration: none;
   }
 

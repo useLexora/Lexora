@@ -1,6 +1,5 @@
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
-import type { LocalWorkspaceDraft } from '@buddy-shared/conversation/workspaceApi'
 
 import type { BuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import type { JSONContent } from '@tiptap/core'
@@ -28,19 +27,19 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
   const draftsByScope = shallowReactive(new Map<string, ChatDraftState>())
   const isolatedDraft = shallowRef<{ sourceKey: string, targetKey: string } | null>(null)
   watch(options.targetKey, () => isolatedDraft.value = null, { flush: 'sync' })
-  watch(
-    () => [options.targetKey.value, draftsByScope.has(options.targetKey.value)] as const,
-    ([key, exists]) => {
-      if (!exists)
-        draftsByScope.set(key, emptyDraft())
-    },
-    { flush: 'sync', immediate: true },
-  )
   const activeTargetKey = computed(() => (
     isolatedDraft.value?.sourceKey === options.targetKey.value
       ? isolatedDraft.value.targetKey
       : options.targetKey.value
   ))
+  watch(
+    () => [activeTargetKey.value, draftsByScope.has(activeTargetKey.value)] as const,
+    ([key, exists]) => {
+      if (!exists)
+        draftsByScope.set(key, emptyDraft(key))
+    },
+    { flush: 'sync', immediate: true },
+  )
   const currentDraft = computed(() => load(activeTargetKey.value))
   const composerContent = computed(() => userContentToChatComposerDocument(currentDraft.value.content))
   const draft = computed(() => buddyUserContentToText(currentDraft.value.content))
@@ -72,7 +71,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     const existing = draftsByScope.get(key)
     if (existing)
       return existing
-    const value = emptyDraft()
+    const value = emptyDraft(key)
     draftsByScope.set(key, value)
     return value
   }
@@ -146,6 +145,8 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
       const empty = createBuddyUserContent()
       const destination = draftsByScope.get(targetKey)
       const key = destination && destination.draftId !== current.draftId ? sourceKey : targetKey
+      if (sourceKey.startsWith('draft:') && sourceKey === options.targetKey.value && sourceKey !== key)
+        isolatedDraft.value = { sourceKey, targetKey: key }
       if (sourceKey !== key)
         draftsByScope.delete(sourceKey)
       const next = {
@@ -267,17 +268,6 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         draftsByScope.set(value.targetKey, fromRemote(value.draft))
       load(options.targetKey.value)
     },
-    importLegacy(targetKey: string, value: LocalWorkspaceDraft) {
-      const document = value.composerContent as JSONContent | null
-        ?? createChatComposerContentFromText(value.content)
-      draftsByScope.set(targetKey, {
-        ...emptyDraft(),
-        approvalPolicy: value.approvalPolicy,
-        content: chatComposerDocumentToUserContent(document),
-        draftId: value.draftId,
-        executionProfile: value.executionProfile,
-      })
-    },
     isEditorSessionCurrent(value: Pick<ChatDraftState, 'draftId' | 'editorSessionId'>) {
       return findDraft(value.draftId)?.[1].editorSessionId === value.editorSessionId
     },
@@ -332,12 +322,12 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
   }
 }
 
-function emptyDraft(): ChatDraftState {
+function emptyDraft(targetKey = ''): ChatDraftState {
   return {
     approvalPolicy: BUDDY_DEFAULT_APPROVAL_POLICY,
     confirmedSnapshot: null,
     content: createBuddyUserContent(),
-    draftId: crypto.randomUUID(),
+    draftId: targetKey.startsWith('draft:') ? targetKey.slice(6) : crypto.randomUUID(),
     editorSessionId: crypto.randomUUID(),
     editVersion: 0,
     executionProfile: BUDDY_DEFAULT_EXECUTION_PROFILE,

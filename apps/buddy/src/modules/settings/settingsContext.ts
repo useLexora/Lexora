@@ -1,7 +1,7 @@
 import type { DesktopAppInfo, DesktopBrowserApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyCapabilities } from '@buddy-shared/platform'
 import type { Ref } from 'vue'
-import type { ApplicationSettings } from './contracts'
+import type { ApplicationSettings, ShortcutSettings } from './contracts'
 import type { DesktopDataSettingsCapability } from './state/desktopDataSettingsCapability'
 import type { McpSettingsCapability } from './state/useMcpSettingsCapability'
 import type { WebSettingsCapability } from './state/useWebSettingsCapability'
@@ -9,6 +9,7 @@ import type { ModelProvidersStore } from '@/modules/models'
 import { createInjectionState } from '@vueuse/core'
 
 export interface SettingsContext {
+  shortcuts: ShortcutSettings
   browser: Pick<DesktopBrowserApi, 'clearData' | 'getDataSummary'>
   appInfo: Readonly<Ref<DesktopAppInfo | null>>
   applicationSettings: ApplicationSettings

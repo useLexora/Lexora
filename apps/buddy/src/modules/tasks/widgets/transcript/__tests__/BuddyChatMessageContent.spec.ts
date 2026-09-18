@@ -122,6 +122,7 @@ function renderContent(message: LocalMessage, isDark = false) {
         language: shallowRef('zh-CN'),
         isDark: shallowRef(isDark),
         appSidebarCollapsed: shallowRef(false),
+        chat: shallowRef({ outlinePosition: 'top-right', welcome: 'random' }),
       })
       return () => h(BuddyChatMessageContent, {
         language: 'zh-CN',

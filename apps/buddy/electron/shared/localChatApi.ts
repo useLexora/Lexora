@@ -5,7 +5,7 @@ import type { LocalConnector, LocalConnectorConfig, LocalConnectorCredential, Lo
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
 import type { LocalChatCommandRequest, LocalStartTurnRequest, LocalTurnStart } from '../../shared/conversation/chatApi'
 import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
-import type { LocalComposerDraft, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
+import type { LocalComposerDraft, LocalComposerDraftDiscard, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
 import type {
   BuddyComposerResource,
   BuddyComposerResourceAccept,
@@ -83,6 +83,9 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   composerResourcesSelectFiles: 'lexora:buddy:composer-resources:select-files',
   composerResourcesSelectSource: 'lexora:buddy:composer-resources:select-source',
   composerResourcesSelectSpaceFile: 'lexora:buddy:composer-resources:select-space-file',
+  composerDraftsList: 'lexora:buddy:composer-drafts:list',
+  composerDraftsFind: 'lexora:buddy:composer-drafts:find',
+  composerDraftsDiscard: 'lexora:buddy:composer-drafts:discard',
   composerDraftsGet: 'lexora:buddy:composer-drafts:get',
   composerDraftsOpen: 'lexora:buddy:composer-drafts:open',
   composerDraftsSave: 'lexora:buddy:composer-drafts:save',
@@ -124,6 +127,8 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   notificationsMarkAllSeen: 'lexora:buddy:notifications:mark-all-seen',
   notificationsMarkSeen: 'lexora:buddy:notifications:mark-seen',
   spacesCreate: 'lexora:buddy:spaces:create',
+  spaceDocumentRead: 'lexora:buddy:spaces:document:read',
+  spaceDocumentSave: 'lexora:buddy:spaces:document:save',
   spacesDelete: 'lexora:buddy:spaces:delete',
   spacesList: 'lexora:buddy:spaces:list',
   spacesSearchFiles: 'lexora:buddy:spaces:search-files',
@@ -202,6 +207,9 @@ export interface LocalChatApi {
     clear: (input: TaskMarkClearInput) => Promise<LocalTaskMarkState>
   }
   composerDrafts: {
+    find: (draftId: string) => Promise<LocalComposerDraft | null>
+    discard: (input: LocalComposerDraftDiscard) => Promise<boolean>
+    list: () => Promise<LocalComposerDraft[]>
     get: (draftId: string) => Promise<LocalComposerDraft>
     open: (input: LocalComposerDraftOpen) => Promise<LocalComposerDraft>
     save: (input: LocalComposerDraftSave) => Promise<LocalComposerDraft>
@@ -294,6 +302,8 @@ export interface LocalChatApi {
     markSeen: (notificationId: string, revision: string) => Promise<LocalNotificationList>
   }
   spaces: {
+    readDocument: (input: SpaceFileTarget) => Promise<import('../../shared/spaces/spaceFileApi').SpaceTextDocument>
+    saveDocument: (input: import('../../shared/spaces/spaceFileApi').SpaceSaveDocument) => Promise<import('../../shared/spaces/spaceFileApi').SpaceSaveResult>
     listDirectory: (input: SpaceDirectoryRequest) => Promise<LocalSpaceDirectoryPage>
     readFile: (input: SpaceFileTarget) => Promise<LocalSpaceFilePreview>
     revealFile: (input: SpaceFileTarget) => Promise<void>

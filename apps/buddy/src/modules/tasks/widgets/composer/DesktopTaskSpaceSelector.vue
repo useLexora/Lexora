@@ -179,7 +179,7 @@ function openSpaceCreator() {
 
 <style scoped lang="scss">
 .desktop-task-space-selector__trigger {
-  max-width: min(14rem, 28vw);
+  max-width: min(14rem, 40cqw);
   min-width: 0;
   height: var(--buddy-composer-control-height);
   border-radius: var(--buddy-composer-control-radius);

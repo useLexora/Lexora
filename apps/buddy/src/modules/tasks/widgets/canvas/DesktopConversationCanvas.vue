@@ -8,7 +8,7 @@ import { computed, nextTick, onBeforeUnmount, useTemplateRef, watch } from 'vue'
 import { createChatRunTranscriptProjector } from '../../model/transcript/chatRunTranscriptProjector'
 import ConversationCanvas from './ConversationCanvas.vue'
 
-const props = defineProps<{ workspace: TaskChatWorkspace, active: boolean, matches: readonly string[], selectedNodeId: string | null, searchMessageId?: string | null }>()
+const props = defineProps<{ workspace: TaskChatWorkspace, active: boolean, selectedNodeId: string | null }>()
 const emit = defineEmits<{ focusComposer: [], openNode: [node: LocalConversationTreeNode], editNode: [node: LocalConversationTreeNode], openQuote: [messageId: string, quoteId: string], openNodeArtifact: [artifact: LocalArtifact] }>()
 const canvasRef = useTemplateRef<InstanceType<typeof ConversationCanvas>>('canvasRef')
 const tree = computed(() => props.workspace.tree.data.value)
@@ -129,9 +129,7 @@ onBeforeUnmount(() => props.workspace.tree.setVisible(false))
     :active="active"
     :loading="workspace.tree.loading.value"
     :error="workspace.tree.error.value"
-    :matches="matches"
     :selected-node-id="selectedNodeId"
-    :search-message-id="searchMessageId"
     @followup="beginFollowup"
     @retry="retry"
     @open="openNode"

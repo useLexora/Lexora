@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname } from 'node:path'
 import process from 'node:process'
-import { app, crashReporter, Menu } from 'electron'
+import { app, crashReporter, Menu, protocol } from 'electron'
 import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
@@ -13,11 +13,12 @@ import developmentTrayIconPath from '../../../resources/icons/tray-icon-dev.png?
 import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
-import { registerAttachmentSchemePrivileges } from '../attachmentProtocol'
+import { attachmentSchemePrivileges } from '../attachmentProtocol'
 import { DesktopDiagnosticLogger } from '../desktopDiagnostics'
+import { extensionSchemePrivileges } from '../extensions/ExtensionProtocol'
 import { resolveBuddyRuntimePaths } from '../paths'
 import { desktopHosts } from '../platform/desktopHost'
-import { registerRendererSchemePrivileges } from '../rendererProtocol'
+import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { bootstrapStep } from './desktopBootstrap'
 import { DesktopStartup } from './DesktopStartup'
@@ -103,8 +104,7 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
     }
   }
   bootstrapStep('register_protocols', () => {
-    registerAttachmentSchemePrivileges()
-    registerRendererSchemePrivileges()
+    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges])
   })
   bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity?.(paths.desktopName))
 }

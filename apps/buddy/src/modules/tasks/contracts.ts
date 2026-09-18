@@ -167,6 +167,7 @@ export interface TaskTranscript {
 }
 
 export interface TaskStatus {
+  isClosing: State<boolean>
   canRestartRuntime: State<boolean>
   errorMessage: State<string | null>
   isLoading: State<boolean>
@@ -214,6 +215,8 @@ export interface TaskChatWorkspace {
 }
 
 export interface TaskCapability {
+  prepareClose: () => Promise<boolean>
+  cancelClose: () => void
   index: TaskIndex
   language: State<BuddyLocale>
   session: TaskSession

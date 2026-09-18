@@ -159,16 +159,27 @@ withDefaults(defineProps<{
 
 .desktop-chat-composer__toolbar {
   min-height: var(--buddy-composer-control-height);
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.55rem;
 }
 
 .desktop-chat-composer__actions {
+  max-width: 100%;
   justify-content: flex-end;
   gap: 0.35rem;
+  margin-left: auto;
 }
 
 .desktop-chat-composer__leading-actions {
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+@container desktop-chat-composer (max-width: 560px) {
+  .desktop-chat-composer__leading-actions {
+    flex-basis: 100%;
+  }
 }
 </style>

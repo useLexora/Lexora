@@ -4,12 +4,15 @@ import type { LocalConversationSummary } from '@buddy-shared/conversation/conver
 import type { LocalWorkspaceDraft } from '@buddy-shared/conversation/workspaceApi'
 
 export function createDraftScopeKey(selection: {
+  draftKey?: string
   branchId: string | null
   conversationId: string | null
   spaceId: string | null
 }): string {
   if (selection.conversationId && selection.branchId)
     return `conversation:${selection.conversationId}:${selection.branchId}`
+  if (selection.draftKey)
+    return `draft:${selection.draftKey}`
   return selection.spaceId ? `space:${selection.spaceId}` : 'global'
 }
 
@@ -17,6 +20,8 @@ export function parseDraftScopeKey(targetKey: string): BuddyComposerDraftScope {
   if (targetKey === 'global')
     return { kind: 'global' }
   const parts = targetKey.split(':')
+  if (parts[0] === 'draft' && parts.length === 2 && parts[1])
+    return { kind: 'task', draftId: parts[1], spaceId: null }
   if (parts[0] === 'space' && parts.length === 2 && parts[1])
     return { kind: 'space', spaceId: parts[1] }
   if (parts[0] === 'conversation' && parts.length === 3 && parts[1] && parts[2]) {

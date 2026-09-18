@@ -113,6 +113,7 @@ function createOwner(name: string) {
       openConversation: async () => {},
     },
     status: {
+      isClosing: shallowRef(false),
       canRestartRuntime: shallowRef(false),
       errorMessage: shallowRef<string | null>(null),
       isLoading: shallowRef(true),
@@ -160,8 +161,7 @@ function createOwner(name: string) {
 
 function bindWorkspace(owner: ReturnType<typeof createOwner>) {
   const props = shallowReactive<ChatWorkspaceProps>({
-    activeSearchMessageId: null,
-    matchingSearchMessageIds: [],
+    revealMessageId: null,
     workspace: owner.workspace,
   })
   const scope = effectScope()

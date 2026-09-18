@@ -5,6 +5,7 @@ import type { ArtifactViewMode, TaskContextTab } from '../../model/context-panel
 import type { UseTaskContextPanelOptions } from './typing'
 import { computed, readonly, watch } from 'vue'
 import { useContextPanelControl } from '@/platform/desktop/useContextPanelControl'
+import { readContextSelection, readContextTab } from '../../model/context-panel/readContextTab'
 import { artifactTabId, browserTabId, contextTabSource, spaceTaskBrowserTab, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
 import { resolveChatToolFileTarget } from '../../model/transcript/chatToolFileTarget'
 import { useContextPanelTabs } from './useContextPanelTabs'
@@ -19,7 +20,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     onTarget: (target) => {
       const tab = spaceTaskBrowserTab(target.source.conversationId)
       if (tab)
-        store.put({ ...tab, source: target.source })
+        store.put({ ...tab, source: target.source }, options.taskVisible.value && target.source.conversationId === options.activeConversationId.value)
     },
   })
   const fileSpaces = computed(() => options.spaces.value.filter(space => space.revokedAt === null
@@ -157,12 +158,33 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     return store.resources.value.some(tab => tab.id === id)
   }
 
-  function restoreTab(tab: TaskContextTab) {
-    if (isAvailable(tab) && !hasTab(tab.id))
+  function restoreTab(value: unknown) {
+    const tab = readContextTab(value)
+    if (tab && isAvailable(tab) && !hasTab(tab.id))
       store.put(tab, false)
   }
 
   return {
+    restoreSnapshot(value: unknown) {
+      if (!value || typeof value !== 'object')
+        return
+      const snapshot = value as { tabs?: unknown, selections?: unknown }
+      if (Array.isArray(snapshot.tabs))
+        snapshot.tabs.slice(0, 512).forEach(restoreTab)
+      if (Array.isArray(snapshot.selections)) {
+        for (const selection of snapshot.selections) {
+          const parsed = readContextSelection(selection)
+          if (parsed)
+            store.restoreSelections([parsed])
+        }
+      }
+    },
+    snapshot: store.snapshot,
+    restoreSelections: store.restoreSelections,
+    openView: (viewId: string, label: string) => openTab({ kind: 'view', id: viewId, viewId, label, scope: store.scope.value }),
+    updateView: (viewId: string, label: string) => store.update(tab => tab.kind === 'view' && tab.viewId === viewId && tab.label !== label ? { ...tab, label } : tab),
+    removeView: store.close,
+    allTabs: store.resources,
     activeTab: store.activeTab,
     tabs: store.tabs,
     isOpen: control.isOpen,
@@ -171,6 +193,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     fileSpaces: readonly(fileSpaces),
     canAddChanges: readonly(canAddChanges),
     adoptDraft: store.adoptDraft,
+    discardDraft: store.discardDraft,
     addBrowser,
     canPreviewFile,
     closeTab: store.close,

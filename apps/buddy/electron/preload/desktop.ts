@@ -8,8 +8,12 @@ import { ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
-export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'window'> {
+export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'window' | 'workbench'> {
   return {
+    workbench: Object.freeze({
+      read: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.workbenchRead),
+      write: (state: import('../../shared/workbench/workbenchState').WorkbenchState) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.workbenchWrite, state),
+    }),
     contextPanel: Object.freeze({
       getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.contextPanelGetState),
       execute: (command: ContextPanelCommand) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.contextPanelExecute, {

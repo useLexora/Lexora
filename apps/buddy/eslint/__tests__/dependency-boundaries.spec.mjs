@@ -25,6 +25,11 @@ function lint(filename, code) {
 }
 
 const cases = [
+  ['workbench cannot depend on app composition', 'src/workbench/browser/View.ts', 'import { root } from \'@/app/bootstrap/root\'', 'workbenchToBusiness'],
+  ['workbench cannot depend on contributions', 'src/workbench/common/Resource.ts', 'import type { Task } from \'@/modules/tasks\'', 'workbenchToBusiness'],
+  ['workbench services cannot depend on Vue', 'src/workbench/services/Controller.ts', 'import { ref } from \'vue\'', 'workbenchCoreHost'],
+  ['workbench services cannot depend on browser components', 'src/workbench/services/Controller.ts', 'import { Pane } from \'../browser/Pane\'', 'workbenchCoreHost'],
+  ['workbench services cannot depend on host APIs', 'src/workbench/services/Controller.ts', 'import type { API } from \'@buddy-electron/shared/desktopApi\'', 'workbenchCoreHost'],
   ['module cannot import app through alias', 'src/modules/tasks/state/useTasks.ts', 'import { app } from \'@/app/desktopAppContext\'', 'moduleToApp'],
   ['module cannot import app through relative path', 'src/modules/tasks/state/useTasks.ts', 'import { app } from \'../../../app/desktopAppContext\'', 'moduleToApp'],
   ['normalized alias cannot bypass boundary', 'src/modules/tasks/state/useTasks.ts', 'import { app } from \'@/modules/tasks/../../app/desktopAppContext\'', 'moduleToApp'],

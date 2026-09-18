@@ -9,6 +9,9 @@ export function registerComposerDraftRpc(options: {
   service: ComposerDraftService
 }): () => void {
   const disposers = [
+    registerRuntimeRequest(options.rpc, composerDraftsRpc.find, params => options.service.find(params.draftId)),
+    registerRuntimeRequest(options.rpc, composerDraftsRpc.discard, params => options.service.discard(params)),
+    registerRuntimeRequest(options.rpc, composerDraftsRpc.list, () => options.service.list()),
     registerRuntimeRequest(options.rpc, composerDraftsRpc.open, params => options.service.open(
       params,
     )),

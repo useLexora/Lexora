@@ -44,6 +44,9 @@ export function selectDesktopChatWelcomeVariant(
   preference: DesktopChatWelcomePreference,
   randomUnit = Math.random(),
 ) {
+  if (preference === 'none')
+    return null
+
   if (preference !== 'random')
     return DESKTOP_CHAT_WELCOME_VARIANTS.find(variant => variant.id === preference)!
 

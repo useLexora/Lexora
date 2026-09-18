@@ -712,6 +712,7 @@ function resolveDraftScope(scope: BuddyComposerDraftScope): {
 } {
   switch (scope.kind) {
     case 'global': return { branchId: null, conversationId: null, spaceId: null }
+    case 'task':
     case 'space': return { branchId: null, conversationId: null, spaceId: scope.spaceId }
     case 'conversation_branch': return {
       branchId: scope.branchId,

@@ -8,6 +8,32 @@ import { nextTick, shallowRef } from 'vue'
 import { createTaskPanel } from './contextPanelFixture'
 
 describe('useTaskContextPanel', () => {
+  it('discards only context tabs owned by the closed new-task pane', async () => {
+    const activeDraftId = shallowRef('first')
+    const panel = createTaskPanel({ activeDraftId })
+    panel.addBrowser()
+    const first = panel.activeTab.value!
+    activeDraftId.value = 'second'
+    await nextTick()
+    panel.addBrowser()
+    const second = panel.activeTab.value!
+    expect(panel.discardDraft('first')).toEqual([first])
+    expect(panel.allTabs.value).toEqual([second])
+    expect(panel.activeTab.value?.id).toBe(second.id)
+  })
+
+  it('keeps browser identity when a closed new-task pane releases independent context', () => {
+    const activeDraftId = shallowRef('first')
+    const mode = shallowRef<'task' | 'independent'>('task')
+    const panel = createTaskPanel({ activeDraftId, mode })
+    panel.addBrowser()
+    const first = panel.activeTab.value!
+    mode.value = 'independent'
+    expect(panel.discardDraft('first')).toEqual([])
+    expect(panel.allTabs.value).toEqual([{ ...first, scope: 'independent' }])
+    expect(panel.activeTab.value?.id).toBe(first.id)
+  })
+
   it('offers only authorized directories and hides the linked file entry without a current directory', async () => {
     const space = fileSpace()
     const unbound = { ...space, id: 'unbound', primaryDirectory: null }

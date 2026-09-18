@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { ArrowWrap20Regular, ChevronRight16Regular, FolderOpen20Regular } from '@vicons/fluent'
+import { ArrowWrap20Regular, ChevronRight16Regular } from '@vicons/fluent'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -8,22 +8,23 @@ import DirectoryTreeCollapsedIcon from '@/shared/ui/icon/DirectoryTreeCollapsedI
 import DirectoryTreeExpandedIcon from '@/shared/ui/icon/DirectoryTreeExpandedIcon.vue'
 import DesktopContextAction from './DesktopContextAction.vue'
 
-const props = withDefaults(defineProps<{ path: string, rootName: string, language: BuddyLocale, wrap: boolean, treeVisible: boolean, showReveal?: boolean }>(), { showReveal: true })
-defineEmits<{ reveal: [], toggleWrap: [], toggleTree: [] }>()
+const props = defineProps<{ path: string, rootName: string, language: BuddyLocale, wrap: boolean, treeVisible: boolean }>()
+defineEmits<{ toggleWrap: [], toggleTree: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const segments = computed(() => [props.rootName, ...props.path.split('/').filter(Boolean)])
 </script>
 
 <template>
   <div class="desktop-file-toolbar">
-    <div class="desktop-file-toolbar__path">
-      <template v-for="(segment, index) in segments" :key="index">
-        <DesktopIcon v-if="index" :component="ChevronRight16Regular" />
-        <span :class="{ 'is-current': index === segments.length - 1 }">{{ segment }}</span>
-      </template>
-    </div>
+    <slot>
+      <div class="desktop-file-toolbar__path">
+        <template v-for="(segment, index) in segments" :key="index">
+          <DesktopIcon v-if="index" :component="ChevronRight16Regular" />
+          <span :class="{ 'is-current': index === segments.length - 1 }">{{ segment }}</span>
+        </template>
+      </div>
+    </slot>
     <div class="desktop-file-toolbar__actions">
-      <DesktopContextAction v-if="showReveal" :icon="FolderOpen20Regular" :label="t('desktop.context.revealFile')" @click="$emit('reveal')" />
       <DesktopContextAction :icon="ArrowWrap20Regular" :label="t('desktop.context.wrap')" :active="wrap" @click="$emit('toggleWrap')" />
       <DesktopContextAction :icon="treeVisible ? DirectoryTreeExpandedIcon : DirectoryTreeCollapsedIcon" :label="t(treeVisible ? 'desktop.context.hideTree' : 'desktop.context.showTree')" :active="treeVisible" @click="$emit('toggleTree')" />
     </div>

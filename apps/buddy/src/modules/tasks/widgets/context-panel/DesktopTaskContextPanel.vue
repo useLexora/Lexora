@@ -3,7 +3,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ContextPanelTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { Add20Regular, Code16Regular, Dismiss16Regular, Folder20Regular, Globe16Regular } from '@vicons/fluent'
 import { NPopover } from 'naive-ui'
-import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -22,6 +22,7 @@ const emit = defineEmits<{
 }>()
 defineSlots<{ default?: () => unknown, toolbar?: () => unknown }>()
 const { t } = useBuddyI18n(() => props.language)
+const panelId = `context-${useId()}`
 const menuOpen = shallowRef(false)
 const tabsScrollRoot = useTemplateRef<HTMLElement>('tabsScrollRoot')
 const entries = computed(() => [
@@ -32,6 +33,22 @@ const entries = computed(() => [
 function open(kind: 'changes' | 'files' | 'browser') {
   menuOpen.value = false
   emit('add', kind)
+}
+async function navigateTab(event: KeyboardEvent, index: number) {
+  if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
+    return
+  const next = event.key === 'ArrowLeft'
+    ? (index + props.tabs.length - 1) % props.tabs.length
+    : event.key === 'ArrowRight'
+      ? (index + 1) % props.tabs.length
+      : event.key === 'Home' ? 0 : event.key === 'End' ? props.tabs.length - 1 : null
+  const tab = next === null ? null : props.tabs[next]
+  if (!tab)
+    return
+  event.preventDefault()
+  emit('selectTab', tab.id)
+  await nextTick()
+  document.getElementById(`${panelId}-${tab.id}`)?.focus()
 }
 function handleTabsWheel(event: WheelEvent) {
   if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY))
@@ -53,8 +70,8 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
     <header class="desktop-task-context-panel__header" :style="{ '--tab-count': tabs.length }">
       <div v-if="tabs.length" ref="tabsScrollRoot" class="desktop-task-context-panel__tabs-scroll" @wheel="handleTabsWheel">
         <div class="desktop-task-context-panel__tabs" role="tablist" :aria-label="t('desktop.context.tabCount', { count: tabs.length })">
-          <div v-for="tab in tabs" :key="tab.id" class="desktop-task-context-panel__tab" :class="{ 'is-active': tab.id === activeTabId }">
-            <button class="desktop-task-context-panel__tab-select" role="tab" type="button" :aria-selected="tab.id === activeTabId" @click="emit('selectTab', tab.id)">
+          <div v-for="(tab, index) in tabs" :key="tab.id" class="desktop-task-context-panel__tab" :class="{ 'is-active': tab.id === activeTabId }">
+            <button :id="`${panelId}-${tab.id}`" class="desktop-task-context-panel__tab-select" role="tab" type="button" :tabindex="tab.id === activeTabId ? 0 : -1" :aria-controls="panelId" :aria-selected="tab.id === activeTabId" @keydown="navigateTab($event, index)" @auxclick.middle.prevent="emit('closeTab', tab.id)" @click="emit('selectTab', tab.id)">
               <FileIcon v-if="tab.icon === 'file'" :name="tab.fileName ?? tab.title" />
               <FolderIcon v-else-if="tab.icon === 'folder'" class="desktop-task-context-panel__folder-icon" />
               <DesktopIcon v-else :component="tab.icon === 'browser' ? Globe16Regular : Code16Regular" />
@@ -82,7 +99,7 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
     <div v-if="$slots.toolbar" class="desktop-task-context-panel__toolbar">
       <slot name="toolbar" />
     </div>
-    <div v-if="activeTabId" class="desktop-task-context-panel__body">
+    <div v-if="activeTabId" :id="panelId" class="desktop-task-context-panel__body" role="tabpanel" :aria-labelledby="`${panelId}-${activeTabId}`">
       <slot />
     </div>
     <div v-else class="desktop-task-context-panel__empty">
@@ -133,22 +150,22 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
   width: 100%;
   min-width: calc(var(--tab-count) * 7.5rem);
   height: 100%;
-  align-items: stretch;
+  align-items: center;
   gap: 0.25rem;
-  padding: 0.5625rem 0.25rem;
+  padding: 0 0.375rem;
 }
 
 .desktop-task-context-panel__tab {
   position: relative;
   display: flex;
-  height: 2.5rem;
+  height: 2rem;
   min-width: 7.5rem;
   max-width: 14rem;
   flex: 0 1 11rem;
   align-items: center;
   overflow: hidden;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--buddy-icon-button-radius);
   background: transparent;
   color: var(--buddy-text-secondary);
   transition:
@@ -157,12 +174,12 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
 }
 
 .desktop-task-context-panel__tab:hover {
-  background: var(--buddy-nav-hover);
+  background: var(--buddy-state-hover);
   color: var(--buddy-text-strong);
 }
 
 .desktop-task-context-panel__tab.is-active {
-  background: var(--buddy-nav-hover);
+  background: var(--buddy-nav-selected);
   color: var(--buddy-nav-foreground);
 }
 

@@ -39,6 +39,10 @@ name = "bounded-file"
 path = "__tests__/bounded_file.rs"
 
 [[test]]
+name = "bounded-write"
+path = "__tests__/bounded_write.rs"
+
+[[test]]
 name = "bounded-file-linux"
 path = "__tests__/bounded_file_linux.rs"
 

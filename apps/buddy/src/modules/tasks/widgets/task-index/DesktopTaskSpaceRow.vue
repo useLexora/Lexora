@@ -14,7 +14,7 @@ import {
   MoreHorizontal20Regular,
 } from '@vicons/fluent'
 import { NDropdown } from 'naive-ui'
-import { computed, h } from 'vue'
+import { computed, h, useId, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
@@ -22,6 +22,7 @@ import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
 import DesktopSpaceIcon from '../space/DesktopSpaceIcon.vue'
+import { useTaskHistoryDrag } from './useTaskHistoryDrag'
 
 const props = defineProps<{
   dragging?: boolean
@@ -91,41 +92,28 @@ function handleMenuAction(action: string | number): void {
     emit('menu', action)
 }
 
-function handleDragStart(event: DragEvent) {
-  if (!props.reorderable) {
-    event.preventDefault()
-    return
-  }
-  event.dataTransfer?.setData('text/plain', 'desktop-task-pinned-item')
-  if (event.dataTransfer)
-    event.dataTransfer.effectAllowed = 'move'
-  emit('dragStart')
-}
-
-function handleDragOver(event: DragEvent) {
-  if (!props.reorderTarget)
-    return
-  event.preventDefault()
-  if (event.dataTransfer)
-    event.dataTransfer.dropEffect = 'move'
-  emit('dragOver', resolveDropPosition(event))
-}
-
-function handleDrop(event: DragEvent) {
-  if (!props.reorderTarget)
-    return
-  event.preventDefault()
-  emit('drop', resolveDropPosition(event))
-}
-
-function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
-  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-}
+const dragId = useId()
+const element = useTemplateRef<HTMLElement>('row')
+const handle = useTemplateRef<HTMLElement>('handle')
+useTaskHistoryDrag({
+  id: () => dragId,
+  element,
+  handle,
+  type: 'pinned-space',
+  data: () => ({ title: props.space.name }),
+  disabled: () => !props.reorderable,
+  reorderable: () => !!props.reorderable,
+  reorderTarget: () => !!props.reorderTarget,
+  start: () => emit('dragStart'),
+  end: () => emit('dragEnd'),
+  over: position => emit('dragOver', position),
+  drop: position => emit('drop', position),
+})
 </script>
 
 <template>
   <div
+    ref="row"
     class="desktop-task-space-row"
     :class="{
       'is-dragging': dragging,
@@ -133,13 +121,9 @@ function resolveDropPosition(event: DragEvent): DesktopTaskPinnedDropPosition {
       'is-drop-before': dropPosition === 'before',
       'is-reorderable': reorderable,
     }"
-    :draggable="reorderable"
-    @dragend="emit('dragEnd')"
-    @dragover="handleDragOver"
-    @dragstart="handleDragStart"
-    @drop="handleDrop"
   >
     <button
+      ref="handle"
       class="desktop-task-space-row__name"
       type="button"
       :aria-expanded="expanded"

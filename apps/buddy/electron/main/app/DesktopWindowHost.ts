@@ -1,6 +1,5 @@
 import type { BrowserWindow } from 'electron'
 import type { LexoraConfig } from '../../shared/desktopApi'
-import type { ExecuteDesktopCommand } from '../desktopCommands'
 import type { DesktopEnvironment } from './typing'
 import process from 'node:process'
 import { app, nativeTheme, screen } from 'electron'
@@ -12,7 +11,6 @@ import { applyDesktopWindowAppearance, createDesktopWindow } from '../window'
 import { observeRendererDiagnostics } from './desktopProcessDiagnostics'
 
 interface WindowBindings {
-  executeCommand: ExecuteDesktopCommand
   isQuitting: () => boolean
   onHidden: () => void
   onWindowCreated: (window: BrowserWindow) => void
@@ -46,7 +44,6 @@ export class DesktopWindowHost {
       createWindow: () => {
         const handle = createDesktopWindow({
           appName: environment.paths.appName,
-          executeCommand: bindings.executeCommand,
           iconPath: environment.desktopIconPath,
           isQuitting: bindings.isQuitting,
           onHidden() {

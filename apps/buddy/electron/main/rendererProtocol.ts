@@ -15,16 +15,9 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 }
 
-export function registerRendererSchemePrivileges(): void {
-  protocol.registerSchemesAsPrivileged([{
-    scheme: RENDERER_PROTOCOL,
-    privileges: {
-      codeCache: true,
-      secure: true,
-      standard: true,
-      supportFetchAPI: true,
-    },
-  }])
+export const rendererSchemePrivileges: Electron.CustomScheme = {
+  scheme: RENDERER_PROTOCOL,
+  privileges: { codeCache: true, secure: true, standard: true, supportFetchAPI: true },
 }
 
 export function installRendererProtocol(rendererRoot = join(__dirname, '../renderer')): () => void {

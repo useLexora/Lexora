@@ -7,6 +7,7 @@ import {
   dateZhCN,
   enUS,
   NConfigProvider,
+  NDialogProvider,
   NMessageProvider,
   zhCN,
 } from 'naive-ui'
@@ -53,16 +54,18 @@ watchEffect(() => {
     :theme-overrides="themeOverrides"
   >
     <NMessageProvider placement="top" closable :duration="6000">
-      <div class="buddy-app" :class="{ 'is-dark': prefersDark }">
-        <DesktopAppProvider
-          v-slot="{ shell }"
-          :is-dark="prefersDark"
-          @language-change="language = $event"
-          @theme-change="themePreference = $event"
-        >
-          <DesktopShell :bindings="shell" />
-        </DesktopAppProvider>
-      </div>
+      <NDialogProvider>
+        <div class="buddy-app" :class="{ 'is-dark': prefersDark }">
+          <DesktopAppProvider
+            v-slot="{ shell }"
+            :is-dark="prefersDark"
+            @language-change="language = $event"
+            @theme-change="themePreference = $event"
+          >
+            <DesktopShell :bindings="shell" />
+          </DesktopAppProvider>
+        </div>
+      </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>

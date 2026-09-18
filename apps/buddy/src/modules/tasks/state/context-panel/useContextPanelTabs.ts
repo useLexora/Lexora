@@ -7,14 +7,14 @@ import { taskContextPanelScope } from '../../model/context-panel/taskContextPane
 export function useContextPanelTabs(options: {
   mode: Readonly<Ref<DesktopContextPanelMode>>
   conversationId: Readonly<Ref<string | null>>
-  draftId: Readonly<Ref<string>>
+  draftId: Readonly<Ref<string | null>>
 }) {
   const resources = shallowRef<readonly TaskContextTab[]>([])
   const selections = shallowReactive(new Map<ContextPanelScope, string>())
   const discardedScopes = new Set<ContextPanelScope>()
   const taskScope = computed<ContextPanelScope>(() => options.conversationId.value
     ? taskContextPanelScope(options.conversationId.value)
-    : `draft:${options.draftId.value}`)
+    : options.draftId.value ? `draft:${options.draftId.value}` : 'workspace')
   const scope = computed<ContextPanelScope>(() => options.mode.value === 'independent' ? 'independent' : taskScope.value)
   const tabs = computed(() => scopeTabs(scope.value))
   const activeTab = computed(() => selectedTab(scope.value))
@@ -96,5 +96,26 @@ export function useContextPanelTabs(options: {
     return removed
   }
 
-  return { activeTab: readonly(activeTab), tabs: readonly(tabs), resources: readonly(resources), scope: readonly(scope), select, put, close, update, retain, discard, adoptDraft }
+  function discardDraft(draftId: string) {
+    const draftScope: ContextPanelScope = `draft:${draftId}`
+    if (options.mode.value === 'independent') {
+      resources.value = resources.value.map(tab => tab.scope === draftScope ? { ...tab, scope: 'independent' } : tab)
+      selections.delete(draftScope)
+      discardedScopes.add(draftScope)
+      return []
+    }
+    return discard(draftScope)
+  }
+
+  function snapshot() {
+    return { tabs: resources.value, selections: [...selections] }
+  }
+  function restoreSelections(values: readonly (readonly [ContextPanelScope, string])[]) {
+    for (const [scope, id] of values) {
+      if (scopeTabs(scope).some(tab => tab.id === id))
+        selections.set(scope, id)
+    }
+  }
+
+  return { snapshot, restoreSelections, activeTab: readonly(activeTab), tabs: readonly(tabs), resources: readonly(resources), scope: readonly(scope), select, put, close, update, retain, discard, discardDraft, adoptDraft }
 }

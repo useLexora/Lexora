@@ -5,7 +5,7 @@ export const tasksRoutes: ReadonlyArray<RouteRecordRaw> = [
   {
     path: '/tasks',
     name: DESKTOP_ROUTE_NAMES.tasks,
-    component: () => import('./pages/DesktopTasksView.vue'),
+    component: { render: () => null },
     meta: { desktopView: 'tasks' },
   },
 ]

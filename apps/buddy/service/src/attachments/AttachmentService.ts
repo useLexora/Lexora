@@ -10,7 +10,7 @@ import type { AttachmentImageReference } from './AttachmentImageReference'
 import type { AttachmentToolWorkspace } from './AttachmentToolWorkspace'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, normalize } from 'node:path'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
 import { BUDDY_MEDIA_EXTENSIONS, BUDDY_MEDIA_FILE_BYTES_LIMIT, isDocumentMimeType } from '../../../shared/conversation/attachmentFormats'
@@ -284,6 +284,20 @@ export class AttachmentService {
         released.push(id)
     }
     return released
+  }
+
+  async releaseDraft(draftId: string): Promise<void> {
+    await this.release(this.#repository.listAll().filter(record => record.draftId === draftId).map(record => record.id))
+    const directory = this.#paths.draftAttachments(draftId)
+    for (const path of [directory, dirname(directory)]) {
+      try {
+        await rmdir(path)
+      }
+      catch (error) {
+        if (!['ENOENT', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          throw error
+      }
+    }
   }
 
   cleanupDrafts(now = Date.now(), retainedAttachmentIds: ReadonlySet<string> = new Set()): Promise<string[]> {

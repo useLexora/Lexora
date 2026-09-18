@@ -308,6 +308,7 @@ describe('buddy runtime cross-subsystem contract', () => {
         rpc: harness.rpc,
       })
       await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      await turnRequest(harness, { content: 'Remember both historical images', requestId: 'attachment-recovery-1' })
       await harness.invoke('composerResources.accept', {
         draftId: 'draft-attachment-recovery-1',
         resources: [keptSource, missingSource].map((sourcePath, index) => ({ resourceId: `recovery-${index}`, name: `recovery-${index}.png`, mimeType: 'image/png', sizeBytes: keptBytes.length, sourcePath, storage: 'snapshot' })),
