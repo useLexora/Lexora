@@ -54,6 +54,10 @@ path = "__tests__/bounded_file_macos.rs"
 name = "process-control-linux"
 path = "__tests__/process_control_linux.rs"
 
+[[test]]
+name = "installer-process-windows"
+path = "__tests__/installer_process_windows.rs"
+
 [[example]]
 name = "sandbox-adversary"
 path = "__tests__/sandbox_adversary.rs"

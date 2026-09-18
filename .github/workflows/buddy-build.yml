@@ -294,7 +294,10 @@ jobs:
         timeout-minutes: 3
         run: |
           $installer = Start-Process -FilePath '${{ steps.package.outputs.path }}' -ArgumentList '/S' -Wait -PassThru
-          if ($installer.ExitCode -ne 0) { throw "NSIS installation failed: $($installer.ExitCode)" }
+          if ($installer.ExitCode -ne 0) {
+            Get-Content -LiteralPath (Join-Path $env:TEMP 'Lexora-Buddy-installer.log') -ErrorAction SilentlyContinue
+            throw "NSIS installation failed: $($installer.ExitCode)"
+          }
           $directory = Join-Path $env:LOCALAPPDATA 'Programs\Lexora Buddy'
           if (!(Test-Path -LiteralPath (Join-Path $directory 'Lexora Buddy.exe'))) {
             Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |

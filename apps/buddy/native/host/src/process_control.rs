@@ -158,6 +158,19 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), ProcessError> {
     }
 }
 
+#[cfg(windows)]
+pub fn executable_running(executable: &str) -> Result<bool, ProcessError> {
+    if !crate::windows_path::valid(executable)
+        || !std::path::Path::new(executable)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        return Err(ProcessError::Invalid);
+    }
+    windows::executable_running(executable)
+}
+
 #[cfg(test)]
 #[path = "../__tests__/process_control.rs"]
 mod tests;

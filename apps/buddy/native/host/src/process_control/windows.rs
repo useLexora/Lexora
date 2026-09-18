@@ -61,6 +61,41 @@ fn running(handle: &Handle, wait_ms: u32) -> Result<bool, ProcessError> {
     }
 }
 
+pub(super) fn executable_running(executable: &str) -> Result<bool, ProcessError> {
+    let expected = match std::fs::canonicalize(executable) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err(ProcessError::Failed),
+    };
+    let name = expected
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(ProcessError::Invalid)?;
+    let expected = expected.to_str().ok_or(ProcessError::Invalid)?;
+    for entry in snapshot::read()? {
+        if !snapshot::same_name(&entry.name, name) {
+            continue;
+        }
+        let Some(handle) = open(entry.pid, None)? else {
+            continue;
+        };
+        if !running(&handle, 0)? {
+            continue;
+        }
+        let executable = identity::executable(&handle);
+        if !running(&handle, 0)? {
+            continue;
+        }
+        let actual = std::fs::canonicalize(executable?).map_err(|_| ProcessError::Failed)?;
+        if snapshot::same_name(actual.to_str().ok_or(ProcessError::Failed)?, expected)
+            && running(&handle, 0)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn inspect(
     handle: &Handle,
     pid: u32,

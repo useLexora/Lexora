@@ -8,15 +8,19 @@ use windows_sys::Win32::{
 
 use super::{Handle, ProcessError, Target, process_name};
 
-pub(super) fn target(handle: &Handle, pid: u32) -> Result<Target, ProcessError> {
+pub(super) fn executable(handle: &Handle) -> Result<String, ProcessError> {
     let mut path = vec![0u16; 32768];
     let mut len = path.len() as u32;
     // SAFETY: The process handle permits querying; path has the declared UTF-16 capacity.
     if unsafe { QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut len) } == 0 {
         return Err(ProcessError::Failed);
     }
-    let executable = String::from_utf16(path.get(..len as usize).ok_or(ProcessError::Failed)?)
-        .map_err(|_| ProcessError::Failed)?;
+    String::from_utf16(path.get(..len as usize).ok_or(ProcessError::Failed)?)
+        .map_err(|_| ProcessError::Failed)
+}
+
+pub(super) fn target(handle: &Handle, pid: u32) -> Result<Target, ProcessError> {
+    let executable = executable(handle)?;
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
