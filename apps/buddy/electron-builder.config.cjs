@@ -1,6 +1,8 @@
+const { resolve } = require('node:path')
 const process = require('node:process')
 const { desktopArtifactName } = require('../../packaging/buddy/release/artifacts.mjs')
 const { macosSigningMode } = require('../../packaging/buddy/release/macos.mjs')
+const { nativeHostResources } = require('../../packaging/buddy/release/native-host.mjs')
 const { excludedDependencyFiles, platformResources } = require('../../packaging/buddy/release/platform-definition.mjs')
 const { resolveBuildTarget } = require('../../packaging/buddy/release/targets.mjs')
 const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
@@ -11,6 +13,13 @@ const { sourceDateEpoch } = require('./buddy.version.json')
 const { desktopName, productName: displayName } = require('./package.json')
 
 process.env.SOURCE_DATE_EPOCH ??= String(sourceDateEpoch)
+
+if (target.platform === OPERATING_SYSTEM.Windows) {
+  const helper = nativeHostResources(target).find(resource => resource.name === 'processControl')
+  if (!helper)
+    throw new Error(`Missing installer process helper: ${target.id}`)
+  process.env.LEXORA_INSTALLER_PROCESS_HELPER = resolve(__dirname, helper.from)
+}
 
 const macro = name => `$${`{${name}}`}`
 const signedMacos = macosSigningMode() === 'developer-id'

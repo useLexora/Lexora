@@ -1,6 +1,12 @@
 name: Lexora Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Unpublished version on master to recover, for example 0.8.0
+        type: string
+        required: true
   push:
     branches:
       - master
@@ -35,15 +41,31 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Validate version-only transition
+      - name: Validate release source
         id: transition
         env:
           AFTER_SHA: ${{ github.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RECOVERY_VERSION: ${{ inputs.version }}
         run: |
-          node packaging/release/transition.mjs \
-            --check "$BEFORE_SHA" "$AFTER_SHA" \
-            --github-output "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            if [[ "$RELEASE_REF" != refs/heads/master ]]; then
+              echo "Release recovery must run from master" >&2
+              exit 1
+            fi
+            node packaging/release/version.mjs --check-tag "v$RECOVERY_VERSION"
+            {
+              echo "commit=$AFTER_SHA"
+              echo "tag=v$RECOVERY_VERSION"
+              echo "version=$RECOVERY_VERSION"
+            } >> "$GITHUB_OUTPUT"
+          else
+            node packaging/release/transition.mjs \
+              --check "$BEFORE_SHA" "$AFTER_SHA" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
 
       - name: Require unused release identity
         env:

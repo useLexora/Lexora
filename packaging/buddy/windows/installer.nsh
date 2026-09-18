@@ -1,5 +1,4 @@
-﻿!define BUDDY_INSTALLER_SOURCE_DIR "${__FILEDIR__}"
-!define /redef APP_FILENAME "${PRODUCT_FILENAME}"
+﻿!define /redef APP_FILENAME "${PRODUCT_FILENAME}"
 
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
@@ -9,16 +8,24 @@
   !endif
     Push $0
     Push $1
+    Push $2
     InitPluginsDir
     ClearErrors
-    File /oname=$PLUGINSDIR\buddy-check-running.ps1 "${BUDDY_INSTALLER_SOURCE_DIR}\check-running.ps1"
+    File /oname=$PLUGINSDIR\buddy-process-control.exe "$%LEXORA_INSTALLER_PROCESS_HELPER%"
     IfErrors buddy_probe_failed
 
     buddy_retry:
       DetailPrint "正在检查应用状态 / Checking application state..."
-      nsExec::ExecToStack /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\buddy-check-running.ps1" -ExecutablePath "$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+      nsExec::ExecToStack /TIMEOUT=30000 '"$PLUGINSDIR\buddy-process-control.exe" --check-running "$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
       Pop $0
       Pop $1
+      DetailPrint "Process check: $0 $1"
+      ClearErrors
+      FileOpen $2 "$TEMP\Lexora-Buddy-installer.log" a
+      IfErrors buddy_probe_logged
+      FileWrite $2 "$INSTDIR\${APP_EXECUTABLE_FILENAME}: $0 $1$\r$\n"
+      FileClose $2
+    buddy_probe_logged:
       StrCmp $0 "0" buddy_ready
       StrCmp $0 "32" buddy_running
       StrCmp $0 "timeout" buddy_probe_timeout
@@ -46,6 +53,7 @@
 
     buddy_ready:
       SetErrorLevel 0
+      Pop $2
       Pop $1
       Pop $0
     FunctionEnd
