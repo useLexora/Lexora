@@ -269,8 +269,10 @@ export function createChatAgentTurnReducer(
       if (!messageId)
         return
       const phase = readAssistantTextPhase(payload.phase)
+      const isCommentary = phase === 'commentary'
+        || (!phase && payload.stopReason === 'tool_use')
       finalMessageId = null
-      if (phase === 'commentary') {
+      if (isCommentary) {
         processMessageIds.add(messageId)
         const value = readString(content?.text)
         const normalized = normalizeProcessNarration(value)
@@ -298,24 +300,6 @@ export function createChatAgentTurnReducer(
       else if (phase === 'final_answer') {
         processMessageIds.delete(messageId)
         finalMessageId = messageId
-      }
-      else if (payload.stopReason === 'tool_use') {
-        processMessageIds.add(messageId)
-        const value = readString(content?.text)
-        const normalized = normalizeProcessNarration(value)
-        const duplicatesReasoning = normalized && [...reasoning.values()].some(node => (
-          normalizeProcessNarration(node.text) === normalized
-        ))
-        if (normalized && !duplicatesReasoning) {
-          const id = `process-text:${messageId}:message`
-          rememberNode(id, event)
-          text.set(id, {
-            id,
-            kind: 'text',
-            messageId,
-            text: value,
-          })
-        }
       }
       else {
         processMessageIds.delete(messageId)

@@ -148,7 +148,7 @@ describe('projectStreamingAssistantMessage', () => {
     )).toEqual([])
   })
 
-  it('projects a flat agent turn and attaches narration to the following tool', () => {
+  it('projects unphased tool-use narration as process text for legacy events', () => {
     const turns = projectChatAgentTurns([
       event(1, 'message.started', { messageId: 'message-process', role: 'assistant' }),
       event(2, 'message.block.started', {
@@ -211,7 +211,11 @@ describe('projectStreamingAssistantMessage', () => {
       completedAt: '2026-08-14T00:00:02.000Z',
       finalMessageId: 'message-final',
       messageStartedAt: { 'message-process': '2026-08-14T00:00:01.000Z' },
-      nodeStartedAt: { 'reasoning:message-process:0': '2026-08-14T00:00:02.000Z', 'tool:tool-1': '2026-08-14T00:00:05.000Z' },
+      nodeStartedAt: {
+        'process-text:message-process:message': '2026-08-14T00:00:04.000Z',
+        'reasoning:message-process:0': '2026-08-14T00:00:02.000Z',
+        'tool:tool-1': '2026-08-14T00:00:05.000Z',
+      },
       nodes: [
         {
           contentIndex: 0,
@@ -221,7 +225,14 @@ describe('projectStreamingAssistantMessage', () => {
           text: 'Checking the current process state',
         },
         {
-          description: 'I will inspect the process first.',
+          id: 'process-text:message-process:message',
+          kind: 'text',
+          messageId: 'message-process',
+          phase: 'commentary',
+          text: 'I will inspect the process first.',
+        },
+        {
+          description: 'Run a host shell command from the current workspace',
           id: 'tool:tool-1',
           isError: false,
           kind: 'tool',

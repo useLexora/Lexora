@@ -109,6 +109,46 @@ describe('chat run transcript projector', () => {
     })
   })
 
+  it('moves legacy tool-use text from the streaming row into commentary without dropping it', () => {
+    const currentRun = run('run-a')
+    const projector = createChatRunTranscriptProjector()
+    const prefix = [
+      messageEvent('run-a', 1, 'message.started', {
+        messageId: 'assistant-run-a',
+        role: 'assistant',
+      }),
+      messageEvent('run-a', 2, 'message.delta', {
+        delta: 'CI is green. I will verify the merge state next.',
+        messageId: 'assistant-run-a',
+      }),
+    ]
+    const initialBuckets = replaceChatRunEventBuckets(prefix)
+    const initial = projector.project(initialBuckets, [currentRun])[0]!
+
+    expect(initial.streamingMessages).toMatchObject([{
+      text: 'CI is green. I will verify the merge state next.',
+    }])
+    expect(initial.turn.nodes).toEqual([])
+
+    const completed = projector.project(mergeChatRunEventBuckets(initialBuckets, [
+      messageEvent('run-a', 3, 'message.completed', {
+        content: { text: 'CI is green. I will verify the merge state next.' },
+        messageId: 'assistant-run-a',
+        role: 'assistant',
+        stopReason: 'tool_use',
+      }),
+    ]), [currentRun])[0]!
+
+    expect(completed.streamingMessages).toEqual([])
+    expect(completed.turn.processMessageIds).toEqual(['assistant-run-a'])
+    expect(completed.turn.nodes).toMatchObject([{
+      kind: 'text',
+      messageId: 'assistant-run-a',
+      phase: 'commentary',
+      text: 'CI is green. I will verify the merge state next.',
+    }])
+  })
+
   it('applies an appended suffix without rebuilding unaffected turn nodes', () => {
     const currentRun = run('run-a')
     const firstReasoning = reasoningEvent('run-a', 1, 'First', 0)

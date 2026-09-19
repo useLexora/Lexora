@@ -515,8 +515,9 @@ function projectAssistantMessageEnd(
       ? [{ content, contentIndex, phase: resolvePiTextPhase(content) }]
       : []
   ))
-  const phase = resolveCompletedTextPhase(textBlocks)
   const text = selectCompletedText(textBlocks)
+  const phase = resolveCompletedTextPhase(textBlocks)
+    ?? (message.stopReason === 'toolUse' && text.trim() ? 'commentary' : undefined)
   const missingTextBlockEvents: BuddyProjectedEvent[] = textBlocks.flatMap((block) => {
     if (
       block.phase !== 'commentary'
