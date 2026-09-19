@@ -308,6 +308,52 @@ describe('projectPiEvent product messages', () => {
     })
   })
 
+  it('classifies unphased tool-use text as commentary', () => {
+    const state = createPiEventProjectionState()
+    const message: AssistantMessage = {
+      api: 'openai-completions',
+      content: [
+        {
+          thinking: 'Checking the pull request status',
+          thinkingSignature: 'reasoning_content',
+          type: 'thinking',
+        },
+        {
+          text: 'CI is green. I will verify the merge state next.',
+          type: 'text',
+        },
+        {
+          arguments: { command: 'gh pr view 130' },
+          id: 'tool-1',
+          name: 'bash',
+          type: 'toolCall',
+        },
+      ],
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      role: 'assistant',
+      stopReason: 'toolUse',
+      timestamp: 1,
+      usage: emptyUsage(),
+    }
+    const started = projectPiEvent({ message, type: 'message_start' }, state)
+    const messageId = (started.events[0]?.payload as { messageId?: unknown }).messageId
+
+    expect(projectPiEvent({ message, type: 'message_end' }, state)).toEqual({
+      events: [{
+        payload: {
+          content: { text: 'CI is green. I will verify the merge state next.' },
+          messageId,
+          phase: 'commentary',
+          role: 'assistant',
+          stopReason: 'tool_use',
+        },
+        type: 'message.completed',
+      }],
+      sourceMessageId: messageId,
+    })
+  })
+
   it('classifies stable model failures', () => {
     for (const [errorMessage, failureCode] of [
       ['MODEL_INPUT_UNSUPPORTED', 'MODEL_INPUT_UNSUPPORTED'],
