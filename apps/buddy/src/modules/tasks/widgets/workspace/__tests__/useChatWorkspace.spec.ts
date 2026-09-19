@@ -224,6 +224,40 @@ describe('useChatWorkspace', () => {
     expect(view.transcriptBindings.value?.conversationId).toBe('conversation-first')
   })
 
+  it('follows the tail again when the reader sends from a detached position', async () => {
+    const owner = createOwner('send-follow')
+    const { view, list } = bindWorkspace(owner)
+    const metrics = { clientHeight: 400, scrollHeight: 1_000, scrollTop: 600 }
+    list.value = {
+      captureScrollAnchor: () => null,
+      highlightMessage: () => {},
+      readScrollMetrics: () => ({ ...metrics }),
+      restoreScrollAnchor: () => null,
+      scrollToMessage: () => null,
+      scrollToTail: () => {
+        metrics.scrollTop = metrics.scrollHeight - metrics.clientHeight
+        return { ...metrics }
+      },
+    }
+    owner.workspace.session.activeConversationId.value = 'conversation-send'
+    owner.workspace.session.activeBranchId.value = 'branch-send'
+    owner.workspace.status.isLoading.value = false
+    await nextTick()
+    await nextTick()
+    expect(view.viewport.showReturnToLatest.value).toBe(false)
+
+    metrics.scrollTop = 100
+    view.viewport.handleScroll({ ...metrics })
+    expect(view.viewport.showReturnToLatest.value).toBe(true)
+
+    owner.workspace.execution.isSending.value = true
+    await nextTick()
+    await nextTick()
+
+    expect(metrics.scrollTop).toBe(600)
+    expect(view.viewport.showReturnToLatest.value).toBe(false)
+  })
+
   it('follows a replacement workspace owner and ignores late updates from the previous owner', async () => {
     const previous = createOwner('previous')
     const next = createOwner('next')

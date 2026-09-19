@@ -50,9 +50,9 @@ export function observeChatScroll(
   const expectedTop = Math.min(state.observedTop, floor)
   const movedByReader = Math.abs(metrics.scrollTop - expectedTop)
     > CHAT_SCROLL_POSITION_EPSILON_PX
-  const ownership = movedByReader
-    ? isNearChatTail(metrics) ? 'following' : 'detached'
-    : state.ownership
+  const ownership = isNearChatTail(metrics)
+    ? 'following'
+    : movedByReader ? 'detached' : state.ownership
 
   return {
     movedByReader,
@@ -69,8 +69,23 @@ export function recordProgrammaticChatScroll(
 ): ChatScrollState {
   return {
     observedTop: metrics.scrollTop,
-    ownership: state.ownership === 'returning' && isNearChatTail(metrics)
-      ? 'following'
-      : state.ownership,
+    ownership: resolveChatTailOwnership(state.ownership, metrics),
   }
+}
+
+export function reconcileChatScrollOwnership(
+  state: ChatScrollState,
+  metrics: ChatMessageScrollMetrics,
+): ChatScrollState {
+  const ownership = resolveChatTailOwnership(state.ownership, metrics)
+  return ownership === state.ownership
+    ? state
+    : { observedTop: metrics.scrollTop, ownership }
+}
+
+function resolveChatTailOwnership(
+  ownership: ChatScrollOwnership,
+  metrics: ChatMessageScrollMetrics,
+): ChatScrollOwnership {
+  return isNearChatTail(metrics) ? 'following' : ownership
 }

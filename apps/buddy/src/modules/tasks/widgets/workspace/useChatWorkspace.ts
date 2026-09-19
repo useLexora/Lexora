@@ -30,6 +30,11 @@ export function useChatWorkspace(
     timelineItems: computed(() => transcript.value.timelineItems.value),
   })
 
+  watch(() => execution.value.isSending.value, (sending) => {
+    if (sending)
+      void viewport.returnToLatest()
+  })
+
   watch(() => [
     session.value.activeConversationId.value,
     workspace.value.welcomePreference.value,
