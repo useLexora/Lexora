@@ -5,6 +5,7 @@ import {
   createChatScrollState,
   detachChatScroll,
   observeChatScroll,
+  reconcileChatScrollOwnership,
   recordProgrammaticChatScroll,
 } from '@/modules/tasks/widgets/workspace/chatScroll'
 
@@ -185,9 +186,10 @@ export function useChatViewport(options: UseChatViewportOptions) {
     }
   }
 
-  function handleContentResize(_metrics: ChatMessageScrollMetrics) {
+  function handleContentResize(metrics: ChatMessageScrollMetrics) {
     if (disposed || options.isLoading.value || isPositioning.value)
       return
+    scrollState.value = reconcileChatScrollOwnership(scrollState.value, metrics)
     if (scrollState.value.ownership === 'detached')
       restoreReadingPosition()
     else writeTailPosition()
@@ -201,6 +203,9 @@ export function useChatViewport(options: UseChatViewportOptions) {
 
   function handleReaderLayoutIntent() {
     if (disposed)
+      return
+    const metrics = options.list.value?.readScrollMetrics()
+    if (metrics && metrics.scrollHeight <= metrics.clientHeight)
       return
     operationGeneration += 1
     pendingRevealMessageId = null

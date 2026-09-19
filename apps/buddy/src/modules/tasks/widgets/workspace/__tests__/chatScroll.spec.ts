@@ -4,6 +4,7 @@ import {
   beginReturningToChatTail,
   createChatScrollState,
   observeChatScroll,
+  reconcileChatScrollOwnership,
   recordProgrammaticChatScroll,
 } from '../chatScroll'
 
@@ -78,6 +79,46 @@ describe('desktopChatScroll', () => {
         ownership: 'following',
       },
     })
+  })
+
+  it('returns to follow ownership when a floor clamp leaves the position at the tail', () => {
+    const clamped = observeChatScroll({
+      observedTop: 700,
+      ownership: 'detached',
+    }, {
+      clientHeight: 600,
+      scrollHeight: 1_000,
+      scrollTop: 400,
+    })
+
+    expect(clamped).toEqual({
+      movedByReader: false,
+      state: {
+        observedTop: 400,
+        ownership: 'following',
+      },
+    })
+  })
+
+  it('reconciles a reader left at the tail by shrinking content', () => {
+    const detached = {
+      observedTop: 700,
+      ownership: 'detached',
+    } as const
+
+    expect(reconcileChatScrollOwnership(detached, {
+      clientHeight: 600,
+      scrollHeight: 600,
+      scrollTop: 0,
+    })).toEqual({
+      observedTop: 0,
+      ownership: 'following',
+    })
+    expect(reconcileChatScrollOwnership(detached, {
+      clientHeight: 600,
+      scrollHeight: 1_600,
+      scrollTop: 700,
+    })).toBe(detached)
   })
 
   it('lets reverse reader movement interrupt a return to the tail', () => {

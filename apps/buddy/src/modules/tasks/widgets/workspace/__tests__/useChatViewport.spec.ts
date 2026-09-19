@@ -431,6 +431,29 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(150)
   })
 
+  it('keeps following when shrinking content leaves nothing to scroll', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.original.metrics.scrollTop = 500
+    fixture.viewport.handleScroll(fixture.original.metrics)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
+
+    fixture.original.metrics.scrollHeight = 400
+    fixture.original.metrics.scrollTop = 0
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+
+    expect(fixture.original.metrics.scrollTop).toBe(0)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+  })
+
+  it('ignores a reader layout intent while the transcript cannot scroll', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.original.metrics.scrollHeight = 400
+    fixture.original.metrics.scrollTop = 0
+    fixture.viewport.handleReaderLayoutIntent()
+
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+  })
+
   it('keeps reader ownership when only the list owner is replaced', async () => {
     const fixture = createViewport(async () => false)
     fixture.viewport.handleReaderLayoutIntent()
