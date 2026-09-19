@@ -230,6 +230,7 @@ async function confirmSetup() {
 
 <style scoped lang="scss">
 .desktop-permission-mode-selector__trigger {
+  position: relative;
   min-width: 0;
   height: var(--buddy-composer-control-height);
   border-radius: var(--buddy-composer-control-radius);
@@ -259,13 +260,15 @@ async function confirmSetup() {
 }
 
 .desktop-permission-mode-selector__warning {
+  position: absolute;
+  top: -0.1rem;
+  right: -0.1rem;
+  z-index: 1;
   display: inline-flex;
-  width: 1rem;
-  height: 1rem;
-  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
   align-items: center;
   justify-content: center;
-  margin-left: 0.35rem;
   color: var(--buddy-status-warning-text);
 }
 

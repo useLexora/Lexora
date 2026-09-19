@@ -142,6 +142,7 @@ async function selectConversationFile(option: ChatPromptContextOption) {
 <template>
   <DesktopChatComposerFrame
     class="desktop-chat-composer-wrap"
+    single-line-toolbar
     @dragover="handleFileDragover"
     @drop="handleFileDrop"
   >
@@ -313,62 +314,106 @@ async function selectConversationFile(option: ChatPromptContextOption) {
 </template>
 
 <style scoped lang="scss">
-.desktop-chat-composer__context-usage,
-.desktop-chat-composer__permission-mode,
-.desktop-chat-composer__model-selector {
-  display: contents;
-}
-
-.desktop-chat-composer__send-trigger {
-  display: inline-flex;
-}
-
-.desktop-chat-composer__send-action,
-.desktop-chat-composer__queue-action {
-  --n-height: var(--buddy-composer-control-height);
-
-  width: var(--buddy-composer-control-height);
-  min-width: var(--buddy-composer-control-height);
-  height: var(--buddy-composer-control-height);
-}
-
-.desktop-chat-composer__disclaimer {
-  margin: 0.45rem 0 0;
-  color: var(--buddy-text-muted);
-  font-size: 0.68rem;
-  text-align: center;
-}
-
-@container desktop-chat-composer (max-width: 26rem) {
-  .desktop-chat-composer__context-usage {
-    display: none;
+.desktop-chat-composer {
+  &__context-usage,
+  &__permission-mode,
+  &__model-selector {
+    display: inline-flex;
+    min-width: 0;
+    flex: none;
+    align-items: center;
   }
-}
 
-@container desktop-chat-composer (max-width: 24rem) {
-  .desktop-chat-composer__model-selector {
-    display: none;
-  }
-}
+  &__context-usage {
+    &:empty {
+      display: none;
+    }
 
-@container desktop-chat-composer (max-width: 20rem) {
-  .desktop-chat-composer__permission-mode :deep(.desktop-permission-mode-selector__trigger) {
-    width: var(--buddy-composer-control-height);
-    min-width: var(--buddy-composer-control-height);
-    padding: 0;
-
-    &.has-warning {
-      width: auto;
-      padding: 0 0.5rem;
+    @container desktop-chat-composer (max-width: 36rem) {
+      display: none;
     }
   }
 
-  .desktop-chat-composer__permission-mode :deep(.desktop-permission-mode-selector__trigger-label) {
-    display: none;
+  &__permission-mode {
+    @container desktop-chat-composer (max-width: 33rem) {
+      :deep(.desktop-permission-mode-selector__trigger) {
+        width: var(--buddy-composer-control-height);
+        min-width: var(--buddy-composer-control-height);
+        max-width: var(--buddy-composer-control-height);
+        padding: 0;
+      }
+
+      :deep(.desktop-permission-mode-selector__trigger-label) {
+        display: none;
+      }
+
+      :deep(.n-button__content) {
+        gap: 0;
+      }
+
+      :deep(.n-button__icon) {
+        margin: 0;
+      }
+    }
+
+    @container desktop-chat-composer (max-width: 24rem) {
+      display: none;
+    }
   }
 
-  .desktop-chat-composer__permission-mode :deep(.n-button__icon) {
-    margin: 0;
+  &__model-selector {
+    :deep(.desktop-model-selector) {
+      min-width: 0;
+    }
+
+    @container desktop-chat-composer (max-width: 27rem) {
+      margin-right: 0.15rem;
+
+      :deep(.desktop-model-selector__trigger) {
+        width: var(--buddy-composer-control-height);
+        min-width: var(--buddy-composer-control-height);
+        max-width: var(--buddy-composer-control-height);
+        justify-content: center;
+        gap: 0;
+        padding: 0;
+      }
+
+      :deep(.desktop-model-selector__compact-icon) {
+        display: inline-flex;
+      }
+
+      :deep(.desktop-model-selector__model),
+      :deep(.desktop-model-selector__separator),
+      :deep(.desktop-model-selector__effort),
+      :deep(.desktop-model-selector__flash) {
+        display: none;
+      }
+    }
+
+    @container desktop-chat-composer (max-width: 18.5rem) {
+      display: none;
+    }
+  }
+
+  &__send-trigger {
+    display: inline-flex;
+    flex: none;
+  }
+
+  &__send-action,
+  &__queue-action {
+    --n-height: var(--buddy-composer-control-height);
+
+    width: var(--buddy-composer-control-height);
+    min-width: var(--buddy-composer-control-height);
+    height: var(--buddy-composer-control-height);
+  }
+
+  &__disclaimer {
+    margin: 0.45rem 0 0;
+    color: var(--buddy-text-muted);
+    font-size: 0.68rem;
+    text-align: center;
   }
 }
 </style>

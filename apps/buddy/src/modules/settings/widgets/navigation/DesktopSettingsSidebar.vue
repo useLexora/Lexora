@@ -5,7 +5,6 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import {
   Alert20Regular,
   AnimalCat20Regular,
-  Bot20Regular,
   DataUsage20Regular,
   DocumentTextClock20Regular,
   Globe20Regular,
@@ -24,6 +23,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { supportsSettingsCategory } from '@/platform/desktop/desktopCapabilities'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
 import DesktopWorkspaceSidebarIdentity from '@/shared/ui/workspace-sidebar/DesktopWorkspaceSidebarIdentity.vue'
 
@@ -48,7 +48,7 @@ const groups = [
   {
     key: 'ai',
     categories: [
-      { icon: Bot20Regular, key: 'models' },
+      { icon: ModelIcon, key: 'models' },
       { icon: PlugConnected20Regular, key: 'mcp' },
       { icon: SkillIcon, key: 'skills' },
       { icon: DataUsage20Regular, key: 'usage' },

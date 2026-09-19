@@ -20,6 +20,7 @@ import DesktopModelPicker from '@/modules/models/widgets/model-selector/DesktopM
 import DesktopReasoningMeter from '@/modules/models/widgets/model-selector/DesktopReasoningMeter.vue'
 import DesktopReasoningPicker from '@/modules/models/widgets/model-selector/DesktopReasoningPicker.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import { useModelSelector } from './useModelSelector'
 
 const props = withDefaults(defineProps<{
@@ -93,6 +94,15 @@ const {
   updateModel: value => emit('updateModel', value),
   updateServiceTier: value => emit('updateServiceTier', value),
 })
+const modelTriggerLabel = computed(() => {
+  if (!selectedEffortLabel.value)
+    return modelLabel.value
+
+  const effortLabel = isEffortUnavailable.value
+    ? `${selectedEffortLabel.value} (${t('common.unavailable')})`
+    : selectedEffortLabel.value
+  return `${modelLabel.value} · ${effortLabel}`
+})
 </script>
 
 <template>
@@ -118,10 +128,12 @@ const {
             :class="[`is-${surface}`, { 'is-fast': isFastMode }]"
             type="button"
             aria-haspopup="menu"
+            :aria-label="modelTriggerLabel"
             :aria-expanded="isOpen"
             :disabled="!canOpen"
             @click="toggle"
           >
+            <DesktopIcon class="desktop-model-selector__compact-icon" :component="ModelIcon" :size="18" />
             <DesktopIcon v-if="isFastMode" class="desktop-model-selector__flash" :component="Flash20Filled" />
             <span class="desktop-model-selector__model">
               {{ modelLabel }}
@@ -359,6 +371,11 @@ const {
     background: var(--buddy-surface-raised);
     padding-inline: 0.7rem 0.55rem;
   }
+}
+
+.desktop-model-selector__compact-icon {
+  display: none;
+  flex: none;
 }
 
 .desktop-model-selector__model {
