@@ -71,113 +71,127 @@ function openSpaceCreator() {
 </script>
 
 <template>
-  <NPopover
-    class="buddy-raw-popover"
-    raw
-    :show="panelOpen"
-    :show-arrow="false"
-    placement="top-start"
-    to=".buddy-app"
-    trigger="click"
-    @update:show="panelOpen = $event"
-  >
-    <template #trigger>
-      <NButton
-        class="desktop-task-space-selector__trigger"
-        quaternary
-        size="small"
-        aria-haspopup="dialog"
-        :aria-expanded="panelOpen"
-      >
-        <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="activeSpace?.icon" :icon-color="activeSpace?.iconColor" :size="16" />
-        <span>{{ triggerLabel }}</span>
-        <DesktopIcon
-          class="desktop-task-space-selector__chevron"
-          :class="{ 'is-open': panelOpen }"
-          :component="ChevronDown16Regular"
-          :size="16"
-        />
-      </NButton>
-    </template>
-
-    <section
-      class="desktop-task-space-selector__panel"
-      role="dialog"
-      :aria-label="t('desktop.tasks.spaceSelect')"
+  <div class="desktop-task-space-selector">
+    <NPopover
+      class="buddy-raw-popover"
+      raw
+      :show="panelOpen"
+      :show-arrow="false"
+      placement="top-start"
+      to=".buddy-app"
+      trigger="click"
+      @update:show="panelOpen = $event"
     >
-      <div class="desktop-task-space-selector__search">
-        <NInput
-          ref="searchInput"
-          v-model:value="query"
-          clearable
+      <template #trigger>
+        <NButton
+          class="desktop-task-space-selector__trigger"
+          quaternary
           size="small"
-          :placeholder="t('desktop.tasks.spaceSearch')"
+          aria-haspopup="dialog"
+          :aria-label="triggerLabel"
+          :aria-expanded="panelOpen"
         >
-          <template #prefix>
-            <DesktopIcon class="desktop-task-space-selector__icon" :component="Search16Regular" :size="16" />
-          </template>
-        </NInput>
-      </div>
-
-      <div class="desktop-task-space-selector__spaces" role="listbox">
-        <button
-          v-for="space in visibleSpaces"
-          :key="space.id"
-          class="desktop-task-space-selector__space"
-          :class="{ 'is-selected': activeSpace?.id === space.id }"
-          type="button"
-          role="option"
-          :aria-selected="activeSpace?.id === space.id"
-          @click="selectSpace(space.id)"
-        >
-          <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="space.icon" :icon-color="space.iconColor" :size="16" />
-          <span>{{ space.name }}</span>
+          <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="activeSpace?.icon" :icon-color="activeSpace?.iconColor" :size="16" />
+          <span class="desktop-task-space-selector__label">{{ triggerLabel }}</span>
           <DesktopIcon
-            v-if="activeSpace?.id === space.id"
-            class="desktop-task-space-selector__icon"
-            :component="Checkmark16Regular"
+            class="desktop-task-space-selector__chevron"
+            :class="{ 'is-open': panelOpen }"
+            :component="ChevronDown16Regular"
             :size="16"
           />
-        </button>
-        <span v-if="!visibleSpaces.length" class="desktop-task-space-selector__empty">
-          {{ t('desktop.tasks.spaceSearchEmpty') }}
-        </span>
-      </div>
+        </NButton>
+      </template>
 
-      <div class="desktop-task-space-selector__divider" role="separator" />
-      <button
-        class="desktop-task-space-selector__action desktop-task-space-selector__create"
-        type="button"
-        @click="openSpaceCreator"
+      <section
+        class="desktop-task-space-selector__panel"
+        role="dialog"
+        :aria-label="t('desktop.tasks.spaceSelect')"
       >
-        <DesktopIcon class="desktop-task-space-selector__icon" :component="FolderAdd16Regular" :size="16" />
-        <span>{{ t('desktop.tasks.createSpaceTitle') }}</span>
-      </button>
+        <div class="desktop-task-space-selector__search">
+          <NInput
+            ref="searchInput"
+            v-model:value="query"
+            clearable
+            size="small"
+            :placeholder="t('desktop.tasks.spaceSearch')"
+          >
+            <template #prefix>
+              <DesktopIcon class="desktop-task-space-selector__icon" :component="Search16Regular" :size="16" />
+            </template>
+          </NInput>
+        </div>
 
-      <template v-if="activeSpace">
+        <div class="desktop-task-space-selector__spaces" role="listbox">
+          <button
+            v-for="space in visibleSpaces"
+            :key="space.id"
+            class="desktop-task-space-selector__space"
+            :class="{ 'is-selected': activeSpace?.id === space.id }"
+            type="button"
+            role="option"
+            :aria-selected="activeSpace?.id === space.id"
+            @click="selectSpace(space.id)"
+          >
+            <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="space.icon" :icon-color="space.iconColor" :size="16" />
+            <span>{{ space.name }}</span>
+            <DesktopIcon
+              v-if="activeSpace?.id === space.id"
+              class="desktop-task-space-selector__icon"
+              :component="Checkmark16Regular"
+              :size="16"
+            />
+          </button>
+          <span v-if="!visibleSpaces.length" class="desktop-task-space-selector__empty">
+            {{ t('desktop.tasks.spaceSearchEmpty') }}
+          </span>
+        </div>
+
         <div class="desktop-task-space-selector__divider" role="separator" />
         <button
-          class="desktop-task-space-selector__action desktop-task-space-selector__clear"
+          class="desktop-task-space-selector__action desktop-task-space-selector__create"
           type="button"
-          @click="clearSpace"
+          @click="openSpaceCreator"
         >
-          <DesktopIcon class="desktop-task-space-selector__icon" name="spaceNone" />
-          <span>{{ t('desktop.tasks.spaceNone') }}</span>
+          <DesktopIcon class="desktop-task-space-selector__icon" :component="FolderAdd16Regular" :size="16" />
+          <span>{{ t('desktop.tasks.createSpaceTitle') }}</span>
         </button>
-      </template>
-    </section>
-  </NPopover>
 
-  <DesktopSpaceDialog
-    v-model:show="spaceDialogOpen"
-    :language="language"
-    :space="null"
-    :select-directory="selectDirectory"
-    :save="createSpace"
-  />
+        <template v-if="activeSpace">
+          <div class="desktop-task-space-selector__divider" role="separator" />
+          <button
+            class="desktop-task-space-selector__action desktop-task-space-selector__clear"
+            type="button"
+            @click="clearSpace"
+          >
+            <DesktopIcon class="desktop-task-space-selector__icon" name="spaceNone" />
+            <span>{{ t('desktop.tasks.spaceNone') }}</span>
+          </button>
+        </template>
+      </section>
+    </NPopover>
+
+    <DesktopSpaceDialog
+      v-model:show="spaceDialogOpen"
+      :language="language"
+      :space="null"
+      :select-directory="selectDirectory"
+      :save="createSpace"
+    />
+  </div>
 </template>
 
 <style scoped lang="scss">
+.desktop-task-space-selector {
+  display: inline-flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+
+  @container desktop-chat-composer (max-width: 21rem) {
+    display: none;
+  }
+}
+
 .desktop-task-space-selector__trigger {
   max-width: min(14rem, 40cqw);
   min-width: 0;
@@ -215,6 +229,24 @@ function openSpaceCreator() {
     min-width: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  @container desktop-chat-composer (max-width: 30rem) {
+    width: var(--buddy-composer-control-height);
+    min-width: var(--buddy-composer-control-height);
+    max-width: var(--buddy-composer-control-height);
+    padding: 0;
+
+    :deep(.n-button__content) {
+      gap: 0;
+    }
+  }
+}
+
+.desktop-task-space-selector__label,
+.desktop-task-space-selector__chevron {
+  @container desktop-chat-composer (max-width: 30rem) {
+    display: none;
   }
 }
 

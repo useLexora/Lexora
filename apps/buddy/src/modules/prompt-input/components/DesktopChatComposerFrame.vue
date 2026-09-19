@@ -4,13 +4,21 @@ import { NScrollbar } from 'naive-ui'
 withDefaults(defineProps<{
   borderRadius?: string
   expanded?: boolean
+  singleLineToolbar?: boolean
 }>(), {
   expanded: false,
+  singleLineToolbar: false,
 })
 </script>
 
 <template>
-  <div class="desktop-chat-composer-frame" :class="{ 'is-expanded': expanded }">
+  <div
+    class="desktop-chat-composer-frame"
+    :class="{
+      'is-expanded': expanded,
+      'has-single-line-toolbar': singleLineToolbar,
+    }"
+  >
     <slot name="attachments" />
 
     <div class="desktop-chat-composer" :style="{ borderRadius }">
@@ -175,6 +183,23 @@ withDefaults(defineProps<{
   max-width: 100%;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.has-single-line-toolbar {
+  .desktop-chat-composer__toolbar {
+    flex-wrap: nowrap;
+    justify-content: normal;
+  }
+
+  .desktop-chat-composer__actions {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+
+  .desktop-chat-composer__leading-actions {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+  }
 }
 
 @container desktop-chat-composer (max-width: 560px) {
