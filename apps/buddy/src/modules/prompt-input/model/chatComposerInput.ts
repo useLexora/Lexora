@@ -52,6 +52,7 @@ export interface ChatComposerSubmitPayload {
 }
 
 const TRIGGER_BOUNDARY_PATTERN = /[\s([{，。！？；：、"'`]$/u
+const CHAT_COMPOSER_SUGGESTION_LIMIT = 8
 
 export function createEmptyChatComposerContent(): JSONContent {
   return { content: [{ type: 'paragraph' }], type: 'doc' }
@@ -119,8 +120,10 @@ export function createChatComposerSuggestions(
         value: `/${command.name}`,
       }))
     : trigger.kind === 'skill' ? options.skills : createChatComposerSourceOptions(options.files)
-  const query = trigger.query.trim().toLowerCase()
-  return (trigger.kind === 'mention' ? candidates : filterChatComposerOptions(candidates, query).slice(0, 8))
+  if (trigger.kind === 'mention')
+    return candidates.map(option => ({ option }))
+  return rankChatComposerOptions(candidates, trigger.query)
+    .slice(0, CHAT_COMPOSER_SUGGESTION_LIMIT)
     .map(option => ({ option }))
 }
 
@@ -152,4 +155,35 @@ function filterChatComposerOptions(
     .join(' ')
     .toLowerCase()
     .includes(normalizedQuery))
+}
+
+function rankChatComposerOptions(
+  options: ReadonlyArray<ChatPromptContextOption>,
+  query: string,
+): ReadonlyArray<ChatPromptContextOption> {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery)
+    return options
+  const ranked: Array<{ index: number, option: ChatPromptContextOption, rank: number }> = []
+  options.forEach((option, index) => {
+    const rank = chatComposerOptionRank(option, normalizedQuery)
+    if (rank !== null)
+      ranked.push({ index, option, rank })
+  })
+  return ranked
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(entry => entry.option)
+}
+
+function chatComposerOptionRank(option: ChatPromptContextOption, query: string): number | null {
+  const names = [option.label, option.fileName, option.value]
+    .flatMap(name => name ? [name.toLowerCase()] : [])
+  if (names.includes(query))
+    return 0
+  if (names.some(name => name.startsWith(query)))
+    return 1
+  if (names.some(name => name.includes(query)))
+    return 2
+  const detail = [option.path, option.description].filter(Boolean).join(' ').toLowerCase()
+  return detail.includes(query) ? 3 : null
 }

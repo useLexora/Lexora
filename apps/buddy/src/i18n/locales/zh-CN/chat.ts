@@ -212,6 +212,7 @@ export default {
   'desktop.chat.sourcePickerMoreResults': '结果较多，请缩小搜索范围',
   'desktop.chat.sourcePickerClipboard': '剪贴板',
   'desktop.chat.sourcePickerNoReferences': '暂无可引用内容',
+  'desktop.chat.sourcePickerNoSkills': '暂无可用的 Skill',
   'desktop.chat.sourcePickerNoMatches': '没有匹配的内容',
   'desktop.chat.locateAttachment': '定位附件 {name}',
   'desktop.chat.sourcePickerSearch': '搜索对话文件',

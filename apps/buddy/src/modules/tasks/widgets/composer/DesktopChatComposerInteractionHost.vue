@@ -94,6 +94,7 @@ function resetDismissTimer() {
 .desktop-chat-composer-interaction-host__chooser {
   min-width: 0;
   border-radius: 0.55rem;
+  background: var(--buddy-surface-raised);
   box-shadow: var(--buddy-shadow-raised);
 }
 

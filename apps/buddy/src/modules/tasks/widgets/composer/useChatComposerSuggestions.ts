@@ -17,6 +17,7 @@ export function useChatComposerSuggestions(
   const contextLoadFailed = shallowRef(false)
   const deepSearch = shallowRef(false)
   let contextRequestId = 0
+  let loadedSkillDraftId: string | null = null
 
   const fileQuery = shallowRef('')
   const currentOptions = computed<ChatPromptContextOption[]>(() => {
@@ -51,16 +52,23 @@ export function useChatComposerSuggestions(
     activeSuggestionIndex.value = 0
     if (!trigger || trigger.kind === 'slash') {
       deepSearch.value = false
+      loadedSkillDraftId = null
       invalidateQuery()
       return
     }
     if (trigger.kind !== 'mention')
       deepSearch.value = false
+    const draftId = options.draftId.value
+    const reusesSkillCatalog = trigger.kind === 'skill' && loadedSkillDraftId === draftId
+    if (reusesSkillCatalog && !contextLoadFailed.value)
+      return
+    loadedSkillDraftId = trigger.kind === 'skill' ? draftId : null
     void loadContextOptions(trigger.kind === 'mention' ? trigger.query : null)
   }, { flush: 'sync' })
   watch(options.draftId, () => {
     activeTrigger.value = null
     contextOptions.value = { files: [], skills: [] }
+    loadedSkillDraftId = null
     invalidateQuery()
   }, { flush: 'sync' })
   onScopeDispose(invalidateQuery)

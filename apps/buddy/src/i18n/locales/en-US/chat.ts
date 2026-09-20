@@ -214,6 +214,7 @@ export default {
   'desktop.chat.sourcePickerMoreResults': 'More results are available. Narrow your search.',
   'desktop.chat.sourcePickerClipboard': 'Clipboard',
   'desktop.chat.sourcePickerNoReferences': 'No content available to reference',
+  'desktop.chat.sourcePickerNoSkills': 'No skills available',
   'desktop.chat.sourcePickerNoMatches': 'No matching content',
   'desktop.chat.locateAttachment': 'Locate attachment {name}',
   'desktop.chat.sourcePickerSearch': 'Search conversation files',

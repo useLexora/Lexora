@@ -27,6 +27,17 @@ function fileOption(name: string): ChatPromptContextOption {
   }
 }
 
+function skillOption(name: string, description: string): ChatPromptContextOption {
+  return {
+    description,
+    kind: 'skill',
+    label: name,
+    path: null,
+    skill: { id: `${name}-id`, name, revision: 'revision-one' },
+    value: name,
+  }
+}
+
 async function mountComposer(options: {
   loadContextOptions?: (query: string | null, deepSearch?: boolean) => Promise<ChatComposerContextOptions>
   selectSource?: (source: BuddyComposerSource) => Promise<string | null>
@@ -432,6 +443,36 @@ describe('chat composer editing', () => {
     expect(flow.editor.getText()).toContain('before ')
     expect(flow.editor.getText()).toContain(' after')
     expect(flow.editor.state.selection.from).toBe(flow.editor.state.doc.content.size - 1)
+  })
+
+  it('ranks skill name matches above description matches and loads the skill catalog once per suggestion session', async () => {
+    const queries: (string | null)[] = []
+    const flow = await mountComposer({ loadContextOptions: async (query) => {
+      queries.push(query)
+      return {
+        files: [],
+        skills: [
+          skillOption('antfu', 'opinionated tooling for projects'),
+          skillOption('pr', 'create a pull request'),
+          skillOption('grill-me', 'planning interviews'),
+          skillOption('snapshot-approval', 'approve snapshots'),
+        ],
+      }
+    } })
+    const skillLabels = () => flow.composer.suggestions.value.map(item => item.option.label)
+    flow.editor.view.dom.focus()
+    flow.editor.commands.insertContent('$')
+    await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
+    flow.editor.commands.insertContent('pr')
+    await expect.poll(skillLabels).toEqual(['pr', 'snapshot-approval', 'antfu'])
+    expect(queries).toEqual([null])
+
+    flow.keydown('Escape')
+    expect(flow.composer.activeTrigger.value).toBeNull()
+    flow.editor.commands.insertContent(' $')
+    await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
+    expect(queries).toEqual([null, null])
+    expect(flow.sent).toEqual([])
   })
 
   it('discards query results after the editor scope is disposed', async () => {
