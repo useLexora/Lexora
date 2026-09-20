@@ -105,7 +105,7 @@ jobs:
             exit 1
           fi
 
-          git commit -m "chore(release): 准备 v$VERSION"
+          git commit -m "chore(release): 发布 v$VERSION"
           HEAD_SHA="$(git rev-parse HEAD)"
           node packaging/release/transition.mjs --check "$BASE_SHA" "$HEAD_SHA"
 
