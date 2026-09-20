@@ -225,6 +225,8 @@ function previewLeaveTransition(): Promise<void> {
 </template>
 
 <style scoped lang="scss">
+@use '@/shared/ui/highlight/inlineHighlightToken' as highlight;
+
 .buddy-chat-message-content {
   &__folder { width: 3rem; height: 3rem; }
   display: grid;
@@ -423,19 +425,7 @@ function previewLeaveTransition(): Promise<void> {
 }
 
 .buddy-chat-message-content__directive {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: 0.25rem;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: color-mix(in srgb, var(--buddy-accent-on-surface) 10%, transparent);
-  color: inherit;
-  font: inherit;
-  line-height: 1.35;
-  margin: 0 0.12rem;
-  padding: 0.08rem 0.3rem;
-  vertical-align: baseline;
+  @include highlight.inline-highlight-token;
 }
 
 @media (prefers-reduced-motion: reduce) {

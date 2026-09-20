@@ -45,7 +45,7 @@ withDefaults(defineProps<{
 </template>
 
 <style scoped lang="scss">
-@use '@/shared/ui/highlight/waveHighlight' as highlight;
+@use '@/shared/ui/highlight/inlineHighlightToken' as highlight;
 
 .desktop-chat-composer-frame {
   --desktop-chat-composer-editor-padding-top: 0.35rem;
@@ -115,40 +115,22 @@ withDefaults(defineProps<{
   max-height: 18rem;
 }
 
-:deep(.chat-prompt-token-node) {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  margin-inline: 0.2rem;
-  border: 1px solid var(--buddy-accent-border);
-  border-radius: 0.38rem;
-  background: var(--buddy-accent-surface);
-  color: var(--buddy-accent-on-surface);
-  font-size: 0.78rem;
-  font-weight: 650;
-  line-height: 1.45;
-  padding: 0.05rem 0.35rem;
+:deep(.chat-prompt-token-node),
+:deep([data-type='chat-resource-reference']) {
+  @include highlight.inline-highlight-token;
+
+  margin-inline: 0.12rem;
 }
 
 :deep([data-type='chat-resource-reference']) {
-  @include highlight.wave-highlight;
-
-  display: inline;
-  border: 0;
-  border-radius: 0;
-  color: var(--buddy-accent-on-surface);
-  font: inherit;
-  font-weight: 600;
-  margin-inline: 0.12rem;
-  padding: 0 0.15em;
-  vertical-align: baseline;
-  white-space: nowrap;
-
-  &:hover,
-  &.ProseMirror-selectednode {
+  &:hover {
     --inline-wave-highlight-active: 1;
   }
+}
 
+:deep(.chat-prompt-token-node.ProseMirror-selectednode),
+:deep([data-type='chat-resource-reference'].ProseMirror-selectednode) {
+  --inline-wave-highlight-active: 1;
 }
 
 :deep(.chat-resource-reference__label) {

@@ -29,20 +29,11 @@ const { t } = useBuddyI18n(() => props.language)
 </template>
 
 <style scoped lang="scss">
-@use '@/shared/ui/highlight/waveHighlight' as highlight;
+@use '@/shared/ui/highlight/inlineHighlightToken' as highlight;
 
 .buddy-chat-resource-reference {
-  @include highlight.wave-highlight;
+  @include highlight.inline-highlight-token;
 
-  display: inline;
-  border: 0;
-  border-radius: 0;
-  color: var(--buddy-accent-on-surface);
-  font-weight: 600;
-  line-height: inherit;
-  padding: 0 0.15em;
-  vertical-align: baseline;
-  white-space: nowrap;
   text-decoration: none;
 
   &:hover,

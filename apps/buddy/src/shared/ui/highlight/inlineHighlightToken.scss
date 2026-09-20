@@ -1,0 +1,15 @@
+@use './waveHighlight' as waveHighlight;
+
+@mixin inline-highlight-token {
+  @include waveHighlight.wave-highlight;
+
+  display: inline;
+  border: 0;
+  border-radius: 0;
+  color: var(--buddy-accent-on-surface);
+  font: inherit;
+  font-weight: 600;
+  padding: 0 0.15em;
+  vertical-align: baseline;
+  white-space: nowrap;
+}

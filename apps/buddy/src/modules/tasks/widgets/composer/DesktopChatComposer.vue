@@ -106,11 +106,16 @@ const suggestionOptions = computed(() => suggestions.value.map(({ option }) => o
 const chooserVisible = computed(() => !sourceMenuOpen.value && Boolean(
   activeTrigger.value && (activeTrigger.value.kind === 'mention' || activeTrigger.value.kind === 'skill' || suggestions.value.length || isLoadingContext.value),
 ))
-const suggestionEmptyLabel = computed(() => contextLoadFailed.value
-  ? t('desktop.chat.sourcePickerLoadFailed')
-  : activeTrigger.value?.kind === 'mention'
-    ? t(activeTrigger.value.query ? 'desktop.chat.sourcePickerNoMatches' : 'desktop.chat.sourcePickerNoReferences')
-    : t('desktop.chat.sourcePickerEmpty'))
+const suggestionEmptyLabel = computed(() => {
+  if (contextLoadFailed.value)
+    return t('desktop.chat.sourcePickerLoadFailed')
+  const trigger = activeTrigger.value
+  if (trigger?.kind === 'mention')
+    return t(trigger.query ? 'desktop.chat.sourcePickerNoMatches' : 'desktop.chat.sourcePickerNoReferences')
+  if (trigger?.kind === 'skill')
+    return t(trigger.query ? 'desktop.chat.sourcePickerNoMatches' : 'desktop.chat.sourcePickerNoSkills')
+  return t('desktop.chat.sourcePickerNoMatches')
+})
 const modelInputIssueMessage = computed(() => {
   if (modelInputIssue.value === 'reasoning_unsupported')
     return t('desktop.chat.modelReasoningUnsupported', { value: props.selectedEffort ?? '' })
