@@ -6,7 +6,7 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { createAttachmentRepository } from './attachmentRepository'
 import { createComposerDraftCommitter } from './commitComposerDraft'
 import { withTransaction } from './database'
-import { assertTurnAttachmentBindings, TurnRequestAttachmentError } from './turnRequestRepository'
+import { assertTurnAttachmentBindings, resolveTurnExecutionProfile, TurnRequestAttachmentError } from './turnRequestRepository'
 
 interface QueueRow {
   id: string
@@ -109,7 +109,7 @@ export function createChatQueueRepository(database: DatabaseSync) {
         assertScope(input)
         if (!database.prepare('SELECT id FROM chat_queue WHERE id = ? AND state IN (\'waiting\', \'paused\')').get(input.queuedMessageId!))
           throw new BuddyServiceError('VALIDATION_FAILED')
-        const run = database.prepare('SELECT id FROM runs WHERE id = ? AND conversation_id = ? AND branch_id = ? AND status = \'running\' AND purpose = \'chat\' AND approval_policy = ? AND execution_profile = ?').get(runId, input.conversationId, input.branchId, input.approvalPolicy, input.executionProfile)
+        const run = database.prepare('SELECT id FROM runs WHERE id = ? AND conversation_id = ? AND branch_id = ? AND status = \'running\' AND purpose = \'chat\' AND approval_policy = ? AND execution_profile = ?').get(runId, input.conversationId, input.branchId, input.approvalPolicy, resolveTurnExecutionProfile(input))
         if (!run)
           throw new BuddyServiceError('VALIDATION_FAILED')
         database.prepare('INSERT INTO messages (id, conversation_id, branch_id, run_id, role, content_json, created_at) VALUES (?, ?, ?, NULL, \'user\', ?, ?)').run(input.userMessageId, input.conversationId, input.branchId, JSON.stringify(input.userMessageContent), new Date().toISOString())

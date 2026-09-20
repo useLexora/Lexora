@@ -13,6 +13,7 @@ import { isDocumentMimeType } from '../../../shared/conversation/attachmentForma
 import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
 import { getAttachmentLabels } from '../attachments/attachmentLabels'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
+import { resolveTurnExecutionProfile } from '../storage/turnRequestRepository'
 
 export interface ChatQueueServiceOptions {
   queue: ChatQueueRepository
@@ -85,6 +86,9 @@ export class ChatQueueService {
         return false
       if (active.purpose !== 'chat' || active.model !== input.model || active.provider !== input.provider)
         throw new BuddyServiceError('VALIDATION_FAILED')
+      const run = this.#options.runs.findById(active.id)
+      if (!run || run.approvalPolicy !== input.approvalPolicy || run.executionProfile !== resolveTurnExecutionProfile(input))
+        return false
       await this.#options.turns.validatePreparedInput(input, false)
       if (this.#disposed || !this.#options.queue.pending(target) || this.#options.queue.activeRun(target)?.id !== active.id)
         return false
@@ -129,7 +133,7 @@ export class ChatQueueService {
     const current = this.#options.runInputs.findByRunId(run.id)
     return run.status === 'running' && run.branchId === input.branchId
       && run.model === input.model && run.provider === input.provider
-      && run.approvalPolicy === input.approvalPolicy && run.executionProfile === input.executionProfile
+      && run.approvalPolicy === input.approvalPolicy && run.executionProfile === resolveTurnExecutionProfile(input)
       && run.contextWindow === (input.modelParameters?.contextWindow ?? null)
       && run.maxTokens === (input.modelParameters?.maxTokens ?? null)
       && current?.reasoning === input.runInput.reasoning && current.serviceTier === input.runInput.serviceTier

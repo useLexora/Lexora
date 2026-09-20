@@ -19,6 +19,22 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it('narrows only the run profile and rejects wider overrides without consuming the draft', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    const drafts = createComposerDraftRepository(database)
+    const original = drafts.findById('draft-1')
+    expect(() => repository.prepare({ ...createInput(), runExecutionProfile: 'full_access' })).toThrow(TurnRequestConflictError)
+    expect(database.prepare('SELECT COUNT(*) AS count FROM conversations').get()).toEqual({ count: 0 })
+    expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 0 })
+    expect(drafts.findById('draft-1')).toEqual(original)
+
+    repository.prepare({ ...createInput(), runExecutionProfile: 'read_only' })
+    expect(database.prepare('SELECT execution_profile FROM runs').get()).toEqual({ execution_profile: 'read_only' })
+    expect(database.prepare('SELECT execution_profile FROM conversations').get()).toEqual({ execution_profile: 'workspace_write' })
+    expect(drafts.findById('draft-1')).toMatchObject({ revision: 1, executionConfig: { executionProfile: 'workspace_write' } })
+  })
+
   it('creates a followup branch only when its source and draft commit succeed, preserving the original draft', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)

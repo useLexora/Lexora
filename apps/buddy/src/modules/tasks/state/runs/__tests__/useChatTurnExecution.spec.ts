@@ -1,5 +1,8 @@
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
+import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { formatLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, shallowRef } from 'vue'
@@ -86,6 +89,35 @@ describe('useChatTurnExecution cancellation ownership', () => {
   )
 })
 
+describe('turn submission conflicts', () => {
+  it('keeps the confirmed review and resources when its revision changes before submission', async () => {
+    const f = createFixture()
+    f.projectedRuns.value = []
+    f.selectedModel.value = { modelId: 'model-a', providerId: 'provider-a' } as LocalRuntimeModelOption
+    const content = { ...createBuddyUserContent('/review inspect only'), panelResourceIds: ['resource-a'] }
+    f.drafts.setUserContent(content)
+    const key = 'conversation:conversation-a:branch-a'
+    const snapshot = f.drafts.snapshot(key)
+    f.drafts.confirmOpen(snapshot, {
+      content,
+      draftId: snapshot.draftId,
+      executionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile },
+      modelSelection: null,
+      revision: 1,
+      scope: { kind: 'conversation_branch', conversationId: 'conversation-a', branchId: 'branch-a' },
+      updatedAt: '2026-09-08T00:00:00.000Z',
+    })
+    f.api.chat.startTurn.mockRejectedValue(new Error(formatLocalChatPublicError({ code: 'DRAFT_CONFLICT', retryable: false })))
+    const confirmed = f.drafts.snapshot(key)
+
+    expect(await f.execution.send({ content: '/review inspect only', userContent: content })).toBe(false)
+    expect(f.drafts.snapshot(key)).toEqual(confirmed)
+    expect(f.error.value).toContain('input changed')
+    expect(f.projectedRuns.value).toEqual([])
+    expect(f.api.chat.startTurn.mock.calls).toEqual([[expect.objectContaining({ draftId: snapshot.draftId, expectedRevision: 1 })]])
+  })
+})
+
 function createFixture() {
   const scope = effectScope()
   scopes.push(scope)
@@ -115,10 +147,12 @@ function createFixture() {
     const error = shallowRef<string | null>(null)
     const pending = deferred<LocalRun>()
     const composerTarget = useComposerTarget({ drafts, conversationId: session.activeConversationId, branchId: session.activeBranchId, persist: async () => true })
+    const api = { chat: { listQueue: async () => [], enqueue: vi.fn(), cancelQueued: vi.fn(), steerQueued: vi.fn(), cancel: () => pending.promise, executeCommand: vi.fn(), startTurn: vi.fn() } }
+    const selectedModel = shallowRef<LocalRuntimeModelOption | null>(null)
     const execution = useChatTurnExecution({
       composerTarget,
       activeRun: computed(() => projectedRuns.value.find(item => item.status === 'running') ?? null),
-      api: { chat: { listQueue: async () => [], enqueue: vi.fn(), cancelQueued: vi.fn(), steerQueued: vi.fn(), cancel: () => pending.promise, executeCommand: vi.fn(), startTurn: vi.fn() } },
+      api,
       approvalPolicy: drafts.approvalPolicy,
       canSendDraft: shallowRef(true),
       drafts,
@@ -128,7 +162,7 @@ function createFixture() {
       getRunTerminationMessage: () => 'Run ended',
       isUpdatingPermissionSettings: shallowRef(false),
       language: shallowRef('en-US'),
-      modelSelection: { selectedModel: shallowRef(null) },
+      modelSelection: { selectedModel },
       onActionCommandRunStarted: () => {},
       persistWorkspaceState: async () => true,
       runSync: {
@@ -161,7 +195,7 @@ function createFixture() {
       drafts.updateComposerContent('current view input', null)
       error.value = 'current view status'
     }
-    return { drafts, error, execution, navigate, pending, projectedRuns, run, scope }
+    return { api, drafts, error, execution, navigate, pending, projectedRuns, run, scope, selectedModel }
   })!
 }
 

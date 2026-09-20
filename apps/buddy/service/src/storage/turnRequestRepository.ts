@@ -3,8 +3,16 @@ import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conve
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { RunInputContextItem } from './runInputRepository'
+import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { createComposerDraftCommitter } from './commitComposerDraft'
 import { withTransaction } from './database'
+
+export function resolveTurnExecutionProfile(input: { executionProfile: BuddyExecutionProfile, runExecutionProfile?: BuddyExecutionProfile }): BuddyExecutionProfile {
+  const profile = input.runExecutionProfile ?? input.executionProfile
+  if (!isExecutionProfileWithin(profile, input.executionProfile))
+    throw new TurnRequestConflictError()
+  return profile
+}
 
 export interface PrepareTurnRequestInput {
   queuedMessageId?: string
@@ -19,6 +27,7 @@ export interface PrepareTurnRequestInput {
     expectedRevision: number
   }
   executionProfile: BuddyExecutionProfile
+  runExecutionProfile?: BuddyExecutionProfile
   model: string
   modelParameters?: { contextWindow: number, maxTokens: number }
   spaceId: string | null
@@ -75,6 +84,7 @@ export interface RegenerateTurnRequestInput {
   conversationId: string
   createdAt: string
   executionProfile: BuddyExecutionProfile
+  runExecutionProfile?: BuddyExecutionProfile
   forkedFromMessageId: string
   parentBranchId: string
   requestFingerprint: string
@@ -340,7 +350,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           null,
           input.createdAt,
           input.approvalPolicy,
-          input.executionProfile,
+          resolveTurnExecutionProfile(input),
         )
         insertRunInput.run(
           input.runId,
@@ -468,7 +478,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           previous?.pi_session_file ?? null,
           input.createdAt,
           input.approvalPolicy,
-          input.executionProfile,
+          resolveTurnExecutionProfile(input),
         )
         insertRunInput.run(
           input.runId,
@@ -574,7 +584,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           null,
           input.createdAt,
           input.approvalPolicy,
-          input.executionProfile,
+          resolveTurnExecutionProfile(input),
         )
         if (Number(cloneRunInput.run(input.runId, input.createdAt, input.sourceRunId).changes) !== 1)
           throw new TurnRequestConflictError()
