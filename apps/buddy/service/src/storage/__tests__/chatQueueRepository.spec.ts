@@ -67,6 +67,19 @@ describe('chat queue ownership and delivery', () => {
     expect(f.queue.list(f.scope)).toEqual([])
   })
 
+  it('atomically refuses to commit a read-only review into a writable run', () => {
+    const f = fixture()
+    f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
+    const pending = f.queue.pending(f.target('review'))!
+    expect(() => f.queue.commitInRun(pending, 'run-initial')).toThrow()
+    expect(f.queue.pending(f.target('review'))).toEqual(pending)
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    f.database.exec('UPDATE runs SET execution_profile = \'read_only\'')
+    f.queue.commitInRun(pending, 'run-initial')
+    expect(f.queue.list(f.scope)).toEqual([])
+    expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'review' }])
+  })
+
   it('protects queued image snapshots from draft cleanup and binds them to the delivered message', () => {
     const f = fixture()
     const attachments = createAttachmentRepository(f.database)

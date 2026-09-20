@@ -58,7 +58,6 @@ export class ChatCommandService {
     ))
     if (
       !command
-      || command.kind !== 'action'
       || command.name !== 'compact'
       || getBuddyUserContentResourceIds(draft.content).length
       || draft.content.quotes?.length

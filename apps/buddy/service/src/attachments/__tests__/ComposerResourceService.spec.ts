@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { BuddyUserContentV1 } from '../../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../../shared/conversation/composerDraft'
 import type { InputModel } from '../../providers/modelCapabilities'
 import { Buffer } from 'node:buffer'
@@ -12,6 +13,7 @@ import { createBuddyInputReference } from '../../agent/context/BuddyInputReferen
 import { BuddySessionRecoveryService } from '../../agent/sessions/recovery/BuddySessionRecoveryService'
 import { BuddyConversationTree } from '../../agent/sessions/tree/BuddyConversationTree'
 import { ArtifactService } from '../../artifacts/ArtifactService'
+import { BUDDY_REVIEW_PROMPT } from '../../chat/buddyReviewPrompt'
 import { ChatInputValidationService } from '../../chat/ChatInputValidationService'
 import { ChatQueueService } from '../../chat/ChatQueueService'
 import { ChatTurnService } from '../../chat/ChatTurnService'
@@ -235,6 +237,72 @@ async function checkedTurns(overrides: Partial<InputModel> = {}) {
     return draft
   } }
 }
+
+describe('review turn boundaries', () => {
+  const executionConfig = { approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }
+  function reviewContent(mode: 'text' | 'directive' | 'directive_with_arguments', focus: string): BuddyUserContentV1 {
+    if (mode === 'text')
+      return createBuddyUserContent(`/review ${focus}`)
+    return { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: mode === 'directive'
+      ? [
+          { type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: '/review' },
+          { type: 'text', text: ` ${focus}` },
+        ]
+      : [{ type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: `/review ${focus}` }] }] }
+  }
+
+  it.each(['text', 'directive', 'directive_with_arguments'] as const)('keeps reviews read-only through send, edit and regeneration without narrowing the next ordinary turn (%s)', async (mode) => {
+    const f = await checkedTurns()
+    const inputs = createRunInputRepository(f.database)
+    const draft = f.drafts.open({ draftId: 'review-draft', scope: { kind: 'global' }, initialContent: reviewContent(mode, 'first focus'), initialExecutionConfig: executionConfig, initialModelSelection: null, now: new Date().toISOString() })
+    const first = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'review-start' })
+    expect(first.run.executionProfile).toBe('read_only')
+    expect(f.conversations.findById(first.conversationId)?.executionProfile).toBe('workspace_write')
+    expect(inputs.findByRunId(first.runId)?.prompt.split(BUDDY_REVIEW_PROMPT)).toHaveLength(2)
+    expect(inputs.findByRunId(first.runId)?.prompt.split('first focus')).toHaveLength(2)
+    const source = f.runs.findById(first.runId)!
+    const edit = f.drafts.open({ draftId: 'review-edit', scope: { kind: 'message_edit', conversationId: first.conversationId, branchId: first.branchId, userMessageId: source.triggeringMessageId }, initialContent: reviewContent(mode, 'edited focus'), initialExecutionConfig: executionConfig, initialModelSelection: null, now: new Date().toISOString() })
+    const edited = await f.turns.editUserMessage({ conversationId: first.conversationId, userMessageId: source.triggeringMessageId, draftId: edit.draftId, expectedRevision: edit.revision, requestId: 'review-edit' })
+    expect(edited.run.executionProfile).toBe('read_only')
+    expect(inputs.findByRunId(edited.runId)?.prompt.split(BUDDY_REVIEW_PROMPT)).toHaveLength(2)
+    expect(inputs.findByRunId(edited.runId)?.prompt.split('edited focus')).toHaveLength(2)
+    expect(f.conversations.listBranchMessages(first.conversationId, first.branchId).find(message => message.id === source.triggeringMessageId)?.content).toMatchObject({ userContent: draft.content })
+    const regenerated = await f.turns.regenerateAssistant({ conversationId: first.conversationId, sourceRunId: edited.runId, requestId: 'review-regenerate' })
+    expect(regenerated.run.executionProfile).toBe('read_only')
+    expect(inputs.findByRunId(regenerated.runId)?.prompt).toBe(inputs.findByRunId(edited.runId)?.prompt)
+    const next = f.drafts.open({ draftId: 'ordinary', scope: { kind: 'conversation_branch', conversationId: first.conversationId, branchId: regenerated.branchId }, initialContent: createBuddyUserContent('continue normally'), initialExecutionConfig: executionConfig, initialModelSelection: null, now: new Date().toISOString() })
+    const ordinary = await f.turns.start({ draftId: next.draftId, expectedRevision: next.revision, requestId: 'ordinary' })
+    expect(ordinary.run.executionProfile).toBe('workspace_write')
+    expect(inputs.findByRunId(ordinary.runId)?.prompt).toBe('continue normally')
+  })
+
+  it.each([
+    ['workspace_write', 'read_only'],
+    ['full_access', 'workspace_write'],
+  ] as const)('regenerates a %s run under the current narrower %s permission', async (sourceProfile, currentProfile) => {
+    const f = await checkedTurns()
+    const draft = f.drafts.open({ draftId: 'ordinary', scope: { kind: 'global' }, initialContent: createBuddyUserContent('inspect'), initialExecutionConfig: { ...executionConfig, executionProfile: sourceProfile }, initialModelSelection: null, now: new Date().toISOString() })
+    const first = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'ordinary' })
+    f.conversations.setPermissionSettings({ id: first.conversationId, approvalPolicy: 'policy', executionProfile: currentProfile, updatedAt: new Date().toISOString() })
+    const regenerated = await f.turns.regenerateAssistant({ conversationId: first.conversationId, sourceRunId: first.runId, requestId: 'narrowed' })
+    expect(regenerated.run.executionProfile).toBe(currentProfile)
+    expect(f.runs.findById(first.runId)?.executionProfile).toBe(sourceProfile)
+  })
+
+  it.each(['/plan', '/status', '/skills', '/review'])('keeps a legacy %s draft usable without reviving retired prompt behavior', async (command) => {
+    const f = await checkedTurns()
+    const legacy = { drafts: [{ draftId: 'legacy', targetKey: 'global', composerContent: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'chatPromptToken', attrs: { kind: 'slashCommand', value: command } }] }] } }] }
+    const normalized = await normalizeComposerWorkspace(legacy, { resources: f.service, conversations: f.conversations })
+    expect(normalized).toMatchObject({ drafts: [{ composerContent: { content: [{ content: [command === '/review'
+      ? { type: 'chatPromptDirective', attrs: { directive: 'slash_command', commandMode: 'prompt', value: '/review' } }
+      : { type: 'text', text: command }] }] } }] })
+    const content: BuddyUserContentV1 = { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: command }] }] }
+    const draft = f.drafts.open({ draftId: 'legacy', scope: { kind: 'global' }, initialContent: content, initialExecutionConfig: executionConfig, initialModelSelection: null, now: new Date().toISOString() })
+    const turn = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'legacy' })
+    expect(createRunInputRepository(f.database).findByRunId(turn.runId)?.prompt).toBe(command === '/review' ? BUDDY_REVIEW_PROMPT : command)
+    expect(turn.run.executionProfile).toBe(command === '/review' ? 'read_only' : 'workspace_write')
+  })
+})
 
 describe('attachment working copies', () => {
   it('preserves working edits across restart and restores deleted copies without modifying the snapshot', async () => {
@@ -1043,7 +1111,7 @@ describe('composer resource import', () => {
     expect(attachmentRepository.findById(editedAttachmentId)?.sourcePath).toBe('/fixture/note.txt')
     expect(editedAttachmentId).not.toBe((originalMessage.content as { resourceSnapshots: Array<{ attachmentId: string }> }).resourceSnapshots[0]!.attachmentId)
     expect(await readFile(attachmentRepository.findById(editedAttachmentId)!.storedPath, 'utf8')).toBe('abc')
-    expect(runInputs.findByRunId(editedTurn.runId)!.prompt).toContain('先梳理目标、约束、依赖与实施步骤')
+    expect(runInputs.findByRunId(editedTurn.runId)!.prompt).toContain('/plan revise with the snapshot')
 
     const mixedContent = { ...createBuddyUserContent(), body: [{ type: 'paragraph' as const, content: [
       { type: 'prompt_directive' as const, directive: 'slash_command' as const, commandMode: 'prompt' as const, value: '/plan' },
@@ -1066,7 +1134,7 @@ describe('composer resource import', () => {
       expectedRevision: mixedDraft.revision,
       requestId: 'mixed',
     })
-    expect(runInputs.findByRunId(mixed.runId)!.prompt).toContain('先梳理目标、约束、依赖与实施步骤')
+    expect(runInputs.findByRunId(mixed.runId)!.prompt).toContain('/plan Use ')
     expect(runInputs.findByRunId(mixed.runId)!.prompt).toContain('Use concise wording.')
     expect(conversations.listBranchMessages(mixed.conversationId, mixed.branchId)[0]!.content).toMatchObject({
       resourceSnapshots: [],

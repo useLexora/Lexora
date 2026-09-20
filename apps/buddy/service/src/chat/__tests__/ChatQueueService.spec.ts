@@ -127,6 +127,34 @@ describe('persistent chat queue scheduling', () => {
     },
   )
 
+  it.each(['followUp', 'steer'] as const)('keeps a review out of a writable run during %s and starts it read-only afterward', async (mode) => {
+    const f = fixture()
+    f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
+    const accepted = mode === 'followUp'
+      ? await f.service.followUp('run-initial', f.controller.signal)
+      : await f.service.steer(f.target('review'))
+    expect(accepted).toBe(false)
+    expect(f.queue.pending(f.target('review'))?.runExecutionProfile).toBe('read_only')
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.service.onRunSettled('run-initial')
+    await vi.waitFor(() => expect(f.runs.findById('run-review')?.executionProfile).toBe('read_only'))
+    expect(f.queue.list(f.scope)).toEqual([])
+    expect(f.database.prepare('SELECT execution_profile FROM conversations').get()).toEqual({ execution_profile: 'workspace_write' })
+  })
+
+  it('continues reviews in a read-only run but keeps ordinary writable input for a new run', async () => {
+    const f = fixture()
+    f.database.exec('UPDATE runs SET execution_profile = \'read_only\'')
+    f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
+    f.queue.enqueue(f.input('ordinary'))
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    expect(await f.service.steer(f.target('ordinary'))).toBe(false)
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['ordinary'])
+    expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'review' }])
+  })
+
   it('pauses validation failures and prevents a paused head from being skipped', async () => {
     const f = fixture()
     for (const id of ['A', 'B'])

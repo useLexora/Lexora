@@ -1,8 +1,10 @@
+import type { BuddyChatCommandName } from '@buddy-shared/conversation/buddyChatCommands'
 import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
+import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceCard, UseChatComposerOptions } from './typing'
-import type { ChatPromptContextOption } from '@/modules/prompt-input'
-import { parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
+import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
+import { isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { composerReferencePath } from '@buddy-shared/conversation/composerReferencePath'
 import { computed, onScopeDispose, watch } from 'vue'
 import { CHAT_PROMPT_DIRECTIVE_NODE_NAME, getChatComposerResourceIds, serializeChatComposerContent } from '@/modules/prompt-input'
@@ -85,9 +87,57 @@ export function useChatComposer(options: UseChatComposerOptions) {
   }
 
   function submit() {
-    if (!canSubmit.value)
+    const current = editor.value
+    if (!current?.isEditable)
       return
-    options.onSend(serializeChatComposerContent(editor.value?.getJSON() ?? contentJSON.value))
+    const command = parseBuddyChatCommand(serializeChatComposerContent(current.getJSON()).content)
+    if (command && !isBuddyRunChatCommand(command.name) && replaceTypedCommand(command.name) && command.name === 'skills')
+      return
+    const submitted = current.getJSON()
+    const serialized = serializeChatComposerContent(submitted)
+    if (!canSubmitDocument(serialized, getChatComposerResourceIds(submitted)))
+      return
+    options.onSend(serialized)
+  }
+
+  function canSubmitDocument(
+    serialized: ChatComposerSubmitPayload,
+    submittedResourceIds: readonly string[],
+  ): boolean {
+    return options.canSend.value
+      && modelInputIssue.value === null
+      && Boolean(serialized.content.length || submittedResourceIds.length || serialized.userContent?.quotes?.length)
+      && submittedResourceIds.every(id => resourceById.value.get(id)?.resource.state === 'ready')
+  }
+
+  function insertCommand(name: BuddyChatCommandName, range: { from: number, to: number }, trailingSpace = false) {
+    query.closeSuggestions()
+    const content: JSONContent[] = name === 'skills'
+      ? [{ type: 'text', text: '$' }]
+      : [{
+          type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
+          attrs: { directive: 'slash_command', commandMode: name === 'compact' ? 'action' : 'prompt', value: `/${name}` },
+        }, ...trailingSpace ? [{ type: 'text', text: ' ' }] : []]
+    return editor.value?.chain().focus().insertContentAt(range, content).run() ?? false
+  }
+
+  function replaceTypedCommand(name: BuddyChatCommandName): boolean {
+    let range: { from: number, to: number } | null = null
+    let foundContent = false
+    editor.value?.state.doc.descendants((node, position) => {
+      if (foundContent || !node.isInline)
+        return !foundContent
+      if (node.isText && !node.text?.trim())
+        return
+      foundContent = true
+      const match = node.isText ? new RegExp(`^(\\s*)/${name}(?=\\s|$)`, 'i').exec(node.text!) : null
+      if (match) {
+        const from = position + match[1]!.length
+        range = { from, to: from + name.length + 1 }
+      }
+      return false
+    })
+    return range ? insertCommand(name, range) : false
   }
 
   async function resolveSource(source: BuddyComposerSource): Promise<string | null> {
@@ -142,17 +192,20 @@ export function useChatComposer(options: UseChatComposerOptions) {
       return
     }
     const command = option.kind === 'slashCommand' ? parseBuddyChatCommand(option.value) : null
-    if (option.kind === 'slashCommand' && !command)
+    if (option.kind === 'slashCommand') {
+      if (!command)
+        return
+      if (insertCommand(command.name, { from, to }, true) && isBuddyRunChatCommand(command.name))
+        submit()
       return
+    }
     currentEditor
       .chain()
       .focus()
       .deleteRange({ from, to })
       .insertContent({
         type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
-        attrs: command
-          ? { directive: 'slash_command', commandMode: command.kind, value: option.value }
-          : { directive: 'skill', value: option.value, skill: option.skill ?? null },
+        attrs: { directive: 'skill', value: option.value, skill: option.skill ?? null },
       })
       .insertContent(' ')
       .run()

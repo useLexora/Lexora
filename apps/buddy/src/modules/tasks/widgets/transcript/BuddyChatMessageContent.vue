@@ -4,6 +4,7 @@ import type { BuddyPromptDirective } from '@buddy-shared/conversation/buddyUserC
 
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { isRetiredBuddyPromptCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { buddyPromptDirectiveToText, getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
 import { NScrollbar, NTooltip } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef } from 'vue'
@@ -96,6 +97,10 @@ function openPreview(attachmentId: string | undefined) {
 
 function directiveText(directive: BuddyPromptDirective): string {
   return buddyPromptDirectiveToText(directive)
+}
+
+function isRetiredDirective(directive: BuddyPromptDirective): boolean {
+  return directive.directive === 'slash_command' && isRetiredBuddyPromptCommand(directive.value)
 }
 
 async function updatePreviewOpen(open: boolean) {
@@ -192,6 +197,9 @@ function previewLeaveTransition(): Promise<void> {
         <template v-for="(node, nodeIndex) in paragraph.content" :key="nodeIndex">
           <span v-if="node.type === 'text'">{{ node.text }}</span>
           <br v-else-if="node.type === 'hard_break'">
+          <span
+            v-else-if="node.type === 'prompt_directive' && isRetiredDirective(node)"
+          >{{ directiveText(node) }}</span>
           <span
             v-else-if="node.type === 'prompt_directive'"
             class="buddy-chat-message-content__directive"

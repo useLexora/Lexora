@@ -236,7 +236,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     }
     catch (error) {
       const remote = await options.api.composerDrafts.get(snapshot.draftId).catch(() => null)
-      if (!remote || remote.revision !== expectedRevision + 1 || (!sameDraftValue(remote, snapshot) || (taskSpace !== undefined && (remote.scope.kind !== 'task' || remote.scope.spaceId !== taskSpace))))
+      if (!remote || remote.revision !== expectedRevision + 1 || !sameDraftValue(remote, snapshot) || (taskSpace !== undefined && (remote.scope.kind !== 'task' || remote.scope.spaceId !== taskSpace)))
         throw error
       if (remote.scope.kind === 'task')
         savedSpaces.set(snapshot.targetKey, remote.scope.spaceId)

@@ -1,5 +1,6 @@
 import type { BuddyInlineNodeV1, BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { JSONContent } from '@tiptap/core'
+import { isRetiredBuddyPromptCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { buddyUserContentV1Schema } from '@buddy-shared/conversation/buddyUserContent'
 
 export const CHAT_RESOURCE_REFERENCE_NODE_NAME = 'chatResourceReference'
@@ -43,12 +44,14 @@ function inlineNodeToEditorNode(node: BuddyInlineNodeV1): JSONContent {
       attrs: { resourceId: node.resourceId },
       type: CHAT_RESOURCE_REFERENCE_NODE_NAME,
     }
-    case 'prompt_directive': return {
-      attrs: node.directive === 'skill'
-        ? { directive: node.directive, value: node.value, ...(node.skill ? { skill: { ...node.skill } } : {}) }
-        : { commandMode: node.commandMode, directive: node.directive, value: node.value },
-      type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
-    }
+    case 'prompt_directive': return node.directive === 'slash_command' && isRetiredBuddyPromptCommand(node.value)
+      ? { text: node.value, type: 'text' }
+      : {
+          attrs: node.directive === 'skill'
+            ? { directive: node.directive, value: node.value, ...(node.skill ? { skill: { ...node.skill } } : {}) }
+            : { commandMode: node.commandMode, directive: node.directive, value: node.value },
+          type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
+        }
   }
 }
 

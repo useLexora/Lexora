@@ -35,7 +35,7 @@ describe('composer product document boundary', () => {
           { type: 'hard_break' },
           { type: 'resource_ref', resourceId: 'image-a' },
           { directive: 'skill', type: 'prompt_directive', value: 'review', skill: { id: 'review-id', name: 'review', revision: 'revision-one' } },
-          { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/plan' },
+          { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/review' },
         ],
         type: 'paragraph',
       }, { type: 'paragraph', content: [] }],
@@ -48,6 +48,28 @@ describe('composer product document boundary', () => {
     expect(chatComposerDocumentToUserContent(editor.getJSON())).toEqual(content)
     expect(editor.getText()).toContain('@image-a.png')
     expect(editor.getHTML()).not.toContain('resourceid=')
+  })
+
+  it.each(['/plan', '/status', '/skills'])('downgrades the old %s prompt directive to plain text instead of blocking the draft', (command) => {
+    const content = buddyUserContentV1Schema.parse({
+      body: [{
+        content: [
+          { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: command },
+          { text: ' 继续', type: 'text' },
+        ],
+        type: 'paragraph',
+      }],
+      panelResourceIds: [],
+      version: 1,
+    })
+    const editor = createEditor()
+    replaceChatComposerDocument(editor, content)
+
+    expect(editor.getJSON().content?.[0]?.content?.[0]).toEqual({ text: `${command} 继续`, type: 'text' })
+    expect(editor.getText()).toBe(`${command} 继续`)
+    expect(chatComposerDocumentToUserContent(editor.getJSON()).body[0]?.content).toEqual([
+      { text: `${command} 继续`, type: 'text' },
+    ])
   })
 
   it('rejects unknown editor nodes and formatting instead of silently losing content', () => {

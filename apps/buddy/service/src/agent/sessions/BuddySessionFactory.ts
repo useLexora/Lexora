@@ -6,6 +6,7 @@ import type { BuddySessionExtensionServices } from '../extensions/createBuddySes
 import type { BuddySessionBlueprint } from './BuddySessionBlueprint'
 import type { BuddyConversationTree } from './tree/BuddyConversationTree'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
+import { isExecutionProfileWithin } from '../../../../shared/permissions/executionProfile'
 import { AttachmentToolWorkspace } from '../../attachments/AttachmentToolWorkspace'
 import { BuddyAgentRunError } from '../../runs/runError'
 import { createBuddySessionExtensions } from '../extensions/createBuddySessionExtensions'
@@ -69,7 +70,7 @@ export class BuddySessionFactory {
       || conversation.id !== run.conversationId
       || conversation.spaceId !== (blueprint.space?.id ?? null)
       || conversation.approvalPolicy !== blueprint.approvalPolicy
-      || conversation.executionProfile !== blueprint.executionProfile
+      || !isExecutionProfileWithin(blueprint.executionProfile, conversation.executionProfile)
       || run.branchId !== blueprint.branchId
       || run.approvalPolicy !== blueprint.approvalPolicy
       || run.executionProfile !== blueprint.executionProfile

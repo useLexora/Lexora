@@ -14,7 +14,7 @@ import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSes
 import type { ChatDrafts, TaskModelSelection } from '@/modules/tasks/state/drafts/typing'
 import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskIndexData'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
-import { parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
+import { isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
@@ -99,16 +99,15 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     if ((!content.trim() && !resourceIds.length && !hasQuotes) || !canSend.value)
       return false
     const command = parseBuddyChatCommand(content)
-    if (command?.kind === 'action' && (resourceIds.length || hasQuotes || options.composerTarget.current.value.kind === 'message_followup')) {
+    const isRunCommand = Boolean(command && isBuddyRunChatCommand(command.name))
+    if (isRunCommand && (resourceIds.length || hasQuotes || options.composerTarget.current.value.kind === 'message_followup')) {
       options.setErrorMessage(options.unavailableCommandMessage())
       return false
     }
-    if (command?.kind === 'action' && options.activeRun.value)
+    if (isRunCommand && options.activeRun.value)
       return false
-    if (command?.kind === 'action') {
-      options.drafts.setUserContent(createActionCommandContent(command))
+    if (isRunCommand && command)
       return executeActionCommand(command, contextItems)
-    }
 
     const sourceScopeKey = options.draftScopeKey.value
     const navigationVersion = options.session.generation()
@@ -183,7 +182,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
   }
 
   async function executeActionCommand(
-    command: Extract<ParsedBuddyChatCommand, { kind: 'action' }>,
+    command: ParsedBuddyChatCommand,
     contextItems: ReadonlyArray<LocalPromptContextItem>,
   ): Promise<boolean> {
     const conversationId = options.session.activeConversationId.value
@@ -199,6 +198,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       options.setErrorMessage(options.unavailableCommandMessage())
       return false
     }
+    options.drafts.setUserContent(createActionCommandContent(command))
 
     const sourceScopeKey = options.draftScopeKey.value
     const navigationVersion = options.session.generation()
@@ -307,7 +307,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
 }
 
 function createActionCommandContent(
-  command: Extract<ParsedBuddyChatCommand, { kind: 'action' }>,
+  command: ParsedBuddyChatCommand,
 ): BuddyUserContentV1 {
   return {
     body: [{

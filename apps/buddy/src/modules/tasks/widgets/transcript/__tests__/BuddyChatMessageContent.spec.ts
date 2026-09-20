@@ -39,6 +39,18 @@ describe('buddyChatMessageContent', () => {
       expect(root.classList.contains('dark')).toBe(isDark)
   })
 
+  it('renders a retired directive as plain text and keeps live directives highlighted', async () => {
+    const document = parseHtml(await renderDirectiveMessage())
+    const body = document.querySelector('.buddy-chat-message-content__structured-body')
+    const retired = body?.querySelector('span')
+    const directives = [...(body?.querySelectorAll('.buddy-chat-message-content__directive') ?? [])]
+
+    expect(body?.textContent).toBe('/plan 与 /review')
+    expect(retired?.getAttribute('class')).toBeNull()
+    expect(retired?.textContent).toBe('/plan')
+    expect(directives.map(element => element.textContent)).toEqual(['/review'])
+  })
+
   it.each([false, true])('renders inline-only snapshots once above the body and keeps named references readable (independent attachment: %s)', async (panel) => {
     const html = await renderStructuredUserMessage(panel)
     const document = parseHtml(html)
@@ -108,6 +120,35 @@ async function renderStructuredUserMessage(panel: boolean): Promise<string> {
     conversationId: 'conversation-1',
     createdAt: '2026-08-28T00:00:00.000Z',
     id: 'user-structured-message',
+    role: 'user',
+    runId: null,
+  } as LocalMessage
+
+  return renderContent(message)
+}
+
+async function renderDirectiveMessage(): Promise<string> {
+  const message = {
+    attachments: [],
+    branchId: 'branch-1',
+    content: {
+      resourceSnapshots: [],
+      userContent: {
+        body: [{
+          content: [
+            { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/plan' },
+            { text: ' 与 ', type: 'text' },
+            { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/review' },
+          ],
+          type: 'paragraph',
+        }],
+        panelResourceIds: [],
+        version: 1,
+      },
+    },
+    conversationId: 'conversation-1',
+    createdAt: '2026-08-28T00:00:00.000Z',
+    id: 'user-directive-message',
     role: 'user',
     runId: null,
   } as LocalMessage

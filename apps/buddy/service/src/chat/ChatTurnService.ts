@@ -45,7 +45,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import {
-  materializeBuddyPromptCommand,
+  isBuddyReviewCommand,
+  isRetiredBuddyPromptCommand,
   parseBuddyChatCommand,
 } from '../../../shared/conversation/buddyChatCommands'
 import {
@@ -56,6 +57,7 @@ import {
 } from '../../../shared/conversation/buddyUserContent'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
 import { resolveInteractiveModelSelection } from '../providers/resolveInteractiveModelSelection'
@@ -66,6 +68,7 @@ import {
   formatBuddySkillPrompt,
 } from '../skills/SkillService'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
+import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt } from './buddyReviewPrompt'
 import { createConversationTitle } from './conversationTitle'
 import { persistPreparedTurn } from './persistPreparedTurn'
 
@@ -130,7 +133,6 @@ interface PrepareTurnMaterializationInput {
   attachmentIds: readonly string[]
   content: string
   contextItems: readonly ChatContextItem[]
-  contextSuffix?: string
   conversationId: string
   branchId: string
   point?: ChatInputHistoryPoint
@@ -168,12 +170,6 @@ export class ChatTurnService {
       throw new BuddyServiceError('VALIDATION_FAILED')
     const followupScope = draft.scope.kind === 'message_followup' ? draft.scope : null
     const content = buddyUserContentToText(draft.content).trim()
-    const directiveItems = draft.content.body.flatMap(paragraph => paragraph.content.flatMap(
-      node => node.type === 'prompt_directive' && node.directive === 'slash_command'
-        ? [{ kind: 'slashCommand' as const, value: node.value }]
-        : [],
-    ))
-    const promptCommand = validateTurnCommand(content, directiveItems)
     const scope = resolveDraftScope(draft.scope)
     if (scope.conversationId && this.#options.conversationLifecycle.isDeleting(scope.conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -231,6 +227,7 @@ export class ChatTurnService {
     const {
       attachmentPrompt,
       prompt,
+      reviewRequested,
       contextItems: resolvedContextItems,
       selection,
       thinkingLevel,
@@ -243,9 +240,6 @@ export class ChatTurnService {
       },
       content: '',
       contextItems: [],
-      contextSuffix: promptCommand && !directiveItems.length
-        ? materializeBuddyPromptCommand({ ...promptCommand, arguments: '' })
-        : '',
       conversationId,
       draftId: input.draftId,
       branchId: parentBranchId,
@@ -276,6 +270,7 @@ export class ChatTurnService {
         expectedRevision: input.expectedRevision,
       },
       executionProfile: draft.executionConfig.executionProfile,
+      runExecutionProfile: reviewRequested ? 'read_only' : undefined,
       model: selection.modelId,
       modelParameters: toModelParameters(selection),
       spaceId: space?.id ?? null,
@@ -361,18 +356,11 @@ export class ChatTurnService {
       : []
     if (!replay && !content && resourceInputs.length === 0 && !draft?.content.quotes?.length)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    if (draft) {
-      const directiveItems = draft.content.body.flatMap(paragraph => paragraph.content.flatMap(
-        node => node.type === 'prompt_directive' && node.directive === 'slash_command'
-          ? [{ kind: 'slashCommand' as const, value: node.value }]
-          : [],
-      ))
-      validateTurnCommand(content, directiveItems)
-    }
     const attachmentIds = getResourceAttachmentIds(resourceInputs)
     const {
       prompt,
       replayInput,
+      reviewRequested,
       contextItems: resolvedContextItems,
       selection,
       thinkingLevel,
@@ -421,6 +409,7 @@ export class ChatTurnService {
             createdAt: new Date().toISOString(),
             draft: { draftId: input.draftId, expectedRevision: input.expectedRevision },
             executionProfile: conversation.executionProfile,
+            runExecutionProfile: reviewRequested ? 'read_only' : undefined,
             forkedFromMessageId,
             model: selection.modelId,
             modelParameters: toModelParameters(selection),
@@ -495,6 +484,9 @@ export class ChatTurnService {
           conversationId: conversation.id,
           createdAt: new Date().toISOString(),
           executionProfile: conversation.executionProfile,
+          runExecutionProfile: isExecutionProfileWithin(sourceRun.executionProfile, conversation.executionProfile)
+            ? sourceRun.executionProfile
+            : conversation.executionProfile,
           forkedFromMessageId: requireValue(sourceRun).triggeringMessageId,
           parentBranchId,
           requestFingerprint: createRegenerationFingerprint(input),
@@ -587,7 +579,7 @@ export class ChatTurnService {
       ? ''
       : [
           legacyContext?.prompt ?? '',
-          input.contextSuffix ?? '',
+          directives?.contextSuffix ?? '',
         ].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
     const prompt = replayInput?.prompt
       ?? [attachmentPrompt.prompt, context].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
@@ -616,6 +608,7 @@ export class ChatTurnService {
       prompt,
       contextItems,
       replayInput,
+      reviewRequested: directives?.reviewRequested ?? false,
       selection,
       thinkingLevel,
     }
@@ -676,10 +669,17 @@ async function materializeComposerDirectives(
   skills: Pick<SkillService, 'materializeForSpace'>,
 ) {
   const directives = content.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
+  const textCommand = parseBuddyChatCommand(buddyUserContentToText(content))
+  if (textCommand?.name === 'compact')
+    throw new BuddyServiceError('VALIDATION_FAILED')
+  const hasReviewDirective = directives.some(node => node.directive === 'slash_command' && isBuddyReviewCommand(node.value))
+  const reviewsAsText = textCommand?.name === 'review' && !hasReviewDirective
   const selections = directives.flatMap(node => node.directive === 'skill' ? [node.skill ?? node.value] : [])
   const loaded = await skills.materializeForSpace(space?.id ?? null, selections)
   const selected = new Map(loaded.map(skill => [skill.name, formatBuddySkillPrompt(skill)]))
   return {
+    reviewRequested: hasReviewDirective || reviewsAsText,
+    contextSuffix: reviewsAsText ? BUDDY_REVIEW_PROMPT : '',
     contextItems: loaded.map(skill => ({ kind: 'skill' as const, value: skill.name, skill: skill.reference })),
     resolveDirective(directive: BuddyPromptDirective): string {
       if (directive.directive === 'skill') {
@@ -688,10 +688,11 @@ async function materializeComposerDirectives(
           throw new SkillError('SKILL_NOT_FOUND')
         return value
       }
-      const command = parseBuddyChatCommand(directive.value)
-      if (!command || command.kind !== 'prompt' || directive.commandMode !== 'prompt' || command.arguments)
-        throw new BuddyServiceError('VALIDATION_FAILED')
-      return materializeBuddyPromptCommand(command)
+      if (isRetiredBuddyPromptCommand(directive.value))
+        return directive.value
+      if (isBuddyReviewCommand(directive.value) && directive.commandMode === 'prompt')
+        return buildBuddyReviewPrompt(parseBuddyChatCommand(directive.value)!.arguments)
+      throw new BuddyServiceError('VALIDATION_FAILED')
     },
   }
 }
@@ -817,24 +818,6 @@ async function materializeContextItems(
     prompt: sections.join(PROMPT_SECTION_SEPARATOR),
     contextItems: items.map(item => item.kind === 'skill' ? { ...item, skill: skillsByName.get(item.value)!.reference } : item),
   }
-}
-
-function validateTurnCommand(content: string, items: readonly ChatContextItem[]) {
-  const command = parseBuddyChatCommand(content)
-  const commandItems = items.filter(item => item.kind === 'slashCommand')
-  if (command?.kind === 'action')
-    throw new BuddyServiceError('VALIDATION_FAILED')
-  if (commandItems.length === 0)
-    return command?.kind === 'prompt' ? command : null
-  if (
-    commandItems.length !== 1
-    || !command
-    || command.kind !== 'prompt'
-    || commandItems[0]!.value !== `/${command.name}`
-  ) {
-    throw new BuddyServiceError('VALIDATION_FAILED')
-  }
-  return command
 }
 
 function normalizeThinkingLevel(value: string | null | undefined): BuddyThinkingLevel | undefined {

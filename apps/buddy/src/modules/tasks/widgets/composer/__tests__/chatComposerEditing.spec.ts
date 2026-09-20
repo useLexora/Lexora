@@ -4,12 +4,13 @@ import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/convers
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceView } from '../../../state/composer/typing'
-import type { ChatComposerContextOptions, ChatPromptContextOption } from '@/modules/prompt-input'
+import type { ChatComposerContextOptions, ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import { deferred } from '@buddy-tests/deferred'
 import { EditorContent } from '@tiptap/vue-3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
-import { createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
+import { chatComposerDocumentToUserContent, createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
+import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatComposerResourceEditing'
 import { insertChatComposerResources } from '@/modules/prompt-input/ui'
 import { useChatComposer } from '../useChatComposer'
 
@@ -51,6 +52,7 @@ async function mountComposer(options: {
   const selectedServiceTier = shallowRef<BuddyServiceTier | null>(null)
   const updates: { text: string, content: JSONContent }[] = []
   const sent: string[] = []
+  const sentPayloads: ChatComposerSubmitPayload[] = []
   let composer!: ReturnType<typeof useChatComposer>
   const root = document.createElement('div')
   document.body.append(root)
@@ -72,7 +74,10 @@ async function mountComposer(options: {
         loadContextOptions: options.loadContextOptions ?? (async () => ({ files: [], skills: [] })),
         beginImport: () => [],
         selectSource: options.selectSource ?? (async () => null),
-        onSend: payload => sent.push(payload.content),
+        onSend: (payload) => {
+          sent.push(payload.content)
+          sentPayloads.push(payload)
+        },
         onUpdateContent: (text, value) => {
           updates.push({ text, content: value })
           draft.value = text
@@ -100,10 +105,64 @@ async function mountComposer(options: {
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { composer, content, draft, draftId, editor, keydown, resources, selectedEffort, selectedServiceTier, sent, updates, unmount }
+  return { composer, content, draft, draftId, editor, keydown, resources, selectedEffort, selectedServiceTier, sent, sentPayloads, updates, unmount }
 }
 
 describe('chat composer editing', () => {
+  it.each(['select', 'submit'] as const)('preserves structured input when a review command is handled through %s', async (source) => {
+    const flow = await mountComposer()
+    const prefix = source === 'select' ? '/rev' : '/review'
+    const skill = { id: 'writer-id', name: 'writer', revision: 'revision-one' }
+    const quote = { id: 'quote', text: 'quoted evidence', source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' } }
+    flow.resources.value = ['inline', 'panel'].map(resourceId => ({ accepted: true, canRetry: false, resource: { draftId: 'draft-1', resourceId, kind: 'text', mimeType: 'text/plain', name: `${resourceId}.txt`, sizeBytes: 10, state: 'ready', attachmentId: resourceId, previewUrl: null } }))
+    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'], quotes: [quote] }, content: [{ type: 'paragraph', content: [
+      { type: 'text', text: `${prefix} inspect <Policy> & keep notes ` },
+      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
+      { type: 'chatPromptDirective', attrs: { directive: 'skill', value: 'writer', skill } },
+    ] }] }))
+    if (source === 'select') {
+      flow.editor.commands.setTextSelection(prefix.length + 1)
+      flow.composer.activeTrigger.value = { kind: 'slash', query: 'rev' }
+      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/review', label: '/review', description: null, path: null })
+      expect(flow.sent).toEqual([])
+    }
+    flow.composer.submit()
+    const content = flow.sentPayloads[0]?.userContent
+    expect(flow.sentPayloads).toHaveLength(1)
+    expect(flow.sent[0]).toContain('inspect <Policy> & keep notes')
+    expect(content?.body[0]?.content).toEqual([
+      { type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: '/review' },
+      { type: 'text', text: `${source === 'select' ? ' ' : ''} inspect <Policy> & keep notes ` },
+      { type: 'resource_ref', resourceId: 'inline' },
+      { type: 'prompt_directive', directive: 'skill', value: 'writer', skill },
+    ])
+    expect(content?.panelResourceIds).toEqual(['panel'])
+    expect(content?.quotes).toEqual([quote])
+  })
+
+  it.each(['select', 'submit'] as const)('opens the skills picker without discarding the remaining input through %s', async (source) => {
+    const flow = await mountComposer()
+    const prefix = source === 'select' ? '/ski' : '/skills'
+    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
+      { type: 'text', text: `${prefix} keep this text ` },
+      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
+    ] }] }))
+    if (source === 'select') {
+      flow.editor.commands.setTextSelection(prefix.length + 1)
+      flow.composer.activeTrigger.value = { kind: 'slash', query: 'ski' }
+      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/skills', label: '/skills', description: null, path: null })
+    }
+    else {
+      flow.composer.submit()
+    }
+    expect(flow.sent).toEqual([])
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
+      body: [{ content: [{ type: 'text', text: '$ keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
+      panelResourceIds: ['panel'],
+    })
+    expect(flow.editor.state.selection.from).toBe(2)
+  })
+
   it('uses working-directory-relative navigation, keeps external paths absolute and resets deep search between mentions', async () => {
     const queries: Array<{ query: string | null, deep: boolean | undefined }> = []
     const folder = { ...fileOption('apps'), path: '/work/apps', entryKind: 'directory' as const }

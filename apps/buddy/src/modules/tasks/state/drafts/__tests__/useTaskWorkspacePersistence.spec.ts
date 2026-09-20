@@ -340,6 +340,28 @@ describe('workspace Draft persistence', () => {
     expect(buddyUserContentToText(fixture.runtimeDraft('global')!.content)).toBe('latest retry')
   })
 
+  it('preserves the dirty draft and revision when saving and reading both fail', async () => {
+    let failing = true
+    const unavailable = async () => {
+      if (failing)
+        throw new Error('Runtime unavailable')
+    }
+    const fixture = await createFixture({ confirmedContent: 'previously saved', beforeSave: unavailable, beforeGet: unavailable })
+    const content = { ...createBuddyUserContent('/review unsaved notes'), panelResourceIds: ['local-resource'] }
+    fixture.drafts.setUserContent(content)
+    const snapshot = fixture.drafts.snapshot('global')
+
+    expect(await fixture.persistence.persist()).toBe(false)
+    expect(fixture.drafts.snapshot('global')).toEqual(snapshot)
+    expect(fixture.drafts.isPersisted(snapshot)).toBe(false)
+    expect(fixture.runtimeDraft('global')?.content).toEqual(createBuddyUserContent('previously saved'))
+    expect(fixture.errors).toHaveLength(1)
+    failing = false
+    expect(await fixture.persistence.persist()).toBe(true)
+    expect(fixture.runtimeDraft('global')?.content).toEqual(content)
+    fixture.persistence.dispose()
+  })
+
   it('hydrates the latest Runtime-confirmed Draft after a renderer restart', async () => {
     const fixture = await createFixture({ confirmedContent: 'confirmed before restart' })
 
