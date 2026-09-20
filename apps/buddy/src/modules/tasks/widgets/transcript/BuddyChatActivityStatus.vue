@@ -15,10 +15,10 @@ defineProps<{
   <div class="buddy-chat-activity-status" :class="{ 'is-warning': warning }" role="status">
     <BuddyChatActivityLoader v-if="active" />
     <slot v-else name="icon" />
-    <BuddyChatShimmerText class="buddy-chat-activity-status__label" :title="label" :mode="active ? 'continuous' : 'static'">
+    <BuddyChatShimmerText class="buddy-chat-activity-status__label" :mode="active ? 'continuous' : 'static'">
       {{ label }}
     </BuddyChatShimmerText>
-    <span v-if="target" class="buddy-chat-activity-status__target" :title="target">{{ target }}</span>
+    <span v-if="target" class="buddy-chat-activity-status__target">{{ target }}</span>
     <span v-if="detail" class="buddy-chat-activity-status__detail">{{ detail }}</span>
     <slot />
   </div>
@@ -29,9 +29,9 @@ defineProps<{
   --buddy-shimmer-base: var(--buddy-text-secondary);
   display: flex;
   min-width: 0;
-  min-height: 30px;
+  min-height: var(--buddy-chat-activity-row-height);
   align-items: center;
-  gap: 6px;
+  gap: var(--buddy-chat-activity-row-gap);
   color: var(--buddy-text-secondary);
   font-size: var(--buddy-chat-process-font-size);
   line-height: 22px;

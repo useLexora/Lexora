@@ -25,6 +25,10 @@
   --buddy-chat-gap-section: 0.75rem;
   --buddy-chat-gap-turn: 2rem;
   --buddy-chat-process-row-gap: 0.375rem;
+  --buddy-chat-activity-row-height: 28px;
+  --buddy-chat-activity-icon-size: 14px;
+  --buddy-chat-activity-row-gap: 6px;
+  --buddy-chat-activity-indent: calc(var(--buddy-chat-activity-icon-size) + var(--buddy-chat-activity-row-gap));
   --buddy-sidebar-header-font-size: 14px;
   --buddy-sidebar-header-font-weight: 600;
   --buddy-sidebar-section-font-size: 12px;

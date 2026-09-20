@@ -1,0 +1,70 @@
+@mixin icon {
+  width: var(--buddy-chat-activity-icon-size);
+  height: var(--buddy-chat-activity-icon-size);
+  flex: none;
+  color: var(--buddy-text-muted);
+  font-size: var(--buddy-chat-activity-icon-size);
+}
+
+@mixin chevron {
+  @include icon;
+  opacity: 0.65;
+  transition: transform 120ms ease;
+
+  &.is-open {
+    transform: rotate(90deg);
+  }
+
+  &.is-hidden {
+    visibility: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+@mixin header {
+  .buddy-chat-activity-row {
+    display: inline-flex;
+    min-width: 0;
+    max-width: calc(100% + 8px);
+    min-height: var(--buddy-chat-activity-row-height);
+    align-items: center;
+    gap: var(--buddy-chat-activity-row-gap);
+    margin-inline: -4px;
+    padding: 3px 4px;
+    border: 0;
+    border-radius: var(--buddy-radius-micro);
+    background: transparent;
+    color: var(--buddy-text-secondary);
+    font: inherit;
+    font-size: var(--buddy-chat-process-font-size);
+    line-height: 22px;
+    text-align: start;
+    cursor: pointer;
+
+    &:not(:disabled):hover {
+      background: var(--buddy-state-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--buddy-focus-ring);
+      outline-offset: 2px;
+    }
+
+    &:disabled {
+      cursor: default;
+    }
+  }
+
+  .buddy-chat-activity-row__icon { @include icon; }
+  .buddy-chat-activity-row__chevron { @include chevron; }
+  .buddy-chat-activity-row__label {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

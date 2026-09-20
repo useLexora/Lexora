@@ -20,11 +20,13 @@ const display = computed(() => describeChatCompaction(props.node, props.language
     :label="display.label" :active="display.active" :detail="display.detail" :warning="display.warning"
   >
     <template #icon>
-      <DesktopIcon :component="ArrowSync20Regular" class="buddy-chat-compaction__icon" />
+      <DesktopIcon :component="ArrowSync20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
     </template>
   </BuddyChatActivityStatus>
 </template>
 
-<style scoped>
-.buddy-chat-compaction__icon { width: 14px; height: 14px; flex: none; color: var(--buddy-text-muted); }
+<style scoped lang="scss">
+@use './chatActivityRow' as activity;
+
+.buddy-chat-activity-row__icon { @include activity.icon; }
 </style>

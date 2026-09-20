@@ -80,17 +80,17 @@ defineExpose({ revealActivity })
     v-show="hasHistory || open || group.toolCount > 1"
     class="buddy-chat-activity-group"
     :data-activity-id="group.id"
-    :class="{ 'is-open': open, 'is-thinking': group.toolCount === 0, 'is-tool-group': group.toolCount > 0 && !singleTool }"
+    :class="{ 'is-open': open, 'is-grouped': !singleTool && !singleReasoning }"
   >
     <div v-if="!singleTool && !singleReasoning" class="buddy-chat-activity-group__heading">
-      <button ref="header" class="buddy-chat-activity-group__header" type="button" :aria-expanded="open" :title="fullSummary" @click="open = !open">
-        <BuddyChatToolIcon v-if="summary.icon !== 'reasoning'" :icon="summary.icon" class="buddy-chat-activity-group__icon" />
-        <DesktopIcon v-else :component="Thinking20Regular" class="buddy-chat-activity-group__icon" />
-        <span class="buddy-chat-activity-group__label">{{ summary.label }}</span>
-        <span v-if="!open && summary.target" class="buddy-chat-activity-group__target" :title="summary.target">{{ summary.target }}</span>
-        <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-group__chevron" :class="{ 'is-open': open }" />
+      <button ref="header" class="buddy-chat-activity-group__header buddy-chat-activity-row" type="button" :aria-expanded="open" :aria-label="fullSummary || undefined" @click="open = !open">
+        <BuddyChatToolIcon v-if="summary.icon !== 'reasoning'" :icon="summary.icon" class="buddy-chat-activity-row__icon" aria-hidden="true" />
+        <DesktopIcon v-else :component="Thinking20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
+        <span class="buddy-chat-activity-row__label">{{ summary.label }}</span>
+        <span v-if="!open && summary.target" class="buddy-chat-activity-group__target">{{ summary.target }}</span>
+        <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open }" aria-hidden="true" />
       </button>
-      <button v-if="group.issueCount" class="buddy-chat-activity-group__issues" type="button" :title="t('desktop.chat.activityNextIssue')" @click="revealNextIssue">
+      <button v-if="group.issueCount" class="buddy-chat-activity-group__issues" type="button" @click="revealNextIssue">
         {{ t('desktop.chat.activityIssueCount', { count: group.issueCount }) }}
       </button>
     </div>
@@ -117,13 +117,12 @@ defineExpose({ revealActivity })
           </BuddyChatDisclosure>
           <BuddyChatReasoningRow
             v-else-if="entry.kind === 'reasoning' && entry.status !== 'running'"
-            class="buddy-chat-activity-group__thought"
             :node="entry" :language="language" :open="openEntries.get(entry.id) === true"
             @toggle="toggleEntry(entry.id)"
           />
         </template>
-        <button v-if="!singleTool && group.nodes.length > 8" class="buddy-chat-activity-group__collapse" type="button" @click="collapseFromBottom">
-          <DesktopIcon :component="ChevronUp20Regular" />
+        <button v-if="!singleTool && group.nodes.length > 8" class="buddy-chat-activity-group__collapse buddy-chat-activity-row" type="button" @click="collapseFromBottom">
+          <DesktopIcon :component="ChevronUp20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
           {{ t('desktop.chat.activityCollapse') }}
         </button>
       </div>
@@ -132,6 +131,10 @@ defineExpose({ revealActivity })
 </template>
 
 <style scoped lang="scss">
+@use './chatActivityRow' as activity;
+
+@include activity.header;
+
 .buddy-chat-activity-group {
   min-width: 0;
 }
@@ -140,62 +143,6 @@ defineExpose({ revealActivity })
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.buddy-chat-activity-group__header {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 30px;
-  align-items: center;
-  gap: 6px;
-  margin-left: -4px;
-  padding: 3px 4px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  font: inherit;
-  font-size: var(--buddy-chat-process-font-size);
-  line-height: 22px;
-  text-align: left;
-  cursor: pointer;
-  &:hover {
-    background: var(--buddy-state-hover);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
-  }
-}
-
-.buddy-chat-activity-group__chevron {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--buddy-text-muted);
-  opacity: 0.65;
-  transition: transform 120ms ease;
-}
-
-.buddy-chat-activity-group__chevron.is-open {
-  transform: rotate(90deg);
-}
-
-.buddy-chat-activity-group__icon {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--buddy-text-muted);
-}
-
-.buddy-chat-activity-group__label {
-  flex: none;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .buddy-chat-activity-group__target {
@@ -230,39 +177,13 @@ defineExpose({ revealActivity })
 
 .buddy-chat-activity-group__collapse {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 4px 0 0;
-  padding: 3px 8px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
+  margin-top: 4px;
   color: var(--buddy-text-muted);
-  font: inherit;
   font-size: var(--buddy-chat-caption-font-size);
-  cursor: pointer;
-
-  :deep(.n-icon) { width: 14px; height: 14px; }
-  &:hover { background: var(--buddy-state-hover); color: var(--buddy-text-secondary); }
-  &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
 }
 
-.is-tool-group > .buddy-chat-activity-group__content {
-  margin: 3px 0 6px;
-  padding: 2px 4px 2px 8px;
-}
-
-.is-tool-group .buddy-chat-activity-group__thought {
-  padding: 5px 8px 7px;
-}
-
-.is-thinking > .buddy-chat-activity-group__content {
-  margin: 3px 0 6px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .buddy-chat-activity-group__chevron {
-    transition: none;
-  }
+.is-grouped > .buddy-chat-activity-group__content {
+  margin-block: 4px;
+  padding-inline-start: var(--buddy-chat-activity-indent);
 }
 </style>
