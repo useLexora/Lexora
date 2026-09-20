@@ -23,7 +23,6 @@ import type {
   RuntimeModelProvider,
 } from '../providers/resolveInteractiveModelSelection'
 import type { SkillService } from '../skills/SkillService'
-import type { AttachmentRecord } from '../storage/attachmentRepository'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { ConversationRecord } from '../storage/conversationRecord'
@@ -43,7 +42,7 @@ import type {
 import type { ChatInputHistoryPoint, ChatInputValidationService } from './ChatInputValidationService'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { basename, isAbsolute, join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import {
   materializeBuddyPromptCommand,
@@ -67,6 +66,7 @@ import {
   formatBuddySkillPrompt,
 } from '../skills/SkillService'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
+import { createConversationTitle } from './conversationTitle'
 import { persistPreparedTurn } from './persistPreparedTurn'
 
 const MAX_CONTEXT_FILE_BYTES = 1024 * 1024
@@ -257,11 +257,6 @@ export class ChatTurnService {
     })
     const runId = randomUUID()
     const userMessageId = randomUUID()
-    const resourceNames = new Map(resourceInputs.map(resource => [resource.resourceId, resource.localReference?.name ?? attachmentPrompt.records.find(record => record.id === resource.attachmentId)?.name ?? 'file']))
-    const messageText = buddyUserContentToText(
-      draft.content,
-      id => `@${resourceNames.get(id)!}`,
-    ).trim()
     const stagedAttachments = await this.#options.attachments.prepareMessageAttachments({
       attachmentIds,
       conversationId,
@@ -295,7 +290,7 @@ export class ChatTurnService {
         serviceTier: selection.serviceTier,
       },
       runId,
-      title: createConversationTitle(messageText || [...resourceNames.values()].join(', '), attachmentPrompt.records),
+      title: createConversationTitle(draft.content, attachmentPrompt.records),
       userMessageContent: createPersistedUserMessageContent(
         draft.content,
         bindResourceAttachments(resourceInputs, persistedAttachmentIds),
@@ -863,15 +858,6 @@ function toModelParameters(selection: TurnModelSelection) {
 
 function isInterruptedRun(run: RunRecord): boolean {
   return run.status === 'failed' && run.errorCode === 'RUNTIME_RESTARTED'
-}
-
-function createConversationTitle(
-  content: string,
-  attachments: readonly AttachmentRecord[],
-): string {
-  return content.trim().replaceAll(/\s+/g, ' ').slice(0, 80)
-    || attachments.map(attachment => basename(attachment.name)).join(', ').slice(0, 80)
-    || 'New conversation'
 }
 
 function requireValue<T>(value: T | null): T {
