@@ -3,7 +3,7 @@ import type { LocalTaskMark } from '@buddy-shared/conversation/taskMarkApi'
 import type { DropdownOption } from 'naive-ui'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { SYSTEM_UNREAD_MARK_ID } from '@buddy-shared/conversation/taskMarkApi'
-import { Delete20Regular, Edit20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
+import { Edit20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
 import { NButton, NDropdown, NEllipsis, NTag, NTooltip } from 'naive-ui'
 import { computed, h, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -21,7 +21,7 @@ const menuOpen = shallowRef(false)
 const isSystem = computed(() => props.mark.id === SYSTEM_UNREAD_MARK_ID)
 const actions = computed<DropdownOption[]>(() => [
   { key: 'edit', label: t('common.edit'), icon: () => h(DesktopIcon, { component: Edit20Regular, size: 16 }), disabled: props.disabled },
-  { key: 'remove', label: t('common.delete'), icon: () => h(DesktopIcon, { component: Delete20Regular, size: 16 }), disabled: props.disabled || isSystem.value },
+  { key: 'remove', label: t('common.delete'), icon: () => h(DesktopIcon, { name: 'delete', size: 16 }), disabled: props.disabled || isSystem.value },
 ])
 
 function handleAction(action: string | number) {

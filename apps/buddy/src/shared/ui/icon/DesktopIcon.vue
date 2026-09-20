@@ -22,9 +22,10 @@ const maskStyle = computed(() => ({
 </script>
 
 <template>
+  <!-- n-icon：与 Fluent 图标共用 naive 的图标字号规则，例如下拉菜单的 --n-option-icon-size -->
   <span
     v-if="name"
-    class="desktop-icon"
+    class="desktop-icon n-icon"
     :style="maskStyle"
     aria-hidden="true"
     v-bind="$attrs"
