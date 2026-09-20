@@ -14,8 +14,8 @@
 .buddy-chat-activity-loader {
   position: relative;
   isolation: isolate;
-  width: 16px;
-  height: 16px;
+  width: var(--buddy-chat-activity-icon-size);
+  height: var(--buddy-chat-activity-icon-size);
   flex: 0 0 auto;
   border-radius: 50%;
   perspective: 64px;

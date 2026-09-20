@@ -32,16 +32,16 @@ function collapse() {
 
 <template>
   <div class="buddy-chat-reasoning-entry">
-    <button ref="header" class="buddy-chat-reasoning-entry__header" type="button" :aria-expanded="open" :aria-controls="bodyId" @click="emit('toggle')">
-      <DesktopIcon :component="Thinking20Regular" class="buddy-chat-reasoning-entry__icon" />
-      <span class="buddy-chat-reasoning-entry__label">{{ label }}</span>
+    <button ref="header" class="buddy-chat-reasoning-entry__header buddy-chat-activity-row" type="button" :aria-expanded="open" :aria-controls="bodyId" @click="emit('toggle')">
+      <DesktopIcon :component="Thinking20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
+      <span class="buddy-chat-reasoning-entry__label buddy-chat-activity-row__label">{{ label }}</span>
       <span v-if="!open" class="buddy-chat-reasoning-entry__summary">{{ summary }}</span>
-      <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-reasoning-entry__chevron" :class="{ 'is-open': open }" />
+      <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open }" aria-hidden="true" />
     </button>
     <BuddyChatDisclosure>
       <div v-if="open" :id="bodyId" class="buddy-chat-reasoning-entry__content">
         <BuddyChatReasoningBody :text="node.text" />
-        <button class="buddy-chat-reasoning-entry__collapse" type="button" @click="collapse">
+        <button class="buddy-chat-reasoning-entry__collapse buddy-chat-activity-row" type="button" @click="collapse">
           {{ t('desktop.chat.activityCollapse') }}
         </button>
       </div>
@@ -50,41 +50,16 @@ function collapse() {
 </template>
 
 <style scoped lang="scss">
+@use './chatActivityRow' as activity;
+
+@include activity.header;
+
 .buddy-chat-reasoning-entry {
   min-width: 0;
 }
 
-.buddy-chat-reasoning-entry__header,
-.buddy-chat-reasoning-entry__collapse {
-  display: inline-flex;
-  max-width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  font: inherit;
-  font-size: var(--buddy-chat-process-font-size);
-  line-height: 22px;
-  text-align: left;
-  cursor: pointer;
-
-  &:hover { background: var(--buddy-state-hover); }
-  &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-}
-
-.buddy-chat-reasoning-entry__header { margin-left: -4px; }
-.buddy-chat-reasoning-entry__content { padding-left: 20px; }
-.buddy-chat-reasoning-entry__icon {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--buddy-text-muted);
-}
-.buddy-chat-reasoning-entry__label { flex: none; white-space: nowrap; }
+.buddy-chat-reasoning-entry__content { padding-inline-start: var(--buddy-chat-activity-indent); }
+.buddy-chat-reasoning-entry__label { flex: none; }
 .buddy-chat-reasoning-entry__summary {
   min-width: 0;
   overflow: hidden;
@@ -94,19 +69,5 @@ function collapse() {
   white-space: nowrap;
 }
 
-.buddy-chat-reasoning-entry__chevron {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--buddy-text-muted);
-  transition: transform 120ms ease;
-
-  &.is-open { transform: rotate(90deg); }
-}
-
 .buddy-chat-reasoning-entry__collapse { font-size: var(--buddy-chat-caption-font-size); }
-
-@media (prefers-reduced-motion: reduce) {
-  .buddy-chat-reasoning-entry__chevron { transition: none; }
-}
 </style>

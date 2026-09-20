@@ -157,7 +157,8 @@ const output = computed(() => {
   display: grid;
   gap: var(--buddy-chat-gap-block);
   min-width: 0;
-  margin: 4px 8px 8px 28px;
+  margin: 4px 0 8px;
+  margin-inline-start: var(--buddy-chat-activity-indent);
 }
 
 .buddy-chat-terminal-card {

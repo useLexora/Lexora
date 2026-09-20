@@ -52,12 +52,12 @@ function reveal() {
       <button
         v-if="activity.reasoning || activity.tools.length"
         class="buddy-chat-run-activity__reveal" :class="{ 'is-open': reasoningOpen }" type="button"
-        :aria-label="actionLabel" :title="actionLabel" :aria-expanded="activity.reasoning ? reasoningOpen : undefined"
+        :aria-label="actionLabel" :aria-expanded="activity.reasoning ? reasoningOpen : undefined"
         @click="reveal"
       >
-        <DesktopIcon :component="ChevronRight20Regular" />
+        <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" aria-hidden="true" />
       </button>
-      <span class="buddy-chat-run-activity__duration" aria-live="off" :title="t('desktop.chat.activityRunDuration')">{{ duration }}</span>
+      <span class="buddy-chat-run-activity__duration" aria-live="off">{{ duration }}</span>
     </BuddyChatActivityStatus>
     <BuddyChatDisclosure>
       <BuddyChatReasoningBody v-if="reasoningOpen && activity.reasoning" :key="activity.reasoning.id" :text="activity.reasoning.text" class="buddy-chat-run-activity__reasoning" />
@@ -66,6 +66,10 @@ function reveal() {
 </template>
 
 <style scoped lang="scss">
+@use './chatActivityRow' as activity;
+
+.buddy-chat-activity-row__chevron { @include activity.chevron; }
+
 .buddy-chat-run-activity {
   min-width: 0;
   padding-bottom: var(--buddy-chat-gap-turn);
@@ -93,15 +97,10 @@ function reveal() {
   color: var(--buddy-text-muted);
   cursor: pointer;
 
-  :deep(.n-icon) { width: 14px; height: 14px; transition: transform 120ms ease; }
   &.is-open :deep(.n-icon) { transform: rotate(90deg); }
   &:hover { background: var(--buddy-state-hover); color: var(--buddy-text-secondary); }
   &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
 }
 
-.buddy-chat-run-activity__reasoning { margin-top: 4px; padding-inline: 22px 8px; }
-
-@media (prefers-reduced-motion: reduce) {
-  .buddy-chat-run-activity__reveal :deep(.n-icon) { transition: none; }
-}
+.buddy-chat-run-activity__reasoning { margin-top: 4px; padding-inline-start: var(--buddy-chat-activity-indent); }
 </style>
