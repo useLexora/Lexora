@@ -70,7 +70,7 @@ describe('provider settings prop reactivity', () => {
     const props = shallowReactive({ providerSettings: first })
     const scope = effectScope()
     cleanups.push(() => scope.stop())
-    const detail = scope.run(() => useProviderDetail(() => props.providerSettings, () => 'service', () => {}))!
+    const detail = scope.run(() => useProviderDetail(() => props.providerSettings, () => 'service'))!
     detail.openModelDetail('model')
     props.providerSettings = second
     detail.openModelDetail('model')
@@ -92,7 +92,7 @@ describe('provider settings prop reactivity', () => {
     const props = shallowReactive({ providerSettings: first })
     const scope = effectScope()
     cleanups.push(() => scope.stop())
-    const detail = scope.run(() => useProviderDetail(() => props.providerSettings, () => 'service', () => {}))!
+    const detail = scope.run(() => useProviderDetail(() => props.providerSettings, () => 'service'))!
     detail.openManualModelDialog()
     const oldRequest = detail.saveManualModel(manualModel())
     props.providerSettings = second
@@ -106,22 +106,6 @@ describe('provider settings prop reactivity', () => {
     await newRequest
     expect(detail.showManualModelDialog.value).toBe(false)
     expect(detail.savingManualModel.value).toBe(false)
-  })
-
-  it('does not navigate away when a removal completes after the owner was disposed', async () => {
-    const removed = deferred<boolean>()
-    const store = createStore('Alpha')
-    store.removeProvider = () => removed.promise
-    let navigated = false
-    const scope = effectScope()
-    const detail = scope.run(() => useProviderDetail(() => store, () => 'service', () => {
-      navigated = true
-    }))!
-    const request = detail.removeProvider()
-    scope.stop()
-    removed.resolve(true)
-    await request
-    expect(navigated).toBe(false)
   })
 
   it('surfaces an unavailable model through its info icon and clears it from the row', async () => {

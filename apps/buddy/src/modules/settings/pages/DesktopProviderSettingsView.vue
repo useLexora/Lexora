@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NSwitch } from 'naive-ui'
+import { NButton, NPopconfirm, NSwitch, NTooltip } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -7,6 +7,7 @@ import { DesktopProviderAddDialog, DesktopProviderAuthDialog, DesktopProviderDet
 import DesktopSettingsPageLayout from '@/modules/settings/layouts/DesktopSettingsPageLayout.vue'
 import { useSettingsContext } from '@/modules/settings/settingsContext'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
   providerId: string
@@ -26,6 +27,10 @@ const providerSummary = computed(() => {
 const authProviderName = computed(() => providerSettings.providers.value.find(
   item => item.id === providerSettings.authChallenge.value?.providerId,
 )?.displayName ?? null)
+const removeDisabled = computed(() => {
+  const value = provider.value
+  return !value || value.activeRunCount > 0 || providerSettings.mutatingProviderId.value === value.id
+})
 watch(
   [() => props.providerId, provider],
   async (_providerId, _previousProviderId, onCleanup) => {
@@ -41,6 +46,10 @@ watch(
 function continueSetup() {
   providerSettings.clearModelProviderError()
   showAddDialog.value = true
+}
+
+async function removeProvider() {
+  await providerSettings.removeProvider(props.providerId)
 }
 
 async function leaveProvider() {
@@ -64,6 +73,34 @@ const { authChallenge, language } = providerSettings
       {{ providerSummary }}
     </template>
     <template v-if="provider" #actions>
+      <NTooltip :delay="350">
+        <template #trigger>
+          <span class="desktop-provider-settings-view__action">
+            <NPopconfirm
+              :negative-text="t('common.cancel')"
+              :positive-text="t('common.confirm')"
+              @positive-click="removeProvider"
+            >
+              <template #trigger>
+                <NButton
+                  class="buddy-icon-button desktop-provider-settings-view__remove"
+                  quaternary
+                  size="small"
+                  :disabled="removeDisabled"
+                  :aria-label="t('desktop.providers.removeService')"
+                >
+                  <template #icon>
+                    <DesktopIcon name="delete" :size="16" />
+                  </template>
+                </NButton>
+              </template>
+              {{ t('desktop.providers.removeServiceConfirmation') }}
+            </NPopconfirm>
+          </span>
+        </template>
+        {{ t('desktop.providers.removeService') }}
+      </NTooltip>
+      <span class="desktop-provider-settings-view__divider" aria-hidden="true" />
       <NSwitch
         :round="false"
         :value="provider.enabled"
@@ -76,7 +113,6 @@ const { authChallenge, language } = providerSettings
       v-if="provider"
       :provider-id="providerId"
       :provider-settings="providerSettings"
-      @back="leaveProvider"
       @continue-setup="continueSetup"
     />
     <DesktopProviderAddDialog
@@ -95,6 +131,20 @@ const { authChallenge, language } = providerSettings
 </template>
 
 <style scoped>
+.desktop-provider-settings-view__action {
+  display: inline-flex;
+}
+
+.desktop-provider-settings-view__remove:not(:disabled):hover {
+  color: var(--buddy-status-danger-text);
+}
+
+.desktop-provider-settings-view__divider {
+  width: 1px;
+  height: 14px;
+  background: var(--buddy-border-subtle);
+}
+
 .desktop-provider-settings-view__breadcrumb {
   display: flex;
   min-width: 0;

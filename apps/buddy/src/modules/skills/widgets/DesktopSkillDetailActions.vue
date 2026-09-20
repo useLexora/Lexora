@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { ArrowSync20Regular, Code20Regular, Delete20Regular, Eye20Regular, FolderOpen20Regular, Globe20Regular } from '@vicons/fluent'
+import { ArrowSync20Regular, Code20Regular, Eye20Regular, FolderOpen20Regular, Globe20Regular } from '@vicons/fluent'
 import { NButton, NPopconfirm, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -45,7 +45,7 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
             <template #trigger>
               <NButton class="buddy-icon-button skill-detail__remove" quaternary :disabled="mutationDisabled" :aria-label="t('desktop.skills.remove')">
                 <template #icon>
-                  <DesktopIcon :component="Delete20Regular" />
+                  <DesktopIcon name="delete" />
                 </template>
               </NButton>
             </template>

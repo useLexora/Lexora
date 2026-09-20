@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
-import { Add20Regular, Delete20Regular, Info20Regular } from '@vicons/fluent'
+import { Add20Regular, Info20Regular } from '@vicons/fluent'
 import { NButton, NPopconfirm, NSpace, NSwitch, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -16,7 +16,6 @@ const props = defineProps<{
   providerId: string
 }>()
 const emit = defineEmits<{
-  back: []
   continueSetup: [providerId: string]
 }>()
 const language = computed(() => props.providerSettings.language.value)
@@ -38,8 +37,7 @@ const {
   openModelDetail,
   formatTokens,
   removeUnavailableModel,
-  removeProvider,
-} = useProviderDetail(() => props.providerSettings, () => props.providerId, () => emit('back'))
+} = useProviderDetail(() => props.providerSettings, () => props.providerId)
 </script>
 
 <template>
@@ -192,7 +190,7 @@ const {
                       @click="removeUnavailableModel(model.modelId)"
                     >
                       <template #icon>
-                        <DesktopIcon :component="Delete20Regular" :size="16" />
+                        <DesktopIcon name="delete" :size="16" />
                       </template>
                     </NButton>
                   </span>
@@ -201,30 +199,6 @@ const {
               </NTooltip>
             </template>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="desktop-provider-detail__section">
-      <h3>{{ t('desktop.providers.serviceActions') }}</h3>
-      <div class="desktop-provider-detail__group">
-        <div class="desktop-provider-detail__row">
-          <div class="desktop-provider-detail__row-copy">
-            <strong>{{ t('desktop.providers.removeService') }}</strong>
-            <small>{{ t('desktop.providers.removeServiceDescription') }}</small>
-          </div>
-          <NPopconfirm
-            :negative-text="t('common.cancel')"
-            :positive-text="t('common.confirm')"
-            @positive-click="removeProvider"
-          >
-            <template #trigger>
-              <NButton type="error" size="small" :disabled="provider.activeRunCount > 0">
-                {{ t('desktop.providers.removeService') }}
-              </NButton>
-            </template>
-            {{ t('desktop.providers.removeServiceConfirmation') }}
-          </NPopconfirm>
         </div>
       </div>
     </section>

@@ -1,4 +1,5 @@
 import accountAvatarUrl from './assets/account-avatar.svg'
+import deleteUrl from './assets/delete.svg'
 import messageBranchNextUrl from './assets/message-branch-next.svg'
 import messageBranchPreviousUrl from './assets/message-branch-previous.svg'
 import messageCopiedUrl from './assets/message-copied.svg'
@@ -24,6 +25,7 @@ import windowRestoreUrl from './assets/window-restore.svg'
 
 export const DESKTOP_ICON_URLS = {
   accountAvatar: accountAvatarUrl,
+  delete: deleteUrl,
   messageBranchNext: messageBranchNextUrl,
   messageBranchPrevious: messageBranchPreviousUrl,
   messageCopied: messageCopiedUrl,

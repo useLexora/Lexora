@@ -10,7 +10,6 @@ import {
   Checkmark20Regular,
   ChevronDown20Regular,
   ChevronRight20Regular,
-  Delete20Regular,
   ErrorCircle20Regular,
   MoreHorizontal20Regular,
   SpinnerIos20Regular,
@@ -61,7 +60,7 @@ const groups = computed(() => {
   }))
 })
 const actionOptions = computed<DropdownOption[]>(() => [{
-  icon: () => h(DesktopIcon, { component: Delete20Regular }),
+  icon: () => h(DesktopIcon, { name: 'delete' }),
   key: 'delete',
   label: t('desktop.automations.action.delete'),
 }])

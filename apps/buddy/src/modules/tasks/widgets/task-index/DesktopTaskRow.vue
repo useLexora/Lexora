@@ -7,7 +7,6 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import {
   ApprovalsApp20Regular,
-  Delete20Regular,
   Edit20Regular,
   MoreHorizontal20Regular,
   Settings20Regular,
@@ -106,7 +105,7 @@ const actions = computed<DropdownOption[]>(() => [
   },
   { type: 'divider', key: 'task-actions-divider' },
   { icon: () => hIcon(Edit20Regular), key: 'rename', label: t('desktop.tasks.renameTask') },
-  { icon: () => hIcon(Delete20Regular), key: 'delete', label: t('desktop.tasks.deleteTask') },
+  { icon: () => h(DesktopIcon, { name: 'delete' }), key: 'delete', label: t('desktop.tasks.deleteTask') },
 ])
 
 function hIcon(component: typeof Edit20Regular) {

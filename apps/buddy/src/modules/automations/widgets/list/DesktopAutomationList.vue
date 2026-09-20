@@ -5,7 +5,6 @@ import type { DropdownOption } from 'naive-ui'
 import type { HTMLAttributes } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import {
-  Delete20Regular,
   MoreHorizontal20Regular,
   Pause20Regular,
   Play20Regular,
@@ -62,7 +61,7 @@ function actionOptions(automation: LocalAutomationListItem): DropdownOption[] {
   return [
     ...(lifecycleAction ? [lifecycleAction] : []),
     {
-      icon: () => h(DesktopIcon, { component: Delete20Regular }),
+      icon: () => h(DesktopIcon, { name: 'delete' }),
       key: 'delete',
       label: t('desktop.automations.action.delete'),
       props: dropdownItemProps,

@@ -4,7 +4,7 @@ import type { ModelParameterActions, ProviderConnectionActions } from './typing'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { desktopProviderApiOptions } from '../../model/desktopProviderApiOptions'
 
-export function useProviderDetail(providerSettings: () => ModelProvidersStore, providerId: () => string, onRemoved: () => void) {
+export function useProviderDetail(providerSettings: () => ModelProvidersStore, providerId: () => string) {
   let generation = 0
   const provider = computed(() => providerSettings().providers.value.find(item => item.id === providerId()) ?? null)
   const models = computed(() => providerSettings().registeredModels.value.filter(
@@ -95,12 +95,6 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     await providerSettings().removeModel(providerId(), modelId)
   }
 
-  async function removeProvider() {
-    const requestGeneration = generation
-    if (await providerSettings().removeProvider(providerId()) && requestGeneration === generation)
-      onRemoved()
-  }
-
   return {
     provider,
     models,
@@ -118,6 +112,5 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     openModelDetail,
     formatTokens,
     removeUnavailableModel,
-    removeProvider,
   }
 }

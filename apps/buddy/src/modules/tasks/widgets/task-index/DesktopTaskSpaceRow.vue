@@ -8,7 +8,6 @@ import type { TaskSpaceMenuAction } from '@/modules/tasks/widgets/task-index/use
 import {
   ChevronDown16Regular,
   ChevronRight16Regular,
-  Delete20Regular,
   Edit20Regular,
   FolderOpen20Regular,
   MoreHorizontal20Regular,
@@ -69,7 +68,7 @@ const menuOptions = computed<DropdownOption[]>(() => [
     label: t('common.edit'),
   },
   {
-    icon: () => h(DesktopIcon, { component: Delete20Regular, size: 14 }),
+    icon: () => h(DesktopIcon, { name: 'delete', size: 14 }),
     key: 'delete',
     label: t('common.delete'),
   },
