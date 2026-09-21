@@ -206,7 +206,7 @@ export class ProviderService {
         enabled,
         enabledModelCount,
         modelCount: modelSummary?.modelCount ?? 0,
-        setupComplete: Boolean(provider && storedCredentialType !== null && enabledModelCount > 0),
+        setupComplete: Boolean(provider && storedCredentialType !== null),
         syncUnavailableReason: !provider && custom ? 'unsupported_api' : syncUnavailableReason,
       })
     })

@@ -104,7 +104,7 @@ const { authChallenge, language } = providerSettings
       <NSwitch
         :round="false"
         :value="provider.enabled"
-        :disabled="provider.activeRunCount > 0 || (!provider.enabled && !provider.setupComplete)"
+        :disabled="provider.activeRunCount > 0 || (!provider.enabled && (!provider.setupComplete || provider.enabledModelCount === 0))"
         @update:value="providerSettings.setProviderEnabled(provider.id, $event)"
       />
     </template>

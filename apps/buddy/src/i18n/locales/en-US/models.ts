@@ -116,6 +116,7 @@ export default {
   'desktop.providers.modelSourceSummary.manual': 'Manual model',
   'desktop.providers.modelSourceSummary.synced': 'Synced model',
   'desktop.providers.noAddedServices': 'No model services added yet',
+  'desktop.providers.noEnabledAvailableModelsHint': 'No enabled models are currently available. Sync or enable models in Management.',
   'desktop.providers.noModels': 'No models',
   'desktop.providers.noSearchResults': 'No matching model services',
   'desktop.providers.notFoundInLastSync': 'Unavailable in the current model catalog',
