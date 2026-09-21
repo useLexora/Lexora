@@ -4,7 +4,7 @@ ENV PNPM_HOME=/pnpm
 ENV PATH="${PNPM_HOME}:${PATH}"
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
-RUN npm install --global pnpm@11.5.0 \
+RUN npm install --global pnpm@12.5.1 \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/*
@@ -33,7 +33,7 @@ ENV NODE_ENV=production
 ENV PRISMA_HIDE_UPDATE_MESSAGE=1
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
-RUN npm install --global pnpm@11.5.0 \
+RUN npm install --global pnpm@12.5.1 \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/* \
