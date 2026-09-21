@@ -76,20 +76,25 @@ pub(super) fn executable_running(executable: &str) -> Result<bool, ProcessError>
         if !snapshot::same_name(&entry.name, name) {
             continue;
         }
-        let Some(handle) = open(entry.pid, None)? else {
+        let Ok(Some(handle)) = open(entry.pid, None) else {
             continue;
         };
-        if !running(&handle, 0)? {
+        if !running(&handle, 0).unwrap_or(false) {
             continue;
         }
-        let executable = identity::executable(&handle);
-        if !running(&handle, 0)? {
+        let Ok(executable) = identity::executable(&handle) else {
+            continue;
+        };
+        if !running(&handle, 0).unwrap_or(false) {
             continue;
         }
-        let actual = std::fs::canonicalize(executable?).map_err(|_| ProcessError::Failed)?;
-        if snapshot::same_name(actual.to_str().ok_or(ProcessError::Failed)?, expected)
-            && running(&handle, 0)?
-        {
+        let Ok(actual) = std::fs::canonicalize(&executable) else {
+            continue;
+        };
+        let Some(actual_str) = actual.to_str() else {
+            continue;
+        };
+        if snapshot::same_name(actual_str, expected) && running(&handle, 0).unwrap_or(false) {
             return Ok(true);
         }
     }
