@@ -29,13 +29,13 @@
   <a href="https://uselexora.app/en/guide/quick-start">Guide</a>
 </p>
 
-Lexora is a personal AI workspace built around Desktop. Within the access you grant, it uses local files and tools to turn ideas from conversation into action, making words the starting point for work, creativity, and everyday life.
+Lexora is a self-evolved, sovereign personal desktop AI agent crafted through real-world practice. Beyond model wrappers and coding copilots, it features an independent local execution runtime and security sandbox—running tools, editing files, and automating tasks within your authorized boundaries to turn ideas into action, making words the starting point for work, creativity, and everyday life.
 
 ## Your desktop agent
 
-Lexora brings conversation, local context, and tool execution into one workspace for research, content creation, coding, and everyday automation. From reading files and running commands to producing deliverables, you can follow the work and inspect the results.
+Lexora integrates task conversations, local context, sandboxed tool execution, and artifact delivery into a cohesive desktop workflow. From inspecting files and running commands to refining code and generating deliverables, every step of the execution and its outcomes remain visible and verifiable.
 
-You choose the models and authorize access to files and tools. Whether you're moving a project forward or trying out a wild idea, it can start with a conversation.
+Bring your preferred models and grant access with fine-grained permissions. Whether advancing a complex project or exploring a spark of curiosity, Lexora turns intent into tangible action.
 
 <table>
   <tr>

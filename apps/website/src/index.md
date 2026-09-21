@@ -1,7 +1,7 @@
 ---
 layout: landing
 title: Lexora
-titleTemplate: 个人 AI 工作台
-description: 想你所想，行你所行。Lexora 是你的个人 AI 工作台，陪你写作、写代码、理资料，也聊聊不着边际的想法。
+titleTemplate: 个人桌面 AI Agent
+description: 想你所想，行你所行。在真实桌面实践中自我演化的个人 AI Agent，调度本地工具与文件，让文字成为工作、创作与生活的起点。
 markdownStyles: false
 ---

@@ -2,7 +2,7 @@
 
 Big ideas. A little company.
 
-Lexora is a personal AI workspace that runs on your computer. Write, code, organize notes, or talk about everyday life and far-fetched ideas. When it is time to act, bring your files and tools along.
+Lexora is a self-evolved, sovereign personal desktop AI agent crafted through real-world practice. Beyond model wrappers and coding copilots, it runs on your computer to turn ideas into tangible results using local files and tools, making words the starting point for work, creativity, and everyday life.
 
 ## Start with something you want to do
 
