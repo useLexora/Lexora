@@ -29,7 +29,22 @@ describe('desktopChatBlocker', () => {
       hasSelectedModel: false,
       runtimeError: null,
       runtimeStatus: 'ready',
-    })).toEqual({ dismissible: true, kind: 'model' })
+    })).toEqual({ dismissible: true, kind: 'model', reason: 'missing' })
+    expect(resolveChatBlocker({
+      hasAvailableModels: false,
+      hasAvailableProvider: true,
+      hasSelectedModel: false,
+      runtimeError: null,
+      runtimeStatus: 'ready',
+    })).toEqual({ dismissible: true, kind: 'no_models' })
+    expect(resolveChatBlocker({
+      hasAvailableModels: true,
+      hasAvailableProvider: true,
+      hasSelectedModel: false,
+      isModelUnavailable: true,
+      runtimeError: null,
+      runtimeStatus: 'ready',
+    })).toEqual({ dismissible: true, kind: 'model', reason: 'unavailable' })
     expect(resolveChatBlocker({
       hasAvailableProvider: true,
       hasSelectedModel: true,

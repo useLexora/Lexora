@@ -87,6 +87,20 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
     secondaryPanel.value = props.selectedModel ? null : 'model'
   }
 
+  function open(panel?: 'model' | 'main') {
+    if (!canOpen.value)
+      return
+    isOpen.value = true
+    if (panel === 'model' || !props.selectedModel) {
+      activePanel.value = 'advanced'
+      secondaryPanel.value = 'model'
+    }
+    else {
+      activePanel.value = 'main'
+      secondaryPanel.value = null
+    }
+  }
+
   function close() {
     isOpen.value = false
     activePanel.value = 'main'
@@ -180,6 +194,8 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
     displayedEffortLabel,
     supportsFastMode,
     isFastMode,
+    close,
+    open,
     toggle,
     clearModel,
     toggleFastMode,

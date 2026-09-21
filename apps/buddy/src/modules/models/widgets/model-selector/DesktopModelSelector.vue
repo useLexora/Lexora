@@ -77,6 +77,8 @@ const {
   displayedEffortLabel,
   supportsFastMode,
   isFastMode,
+  close,
+  open,
   toggle,
   clearModel,
   toggleFastMode,
@@ -102,6 +104,12 @@ const modelTriggerLabel = computed(() => {
     ? `${selectedEffortLabel.value} (${t('common.unavailable')})`
     : selectedEffortLabel.value
   return `${modelLabel.value} · ${effortLabel}`
+})
+
+defineExpose({
+  close,
+  open,
+  toggle,
 })
 </script>
 

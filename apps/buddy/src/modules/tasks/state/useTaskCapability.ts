@@ -105,9 +105,15 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   const hasAvailableProvider = computed(() => modelProviders.providers.value.some(
     provider => provider.enabled && provider.status === 'available',
   ))
+  const hasAvailableModels = computed(() => modelProviders.models.value.length > 0)
+  const isModelUnavailable = computed(() =>
+    taskModels.selectedModelId.value !== null && taskModels.selectedModel.value === null,
+  )
   const chatBlocker = computed(() => resolveChatBlocker({
     hasAvailableProvider: hasAvailableProvider.value,
+    hasAvailableModels: hasAvailableModels.value,
     hasSelectedModel: taskModels.selectedModel.value !== null,
+    isModelUnavailable: isModelUnavailable.value,
     runtimeError: runtimeSupervisor.runtimeError.value,
     runtimeStatus: runtimeSupervisor.runtimeState.value.status,
   }))
@@ -249,7 +255,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   })
   const { contextUsage } = contextUsageTracker
   const composerModelInputIssue = computed(() => resolveChatComposerModelInputIssue({
-    model: taskModels.selectedModelOption.value,
+    model: taskModels.selectedModel.value,
     modelSelection: taskModels.currentSelection(),
     resourceIds: getChatComposerResourceIds(composerContent.value as JSONContent),
     resources: composerResources.resources.value,
@@ -466,7 +472,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       models: modelProviders.models,
       providers: modelProviders.providers,
       selectedEffort: taskModels.selectedEffort,
-      selectedModel: taskModels.selectedModelOption,
+      selectedModel: taskModels.selectedModel,
       selectedModelId: taskModels.selectedModelId,
       selectedServiceTier: taskModels.selectedServiceTier,
       selectAttachments,
