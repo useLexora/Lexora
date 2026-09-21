@@ -16,7 +16,7 @@ const guides = [
 
 export default defineConfig({
   title: 'Lexora',
-  description: '想你所想，行你所行。你的个人 AI 工作台，陪你写作、写代码、聊想法，把好奇心变成可能。',
+  description: '想你所想，行你所行。在真实桌面实践中自我演化的个人 AI Agent，调度本地工具与文件，让文字成为工作、创作与生活的起点。',
   base: websiteBase,
   cleanUrls: true,
   appearance: 'dark',
@@ -54,7 +54,7 @@ export default defineConfig({
     en: {
       label: 'English',
       lang: 'en-US',
-      description: 'Your personal AI workspace. Write, code, explore ideas, or just chat. A little company for whatever comes next.',
+      description: 'Think alongside you. Act on your intent. A self-evolved, sovereign desktop AI agent crafted to make words the starting point for work, creativity, and everyday life.',
       themeConfig: {
         nav: [
           { text: 'Explore', link: '/en/#playground' },

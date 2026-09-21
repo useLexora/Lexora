@@ -5,7 +5,7 @@
   "version": "0.8.4",
   "private": true,
   "packageManager": "pnpm@12.5.1",
-  "description": "Lexora Buddy local personal AI companion",
+  "description": "Sovereign, self-evolved personal desktop AI agent",
   "desktopName": "site.haohaoxue.LexoraBuddy",
   "author": {
     "name": "shanyuhai123",

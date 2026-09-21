@@ -1,7 +1,7 @@
 ---
 layout: landing
 title: Lexora
-titleTemplate: Your personal AI workspace
-description: Big ideas. A little company. Write a story, fix some code, sort your notes, or just chat. Lexora is your personal AI workspace for work and everything beyond it.
+titleTemplate: Sovereign Desktop AI Agent
+description: Think alongside you. Act on your intent. A self-evolved, sovereign desktop AI agent crafted to make words the starting point for work, creativity, and everyday life.
 markdownStyles: false
 ---

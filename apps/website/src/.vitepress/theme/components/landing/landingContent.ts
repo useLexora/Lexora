@@ -3,7 +3,7 @@ const zh = {
   hero: {
     eyebrow: '一点灵感，一点魔法，还有你。',
     title: ['想你所想，', '行你所行。'],
-    description: '你的个人 AI 工作台。写东西、写代码、理资料，也聊聊不着边际的想法。正经事与奇思妙想，都有个搭子。',
+    description: '在真实桌面实践中自我演化的个人 AI Agent。写东西、写代码、理资料，让文字成为工作、创作与生活的起点。正经事与奇思妙想，都有个搭子。',
     primary: '带 Lexora 回家',
     secondary: '看看它如何工作',
     note: '开源 · 本地运行 · 自由选择模型',
@@ -91,7 +91,7 @@ const en: typeof zh = {
   hero: {
     eyebrow: 'A little inspiration. A little magic. And you.',
     title: ['Big ideas.', 'A little company.'],
-    description: 'Your personal AI workspace. Write a story, fix some code, sort your notes, or follow a wild tangent. A little company, whatever you’re into.',
+    description: 'A self-evolved, sovereign desktop AI agent crafted through real-world practice. Turning ideas into action, making words the starting point for work, creativity, and everyday life.',
     primary: 'Bring Lexora home',
     secondary: 'See it in action',
     note: 'Open source · Runs locally · Your choice of model',
