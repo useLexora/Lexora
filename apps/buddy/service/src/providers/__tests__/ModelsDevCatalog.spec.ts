@@ -1,5 +1,5 @@
 import type { Usage } from '@earendil-works/pi-ai'
-import { calculateCost, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+import { calculateCost, getSupportedThinkingLevels, normalizeContext } from '@earendil-works/pi-ai'
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { describe, expect, it } from 'vitest'
 import snapshot from '../data/models-dev.json'
@@ -31,7 +31,7 @@ describe('models.dev metadata', () => {
     const source = provider.getModels().find(model => model.id === 'gpt-5.5')!
     const metadata = new ModelsDevCatalog(snapshot.data).getModels('openai').find(model => model.id === source.id)!
     let payload: unknown
-    const result = await provider.streamSimple({ ...source, thinkingLevelMap: metadata.thinkingLevelMap }, { messages: [] }, {
+    const result = await provider.streamSimple({ ...source, thinkingLevelMap: metadata.thinkingLevelMap }, normalizeContext({ messages: [] }), {
       apiKey: 'fixture-not-a-real-key',
       onPayload: (request) => {
         payload = request

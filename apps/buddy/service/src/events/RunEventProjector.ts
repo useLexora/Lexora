@@ -44,7 +44,7 @@ const usageEventPayloadSchema = z.object({
   outputCost: z.number().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   provider: z.string().min(1),
-  purpose: z.enum(['compaction', 'tool', 'turn']),
+  purpose: z.enum(['cache_warm', 'compaction', 'tool', 'turn']),
   reasoningTokens: z.number().int().nonnegative().nullable(),
   sourceEntryId: z.string().min(1),
   totalCost: z.number().nonnegative(),

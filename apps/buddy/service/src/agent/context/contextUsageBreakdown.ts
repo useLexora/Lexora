@@ -5,6 +5,7 @@ import type {
   TextContent,
   Tool,
 } from '@earendil-works/pi-ai'
+import { getCurrentSystemPrompt, getCurrentTools, normalizeContext } from '@earendil-works/pi-ai'
 
 export interface BuddyContextUsageBreakdown {
   mcpTokens: number
@@ -57,13 +58,16 @@ export function createEstimatedContextUsage(context: Context): BuddyEstimatedCon
 function estimateFixedContextSources(
   context: Context,
 ): Omit<BuddyContextUsageBreakdown, 'messageTokens'> {
-  const skillCatalog = readSkillCatalog(context.systemPrompt ?? '')
+  const { messages } = normalizeContext(context)
+  const systemPrompt = getCurrentSystemPrompt(messages)
+  const tools = getCurrentTools(messages)
+  const skillCatalog = readSkillCatalog(systemPrompt)
   return {
-    mcpTokens: estimateTools(context.tools?.filter(tool => tool.name.startsWith('mcp__'))),
+    mcpTokens: estimateTools(tools.filter(tool => tool.name.startsWith('mcp__'))),
     skillTokens: estimateTextTokens(skillCatalog)
       + estimateSelectedSkillTokens(context.messages),
-    systemPromptTokens: estimateTextTokens((context.systemPrompt ?? '').replace(skillCatalog, '')),
-    toolTokens: estimateTools(context.tools?.filter(tool => !tool.name.startsWith('mcp__'))),
+    systemPromptTokens: estimateTextTokens(systemPrompt.replace(skillCatalog, '')),
+    toolTokens: estimateTools(tools.filter(tool => !tool.name.startsWith('mcp__'))),
   }
 }
 
@@ -100,6 +104,8 @@ function estimateMessages(messages: Message[]): number {
 }
 
 function estimateMessageTokens(message: Message): number {
+  if (message.role === 'system')
+    return 0
   if (message.role === 'user' || message.role === 'toolResult')
     return estimateTextAndImageContentTokens(message.content)
 

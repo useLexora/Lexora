@@ -52,6 +52,7 @@ function modelLabel(providerId: string, modelId: string): string {
   return modelId || providerId
 }
 
+const cacheWarmingUsage = computed(() => props.status?.tokens.byPurpose.find(entry => entry.purpose === 'cache_warm'))
 const cacheHitRate = computed(() => {
   const totals = props.status?.tokens.totals
   if (!totals)
@@ -161,15 +162,9 @@ const runRows = computed(() => {
             <span>{{ t('desktop.chat.status.throughput') }}</span>
             <span>{{ formatRate(status.timing.throughput.tokensPerSecond) }} {{ t('desktop.chat.status.samples', { count: status.timing.throughput.samples }) }}</span>
           </div>
-          <div v-if="status.timing.slowestTools.length" class="conversation-status__row">
-            <span>{{ t('desktop.chat.status.slowestTools') }}</span>
-            <span class="conversation-status__values">
-              <span v-for="(entry, index) in status.timing.slowestTools" :key="index">{{ entry.name }} {{ formatDuration(entry.ms) }}</span>
-            </span>
-          </div>
         </DesktopConversationStatusSection>
 
-        <DesktopConversationStatusSection v-if="status.tokens.totals.totalTokens || status.tokens.byModel.length" :title="t('desktop.chat.status.tokens')">
+        <DesktopConversationStatusSection v-if="status.cacheWarming || status.tokens.totals.totalTokens || status.tokens.byModel.length" :title="t('desktop.chat.status.tokens')">
           <div v-if="status.tokens.totals.totalTokens" class="conversation-status__row">
             <span>{{ t('desktop.chat.status.totalTokens') }}</span><span>{{ formatTokens(status.tokens.totals.totalTokens) }}</span>
           </div>
@@ -178,6 +173,14 @@ const runRows = computed(() => {
           </div>
           <div v-if="formatCost(status.tokens.totals.totalCost)" class="conversation-status__row">
             <span>{{ t('desktop.chat.status.cost') }}</span><span>{{ formatCost(status.tokens.totals.totalCost) }}</span>
+          </div>
+          <div v-if="status.cacheWarming" class="conversation-status__row is-warming">
+            <span>{{ t('desktop.settings.runtime.cacheWarming') }}</span>
+            <span>{{ t(`desktop.chat.status.warming.${status.cacheWarming}`) }}</span>
+          </div>
+          <div v-if="cacheWarmingUsage" class="conversation-status__row">
+            <span>{{ t('desktop.chat.status.warmingUsage') }}</span>
+            <span>{{ formatTokens(cacheWarmingUsage.totalTokens) }}<template v-if="formatCost(cacheWarmingUsage.totalCost)"> · {{ formatCost(cacheWarmingUsage.totalCost) }}</template></span>
           </div>
           <div v-for="entry in status.tokens.byModel" :key="`${entry.providerId}:${entry.modelId}`" class="conversation-status__row is-model">
             <span>
@@ -289,5 +292,11 @@ const runRows = computed(() => {
   margin: 0;
   color: var(--buddy-text-secondary);
   padding: 4px 2px;
+}
+.conversation-status__row.is-warming > span:last-child {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 </style>

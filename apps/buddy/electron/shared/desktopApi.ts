@@ -133,6 +133,7 @@ export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> 
 }
 
 export interface LexoraConfig {
+  runtime: import('../../shared/runtime/runtimePreferences').RuntimePreferences
   browser: import('../../shared/browser/browserPreferences').BrowserPreferences
   proxy: import('../../shared/network/proxySettings').ProxySettings
   desktop: {
@@ -159,6 +160,7 @@ export interface LexoraConfig {
 }
 
 export interface LexoraConfigPatch {
+  runtime?: Partial<LexoraConfig['runtime']>
   browser?: Partial<LexoraConfig['browser']>
   proxy?: LexoraConfig['proxy']
   desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar'>> & {

@@ -1,5 +1,6 @@
-import type { Api, Model } from '@earendil-works/pi-ai'
+import type { Api, JsonValue, Model } from '@earendil-works/pi-ai'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { TSchema } from 'typebox'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_WEB_SETTINGS } from '../../../../shared/network/webProtocol'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
@@ -28,8 +29,8 @@ describe('native search usage projection', () => {
         } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } }),
       },
     })
-    const tools: ToolDefinition[] = []
-    await createWebExtension({ service, conversationId: 'fixture' }).factory({ registerTool: (tool: ToolDefinition) => tools.push(tool), on: () => {} } as never)
+    const tools: ToolDefinition<TSchema, JsonValue>[] = []
+    await createWebExtension({ service, conversationId: 'fixture' }).factory({ registerTool: (tool: ToolDefinition<TSchema, JsonValue>) => tools.push(tool), on: () => {} } as never)
     const result = await tools[0]!.execute('search-1', { query: 'fixture' }, new AbortController().signal, undefined, { model } as never)
     const events: unknown[] = []
     const usageService = new UsageService({

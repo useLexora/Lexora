@@ -9,6 +9,9 @@ describe('response token usage', () => {
     const first = usageEvent(1, { inputTokens: 100, outputTokens: 20, cacheReadTokens: 600, cacheWriteTokens: 300 })
     reducer.append([first])
     const before = reducer.project()
+    const warm = usageEvent(4, { inputTokens: 0, outputTokens: 1, cacheReadTokens: 100000, cacheWriteTokens: 0 })
+    reducer.append([{ ...warm, payload: { ...(warm.payload as object), purpose: 'cache_warm' } }])
+    expect(reducer.project()).toEqual(before)
     reducer.append([
       first,
       usageEvent(2, { inputTokens: 300, outputTokens: 80, cacheReadTokens: 200, cacheWriteTokens: 0 }),

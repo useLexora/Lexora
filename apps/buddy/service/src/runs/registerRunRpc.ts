@@ -4,6 +4,7 @@ import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import type { UsageRepository } from '../storage/usageRepository'
+import type { ConversationStatusOptions } from './ConversationStatusService'
 import { runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRpc } from '../../../shared/runs/runApi'
@@ -12,6 +13,7 @@ import { ConversationStatusService } from './ConversationStatusService'
 import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
+  getCacheWarmingStatus?: ConversationStatusOptions['getCacheWarmingStatus']
   eventLog: Pick<RunEventReader, 'list' | 'listForConversation'>
   inputs: Pick<RunInputRepository, 'findByRunId'>
   repository: Pick<
@@ -28,6 +30,7 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
     options.inputs.findByRunId(run.id)?.reasoning ?? null,
   )
   const status = new ConversationStatusService({
+    getCacheWarmingStatus: options.getCacheWarmingStatus,
     events: options.eventLog,
     repository: options.repository,
     usage: options.usage,

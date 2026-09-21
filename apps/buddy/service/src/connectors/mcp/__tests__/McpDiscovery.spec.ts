@@ -1,10 +1,10 @@
-import type { Api, AssistantMessage, Context, Model } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessage, Context, JsonObject, Model } from '@earendil-works/pi-ai'
 import { Buffer } from 'node:buffer'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { expect, it, vi } from 'vitest'
 import { createEstimatedContextUsage } from '../../../agent/context/contextUsageBreakdown'
@@ -17,7 +17,7 @@ import { openBuddyDatabase } from '../../../storage/database'
 import { McpConnectorService } from '../McpConnectorService'
 import { createMcpCapability } from '../mcpExtension'
 
-function reply(model: Model<Api>, call?: { name: string, arguments: Record<string, unknown> }) {
+function reply(model: Model<Api>, call?: { name: string, arguments: JsonObject }) {
   const message: AssistantMessage = {
     api: model.api,
     model: model.id,
@@ -108,7 +108,11 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     const requests: Context[] = []
     const toolName = mcp.disclosure!.toolNames[0]!
     vi.spyOn(runtime, 'streamSimple').mockImplementation((selected, context) => {
-      requests.push(structuredClone({ ...context, tools: context.tools?.map(({ name, description, parameters }) => ({ name, description, parameters })) }))
+      requests.push(structuredClone({
+        systemPrompt: getCurrentSystemPrompt(context.messages),
+        tools: getCurrentTools(context.messages).map(({ name, description, parameters }) => ({ name, description, parameters })),
+        messages: context.messages.filter(message => message.role !== 'system'),
+      }))
       return reply(selected, requests.length === 1
         ? { name: 'lexora_tool_search', arguments: { query: '骑行路线规划' } }
         : requests.length === 2 ? { name: toolName, arguments: { origin: '120,30', destination: '121,31' } } : undefined)

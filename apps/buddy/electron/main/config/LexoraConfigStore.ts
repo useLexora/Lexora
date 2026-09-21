@@ -8,6 +8,7 @@ import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
+import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
@@ -85,6 +86,9 @@ const petConfigSchema = z.object({
 })
 
 const lexoraConfigFileSchema = z.object({
+  runtime: z.object({
+    cache_warming: runtimePreferencesSchema.shape.cacheWarming.default(DEFAULT_RUNTIME_PREFERENCES.cacheWarming),
+  }).passthrough().prefault({}),
   browser: z.object({
     screenshot_destination: browserPreferencesSchema.shape.screenshotDestination.default(DEFAULT_BROWSER_PREFERENCES.screenshotDestination),
     default_zoom_factor: browserPreferencesSchema.shape.defaultZoomFactor.default(DEFAULT_BROWSER_PREFERENCES.defaultZoomFactor),
@@ -196,6 +200,7 @@ function decodeConfig(value: unknown): LexoraConfig {
   }
 
   return {
+    runtime: { cacheWarming: config.runtime.cache_warming },
     browser: {
       screenshotDestination: config.browser.screenshot_destination,
       defaultZoomFactor: config.browser.default_zoom_factor,
@@ -238,6 +243,7 @@ function decodeConfig(value: unknown): LexoraConfig {
 
 function encodeConfig(config: LexoraConfig) {
   return {
+    runtime: { cache_warming: config.runtime.cacheWarming },
     browser: {
       screenshot_destination: config.browser.screenshotDestination,
       default_zoom_factor: config.browser.defaultZoomFactor,
@@ -280,6 +286,7 @@ function encodeConfig(config: LexoraConfig) {
 
 function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraConfig {
   return {
+    runtime: runtimePreferencesSchema.parse({ ...current.runtime, ...patch.runtime }),
     browser: browserPreferencesSchema.parse({ ...current.browser, ...patch.browser }),
     proxy: proxySettingsSchema.parse(patch.proxy ?? current.proxy),
     desktop: {
@@ -323,6 +330,7 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   delete nextDesktop.chat_sidebar_pinned_items
   const next: Record<string, unknown> = {
     ...root,
+    runtime: { ...asRecord(root.runtime), ...encoded.runtime },
     browser: { ...asRecord(root.browser), ...encoded.browser },
     proxy: encoded.proxy,
     desktop: nextDesktop,

@@ -58,7 +58,6 @@ export class ChatInputValidationService {
     const currentBytes = input.attachments.length * 1024
     const context = await this.#readContext(input, model)
     let bytes = currentBytes + Buffer.byteLength(JSON.stringify(input.prompt), 'utf8')
-      + Buffer.byteLength(context.systemPrompt ?? '', 'utf8')
     for (const message of prepareBuddyInputHistory(context.messages)) {
       const reference = readBuddyInputReference(message)
       if (!reference) {
@@ -77,7 +76,7 @@ export class ChatInputValidationService {
     }
   }
 
-  async #readContext(input: ChatInputValidationInput, model: InputModel): Promise<{ messages: AgentSession['messages'], systemPrompt?: string }> {
+  async #readContext(input: ChatInputValidationInput, model: InputModel): Promise<{ messages: AgentSession['messages'] }> {
     const point = input.point ?? { kind: 'branch_head' }
     if (point.kind === 'empty')
       return { messages: [] }

@@ -2,7 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 
 export type DesktopView = 'extension-page' | 'extensions' | 'automations' | 'settings' | 'tasks'
 export type DesktopAutomationSection = 'history' | 'plans'
-export type DesktopSettingsCategory = 'shortcuts' | 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'extensions' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
+export type DesktopSettingsCategory = 'runtime' | 'shortcuts' | 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'extensions' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
 
 export const DESKTOP_ROUTE_NAMES = {
   extensions: 'desktop.extensions',
@@ -12,6 +12,7 @@ export const DESKTOP_ROUTE_NAMES = {
   automationsEdit: 'desktop.automations.edit',
   automationsHistory: 'desktop.automations.history',
   automationsPlans: 'desktop.automations.plans',
+  settingsRuntime: 'desktop.settings.runtime',
   settingsMcp: 'desktop.settings.mcp',
   settingsExtensions: 'desktop.settings.extensions',
   settingsApp: 'desktop.settings.app',
@@ -38,6 +39,7 @@ const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
 }
 
 const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
+  runtime: DESKTOP_ROUTE_NAMES.settingsRuntime,
   shortcuts: DESKTOP_ROUTE_NAMES.settingsShortcuts,
   extensions: DESKTOP_ROUTE_NAMES.settingsExtensions,
   general: DESKTOP_ROUTE_NAMES.settingsGeneral,

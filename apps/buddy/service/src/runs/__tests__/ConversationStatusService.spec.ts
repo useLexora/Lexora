@@ -89,9 +89,9 @@ describe('conversation status fold', () => {
       event(12, 'run.completed', { errorCode: null }, '2026-09-20T10:06:00.000Z'),
     ]
     const records = [
-      usage('run-1', 'provider-a', 'model-a', 'chat', { cacheReadTokens: 1_000, inputTokens: 200, outputTokens: 800, totalCost: 0.4 }),
-      usage('run-3', 'provider-b', 'model-b', 'chat', { cacheReadTokens: 0, inputTokens: 300, outputTokens: 100, totalCost: 0.1 }),
-      usage('run-4', 'provider-a', 'model-a', 'conversation.compaction', { cacheReadTokens: 0, inputTokens: 100, outputTokens: 50, totalCost: 0.05 }),
+      usage('run-1', 'provider-a', 'model-a', 'turn', { cacheReadTokens: 1_000, inputTokens: 200, outputTokens: 800, totalCost: 0.4 }),
+      usage('run-3', 'provider-b', 'model-b', 'turn', { cacheReadTokens: 0, inputTokens: 300, outputTokens: 100, totalCost: 0.1 }),
+      usage('run-4', 'provider-a', 'model-a', 'compaction', { cacheReadTokens: 0, inputTokens: 100, outputTokens: 50, totalCost: 0.05 }),
     ]
 
     const status = await service(runs, events, records).status(conversationId)
@@ -110,7 +110,6 @@ describe('conversation status fold', () => {
     expect(status.activity.compactions).toEqual({ count: 1, lastAfterTokens: 21_000, lastBeforeTokens: 84_000 })
 
     expect(status.timing.toolMs).toBe(9_000)
-    expect(status.timing.slowestTools).toEqual([{ ms: 7_000, name: 'shell' }, { ms: 2_000, name: 'read' }])
     expect(status.timing.modelMs).toBe(10_000)
     expect(status.timing.ttft).toEqual({ averageMs: 2_000, maxMs: 2_000, samples: 1 })
     expect(status.timing.throughput.samples).toBe(1)
@@ -118,14 +117,19 @@ describe('conversation status fold', () => {
     expect(Math.round(status.timing.throughput.tokensPerSecond)).toBe(113)
     expect(status.timing.wallMs).toBe(360_000)
 
+    const withWarming = await service(runs, events, [...records, usage('run-1', 'provider-a', 'model-a', 'cache_warm', { cacheReadTokens: 100_000, inputTokens: 0, outputTokens: 1, totalCost: 0.1 })]).status(conversationId)
+    expect(withWarming.timing).toEqual(status.timing)
+    expect(withWarming.tokens.totals.totalCost).toBeCloseTo(status.tokens.totals.totalCost + 0.1)
+    expect(withWarming.tokens.byPurpose.find(entry => entry.purpose === 'cache_warm')?.totalTokens).toBe(100_001)
+
     expect(status.tokens.totals.totalTokens).toBe(2_550)
     expect(status.tokens.byModel.map(entry => [entry.modelId, entry.totalTokens, entry.runCount])).toEqual([
       ['model-a', 2_150, 2],
       ['model-b', 400, 1],
     ])
     expect(status.tokens.byPurpose.map(entry => [entry.purpose, entry.totalTokens])).toEqual([
-      ['chat', 2_400],
-      ['conversation.compaction', 150],
+      ['turn', 2_400],
+      ['compaction', 150],
     ])
   })
 

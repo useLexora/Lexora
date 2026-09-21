@@ -18,6 +18,22 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults warming off and preserves runtime preferences across saves and restart', async () => {
+    const { store, configPath } = await createConfigStore()
+    expect((await store.read()).runtime.cacheWarming).toBe('off')
+    await store.update({ runtime: { cacheWarming: 'streaming' } })
+    await store.update({ desktop: { language: 'en-US' } })
+    expect((await new LexoraConfigStore({ configPath }).read()).runtime.cacheWarming).toBe('streaming')
+    const saved = await readFile(configPath, 'utf8')
+    expect(saved).toMatch(/\[runtime\][\s\S]*cache_warming = "streaming"/)
+    await expect(store.update({ runtime: { cacheWarming: 'idle' as never } })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+    await expect(store.update({ runtime: { cacheWarming: 'off' } }, () => {
+      throw new Error('Apply failed')
+    })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+  })
+
   it('defaults existing profiles to the upper right and persists every outline position without changing other settings', async () => {
     const { configPath, store } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
