@@ -1,7 +1,7 @@
 import type { Usage } from '@earendil-works/pi-ai'
 import type { UsageRecord } from '../storage/usageRepository'
 
-export type BuddyUsagePurpose = 'compaction' | 'tool' | 'turn'
+export type BuddyUsagePurpose = 'cache_warm' | 'compaction' | 'tool' | 'turn'
 
 export interface RecordPiUsageInput {
   createdAt: string

@@ -70,4 +70,19 @@ describe('toolDisclosure', () => {
     disclosure.restore(messages.slice(2))
     expect(disclosure.active(model)).toEqual(['read', TOOL_SEARCH_NAME])
   })
+
+  it('restores system tool deltas while applying removals, registration and model availability', () => {
+    const disclosure = create()
+    const declared = tools.filter(tool => ['lexora_browser_act', 'lexora_image_generate'].includes(tool.name))
+    disclosure.restore([
+      { role: 'system', content: 'Buddy', toolsAdded: declared, timestamp: 0 },
+      { role: 'system', content: '', sections: { run: 'Continue' }, timestamp: 1 },
+      { role: 'system', content: '', toolsRemoved: [{ name: 'lexora_browser_act' }], toolsAdded: [{ ...tools[0]!, name: 'unregistered' }], timestamp: 2 },
+      { role: 'user', content: 'The summary mentioned lexora_buddy_automation', timestamp: 3 },
+    ])
+    expect(disclosure.active(model)).toEqual(['read', TOOL_SEARCH_NAME, 'lexora_image_generate'])
+    expect(disclosure.active(undefined)).toEqual(['read', TOOL_SEARCH_NAME])
+    disclosure.restore([{ role: 'system', content: 'Buddy', timestamp: 0 }])
+    expect(disclosure.active(model)).toEqual(['read', TOOL_SEARCH_NAME])
+  })
 })

@@ -168,7 +168,9 @@ function createAgentSessionDouble(
     sessionManager: manager,
     setModel: vi.fn(),
     setThinkingLevel: vi.fn(),
+    setCacheWarmingMode: vi.fn(),
     settingsManager: {
+      getCacheWarmingMode: () => 'off',
       getCompactionSettings: () => ({ enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 }),
     },
     subscribe: vi.fn(() => () => {}),

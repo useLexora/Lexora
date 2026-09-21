@@ -1,15 +1,16 @@
-import type { Api, AssistantMessage, Context, Model } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessage, Context, JsonObject, Model } from '@earendil-works/pi-ai'
 import type { BuddyInProcessExtension } from '../../BuddyInProcessExtension'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToolAuthorizationService } from '../../../../permissions/ToolAuthorizationService'
 import { createEstimatedContextUsage } from '../../../context/contextUsageBreakdown'
 import { createIsolatedBuddyContextSnapshot as createBuddyContextSnapshot, createIsolatedBuddySession as createBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
+import { createReusableBuddySession } from '../../../sessions/createReusableBuddySession'
 import { createToolPolicyExtension } from '../../toolPolicyExtension'
 import { createToolDiscoveryCapability } from '../toolDiscoveryExtension'
 
@@ -59,7 +60,7 @@ async function fixture() {
   return { root, options, runtime, model }
 }
 
-function response(model: Model<Api>, calls: { name: string, arguments: Record<string, unknown> }[] = []) {
+function response(model: Model<Api>, calls: { name: string, arguments: JsonObject }[] = []) {
   const message: AssistantMessage = {
     api: model.api,
     model: model.id,
@@ -132,7 +133,7 @@ describe('real Pi tool discovery loop', () => {
     }
   })
 
-  it('recomputes disclosure from compacted context and ignores names in the summary', async () => {
+  it('preserves declared tools across compaction and resume after discovery results leave context', async () => {
     const { options, runtime } = await fixture()
     let request = 0
     vi.spyOn(runtime, 'streamSimple').mockImplementation((model) => {
@@ -150,15 +151,19 @@ describe('real Pi tool discovery loop', () => {
       if (entry?.type !== 'compaction')
         throw new Error('Expected committed compaction')
       created.session.agent.state.messages = manager.buildSessionContext().messages
+      expect(created.session.messages.some(message => message.role === 'toolResult')).toBe(false)
+      expect(entry.systemMessage?.toolsAdded?.map(tool => tool.name)).toContain(name)
+      expect(entry.systemMessage?.sections?.buddy_tool_guidelines).toContain('DISCLOSED_SAMPLE_GUIDELINE')
       await created.session.extensionRunner?.emit({ type: 'session_compact', compactionEntry: entry, fromExtension: false, reason: 'manual', willRetry: false })
-      expect(created.session.getActiveToolNames()).not.toContain(name)
+      expect(created.session.getActiveToolNames()).toContain(name)
     }
     finally {
       await created.shutdown('quit')
     }
     const resumed = await createBuddySession({ ...options, piSessionFile: created.piSessionFile })
     try {
-      expect(resumed.session.getActiveToolNames()).not.toContain(name)
+      expect(resumed.session.getActiveToolNames()).toContain(name)
+      expect(getCurrentSystemMessage(resumed.session.messages)?.sections?.buddy_tool_guidelines).toContain('DISCLOSED_SAMPLE_GUIDELINE')
     }
     finally {
       await resumed.shutdown('quit')
@@ -197,7 +202,11 @@ describe('real Pi tool discovery loop', () => {
     const { root, options, runtime } = await fixture()
     const requests: Context[] = []
     vi.spyOn(runtime, 'streamSimple').mockImplementation((model, context) => {
-      requests.push(structuredClone({ ...context, tools: context.tools?.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) }))
+      requests.push(structuredClone({
+        systemPrompt: getCurrentSystemPrompt(context.messages),
+        tools: getCurrentTools(context.messages)?.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        messages: context.messages.filter(message => message.role !== 'system'),
+      }))
       if (requests.length === 1)
         return response(model, [{ name: 'lexora_tool_search', arguments: { toolNames: [name] } }])
       if (requests.length === 2)
@@ -206,13 +215,27 @@ describe('real Pi tool discovery loop', () => {
     })
     const initialPreview = await createBuddyContextSnapshot(options)
     const created = await createBuddySession(options)
+    const reusable = createReusableBuddySession({
+      session: created.session,
+      shutdown: created.shutdown,
+      assertModelAccess: async () => options.model!,
+      runContext: { current: null },
+      inputReferences: { pending: null },
+      materializeInput: async input => input.prompt,
+    })
     try {
       await created.session.prompt('Save the sample')
       expect(requests[0]?.tools?.map(tool => tool.name)).not.toContain(name)
       expect(requests[0]?.systemPrompt).not.toContain('DISCLOSED_SAMPLE_GUIDELINE')
       expect(requests[1]?.tools?.filter(tool => tool.name === name)).toHaveLength(1)
       expect(requests[1]?.systemPrompt).toContain('DISCLOSED_SAMPLE_GUIDELINE')
+      expect(getCurrentSystemPrompt(reusable.getInputContext!().messages)).toBe(requests.at(-1)?.systemPrompt)
+      expect(getCurrentSystemMessage(reusable.getInputContext!().messages)?.sections?.buddy_tool_guidelines).toContain('DISCLOSED_SAMPLE_GUIDELINE')
       expect(await readFile(join(root, 'result.txt'), 'utf8')).toBe('Original tool execution')
+      const recorded = created.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'system' && entry.message.sections?.buddy_tool_guidelines?.includes('DISCLOSED_SAMPLE_GUIDELINE'))
+      expect(recorded).toHaveLength(1)
+      await created.session.prompt('Continue without changing tools')
+      expect(created.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'system' && entry.message.sections?.buddy_tool_guidelines?.includes('DISCLOSED_SAMPLE_GUIDELINE'))).toHaveLength(1)
       const initial = createEstimatedContextUsage({ ...requests[0]!, messages: [] })
       expect(initialPreview).toEqual(initial)
       const resumedPreview = await createBuddyContextSnapshot({ ...options, piSessionFile: created.piSessionFile })
@@ -224,6 +247,7 @@ describe('real Pi tool discovery loop', () => {
     const resumed = await createBuddySession({ ...options, piSessionFile: created.piSessionFile })
     try {
       expect(resumed.session.getActiveToolNames()).toContain(name)
+      expect(getCurrentSystemMessage(resumed.session.messages)?.sections?.buddy_tool_guidelines).toContain('DISCLOSED_SAMPLE_GUIDELINE')
     }
     finally {
       await resumed.shutdown('quit')

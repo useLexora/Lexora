@@ -4,6 +4,7 @@ import { runTokenUsageSchema } from '@buddy-shared/usage/runTokenUsage'
 import { z } from 'zod'
 
 const recordedUsageSchema = runTokenUsageSchema.extend({
+  purpose: z.string().optional(),
   usageRecordId: z.string().min(1),
 }).strip()
 
@@ -16,7 +17,7 @@ export function createChatRunTokenUsageReducer(runId: string): ChatProjectionRed
         if (event.runId !== runId || event.type !== 'usage.recorded')
           continue
         const parsed = recordedUsageSchema.safeParse(event.payload)
-        if (!parsed.success || recordedIds.has(parsed.data.usageRecordId))
+        if (!parsed.success || parsed.data.purpose === 'cache_warm' || recordedIds.has(parsed.data.usageRecordId))
           continue
         const record = parsed.data
         recordedIds.add(record.usageRecordId)

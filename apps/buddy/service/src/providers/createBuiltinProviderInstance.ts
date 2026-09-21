@@ -1,4 +1,4 @@
-import type { Api, AssistantMessageEvent, Context, Model, Provider } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessageEvent, Model, Provider, TranscriptContext } from '@earendil-works/pi-ai'
 import { lazyStream } from '@earendil-works/pi-ai'
 
 interface BuiltinProviderInstanceOptions {
@@ -12,7 +12,7 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
   const { id, name, source } = options
   const toSourceModel = <T extends Api>(model: Model<T>): Model<T> => ({ ...model, provider: source.id })
   const toInstanceModel = (model: Model<Api>): Model<Api> => ({ ...model, provider: id })
-  const toSourceContext = (context: Context): Context => ({
+  const toSourceContext = (context: TranscriptContext): TranscriptContext => ({
     ...context,
     messages: context.messages.map((message) => {
       if (message.role !== 'assistant')

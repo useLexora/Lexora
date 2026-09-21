@@ -5,6 +5,7 @@ import type { RunRepository } from '../storage/runRepository'
 import type { UsageRecord, UsageRepository } from '../storage/usageRepository'
 
 export interface ConversationStatusOptions {
+  getCacheWarmingStatus?: (conversationId: string) => LocalConversationStatus['cacheWarming']
   events: Pick<RunEventReader, 'listForConversation'>
   repository: Pick<RunRepository, 'listForConversation'>
   usage: Pick<UsageRepository, 'listForRun'>
@@ -53,6 +54,7 @@ export class ConversationStatusService {
     const usage = runs.flatMap(run => this.#options.usage.listForRun(run.id))
 
     return {
+      cacheWarming: this.#options.getCacheWarmingStatus?.(conversationId) ?? null,
       activity: {
         compactions: foldCompactions(ordered),
         runs: {
@@ -220,8 +222,7 @@ function foldTiming(
   const messageStarts = new Map<string, number>()
   const firstNameBlock = new Map<string, number>()
   const messageEnds = new Map<string, number>()
-  const openTools = new Map<string, { name: string, at: number }>()
-  const toolDurations: { ms: number, name: string }[] = []
+  const openTools = new Map<string, number>()
   let toolMs = 0
   for (const event of events) {
     const at = Date.parse(event.createdAt)
@@ -238,16 +239,13 @@ function foldTiming(
     else if (event.type === 'tool.started' || event.type === 'tool.preparing') {
       const toolCallId = readString(event.payload, 'toolCallId')
       if (toolCallId)
-        openTools.set(toolCallId, { at, name: readString(event.payload, 'toolName') ?? 'tool' })
+        openTools.set(toolCallId, at)
     }
     else if (event.type === 'tool.completed' || event.type === 'tool.failed' || event.type === 'tool.denied') {
       const toolCallId = readString(event.payload, 'toolCallId')
-      const open = toolCallId ? openTools.get(toolCallId) : null
-      if (open && event.type === 'tool.completed') {
-        const duration = Math.max(0, at - open.at)
-        toolMs += duration
-        toolDurations.push({ ms: duration, name: open.name })
-      }
+      const startedAt = toolCallId ? openTools.get(toolCallId) : undefined
+      if (startedAt !== undefined && event.type === 'tool.completed')
+        toolMs += Math.max(0, at - startedAt)
       if (toolCallId)
         openTools.delete(toolCallId)
     }
@@ -275,13 +273,10 @@ function foldTiming(
     }
   }
   const outputTokens = usage
-    .reduce((sum, record) => sum + (record.purpose === RUN_PURPOSES.chat ? record.outputTokens : 0), 0)
+    .reduce((sum, record) => sum + (record.purpose === 'turn' ? record.outputTokens : 0), 0)
   const wall = foldWall(events)
   return {
     modelMs,
-    slowestTools: toolDurations
-      .sort((left, right) => right.ms - left.ms)
-      .slice(0, NAMED_LIMIT),
     throughput: {
       samples: decodeSamples,
       tokensPerSecond: decodeMs > 0 ? (outputTokens / decodeMs) * 1_000 : 0,

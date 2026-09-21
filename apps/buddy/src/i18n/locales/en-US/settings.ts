@@ -1,6 +1,14 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.settings.category.runtime': 'Runtime',
+  'desktop.settings.categoryDescription.runtime': 'Manage context and model request behavior.',
+  'desktop.settings.runtime.context': 'Context',
+  'desktop.settings.runtime.cacheWarming': 'Cache warming',
+  'desktop.settings.runtime.cacheWarmingDescription': 'Maintain prompt caches during active tasks when the model supports it and the expected benefit covers the cost. Additional usage is included in usage reports. Stops when the task ends.',
+  'desktop.settings.runtime.cacheWarmingOff': 'Off',
+  'desktop.settings.runtime.cacheWarmingStreaming': 'During task execution',
+
   'desktop.settings.category.shortcuts': 'Keyboard shortcuts',
   'desktop.settings.categoryDescription.shortcuts': 'View and customize keyboard shortcuts. Changes apply immediately.',
   'desktop.shortcuts.resetAll': 'Restore defaults',

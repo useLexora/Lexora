@@ -36,8 +36,7 @@ export function excludedDependencyFiles(target) {
   const tuiNative = 'node_modules/@earendil-works/pi-tui/native'
   const sandboxVendor = 'node_modules/@anthropic-ai/sandbox-runtime/vendor'
   return [
-    '!node_modules/@mariozechner/clipboard-darwin-universal/**',
-    ...[OPERATING_SYSTEM.MacOS, OPERATING_SYSTEM.Windows].flatMap(platform => platform !== target.platform
+    ...Object.values(OPERATING_SYSTEM).flatMap(platform => platform !== target.platform
       ? [`!${tuiNative}/${platform}/**`]
       : Object.values(CPU_ARCHITECTURE)
           .filter(architecture => architecture !== target.architecture)

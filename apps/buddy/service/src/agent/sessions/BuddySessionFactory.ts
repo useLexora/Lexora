@@ -1,4 +1,5 @@
 import type { BuddyThinkingLevel } from '../../../../shared/conversation/modelSelection'
+import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { ProviderExecutionModelResolver } from '../../providers/ProviderExecutionModelResolver'
 import type { ConversationRepository } from '../../storage/conversationRepository'
 import type { RunRepository } from '../../storage/runRepository'
@@ -14,6 +15,7 @@ import { createBuddySession } from './createBuddySession'
 import { createReusableBuddySession } from './createReusableBuddySession'
 
 export interface BuddySessionFactoryOptions {
+  bindPreferences?: (apply: (preferences: RuntimePreferences) => void) => Promise<() => void>
   tree: BuddyConversationTree
   events?: ApplicationEvents
   agentDirectory: string
@@ -104,7 +106,9 @@ export class BuddySessionFactory {
       })
     })
     const tree = await this.#options.tree.open(run, blueprint.canonicalRoot, selected.model)
+    let reusable: ReturnType<typeof createReusableBuddySession> | undefined
     const session = await createBuddySession({
+      getInputMessages: () => reusable?.getInputContext?.().messages ?? [],
       sessionManager: tree.manager,
       agentDir: this.#options.agentDirectory,
       approvalPolicy: blueprint.approvalPolicy,
@@ -115,6 +119,7 @@ export class BuddySessionFactory {
       cwd: blueprint.canonicalRoot,
       executionProfile: blueprint.executionProfile,
       getServiceTier: extensions.getServiceTier,
+      getPendingInput: () => extensions.inputReferences.pending,
       inProcessExtensions: extensions.inProcessExtensions,
       model: selected.model,
       modelRuntime: selected.runtime,
@@ -123,45 +128,57 @@ export class BuddySessionFactory {
     })
 
     const inputWorkspace = new AttachmentToolWorkspace(blueprint.scratchRoot)
+    let unsubscribePreferences: (() => void) | undefined
+    reusable = createReusableBuddySession({
+      skillReferences: blueprint.resources.skillReferences,
+      tree,
+      assertModelAccess: async (provider, model, contextWindow, maxTokens) => {
+        return this.#options.models.resolveAvailable({
+          contextWindow,
+          maxTokens,
+          modelId: model,
+          providerId: provider,
+        })
+      },
+      runContext: extensions.runContext,
+      session: session.session,
+      shutdown: (reason) => {
+        unsubscribePreferences?.()
+        return events.scope({ runId: undefined, operationId: undefined, parentOperationId: undefined }).operation('session.close', () => session.shutdown(reason))
+      },
+      inputReferences: extensions.inputReferences,
+      getInputMetadata: ids => this.#options.services.attachmentService.getInputMetadata(ids, blueprint.conversationId),
+      materializeDocuments: input => this.#options.services.attachmentService.materializeDocumentInputs(
+        input.documents ?? [],
+        blueprint.conversationId,
+      ),
+      materializeInput: async (input) => {
+        const resources = await this.#options.services.attachmentService.materializeInputResources(input, blueprint.conversationId, inputWorkspace)
+        return [
+          { text: input.prompt, type: 'text' as const },
+          ...resources ? [{ text: resources, type: 'text' as const }] : [],
+          ...(await this.#options.services.attachmentService.materializePiInputImages(
+            input.images,
+            blueprint.conversationId,
+          )).flatMap((image, index) => [
+            { type: 'text' as const, text: `Native attachment: ${input.images[index]!.attachmentId}` },
+            image,
+          ]),
+        ]
+      },
+    })
+    try {
+      unsubscribePreferences = await this.#options.bindPreferences?.(reusable.applyPreferences)
+    }
+    catch (error) {
+      await reusable.shutdown('quit')
+      throw error
+    }
     return {
       piSessionFile: session.piSessionFile,
       recoveredFromProductHistory: tree.recoveredFromProductHistory,
       recoveryDegradation: tree.recoveryDegradation,
-      session: createReusableBuddySession({
-        skillReferences: blueprint.resources.skillReferences,
-        tree,
-        assertModelAccess: async (provider, model, contextWindow, maxTokens) => {
-          return this.#options.models.resolveAvailable({
-            contextWindow,
-            maxTokens,
-            modelId: model,
-            providerId: provider,
-          })
-        },
-        runContext: extensions.runContext,
-        session: session.session,
-        shutdown: reason => events.scope({ runId: undefined, operationId: undefined, parentOperationId: undefined }).operation('session.close', () => session.shutdown(reason)),
-        inputReferences: extensions.inputReferences,
-        getInputMetadata: ids => this.#options.services.attachmentService.getInputMetadata(ids, blueprint.conversationId),
-        materializeDocuments: input => this.#options.services.attachmentService.materializeDocumentInputs(
-          input.documents ?? [],
-          blueprint.conversationId,
-        ),
-        materializeInput: async (input) => {
-          const resources = await this.#options.services.attachmentService.materializeInputResources(input, blueprint.conversationId, inputWorkspace)
-          return [
-            { text: input.prompt, type: 'text' as const },
-            ...resources ? [{ text: resources, type: 'text' as const }] : [],
-            ...(await this.#options.services.attachmentService.materializePiInputImages(
-              input.images,
-              blueprint.conversationId,
-            )).flatMap((image, index) => [
-              { type: 'text' as const, text: `Native attachment: ${input.images[index]!.attachmentId}` },
-              image,
-            ]),
-          ]
-        },
-      }),
+      session: reusable,
     }
   }
 }

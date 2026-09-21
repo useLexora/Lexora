@@ -3,6 +3,7 @@ import type {
   AgentSession,
   SessionEntry,
 } from '@earendil-works/pi-coding-agent'
+import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { AttachmentFileInput } from '../../attachments/AttachmentDocumentReference'
 import type {
@@ -20,17 +21,17 @@ import {
   sessionEntryToContextMessages,
 } from '@earendil-works/pi-coding-agent'
 import { BUDDY_DEFAULT_THINKING_LEVEL } from '../../../../shared/conversation/modelSelection'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../shared/runtime/runtimePreferences'
 import { applyDocumentInputPayload } from '../../providers/documentInputPayload'
 import { supportsModelFileInput, supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { getModelRequestBytesLimit } from '../../providers/modelInputBudget'
 import { SkillError } from '../../skills/skillFiles'
 import { createBuddyInputReferenceMessage, readBuddyInputReference } from '../context/BuddyInputReference'
-import { buildBuddyRequestContext } from '../context/buildBuddyRequestContext'
 import { createContextUsageBreakdown } from '../context/contextUsageBreakdown'
 import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
 import { projectBuddyInput, projectMessageImages } from '../context/projectBuddyInput'
-import { withNativeAttachmentPrompt } from '../context/withNativeAttachmentPrompt'
 import { toBuddySessionStorageError } from './BuddySessionErrors'
+import { getBuddyCacheWarmingStatus } from './getBuddyCacheWarmingStatus'
 
 export interface CreateReusableBuddySessionOptions {
   skillReferences?: readonly SkillReference[]
@@ -52,8 +53,13 @@ export interface CreateReusableBuddySessionOptions {
 
 export function createReusableBuddySession(
   options: CreateReusableBuddySessionOptions,
-): ReusableBuddySession {
+): ReusableBuddySession & { applyPreferences: (preferences: RuntimePreferences) => void } {
   const { session } = options
+  let preferences = DEFAULT_RUNTIME_PREFERENCES
+  function applyCacheWarming(mode: RuntimePreferences['cacheWarming']) {
+    if (session.settingsManager.getCacheWarmingMode() !== mode)
+      session.setCacheWarmingMode(mode)
+  }
   const convertToLlm = session.agent.convertToLlm
   const streamFunction = session.agent.streamFunction
   let latestContext: Context | null = null
@@ -83,7 +89,7 @@ export function createReusableBuddySession(
       throw new Error('Missing input model')
     const history = prepareBuddyInputHistory(messages).map(message => message.role === 'user' && 'buddyInput' in message ? message : projectMessageImages(message, model))
     let remainingBytes = (getModelRequestBytesLimit(model.api) ?? Number.POSITIVE_INFINITY) - 1024 * 1024
-      - Buffer.byteLength(JSON.stringify(history), 'utf8') - Buffer.byteLength(session.systemPrompt ?? '', 'utf8')
+      - Buffer.byteLength(JSON.stringify(history), 'utf8')
     try {
       for (const message of [...history].reverse()) {
         const reference = readBuddyInputReference(message)
@@ -143,9 +149,15 @@ export function createReusableBuddySession(
       return createInputMaterializationFailure(model)
     if (request && [...request.documents.values()].some(file => !supportsModelFileInput(model, file.mimeType)))
       return createInputMaterializationFailure(model, 'MODEL_INPUT_UNSUPPORTED')
-    const nativeContext = withNativeAttachmentPrompt(context, model, request?.documents.values() ?? [])
-    const requestContext = supportsModelToolCalls(model) ? nativeContext : { ...nativeContext, tools: undefined }
-    latestContext = buildBuddyRequestContext(requestContext, session.getAllTools())
+    const requestContext = supportsModelToolCalls(model)
+      ? context
+      : {
+          ...context,
+          messages: context.messages.map(message => message.role === 'system'
+            ? { ...message, toolsAdded: undefined, toolsRemoved: undefined }
+            : message),
+        }
+    latestContext = requestContext
     return streamFunction(model, requestContext, {
       ...streamOptions,
       onPayload: async (payload, target) => {
@@ -155,6 +167,16 @@ export function createReusableBuddySession(
     })
   }
   return {
+    getCacheWarmingStatus: () => getBuddyCacheWarmingStatus({
+      mode: preferences.cacheWarming,
+      model: session.model,
+      active: !!options.runContext.current && !options.runContext.current.signal.aborted,
+      status: session.cacheWarmingStatus,
+    }),
+    applyPreferences: (next) => {
+      preferences = next
+      applyCacheWarming(options.runContext.current && !options.runContext.current.signal.aborted ? preferences.cacheWarming : 'off')
+    },
     getInputContext: () => {
       const messages = [...session.messages]
       for (const message of messages) {
@@ -163,11 +185,12 @@ export function createReusableBuddySession(
           pendingInputs.delete(input.messageId)
       }
       messages.push(...[...pendingInputs.values()].map(input => createBuddyInputReferenceMessage(input, Date.now())))
-      return { messages, systemPrompt: session.systemPrompt }
+      return { messages }
     },
     steer: (prepare, skills) => enqueueInput('steer', prepare, skills),
     followUp: (prepare, skills) => enqueueInput('followUp', prepare, skills),
     abort: () => {
+      applyCacheWarming('off')
       pendingInputs.clear()
       session.agent.clearSteeringQueue()
       session.agent.clearFollowUpQueue()
@@ -194,6 +217,8 @@ export function createReusableBuddySession(
           async () => {
             await options.tree?.begin(session, input.runId)
             await applyModelSelection(session, options.assertModelAccess, input)
+            input.signal.throwIfAborted()
+            applyCacheWarming(preferences.cacheWarming)
           },
         )
       }
@@ -202,6 +227,7 @@ export function createReusableBuddySession(
         throw error
       }
       return () => {
+        applyCacheWarming('off')
         if (options.runContext.current?.runId === input.runId)
           options.runContext.current = null
       }

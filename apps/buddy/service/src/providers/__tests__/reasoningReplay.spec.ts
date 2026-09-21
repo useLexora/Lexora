@@ -1,4 +1,5 @@
 import type { AssistantMessage, Context, Model } from '@earendil-works/pi-ai'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import { stream } from '@earendil-works/pi-ai/api/openai-completions'
 import { describe, expect, it } from 'vitest'
 
@@ -30,7 +31,7 @@ function assistant(content: AssistantMessage['content']): AssistantMessage {
 
 async function requestMessages(messages: Context['messages'], reasoning = false) {
   let payload: { messages: Array<Record<string, unknown>> } | undefined
-  const result = await stream({ ...model, reasoning }, { messages, tools: [] }, {
+  const result = await stream({ ...model, reasoning }, normalizeContext({ messages, tools: [] }), {
     apiKey: 'fixture-key',
     maxRetries: 0,
     fetch: async (_input, init) => {

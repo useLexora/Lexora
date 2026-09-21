@@ -16,11 +16,6 @@ const namedCountSchema = z.object({
   count: z.number().int().nonnegative(),
 }).strict()
 
-const namedDurationSchema = z.object({
-  name: z.string().min(1),
-  ms: z.number().nonnegative(),
-}).strict()
-
 const tokenTotalsSchema = z.object({
   cacheReadTokens: z.number().int().nonnegative(),
   cacheWriteTokens: z.number().int().nonnegative(),
@@ -32,7 +27,11 @@ const tokenTotalsSchema = z.object({
   totalTokens: z.number().int().nonnegative(),
 }).strict()
 
+export const cacheWarmingStatusSchema = z.enum(['off', 'unsupported', 'idle', 'waiting', 'scheduled', 'refreshing', 'uneconomic', 'unavailable', 'expired', 'stopped'])
+export type LocalCacheWarmingStatus = z.infer<typeof cacheWarmingStatusSchema>
+
 export const conversationStatusSchema = z.object({
+  cacheWarming: cacheWarmingStatusSchema.nullable(),
   activity: z.object({
     turns: z.number().int().nonnegative(),
     runs: z.object({
@@ -58,7 +57,6 @@ export const conversationStatusSchema = z.object({
     modelMs: z.number().nonnegative(),
     wallMs: z.number().nonnegative(),
     toolMs: z.number().nonnegative(),
-    slowestTools: z.array(namedDurationSchema),
     throughput: z.object({
       samples: z.number().int().nonnegative(),
       tokensPerSecond: z.number().nonnegative(),

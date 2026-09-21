@@ -1,5 +1,6 @@
 import type { Context, Model } from '@earendil-works/pi-ai'
 import { Buffer } from 'node:buffer'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import { stream } from '@earendil-works/pi-ai/api/openai-codex-responses'
 import { describe, expect, it } from 'vitest'
 
@@ -32,7 +33,7 @@ describe('patched Pi OpenAI text phase', () => {
       status: 'completed',
       type: 'message',
     }
-    const response = stream(model, context, {
+    const response = stream(model, normalizeContext(context), {
       apiKey: token(),
       fetch: async () => sseResponse([
         { response: { id: 'response-2' }, type: 'response.created' },

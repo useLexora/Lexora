@@ -1,6 +1,7 @@
 import type { Api, Message, Model } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolDisclosurePolicy, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
+import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import MiniSearch from 'minisearch'
 import { isToolSearchResult, TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
@@ -75,6 +76,11 @@ export class ToolDisclosure {
   }
 
   restore(messages: readonly Message[]): void {
+    const current = getCurrentSystemMessage(messages)
+    if (current) {
+      this.#discovered = new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#policies.has(name)))
+      return
+    }
     const discovered = new Set<string>()
     const calls = new Map<string, string>()
     for (const message of messages) {

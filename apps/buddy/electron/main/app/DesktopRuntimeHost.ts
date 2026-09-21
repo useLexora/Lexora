@@ -17,6 +17,7 @@ import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
 import { isLinux } from '../../../shared/platform/identifiers'
+import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
@@ -155,6 +156,7 @@ export class DesktopRuntimeHost {
       },
       bindPeer: (peer) => {
         const disposers = [
+          peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
           registerExtensionAuthoringRpc(peer),
           peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
             const source = contextPanelSourceSchema.parse(params)
@@ -193,7 +195,10 @@ export class DesktopRuntimeHost {
 
   async applyConfig(config: LexoraConfig): Promise<void> {
     await this.#network?.apply(config.proxy)
+    const previous = this.#config?.runtime
     this.#config = config
+    if (previous?.cacheWarming !== config.runtime.cacheWarming)
+      this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
     await Promise.all(this.#features.map(feature => feature.applyConfig(config)))
     if (app.isPackaged && !this.#environment.isSmokeTest)
       await this.#environment.setAutostart(config.desktop.launchAtLogin)

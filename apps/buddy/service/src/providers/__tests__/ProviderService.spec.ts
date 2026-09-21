@@ -60,7 +60,8 @@ describe('providerService', () => {
   it('preserves configured media capabilities independently from native channel transport support', async () => {
     const runtime = new FakeModelRuntime()
     runtime.providers = builtinProviders().filter(provider => ['openai-codex', 'google'].includes(provider.id))
-    runtime.models = runtime.providers.flatMap(provider => provider.getModels()).filter(model => ['gpt-5.5', 'gpt-5.4-mini', 'gemini-2.5-pro'].includes(model.id))
+    runtime.models = runtime.providers.flatMap(provider => provider.getModels()).filter(model => ['gpt-5.5', 'gemini-2.5-pro'].includes(model.id))
+    runtime.models.push({ ...runtime.models.find(model => model.id === 'gpt-5.5')!, id: 'fixture-no-pdf' })
     runtime.credentials = runtime.providers.map(provider => ({ providerId: provider.id, type: provider.id === 'google' ? 'api_key' : 'oauth' } as CredentialInfo))
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     try {
@@ -69,7 +70,7 @@ describe('providerService', () => {
       const codex = (await service.listModels('openai-codex')).find(model => model.id === 'gpt-5.5')!
       expect(codex.capabilities).toContain('pdf')
       expect(codex.contextWindow).toBe(runtime.models.find(model => model.id === 'gpt-5.5')!.contextWindow)
-      expect((await service.listModels('openai-codex')).find(model => model.id === 'gpt-5.4-mini')!.capabilities).not.toContain('pdf')
+      expect((await service.listModels('openai-codex')).find(model => model.id === 'fixture-no-pdf')!.capabilities).not.toContain('pdf')
       expect((await service.listModels('google'))[0]!.capabilities).toEqual(expect.arrayContaining(['image', 'pdf', 'audio', 'video']))
       const overrides = { image: true, audio: true, video: true, reasoningOptions: ['off'] as const }
       await service.setModelCapabilities('openai-codex', 'gpt-5.5', { ...overrides, reasoningOptions: [...overrides.reasoningOptions] })

@@ -2,6 +2,7 @@ import type { LexoraConfigPatch } from './desktopApi'
 import { z } from 'zod'
 import { browserPreferencesSchema } from '../../shared/browser/browserPreferences'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
+import { runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
 import {
   DESKTOP_CHAT_OUTLINE_POSITIONS,
@@ -49,6 +50,7 @@ export const releasePageInputSchema = z.object({
 }).strict()
 
 export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
+  runtime: runtimePreferencesSchema.partial().optional(),
   browser: browserPreferencesSchema.partial().optional(),
   proxy: proxySettingsSchema.optional(),
   desktop: z.object({

@@ -1,3 +1,68 @@
+diff --git a/dist/core/cache-warmer.d.ts b/dist/core/cache-warmer.d.ts
+index bdce629931762b514185bcb034ef5aada0bbbd78..444f9743f456e691dce238636816031307738bf2 100644
+--- a/dist/core/cache-warmer.d.ts
++++ b/dist/core/cache-warmer.d.ts
+@@ -91,6 +91,7 @@ export declare class CacheWarmer {
+     private stop;
+     private schedule;
+     private refresh;
++    private refreshDeadlineMissed;
+     private validateRun;
+     private getModeStopReason;
+     private evaluate;
+diff --git a/dist/core/cache-warmer.js b/dist/core/cache-warmer.js
+index 78eb34bbe48f82f0ce5f0db4ca5c94781d9d9491..e8edc7cdc56ffd3a0859db8e5d6f42854b6a5ccd 100644
+--- a/dist/core/cache-warmer.js
++++ b/dist/core/cache-warmer.js
+@@ -135,7 +135,9 @@ export class CacheWarmer {
+         this.run = {
+             ...request,
+             isCurrent,
++            ttlMs,
+             delayMs,
++            refreshDeadlineAt: 0,
+             startedAt: Date.now(),
+             controller: new AbortController(),
+             phase: "streaming",
+@@ -186,6 +188,7 @@ export class CacheWarmer {
+     schedule(run) {
+         run.extensionOverride = false;
+         run.nextWarmAt = Date.now() + run.delayMs;
++        run.refreshDeadlineAt = run.nextWarmAt + Math.floor((run.ttlMs - run.delayMs) / 2);
+         const deadline = run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_AGE_MS : MAX_WARMING_AGE_MS);
+         if (run.nextWarmAt > deadline || Date.now() >= deadline) {
+             this.stop(run.phase === "idle" ? "30-minute idle safety limit reached" : "one-hour safety limit reached");
+@@ -196,7 +199,7 @@ export class CacheWarmer {
+     }
+     async refresh(run) {
+         run.timer = undefined;
+-        if (!this.validateRun(run))
++        if (!this.validateRun(run) || this.refreshDeadlineMissed(run))
+             return;
+         const decision = this.evaluate(run);
+         const { warmCost, missCost, continuationProbability } = decision;
+@@ -213,7 +216,7 @@ export class CacheWarmer {
+         catch {
+             // Extension failures fall back to pi's own decision.
+         }
+-        if (!this.validateRun(run))
++        if (!this.validateRun(run) || this.refreshDeadlineMissed(run))
+             return;
+         const extensionOverride = action !== decision.action;
+         if (action === "stop") {
+@@ -248,6 +251,12 @@ export class CacheWarmer {
+         if (this.run === run)
+             this.schedule(run);
+     }
++    refreshDeadlineMissed(run) {
++        if (Date.now() <= run.refreshDeadlineAt)
++            return false;
++        this.stop("cache refresh deadline missed");
++        return true;
++    }
+     validateRun(run) {
+         if (this.run !== run)
+             return false;
 diff --git a/dist/core/tools/find-execution.js b/dist/core/tools/find-execution.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b6742421290949

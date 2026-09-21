@@ -284,6 +284,19 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     event: AgentSessionEvent,
     sourceMessageId: string | undefined,
   ): Promise<void> {
+    if (event.type === 'entry_appended' && event.entry.type === 'usage' && event.entry.kind === 'cache_warm') {
+      const { entry } = event
+      await this.#eventWriter.drain()
+      await this.#recordUsageWithDegradation('cache_warm', () => this.#usage.record({
+        createdAt: entry.timestamp,
+        model: entry.model,
+        provider: entry.provider,
+        purpose: 'cache_warm',
+        runId: this.#runId,
+        sourceEntryId: entry.id,
+        usage: entry.usage,
+      }))
+    }
     if (event.type === 'message_end' && sourceMessageId) {
       const message = event.message
       const purpose = message.role === 'assistant'

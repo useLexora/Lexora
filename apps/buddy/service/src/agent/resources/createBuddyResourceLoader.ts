@@ -1,6 +1,7 @@
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BoundedContextFile } from './loadBoundedContextFiles'
 import process from 'node:process'
@@ -12,9 +13,11 @@ import {
 import { SHELL_SANDBOX_EXTENSION } from '../../sandbox/shellCapability'
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
+import { createSystemSectionsExtension } from '../extensions/systemSectionsExtension'
 import { createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
+  getPendingInput?: () => BuddyInputReferenceV1 | null
   approvedSkillPaths: readonly string[]
   agentDir: string
   approvalPolicy: BuddyApprovalPolicy
@@ -29,6 +32,7 @@ export interface CreateBuddyResourceLoaderOptions {
 
 export function createBuddySettingsManager(): SettingsManager {
   return PiSettingsManager.inMemory({
+    cacheWarming: 'off',
     enableAnalytics: false,
     enableInstallTelemetry: false,
     extensions: [],
@@ -58,7 +62,7 @@ export async function createBuddyResourceLoader(
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
     appendSystemPromptOverride: () => [],
     cwd: options.cwd,
-    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions],
+    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput)],
     noContextFiles: true,
     noExtensions: true,
     noPromptTemplates: true,

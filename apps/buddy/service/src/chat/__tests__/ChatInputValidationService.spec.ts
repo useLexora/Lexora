@@ -2,9 +2,11 @@ import type { AgentSession } from '@earendil-works/pi-coding-agent'
 import type { InputModel } from '../../providers/modelCapabilities'
 import type { AttachmentRecord } from '../../storage/attachmentRepository'
 import type { ChatInputValidationInput } from '../ChatInputValidationService'
+import { getCurrentSystemPrompt } from '@earendil-works/pi-ai'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it } from 'vitest'
 import { createBuddyInputReference, createBuddyInputReferenceMessage } from '../../agent/context/BuddyInputReference'
+import { createReusableBuddySession } from '../../agent/sessions/createReusableBuddySession'
 import { ChatInputValidationService } from '../ChatInputValidationService'
 
 describe('chat input validation', () => {
@@ -48,6 +50,19 @@ describe('chat input validation', () => {
     await expect(fixture.service.validate(input())).resolves.toBeUndefined()
   })
 
+  it('counts transcript system content once in both live and restored branches', async () => {
+    const fixture = createFixture()
+    const system = { role: 'system' as const, content: 's'.repeat(10_000), timestamp: 1 }
+    const user = { role: 'user' as const, content: 'u'.repeat(18_936_000), timestamp: 2 }
+    fixture.history.appendMessage(system)
+    fixture.history.appendMessage(user)
+    await expect(fixture.service.validate(input())).resolves.toBeUndefined()
+    fixture.active.messages = [system, user]
+    await expect(fixture.service.validate(input())).resolves.toBeUndefined()
+    fixture.active.messages = [system, { ...user, content: `${user.content}${'x'.repeat(20_000)}` }]
+    await expect(fixture.service.validate(input())).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
+  })
+
   it('includes active input and pending steering when checking another input', async () => {
     const fixture = createFixture()
     const audio = fixture.attach('audio/wav', 8 * 1024 * 1024)
@@ -80,7 +95,21 @@ function createFixture(overrides: Partial<InputModel> = {}) {
     models: { resolveAvailable: async () => model },
     attachments: { getInputMetadata: ids => ids.map(id => records.get(id)!) },
     paths: { conversationWorkspace: () => '/fixture' },
-    sessions: { getReady: () => active.messages ? { getInputContext: () => ({ messages: active.messages! }) } as never : null },
+    sessions: { getReady: () => active.messages
+      ? createReusableBuddySession({
+          session: {
+            model,
+            messages: active.messages,
+            systemPrompt: getCurrentSystemPrompt(active.messages),
+            agent: { convertToLlm: async messages => messages },
+          } as AgentSession,
+          assertModelAccess: async () => model,
+          inputReferences: { pending: null },
+          runContext: { current: null },
+          materializeInput: async value => value.prompt,
+          shutdown: async () => {},
+        })
+      : null },
     tree: { preview: async () => history, snapshot: async () => null },
     recovery: { create: async () => ({ messages: [], recoveredImageCount: 0, missingAttachmentIds: [] }) },
     runs: { findById: () => null, findLatestForBranch: () => null },

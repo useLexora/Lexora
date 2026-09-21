@@ -8,6 +8,7 @@ import type {
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BuddySessionResources } from '../resources/BuddySessionResources'
 import type { BoundedContextDiagnostic } from '../resources/loadBoundedContextFiles'
@@ -38,10 +39,13 @@ import {
 import {
   BuddySessionCreationError,
 } from './BuddySessionErrors'
+import { installBuddySystemSections } from './installBuddySystemSections'
 
 const sessionIdentityPattern = /^[A-Z0-9][\w-]{0,127}$/i
 
 export interface CreateBuddySessionOptions {
+  getInputMessages?: () => AgentSession['messages']
+  getPendingInput?: () => BuddyInputReferenceV1 | null
   sessionManager: SessionManager
   agentDir: string
   approvalPolicy: BuddyApprovalPolicy
@@ -154,7 +158,7 @@ export async function createBuddyContextSnapshot(
         : []
     })
     return createEstimatedContextUsage(buildBuddyRequestContext({
-      messages: convertToLlm(prepareBuddyInputHistory(result.session.messages)),
+      messages: convertToLlm(prepareBuddyInputHistory(result.session.messages)).filter(message => message.role !== 'system'),
       systemPrompt: result.session.systemPrompt,
       tools,
     }, result.session.getAllTools()))
@@ -215,6 +219,7 @@ async function createConfiguredBuddySession(
   const context = options.resources.context
   const settingsManager = createBuddySettingsManager()
   const resourceLoader = await createBuddyResourceLoader({
+    getPendingInput: options.getPendingInput,
     approvedSkillPaths: [...options.resources.approvedSkillPaths],
     agentDir: runtime.agentDir,
     approvalPolicy: options.approvalPolicy,
@@ -250,12 +255,7 @@ async function createConfiguredBuddySession(
     throw error
   }
   const previousPayloadTransform = result.session.agent.onPayload
-  const stream = result.session.agent.streamFunction
-  result.session.agent.streamFunction = (model, context, streamOptions) => stream(
-    model,
-    buildBuddyRequestContext(context, result.session.getAllTools()),
-    streamOptions,
-  )
+  installBuddySystemSections(result.session, options.getInputMessages)
   result.session.agent.onPayload = async (payload, model) => {
     const previousPayload = await previousPayloadTransform?.(payload, model)
     return applyBuddyOpenAiRequestOptions(

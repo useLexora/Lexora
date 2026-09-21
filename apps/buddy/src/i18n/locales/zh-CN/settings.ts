@@ -1,4 +1,12 @@
 export default {
+  'desktop.settings.category.runtime': '运行时',
+  'desktop.settings.categoryDescription.runtime': '管理上下文与模型调用策略。',
+  'desktop.settings.runtime.context': '上下文',
+  'desktop.settings.runtime.cacheWarming': '缓存预热',
+  'desktop.settings.runtime.cacheWarmingDescription': '任务执行期间按需维护模型的提示词缓存，仅在支持的模型上且预计有收益时执行。会产生额外用量，计入使用情况；任务结束后停止。',
+  'desktop.settings.runtime.cacheWarmingOff': '关闭',
+  'desktop.settings.runtime.cacheWarmingStreaming': '任务执行期间',
+
   'desktop.settings.category.shortcuts': '快捷键',
   'desktop.settings.categoryDescription.shortcuts': '查看和修改快捷键，设置立即生效。',
   'desktop.shortcuts.resetAll': '恢复默认',

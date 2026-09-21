@@ -7,7 +7,7 @@ import { Buffer } from 'node:buffer'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/compat'
 import { estimateTokens, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
@@ -49,6 +49,18 @@ afterEach(async () => {
 })
 
 describe('composer input at the Buddy session boundary', () => {
+  it('omits tool declarations and guidelines for models without tool calling across turns', async () => {
+    const fixture = await createFixture({ toolCall: false })
+    await fixture.send({ ...plan('plain'), text: 'First turn', images: [] })
+    await fixture.send({ ...plan('follow'), text: 'Next turn', images: [] })
+    expect(fixture.contexts).toHaveLength(2)
+    for (const context of fixture.contexts) {
+      expect(context.tools).toEqual([])
+      expect(context.systemPrompt).not.toContain(OUTPUT_GUIDELINE)
+      expect(context.systemPrompt).toContain(DIRECTORY_CONTEXT)
+    }
+  })
+
   it.each(['openai', 'anthropic', 'openai-codex'] as const)('materializes native %s PDFs after payload hooks and restores refs without persisting bytes', async (provider) => {
     const payloads: unknown[] = []
     const capture: Stream = (model, context, options) => streamSimple(model, context, {
@@ -75,7 +87,7 @@ describe('composer input at the Buddy session boundary', () => {
     expect(persisted).toContain('application/pdf')
     expect(persisted).not.toContain(bytes.toString('base64'))
     expect(persisted).not.toContain('buddy-pdf:')
-    expect(persisted).not.toContain('Attachment resources:')
+    expect(persisted).toContain('Attachment resources:')
     await fixture.shutdown('quit')
     const restored = await createFixture({ root: fixture.root, piSessionFile: fixture.piSessionFile, provider, stream: capture })
     await restored.send({ ...plan('pdf-followup'), images: [], text: 'Summarize the same PDF again.' })
@@ -202,6 +214,32 @@ describe('composer input at the Buddy session boundary', () => {
     expect(userMessages(fixture.contexts[1])[0]?.content).toEqual(materializedContent(fixture))
     expect(referenceEntries(fixture)).toHaveLength(1)
     expect(fixture.session.messages.at(-1)).toMatchObject({ role: 'assistant', stopReason: 'stop' })
+    await expectSafePersistence(fixture)
+  })
+
+  it.each(['steer', 'followUp'] as const)('records attachment guidance when the first attachment arrives through %s', async (mode) => {
+    const started = Promise.withResolvers<void>()
+    const first = createAssistantMessageEventStream()
+    let calls = 0
+    const fixture = await createFixture({
+      stream: (model) => {
+        if (++calls > 1)
+          return terminalStream(model)
+        started.resolve()
+        return first
+      },
+    })
+    const sending = fixture.send({ ...plan('plain-first'), text: 'Start with text', images: [] })
+    await started.promise
+    expect(fixture.reusable[mode]?.(() => toBuddyInputReference(plan('queued-image')))).toBe(true)
+    const message = await terminalStream(fixture.session.model!).result()
+    first.push({ type: 'done', reason: 'stop', message })
+    await sending
+    expect(fixture.contexts).toHaveLength(2)
+    expect(fixture.contexts[0]?.systemPrompt).not.toContain('Attachment resources:')
+    expect(fixture.contexts[1]?.systemPrompt).toContain('Attachment resources:')
+    const entries = fixture.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'system' && entry.message.sections?.buddy_attachment_resources)
+    expect(entries).toHaveLength(1)
     await expectSafePersistence(fixture)
   })
 
@@ -469,6 +507,7 @@ async function createFixture(options: {
   provider?: 'openai' | 'anthropic' | 'openai-codex'
   approvalDecision?: 'denied' | 'approved_once'
   contextWindow?: number
+  toolCall?: boolean
   stream?: Stream
 } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), 'buddy-composer-s0-'))
@@ -494,7 +533,7 @@ async function createFixture(options: {
   const catalogModel = modelRuntime.getModel(provider, provider === 'openai' ? 'gpt-4o-mini' : provider === 'openai-codex' ? 'gpt-5.5' : 'claude-sonnet-4-5')
   if (!catalogModel)
     throw new Error('Missing installed model fixture')
-  const model = { ...catalogModel, pdfInput: true, contextWindow: options.contextWindow ?? catalogModel.contextWindow }
+  const model = { ...catalogModel, pdfInput: true, toolCall: options.toolCall, contextWindow: options.contextWindow ?? catalogModel.contextWindow }
   const runContext: BuddyExtensionRunContextStore = { current: null }
   const images = new Map([
     ['snapshot-red', png([255, 0, 0, 255])],
@@ -515,12 +554,14 @@ async function createFixture(options: {
         lifecycle.push('input')
       })
       pi.on('before_provider_request', event => ({ ...new Object(event.payload), metadata: { offline_probe: 'preserved' } }))
-      pi.on('before_agent_start', event => ({
-        systemPrompt: `${event.systemPrompt}\nCurrent offline run: ${runContext.current?.runId}`,
-      }))
+      pi.on('before_agent_start', (event) => {
+        event.systemPromptOptions.sections.offline_run = `Current offline run: ${runContext.current?.runId}`
+      })
     },
   }
+  let reusable: ReturnType<typeof createReusableBuddySession> | undefined
   const created = await createBuddySession({
+    getInputMessages: () => reusable?.getInputContext?.().messages ?? [],
     agentDir: join(root, 'agent'),
     approvalPolicy: 'policy',
     branchId: 'branch-1',
@@ -530,6 +571,7 @@ async function createFixture(options: {
     cwd: root,
     executionProfile: 'workspace_write',
     getServiceTier: () => runContext.current?.serviceTier ?? null,
+    getPendingInput: () => inputReferences.pending,
     inProcessExtensions: [
       ...options.approvalDecision
         ? [createToolPolicyExtension({
@@ -601,11 +643,15 @@ async function createFixture(options: {
         stopReason: 'error',
       })
     }
-    contexts.push({ ...context, messages: structuredClone(context.messages) })
+    contexts.push(structuredClone({
+      systemPrompt: getCurrentSystemPrompt(context.messages),
+      tools: getCurrentTools(context.messages),
+      messages: context.messages.filter(message => message.role !== 'system'),
+    }))
     lifecycle.push('provider')
     return options.stream?.(requestModel, context, streamOptions) ?? terminalStream(requestModel)
   }
-  const reusable = createReusableBuddySession({
+  reusable = createReusableBuddySession({
     assertModelAccess: async () => model,
     inputReferences,
     materializeDocuments: async input => Promise.all((input.documents ?? []).map(async reference => ({
@@ -640,7 +686,7 @@ async function createFixture(options: {
         throw new Error('MESSAGE_SNAPSHOT_MISMATCH')
       return false
     }
-    const release = await reusable.activateTurn({
+    const release = await reusable!.activateTurn({
       contextWindow: null,
       flushProjectedEvents: async () => {},
       maxTokens: null,
@@ -653,7 +699,7 @@ async function createFixture(options: {
       signal: new AbortController().signal,
     })
     try {
-      await reusable.prompt(input.text, {
+      await reusable!.prompt(input.text, {
         expandPromptTemplates: false,
         images: referenceImages(input),
         inputReference: reference,

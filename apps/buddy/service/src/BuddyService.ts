@@ -24,6 +24,7 @@ import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
 import { BuddyRunExecutionPlanner } from './agent/execution/BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from './agent/execution/BuddyTurnLauncher'
 import { PiTurnExecutor } from './agent/execution/PiTurnExecutor'
+import { bindRuntimePreferences } from './agent/sessions/bindRuntimePreferences'
 import { BuddySessionBlueprintService } from './agent/sessions/BuddySessionBlueprintService'
 import { BuddySessionFactory } from './agent/sessions/BuddySessionFactory'
 import { BuddySessionRegistry } from './agent/sessions/BuddySessionRegistry'
@@ -79,8 +80,8 @@ import { AttentionNotificationService } from './notifications/AttentionNotificat
 import { registerNotificationRpc } from './notifications/registerNotificationRpc'
 import { createProviderService } from './providers/createProviderService'
 import { registerProviderRpc } from './providers/registerProviderRpc'
-import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 
+import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { BuddyServiceError } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunLifecycleService } from './runs/RunLifecycleService'
@@ -431,6 +432,7 @@ export async function startBuddyService(
     const conversationTree = new BuddyConversationTree({ conversationsDirectory: paths.conversationsDirectory, conversations, repository: createConversationTreeRepository(options.database), runs, recovery: sessionRecovery })
     const sessionFactory = await host.start('runtime.session_factory', () => {
       const service = new BuddySessionFactory({
+        bindPreferences: apply => bindRuntimePreferences(options.rpc, apply),
         tree: conversationTree,
         events,
         agentDirectory,
@@ -617,6 +619,10 @@ export async function startBuddyService(
       )
       register(
         registerRunRpc({
+          getCacheWarmingStatus: (conversationId) => {
+            const branchId = conversations.findById(conversationId)?.activeBranchId
+            return branchId ? sessions.getReady(conversationId, branchId)?.getCacheWarmingStatus?.() ?? null : null
+          },
           eventLog: options.eventLog,
           inputs: runInputs,
           repository: runs,

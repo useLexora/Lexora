@@ -1,6 +1,7 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession } from '@earendil-works/pi-coding-agent'
 import type { InputModel } from '../../../providers/modelCapabilities'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/api/google-generative-ai'
 import { describe, expect, it } from 'vitest'
 import { createReusableBuddySession } from '../../sessions/createReusableBuddySession'
@@ -39,7 +40,7 @@ describe('oversized input recovery', () => {
     })
     const request = async (messages: AgentSession['messages']) => {
       const converted = await session.agent.convertToLlm(messages)
-      return (await session.agent.streamFunction(model, { messages: converted })).result()
+      return (await session.agent.streamFunction(model, normalizeContext({ messages: converted }))).result()
     }
     const first = reference('first')
     const second = reference('second')
@@ -53,6 +54,35 @@ describe('oversized input recovery', () => {
     const resumed = captured[1] as { contents: Array<{ parts: Array<{ inlineData?: unknown }> }> }
     expect(resumed.contents.flatMap(message => message.parts).filter(part => part.inlineData)).toHaveLength(1)
     expect(readBuddyInputReference(second)?.documents).toHaveLength(1)
+  })
+
+  it('preserves an attachment that fits beside a transcript system message', async () => {
+    const model: InputModel = { api: 'google-generative-ai', baseUrl: 'https://example.test', provider: 'fixture', id: 'gemini-2.5-pro', name: 'Fixture', contextWindow: 1_000_000, maxTokens: 8192, input: ['text', 'image'], reasoning: false, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+    const system = { role: 'system' as const, content: 's'.repeat(10_000), timestamp: 1 }
+    const session = {
+      model,
+      systemPrompt: system.content,
+      agent: { convertToLlm: async (messages: AgentSession['messages']) => messages },
+    } as AgentSession
+    const projected: string[][] = []
+    createReusableBuddySession({
+      session,
+      assertModelAccess: async () => model,
+      inputReferences: { pending: null },
+      runContext: { current: null },
+      shutdown: async () => {},
+      getInputMetadata: () => [{ id: 'image-1', sizeBytes: 1_000 }],
+      materializeInput: async (input) => {
+        projected.push(input.images.map(image => image.attachmentId))
+        return input.prompt
+      },
+    })
+    const input = createBuddyInputReferenceMessage(createBuddyInputReference({ messageId: 'input', prompt: 'Inspect', images: [{ attachmentId: 'image-1', mimeType: 'image/png' }] }), 3)
+    const user = { role: 'user' as const, content: 'u'.repeat(18_935_000), timestamp: 2 }
+    await session.agent.convertToLlm([system, user, input])
+    expect(projected).toEqual([['image-1']])
+    await session.agent.convertToLlm([system, { ...user, content: `${user.content}${'x'.repeat(20_000)}` }, input])
+    expect(projected).toEqual([['image-1'], []])
   })
 
   it('retains attachments that were delivered before a later local failure', () => {
