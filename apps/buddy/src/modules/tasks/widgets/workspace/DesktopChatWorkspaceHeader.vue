@@ -69,6 +69,7 @@ const { t } = useBuddyI18n(() => props.language)
   min-width: 0;
   flex: 1;
   gap: 0.05rem;
+  user-select: none;
 
   strong {
     overflow: hidden;

@@ -4,19 +4,20 @@ import type { DropPosition, ResourceRef, WorkbenchView } from '../common/workben
 import type { WorkbenchController } from '../services/WorkbenchController'
 import type { WorkingCopyService } from '../services/WorkingCopyService'
 import { formatKeybinding, matchesKeybinding } from '@buddy-shared/shortcuts/keybinding'
-import { defaultPreset, Feedback, PointerActivationConstraints } from '@dnd-kit/dom'
+import { PointerActivationConstraints } from '@dnd-kit/dom'
 import { DragDropProvider, DragOverlay, KeyboardSensor, PointerSensor } from '@dnd-kit/vue'
 import { NInput, NModal } from 'naive-ui'
 import { computed, onMounted, onScopeDispose, provide, shallowRef, triggerRef } from 'vue'
 import { workbenchLabels } from '../common/workbenchLabels'
 import { useWorkbenchResize } from './useWorkbenchResize'
 import { workbenchKey } from './workbenchContext'
+import { createWorkbenchDragPlugins } from './workbenchDragPlugins'
 import WorkbenchViewBoundary from './WorkbenchViewBoundary.vue'
 
 const props = defineProps<{ controller: WorkbenchController, copies: WorkingCopyService, language: string, backupError: boolean, active: boolean, keybindings: Readonly<Record<string, readonly string[]>>, platform: string }>()
 const emit = defineEmits<{ retryBackup: [], dropResource: [resource: ResourceRef, paneId: string, position: DropPosition] }>()
 defineSlots<{ default: () => unknown, view: (props: { view: WorkbenchView, visible: boolean }) => unknown }>()
-const plugins = defaultPreset.plugins.map(plugin => plugin === Feedback ? Feedback.configure({ dropAnimation: null }) : plugin)
+const plugins = createWorkbenchDragPlugins()
 const sensors = [PointerSensor.configure({ activationConstraints: () => [new PointerActivationConstraints.Distance({ value: 6 })] }), KeyboardSensor]
 const resize = useWorkbenchResize(props.controller)
 const layout = shallowRef(props.controller.layout)
@@ -171,5 +172,8 @@ provide(workbenchKey, { resize, controller: props.controller, copies: props.copi
 .workbench__commands button:hover, .workbench__commands button:focus-visible { background: var(--buddy-state-hover); }
 .workbench__resize-shield { position: fixed; inset: 0; z-index: 9999; cursor: var(--workbench-resize-cursor); }
 .workbench.is-resizing { user-select: none; }
+.workbench.is-dragging { user-select: none; }
+.workbench.is-dragging .workbench__view { pointer-events: none; }
+:global(body:has(.workbench.is-dragging)) { user-select: none !important; }
 :global(body:has(.workbench.is-dragging) webview) { pointer-events: none !important; }
 </style>

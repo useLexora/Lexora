@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import type { Component, PropType } from 'vue'
 import type { WorkbenchView } from '../../common/workbench'
+import { AutoScroller, Feedback } from '@dnd-kit/dom'
 import { expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, onUnmounted } from 'vue'
 import { ContributionRegistry } from '../../services/ContributionRegistry'
 import { WorkbenchController } from '../../services/WorkbenchController'
 import { WorkingCopyService } from '../../services/WorkingCopyService'
 import { useWorkbench } from '../workbenchContext'
+import { createWorkbenchDragPlugins } from '../workbenchDragPlugins'
 import WorkbenchHost from '../WorkbenchHost.vue'
 import WorkbenchLayoutNode from '../WorkbenchLayoutNode.vue'
 
@@ -87,4 +89,15 @@ it('keeps a contributed view instance alive across splits, moves and missing con
     element.remove()
   }
   expect(disposed).toBe(created)
+})
+
+it('configures workbench drag plugins without AutoScroller to avoid scrolling conversation pages during drag', () => {
+  const plugins = createWorkbenchDragPlugins()
+  const pluginInstances = plugins.map(p => typeof p === 'object' && p !== null && 'plugin' in p ? (p as { plugin: unknown }).plugin : p)
+
+  expect(pluginInstances).not.toContain(AutoScroller)
+  expect(pluginInstances.some(p => typeof p === 'function' && p.name.includes('AutoScroller'))).toBe(false)
+  const feedbackPlugin = plugins.find(p => typeof p === 'object' && p !== null && 'plugin' in p && (p as { plugin: unknown }).plugin === Feedback) as { options: { dropAnimation: null } } | undefined
+  expect(feedbackPlugin).toBeDefined()
+  expect(feedbackPlugin?.options.dropAnimation).toBeNull()
 })
