@@ -1,6 +1,6 @@
 import type { ComposerResourceService } from '../attachments/ComposerResourceService'
 import type { ConversationRepository } from '../storage/conversationRepository'
-import { isRetiredBuddyPromptCommand, parseBuddyChatCommand } from '../../../shared/conversation/buddyChatCommands'
+import { getBuddyChatCommandDefinition, isRetiredBuddyPromptCommand, parseBuddyChatCommand } from '../../../shared/conversation/buddyChatCommands'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 
 export async function normalizeComposerWorkspace(value: unknown, options: {
@@ -42,7 +42,7 @@ export async function normalizeComposerWorkspace(value: unknown, options: {
         const command = parseBuddyChatCommand(value)
         if (!command || command.arguments)
           throw new BuddyServiceError('VALIDATION_FAILED')
-        return { type: 'chatPromptDirective', attrs: { directive: 'slash_command', commandMode: command.name === 'review' ? 'prompt' : 'action', value } }
+        return { type: 'chatPromptDirective', attrs: { directive: 'slash_command', commandMode: getBuddyChatCommandDefinition(command.name).kind, value } }
       }
       return Array.isArray(node.content) ? { ...node, content: await Promise.all(node.content.map(normalize)) } : node
     }

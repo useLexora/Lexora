@@ -1,3 +1,4 @@
+import type { LocalConversationStatus } from '@buddy-shared/runs/conversationStatusApi'
 import type { LocalArtifactText } from '../../shared/artifacts/artifactApi'
 import type { LocalAutomation, LocalAutomationCreateRequest, LocalAutomationListRequest, LocalAutomationMutationRequest, LocalAutomationOccurrenceListRequest, LocalAutomationOccurrencePage, LocalAutomationPage, LocalAutomationPreviewRequest, LocalAutomationPreviewResult, LocalAutomationRunNowResult, LocalAutomationUpdateRequest } from '../../shared/automation/automationApi'
 import type { ChangeOverviewRequest, LocalChangeOverview, LocalChangeSetDetail } from '../../shared/changes/changeApi'
@@ -167,6 +168,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   runsGet: 'lexora:buddy:runs:get',
   runsList: 'lexora:buddy:runs:list',
   runsListEvents: 'lexora:buddy:runs:list-events',
+  runsStatus: 'lexora:buddy:runs:status',
   runtimeRestart: 'lexora:buddy:runtime:restart',
   runtimeStateChanged: 'lexora:buddy:runtime:state-changed',
   runtimeStatus: 'lexora:buddy:runtime:status',
@@ -414,6 +416,7 @@ export interface LocalChatApi {
       conversationId: string
       limit?: number
     }) => Promise<ReadonlyArray<LocalRunEvent>>
+    status: (input: { conversationId: string }) => Promise<LocalConversationStatus>
   }
   approvals: {
     list: (input?: {

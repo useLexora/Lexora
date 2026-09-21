@@ -46,6 +46,7 @@ import { isAbsolute, join } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import {
   isBuddyReviewCommand,
+  isBuddyRunChatCommand,
   isRetiredBuddyPromptCommand,
   parseBuddyChatCommand,
 } from '../../../shared/conversation/buddyChatCommands'
@@ -670,7 +671,7 @@ async function materializeComposerDirectives(
 ) {
   const directives = content.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
   const textCommand = parseBuddyChatCommand(buddyUserContentToText(content))
-  if (textCommand?.name === 'compact')
+  if (textCommand && isBuddyRunChatCommand(textCommand.name))
     throw new BuddyServiceError('VALIDATION_FAILED')
   const hasReviewDirective = directives.some(node => node.directive === 'slash_command' && isBuddyReviewCommand(node.value))
   const reviewsAsText = textCommand?.name === 'review' && !hasReviewDirective

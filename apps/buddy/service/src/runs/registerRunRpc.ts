@@ -3,9 +3,12 @@ import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
+import type { UsageRepository } from '../storage/usageRepository'
+import { runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
+import { ConversationStatusService } from './ConversationStatusService'
 import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
@@ -15,6 +18,7 @@ export interface RegisterRunRpcOptions {
     RunRepository,
     'findById' | 'listForConversation' | 'listRecent'
   >
+  usage: Pick<UsageRepository, 'listForRun'>
   rpc: RuntimeRequestRegistrar
 }
 
@@ -23,7 +27,13 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
     run,
     options.inputs.findByRunId(run.id)?.reasoning ?? null,
   )
+  const status = new ConversationStatusService({
+    events: options.eventLog,
+    repository: options.repository,
+    usage: options.usage,
+  })
   const disposers = [
+    registerRuntimeRequest(options.rpc, runsStatusRpc.status, input => status.status(input.conversationId)),
     registerRuntimeRequest(options.rpc, runsRpc.list, (input) => {
       const records = input.conversationId
         ? options.repository.listForConversation(input.conversationId, input.limit ?? 100)

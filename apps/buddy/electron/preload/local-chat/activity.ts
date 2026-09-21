@@ -26,6 +26,7 @@ export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notificat
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsList, input ?? {}),
       get: runId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsGet, { runId }),
       listEvents: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsListEvents, input),
+      status: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsStatus, { ...input }),
     }),
     approvals: Object.freeze({
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsList, input ?? {}),

@@ -1,53 +1,71 @@
-export type BuddyChatCommandName = 'compact' | 'review' | 'skills'
+export type BuddyChatCommandName = 'compact' | 'review' | 'skills' | 'status'
 export type BuddyChatCommandDescriptionKey = `desktop.chat.command.${BuddyChatCommandName}`
 
-export interface BuddyChatCommandDefinition {
+export type BuddyChatCommandDefinition = {
   argumentHint: string | null
   descriptionKey: BuddyChatCommandDescriptionKey
   name: BuddyChatCommandName
-}
+} & (
+  | { kind: 'prompt' }
+  | { kind: 'action', action: 'run' | 'view' | 'input' }
+)
 
 export interface ParsedBuddyChatCommand {
   arguments: string
   name: BuddyChatCommandName
 }
 
-export const BUDDY_CHAT_COMMANDS: ReadonlyArray<BuddyChatCommandDefinition> = [
-  {
+const commandsByName: Readonly<Record<BuddyChatCommandName, BuddyChatCommandDefinition>> = {
+  compact: {
+    kind: 'action',
+    action: 'run',
     argumentHint: 'focus',
     descriptionKey: 'desktop.chat.command.compact',
     name: 'compact',
   },
-  {
+  review: {
+    kind: 'prompt',
     argumentHint: 'focus',
     descriptionKey: 'desktop.chat.command.review',
     name: 'review',
   },
-  {
+  skills: {
+    kind: 'action',
+    action: 'input',
     argumentHint: null,
     descriptionKey: 'desktop.chat.command.skills',
     name: 'skills',
   },
-]
+  status: {
+    kind: 'action',
+    action: 'view',
+    argumentHint: null,
+    descriptionKey: 'desktop.chat.command.status',
+    name: 'status',
+  },
+}
 
-export const BUDDY_RUN_CHAT_COMMANDS: ReadonlyArray<BuddyChatCommandName> = ['compact']
+export const BUDDY_CHAT_COMMANDS: ReadonlyArray<BuddyChatCommandDefinition> = Object.values(commandsByName)
 
 const RETIRED_BUDDY_PROMPT_COMMANDS: readonly string[] = ['plan', 'status', 'skills']
 
-const commandsByName = new Map(BUDDY_CHAT_COMMANDS.map(command => [command.name, command]))
+export function getBuddyChatCommandDefinition(name: BuddyChatCommandName): BuddyChatCommandDefinition {
+  return commandsByName[name]
+}
 
 export function parseBuddyChatCommand(value: string): ParsedBuddyChatCommand | null {
   const invocation = parseBuddyChatCommandInvocation(value)
   if (!invocation)
     return null
-  const definition = commandsByName.get(invocation.name as BuddyChatCommandName)
+  const definition = BUDDY_CHAT_COMMANDS.find(command => command.name === invocation.name)
   if (!definition)
     return null
   return { arguments: invocation.arguments, name: definition.name }
 }
 
 export function isBuddyRunChatCommand(name: string): boolean {
-  return (BUDDY_RUN_CHAT_COMMANDS as ReadonlyArray<string>).includes(name)
+  const definition = BUDDY_CHAT_COMMANDS.find(command => command.name === name)
+  return definition?.kind === 'action' && definition.action === 'run'
 }
 
 export function isBuddyReviewCommand(value: string): boolean {

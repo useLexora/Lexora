@@ -4,11 +4,12 @@ import type { BuddyComposerSource } from '@buddy-shared/conversation/composerRes
 import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceCard, UseChatComposerOptions } from './typing'
 import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
-import { isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
+import { getBuddyChatCommandDefinition, isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { composerReferencePath } from '@buddy-shared/conversation/composerReferencePath'
 import { computed, onScopeDispose, watch } from 'vue'
 import { CHAT_PROMPT_DIRECTIVE_NODE_NAME, getChatComposerResourceIds, serializeChatComposerContent } from '@/modules/prompt-input'
 import { insertChatComposerResources, insertResolvedChatComposerResource, removeChatComposerPanelResource, removeChatComposerResource } from '@/modules/prompt-input/ui'
+import { useConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { resolveComposerResourcePreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { resolveChatComposerModelInputIssue } from '../../model/composer/chatComposerModelCapability'
 import { composerParentDirectory } from './chatComposerSourcePresentation'
@@ -17,6 +18,7 @@ import { useChatComposerEditor } from './useChatComposerEditor'
 import { useChatComposerSuggestions } from './useChatComposerSuggestions'
 
 export function useChatComposer(options: UseChatComposerOptions) {
+  const conversationStatusPanel = useConversationStatusPanel()
   let editingSession = 0
   watch(options.draftId, () => {
     editingSession += 1
@@ -91,8 +93,15 @@ export function useChatComposer(options: UseChatComposerOptions) {
     if (!current?.isEditable)
       return
     const command = parseBuddyChatCommand(serializeChatComposerContent(current.getJSON()).content)
-    if (command && !isBuddyRunChatCommand(command.name) && replaceTypedCommand(command.name) && command.name === 'skills')
-      return
+    if (command) {
+      const definition = getBuddyChatCommandDefinition(command.name)
+      if (definition.kind === 'action' && definition.action !== 'run') {
+        replaceTypedCommand(command.name)
+        return
+      }
+      if (definition.kind === 'prompt')
+        replaceTypedCommand(command.name)
+    }
     const submitted = current.getJSON()
     const serialized = serializeChatComposerContent(submitted)
     if (!canSubmitDocument(serialized, getChatComposerResourceIds(submitted)))
@@ -110,13 +119,23 @@ export function useChatComposer(options: UseChatComposerOptions) {
       && submittedResourceIds.every(id => resourceById.value.get(id)?.resource.state === 'ready')
   }
 
-  function insertCommand(name: BuddyChatCommandName, range: { from: number, to: number }, trailingSpace = false) {
+  function applyCommand(name: BuddyChatCommandName, range: { from: number, to: number }, trailingSpace = false) {
     query.closeSuggestions()
-    const content: JSONContent[] = name === 'skills'
+    const definition = getBuddyChatCommandDefinition(name)
+    if (definition.kind === 'action' && definition.action === 'view') {
+      if (!conversationStatusPanel)
+        return false
+      const applied = editor.value?.chain().focus().deleteRange(range).run() ?? false
+      if (!applied)
+        return false
+      conversationStatusPanel.open()
+      return true
+    }
+    const content: JSONContent[] = definition.kind === 'action' && definition.action === 'input'
       ? [{ type: 'text', text: '$' }]
       : [{
           type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
-          attrs: { directive: 'slash_command', commandMode: name === 'compact' ? 'action' : 'prompt', value: `/${name}` },
+          attrs: { directive: 'slash_command', commandMode: definition.kind, value: `/${name}` },
         }, ...trailingSpace ? [{ type: 'text', text: ' ' }] : []]
     return editor.value?.chain().focus().insertContentAt(range, content).run() ?? false
   }
@@ -137,7 +156,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
       }
       return false
     })
-    return range ? insertCommand(name, range) : false
+    return range ? applyCommand(name, range) : false
   }
 
   async function resolveSource(source: BuddyComposerSource): Promise<string | null> {
@@ -195,7 +214,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     if (option.kind === 'slashCommand') {
       if (!command)
         return
-      if (insertCommand(command.name, { from, to }, true) && isBuddyRunChatCommand(command.name))
+      if (applyCommand(command.name, { from, to }, true) && isBuddyRunChatCommand(command.name))
         submit()
       return
     }
