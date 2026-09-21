@@ -114,6 +114,7 @@ export default {
   'desktop.providers.modelSourceSummary.manual': '手动模型',
   'desktop.providers.modelSourceSummary.synced': '同步模型',
   'desktop.providers.noAddedServices': '尚未添加模型服务',
+  'desktop.providers.noEnabledAvailableModelsHint': '当前没有可用的已启用模型，请在管理中同步或启用模型。',
   'desktop.providers.noModels': '暂无模型',
   'desktop.providers.noSearchResults': '没有匹配的模型服务',
   'desktop.providers.notFoundInLastSync': '当前模型目录不可用',

@@ -616,6 +616,11 @@ describe('providerService', () => {
     expect(runtime.credentials).toHaveLength(1)
 
     activeRuns = []
+    await service.setModelEnabled('anthropic', 'claude', false)
+    expect(await service.listProviders()).toEqual([
+      expect.objectContaining({ id: 'anthropic', enabledModelCount: 0, setupComplete: true }),
+    ])
+
     await service.clearCredential('anthropic')
     expect(runtime.credentials).toEqual([])
     expect(await service.listProviders()).toEqual([

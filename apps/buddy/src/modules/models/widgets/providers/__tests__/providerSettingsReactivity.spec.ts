@@ -171,6 +171,73 @@ describe('provider settings prop reactivity', () => {
     expect(row?.textContent).toContain(translateBuddy('zh-CN', 'desktop.providers.manage'))
     expect(row?.querySelector('.desktop-provider-detail__model-availability')).toBeNull()
   })
+
+  it('keeps manage button and switch while showing warning icon when provider has no enabled models', async () => {
+    const store = createStore('Alpha')
+    store.providers.value = [{
+      ...provider('Alpha'),
+      enabled: false,
+      enabledModelCount: 0,
+      modelCount: 0,
+      setupComplete: true,
+      storedCredentialType: 'api_key',
+    }]
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopModelsSettings, { providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const row = root.querySelector('.desktop-models-settings__provider-row')
+    expect(row?.textContent).toContain(translateBuddy('zh-CN', 'desktop.providers.manage'))
+    expect(row?.textContent).not.toContain(translateBuddy('zh-CN', 'desktop.providers.continueSetup'))
+    expect(row?.textContent).not.toContain(translateBuddy('zh-CN', 'common.delete'))
+
+    const availabilityIcon = row?.querySelector('.desktop-models-settings__provider-availability')
+    expect(availabilityIcon).not.toBeNull()
+    expect(availabilityIcon?.getAttribute('aria-label')).toBe(
+      translateBuddy('zh-CN', 'desktop.providers.noEnabledAvailableModelsHint'),
+    )
+
+    const switchEl = row?.querySelector('.n-switch')
+    expect(switchEl).not.toBeNull()
+    expect(switchEl?.classList.contains('n-switch--disabled')).toBe(true)
+  })
+
+  it('displays continue setup and delete buttons for incomplete providers', async () => {
+    const store = createStore('Beta')
+    store.providers.value = [{
+      ...provider('Beta'),
+      enabled: false,
+      enabledModelCount: 0,
+      modelCount: 0,
+      setupComplete: false,
+      storedCredentialType: null,
+    }]
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopModelsSettings, { providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const row = root.querySelector('.desktop-models-settings__provider-row')
+    expect(row?.textContent).toContain(translateBuddy('zh-CN', 'desktop.providers.continueSetup'))
+    expect(row?.textContent).toContain(translateBuddy('zh-CN', 'common.delete'))
+    expect(row?.textContent).not.toContain(translateBuddy('zh-CN', 'desktop.providers.manage'))
+    expect(row?.querySelector('.desktop-models-settings__provider-availability')).toBeNull()
+  })
 })
 
 describe('provider wizard ownership', () => {

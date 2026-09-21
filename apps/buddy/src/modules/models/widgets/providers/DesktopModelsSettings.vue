@@ -2,8 +2,8 @@
 import type { LocalProvider } from '@buddy-shared/providers/providerApi'
 
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
-import { Add20Regular } from '@vicons/fluent'
-import { NButton, NEmpty, NPopconfirm, NSwitch } from 'naive-ui'
+import { Add20Regular, Info20Regular } from '@vicons/fluent'
+import { NButton, NEmpty, NPopconfirm, NSwitch, NTooltip } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopModelSnapshotStatus from '@/modules/models/widgets/providers/DesktopModelSnapshotStatus.vue'
@@ -109,13 +109,25 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
             </NPopconfirm>
           </template>
           <template v-else>
+            <NTooltip v-if="provider.enabledModelCount === 0">
+              <template #trigger>
+                <span
+                  class="desktop-models-settings__provider-availability"
+                  role="img"
+                  :aria-label="t('desktop.providers.noEnabledAvailableModelsHint')"
+                >
+                  <DesktopIcon :component="Info20Regular" :size="18" />
+                </span>
+              </template>
+              {{ t('desktop.providers.noEnabledAvailableModelsHint') }}
+            </NTooltip>
             <NButton size="small" @click="manageProvider(provider.id)">
               {{ t('desktop.providers.manage') }}
             </NButton>
             <NSwitch
               :round="false"
               :value="provider.enabled"
-              :disabled="provider.activeRunCount > 0"
+              :disabled="provider.activeRunCount > 0 || (!provider.enabled && provider.enabledModelCount === 0)"
               @update:value="providerSettings.setProviderEnabled(provider.id, $event)"
             />
           </template>
@@ -279,5 +291,14 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
   min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.desktop-models-settings__provider-availability {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  place-items: center;
+  color: var(--buddy-status-warning-text);
 }
 </style>
