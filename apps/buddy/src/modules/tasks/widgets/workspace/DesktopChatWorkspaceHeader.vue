@@ -26,6 +26,7 @@ const { t } = useBuddyI18n(() => props.language)
     </div>
 
     <div class="desktop-chat-workspace-header__actions">
+      <slot name="leadingActions" />
       <button
         v-if="canToggleCanvas"
         class="desktop-chat-workspace-header__icon-button"

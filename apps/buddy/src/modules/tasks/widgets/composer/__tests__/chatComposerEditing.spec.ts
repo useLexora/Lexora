@@ -12,6 +12,7 @@ import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
 import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatComposerResourceEditing'
 import { insertChatComposerResources } from '@/modules/prompt-input/ui'
+import { CONVERSATION_STATUS_PANEL_KEY } from '../../../state/runs/conversationStatusPanel'
 import { useChatComposer } from '../useChatComposer'
 
 const cleanups: (() => void)[] = []
@@ -43,7 +44,10 @@ async function mountComposer(options: {
   loadContextOptions?: (query: string | null, deepSearch?: boolean) => Promise<ChatComposerContextOptions>
   selectSource?: (source: BuddyComposerSource) => Promise<string | null>
   model?: LocalRuntimeModelOption
+  statusPanel?: boolean
 } = {}) {
+  const canSend = shallowRef(true)
+  const statusPanelOpen = shallowRef(false)
   const content = shallowRef(createChatComposerContentFromText(''))
   const draft = shallowRef('')
   const draftId = shallowRef('draft-1')
@@ -59,7 +63,7 @@ async function mountComposer(options: {
   const app = createApp(defineComponent({
     setup() {
       composer = useChatComposer({
-        canSend: shallowRef(true),
+        canSend,
         composerContent: content,
         draft,
         draftId,
@@ -84,9 +88,14 @@ async function mountComposer(options: {
           content.value = value
         },
       })
-      return () => h(EditorContent, { editor: composer.editor.value })
+      return () => [
+        h(EditorContent, { editor: composer.editor.value }),
+        statusPanelOpen.value ? h('aside', { 'data-testid': 'conversation-status-panel' }, 'Conversation status') : null,
+      ]
     },
   }))
+  if (options.statusPanel !== false)
+    app.provide(CONVERSATION_STATUS_PANEL_KEY, { open: () => { statusPanelOpen.value = true } })
   app.mount(root)
   await nextTick()
   await nextTick()
@@ -105,10 +114,66 @@ async function mountComposer(options: {
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { composer, content, draft, draftId, editor, keydown, resources, selectedEffort, selectedServiceTier, sent, sentPayloads, updates, unmount }
+  return { canSend, composer, content, draft, draftId, editor, keydown, resources, root, selectedEffort, selectedServiceTier, sent, sentPayloads, updates, unmount }
 }
 
 describe('chat composer editing', () => {
+  it.each(['select', 'submit'] as const)('submits a run action with its arguments through %s', async (source) => {
+    const flow = await mountComposer()
+    const prefix = source === 'select' ? '/com' : '/compact'
+    flow.editor.commands.setContent(createChatComposerContentFromText(`${prefix} preserve decisions`))
+    if (source === 'select') {
+      flow.editor.commands.setTextSelection(prefix.length + 1)
+      flow.composer.activeTrigger.value = { kind: 'slash', query: 'com' }
+      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/compact', label: '/compact', description: null, path: null })
+      expect(flow.sentPayloads[0]?.userContent?.body[0]?.content[0]).toEqual({
+        type: 'prompt_directive',
+        directive: 'slash_command',
+        commandMode: 'action',
+        value: '/compact',
+      })
+    }
+    else {
+      flow.composer.submit()
+    }
+    expect(flow.sent).toEqual([source === 'select' ? '/compact  preserve decisions' : '/compact preserve decisions'])
+  })
+
+  it.each(['select', 'submit'] as const)('opens a view action through %s without sending or losing the draft', async (source) => {
+    const flow = await mountComposer()
+    flow.canSend.value = false
+    const prefix = source === 'select' ? '/sta' : '/status'
+    const quote = { id: 'quote', text: 'quoted evidence', source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' } }
+    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'], quotes: [quote] }, content: [{ type: 'paragraph', content: [
+      { type: 'text', text: `${prefix} keep this text ` },
+      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
+    ] }] }))
+    if (source === 'select') {
+      flow.editor.commands.setTextSelection(prefix.length + 1)
+      flow.composer.activeTrigger.value = { kind: 'slash', query: 'sta' }
+      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/status', label: '/status', description: null, path: null })
+    }
+    else {
+      flow.composer.submit()
+    }
+    await nextTick()
+    expect(flow.root.querySelector('[data-testid="conversation-status-panel"]')?.textContent).toBe('Conversation status')
+    expect(flow.sent).toEqual([])
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
+      body: [{ content: [{ type: 'text', text: ' keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
+      panelResourceIds: ['panel'],
+      quotes: [quote],
+    })
+  })
+
+  it('keeps an unavailable view action in the draft instead of sending it as a message', async () => {
+    const flow = await mountComposer({ statusPanel: false })
+    flow.editor.commands.setContent(createChatComposerContentFromText('/status keep this text'))
+    flow.composer.submit()
+    expect(flow.editor.getText()).toBe('/status keep this text')
+    expect(flow.sent).toEqual([])
+  })
+
   it.each(['select', 'submit'] as const)('preserves structured input when a review command is handled through %s', async (source) => {
     const flow = await mountComposer()
     const prefix = source === 'select' ? '/rev' : '/review'

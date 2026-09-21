@@ -27,10 +27,12 @@ describe('buddyChatCommands', () => {
   })
 
   it('marks run commands so only the service decides how a run is executed', () => {
-    expect(BUDDY_CHAT_COMMANDS.map(command => command.name)).toEqual(['compact', 'review', 'skills'])
+    expect(BUDDY_CHAT_COMMANDS.map(command => command.name)).toEqual(['compact', 'review', 'skills', 'status'])
     expect(isBuddyRunChatCommand('compact')).toBe(true)
     expect(isBuddyRunChatCommand('skills')).toBe(false)
     expect(isBuddyRunChatCommand('review')).toBe(false)
+    expect(isBuddyRunChatCommand('status')).toBe(false)
+    expect(isBuddyRunChatCommand('unknown')).toBe(false)
   })
 
   it('scopes a single run profile to the conversation profile width', () => {
@@ -47,9 +49,9 @@ describe('buddyChatCommands', () => {
     expect(isBuddyReviewCommand('/compact')).toBe(false)
   })
 
-  it('downgrades only retired prompt directives while keeping the skills picker available', () => {
+  it('keeps local actions available while retiring their former prompt directives', () => {
     expect(parseBuddyChatCommand('/plan')).toBeNull()
-    expect(parseBuddyChatCommand('/status')).toBeNull()
+    expect(parseBuddyChatCommand('/status')).toEqual({ arguments: '', name: 'status' })
     expect(parseBuddyChatCommand('/skills')?.name).toBe('skills')
     for (const value of ['/plan', '  /plan\n继续', '/status', '/skills'])
       expect(isRetiredBuddyPromptCommand(value)).toBe(true)

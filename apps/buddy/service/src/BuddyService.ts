@@ -621,6 +621,7 @@ export async function startBuddyService(
           inputs: runInputs,
           repository: runs,
           rpc: options.rpc,
+          usage: usageRepository,
         }),
       )
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))

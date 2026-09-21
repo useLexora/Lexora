@@ -50,7 +50,7 @@ describe('composer product document boundary', () => {
     expect(editor.getHTML()).not.toContain('resourceid=')
   })
 
-  it.each(['/plan', '/status', '/skills'])('downgrades the old %s prompt directive to plain text instead of blocking the draft', (command) => {
+  it.each(['/plan', '/status', '/skills'])('downgrades the retired %s prompt directive to plain text instead of blocking the draft', (command) => {
     const content = buddyUserContentV1Schema.parse({
       body: [{
         content: [

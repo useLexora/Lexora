@@ -3,6 +3,7 @@ import { artifactsRequestSchemas, artifactsRpc } from '../../../shared/artifacts
 import { changeOverviewRequestSchema, changesRequestSchemas, changesRpc } from '../../../shared/changes/changeApi'
 import { notificationsRequestSchemas, notificationsRpc } from '../../../shared/notifications/notificationApi'
 import { approvalsRequestSchemas, approvalsRpc } from '../../../shared/permissions/approvalApi'
+import { conversationStatusRequestSchema, runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRequestSchemas, runsResponseSchemas, runsRpc } from '../../../shared/runs/runApi'
 import { usageAnalyticsRpc, usagePeriodSchema, usageTopTasksRequestSchema, usageTrendRequestSchema } from '../../../shared/usage/usageAnalyticsApi'
@@ -31,6 +32,8 @@ export function registerActivityIpc(context: LocalChatIpcContext): void {
     const events = await request(runsRpc.listEvents, runsRequestSchemas.runEvents.parse(input))
     return runsResponseSchemas.runEvents.parse(events.map(toPublicRunEvent))
   })
+
+  handle(LOCAL_CHAT_IPC_CHANNELS.runsStatus, (_event, input) => request(runsStatusRpc.status, conversationStatusRequestSchema.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.approvalsList, (_event, input) => request(approvalsRpc.list, approvalsRequestSchemas.listApprovals.parse(input)))
 
