@@ -4,7 +4,7 @@ ENV PNPM_HOME=/pnpm
 ENV PATH="${PNPM_HOME}:${PATH}"
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
-RUN npm install --global pnpm@11.5.0
+RUN npm install --global pnpm@12.5.1
 
 WORKDIR /workspace
 
@@ -27,7 +27,7 @@ ENV PNPM_HOME=/pnpm
 ENV NODE_ENV=production
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
-RUN npm install --global pnpm@11.5.0 \
+RUN npm install --global pnpm@12.5.1 \
   && mkdir -p /app/apps/agent /pnpm \
   && chown -R node:node /app /pnpm
 

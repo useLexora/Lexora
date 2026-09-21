@@ -1,0 +1,41 @@
+diff --git a/dist/sandbox/linux-sandbox-utils.js b/dist/sandbox/linux-sandbox-utils.js
+--- a/dist/sandbox/linux-sandbox-utils.js
++++ b/dist/sandbox/linux-sandbox-utils.js
+@@ -1239,25 +1239,22 @@
+         }
+         return { source, dest };
+     };
+-    // tmpfs wiped any earlier write binds under this path — restore them.
+     const restoredWrites = [];
+     for (const writePath of allowedWritePaths) {
+         const placement = restorePlacementOf(writePath);
+         if (placement === undefined)
+             continue;
+-        args.push('--bind', placement.source, placement.dest);
+         restoredWrites.push(placement);
+-        logForDebugging(`[Sandbox Linux] Re-bound write path wiped by denyRead tmpfs: ${writePath}`);
+     }
+     // Re-allow specific paths within the denied directory (allowRead overrides denyRead).
+     // After mounting tmpfs over the denied dir, bind back the allowed subdirectories
+     // so they are readable again.
+     const restoredReads = [];
+-    for (const allowPath of readAllowPaths) {
++    for (const allowPath of [...readAllowPaths].sort((a, b) => a.split('/').length - b.split('/').length)) {
+         const placement = restorePlacementOf(allowPath);
+         if (placement === undefined)
+             continue;
+-        // Skip only if a write path was re-bound just above AND covers
++        // Skip only if a write path will be re-bound below AND covers
+         // allowPath. A write path that's an ancestor of the deny dir isn't
+         // re-bound (it wasn't wiped), so allowPath under it still needs
+         // its own ro-bind here.
+@@ -1268,6 +1265,9 @@
+         restoredReads.push(placement);
+         logForDebugging(`[Sandbox Linux] Re-allowed read access within denied region: ${allowPath}`);
+     }
++    for (const placement of restoredWrites.sort((a, b) => a.dest.split('/').length - b.dest.split('/').length)) {
++        args.push('--bind', placement.source, placement.dest);
++    }
+     return { restoredWrites, restoredReads };
+ }
+ /**

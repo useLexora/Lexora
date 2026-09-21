@@ -47,7 +47,7 @@
     "ioredis": "catalog:",
     "jose": "^6.2.3",
     "nestjs-pino": "^4.6.1",
-    "nodemailer": "^9.0.5",
+    "nodemailer": "^9.1.1",
     "openid-client": "^6.8.4",
     "pg": "^8.20.0",
     "pino": "catalog:",
