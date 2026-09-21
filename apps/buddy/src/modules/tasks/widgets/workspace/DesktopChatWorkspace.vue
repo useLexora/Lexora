@@ -76,6 +76,13 @@ async function focusComposer() {
   composerRef.value?.focus()
 }
 
+async function openModelSelector() {
+  if (!composerVisible.value)
+    nodeDetail.close()
+  await nextTick()
+  composerRef.value?.openModelSelector()
+}
+
 const quoteContextKey = computed(() => [props.workspace.session.activeConversationId.value, props.workspace.session.activeBranchId.value, props.workspace.composer.editorKey.value].join(':'))
 const quoteOwnerKey = computed(() => [quoteContextKey.value, props.viewMode, nodeDetail.visible.value, nodeDetail.target.value?.kind === 'question' ? nodeDetail.target.value.messageId : nodeDetail.target.value?.runId].join(':'))
 const quoteDisabled = computed(() => isLoading.value || props.workspace.execution.isSending.value || props.workspace.execution.isMutatingBranch.value)
@@ -224,6 +231,7 @@ function openDetailChanges(id: string) {
             :restoration="workspace.restoration"
             :status="workspace.status"
             @open-settings="emit('openSettings', $event)"
+            @select-model="openModelSelector"
           />
           <div v-if="followup" class="desktop-chat-page__followup" data-testid="canvas-followup-context">
             <span>{{ t('desktop.canvas.composerTarget') }}<strong>{{ followup.text }}</strong></span>

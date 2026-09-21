@@ -91,9 +91,12 @@ const {
   onLocateResource: resourceId => resourceStrip.value?.highlightResource(resourceId),
 })
 
+const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
+
 defineExpose({
   focus: () => editor.value?.commands.focus(),
   inputElement: computed(() => editor.value?.view.dom ?? null),
+  openModelSelector: () => modelSelectorRef.value?.open('model'),
   restoreFocus: () => {
     if (editor.value?.isEditable)
       editor.value.view.focus()
@@ -244,6 +247,7 @@ async function selectConversationFile(option: ChatPromptContextOption) {
         data-testid="composer-model-selector"
       >
         <DesktopModelSelector
+          ref="modelSelectorRef"
           :disabled="isSending"
           :language="language"
           :models="models"

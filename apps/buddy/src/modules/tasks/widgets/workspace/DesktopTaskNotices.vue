@@ -11,7 +11,10 @@ import DesktopChatStatus from './DesktopChatStatus.vue'
 import DesktopDraftRestorationNotice from './DesktopDraftRestorationNotice.vue'
 
 const props = defineProps<TaskNoticesProps>()
-const emit = defineEmits<{ openSettings: [category: DesktopSettingsCategory] }>()
+const emit = defineEmits<{
+  openSettings: [category: DesktopSettingsCategory]
+  selectModel: []
+}>()
 const { t } = useBuddyI18n(() => props.language)
 const restorationConflict = computed(() => props.restoration.conflict.value)
 const restorationState = computed(() => props.restoration.state.value)
@@ -41,6 +44,7 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
     @dismiss-blocker="status.dismissChatBlocker"
     @open-settings="emit('openSettings', $event)"
     @restart-runtime="status.restartRuntime"
+    @select-model="emit('selectModel')"
   />
 
   <article v-if="editingMessageId" class="desktop-chat-page__editing" role="status">

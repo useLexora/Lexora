@@ -16,6 +16,7 @@ const router = useRouter()
 const composerRef = useTemplateRef<InstanceType<typeof DesktopChatComposer>>('composerRef')
 defineExpose({
   focus: () => composerRef.value?.focus(),
+  openModelSelector: () => composerRef.value?.openModelSelector(),
   quote: (quote: BuddyMessageQuote) => composerRef.value?.quote(quote) ?? 'unavailable',
 })
 
