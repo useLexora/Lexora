@@ -5,13 +5,27 @@ import { useTemplateRef } from 'vue'
 
 const props = defineProps<{ view: WorkbenchView }>()
 const element = useTemplateRef<HTMLElement>('element')
-useDraggable({ id: () => props.view.id, type: 'workbench-task', element, data: () => ({ resource: props.view.resource, title: props.view.title }) })
+const { isDragging } = useDraggable({ id: () => props.view.id, type: 'workbench-task', element, data: () => ({ resource: props.view.resource, title: props.view.title }) })
 </script>
 
 <template>
-  <strong ref="element" class="workbench-pane-title">{{ view.title }}</strong>
+  <strong ref="element" class="workbench-pane-title" :class="{ 'is-dragging': isDragging }">{{ view.title }}</strong>
 </template>
 
 <style scoped>
-.workbench-pane-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: grab; touch-action: none; }
+.workbench-pane-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.workbench-pane-title:active,
+.workbench-pane-title.is-dragging {
+  cursor: grabbing;
+}
 </style>
