@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buddyUserContentV1Schema,
   createBuddyUserContent,
+  hasBuddyUserContent,
 } from '../buddyUserContent'
 import { projectBuddyUserContent } from '../buddyUserContentProjection'
 
@@ -83,5 +84,34 @@ describe('buddy user content', () => {
         type: 'paragraph',
       }],
     }, () => ({ kind: 'image', name: 'unused.png' }), () => '')).toThrow('Action commands')
+  })
+
+  it('accurately identifies whether content has user text, attachments, or quotes', () => {
+    expect(hasBuddyUserContent(null)).toBe(false)
+    expect(hasBuddyUserContent(undefined)).toBe(false)
+    expect(hasBuddyUserContent(createBuddyUserContent(''))).toBe(false)
+    expect(hasBuddyUserContent(createBuddyUserContent('   \n  '))).toBe(false)
+
+    // Text content
+    expect(hasBuddyUserContent(createBuddyUserContent('hello'))).toBe(true)
+
+    // Panel resources
+    expect(hasBuddyUserContent({ ...createBuddyUserContent(''), panelResourceIds: ['img-1'] })).toBe(true)
+
+    // Quotes
+    expect(hasBuddyUserContent({
+      ...createBuddyUserContent(''),
+      quotes: [{
+        id: 'q1',
+        text: 'quoted message',
+        source: {
+          conversationId: 'c1',
+          branchId: 'b1',
+          messageId: 'm1',
+          role: 'user',
+          runId: null,
+        },
+      }],
+    })).toBe(true)
   })
 })

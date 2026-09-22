@@ -4,6 +4,7 @@ import type { WorkbenchView } from '../../common/workbench'
 import { AutoScroller, Feedback } from '@dnd-kit/dom'
 import { expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, onUnmounted } from 'vue'
+import { panes } from '../../common/workbench'
 import { ContributionRegistry } from '../../services/ContributionRegistry'
 import { WorkbenchController } from '../../services/WorkbenchController'
 import { WorkingCopyService } from '../../services/WorkingCopyService'
@@ -11,6 +12,7 @@ import { useWorkbench } from '../workbenchContext'
 import { createWorkbenchDragPlugins } from '../workbenchDragPlugins'
 import WorkbenchHost from '../WorkbenchHost.vue'
 import WorkbenchLayoutNode from '../WorkbenchLayoutNode.vue'
+import WorkbenchPaneActions from '../WorkbenchPaneActions.vue'
 
 vi.hoisted(() => {
   Element.prototype.scrollIntoView = () => {}
@@ -100,4 +102,60 @@ it('configures workbench drag plugins without AutoScroller to avoid scrolling co
   const feedbackPlugin = plugins.find(p => typeof p === 'object' && p !== null && 'plugin' in p && (p as { plugin: unknown }).plugin === Feedback) as { options: { dropAnimation: null } } | undefined
   expect(feedbackPlugin).toBeDefined()
   expect(feedbackPlugin?.options.dropAnimation).toBeNull()
+})
+
+it('hides close action in WorkbenchPaneActions when only a single pane exists', async () => {
+  const registry = new ContributionRegistry()
+  registry.register('sample.preview', scope => scope.view({ id: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true }))
+  const controller = new WorkbenchController(registry)
+  const first = (await controller.open({ scheme: 'sample', id: 'one', data: {} }, 'Task 1'))!
+  const copies = new WorkingCopyService({
+    read: async () => ({ text: '', etag: '' }),
+    save: async () => {
+      throw new Error('unused')
+    },
+  })
+  const element = document.createElement('div')
+  document.body.append(element)
+  const app = createApp({
+    render: () => h(WorkbenchHost, { controller, copies, language: 'zh-CN', backupError: false, active: true, keybindings: {}, platform: 'linux' }, {
+      default: () => h(WorkbenchPaneActions, { viewId: first }),
+      view: () => h('div'),
+    }),
+  })
+  app.mount(element)
+  try {
+    await nextTick()
+    expect(panes(controller.layout.root).length).toBe(1)
+
+    // Open dropdown in single-pane mode
+    const menuButton = element.querySelector<HTMLButtonElement>('[data-testid="pane-layout-menu"]')!
+    menuButton.click()
+    await nextTick()
+
+    const singleLabels = [...document.querySelectorAll('.n-dropdown-option-body__label')].map(el => el.textContent?.trim())
+    expect(singleLabels).toEqual(['向左分屏', '向右分屏', '向上分屏', '向下分屏'])
+    expect(document.querySelector('.n-dropdown-divider')).toBeNull()
+
+    // Split to 2 panes
+    await controller.open({ scheme: 'sample', id: 'two', data: {} }, 'Task 2', { direction: 'right' })
+    await nextTick()
+    expect(panes(controller.layout.root).length).toBe(2)
+
+    // Close previous popover and reopen dropdown in multi-pane mode
+    document.body.click()
+    await nextTick()
+    menuButton.click()
+    await nextTick()
+
+    const multiLabels = [...document.querySelectorAll('.n-dropdown-option-body__label')].map(el => el.textContent?.trim())
+    expect(multiLabels).toContain('关闭')
+    expect(document.querySelector('.n-dropdown-divider')).not.toBeNull()
+  }
+  finally {
+    app.unmount()
+    registry.dispose()
+    element.remove()
+    document.querySelectorAll('.v-binder-follower-container').forEach(el => el.remove())
+  }
 })

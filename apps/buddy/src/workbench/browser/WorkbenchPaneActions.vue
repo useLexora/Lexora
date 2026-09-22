@@ -1,22 +1,32 @@
 <script setup lang="ts">
+import type { DropdownOption } from 'naive-ui'
 import type { SplitDirection } from '../common/workbench'
 import { MoreHorizontal20Regular } from '@vicons/fluent'
 import { NDropdown } from 'naive-ui'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { panes } from '../common/workbench'
 import { useWorkbench } from './workbenchContext'
 
 const props = defineProps<{ viewId: string }>()
 const emit = defineEmits<{ split: [direction: SplitDirection] }>()
-const { controller, labels } = useWorkbench()
-const options = computed(() => [
-  { key: 'left', label: labels.value.splitLeft },
-  { key: 'right', label: labels.value.split },
-  { key: 'up', label: labels.value.splitUp },
-  { key: 'down', label: labels.value.splitDown },
-  { type: 'divider', key: 'separator' },
-  { key: 'close', label: labels.value.close },
-])
+const { controller, labels, layout } = useWorkbench()
+const canClose = computed(() => panes(layout.value.root).length > 1)
+const options = computed<DropdownOption[]>(() => {
+  const items: DropdownOption[] = [
+    { key: 'left', label: labels.value.splitLeft },
+    { key: 'right', label: labels.value.split },
+    { key: 'up', label: labels.value.splitUp },
+    { key: 'down', label: labels.value.splitDown },
+  ]
+  if (canClose.value) {
+    items.push(
+      { type: 'divider', key: 'separator' },
+      { key: 'close', label: labels.value.close },
+    )
+  }
+  return items
+})
 function select(key: string) {
   if (key === 'close')
     void controller.close(props.viewId)

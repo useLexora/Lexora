@@ -156,6 +156,16 @@ export function getBuddyUserContentResourceIds(content: BuddyUserContentV1): str
   ])]
 }
 
+export function hasBuddyUserContent(content: BuddyUserContentV1 | null | undefined): boolean {
+  if (!content)
+    return false
+  return Boolean(
+    buddyUserContentToText(content).trim()
+    || getBuddyUserContentResourceIds(content).length
+    || content.quotes?.length,
+  )
+}
+
 export function buddyUserContentToText(
   content: BuddyUserContentV1,
   resourceLabel: (resourceId: string) => string = () => '@file',
