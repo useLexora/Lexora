@@ -64,6 +64,7 @@ export function useComposerContextOptions(options: ComposerContextOptions) {
           label: skill.name,
           path: null,
           value: skill.name,
+          skillScope: skill.source,
           skill: { id: skill.id, name: skill.name, revision: skill.revision },
         })),
     }

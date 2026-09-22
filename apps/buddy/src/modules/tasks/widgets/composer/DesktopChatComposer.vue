@@ -189,10 +189,20 @@ async function selectConversationFile(option: ChatPromptContextOption) {
             @highlight="activeSuggestionIndex = $event"
             @enter-directory="selectSuggestion($event, 'complete')"
             @select="selectSuggestion"
-          />
-          <NButton v-if="activeTrigger?.kind === 'skill' && manageSkills" class="desktop-chat-composer__manage-skills" quaternary size="small" @mousedown.prevent @click="manageSkills">
-            {{ t('desktop.skills.manage') }}
-          </NButton>
+          >
+            <template #extra>
+              <NButton
+                v-if="activeTrigger?.kind === 'skill' && manageSkills"
+                class="desktop-chat-composer__manage-skills"
+                quaternary
+                size="tiny"
+                @mousedown.prevent
+                @click="manageSkills"
+              >
+                {{ t('desktop.skills.manage') }}
+              </NButton>
+            </template>
+          </ChatComposerSourcePicker>
         </template>
       </DesktopChatComposerInteractionHost>
     </template>
@@ -416,6 +426,15 @@ async function selectConversationFile(option: ChatPromptContextOption) {
     width: var(--buddy-composer-control-height);
     min-width: var(--buddy-composer-control-height);
     height: var(--buddy-composer-control-height);
+  }
+
+  &__manage-skills {
+    font-size: 0.6rem;
+    color: var(--buddy-text-muted);
+
+    &:hover {
+      color: var(--buddy-accent-text);
+    }
   }
 
   &__disclaimer {

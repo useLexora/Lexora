@@ -114,4 +114,71 @@ describe('composer source picker', () => {
     expect(selected).toEqual(['src'])
     expect(root.querySelectorAll('.chat-composer-source-picker__footer')).toHaveLength(1)
   })
+
+  it('renders skill icons and scope tags for directory, space and global skills', async () => {
+    const root = document.createElement('div')
+    document.body.append(root)
+    const options: ChatPromptContextOption[] = [
+      {
+        description: 'Local project skill',
+        kind: 'skill',
+        label: 'project-analyzer',
+        path: null,
+        skillScope: 'directory',
+        value: 'project-analyzer',
+      },
+      {
+        description: 'Space installed skill',
+        kind: 'skill',
+        label: 'space-helper',
+        path: null,
+        skillScope: 'space',
+        value: 'space-helper',
+      },
+      {
+        description: 'Global skill',
+        kind: 'skill',
+        label: 'global-bot',
+        path: null,
+        skillScope: 'global',
+        value: 'global-bot',
+      },
+    ]
+    const app = createApp(defineComponent({
+      setup: () => () => h(ChatComposerSourcePicker, {
+        accessibleLabel: 'Skills',
+        emptyLabel: 'No skills',
+        language: 'zh-CN',
+        loadingLabel: 'Loading',
+        options,
+      }, {
+        extra: () => h('button', { class: 'custom-extra' }, 'Manage'),
+      }),
+    }))
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const kindIcons = root.querySelectorAll('.chat-composer-source-picker__kind')
+    expect(kindIcons).toHaveLength(3)
+    kindIcons.forEach((icon) => {
+      expect(icon.classList.contains('is-skill')).toBe(true)
+      expect(icon.textContent?.trim()).not.toBe('$')
+      expect(icon.querySelector('svg')).not.toBeNull()
+    })
+
+    const scopes = root.querySelectorAll('.chat-composer-source-picker__scope')
+    expect(scopes).toHaveLength(3)
+    expect(scopes[0]?.textContent).toBe('工作目录')
+    expect(scopes[0]?.classList.contains('is-directory')).toBe(true)
+    expect(scopes[1]?.textContent).toBe('空间')
+    expect(scopes[1]?.classList.contains('is-space')).toBe(true)
+    expect(scopes[2]?.textContent).toBe('全局')
+    expect(scopes[2]?.classList.contains('is-global')).toBe(true)
+
+    expect(root.querySelector('.custom-extra')?.textContent).toBe('Manage')
+  })
 })
