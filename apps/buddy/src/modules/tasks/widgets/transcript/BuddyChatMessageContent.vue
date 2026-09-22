@@ -18,6 +18,7 @@ import { getChatMessageDisplayText, getChatMessageImageLabels, getChatMessageUse
 import { useResourceHighlight } from '../attachments/useResourceHighlight'
 import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
 import BuddyChatResourceReference from './BuddyChatResourceReference.vue'
+import { tryUseChatContent } from './chatContentContext'
 
 const props = withDefaults(defineProps<{
   final?: boolean
@@ -31,6 +32,7 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useBuddyI18n(() => props.language)
+const chatContent = tryUseChatContent()
 const attachmentTrack = useTemplateRef<HTMLDivElement>('attachmentTrack')
 const attachmentScrollport = computed(() => attachmentTrack.value?.closest<HTMLElement>('.buddy-chat-message-content__attachment-scrollport') ?? null)
 const { highlightedResourceId, highlightResource } = useResourceHighlight(attachmentTrack)
@@ -114,6 +116,13 @@ async function updatePreviewOpen(open: boolean) {
 
 function previewLeaveTransition(): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, 320))
+}
+
+function handleMarkdownLink(href: string) {
+  if (!chatContent)
+    return
+  if (chatContent.canPreviewFile(href))
+    chatContent.previewFile(href)
 }
 </script>
 
@@ -228,6 +237,7 @@ function previewLeaveTransition(): Promise<void> {
       :final="final"
       :language="language"
       :write-clipboard-text="writeClipboardText"
+      @open-link="handleMarkdownLink"
     />
   </div>
 </template>

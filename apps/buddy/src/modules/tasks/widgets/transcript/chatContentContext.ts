@@ -18,3 +18,7 @@ export function useChatContent(): ChatContentContext {
     throw new Error('Chat content context is unavailable')
   return context
 }
+
+export function tryUseChatContent(): ChatContentContext | null {
+  return injectChatContent() ?? null
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { ArrowWrap20Regular, ChevronRight16Regular } from '@vicons/fluent'
+import { ArrowClockwise20Regular, ArrowWrap20Regular, ChevronRight16Regular } from '@vicons/fluent'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -9,7 +9,7 @@ import DirectoryTreeExpandedIcon from '@/shared/ui/icon/DirectoryTreeExpandedIco
 import DesktopContextAction from './DesktopContextAction.vue'
 
 const props = defineProps<{ path: string, rootName: string, language: BuddyLocale, wrap: boolean, treeVisible: boolean }>()
-defineEmits<{ toggleWrap: [], toggleTree: [] }>()
+defineEmits<{ toggleWrap: [], toggleTree: [], refresh: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const segments = computed(() => [props.rootName, ...props.path.split('/').filter(Boolean)])
 </script>
@@ -25,6 +25,7 @@ const segments = computed(() => [props.rootName, ...props.path.split('/').filter
       </div>
     </slot>
     <div class="desktop-file-toolbar__actions">
+      <DesktopContextAction :icon="ArrowClockwise20Regular" :label="t('desktop.context.refreshFiles')" @click="$emit('refresh')" />
       <DesktopContextAction :icon="ArrowWrap20Regular" :label="t('desktop.context.wrap')" :active="wrap" @click="$emit('toggleWrap')" />
       <DesktopContextAction :icon="treeVisible ? DirectoryTreeExpandedIcon : DirectoryTreeCollapsedIcon" :label="t(treeVisible ? 'desktop.context.hideTree' : 'desktop.context.showTree')" :active="treeVisible" @click="$emit('toggleTree')" />
     </div>
