@@ -7,8 +7,8 @@ import type { TaskCapability, TaskResourcePanel } from '@/modules/tasks/contract
 import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
-import { buddyUserContentToText, getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
-import { useDialog } from 'naive-ui'
+import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { NButton, useDialog } from 'naive-ui'
 import { h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
 import { panes, resourceKey } from '@/workbench/common/workbench'
@@ -56,6 +56,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     onError: options.onError,
     prepareFileClose: beforeFileClose,
   })
+  const confirmedDraftCloses = new Set<string>()
   const deletedTasks = new Set<string>()
   let initialized = false
   let navigationVersion = 0
@@ -73,9 +74,150 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   function newTask(spaceId?: string | null, paneId = center(), direction?: SplitDirection): Promise<void> {
     return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: spaceId ?? null } }, labels().newTask, { paneId, direction })
   }
+  async function isDraftDirty(view: WorkbenchView): Promise<boolean> {
+    if (view.resource.scheme !== 'draft')
+      return false
+    const task = pool.peek(view.resource)
+    if (task) {
+      const text = task.workspace.composer.draft.value.trim()
+      const resources = task.workspace.composer.resources.value.length
+      const quotes = ((task.workspace.composer.composerContent.value?.attrs as { quotes?: unknown[] } | undefined)?.quotes?.length ?? 0) > 0
+      return Boolean(text || resources || quotes)
+    }
+    try {
+      const draft = await api.localChat.composerDrafts.get(view.resource.id)
+      return hasBuddyUserContent(draft.content)
+    }
+    catch {
+      return false
+    }
+  }
+
+  function promptUnsentDraftAction(): Promise<'split' | 'discard' | 'cancel'> {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (choice: 'split' | 'discard' | 'cancel') => {
+        if (!settled) {
+          settled = true
+          resolve(choice)
+        }
+      }
+      const modal = dialog.warning({
+        title: labels().unsentDraftPrompt,
+        content: labels().unsentDraftDetail,
+        closable: true,
+        onClose: () => finish('cancel'),
+        onMaskClick: () => finish('cancel'),
+        onEsc: () => finish('cancel'),
+        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
+          h(NButton, {
+            size: 'small',
+            onClick: () => {
+              finish('cancel')
+              modal.destroy()
+            },
+          }, () => labels().cancel),
+          h(NButton, {
+            size: 'small',
+            type: 'error',
+            onClick: () => {
+              finish('discard')
+              modal.destroy()
+            },
+          }, () => labels().discardDraft),
+          h(NButton, {
+            size: 'small',
+            type: 'primary',
+            onClick: () => {
+              finish('split')
+              modal.destroy()
+            },
+          }, () => labels().splitOpen),
+        ]),
+      })
+    })
+  }
+
+  function promptUnsentDraftCloseAction(): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (confirmed: boolean) => {
+        if (!settled) {
+          settled = true
+          resolve(confirmed)
+        }
+      }
+      const modal = dialog.warning({
+        title: labels().unsentDraftPrompt,
+        content: labels().unsentDraftCloseDetail,
+        closable: true,
+        onClose: () => finish(false),
+        onMaskClick: () => finish(false),
+        onEsc: () => finish(false),
+        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
+          h(NButton, {
+            size: 'small',
+            onClick: () => {
+              finish(false)
+              modal.destroy()
+            },
+          }, () => labels().cancel),
+          h(NButton, {
+            size: 'small',
+            type: 'error',
+            onClick: () => {
+              finish(true)
+              modal.destroy()
+            },
+          }, () => labels().discardDraft),
+        ]),
+      })
+    })
+  }
+
   async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal } = {}) {
+    const targetPaneId = destination.paneId ?? center()
+    const targetPane = controller.pane(targetPaneId)
+    const currentViewId = targetPane?.view
+    const currentView = currentViewId ? controller.layout.views[currentViewId] : null
+
+    const isExistingTask = Object.values(controller.layout.views).some(view =>
+      resourceKey(view.resource) === resourceKey(resource)
+      && (view.location === 'main' || view.location === undefined),
+    )
+
+    if (!destination.direction && !isExistingTask && currentView && currentView.resource.scheme === 'draft') {
+      if (resource.scheme === 'draft') {
+        const currentSpaceId = (currentView.resource.data.spaceId as string | null) ?? null
+        const targetSpaceId = (resource.data.spaceId as string | null) ?? null
+        if (currentSpaceId === targetSpaceId) {
+          controller.focus(currentView.id)
+          await router.push('/tasks')
+          return
+        }
+      }
+      if (await isDraftDirty(currentView)) {
+        const action = await promptUnsentDraftAction()
+        if (action === 'cancel') {
+          controller.focus(currentView.id)
+          return
+        }
+        if (action === 'split') {
+          return activateTask(resource, title, { ...destination, direction: 'right' })
+        }
+        confirmedDraftCloses.add(currentView.id)
+      }
+    }
+
     const version = ++navigationVersion
-    const id = await controller.open(resource, title, { paneId: center(), ...destination })
+    let id: string | null = null
+    try {
+      id = await controller.open(resource, title, { paneId: targetPaneId, ...destination })
+    }
+    finally {
+      if (currentView)
+        confirmedDraftCloses.delete(currentView.id)
+    }
     if (!id || destination.signal?.aborted || version !== navigationVersion)
       return
     await router.push('/tasks')
@@ -221,12 +363,23 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   async function beforeClose(view: WorkbenchView, closing?: ReadonlySet<string>): Promise<ViewCloseDecision> {
     if (view.resource.scheme === 'task' && deletedTasks.has(view.resource.id))
       return true
+    if (view.resource.scheme === 'draft' && !confirmedDraftCloses.has(view.id)) {
+      if (await isDraftDirty(view)) {
+        const confirmed = await promptUnsentDraftCloseAction()
+        if (!confirmed)
+          return false
+        confirmedDraftCloses.add(view.id)
+      }
+    }
     try {
       return ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await beforeFileClose(view, closing)
     }
     catch (error) {
       options.onError(error)
       return false
+    }
+    finally {
+      confirmedDraftCloses.delete(view.id)
     }
   }
 
@@ -252,28 +405,39 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
         onClose: () => finish(false),
         onMaskClick: () => finish(false),
         onEsc: () => finish(false),
-        action: () => h('div', { style: 'display:flex;gap:12px' }, [
-          h('button', { onClick: () => {
-            finish(false)
-            modal.destroy()
-          } }, labels().cancel),
-          h('button', { onClick: () => {
-            finish({ commit: () => copies.discard(view.resource), complete: () => persistence.flush().catch(options.onError) })
-            modal.destroy()
-          } }, labels().discard),
-          h('button', { onClick: async () => {
-            if (await copies.save(view.resource)) {
-              try {
-                await persistence.flush()
-                finish(true)
-                modal.destroy()
+        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
+          h(NButton, {
+            size: 'small',
+            onClick: () => {
+              finish(false)
+              modal.destroy()
+            },
+          }, () => labels().cancel),
+          h(NButton, {
+            size: 'small',
+            type: 'error',
+            onClick: () => {
+              finish({ commit: () => copies.discard(view.resource), complete: () => persistence.flush().catch(options.onError) })
+              modal.destroy()
+            },
+          }, () => labels().discard),
+          h(NButton, {
+            size: 'small',
+            type: 'primary',
+            onClick: async () => {
+              if (await copies.save(view.resource)) {
+                try {
+                  await persistence.flush()
+                  finish(true)
+                  modal.destroy()
+                }
+                catch {
+                  finish(false)
+                  modal.destroy()
+                }
               }
-              catch {
-                finish(false)
-                modal.destroy()
-              }
-            }
-          } }, labels().save),
+            },
+          }, () => labels().save),
         ]),
       })
     })

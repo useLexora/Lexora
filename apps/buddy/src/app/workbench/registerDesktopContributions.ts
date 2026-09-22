@@ -29,7 +29,7 @@ export function registerDesktopContributions(controller: WorkbenchController, co
     scope.configuration({ id: 'workbench.wordWrap', defaultValue: false, validate: value => typeof value === 'boolean' })
     scope.command({ id: 'view.close', get label() {
       return labels().closeTask
-    }, keybinding: 'Mod+W', shortcutScope: 'main', enabled: context => context.view?.location === 'main', execute: context => controller.close(context.view!.id) })
+    }, keybinding: 'Mod+W', shortcutScope: 'main', enabled: context => context.view?.location === 'main' && Number(context.values['pane.count'] ?? 1) > 1, execute: context => controller.close(context.view!.id) })
     scope.command({ id: 'view.focusNext', get label() {
       return labels().focusNext
     }, keybinding: 'Mod+J', execute: () => {
