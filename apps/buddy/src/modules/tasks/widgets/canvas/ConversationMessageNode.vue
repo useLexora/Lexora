@@ -51,7 +51,7 @@ function open(event: MouseEvent) {
 <template>
   <article
     class="conversation-node"
-    :class="[message.kind, data.direction, { selected, busy }]"
+    :class="[message.kind, data.direction, { selected, busy }, message.status ? `status-${message.status}` : '']"
     :data-node-id="message.id" :data-kind="message.kind" :data-status="message.status"
     tabindex="0" :aria-label="label" :aria-current="selected ? 'true' : undefined"
     @keydown.enter.self.prevent="actions.open(message.id)"
@@ -62,21 +62,23 @@ function open(event: MouseEvent) {
     <div class="conversation-node__card">
       <header class="conversation-node__header">
         <DesktopIcon class="conversation-node__role" :component="message.kind === 'answer' ? Wand20Regular : Keyboard20Regular" :title="label" />
-        <span v-if="message.kind === 'draft'" class="conversation-node__status">{{ label }}</span>
         <span v-if="message.toolCount" class="conversation-node__tools">{{ t('desktop.canvas.tools', { count: message.toolCount }) }}</span>
-        <span v-if="message.status && message.status !== 'completed'" class="conversation-node__status" :class="message.status">{{ t(`desktop.canvas.${message.status}`) }}</span>
-        <div v-if="message.kind !== 'draft'" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
-          <button v-if="message.kind === 'question'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.chat.editMessage')" :title="t('desktop.chat.editMessage')" data-testid="canvas-node-edit" @click.stop="actions.edit(message.id)">
-            <DesktopIcon :component="Edit20Regular" />
-          </button>
-          <template v-else>
-            <button type="button" :disabled="!data.canMutate" :aria-label="t('desktop.canvas.retry')" :title="t('desktop.canvas.retry')" data-testid="canvas-node-retry" @click.stop="actions.retry(message.id)">
-              <DesktopIcon :component="ArrowSync20Regular" />
+        <div class="conversation-node__trailing">
+          <span v-if="message.kind === 'draft'" class="conversation-node__status">{{ label }}</span>
+          <span v-if="message.status && message.status !== 'completed'" class="conversation-node__status" :class="message.status">{{ t(`desktop.canvas.${message.status}`) }}</span>
+          <div v-if="message.kind !== 'draft' && !busy" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
+            <button v-if="message.kind === 'question'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.chat.editMessage')" :title="t('desktop.chat.editMessage')" data-testid="canvas-node-edit" @click.stop="actions.edit(message.id)">
+              <DesktopIcon :component="Edit20Regular" />
             </button>
-            <button v-if="message.status === 'completed'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.canvas.followup')" :title="t('desktop.canvas.followup')" data-testid="canvas-node-followup" @click.stop="actions.followup(message.id)">
-              <DesktopIcon :component="Add20Regular" />
-            </button>
-          </template>
+            <template v-else>
+              <button type="button" :disabled="!data.canMutate" :aria-label="t('desktop.canvas.retry')" :title="t('desktop.canvas.retry')" data-testid="canvas-node-retry" @click.stop="actions.retry(message.id)">
+                <DesktopIcon :component="ArrowSync20Regular" />
+              </button>
+              <button v-if="message.status === 'completed'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.canvas.followup')" :title="t('desktop.canvas.followup')" data-testid="canvas-node-followup" @click.stop="actions.followup(message.id)">
+                <DesktopIcon :component="Add20Regular" />
+              </button>
+            </template>
+          </div>
         </div>
       </header>
       <div v-if="message.text || message.quoteCount || message.attachmentCount || message.artifactCount || busy || message.kind === 'draft'" class="conversation-node__body" @mousedown.stop @pointerdown.stop>
@@ -129,20 +131,104 @@ function open(event: MouseEvent) {
 </template>
 
 <style scoped lang="scss">
+@property --buddy-beam-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .conversation-node { position: relative; display: flex; width: 100%; height: 100%; flex-direction: column; user-select: none; cursor: pointer; }
-.conversation-node__card { position: relative; display: flex; flex: none; width: 100%; height: 100%; flex-direction: column; border: 1px solid var(--buddy-border-subtle); border-radius: 12px; background: var(--buddy-surface-base); color: var(--buddy-text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / 3%); user-select: none; cursor: pointer; }
+.conversation-node__card { position: relative; display: flex; flex: none; width: 100%; height: 100%; flex-direction: column; border: 1px solid var(--buddy-border-subtle); border-radius: 12px; background: var(--buddy-surface-base); color: var(--buddy-text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / 3%); user-select: none; cursor: pointer; transition: border-color 160ms ease, opacity 160ms ease; }
 .conversation-node.question .conversation-node__card { background: var(--buddy-user-message-surface); }
 .conversation-node:hover .conversation-node__card { border-color: var(--buddy-border-strong); }
 .conversation-node.selected .conversation-node__card { border-color: var(--buddy-focus-ring); box-shadow: 0 0 0 1px var(--buddy-focus-ring), 0 2px 8px rgb(0 0 0 / 3%); }
 .conversation-node:focus-visible { outline: none; }
 .conversation-node:focus-visible .conversation-node__card { outline: 2px solid var(--buddy-accent-border); outline-offset: 3px; }
 .conversation-node.draft .conversation-node__card { border: 1.5px dashed var(--buddy-accent-text); background: color-mix(in srgb, var(--buddy-accent-text) 4%, var(--buddy-surface-base)); box-shadow: none; }
+
+// Status borders: running (border beam animation)
+.conversation-node.status-running .conversation-node__card,
+.conversation-node[data-status="running"] .conversation-node__card {
+  border-color: color-mix(in srgb, var(--buddy-accent-text) 24%, var(--buddy-border-subtle));
+}
+.conversation-node.status-running .conversation-node__card::before,
+.conversation-node[data-status="running"] .conversation-node__card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 12px;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--buddy-beam-angle, 0deg),
+    transparent 0deg,
+    transparent 280deg,
+    color-mix(in srgb, var(--buddy-accent-text) 30%, transparent) 320deg,
+    var(--buddy-accent-text) 360deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: conversation-node-beam 2.8s linear infinite;
+  z-index: 1;
+}
+
+// Status borders: queued (standby dashed)
+.conversation-node.status-queued .conversation-node__card,
+.conversation-node[data-status="queued"] .conversation-node__card {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--buddy-accent-text) 50%, var(--buddy-border-subtle));
+}
+.conversation-node.status-queued:hover .conversation-node__card,
+.conversation-node[data-status="queued"]:hover .conversation-node__card {
+  border-color: var(--buddy-accent-text);
+}
+
+// Status borders: failed (danger border)
+.conversation-node.status-failed .conversation-node__card,
+.conversation-node[data-status="failed"] .conversation-node__card {
+  border-color: var(--buddy-status-danger-border);
+}
+.conversation-node.status-failed:hover .conversation-node__card,
+.conversation-node[data-status="failed"]:hover .conversation-node__card {
+  border-color: var(--buddy-status-danger-text);
+}
+.conversation-node.status-failed.selected .conversation-node__card,
+.conversation-node[data-status="failed"].selected .conversation-node__card {
+  border-color: var(--buddy-status-danger-border);
+  box-shadow: 0 0 0 1.5px var(--buddy-focus-ring), 0 2px 8px rgb(0 0 0 / 3%);
+}
+
+// Status borders: cancelled (muted border and dimmed)
+.conversation-node.status-cancelled .conversation-node__card,
+.conversation-node[data-status="cancelled"] .conversation-node__card {
+  border-color: var(--buddy-border-subtle);
+  opacity: 0.82;
+}
+
+@keyframes conversation-node-beam {
+  from {
+    --buddy-beam-angle: 0deg;
+  }
+  to {
+    --buddy-beam-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-node.status-running .conversation-node__card::before,
+  .conversation-node[data-status="running"] .conversation-node__card::before {
+    animation: none;
+    background: var(--buddy-accent-text);
+  }
+}
 .conversation-node__header { display: flex; height: 44px; flex: none; align-items: center; gap: 8px; padding: 0 14px; cursor: grab; }
 .conversation-node__role { color: var(--buddy-text-secondary); font-size: 16px; }
 .conversation-node__tools, .conversation-node__status { font-size: 10px; color: var(--buddy-text-muted); }
-.conversation-node__status { margin-left: auto; }
 .conversation-node__status.running, .conversation-node__status.queued { color: var(--buddy-accent-text); }
 .conversation-node__status.failed { color: var(--buddy-status-danger-text); }
+.conversation-node__trailing { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; }
 .conversation-node__body { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 8px; padding: 0 16px 12px; overflow: hidden; }
 .conversation-node__quotes { display: flex; flex: none; height: 88px; align-items: flex-start; gap: 6px; overflow: hidden; }
 .conversation-node__quotes :deep(.chat-quote-strip) { flex: 1; }
@@ -153,7 +239,7 @@ function open(event: MouseEvent) {
 .conversation-node__footer { margin-top: auto; display: flex; flex: none; align-items: center; gap: 8px; min-height: 30px; padding: 0 16px 10px; color: var(--buddy-text-muted); font-size: 10px; }
 .conversation-node__model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-node__duration { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
-.conversation-node__actions { display: flex; flex: none; gap: 2px; margin-left: auto; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+.conversation-node__actions { display: flex; flex: none; gap: 2px; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
 .conversation-node:hover .conversation-node__actions, .conversation-node:focus-within .conversation-node__actions { opacity: 1; pointer-events: auto; }
 .conversation-node__actions button { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--buddy-text-secondary); cursor: pointer; }
 .conversation-node__actions button:hover { background: var(--buddy-state-hover); color: var(--buddy-text-primary); }
