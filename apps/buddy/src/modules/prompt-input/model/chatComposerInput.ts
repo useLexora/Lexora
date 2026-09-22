@@ -24,6 +24,7 @@ export interface ChatPromptContextOption extends LocalPromptContextItem {
   label: string
   path: string | null
   source?: BuddyComposerSource
+  skillScope?: 'directory' | 'space' | 'global'
 }
 
 export interface ChatComposerContextOptions {

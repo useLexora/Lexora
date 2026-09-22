@@ -7,6 +7,8 @@ import { NButton, NSwitch } from 'naive-ui'
 import { computed, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
 import ChatComposerDirectoryHeader from './ChatComposerDirectoryHeader.vue'
 import { describeChatComposerSource, getChatComposerSourceRoot } from './chatComposerSourcePresentation'
 
@@ -36,6 +38,10 @@ const emit = defineEmits<{
   deepSearchChange: [value: boolean]
 }>()
 
+defineSlots<{
+  extra?: () => unknown
+}>()
+
 const { t } = useBuddyI18n(() => props.language)
 const deepSearchLabelId = useId()
 const list = useTemplateRef<HTMLElement>('list')
@@ -44,11 +50,12 @@ watch(() => [props.activeIndex, props.options], () => {
   const active = container?.querySelector<HTMLElement>('[aria-selected="true"]')
   if (!container || !active)
     return
+  const offset = 6
   const top = active.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
-  if (top < container.scrollTop)
-    container.scrollTop = top
-  else if (top + active.offsetHeight > container.scrollTop + container.clientHeight)
-    container.scrollTop = top + active.offsetHeight - container.clientHeight
+  if (top - offset < container.scrollTop)
+    container.scrollTop = Math.max(0, top - offset)
+  else if (top + active.offsetHeight + offset > container.scrollTop + container.clientHeight)
+    container.scrollTop = top + active.offsetHeight + offset - container.clientHeight
 }, { flush: 'post' })
 const visibleOptions = computed(() => props.options.filter(option => (
   (!props.filesOnly || option.kind === 'file') && (!props.filesOnly || option.source || option.resourceId)
@@ -79,6 +86,16 @@ const groupedOptions = computed(() => ['current', 'space', 'external', 'history'
 
 function kindLabel(option: ChatPromptContextOption): string {
   return option.kind === 'skill' ? '$' : '/'
+}
+
+function skillScopeLabel(scope?: 'directory' | 'space' | 'global'): string {
+  if (scope === 'directory')
+    return t('desktop.skills.scope.directory')
+  if (scope === 'space')
+    return t('desktop.skills.scope.space')
+  if (scope === 'global')
+    return t('desktop.skills.scope.global')
+  return ''
 }
 
 function groupLabel(category: string): string {
@@ -125,7 +142,10 @@ function highlight(index: number) {
           v-for="{ option, index, description } in group.rows"
           :key="`${option.value}:${option.path ?? ''}`"
           class="chat-composer-source-picker__row"
-          :class="{ 'is-active': index === activeIndex }"
+          :class="{
+            'is-active': index === activeIndex,
+            'is-skill': option.kind === 'skill',
+          }"
           role="presentation"
           @pointermove="highlight(index)"
           @mousedown.prevent
@@ -141,14 +161,27 @@ function highlight(index: number) {
           >
             <span
               class="chat-composer-source-picker__kind"
-              :class="{ 'is-file': option.kind === 'file' }"
+              :class="{
+                'is-file': option.kind === 'file',
+                'is-skill': option.kind === 'skill',
+              }"
             >
               <FolderIcon v-if="option.entryKind === 'directory'" />
               <FileIcon v-else-if="option.kind === 'file'" :name="option.fileName ?? option.label" />
+              <DesktopIcon v-else-if="option.kind === 'skill'" :component="SkillIcon" :size="14" />
               <template v-else>{{ kindLabel(option) }}</template>
             </span>
             <span class="chat-composer-source-picker__copy">
-              <strong>{{ option.label }}</strong>
+              <span class="chat-composer-source-picker__heading">
+                <strong class="chat-composer-source-picker__label">{{ option.label }}</strong>
+                <span
+                  v-if="option.skillScope"
+                  class="chat-composer-source-picker__scope"
+                  :class="`is-${option.skillScope}`"
+                >
+                  {{ skillScopeLabel(option.skillScope) }}
+                </span>
+              </span>
               <small v-if="description">{{ description }}</small>
             </span>
           </button>
@@ -174,16 +207,21 @@ function highlight(index: number) {
         {{ emptyLabel }}
       </span>
     </div>
-    <div v-if="keyboardNavigation && (visibleOptions.length || directory)" class="chat-composer-source-picker__footer" @mousedown.prevent>
-      <span><kbd>↑</kbd><kbd>↓</kbd>{{ t('desktop.chat.sourcePickerNavigate') }}</span>
-      <span><kbd>Enter</kbd>{{ selectionLabel }}</span>
-      <span><kbd>Esc</kbd>{{ t('desktop.chat.sourcePickerClose') }}</span>
-      <span v-if="directory" class="chat-composer-source-picker__deep-search">
-        <NButton :id="deepSearchLabelId" text :tabindex="-1" @click="emit('deepSearchChange', !deepSearch)">
-          {{ t('desktop.chat.sourcePickerDeepSearch') }}
-        </NButton>
-        <NSwitch :aria-labelledby="deepSearchLabelId" :value="deepSearch" size="small" @update:value="emit('deepSearchChange', $event)" />
-      </span>
+    <div v-if="(keyboardNavigation && (visibleOptions.length || directory)) || $slots.extra" class="chat-composer-source-picker__footer" @mousedown.prevent>
+      <div v-if="keyboardNavigation && (visibleOptions.length || directory)" class="chat-composer-source-picker__shortcuts">
+        <span><kbd>↑</kbd><kbd>↓</kbd>{{ t('desktop.chat.sourcePickerNavigate') }}</span>
+        <span><kbd>Enter</kbd>{{ selectionLabel }}</span>
+        <span><kbd>Esc</kbd>{{ t('desktop.chat.sourcePickerClose') }}</span>
+      </div>
+      <div v-if="directory || $slots.extra" class="chat-composer-source-picker__footer-aside">
+        <span v-if="directory" class="chat-composer-source-picker__deep-search">
+          <NButton :id="deepSearchLabelId" text :tabindex="-1" @click="emit('deepSearchChange', !deepSearch)">
+            {{ t('desktop.chat.sourcePickerDeepSearch') }}
+          </NButton>
+          <NSwitch :aria-labelledby="deepSearchLabelId" :value="deepSearch" size="small" @update:value="emit('deepSearchChange', $event)" />
+        </span>
+        <slot name="extra" />
+      </div>
     </div>
   </div>
 </template>
@@ -200,13 +238,16 @@ function highlight(index: number) {
   border-radius: 0.55rem;
   background: var(--buddy-surface-raised);
   box-shadow: none;
+  padding-top: 0.35rem;
 }
 
 .chat-composer-source-picker__list {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0.25rem;
+  padding: 0.15rem 0.35rem 0.35rem;
+  scroll-padding-top: 0.35rem;
+  scroll-padding-bottom: 0.35rem;
 }
 
 .chat-composer-source-picker__row {
@@ -285,6 +326,12 @@ function highlight(index: number) {
     background: transparent;
   }
 
+  &.is-skill {
+    background: var(--buddy-accent-surface-subtle);
+    color: var(--buddy-accent-text);
+    border: 1px solid var(--buddy-accent-border);
+  }
+
   &.is-file :deep(.buddy-file-icon),
   &.is-file :deep(.buddy-folder-icon) {
     width: 1.2rem;
@@ -292,28 +339,70 @@ function highlight(index: number) {
   }
 }
 
+.chat-composer-source-picker__row.is-skill .chat-composer-source-picker__copy {
+  font-family: var(--buddy-font-brand);
+}
+
 .chat-composer-source-picker__copy {
   display: grid;
   min-width: 0;
   gap: 0.12rem;
 
-  strong,
   small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  strong {
-    font-size: 0.76rem;
-    font-weight: 600;
+    color: var(--buddy-text-secondary);
+    font-size: 0.67rem;
     line-height: 1.25;
   }
+}
 
-  small {
-    color: var(--buddy-text-secondary);
-    font-size: 0.66rem;
-    line-height: 1.2;
+.chat-composer-source-picker__heading {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.chat-composer-source-picker__label {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 550;
+  line-height: 1.25;
+}
+
+.chat-composer-source-picker__scope {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.04rem 0.28rem;
+  border-radius: var(--buddy-radius-micro);
+  font-family: var(--buddy-font-brand);
+  font-size: 0.58rem;
+  font-weight: 500;
+  line-height: 1.3;
+  border: 1px solid var(--buddy-border-subtle);
+
+  &.is-directory {
+    color: var(--buddy-accent-text);
+    background: var(--buddy-accent-surface-subtle);
+    border-color: var(--buddy-accent-border);
+  }
+
+  &.is-space {
+    color: var(--buddy-text-primary);
+    background: var(--buddy-state-hover);
+    border-color: var(--buddy-border-subtle);
+  }
+
+  &.is-global {
+    color: var(--buddy-text-muted);
+    background: transparent;
+    border-color: var(--buddy-border-subtle);
   }
 }
 
@@ -335,7 +424,7 @@ function highlight(index: number) {
 
 .chat-composer-source-picker__enter :deep(.n-button__content),
 .chat-composer-source-picker__confirm,
-.chat-composer-source-picker__footer > span {
+.chat-composer-source-picker__shortcuts > span {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -350,11 +439,26 @@ function highlight(index: number) {
   flex: none;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 0.4rem 0.9rem;
   border-top: 1px solid var(--buddy-border-subtle);
   padding: 0.35rem 0.65rem;
   color: var(--buddy-text-muted);
   font-size: 0.6rem;
+}
+
+.chat-composer-source-picker__shortcuts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+}
+
+.chat-composer-source-picker__footer-aside {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-left: auto;
 }
 
 .chat-composer-source-picker kbd {
