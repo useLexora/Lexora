@@ -150,7 +150,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
   <DesktopFileSpacePicker v-model:show="fileSpacePickerOpen" :spaces="panel.fileSpaces.value" :language="language" @select="panel.openFiles" />
   <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" :can-add-files="Boolean(panel.fileEntry.value)" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
     <template v-if="activeTab && activeTab.kind !== 'view' && activeTab.kind !== 'artifact'" #toolbar>
-      <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible">
+      <DesktopFileToolbar v-if="fileTab && fileView" :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible" @refresh="filePreview.refresh()">
         <template v-if="fileTab.target.path" #default>
           <slot name="file-toolbar" :tab="fileTab" />
         </template>
@@ -166,7 +166,10 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
       </div>
       <template #tree>
         <div v-if="fileView.treeFailed" class="context-tree-error">
-          {{ t('desktop.context.directoryLoadFailed') }}
+          <span>{{ t('desktop.context.directoryLoadFailed') }}</span>
+          <button type="button" class="context-tree-retry" @click="filePreview.refresh()">
+            {{ t('desktop.context.retry') }}
+          </button>
         </div>
         <DesktopContextFileTree v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :selected-key="fileTab.target.path || null" :language="language" :load="filePreview.load" @select="panel.selectFile(fileTab.id, $event)" />
       </template>
@@ -245,7 +248,9 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 
 <style scoped>
 .context-resource-state { display: grid; flex: 1; min-width: 0; min-height: 0; place-content: center; padding: 20px; font-size: 12px; color: var(--buddy-text-muted); }
-.context-tree-error { padding: 8px 12px; font-size: 11px; color: var(--buddy-text-muted); }
+.context-tree-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; font-size: 11px; color: var(--buddy-text-muted); }
+.context-tree-retry { border: 0; background: transparent; padding: 0; color: var(--buddy-accent-solid); cursor: pointer; text-decoration: underline; font: inherit; font-size: 11px; }
+.context-tree-retry:hover { opacity: 0.85; }
 .desktop-browser-context-surface {
   display: flex;
   min-width: 0;

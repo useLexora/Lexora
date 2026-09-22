@@ -18,6 +18,10 @@ const props = withDefaults(defineProps<{
   final: true,
 })
 
+const emit = defineEmits<{
+  openLink: [href: string]
+}>()
+
 interface CopyButtonState {
   ariaLabel: string | null
   resetTimer: number
@@ -65,6 +69,37 @@ async function copyCodeBlock(event: MouseEvent) {
   }
 }
 
+function handleLinkClick(event: MouseEvent) {
+  if (!(event.target instanceof Element))
+    return
+
+  const anchor = event.target.closest<HTMLAnchorElement>('a')
+  if (!anchor)
+    return
+
+  event.preventDefault()
+  event.stopImmediatePropagation()
+
+  const href = anchor.getAttribute('href')?.trim()
+  if (!href)
+    return
+
+  if (/^https?:\/\//i.test(href)) {
+    window.open(href, '_blank', 'noopener,noreferrer')
+    return
+  }
+
+  emit('openLink', href)
+}
+
+function handleClick(event: MouseEvent) {
+  void copyCodeBlock(event)
+  if (event.defaultPrevented)
+    return
+
+  handleLinkClick(event)
+}
+
 function showCopiedState(button: HTMLButtonElement) {
   const currentState = copyButtonStates.get(button)
   if (currentState)
@@ -99,7 +134,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="buddy-chat-markdown-host" @click.capture="copyCodeBlock">
+  <div class="buddy-chat-markdown-host" @click.capture="handleClick">
     <MarkdownRender
       class="buddy-chat-markdown"
       :batch-rendering="animateStreaming"

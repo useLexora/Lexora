@@ -162,6 +162,30 @@ describe('useTaskContextPanel', () => {
     expect(panel.activeTab.value).toMatchObject({ target: { path: 'other.txt' } })
   })
 
+  it('switches to an existing exact file tab or reuses an existing space file tab', () => {
+    const space = fileSpace()
+    const panel = createTaskPanel({ activeSpace: shallowRef(space), spaces: shallowRef([space]) })
+
+    panel.previewFile('/workspace/README.md')
+    const firstTab = panel.activeTab.value!
+    expect(firstTab).toMatchObject({ target: { path: 'README.md' } })
+    expect(panel.tabs.value).toHaveLength(1)
+
+    panel.addBrowser()
+    expect(panel.activeTab.value?.kind).toBe('browser')
+    expect(panel.tabs.value).toHaveLength(2)
+
+    panel.previewFile('/workspace/README.md')
+    expect(panel.activeTab.value?.id).toBe(firstTab.id)
+    expect(panel.activeTab.value).toMatchObject({ target: { path: 'README.md' } })
+    expect(panel.tabs.value).toHaveLength(2)
+
+    panel.previewFile('/workspace/hello1.md')
+    expect(panel.activeTab.value?.id).toBe(firstTab.id)
+    expect(panel.activeTab.value).toMatchObject({ target: { path: 'hello1.md' } })
+    expect(panel.tabs.value).toHaveLength(2)
+  })
+
   it('isolates draft resources and carries them into the task created from that draft', () => {
     const activeConversationId = shallowRef<string | null>(null)
     const activeDraftId = shallowRef('first-draft')

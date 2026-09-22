@@ -62,6 +62,10 @@ describe('tool file preview targets', () => {
     ['C:\\Project', 'c:\\project\\src\\main.ts', 'src/main.ts'],
     ['C:\\Project', 'src\\main.ts', 'src/main.ts'],
     ['\\\\host\\share', '\\\\host\\share\\src\\main.ts', 'src/main.ts'],
+    ['/workspace/project', 'sandbox:/workspace/project/src/main.ts', 'src/main.ts'],
+    ['/workspace/project', 'sandbox:src/main.ts', 'src/main.ts'],
+    ['/workspace/project', 'file:///workspace/project/src/main.ts', 'src/main.ts'],
+    ['/workspace/project', 'src/main.ts#L12', 'src/main.ts'],
   ])('maps %s and %s to a current authorized file target', (root, path, expected) => {
     const target = resolveChatToolFileTarget(space(root), path)
     expect(target?.path ?? null).toBe(expected)

@@ -110,6 +110,8 @@ export default {
   'desktop.context.fileRevealFailed': '无法打开文件所在目录',
   'desktop.context.revealFile': '打开所在目录',
   'desktop.context.wrap': '自动换行',
+  'desktop.context.refreshFiles': '刷新文件目录',
+  'desktop.context.retry': '重试',
   'desktop.context.hideTree': '收起目录树',
   'desktop.context.showTree': '展开目录树',
   'desktop.context.allChanges': '全部',

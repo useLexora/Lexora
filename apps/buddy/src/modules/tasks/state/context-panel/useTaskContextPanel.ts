@@ -137,6 +137,35 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     const target = resolveChatToolFileTarget(space, path)
     if (!target || !space?.primaryDirectory)
       return
+
+    const exactTab = store.tabs.value.find(tab =>
+      tab.kind === 'files'
+      && tab.target.spaceId === target.spaceId
+      && tab.target.directoryId === target.directoryId
+      && tab.target.path === target.path,
+    )
+    if (exactTab) {
+      store.select(exactTab.id)
+      void control.open()
+      return
+    }
+
+    const active = store.activeTab.value
+    const spaceTab = (active?.kind === 'files' && active.target.spaceId === target.spaceId && active.target.directoryId === target.directoryId)
+      ? active
+      : store.tabs.value.find(tab =>
+          tab.kind === 'files'
+          && tab.target.spaceId === target.spaceId
+          && tab.target.directoryId === target.directoryId,
+        )
+
+    if (spaceTab) {
+      selectFile(spaceTab.id, target.path)
+      store.select(spaceTab.id)
+      void control.open()
+      return
+    }
+
     openTab({
       id: `files:${store.scope.value}:${target.spaceId}:${target.directoryId}:preview`,
       scope: store.scope.value,

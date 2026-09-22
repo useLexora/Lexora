@@ -61,6 +61,111 @@ describe('resource previews', () => {
     expect(state.current.value?.nodes).toEqual([])
   })
 
+  it('refreshes root and expanded directories while preserving valid expanded keys', async () => {
+    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '') {
+        return {
+          entries: [
+            { name: 'src', path: 'src', kind: 'directory', unavailable: false },
+            { name: 'README.md', path: 'README.md', kind: 'file', unavailable: false },
+          ],
+          nextCursor: null,
+        }
+      }
+      if (path === 'src') {
+        return {
+          entries: [
+            { name: 'index.ts', path: 'src/index.ts', kind: 'file', unavailable: false },
+          ],
+          nextCursor: null,
+        }
+      }
+      throw new Error('Not found')
+    })
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    await Promise.resolve()
+    await nextTick()
+    expect(state.current.value?.nodes).toHaveLength(2)
+
+    state.current.value!.expandedKeys = ['src', 'deleted-folder']
+    await state.refresh()
+
+    expect(state.current.value?.expandedKeys).toEqual(['src'])
+    const srcNode = state.current.value?.nodes.find(node => node.key === 'src')
+    expect(srcNode?.children).toHaveLength(1)
+    expect(srcNode?.children?.[0].key).toBe('src/index.ts')
+    expect(state.current.value?.treeFailed).toBe(false)
+  })
+
+  it('marks treeFailed when root refresh fails and recovers on next successful refresh', async () => {
+    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    let shouldFail = false
+    const listDirectory = vi.fn().mockImplementation(async () => {
+      if (shouldFail)
+        throw new Error('Disk unreadable')
+      return { entries: [{ name: 'file.txt', path: 'file.txt', kind: 'file', unavailable: false }], nextCursor: null }
+    })
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    await nextTick()
+    expect(state.current.value?.treeFailed).toBe(false)
+
+    shouldFail = true
+    await state.refresh()
+    expect(state.current.value?.treeFailed).toBe(true)
+
+    shouldFail = false
+    await state.refresh()
+    expect(state.current.value?.treeFailed).toBe(false)
+    expect(state.current.value?.nodes).toHaveLength(1)
+  })
+
+  it('triggers refresh on window focus event', async () => {
+    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    let count = 0
+    const listDirectory = vi.fn().mockImplementation(async () => {
+      count++
+      return { entries: [{ name: `file-${count}.txt`, path: `file-${count}.txt`, kind: 'file', unavailable: false }], nextCursor: null }
+    })
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    await Promise.resolve()
+    await nextTick()
+    expect(state.current.value?.nodes[0]?.label).toBe('file-1.txt')
+
+    window.dispatchEvent(new Event('focus'))
+    await Promise.resolve()
+    await nextTick()
+    expect(state.current.value?.nodes[0]?.label).toBe('file-2.txt')
+  })
+
+  it('automatically reveals and loads ancestor directories when a nested file path is selected', async () => {
+    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '')
+        return { entries: [{ name: 'src', path: 'src', kind: 'directory', unavailable: false }], nextCursor: null }
+      if (path === 'src')
+        return { entries: [{ name: 'utils', path: 'src/utils', kind: 'directory', unavailable: false }], nextCursor: null }
+      if (path === 'src/utils')
+        return { entries: [{ name: 'math.ts', path: 'src/utils/math.ts', kind: 'file', unavailable: false }], nextCursor: null }
+      return { entries: [], nextCursor: null }
+    })
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    await Promise.resolve()
+    await nextTick()
+
+    tab.value = { ...value, target: { ...value.target, path: 'src/utils/math.ts' } }
+    await Promise.resolve()
+    await nextTick()
+    await Promise.resolve()
+    await nextTick()
+
+    expect(state.current.value?.expandedKeys).toEqual(expect.arrayContaining(['src', 'src/utils']))
+  })
+
   it.each([
     ['report.md', 'text/markdown', 'file', true],
     ['REPORT.MD', 'text/plain', 'file', true],

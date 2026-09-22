@@ -112,6 +112,8 @@ export default {
   'desktop.context.fileRevealFailed': 'Could not reveal this file',
   'desktop.context.revealFile': 'Open containing folder',
   'desktop.context.wrap': 'Wrap lines',
+  'desktop.context.refreshFiles': 'Refresh files',
+  'desktop.context.retry': 'Retry',
   'desktop.context.hideTree': 'Hide file tree',
   'desktop.context.showTree': 'Show file tree',
   'desktop.context.allChanges': 'All',
