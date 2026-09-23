@@ -2,6 +2,7 @@
 import type { ChatAgentToolNode, ChatAgentTurn, ChatAgentTurnNode } from '../../../model/transcript/chatAgentTurn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
+import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import BuddyChatAgentTurn from '../BuddyChatAgentTurn.vue'
 import BuddyChatRunActivity from '../BuddyChatRunActivity.vue'
 import { useProvideChatContent } from '../chatContentContext'
@@ -150,6 +151,30 @@ describe('activity disclosure', () => {
     await nextTick()
     expect(headings().map(header => header.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
     await vi.waitFor(() => expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull())
+  })
+
+  it('renders process narration as safe Markdown', () => {
+    const text = [
+      '**Review complete** with `inline code`.',
+      '',
+      '- First finding',
+      '- Second finding',
+      '',
+      '```ts',
+      'const healthy = true',
+      '```',
+      '',
+      '<img src="https://example.com/tracker.png">',
+    ].join('\n')
+    const { root } = mountTurn([{ id: 'narration', kind: 'text', messageId: 'narration', text }], 'completed')
+    const body = root.querySelector('.buddy-chat-narration-body')!
+
+    expect(body.querySelector('strong')?.textContent).toBe('Review complete')
+    expect(body.querySelector(':not(pre) > code')?.textContent).toBe('inline code')
+    expect([...body.querySelectorAll('li')].map(item => item.textContent)).toEqual(['First finding', 'Second finding'])
+    expect(body.querySelector('pre code')?.textContent).toContain('const healthy = true')
+    expect(body.querySelector('img')).toBeNull()
+    expect(body.textContent).toContain('<img src="https://example.com/tracker.png">')
   })
 
   it('shows a single finished tool directly and retains its open output when a group forms', async () => {
@@ -382,6 +407,12 @@ function mountTurn(nodes: ChatAgentTurnNode[], status: ChatAgentTurn['status'] =
   document.body.append(root)
   const app = createApp({
     setup: () => {
+      useProvideDesktopUi({
+        language: shallowRef('zh-CN'),
+        isDark: shallowRef(false),
+        appSidebarCollapsed: shallowRef(false),
+        chat: shallowRef({ outlinePosition: 'top-right', welcome: 'random' }),
+      })
       useProvideChatContent({ canPreviewFile: () => false, previewFile: () => {}, writeClipboardText: async () => {} })
       const navigation = useChatActivityNavigation()
       return () => [
