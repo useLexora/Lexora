@@ -339,10 +339,6 @@ function highlight(index: number) {
   }
 }
 
-.chat-composer-source-picker__row.is-skill .chat-composer-source-picker__copy {
-  font-family: var(--buddy-font-brand);
-}
-
 .chat-composer-source-picker__copy {
   display: grid;
   min-width: 0;
