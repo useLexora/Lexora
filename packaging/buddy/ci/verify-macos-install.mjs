@@ -161,7 +161,7 @@ function verifyBundleMachOFiles(directory, target, minimumSystemVersion) {
 }
 
 function verifyMacosDeploymentTarget(path, maximumVersion) {
-  const output = execFileSync('xcrun', ['otool', '-l', path], {
+  const output = execFileSync('xcrun', ['vtool', '-show-build', '-', path], {
     encoding: 'utf8',
     env: { ...process.env, LC_ALL: 'C' },
     maxBuffer: 4 * 1024 * 1024,
