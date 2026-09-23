@@ -55,7 +55,7 @@ Bring your preferred models and grant access with fine-grained permissions. Whet
 
 ## Get started
 
-1. [Download the app](https://github.com/useLexora/Lexora/releases/latest) for Windows or Ubuntu / Debian on x64 and ARM64, Arch Linux on x64, or macOS 26+ on Apple Silicon.
+1. [Download the app](https://github.com/useLexora/Lexora/releases/latest) for Windows or Ubuntu / Debian on x64 and ARM64, Arch Linux on x64, or macOS 15+ on Apple Silicon.
 2. Connect a model service in settings using its API key or account authorization.
 3. Start a task and give Lexora a goal. Choose a working directory when you want to work with files.
 

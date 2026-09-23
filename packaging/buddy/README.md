@@ -9,7 +9,7 @@
 | Ubuntu x64 / ARM64 deb | `pnpm --filter @uselexora/lexora-buddy package:deb` |
 | Arch Linux x64 pacman | `pnpm --filter @uselexora/lexora-buddy package:arch` |
 | Windows x64 / ARM64 NSIS | `pnpm --filter @uselexora/lexora-buddy package:windows` |
-| macOS 26+ ARM64 DMG | `pnpm --filter @uselexora/lexora-buddy package:macos` |
+| macOS 15+ ARM64 DMG | `pnpm --filter @uselexora/lexora-buddy package:macos` |
 | Linux x64 / ARM64 独立桌宠 | `pnpm --filter @uselexora/lexora-buddy package:pet` |
 
 产物写入 `apps/buddy/.output/artifacts/`。桌面安装包内置 fd、ripgrep 与原生组件，Linux 还内置 Shell 沙箱 helper。构建需要 Rust 工具链；Linux 还需要 C 编译器、Meson、Ninja、libcap 开发包，运行沙箱需要 socat，包校验需要 `bsdtar`。Windows 构建需要 MSVC C++ Build Tools 与 Windows SDK；macOS 需要 Xcode Command Line Tools。各平台安装包在对应系统和 CPU 架构上构建和验证。

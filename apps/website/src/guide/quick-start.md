@@ -11,7 +11,7 @@
 | Windows x64 / ARM64 | 对应架构的 .exe |
 | Ubuntu / Debian x64 / ARM64 | 对应架构的 .deb |
 | Arch Linux x64 | .pkg.tar.zst |
-| macOS 26+，Apple Silicon（ARM64） | .dmg |
+| macOS 15+，Apple Silicon（ARM64） | .dmg |
 
 Intel / AMD 电脑选择 `x64`（.deb 标为 `amd64`），ARM 电脑选择 `arm64`。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
 
