@@ -329,8 +329,8 @@ function openSearchSpace(spaceId: string) {
 
     <NModal
       :show="spaceDeleteTarget !== null"
-      preset="card"
-      class="desktop-task-sidebar__modal"
+      preset="dialog"
+      type="warning"
       :title="t('desktop.tasks.deleteSpaceTitle')"
       @update:show="!$event && (spaceDeleteTarget = null)"
     >
@@ -349,49 +349,46 @@ function openSearchSpace(spaceId: string) {
           {{ t('desktop.tasks.deleteSpaceRetention') }}
         </p>
       </div>
-      <template #footer>
-        <div class="desktop-task-sidebar__modal-actions">
-          <NButton @click="spaceDeleteTarget = null">
-            {{ spaceDeleteTarget && spaceDeleteTarget.activeRunCount > 0 ? t('common.close') : t('common.cancel') }}
-          </NButton>
-          <NButton
-            v-if="spaceDeleteTarget && spaceDeleteTarget.activeRunCount === 0"
-            type="error"
-            @click="confirmSpaceDelete"
-          >
-            {{ t('common.delete') }}
-          </NButton>
-        </div>
+      <template #action>
+        <NButton @click="spaceDeleteTarget = null">
+          {{ spaceDeleteTarget && spaceDeleteTarget.activeRunCount > 0 ? t('common.close') : t('common.cancel') }}
+        </NButton>
+        <NButton
+          v-if="spaceDeleteTarget && spaceDeleteTarget.activeRunCount === 0"
+          type="error"
+          @click="confirmSpaceDelete"
+        >
+          {{ t('common.delete') }}
+        </NButton>
       </template>
     </NModal>
 
     <NModal
       :show="taskRenameTarget !== null"
-      preset="card"
-      class="desktop-task-sidebar__modal"
-      :style="{ width: 'min(28rem, calc(100vw - 2rem))' }"
+      preset="dialog"
       :title="t('desktop.tasks.renameTask')"
       @update:show="!$event && (taskRenameTarget = null)"
     >
-      <NInput
-        v-model:value="taskTitleDraft"
-        maxlength="80"
-        show-count
-        @keyup.enter="confirmTaskRename"
-      />
-      <template #footer>
-        <div class="desktop-task-sidebar__modal-actions">
-          <NButton @click="taskRenameTarget = null">
-            {{ t('common.cancel') }}
-          </NButton>
-          <NButton
-            type="primary"
-            :disabled="!taskTitleDraft.trim()"
-            @click="confirmTaskRename"
-          >
-            {{ t('common.save') }}
-          </NButton>
-        </div>
+      <div class="desktop-task-sidebar__rename-content">
+        <NInput
+          v-model:value="taskTitleDraft"
+          maxlength="80"
+          show-count
+          autofocus
+          @keyup.enter="confirmTaskRename"
+        />
+      </div>
+      <template #action>
+        <NButton @click="taskRenameTarget = null">
+          {{ t('common.cancel') }}
+        </NButton>
+        <NButton
+          type="primary"
+          :disabled="!taskTitleDraft.trim()"
+          @click="confirmTaskRename"
+        >
+          {{ t('common.save') }}
+        </NButton>
       </template>
     </NModal>
 
@@ -499,14 +496,8 @@ function openSearchSpace(spaceId: string) {
   padding-left: var(--buddy-task-sidebar-scrollbar-gutter);
 }
 
-.desktop-task-sidebar__modal {
-  width: min(28rem, calc(100vw - 2rem));
-}
-
-.desktop-task-sidebar__modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
+.desktop-task-sidebar__rename-content {
+  margin-top: 0.75rem;
 }
 
 .desktop-task-sidebar__delete-space-content {

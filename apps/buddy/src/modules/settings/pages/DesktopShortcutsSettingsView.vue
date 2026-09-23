@@ -190,25 +190,23 @@ function confirmReset() {
         {{ t('desktop.shortcuts.noResults') }}
       </p>
     </div>
-    <NModal v-model:show="resetConfirming" preset="card" class="shortcut-reset-dialog" :style="{ width: 'min(31rem, calc(100vw - 2rem))' }" :title="t('desktop.shortcuts.resetAll')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
+    <NModal v-model:show="resetConfirming" preset="dialog" type="warning" class="shortcut-reset-dialog" :title="t('desktop.shortcuts.resetAll')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
       <p class="shortcut-dialog__description">
         {{ t('desktop.shortcuts.resetConfirm') }}
       </p>
       <NAlert v-if="resetFailed" class="shortcut-dialog__alert" type="error" :show-icon="false">
         {{ t('desktop.shortcuts.saveFailed') }}
       </NAlert>
-      <template #footer>
-        <div class="shortcut-dialog__actions">
-          <NButton :disabled="saving" @click="resetConfirming = false">
-            {{ t('desktop.shortcuts.cancel') }}
-          </NButton>
-          <NButton type="primary" :loading="saving" @click="resetAll">
-            {{ t('desktop.shortcuts.restore') }}
-          </NButton>
-        </div>
+      <template #action>
+        <NButton :disabled="saving" @click="resetConfirming = false">
+          {{ t('desktop.shortcuts.cancel') }}
+        </NButton>
+        <NButton type="primary" :loading="saving" @click="resetAll">
+          {{ t('desktop.shortcuts.restore') }}
+        </NButton>
       </template>
     </NModal>
-    <NModal v-model:show="showRestore" preset="card" class="shortcut-restore-dialog" :style="{ width: 'min(31rem, calc(100vw - 2rem))' }" :title="t('desktop.shortcuts.restoreShortcut')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
+    <NModal v-model:show="showRestore" preset="dialog" class="shortcut-restore-dialog" :title="t('desktop.shortcuts.restoreShortcut')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
       <div v-if="restoring" class="shortcut-dialog__body">
         <p class="shortcut-dialog__description">
           {{ t('desktop.shortcuts.restoreShortcutConfirm', { name: restoring.label }) }}
@@ -222,15 +220,13 @@ function confirmReset() {
           {{ t('desktop.shortcuts.saveFailed') }}
         </NAlert>
       </div>
-      <template #footer>
-        <div class="shortcut-dialog__actions">
-          <NButton :disabled="saving" @click="restoring = null">
-            {{ t('desktop.shortcuts.cancel') }}
-          </NButton>
-          <NButton type="primary" :loading="saving" @click="restoreShortcut">
-            {{ t('desktop.shortcuts.restore') }}
-          </NButton>
-        </div>
+      <template #action>
+        <NButton :disabled="saving" @click="restoring = null">
+          {{ t('desktop.shortcuts.cancel') }}
+        </NButton>
+        <NButton type="primary" :loading="saving" @click="restoreShortcut">
+          {{ t('desktop.shortcuts.restore') }}
+        </NButton>
       </template>
     </NModal>
     <NModal v-model:show="showEditor" preset="card" :title="editing?.label" class="shortcut-editor" :style="{ width: 'min(31rem, calc(100vw - 2rem))' }" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
