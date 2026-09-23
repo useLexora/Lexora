@@ -37,7 +37,7 @@ async function main() {
     execFileSync('ditto', [join(mount, 'lexora-buddy.app'), installed], { stdio: 'inherit', timeout: 120_000 })
     execFileSync('hdiutil', ['detach', mount], { stdio: 'inherit', timeout: 30_000 })
     mounted = false
-    verifyBundleArchitectures(installed)
+    verifyBundleCompatibility(installed, target)
     execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', installed], { stdio: 'inherit' })
     verifyFirstLaunchPolicy(installed, signing)
     const { executablePath, version } = verifyDesktopDirectory(installed, target.id)
@@ -117,11 +117,27 @@ function verifyFirstLaunchPolicy(installed, signing) {
   writeOutput('Ad-hoc macOS application rejected by Gatekeeper; scoped xattr removal preserved the signature')
 }
 
-function verifyBundleArchitectures(directory) {
+function verifyBundleCompatibility(directory, target) {
+  const minimumSystemVersion = target.minimumSystemVersion
+  if (!minimumSystemVersion)
+    throw new Error('macOS target is missing its minimum system version')
+  const declaredMinimum = execFileSync('/usr/libexec/PlistBuddy', [
+    '-c',
+    'Print :LSMinimumSystemVersion',
+    join(directory, 'Contents/Info.plist'),
+  ], { encoding: 'utf8' }).trim()
+  if (compareVersions(declaredMinimum, minimumSystemVersion) !== 0)
+    throw new Error(`macOS application minimum system version must be ${minimumSystemVersion}: ${declaredMinimum}`)
+  const binaries = verifyBundleMachOFiles(directory, target, minimumSystemVersion)
+  writeOutput(`Verified ${binaries} ARM64 Mach-O files with deployment targets at or below macOS ${minimumSystemVersion}`)
+}
+
+function verifyBundleMachOFiles(directory, target, minimumSystemVersion) {
+  let binaries = 0
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) {
-      verifyBundleArchitectures(path)
+      binaries += verifyBundleMachOFiles(path, target, minimumSystemVersion)
       continue
     }
     if (!entry.isFile())
@@ -131,13 +147,55 @@ function verifyBundleArchitectures(directory) {
       const header = Buffer.alloc(32)
       const length = readSync(file, header, 0, header.length, 0)
       const magic = header.toString('hex', 0, 4)
-      if (['cffaedfe', 'cefaedfe', 'feedfacf', 'feedface', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(magic))
-        assertNativeExecutable(header.subarray(0, length), resolveBuildTarget(), path)
+      if (!['cffaedfe', 'cefaedfe', 'feedfacf', 'feedface', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(magic))
+        continue
+      assertNativeExecutable(header.subarray(0, length), target, path)
+      verifyMacosDeploymentTarget(path, minimumSystemVersion)
+      binaries++
     }
     finally {
       closeSync(file)
     }
   }
+  return binaries
+}
+
+function verifyMacosDeploymentTarget(path, maximumVersion) {
+  const output = execFileSync('xcrun', ['otool', '-l', path], {
+    encoding: 'utf8',
+    env: { ...process.env, LC_ALL: 'C' },
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 30_000,
+  })
+  const versions = output.split(/(?=Load command \d+\n)/).flatMap((command) => {
+    if (command.includes('cmd LC_BUILD_VERSION'))
+      return command.match(/^\s*minos\s+(\d+(?:\.\d+){1,2})\s*$/m)?.[1] ?? []
+    if (command.includes('cmd LC_VERSION_MIN_MACOSX'))
+      return command.match(/^\s*version\s+(\d+(?:\.\d+){1,2})\s*$/m)?.[1] ?? []
+    return []
+  })
+  if (versions.length === 0)
+    throw new Error(`Mach-O file does not declare a macOS deployment target: ${path}`)
+  for (const version of versions) {
+    if (compareVersions(version, maximumVersion) > 0)
+      throw new Error(`Mach-O file requires macOS ${version}, above ${maximumVersion}: ${path}`)
+  }
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => {
+    if (!/^\d+(?:\.\d+){0,2}$/.test(value))
+      throw new Error(`Invalid macOS version: ${value}`)
+    return value.split('.').map(Number)
+  }
+  const leftParts = parse(left)
+  const rightParts = parse(right)
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
+    if (difference !== 0)
+      return difference
+  }
+  return 0
 }
 
 void main().catch((error) => {

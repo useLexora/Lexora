@@ -10,7 +10,7 @@ import { CPU_ARCHITECTURE } from '../../../apps/buddy/shared/platform/identifier
 const packaging = {
   linux: { builderPlatform: 'linux', packageFormats: ['deb', 'pacman'] },
   win32: { builderPlatform: 'win', packageFormats: ['nsis'] },
-  darwin: { builderPlatform: 'mac', packageFormats: ['dmg'], minimumSystemVersion: '26.0' },
+  darwin: { builderPlatform: 'mac', packageFormats: ['dmg'], minimumSystemVersion: '15.0' },
 }
 
 export function resolveBuildTarget(id = `${process.platform}-${process.arch}`) {

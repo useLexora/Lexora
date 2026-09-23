@@ -55,7 +55,7 @@ Lexora 将任务对话、本地上下文、沙箱工具执行与产物交付整�
 
 ## 开始使用
 
-1. [下载安装包](https://github.com/useLexora/Lexora/releases/latest)：支持 Windows、Ubuntu / Debian 的 x64 与 ARM64，Arch Linux x64，以及 macOS 26+ 的 Apple Silicon。
+1. [下载安装包](https://github.com/useLexora/Lexora/releases/latest)：支持 Windows、Ubuntu / Debian 的 x64 与 ARM64，Arch Linux x64，以及 macOS 15+ 的 Apple Silicon。
 2. 在设置中连接模型服务，按服务商要求配置 API Key 或账号授权。
 3. 新建任务，给 Lexora 一个目标；需要处理文件时，再选择工作目录。
 

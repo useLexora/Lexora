@@ -11,7 +11,7 @@ Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and
 | Windows x64 / ARM64 | .exe for your architecture |
 | Ubuntu / Debian x64 / ARM64 | .deb for your architecture |
 | Arch Linux x64 | .pkg.tar.zst |
-| macOS 26+, Apple Silicon (ARM64) | .dmg |
+| macOS 15+, Apple Silicon (ARM64) | .dmg |
 
 Choose `x64` (`amd64` for .deb) for Intel / AMD computers, or `arm64` for ARM computers. The native Linux pet is optional company, not a requirement for completing tasks.
 
