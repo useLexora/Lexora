@@ -8,6 +8,7 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { createChatAgentActivityProjector } from '../../model/transcript/chatAgentActivities'
 import BuddyChatActivityGroup from './BuddyChatActivityGroup.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
+import BuddyChatNarrationBody from './BuddyChatNarrationBody.vue'
 import { useChatActivityNavigation } from './useChatActivityNavigation'
 
 const props = defineProps<{
@@ -49,9 +50,11 @@ defineExpose({ revealActivity })
         :language="language"
         :node="row"
       />
-      <p v-else-if="row.kind === 'text'" class="buddy-chat-agent-turn__text">
-        {{ row.text }}
-      </p>
+      <BuddyChatNarrationBody
+        v-else-if="row.kind === 'text'"
+        :language="language"
+        :text="row.text"
+      />
       <p v-else-if="row.kind === 'panel'" class="buddy-chat-agent-turn__panel-operation" data-testid="context-panel-operation">
         <DesktopIcon :component="PanelRight20Regular" />
         <span>{{ t(row.actor === 'harness' ? 'desktop.chat.panelActorSystem' : 'desktop.chat.panelActorUser') }} · {{ t(row.action === 'open' ? 'desktop.chat.panelOpened' : 'desktop.chat.panelClosed') }}</span>
@@ -70,14 +73,6 @@ defineExpose({ revealActivity })
   min-width: 0;
   gap: 6px;
   margin-top: var(--buddy-chat-gap-block);
-}
-
-.buddy-chat-agent-turn__text {
-  margin: 6px 0;
-  color: var(--buddy-text-primary);
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
 }
 
 .buddy-chat-agent-turn__failure-detail {
