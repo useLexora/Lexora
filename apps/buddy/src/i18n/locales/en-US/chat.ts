@@ -207,7 +207,7 @@ export default {
   'desktop.chat.advanced': 'Advanced',
   'desktop.chat.clearModel': 'Clear model',
   'desktop.chat.disclaimer': 'AI can make mistakes, so verify important results.',
-  'desktop.chat.effort': 'Reasoning effort',
+  'desktop.chat.effort': 'Reasoning',
   'desktop.chat.executionProfileAllowFull': 'Allow full access',
   'desktop.chat.executionProfileReadOnly': 'Local read-only',
   'desktop.chat.toolDeniedReadOnly': 'The read-only profile blocked this operation',

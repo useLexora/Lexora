@@ -3,6 +3,7 @@ import type { BuddyTranslate } from './buddyMessages'
 import { computed, toValue } from 'vue'
 import { resolveBuddyLocale, translateBuddy } from './buddyMessages'
 
+export { ensureBuddyDayjs, syncBuddyDayjsLocale, toDayjsLocale } from './buddyDayjs'
 export type { BuddyI18nKey, BuddyLocale, BuddyTranslate } from './buddyMessages'
 export { BUDDY_LOCALES, resolveBuddyLocale, translateBuddy } from './buddyMessages'
 

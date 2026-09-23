@@ -11,9 +11,10 @@ import {
   NMessageProvider,
   zhCN,
 } from 'naive-ui'
-import { computed, shallowRef, watchEffect } from 'vue'
+import { computed, shallowRef, watch, watchEffect } from 'vue'
 import DesktopAppProvider from '@/app/bootstrap/DesktopAppProvider.vue'
 import DesktopShell from '@/app/shell/DesktopShell.vue'
+import { syncBuddyDayjsLocale } from '@/i18n/buddyI18n'
 import {
   buddyColorThemes,
   createBuddyColorVariables,
@@ -33,6 +34,8 @@ const colorTheme = computed(() => buddyColorThemes[prefersDark.value ? 'dark' : 
 const themeOverrides = computed(() => createBuddyNaiveThemeOverrides(colorTheme.value))
 const naiveLocale = computed(() => language.value === 'en-US' ? enUS : zhCN)
 const naiveDateLocale = computed(() => language.value === 'en-US' ? dateEnUS : dateZhCN)
+
+watch(language, syncBuddyDayjsLocale, { immediate: true })
 
 watchEffect(() => {
   if (typeof document === 'undefined')
