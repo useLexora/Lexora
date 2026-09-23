@@ -128,10 +128,23 @@ function formatStdioTarget(connector: LocalConnector): string {
     </section>
     <DesktopMcpConnectionEditor v-if="editor" :connector="editor.connector" :language="language" :busy="!!busyId" :error="error" @close="editor = null" @save="save" />
     <DesktopMcpImportDialog v-if="importing" :language="language" :save="mcp.save" :error="error" @close="importing = false" />
-    <NModal v-if="executionConfirmation" show preset="card" :title="t('desktop.mcp.confirmExecutionTitle')" :style="{ width: 'min(520px, calc(100vw - 48px))' }" :closable="!busyId" :mask-closable="!busyId" @close="executionConfirmation = null" @update:show="value => !value && (executionConfirmation = null)">
-      <template v-if="executionConfirmation">
-        <p>{{ t('desktop.mcp.confirmExecutionDescription') }}</p>
-        <pre class="mcp-settings__target">{{ formatStdioTarget(executionConfirmation.connector) }}</pre>
+    <NModal
+      v-if="executionConfirmation"
+      show
+      preset="dialog"
+      type="warning"
+      :title="t('desktop.mcp.confirmExecutionTitle')"
+      :closable="!busyId"
+      :mask-closable="!busyId"
+      @close="executionConfirmation = null"
+      @update:show="value => !value && (executionConfirmation = null)"
+    >
+      <p>{{ t('desktop.mcp.confirmExecutionDescription') }}</p>
+      <pre class="mcp-settings__target">{{ formatStdioTarget(executionConfirmation.connector) }}</pre>
+      <template #action>
+        <NButton :disabled="!!busyId" @click="executionConfirmation = null">
+          {{ t('common.cancel') }}
+        </NButton>
         <NButton type="primary" :loading="!!busyId" @click="confirmExecution">
           {{ t('desktop.mcp.confirmExecution') }}
         </NButton>
