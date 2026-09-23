@@ -273,9 +273,26 @@ function isMissingFile(error: unknown): boolean {
 }
 
 function readSessionEntries(path: string): FileEntry[] {
-  const text = readFileSync(path, 'utf8')
+  const buffer = readFileSync(path)
   try {
-    const entries: FileEntry[] = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line))
+    const entries: FileEntry[] = []
+    let start = 0
+    while (start < buffer.length) {
+      let end = buffer.indexOf(0x0A, start)
+      if (end === -1)
+        end = buffer.length
+      let lineStart = start
+      let lineEnd = end
+      start = end + 1
+      while (lineStart < lineEnd && buffer[lineStart]! <= 0x20)
+        lineStart++
+      while (lineEnd > lineStart && buffer[lineEnd - 1]! <= 0x20)
+        lineEnd--
+      if (lineStart >= lineEnd)
+        continue
+      const line = buffer.toString('utf8', lineStart, lineEnd)
+      entries.push(JSON.parse(line))
+    }
     if (!entries.length || entries[0]?.type !== 'session')
       throw new InvalidPiTreeError()
     const ids = new Set<string>()

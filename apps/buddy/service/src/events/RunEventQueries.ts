@@ -77,7 +77,7 @@ export class RunEventQueries {
       FROM runs
       INNER JOIN run_events ON run_events.run_id = runs.id
       WHERE runs.status IN ('completed', 'failed', 'cancelled')
-        AND run_events.event_type IN ('message.delta', 'message.block.delta', 'tool.updated')
+        AND run_events.event_type IN ('message.delta', 'message.block.delta', 'tool.updated', 'run.progress')
       ORDER BY runs.started_at, runs.id
     `).all() as unknown as Array<{ id: string }>
     return rows.map(row => row.id)

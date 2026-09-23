@@ -58,10 +58,16 @@ function shouldRemoveRunEvent(
   event: BuddyRunEvent,
   facts: RunEventCompactionFacts,
 ): boolean {
+  if (event.type === 'run.progress')
+    return true
   if (event.type === 'message.delta')
     return facts.completedMessageIds.has(readMessageId(event.payload) ?? '')
   if (event.type === 'message.block.delta')
     return facts.completedBlockKeys.has(readMessageBlockKey(event.payload) ?? '')
+  if (event.type === 'tool.preparing') {
+    const toolCallId = readToolCallId(event.payload) ?? ''
+    return facts.completedToolCallIds.has(toolCallId)
+  }
   if (event.type !== 'tool.updated')
     return false
   const toolCallId = readToolCallId(event.payload) ?? ''

@@ -72,6 +72,22 @@ describe('runEventCompaction', () => {
     expect(plan.removed.map(item => item.sequence)).toEqual([1, 2])
     expect(plan.retained.map(item => item.sequence)).toEqual([3, 4])
   })
+
+  it('compacts transient progress and completed tool preparing events', () => {
+    const events = [
+      event(1, 'run.started', {}),
+      event(2, 'run.progress', { phase: 'thinking' }),
+      event(3, 'tool.preparing', { toolCallId: 'tool-done' }),
+      event(4, 'tool.completed', { toolCallId: 'tool-done' }),
+      event(5, 'tool.preparing', { toolCallId: 'tool-pending' }),
+      event(6, 'run.completed', {}),
+    ]
+
+    const plan = createRunEventCompactionPlan(events)
+
+    expect(plan.removed.map(item => item.sequence)).toEqual([2, 3])
+    expect(plan.retained.map(item => item.sequence)).toEqual([1, 4, 5, 6])
+  })
 })
 
 function event(sequence: number, type: string, payload: unknown): BuddyRunEvent {

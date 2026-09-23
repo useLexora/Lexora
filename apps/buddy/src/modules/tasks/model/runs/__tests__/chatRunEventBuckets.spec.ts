@@ -2,6 +2,7 @@ import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
 
 import { describe, expect, it } from 'vitest'
 import {
+  compactChatRunEventSnapshots,
   mergeChatRunEventBuckets,
   replaceChatRunEventBuckets,
 } from '../chatRunEventBuckets'
@@ -46,6 +47,49 @@ describe('chat run event buckets', () => {
       kind: 'append',
       previousRevision: initial.get('run-a')?.revision,
     })
+  })
+
+  it('compacts preparing events when tool has started or completed, but preserves preparing for failed tools', () => {
+    const events: LocalRunEvent[] = [
+      {
+        createdAt: '2026-09-03T00:00:01.000Z',
+        payload: { presentation: { card: 'file' }, toolCallId: 'tool-completed' },
+        runId: 'run-1',
+        sequence: 1,
+        type: 'tool.preparing',
+      },
+      {
+        createdAt: '2026-09-03T00:00:02.000Z',
+        payload: { presentation: { card: 'file' }, toolCallId: 'tool-completed' },
+        runId: 'run-1',
+        sequence: 2,
+        type: 'tool.completed',
+      },
+      {
+        createdAt: '2026-09-03T00:00:03.000Z',
+        payload: { presentation: { card: 'file' }, toolCallId: 'tool-failed' },
+        runId: 'run-1',
+        sequence: 3,
+        type: 'tool.preparing',
+      },
+      {
+        createdAt: '2026-09-03T00:00:04.000Z',
+        payload: { errorCode: 'PATH_NOT_FOUND', toolCallId: 'tool-failed' },
+        runId: 'run-1',
+        sequence: 4,
+        type: 'tool.failed',
+      },
+      {
+        createdAt: '2026-09-03T00:00:05.000Z',
+        payload: {},
+        runId: 'run-1',
+        sequence: 5,
+        type: 'run.failed',
+      },
+    ]
+
+    const compacted = compactChatRunEventSnapshots(events)
+    expect(compacted.map(item => item.sequence)).toEqual([2, 3, 4, 5])
   })
 })
 
