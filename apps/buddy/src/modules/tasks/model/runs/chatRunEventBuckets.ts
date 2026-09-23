@@ -109,7 +109,11 @@ export function mergeChatRunEvents(
 export function compactChatRunEventSnapshots(
   events: ReadonlyArray<LocalRunEvent>,
 ): ReadonlyArray<LocalRunEvent> {
+  const isTerminalRun = events.some(event =>
+    event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled',
+  )
   const completedToolKeys = new Set<string>()
+  const startedOrCompletedToolKeys = new Set<string>()
   const latestToolReplacementSequence = new Map<string, number>()
   for (const event of events) {
     const toolKey = runToolKey(event)
@@ -117,10 +121,18 @@ export function compactChatRunEventSnapshots(
       continue
     if (event.type === 'tool.completed')
       completedToolKeys.add(toolKey)
+    if (event.type === 'tool.started' || event.type === 'tool.completed')
+      startedOrCompletedToolKeys.add(toolKey)
     else if (event.type === 'tool.updated' && !isToolPresentationDelta(event))
       latestToolReplacementSequence.set(toolKey, event.sequence)
   }
   return events.filter((event) => {
+    if (isTerminalRun && event.type === 'run.progress')
+      return false
+    if (event.type === 'tool.preparing') {
+      const toolKey = runToolKey(event)
+      return toolKey ? !startedOrCompletedToolKeys.has(toolKey) : true
+    }
     if (event.type !== 'tool.updated')
       return true
     const toolKey = runToolKey(event)

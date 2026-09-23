@@ -84,8 +84,8 @@ export function createReadFileExtension(cwd: string): BuddyInProcessExtension {
       pi.registerTool(createBuddyReadTool(cwd))
       pi.on('context', event => ({ messages: projectReadHistory(event.messages) }))
       pi.on('session_before_compact', ({ preparation }) => {
-        preparation.messagesToSummarize = projectReadHistory(preparation.messagesToSummarize)
-        preparation.turnPrefixMessages = projectReadHistory(preparation.turnPrefixMessages)
+        preparation.messagesToSummarize = projectReadHistory(preparation.messagesToSummarize, { omitImages: true })
+        preparation.turnPrefixMessages = projectReadHistory(preparation.turnPrefixMessages, { omitImages: true })
       })
     },
   }
