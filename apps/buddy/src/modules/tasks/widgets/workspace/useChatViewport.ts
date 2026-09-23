@@ -1,10 +1,12 @@
 import type { BuddyChatMessageListHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics, ChatReadingPositions } from '@/modules/tasks/widgets/transcript/chatMessageViewport'
+import type { ObserveChatScrollOptions } from '@/modules/tasks/widgets/workspace/chatScroll'
 import { computed, nextTick, onScopeDispose, shallowRef, watch } from 'vue'
 import {
   beginReturningToChatTail,
   createChatScrollState,
   detachChatScroll,
   observeChatScroll,
+
   reconcileChatScrollOwnership,
   recordProgrammaticChatScroll,
 } from '@/modules/tasks/widgets/workspace/chatScroll'
@@ -162,10 +164,13 @@ export function useChatViewport(options: UseChatViewportOptions) {
       && operation.list === options.list.value
   }
 
-  function handleScroll(metrics: ChatMessageScrollMetrics) {
+  function handleScroll(
+    metrics: ChatMessageScrollMetrics,
+    scrollOptions?: ObserveChatScrollOptions,
+  ) {
     if (disposed || isPositioning.value)
       return
-    const observation = observeChatScroll(scrollState.value, metrics)
+    const observation = observeChatScroll(scrollState.value, metrics, scrollOptions)
     scrollState.value = observation.state
     if (observation.movedByReader) {
       operationGeneration += 1
@@ -212,6 +217,27 @@ export function useChatViewport(options: UseChatViewportOptions) {
     readingAnchor = null
     pendingPosition = null
     scrollState.value = detachChatScroll(scrollState.value)
+  }
+
+  function resetToTail() {
+    if (disposed)
+      return
+    operationGeneration += 1
+    pendingRevealMessageId = null
+    readingAnchor = null
+    pendingPosition = null
+    pendingHistory = null
+    pendingPage = null
+    const currentScope = scopeKey()
+    readingPositions.set(currentScope, null)
+    readingPositions.set(positionedScopeKey, null)
+    scrollState.value = createChatScrollState()
+    isPositioning.value = false
+    writeTailPosition()
+    void nextTick(() => {
+      if (!disposed && scrollState.value.ownership === 'following')
+        writeTailPosition()
+    })
   }
 
   async function returnToLatest() {
@@ -356,6 +382,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     handleReaderLayoutIntent,
     handleScroll,
     isPositioning,
+    resetToTail,
     revealOutlineMessage,
     revealMessage,
     returnToLatest,

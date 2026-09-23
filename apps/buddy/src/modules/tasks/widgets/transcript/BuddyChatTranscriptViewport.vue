@@ -20,14 +20,53 @@ const emit = defineEmits<{
   activeMessageChange: [messageId: string | null]
   contentResize: [metrics: ChatMessageScrollMetrics]
   returnToLatest: []
-  scroll: [metrics: ChatMessageScrollMetrics]
+  scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
 }>()
 
+const root = useTemplateRef<HTMLElement>('root')
 const content = useTemplateRef<HTMLElement>('content')
 const viewport = computed(() => content.value?.closest<HTMLElement>('.buddy-chat-transcript-viewport__scrollport') ?? null)
 let resizeObserver: ResizeObserver | null = null
 let viewportFrameTask: ReturnType<typeof createChatFrameTask> | null = null
 let domIndex: ReturnType<typeof createChatTranscriptDomIndex> | null = null
+
+let isUserInteracting = false
+let userInteractionTimer: number | null = null
+let isPointerDragging = false
+
+function markUserInteraction() {
+  isUserInteracting = true
+  if (userInteractionTimer !== null)
+    window.clearTimeout(userInteractionTimer)
+  userInteractionTimer = window.setTimeout(() => {
+    isUserInteracting = false
+    userInteractionTimer = null
+  }, 160)
+}
+
+function handleWheel() {
+  markUserInteraction()
+}
+
+function handleTouchMove() {
+  markUserInteraction()
+}
+
+function handleKeyDown(event: KeyboardEvent) {
+  const scrollKeys = ['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' ']
+  if (scrollKeys.includes(event.key))
+    markUserInteraction()
+}
+
+function handlePointerDown() {
+  isPointerDragging = true
+  markUserInteraction()
+}
+
+function handlePointerUp() {
+  isPointerDragging = false
+  markUserInteraction()
+}
 
 function readScrollMetrics(): ChatMessageScrollMetrics | null {
   return viewport.value ? toScrollMetrics(viewport.value) : null
@@ -136,17 +175,29 @@ function scheduleActiveMessageChange() {
 
 function handleScroll() {
   const metrics = readScrollMetrics()
-  if (metrics)
-    emit('scroll', metrics)
+  if (metrics) {
+    const userInitiated = isUserInteracting || isPointerDragging
+    emit('scroll', metrics, { userInitiated })
+  }
   scheduleActiveMessageChange()
 }
 
 onMounted(() => {
   if (content.value)
     domIndex = createChatTranscriptDomIndex(content.value)
-  if (viewport.value) {
-    viewport.value.tabIndex = 0
-    viewport.value.dataset.chatScrollViewport = ''
+  const scrollport = viewport.value
+  const rootEl = root.value
+  if (scrollport) {
+    scrollport.tabIndex = 0
+    scrollport.dataset.chatScrollViewport = ''
+    scrollport.addEventListener('wheel', handleWheel, { passive: true })
+    scrollport.addEventListener('touchmove', handleTouchMove, { passive: true })
+    scrollport.addEventListener('keydown', handleKeyDown)
+  }
+  if (rootEl) {
+    rootEl.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
   }
   viewportFrameTask = createChatFrameTask(
     () => {
@@ -155,7 +206,7 @@ onMounted(() => {
     requestAnimationFrame,
     cancelAnimationFrame,
   )
-  if (!content.value || typeof ResizeObserver === 'undefined')
+  if (typeof ResizeObserver === 'undefined')
     return
   resizeObserver = new ResizeObserver(() => {
     const metrics = readScrollMetrics()
@@ -163,7 +214,10 @@ onMounted(() => {
       emit('contentResize', metrics)
     scheduleActiveMessageChange()
   })
-  resizeObserver.observe(content.value)
+  if (content.value)
+    resizeObserver.observe(content.value)
+  if (scrollport)
+    resizeObserver.observe(scrollport)
   scheduleActiveMessageChange()
 })
 
@@ -171,6 +225,22 @@ onBeforeUnmount(() => {
   domIndex?.dispose()
   resizeObserver?.disconnect()
   viewportFrameTask?.cancel()
+  const scrollport = viewport.value
+  const rootEl = root.value
+  if (scrollport) {
+    scrollport.removeEventListener('wheel', handleWheel)
+    scrollport.removeEventListener('touchmove', handleTouchMove)
+    scrollport.removeEventListener('keydown', handleKeyDown)
+  }
+  if (rootEl) {
+    rootEl.removeEventListener('pointerdown', handlePointerDown)
+  }
+  window.removeEventListener('pointerup', handlePointerUp)
+  window.removeEventListener('pointercancel', handlePointerUp)
+  if (userInteractionTimer !== null) {
+    window.clearTimeout(userInteractionTimer)
+    userInteractionTimer = null
+  }
 })
 
 defineExpose<BuddyChatTranscriptViewportHandle>({
@@ -192,7 +262,7 @@ function toScrollMetrics(element: HTMLElement): ChatMessageScrollMetrics {
 </script>
 
 <template>
-  <div class="buddy-chat-transcript-viewport">
+  <div ref="root" class="buddy-chat-transcript-viewport">
     <NScrollbar
       class="buddy-chat-transcript-viewport__scrollbar"
       container-class="buddy-chat-transcript-viewport__scrollport"

@@ -202,7 +202,7 @@ function openDetailChanges(id: string) {
           @regenerate-assistant="workspace.execution.regenerateAssistant"
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"
-          @scroll="viewport.handleScroll"
+          @scroll="(metrics, options) => viewport.handleScroll(metrics, options)"
         />
       </main>
 

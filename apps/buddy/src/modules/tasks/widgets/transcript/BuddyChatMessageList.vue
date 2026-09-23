@@ -53,7 +53,7 @@ const emit = defineEmits<{
   regenerateAssistant: [sourceRunId: string]
   returnToLatest: []
   selectOutlineMessage: [messageId: string]
-  scroll: [metrics: ChatMessageScrollMetrics]
+  scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
   contentResize: [metrics: ChatMessageScrollMetrics]
 }>()
 
@@ -175,7 +175,7 @@ onBeforeUnmount(clearOutlineHighlight)
       @active-message-change="activeOutlineMessageId = $event"
       @content-resize="emit('contentResize', $event)"
       @return-to-latest="emit('returnToLatest')"
-      @scroll="emit('scroll', $event)"
+      @scroll="(metrics, options) => emit('scroll', metrics, options)"
     >
       <template v-for="item in displayRows" :key="item.key">
         <div

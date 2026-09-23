@@ -47,7 +47,7 @@ const emit = defineEmits<{
   regenerateAssistant: [sourceRunId: string]
   returnToLatest: []
   selectOutlineMessage: [messageId: string]
-  scroll: [metrics: ChatMessageScrollMetrics]
+  scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
 }>()
 
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
@@ -149,6 +149,6 @@ defineExpose<BuddyChatMessageListHandle>({
     @regenerate-assistant="emit('regenerateAssistant', $event)"
     @return-to-latest="emit('returnToLatest')"
     @select-outline-message="emit('selectOutlineMessage', $event)"
-    @scroll="emit('scroll', $event)"
+    @scroll="(metrics, options) => emit('scroll', metrics, options)"
   />
 </template>

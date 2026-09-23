@@ -32,8 +32,8 @@ export function useChatWorkspace(
 
   watch(() => execution.value.isSending.value, (sending) => {
     if (sending)
-      void viewport.returnToLatest()
-  })
+      viewport.resetToTail()
+  }, { flush: 'sync' })
 
   watch(() => [
     session.value.activeConversationId.value,

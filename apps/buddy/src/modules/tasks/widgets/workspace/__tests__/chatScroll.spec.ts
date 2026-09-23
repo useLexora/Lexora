@@ -6,6 +6,7 @@ import {
   observeChatScroll,
   reconcileChatScrollOwnership,
   recordProgrammaticChatScroll,
+  resetChatScrollToTail,
 } from '../chatScroll'
 
 describe('desktopChatScroll', () => {
@@ -141,5 +142,69 @@ describe('desktopChatScroll', () => {
       scrollTop: 1_000,
     })
     expect(completed.ownership).toBe('following')
+  })
+
+  it('keeps following ownership when scroll occurs without user initiation (e.g. window resize or split layout changes)', () => {
+    const following = recordProgrammaticChatScroll(createChatScrollState(), {
+      clientHeight: 600,
+      scrollHeight: 1_600,
+      scrollTop: 1_000,
+    })
+
+    const result = observeChatScroll(
+      following,
+      { clientHeight: 500, scrollHeight: 1_600, scrollTop: 800 },
+      { userInitiated: false },
+    )
+
+    expect(result).toEqual({
+      movedByReader: false,
+      state: {
+        observedTop: 800,
+        ownership: 'following',
+      },
+    })
+  })
+
+  it('only detaches when user explicitly scrolls away from tail', () => {
+    const following = recordProgrammaticChatScroll(createChatScrollState(), {
+      clientHeight: 600,
+      scrollHeight: 1_600,
+      scrollTop: 1_000,
+    })
+
+    const detached = observeChatScroll(
+      following,
+      { clientHeight: 600, scrollHeight: 1_600, scrollTop: 500 },
+      { userInitiated: true },
+    )
+    expect(detached).toEqual({
+      movedByReader: true,
+      state: {
+        observedTop: 500,
+        ownership: 'detached',
+      },
+    })
+
+    const backToTail = observeChatScroll(
+      detached.state,
+      { clientHeight: 600, scrollHeight: 1_600, scrollTop: 1_000 },
+      { userInitiated: true },
+    )
+    expect(backToTail).toEqual({
+      movedByReader: false,
+      state: {
+        observedTop: 1_000,
+        ownership: 'following',
+      },
+    })
+  })
+
+  it('resets scroll state to following with resetChatScrollToTail', () => {
+    const reset = resetChatScrollToTail({ clientHeight: 600, scrollHeight: 1_600, scrollTop: 1_000 })
+    expect(reset).toEqual({
+      observedTop: 1_000,
+      ownership: 'following',
+    })
   })
 })
