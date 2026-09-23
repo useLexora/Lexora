@@ -539,4 +539,45 @@ describe('chat viewport operations', () => {
     await nextTick()
     expect(fixture.original.metrics.scrollTop).toBe(420)
   })
+
+  it('explicitly clears previous reading states and follows the tail on resetToTail', async () => {
+    const readingPositions: ChatReadingPositions = new Map()
+    const fixture = createViewport(async () => false, { readingPositions })
+    fixture.options.hasOlderMessages.value = false
+    fixture.original.metrics.scrollTop = 200
+    fixture.viewport.handleScroll(fixture.original.metrics)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
+
+    fixture.viewport.resetToTail()
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+    expect(fixture.original.metrics.scrollTop).toBe(600)
+    expect(readingPositions.get('conversation-1:branch-1')).toBeNull()
+
+    // 新内容追加时保持跟随
+    fixture.original.metrics.scrollHeight = 1_400
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(1_000)
+  })
+
+  it('does not detach follow ownership on non-user scrolls caused by window or split resizing', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.options.hasOlderMessages.value = false
+    // 初始处于 tail: 1000 - 400 = 600
+    fixture.original.metrics.scrollTop = 600
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+
+    // 窗口或者分屏调整导致视口高度变小，且触发了非用户滚动事件
+    fixture.original.metrics.clientHeight = 300
+    fixture.original.metrics.scrollTop = 500 // 暂时未到达最新 tail (700)
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
+
+    // 不会被误认为用户主动脱离
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+
+    // ResizeObserver 回调触发后，立即自动跟随到最新底部
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(700)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+  })
 })

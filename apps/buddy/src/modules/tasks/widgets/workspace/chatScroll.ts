@@ -19,6 +19,10 @@ export interface ObservedChatScroll {
   state: ChatScrollState
 }
 
+export interface ObserveChatScrollOptions {
+  userInitiated?: boolean
+}
+
 const CHAT_SCROLL_POSITION_EPSILON_PX = 0.5
 
 export function createChatScrollState(): ChatScrollState {
@@ -42,17 +46,40 @@ export function detachChatScroll(state: ChatScrollState): ChatScrollState {
   }
 }
 
+export function resetChatScrollToTail(metrics?: ChatMessageScrollMetrics | null): ChatScrollState {
+  return {
+    observedTop: metrics?.scrollTop ?? 0,
+    ownership: 'following',
+  }
+}
+
 export function observeChatScroll(
   state: ChatScrollState,
   metrics: ChatMessageScrollMetrics,
+  options?: ObserveChatScrollOptions,
 ): ObservedChatScroll {
+  const isTail = isNearChatTail(metrics)
   const floor = Math.max(0, metrics.scrollHeight - metrics.clientHeight)
   const expectedTop = Math.min(state.observedTop, floor)
-  const movedByReader = Math.abs(metrics.scrollTop - expectedTop)
+  const movedByPosition = Math.abs(metrics.scrollTop - expectedTop)
     > CHAT_SCROLL_POSITION_EPSILON_PX
-  const ownership = isNearChatTail(metrics)
-    ? 'following'
-    : movedByReader ? 'detached' : state.ownership
+  const movedByReader = options?.userInitiated !== undefined
+    ? Boolean(options.userInitiated && !isTail)
+    : (movedByPosition && !isTail)
+
+  let ownership: ChatScrollOwnership
+  if (isTail) {
+    ownership = 'following'
+  }
+  else if (options?.userInitiated === false) {
+    ownership = state.ownership
+  }
+  else if (movedByReader) {
+    ownership = 'detached'
+  }
+  else {
+    ownership = state.ownership
+  }
 
   return {
     movedByReader,
