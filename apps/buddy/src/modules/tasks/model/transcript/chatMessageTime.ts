@@ -5,8 +5,7 @@ import type {
 } from './chatTranscriptProjection'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import dayjs from 'dayjs'
-import { translateBuddy } from '@/i18n/buddyI18n'
-import 'dayjs/locale/zh-cn'
+import { toDayjsLocale, translateBuddy } from '@/i18n/buddyI18n'
 
 export interface ChatTranscriptDayDividerRow {
   createdAt: string
@@ -171,5 +170,5 @@ export function formatChatMessageTimeLabel(
 }
 
 function localizedDayjs(value: string, locale: BuddyLocale) {
-  return dayjs(value).locale(locale === 'zh-CN' ? 'zh-cn' : 'en')
+  return dayjs(value).locale(toDayjsLocale(locale))
 }

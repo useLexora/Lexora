@@ -14,8 +14,6 @@ import {
   Tag20Regular,
   TagDismiss20Regular,
 } from '@vicons/fluent'
-import dayjs from 'dayjs'
-import relativeTime from 'dayjs/plugin/relativeTime'
 import { NDropdown, NTooltip } from 'naive-ui'
 import { computed, h, useId, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -23,8 +21,8 @@ import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopO
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskMarkOption from './DesktopTaskMarkOption.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
+import { formatTaskRelativeTime } from './taskRelativeTime'
 import { useTaskHistoryDrag } from './useTaskHistoryDrag'
-import 'dayjs/locale/zh-cn'
 
 const props = defineProps<{
   taskId: string
@@ -60,15 +58,10 @@ const emit = defineEmits<{
   rename: []
 }>()
 
-dayjs.extend(relativeTime)
-
 const { t } = useBuddyI18n(() => props.language)
-const relativeTimeLabel = computed(() => {
-  const label = dayjs(props.occurredAt)
-    .locale(props.language === 'zh-CN' ? 'zh-cn' : 'en')
-    .from(props.now)
-  return props.language === 'zh-CN' ? label.replaceAll(' ', '') : label
-})
+const relativeTimeLabel = computed(() => (
+  formatTaskRelativeTime(props.occurredAt, props.now, props.language)
+))
 const activityIcon = computed(() => props.activity === 'awaiting_approval'
   ? ApprovalsApp20Regular
   : SpinnerIos20Regular)
@@ -425,10 +418,13 @@ button {
 }
 
 .desktop-task-row__relative-time {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--buddy-text-muted);
   font-size: 0.75rem;
   line-height: 1;
   pointer-events: none;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

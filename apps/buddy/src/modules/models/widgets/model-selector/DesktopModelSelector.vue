@@ -671,7 +671,7 @@ defineExpose({
   display: grid;
   min-width: 0;
   min-height: var(--buddy-menu-row-height);
-  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.5rem;
   border: 0;
@@ -691,7 +691,9 @@ defineExpose({
   }
 
   > span {
+    flex: none;
     font-size: 0.76rem;
+    white-space: nowrap;
   }
 
   > strong {
