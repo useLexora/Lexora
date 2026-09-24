@@ -17,6 +17,7 @@ import {
   releasePageInputSchema,
 } from '../shared/desktopApiSchemas'
 import { getDesktopCommand, isDesktopCommandId } from '../shared/desktopCommands'
+import { getSystemUserProfile } from './platform/systemProfile'
 import { readDesktopWindowState } from './window'
 
 export interface RegisterDesktopIpcOptions {
@@ -46,7 +47,7 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
     return options.checkForUpdates()
   })
 
-  ipcMain.handle(DESKTOP_IPC_CHANNELS.appGetInfo, (event) => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.appGetInfo, async (event) => {
     assertTrustedSender(event, options.getWindow())
     return {
       capabilities: describeBuddyCapabilities(currentPlatform),
@@ -55,6 +56,7 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
       electronVersion: process.versions.electron,
       nodeVersion: process.versions.node,
       platform: currentPlatform.id,
+      systemProfile: await getSystemUserProfile(),
       version: app.getVersion(),
     }
   })

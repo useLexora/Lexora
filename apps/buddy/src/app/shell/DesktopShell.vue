@@ -36,7 +36,10 @@ const activeView = computed(() => route.meta.desktopView ?? 'tasks')
         <Transition name="desktop-app-sidebar">
           <DesktopAppSidebar
             v-if="!appSidebarCollapsed"
+            :app-info="bindings.appInfo.value"
             :app-version="bindings.appInfo.value?.version ?? null"
+            :profile-config="bindings.profileConfig.value"
+            :update-profile="bindings.updateProfile"
             :language="language"
             :mode="activeView"
             :extension-navigation="bindings.extensionNavigation.value"

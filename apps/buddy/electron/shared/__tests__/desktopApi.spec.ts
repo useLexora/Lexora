@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH } from '../desktopApi'
 import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSchema } from '../desktopApiSchemas'
 
 describe('desktop Preload API contract', () => {
@@ -16,6 +17,16 @@ describe('desktop Preload API contract', () => {
   it('limits feedback text before it crosses the desktop bridge', () => {
     expect(feedbackIssueInputSchema.parse({ feedback: '建议' })).toEqual({ feedback: '建议' })
     expect(() => feedbackIssueInputSchema.parse({ feedback: 'x'.repeat(4_001) })).toThrow()
+  })
+
+  it('accepts encoded two-mebibyte profile avatars without removing the bridge limit', () => {
+    const avatar = 'x'.repeat(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH)
+    const parsed = lexoraConfigPatchSchema.parse({ desktop: { profile: { avatar } } })
+
+    expect(parsed.desktop?.profile?.avatar).toHaveLength(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH)
+    expect(() => lexoraConfigPatchSchema.parse({
+      desktop: { profile: { avatar: `${avatar}x` } },
+    })).toThrow()
   })
 
   it('rejects duplicate task sidebar pins', () => {
