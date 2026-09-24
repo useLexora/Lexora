@@ -1,8 +1,9 @@
 import type { PrivateDirectoryFailure } from '../../shared/diagnostics/privateDirectoryFailure'
+import type { NativeCommandResult } from '../native/nativeCommand'
 import process from 'node:process'
 import { z } from 'zod'
 import { privateDirectoryErrorCodeSchema, privateDirectoryFailureSchema } from '../../shared/diagnostics/privateDirectoryFailure'
-import { runNativeCommand } from '../native/nativeCommand'
+import { runNativeCommand, runNativeCommandSync } from '../native/nativeCommand'
 import { validateWindowsFilePath } from './filePath'
 
 const nativeFailureSchema = z.object({
@@ -38,15 +39,39 @@ export async function ensureWindowsPrivateDirectories(paths: string[], executabl
     })
   }
   catch (cause) {
-    const processErrorCode = privateDirectoryFailureSchema.shape.processErrorCode.safeParse(cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined)
-    const exitCode = privateDirectoryFailureSchema.shape.exitCode.safeParse(cause && typeof cause === 'object' && 'exitCode' in cause ? cause.exitCode : undefined)
-    throw new PrivateDirectoryError(processErrorCode.success && processErrorCode.data === 'ENOENT' ? 'PRIVATE_DIRECTORIES_UNAVAILABLE' : 'PRIVATE_DIRECTORIES_PROCESS_FAILED', {
-      kind: 'private_directories',
-      operation: 'process',
-      ...(processErrorCode.success ? { processErrorCode: processErrorCode.data } : {}),
-      ...(exitCode.success ? { exitCode: exitCode.data } : {}),
-    }, { cause })
+    throw processFailure(cause)
   }
+  validateResult(result)
+}
+
+export function ensureWindowsPrivateDirectoriesSync(paths: string[], executable?: string): void {
+  if (!executable)
+    throw new PrivateDirectoryError('PRIVATE_DIRECTORIES_UNAVAILABLE', { kind: 'private_directories', operation: 'process' })
+  let result
+  try {
+    result = runNativeCommandSync(validateWindowsFilePath(executable), [], { paths: paths.map(validateWindowsFilePath) }, {
+      env: { SystemRoot: process.env.SystemRoot },
+      maxBytes: 1024,
+    })
+  }
+  catch (cause) {
+    throw processFailure(cause)
+  }
+  validateResult(result)
+}
+
+function processFailure(cause: unknown): PrivateDirectoryError {
+  const processErrorCode = privateDirectoryFailureSchema.shape.processErrorCode.safeParse(cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined)
+  const exitCode = privateDirectoryFailureSchema.shape.exitCode.safeParse(cause && typeof cause === 'object' && 'exitCode' in cause ? cause.exitCode : undefined)
+  return new PrivateDirectoryError(processErrorCode.success && processErrorCode.data === 'ENOENT' ? 'PRIVATE_DIRECTORIES_UNAVAILABLE' : 'PRIVATE_DIRECTORIES_PROCESS_FAILED', {
+    kind: 'private_directories',
+    operation: 'process',
+    ...(processErrorCode.success ? { processErrorCode: processErrorCode.data } : {}),
+    ...(exitCode.success ? { exitCode: exitCode.data } : {}),
+  }, { cause })
+}
+
+function validateResult(result: NativeCommandResult): void {
   if (result.code === 0) {
     if (result.stdout.toString('utf8') === '{"ok":true}')
       return

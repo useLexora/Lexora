@@ -1,10 +1,37 @@
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 export interface NativeCommandResult {
   code: number | null
   stdout: Buffer
   stderr: string
+}
+
+export function runNativeCommandSync(
+  executable: string,
+  args: string[],
+  input: unknown,
+  options: { env: NodeJS.ProcessEnv, maxBytes?: number, timeoutMs?: number },
+): NativeCommandResult {
+  const maxBytes = options.maxBytes ?? 1024 * 1024
+  const result = spawnSync(executable, args, {
+    input: JSON.stringify(input),
+    windowsHide: true,
+    env: options.env,
+    maxBuffer: maxBytes,
+    timeout: options.timeoutMs ?? 30_000,
+    killSignal: 'SIGKILL',
+  })
+  if (result.error) {
+    const systemCode = (result.error as NodeJS.ErrnoException).code
+    const code = systemCode === 'ETIMEDOUT'
+      ? 'NATIVE_COMMAND_TIMEOUT'
+      : systemCode === 'ENOBUFS' ? 'NATIVE_COMMAND_OUTPUT_LIMIT' : systemCode
+    throw Object.assign(result.error, { code, exitCode: result.status })
+  }
+  if (result.stdout.length + result.stderr.length > maxBytes)
+    throw Object.assign(new Error('Native host output limit exceeded'), { code: 'NATIVE_COMMAND_OUTPUT_LIMIT', exitCode: result.status })
+  return { code: result.status, stdout: result.stdout, stderr: result.stderr.toString('utf8') }
 }
 
 export function runNativeCommand(

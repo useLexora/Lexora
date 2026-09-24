@@ -22,7 +22,7 @@ import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { bootstrapStep } from './desktopBootstrap'
 import { DesktopStartup } from './DesktopStartup'
-import { checkDesktopDirectories, criticalDesktopDirectories } from './desktopStorage'
+import { checkDesktopDirectories, criticalDesktopDirectories, prepareDesktopPrivateStorage } from './desktopStorage'
 
 export function prepareDesktopEnvironment(): DesktopEnvironment {
   const desktopHost = desktopHosts[currentPlatform.id]
@@ -73,6 +73,7 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
 
 export function initializeDesktopEnvironment(environment: DesktopEnvironment): void {
   const { paths } = environment
+  prepareDesktopPrivateStorage(paths.lexoraHome, privateDirectoriesExecutable())
   const directories = {
     session_data: paths.sessionData,
     user_data: paths.userData,
@@ -125,7 +126,7 @@ export async function prepareDesktopReady(environment: DesktopEnvironment): Prom
   const { paths } = environment
   await checkDesktopCoreDirectories(environment)
   try {
-    await checkDesktopDirectories({ window_state: dirname(paths.windowState) }, privateDirectoriesExecutable())
+    await checkDesktopDirectories({ window_state: dirname(paths.windowState) })
     environment.windowStateAvailable = true
   }
   catch (error) {
