@@ -8,8 +8,8 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { formatLogDuration, formatLogTime } from '../../model/applicationLogPresentation'
 
-const props = defineProps<{ record: ApplicationLogRecord, language: BuddyLocale }>()
-const emit = defineEmits<{ close: [] }>()
+const props = defineProps<{ record: ApplicationLogRecord, language: BuddyLocale, exporting?: boolean }>()
+const emit = defineEmits<{ close: [], exportDiagnostics: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const fields: Array<[keyof ApplicationLogRecord, BuddyI18nKey]> = [
   ['component', 'applicationLogs.component'],
@@ -42,6 +42,9 @@ const raw = computed(() => JSON.stringify(props.record, null, 2))
   <section class="log-details" :aria-label="t('applicationLogs.details')">
     <header class="log-details__header">
       <div><span>{{ t('applicationLogs.details') }}</span><h2>{{ record.event }}</h2></div>
+      <NButton size="tiny" secondary :disabled="exporting" @click="emit('exportDiagnostics')">
+        {{ t('applicationLogs.exportRelated') }}
+      </NButton>
       <NButton size="tiny" quaternary :aria-label="t('applicationLogs.closeDetails')" @click="emit('close')">
         <template #icon>
           <DesktopIcon :component="Dismiss20Regular" />

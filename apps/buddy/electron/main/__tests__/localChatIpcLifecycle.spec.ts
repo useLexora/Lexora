@@ -88,7 +88,7 @@ describe('local chat IPC lifecycle and host authorization', () => {
     expect(calls).toEqual([{
       method: 'providers.login',
       input: { providerId: 'fixture-provider', authType: 'oauth' },
-      options: { timeoutMs: 600_000 },
+      options: { timeoutMs: 600_000, requestId: expect.any(String) },
     }])
   })
 

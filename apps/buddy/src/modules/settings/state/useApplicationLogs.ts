@@ -1,4 +1,4 @@
-import type { ApplicationLogAnchor, ApplicationLogApi, ApplicationLogExportResult, ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
+import type { ApplicationLogAnchor, ApplicationLogApi, ApplicationLogExport, ApplicationLogExportResult, ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
 import { applicationLogKey } from '@buddy-shared/diagnostics/applicationLog'
 import { onScopeDispose, shallowRef, watch } from 'vue'
 
@@ -104,12 +104,12 @@ export function useApplicationLogs(api: ApplicationLogApi) {
     selected.value = selected.value && applicationLogKey(selected.value) === applicationLogKey(record) ? null : record
   }
 
-  async function exportDiagnostics(): Promise<ApplicationLogExportResult> {
+  async function exportDiagnostics(input: ApplicationLogExport = { launch: launch.value }): Promise<ApplicationLogExportResult> {
     if (disposed || exporting.value)
       return { status: 'canceled' }
     exporting.value = true
     try {
-      const result = await api.exportDiagnostics({ launch: launch.value })
+      const result = await api.exportDiagnostics(input)
       return disposed ? { status: 'canceled' } : result
     }
     catch (error) {

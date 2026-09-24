@@ -31,6 +31,7 @@ export interface BuddyServiceNotification {
 }
 
 export interface BuddyServiceRequestOptions {
+  requestId?: string
   signal?: AbortSignal
   timeoutMs?: number
 }
@@ -142,7 +143,7 @@ export class BuddyServiceSupervisor {
     options: BuddyServiceRequestOptions = {},
   ): Promise<unknown> {
     const peer = await this.#waitForReadyPeer()
-    return peer.request(method, params, options.timeoutMs, options.signal)
+    return peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
   }
 
   onStateChange(listener: (state: BuddyServiceSupervisorState) => void): () => void {

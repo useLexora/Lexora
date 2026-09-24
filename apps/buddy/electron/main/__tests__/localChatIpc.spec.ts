@@ -134,6 +134,7 @@ describe('registerLocalChatIpc', () => {
     await expect(handlePreview(event, input)).resolves.toEqual(preview)
     expect(request).toHaveBeenCalledWith('automations.preview', input, {
       timeoutMs: 30_000,
+      requestId: expect.any(String),
     })
     await expect(handlePreview(event, {
       ...input,
@@ -193,6 +194,7 @@ describe('registerLocalChatIpc', () => {
     await expect(runNow(event, input)).resolves.toEqual(result)
     expect(request).toHaveBeenCalledWith('automations.runNow', input, {
       timeoutMs: 30_000,
+      requestId: expect.any(String),
     })
 
     request.mockResolvedValueOnce({

@@ -185,7 +185,7 @@ describe('desktop diagnostics', () => {
     const records = await readRecords(directory)
     expect(records.filter(record => record.scope === 'native-pet').map(record => record.message)).toEqual(['recovered'])
     expect(logger.status.dropped).toBe(2)
-    expect(records.find(record => record.event === 'recorder.loss')?.message).toContain('Dropped records: 2')
+    expect(records.find(record => record.event === 'recorder.loss')?.recorderLoss).toEqual({ dropped: 2, failed: 0 })
     expect(JSON.stringify(records)).not.toContain('fixture-secret')
   })
 
@@ -209,7 +209,7 @@ describe('desktop diagnostics', () => {
     expect(await logger.close()).toMatchObject({ dropped: 1, written: 1 })
     expect((await readRecords(directory))[0]).toMatchObject({
       event: 'recorder.loss',
-      message: 'Dropped records: 1; failed records: 0',
+      recorderLoss: { dropped: 1, failed: 0 },
     })
   })
 
@@ -260,6 +260,7 @@ describe('desktop diagnostics', () => {
     expect(logger.record({ ...event, message: 'recovered' })).toBe(true)
     await logger.close()
     expect((await readRecords(directory)).map(record => record.event)).toEqual(['app.test', 'recorder.loss'])
+    expect((await readRecords(directory)).at(-1)?.recorderLoss).toEqual({ dropped: 1, failed: 1 })
     expect(logger.status.failed).toBe(1)
   })
 

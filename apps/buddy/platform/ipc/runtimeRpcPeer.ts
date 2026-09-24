@@ -80,13 +80,15 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     return () => this.#handlers.delete(method)
   }
 
-  request(method: string, params: unknown, timeoutMs = this.#defaultTimeoutMs, signal?: AbortSignal): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs = this.#defaultTimeoutMs, signal?: AbortSignal, requestId?: string): Promise<unknown> {
     if (this.#closed)
       return Promise.reject(new Error('Runtime RPC peer is closed'))
     if (signal?.aborted)
       return Promise.reject(signal.reason)
 
-    const id = randomUUID()
+    const id = requestId ?? randomUUID()
+    if (this.#pending.has(id))
+      return Promise.reject(new RuntimeProtocolError('Duplicate runtime request ID'))
     return new Promise((resolve, reject) => {
       const cancel = (reason: Error) => {
         const pending = this.#pending.get(id)
@@ -192,7 +194,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     const running = new AbortController()
     this.#running.set(id, running)
     try {
-      const result = await handler(params, running.signal)
+      const result = await handler(params, running.signal, id)
       if (!this.#closed && !running.signal.aborted)
         this.#transport.postMessage({ jsonrpc: '2.0', id, result })
     }

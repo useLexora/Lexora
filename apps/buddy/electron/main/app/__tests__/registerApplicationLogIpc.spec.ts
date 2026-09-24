@@ -53,7 +53,7 @@ describe('diagnostic export IPC', () => {
     const destination = join(directory, 'diagnostics.zip')
     native.save.mockResolvedValue({ canceled: false, filePath: destination })
     await expect(handler(event, { launch: 'current' })).resolves.toEqual({ status: 'saved', errorCount: 1, contextCount: 1 })
-    expect(Object.keys(unzipSync(await readFile(destination))).sort()).toEqual(['context.jsonl', 'errors.jsonl', 'manifest.json'])
+    expect(Object.keys(unzipSync(await readFile(destination))).sort()).toEqual(['context.jsonl', 'errors.jsonl', 'manifest.json', 'summary.txt'])
   })
 
   it('does not write on cancellation or open concurrent save dialogs', async () => {

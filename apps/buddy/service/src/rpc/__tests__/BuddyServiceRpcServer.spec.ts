@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { ModelsError } from '@earendil-works/pi-ai'
 import { describe, expect, it, vi } from 'vitest'
 import { BUDDY_SERVICE_PROTOCOL_VERSION } from '../../../../shared/runtime/runtimeProtocol'
+import { diagnosticContext } from '../../diagnostics/diagnosticContext'
 import { HostCredentialStoreError } from '../../providers/HostCredentialStore'
 
 import {
@@ -24,6 +25,25 @@ class FakeParentPort extends EventEmitter {
 }
 
 describe('runtimeRpcServer', () => {
+  it('carries request identity through async work and suppresses only successful routine polling', async () => {
+    const port = new FakeParentPort()
+    const diagnostics: ApplicationDiagnostic[] = []
+    const server = createBuddyService({ announceReady: false, port, recordDiagnostic: event => diagnostics.push(event) })
+    server.onRequest('chat.queue.list', async (params) => {
+      await new Promise(resolve => setImmediate(resolve))
+      if (params)
+        throw new Error('private-error')
+      return { operationId: diagnosticContext.getStore()?.operationId }
+    })
+    port.receive({ jsonrpc: '2.0', id: 'poll-ok', method: 'chat.queue.list', params: null })
+    port.receive({ jsonrpc: '2.0', id: 'poll-failed', method: 'chat.queue.list', params: true })
+    await vi.waitFor(() => expect(port.sent).toHaveLength(2))
+    expect(port.sent[0]).toMatchObject({ id: 'poll-ok', result: { operationId: 'poll-ok' } })
+    expect(diagnostics).toEqual([expect.objectContaining({ operationId: 'poll-failed', event: 'rpc.handler.failed', level: 'error' })])
+    expect(JSON.stringify(diagnostics)).not.toContain('private-error')
+    server.close(new Error('test completed'))
+  })
+
   it.each([
     ['CREDENTIAL_STORE_UNAVAILABLE', 'CREDENTIAL_STORE_UNAVAILABLE', 'CREDENTIAL_STORE_UNAVAILABLE'],
     ['CREDENTIAL_STORE_FAILURE', 'CREDENTIAL_STORE_FAILURE', 'CREDENTIAL_STORE_FAILURE'],

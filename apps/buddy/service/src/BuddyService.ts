@@ -267,6 +267,7 @@ export async function startBuddyService(
       getActiveRuns: () => runs.listIncomplete(),
       peer: options.rpc,
       providers: providersRepository,
+      record,
     }))
     const executionModels = providerService.executionModels
     const imageGenerationGateway = new OpenAiImageGenerationService({

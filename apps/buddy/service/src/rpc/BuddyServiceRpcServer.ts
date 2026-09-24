@@ -4,10 +4,12 @@ import type { BuddyServiceFailureCode } from '../../../shared/runtime/runtimePro
 import process from 'node:process'
 import { RuntimeRpcPeer } from '../../../platform/ipc/runtimeRpcPeer'
 import { readDiagnosticErrorCode, safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import { isRoutineRpc } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
   buddyServiceFailureNotificationSchema,
 } from '../../../shared/runtime/runtimeProtocol'
+import { diagnosticContext } from '../diagnostics/diagnosticContext'
 
 const SERVICE_NAME = 'lexora-buddy-service'
 
@@ -66,13 +68,16 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
   }
 
   onRequest(method: string, handler: RuntimeRequestHandler): () => void {
-    return this.#peer.onRequest(method, async (params, signal) => {
-      const operationId = crypto.randomUUID()
+    return this.#peer.onRequest(method, async (params, signal, requestId) => {
+      const operationId = requestId ?? crypto.randomUUID()
       const startedAt = performance.now()
-      this.#record({ event: 'rpc.handler.started', level: 'debug', component: 'runtime.rpc', operationId, method })
+      if (!isRoutineRpc(method))
+        this.#record({ event: 'rpc.handler.started', level: 'debug', component: 'runtime.rpc', operationId, method })
       try {
-        const result = await handler(params, signal)
-        this.#record({ event: 'rpc.handler.completed', level: 'debug', component: 'runtime.rpc', operationId, method, durationMs: Math.round(performance.now() - startedAt) })
+        const result = await diagnosticContext.run({ operationId }, () => handler(params, signal, requestId))
+        const durationMs = Math.round(performance.now() - startedAt)
+        if (!isRoutineRpc(method) || durationMs >= 1000)
+          this.#record({ event: 'rpc.handler.completed', level: isRoutineRpc(method) && durationMs >= 1000 ? 'warn' : 'debug', component: 'runtime.rpc', operationId, method, durationMs })
         return result
       }
       catch (error) {
@@ -83,8 +88,8 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
     })
   }
 
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
-    return this.#peer.request(method, params, timeoutMs, signal)
+  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal, requestId?: string): Promise<unknown> {
+    return this.#peer.request(method, params, timeoutMs, signal, requestId)
   }
 
   close(reason: Error): void {

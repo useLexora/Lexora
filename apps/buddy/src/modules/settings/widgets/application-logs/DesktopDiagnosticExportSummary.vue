@@ -2,7 +2,7 @@
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
-const props = defineProps<{ language: BuddyLocale }>()
+const props = defineProps<{ language: BuddyLocale, selected?: boolean }>()
 const { t } = useBuddyI18n(() => props.language)
 </script>
 
@@ -13,7 +13,7 @@ const { t } = useBuddyI18n(() => props.language)
         {{ t('applicationLogs.exportScope') }}
       </h3>
       <ul class="diagnostic-export-summary__list">
-        <li>{{ t('applicationLogs.exportErrors') }}</li>
+        <li>{{ t(selected ? 'applicationLogs.exportSelected' : 'applicationLogs.exportErrors') }}</li>
         <li>{{ t('applicationLogs.exportContext') }}</li>
       </ul>
       <p class="diagnostic-export-summary__hint">

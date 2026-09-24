@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { ipcMain } from 'electron'
 import { ZodError } from 'zod'
 import { diagnosticIdentitySchema, safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import { isRoutineRpc } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
 import { formatLocalChatPublicError, readLocalChatErrorCode } from '../../../shared/runtime/localChatError'
 import { assertTrustedSender } from '../ipc'
 
@@ -19,7 +20,7 @@ export interface DesktopRuntimeGateway {
   request: (
     method: string,
     params: unknown,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number, requestId?: string },
   ) => Promise<unknown>
   restart: () => Promise<void>
 }
@@ -54,12 +55,15 @@ export function createLocalChatIpcContext(options: RegisterLocalChatIpcOptions) 
   const request = async <Contract extends RuntimeRequestContract>(contract: Contract, params: RuntimeRequestInput<Contract>, timeoutMs = 30_000): Promise<RuntimeRequestResult<Contract>> => {
     const context = { method: contract.method, operationId: randomUUID(), ...requestIdentity(params) }
     const startedAt = performance.now()
-    record({ ...context, event: 'rpc.request.started', level: 'info' })
+    if (!isRoutineRpc(contract.method))
+      record({ ...context, event: 'rpc.request.started', level: 'info' })
     try {
-      const result = contract.response.safeParse(await options.runtime.request(contract.method, params, { timeoutMs }))
+      const result = contract.response.safeParse(await options.runtime.request(contract.method, params, { timeoutMs, requestId: context.operationId }))
       if (!result.success)
         throw new DesktopRuntimeResponseError()
-      record({ ...context, ...requestIdentity(result.data), event: 'rpc.request.completed', level: 'info', durationMs: Math.round(performance.now() - startedAt), ...(Array.isArray(result.data) ? { count: result.data.length } : {}) })
+      const durationMs = Math.round(performance.now() - startedAt)
+      if (!isRoutineRpc(contract.method) || durationMs >= 1000)
+        record({ ...context, ...requestIdentity(result.data), event: 'rpc.request.completed', level: isRoutineRpc(contract.method) && durationMs >= 1000 ? 'warn' : 'info', durationMs, ...(Array.isArray(result.data) ? { count: result.data.length } : {}) })
       return result.data as RuntimeRequestResult<Contract>
     }
     catch (error) {

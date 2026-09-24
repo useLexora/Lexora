@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { readLocalChatErrorCode } from '../runtime/localChatError'
 import { desktopBootstrapFailureSchema, processExitSchema, rendererLoadFailureSchema } from './desktopStartupDiagnostic'
 import { privateDirectoryErrorCodeSchema, privateDirectoryFailureSchema } from './privateDirectoryFailure'
+import { providerRequestDiagnosticSchema } from './providerRequestDiagnostic'
 
 export const APPLICATION_DIAGNOSTIC_METHOD = 'application.diagnostic'
 export const diagnosticIdentitySchema = z.string().regex(/^\w[\w:.-]{0,191}$/)
@@ -29,9 +30,11 @@ export const applicationDiagnosticSchema = z.object({
   errorCode: diagnosticCodeSchema.optional(),
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
   failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema]).optional(),
+  providerRequest: providerRequestDiagnosticSchema.optional(),
+  recorderLoss: z.object({ dropped: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).strict().optional(),
   processExit: processExitSchema.optional(),
   loadFailure: rendererLoadFailureSchema.optional(),
-  recoveryAction: z.enum(['retry', 'open_logs', 'show_directory', 'quit']).optional(),
+  recoveryAction: z.enum(['retry', 'open_logs', 'export_diagnostics', 'copy_details', 'show_directory', 'quit']).optional(),
   previousLaunchId: z.uuid().optional(),
   count: z.number().int().nonnegative().optional(),
   attempt: z.number().int().nonnegative().optional(),
