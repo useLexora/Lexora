@@ -1,9 +1,10 @@
 import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import bundledSnapshot from './data/models-dev.json'
+import bundledSnapshotPath from './data/models-dev.json?asset'
 import { isRecord, ModelsDevCatalog } from './ModelsDevCatalog'
 
 export interface ProviderModelSnapshotStatus {
@@ -37,7 +38,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   readonly #fetch: typeof globalThis.fetch
   readonly #now: () => Date
   readonly #generatedAt: string
-  #snapshot: Snapshot
+  #updatedAt: string
   #catalog: ModelsDevCatalog
   #source: 'builtin' | 'remote' = 'builtin'
   #errorCount = 0
@@ -49,9 +50,10 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     this.#snapshotPath = options.snapshotPath
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#now = options.now ?? (() => new Date())
-    this.#snapshot = parseSnapshot(options.builtin ?? bundledSnapshot)
-    this.#generatedAt = this.#snapshot.updatedAt
-    this.#catalog = new ModelsDevCatalog(this.#snapshot.data)
+    const snapshot = parseSnapshot(options.builtin ?? JSON.parse(readFileSync(bundledSnapshotPath, 'utf8')))
+    this.#generatedAt = snapshot.updatedAt
+    this.#updatedAt = snapshot.updatedAt
+    this.#catalog = new ModelsDevCatalog(snapshot.data)
   }
 
   async initialize(): Promise<void> {
@@ -63,7 +65,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       const snapshot = parseSnapshot(JSON.parse(await readFile(this.#snapshotPath, 'utf8')))
       const catalog = new ModelsDevCatalog(snapshot.data)
       if (Date.parse(snapshot.updatedAt) >= Date.parse(this.#generatedAt)) {
-        this.#snapshot = snapshot
+        this.#updatedAt = snapshot.updatedAt
         this.#catalog = catalog
         this.#source = 'remote'
         this.#checkedAt = snapshot.updatedAt
@@ -91,7 +93,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       modelCount: this.getModels().length,
       providerCount: this.getProviders().length,
       source: this.#source,
-      updatedAt: this.#snapshot.updatedAt,
+      updatedAt: this.#updatedAt,
     }
   }
 
@@ -142,7 +144,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
           await rm(temporaryPath, { force: true })
         }
       }
-      this.#snapshot = snapshot
+      this.#updatedAt = snapshot.updatedAt
       this.#catalog = catalog
       this.#source = 'remote'
       this.#checkedAt = snapshot.updatedAt
