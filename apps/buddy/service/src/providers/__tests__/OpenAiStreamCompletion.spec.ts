@@ -1,15 +1,18 @@
 import type { Model, Provider, StreamOptions } from '@earendil-works/pi-ai'
+import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { InMemoryCredentialStore, InMemoryModelsStore, normalizeContext } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { PiApplicationObserver } from '../../agent/events/PiApplicationObserver'
-import { INFERRED_STREAM_COMPLETION, withOpenAiStreamCompletion } from '../withOpenAiStreamCompletion'
+import { diagnosticContext } from '../../diagnostics/diagnosticContext'
+import { INFERRED_STREAM_COMPLETION, withProviderStream } from '../withProviderStream'
 
 const encoder = new TextEncoder()
 const context = normalizeContext({ messages: [{ role: 'user', content: 'hello', timestamp: 1 }] })
 let provider: Provider
 let model: Model<'openai-completions'>
+const diagnostics: ApplicationDiagnostic[] = []
 
 beforeAll(async () => {
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
@@ -18,8 +21,12 @@ beforeAll(async () => {
     baseUrl: 'https://fixture.example.test/v1',
     models: [{ id: 'model', name: 'Model', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 1024 }],
   })
-  provider = withOpenAiStreamCompletion(runtime.getProvider('fixture')!)
+  provider = withProviderStream(runtime.getProvider('fixture')!, record => diagnostics.push(applicationDiagnosticSchema.parse(record)))
   model = runtime.getModels('fixture')[0] as Model<'openai-completions'>
+})
+
+beforeEach(() => {
+  diagnostics.length = 0
 })
 
 function frame(value: unknown): string {
@@ -124,5 +131,58 @@ describe('openAI stream completion compatibility', () => {
     }).result()
     expect(result.stopReason).toBe('stop')
     expect(result.diagnostics).toBeUndefined()
+  })
+
+  it.each([
+    ['text/html', '<html>private-response</html>', 'unknown'],
+    ['application/json', '{"private":"response"}', 'unknown'],
+    ['text/event-stream', '', 'not_observed'],
+  ])('captures %s without recording its body or claiming a cause', async (contentType, body, doneMarker) => {
+    await stream(body, { fetch: async () => new Response(body, { headers: { 'content-type': contentType, 'set-cookie': 'private-cookie' } }) }).result()
+    const last = diagnostics.at(-1)!
+    expect(last).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: true, status: 200, completion: contentType === 'text/event-stream' ? 'incomplete' : 'unknown', failureStage: contentType === 'text/event-stream' ? 'stream' : 'unknown', doneMarker } })
+    expect(JSON.stringify(diagnostics)).not.toMatch(/private|fixture-key|fixture.example/)
+  })
+
+  it('correlates concurrent requests without cross-talk and observes inferred versus standard completions', async () => {
+    await Promise.all([
+      diagnosticContext.run({ operationId: 'operation-a', runId: 'run-a' }, () => stream(`${textDelta('private-answer')}data: [DONE]\n\n`).result()),
+      diagnosticContext.run({ operationId: 'operation-b', runId: 'run-b' }, () => stream(`${textDelta('private-answer')}${frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}data: [DONE]\n\n`).result()),
+    ])
+    const results = diagnostics.filter(record => record.event === 'provider.request.completed')
+    expect(results).toHaveLength(2)
+    expect(results.find(record => record.runId === 'run-a')).toMatchObject({ operationId: 'operation-a', providerRequest: { completion: 'inferred', doneMarker: 'observed', contentEvents: 1, toolCalls: 0 } })
+    expect(results.find(record => record.runId === 'run-b')).toMatchObject({ operationId: 'operation-b', providerRequest: { completion: 'sdk' } })
+    expect(new Set(results.map(record => record.requestId)).size).toBe(2)
+    expect(JSON.stringify(diagnostics)).not.toContain('private-answer')
+  })
+
+  it('records a bounded transport code without exposing error text, URL or credentials', async () => {
+    await stream('', { fetch: async () => {
+      throw new Error('private-key https://private.test/path', { cause: { code: 'ECONNRESET' } })
+    } }).result()
+    expect(diagnostics.at(-1)).toMatchObject({ providerRequest: { responseObserved: false, transportCode: 'ECONNRESET', failureStage: 'request', completion: 'unknown' } })
+    expect(JSON.stringify(diagnostics)).not.toContain('private')
+  })
+
+  it('does not classify a payload preparation failure as an interrupted stream', async () => {
+    let requests = 0
+    const result = await stream('', {
+      onPayload: () => { throw new Error('private payload preparation failure') },
+      fetch: async () => {
+        requests++
+        throw new Error('Unexpected request')
+      },
+    }).result()
+    expect(result.stopReason).toBe('error')
+    expect(requests).toBe(0)
+    expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: false, responseCount: 0, failureStage: 'unknown', completion: 'unknown' } })
+    expect(JSON.stringify(diagnostics)).not.toContain('private')
+  })
+
+  it('distinguishes an HTTP rejection from an incomplete response stream', async () => {
+    await stream('', { fetch: async () => new Response('{"error":{"message":"private rejection"}}', { status: 401, headers: { 'content-type': 'application/json' } }) }).result()
+    expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: true, status: 401, failureStage: 'http', completion: 'unknown' } })
+    expect(JSON.stringify(diagnostics)).not.toContain('private')
   })
 })

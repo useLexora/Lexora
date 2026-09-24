@@ -40,7 +40,7 @@ export const applicationLogQuerySchema = z.object({
 
 export type ApplicationLogQuery = z.input<typeof applicationLogQuerySchema>
 
-export const applicationLogExportSchema = z.object({ launch: diagnosticIdentitySchema }).strict()
+export const applicationLogExportSchema = z.object({ launch: diagnosticIdentitySchema, anchor: logAnchorSchema.optional() }).strict()
 export type ApplicationLogExport = z.infer<typeof applicationLogExportSchema>
 export type ApplicationLogExportResult = { status: 'saved', errorCount: number, contextCount: number } | { status: 'canceled' | 'empty' }
 export interface ApplicationLogLaunch {

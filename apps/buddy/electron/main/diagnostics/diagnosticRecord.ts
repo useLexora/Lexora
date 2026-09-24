@@ -67,7 +67,7 @@ export function encodeDiagnosticRecord(
           }
         : input.error === undefined ? undefined : { name: 'UnknownError', message: 'Non-Error failure' },
     }
-    for (const key of ['parentOperationId', 'generation', 'sessionId', 'providerId', 'connectorId', 'automationId', 'occurrenceId', 'toolCallId', 'sourceSequence', 'occurredAt', 'component', 'conversationId', 'branchId', 'runId', 'turnId', 'requestId', 'errorCode', 'errorType', 'failure', 'processExit', 'loadFailure', 'recoveryAction', 'previousLaunchId', 'count', 'attempt', 'method'] as const) {
+    for (const key of ['parentOperationId', 'generation', 'sessionId', 'providerId', 'connectorId', 'automationId', 'occurrenceId', 'toolCallId', 'sourceSequence', 'occurredAt', 'component', 'conversationId', 'branchId', 'runId', 'turnId', 'requestId', 'errorCode', 'errorType', 'failure', 'providerRequest', 'recorderLoss', 'processExit', 'loadFailure', 'recoveryAction', 'previousLaunchId', 'count', 'attempt', 'method'] as const) {
       const parsed = applicationDiagnosticSchema.shape[key].safeParse(input[key])
       if (!parsed.success)
         return null

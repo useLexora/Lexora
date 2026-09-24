@@ -260,7 +260,7 @@ export class DesktopDiagnosticLogger {
       scope: 'desktop',
       level: 'warn',
       event: 'recorder.loss',
-      message: `Dropped records: ${this.#status.dropped}; failed records: ${this.#status.failed}`,
+      recorderLoss: { dropped: this.#status.dropped, failed: this.#status.failed },
     })
   }
 

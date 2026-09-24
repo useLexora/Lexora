@@ -1,4 +1,6 @@
+import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { describe, expect, it, vi } from 'vitest'
+import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { OpenAiCompatibleModelDiscovery } from '../ProviderModelDiscovery'
 
 describe('providerModelDiscovery', () => {
@@ -47,5 +49,22 @@ describe('providerModelDiscovery', () => {
       providerId: 'example',
     })).rejects.toMatchObject({ code: 'AUTHENTICATION_REQUIRED' })
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [401, 'application/json', '{"error":"private-response"}', 'http'],
+    [200, 'text/html', '<html>private-response</html>', 'decode'],
+    [200, 'application/json', '{"models":["private-model"]}', 'schema'],
+  ])('records HTTP %s and the failed %s stage without free-form data', async (status, contentType, body, failureStage) => {
+    const records: ApplicationDiagnostic[] = []
+    const discovery = new OpenAiCompatibleModelDiscovery({
+      credentials: { read: async () => ({ type: 'api_key', key: 'private-key' }) },
+      request: async () => new Response(body, { status, headers: { 'content-type': contentType } }),
+      record: record => records.push(applicationDiagnosticSchema.parse(record)),
+    })
+    await expect(discovery.discover({ api: 'openai-completions', baseUrl: 'https://private.test/v1', providerId: 'fixture' })).rejects.toMatchObject({ code: 'MODEL_SYNC_FAILED' })
+    expect(records.at(-1)).toMatchObject({ providerRequest: { operation: 'models', responseObserved: true, status, failureStage } })
+    expect(records[0]?.requestId).toBe(records[1]?.requestId)
+    expect(JSON.stringify(records)).not.toContain('private')
   })
 })

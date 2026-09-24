@@ -9,7 +9,7 @@ import { readModelCapabilities } from '../modelCapabilities'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
 import { ProviderRequestHeaders } from '../ProviderRequestHeaders'
 import { ProviderService } from '../ProviderService'
-import { INFERRED_STREAM_COMPLETION } from '../withOpenAiStreamCompletion'
+import { INFERRED_STREAM_COMPLETION } from '../withProviderStream'
 
 describe('provider model resolution', () => {
   it.each([

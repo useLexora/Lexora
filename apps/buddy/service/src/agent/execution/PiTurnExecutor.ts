@@ -17,6 +17,7 @@ import type {
   StartBuddyCompactionInput,
   StartBuddyTurnInput,
 } from './turnTypes'
+import { diagnosticContext } from '../../diagnostics/diagnosticContext'
 import { RunEventLogFatalError } from '../../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from '../../runs/runError'
 
@@ -134,7 +135,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
 
     try {
       signal.throwIfAborted()
-      await binding.session.prompt(input.userInput.prompt, {
+      await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, () => binding.session.prompt(input.userInput.prompt, {
         expandPromptTemplates: false,
         images: input.userInput.images.map(image => ({
           data: '',
@@ -143,7 +144,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
         })),
         inputReference: input.userInput,
         source: 'rpc',
-      })
+      }))
       await binding.session.waitForIdle()
       await piEvents.flush()
     }
@@ -244,9 +245,9 @@ export class PiTurnExecutor implements RunExecutionBackend {
 
     try {
       signal.throwIfAborted()
-      const result = await binding.session.compact(
+      const result = await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, () => binding.session.compact(
         input.customInstructions?.trim() || undefined,
-      )
+      ))
       await piEvents.flush()
       await piEvents.recordCompactionResult(result)
     }

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { ProviderRepository } from '../storage/providerRepository'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
@@ -23,6 +24,7 @@ export interface CreateProviderServiceOptions {
   getActiveRuns?: () => ReadonlyArray<{ model: string, provider: string }>
   peer: RuntimeRpcPeerContract
   providers?: ProviderRepository
+  record?: ApplicationDiagnosticReporter
 }
 
 export async function createProviderService(
@@ -47,7 +49,7 @@ export async function createProviderService(
   })
   const providers = options.providers ?? createProviderRepository(options.database)
   const requestHeaders = new ProviderRequestHeaders(providers.states)
-  const providerRuntime = createProviderModelRuntime(modelRuntime, requestHeaders)
+  const providerRuntime = createProviderModelRuntime(modelRuntime, requestHeaders, options.record)
   for (const provider of builtinProviders())
     providerRuntime.registerNativeProvider(provider)
   const service = new ProviderService({
@@ -59,7 +61,7 @@ export async function createProviderService(
     }),
     credentialStatus: createProviderCredentialStatus(credentials),
     getActiveRuns: options.getActiveRuns,
-    modelDiscovery: new OpenAiCompatibleModelDiscovery({ credentials, requestHeaders }),
+    modelDiscovery: new OpenAiCompatibleModelDiscovery({ credentials, requestHeaders, record: options.record }),
     modelRuntime: providerRuntime,
     requestHeaders,
     providers,

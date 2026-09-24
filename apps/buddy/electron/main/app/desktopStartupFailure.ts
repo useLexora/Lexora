@@ -1,10 +1,10 @@
-import type { MessageBoxOptions } from 'electron'
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { BuddyRuntimePaths } from '../paths'
+import type { RecoveryPresentation } from './desktopRecoveryPage'
 import { dirname } from 'node:path'
 import { PowerShellUnavailableError } from '../../../platform/windows/powerShell'
 import { PrivateDirectoryError } from '../../../platform/windows/privateDirectories'
-import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
+import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { translateDesktopNative } from '../desktopNativeI18n'
 import { DesktopBootstrapError } from './desktopBootstrap'
 
@@ -20,8 +20,8 @@ export function resolveStartupFailureDirectory(error: unknown, paths: BuddyRunti
   }
 }
 
-export function describeDesktopStartupFailure(error: unknown, language: LexoraConfig['desktop']['language'], launchId?: string, directory?: string, logsAvailable = true): MessageBoxOptions {
-  const code = readDiagnosticErrorCode(error)
+export function describeDesktopStartupFailure(error: unknown, language: LexoraConfig['desktop']['language'], launchId?: string, directory?: string, logsAvailable = true, logsPath?: string): RecoveryPresentation {
+  const { errorCode: code = 'OPERATION_FAILED', failure } = readDiagnosticError(error)
   const unconfirmedPermissions = error instanceof PrivateDirectoryError && (error.failure.acl?.reason === 'unsupported_ace' || error.failure.acl?.principal === 'other')
   const reason = error instanceof PowerShellUnavailableError
     ? 'powerShellUnavailable'
@@ -32,27 +32,33 @@ export function describeDesktopStartupFailure(error: unknown, language: LexoraCo
         : code.startsWith('PRIVATE_DIRECTORIES_')
           ? 'privateDirectoriesFailed'
           : 'startupFailureHelp'
+  const t = (key: Parameters<typeof translateDesktopNative>[1]) => translateDesktopNative(language, key)
+  const fields: RecoveryPresentation['recovery']['fields'] = [
+    { label: t('startupErrorCode'), value: code },
+    ...(launchId ? [{ label: t('diagnosticReference'), value: launchId }] : []),
+    ...(failure ? [{ label: t('startupFailureStage'), value: [failure.operation, failure.directoryRole, failure.kind === 'desktop_bootstrap' ? failure.systemCode : undefined].filter(Boolean).join(' / ') }] : []),
+    ...(failure?.kind === 'private_directories' && failure.acl ? [{ label: t('startupPermissionCheck'), value: [failure.acl.reason, failure.acl.principal, failure.acl.accessMask === undefined ? undefined : `mask=0x${failure.acl.accessMask.toString(16)}`, failure.acl.aceFlags === undefined ? undefined : `flags=0x${failure.acl.aceFlags.toString(16)}`].filter(Boolean).join(' / ') }] : []),
+    ...(directory ? [{ label: t('affectedDirectory'), value: directory, localOnly: true }] : []),
+    ...(logsPath ? [{ label: t('startupLogsPath'), value: logsPath, localOnly: true }] : []),
+  ]
+  const actions: RecoveryPresentation['recovery']['actions'] = [
+    { action: 'retry', label: t('retryStartup') },
+    { action: 'open_logs', label: t('openLogs') },
+    ...(directory ? [{ action: 'show_directory' as const, label: t('openAffectedDirectory') }] : []),
+    { action: 'quit', label: t('quitApplication') },
+    { action: 'export_diagnostics', label: t('exportDiagnostics') },
+    { action: 'copy_details', label: t('copyDiagnosticDetails') },
+  ]
+  const description = [t(reason), ...(!logsAvailable ? [t('startupLogsUnavailable')] : [])].join('\n')
   return {
     type: 'error',
     title: 'Lexora Buddy',
     message: translateDesktopNative(language, 'startupFailed'),
-    detail: [
-      translateDesktopNative(language, reason === 'startupFailureHelp' && !logsAvailable ? 'startupLogsUnavailable' : reason),
-      ...(!logsAvailable && reason !== 'startupFailureHelp' ? [translateDesktopNative(language, 'startupLogsUnavailable')] : []),
-      ...(error instanceof DesktopBootstrapError ? [`${translateDesktopNative(language, 'startupFailureStage')}: ${error.failure.operation}${error.failure.directoryRole ? ` / ${error.failure.directoryRole}` : ''}${error.failure.systemCode ? ` / ${error.failure.systemCode}` : ''}`] : []),
-      ...(directory ? [`${translateDesktopNative(language, 'affectedDirectory')}: ${directory}`] : []),
-      translateDesktopNative(language, 'startupRecoveryHelp'),
-      code,
-      ...(launchId ? [`${translateDesktopNative(language, 'diagnosticReference')}: ${launchId}`] : []),
-    ].join('\n\n'),
-    buttons: [
-      translateDesktopNative(language, 'retryStartup'),
-      translateDesktopNative(language, 'openLogs'),
-      ...(directory ? [translateDesktopNative(language, 'openAffectedDirectory')] : []),
-      translateDesktopNative(language, 'quit'),
-    ],
+    detail: [description, t('startupRecoveryIsolation'), ...fields.map(field => `${field.label}: ${field.value}`), t('startupDiagnosticPrivacy')].join('\n\n'),
+    recovery: { reason: description, notice: t('startupRecoveryIsolation'), privacy: t('startupDiagnosticPrivacy'), fields, actions, moreActionsLabel: t('moreActions'), copyDetails: ['Lexora Buddy', ...fields.filter(field => !field.localOnly).map(field => `${field.label}: ${field.value}`)].join('\n') },
+    buttons: actions.map(item => item.label),
     defaultId: 0,
-    cancelId: directory ? 3 : 2,
+    cancelId: actions.findIndex(item => item.action === 'quit'),
     noLink: true,
   }
 }

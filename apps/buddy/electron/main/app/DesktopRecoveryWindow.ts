@@ -1,5 +1,4 @@
-import type { MessageBoxOptions } from 'electron'
-import type { RecoveryAction } from './desktopRecoveryPage'
+import type { RecoveryAction, RecoveryPresentation } from './desktopRecoveryPage'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, session } from 'electron'
 import { readRecoveryAction, recoveryPage } from './desktopRecoveryPage'
@@ -7,13 +6,13 @@ import { readRecoveryAction, recoveryPage } from './desktopRecoveryPage'
 export interface RecoveryActionResult {
   done: boolean
   message?: string
-  options?: MessageBoxOptions
+  options?: RecoveryPresentation
 }
 
 export async function showRecoveryWindow(
-  options: MessageBoxOptions,
+  options: RecoveryPresentation,
   checkingMessage: string,
-  onAction: (action: RecoveryAction, active: () => boolean) => Promise<RecoveryActionResult>,
+  onAction: (action: RecoveryAction, active: () => boolean, window: BrowserWindow) => Promise<RecoveryActionResult>,
 ): Promise<void> {
   const isolatedSession = session.fromPartition(`lexora-recovery-${randomUUID()}`, { cache: false })
   isolatedSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
@@ -23,7 +22,7 @@ export async function showRecoveryWindow(
   const window = new BrowserWindow({
     title: options.title,
     width: 640,
-    height: 660,
+    height: 760,
     minWidth: 440,
     minHeight: 400,
     show: false,
@@ -43,7 +42,7 @@ export async function showRecoveryWindow(
   app.on('second-instance', focus)
   let pending: Promise<void> | undefined
   let currentOptions = options
-  const render = (status = '') => window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(recoveryPage(currentOptions, currentOptions.buttons?.length === 4, status))}`)
+  const render = (status = '') => window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(recoveryPage(currentOptions, status))}`)
   try {
     await new Promise<void>((resolve, reject) => {
       window.once('closed', () => {
@@ -54,11 +53,11 @@ export async function showRecoveryWindow(
       window.webContents.on('will-navigate', (event, url) => {
         event.preventDefault()
         const action = readRecoveryAction(url)
-        if (!action || pending)
+        if (!action || !currentOptions.recovery.actions.some(item => item.action === action) || pending)
           return
         pending = (async () => {
           await window.webContents.executeJavaScript(`document.body.setAttribute('aria-busy', 'true'); document.getElementById('status').textContent = ${JSON.stringify(action === 'retry' ? checkingMessage : '')}`)
-          const result = await onAction(action, active)
+          const result = await onAction(action, active, window)
           if (!active())
             return
           if (result.done) {

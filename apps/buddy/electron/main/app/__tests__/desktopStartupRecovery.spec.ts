@@ -94,7 +94,7 @@ describe('startup recovery', () => {
     expect(native.effects).toEqual([`logs:${environment.paths.logs}`, `location:${paths.userData}`, 'restart'])
     expect(native.messages).toHaveLength(3)
     expect(native.messages[0]).toMatchObject({
-      buttons: ['重新检查并启动', '打开日志目录', '打开问题目录所在位置', '退出'],
+      buttons: ['重新检查并启动', '打开日志目录', '定位问题目录', '退出应用', '导出诊断包', '复制诊断信息'],
       cancelId: 3,
     })
     expect(native.messages[0]?.detail).toContain(`问题目录: ${paths.userData}`)

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { showRecoveryWindow } from '../DesktopRecoveryWindow'
+import { describeDesktopStartupFailure } from '../desktopStartupFailure'
 
 const native = vi.hoisted(() => ({ current: undefined as { navigate: () => void, close: () => void, rejectScript: (error: Error) => void } | undefined }))
 
@@ -42,7 +43,7 @@ vi.mock('electron', async () => {
 describe('recovery window lifecycle', () => {
   it('resolves a user close during action rendering without falling back to another dialog or dispatching a restart', async () => {
     const actions: string[] = []
-    const completion = showRecoveryWindow({ message: 'Recover' }, 'Checking', async (action) => {
+    const completion = showRecoveryWindow(describeDesktopStartupFailure(new Error('fixture'), 'en-US'), 'Checking', async (action) => {
       actions.push(action)
       return { done: true }
     })

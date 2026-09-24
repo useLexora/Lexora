@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { diagnosticIdentitySchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { isToolFailureCode } from '../../../../shared/runs/toolFailure'
-import { INFERRED_STREAM_COMPLETION } from '../../providers/withOpenAiStreamCompletion'
+import { INFERRED_STREAM_COMPLETION } from '../../providers/withProviderStream'
 
 export class PiApplicationObserver {
   readonly #events: ApplicationEvents
