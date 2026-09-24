@@ -46,6 +46,7 @@ module.exports = {
     'package.json',
     'resources/icons/app-icon.png',
     '!**/__tests__/**',
+    '!node_modules/**/*.map',
     ...excludedDependencyFiles(target),
   ],
   mac: {

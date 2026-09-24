@@ -14,6 +14,14 @@ export default defineConfig({
     __LEXORA_BUDDY_VERSION__: JSON.stringify(buddyVersion.version ?? ''),
   },
   plugins: [
+    {
+      name: 'electron-node-asset-path',
+      enforce: 'pre',
+      load(id) {
+        if (id.endsWith('?asset'))
+          return `export default ${JSON.stringify(id.slice(0, -'?asset'.length))}`
+      },
+    },
     vue(),
     UnoCSS(),
   ],

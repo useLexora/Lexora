@@ -410,21 +410,6 @@ importers:
       '@anthropic-ai/sandbox-runtime':
         specifier: 0.0.77
         version: 0.0.77(patch_hash=b859621ca2a537d1865ef159feeccc66fb80b1470d4aef8748318d6cb84fdc50)
-      '@antv/x6':
-        specifier: ^3.1.8
-        version: 3.1.8
-      '@antv/x6-vue-shape':
-        specifier: ^3.0.2
-        version: 3.0.2(@antv/x6@3.1.8)(vue@3.5.43(typescript@6.0.3))
-      '@dnd-kit/abstract':
-        specifier: ^0.5.0
-        version: 0.5.0
-      '@dnd-kit/dom':
-        specifier: ^0.5.0
-        version: 0.5.0
-      '@dnd-kit/vue':
-        specifier: ^0.5.0
-        version: 0.5.0(vue@3.5.43(typescript@6.0.3))
       '@earendil-works/pi-ai':
         specifier: ^0.86.1
         version: 0.86.1(patch_hash=5a203271dc6590ed6f6b52a3974fc7bf58ec5e17c7e19a543ec5474ae9c516eb)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.4.3))(supports-color@8.1.1)(ws@8.21.0)(zod@4.4.3)
@@ -443,60 +428,18 @@ importers:
       '@silvia-odwyer/photon-node':
         specifier: 0.3.4
         version: 0.3.4
-      '@tiptap/core':
-        specifier: ^3.31.3
-        version: 3.31.3(@tiptap/pm@3.31.3)
-      '@tiptap/extension-placeholder':
-        specifier: ^3.31.3
-        version: 3.31.3(@tiptap/extensions@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3))
-      '@tiptap/pm':
-        specifier: ^3.31.3
-        version: 3.31.3
-      '@tiptap/starter-kit':
-        specifier: ^3.31.3
-        version: 3.31.3
-      '@tiptap/vue-3':
-        specifier: ^3.31.3
-        version: 3.31.3(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)(vue@3.5.43(typescript@6.0.3))
-      '@vicons/fluent':
-        specifier: ^0.13.0
-        version: 0.13.0
-      '@vueuse/core':
-        specifier: ^14.3.0
-        version: 14.3.0(vue@3.5.43(typescript@6.0.3))
-      dayjs:
-        specifier: ^1.11.21
-        version: 1.11.21
       diff:
         specifier: ^8.0.4
         version: 8.0.4
-      dompurify:
-        specifier: ^3.4.15
-        version: 3.4.15
-      echarts:
-        specifier: ^6.1.0
-        version: 6.1.0
       fflate:
         specifier: 0.8.3
         version: 0.8.3
       linkedom:
         specifier: ^0.18.13
         version: 0.18.13
-      marked:
-        specifier: ^18.0.13
-        version: 18.0.13
-      markstream-vue:
-        specifier: ^2.0.11
-        version: 2.0.11(katex@0.16.47)(vue-i18n@11.4.5(vue@3.5.43(typescript@6.0.3)))(vue@3.5.43(typescript@6.0.3))
       minisearch:
         specifier: 7.2.0
         version: 7.2.0
-      monaco-editor:
-        specifier: ^0.56.0
-        version: 0.56.0
-      naive-ui:
-        specifier: ^2.45.3
-        version: 2.45.3(vue@3.5.43(typescript@6.0.3))
       proxy-chain:
         specifier: ^2.7.1
         version: 2.7.1(supports-color@8.1.1)
@@ -515,19 +458,43 @@ importers:
       unpdf:
         specifier: ^1.8.1
         version: 1.8.1
-      vue:
-        specifier: ^3.5.43
-        version: 3.5.43(typescript@6.0.3)
-      vue-router:
-        specifier: ^5.1.0
-        version: 5.1.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(vite@8.3.0(@types/node@25.9.1)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@antv/x6':
+        specifier: ^3.1.8
+        version: 3.1.8
+      '@antv/x6-vue-shape':
+        specifier: ^3.0.2
+        version: 3.0.2(@antv/x6@3.1.8)(vue@3.5.43(typescript@6.0.3))
+      '@dnd-kit/abstract':
+        specifier: ^0.5.0
+        version: 0.5.0
+      '@dnd-kit/dom':
+        specifier: ^0.5.0
+        version: 0.5.0
+      '@dnd-kit/vue':
+        specifier: ^0.5.0
+        version: 0.5.0(vue@3.5.43(typescript@6.0.3))
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.4.3)
+      '@tiptap/core':
+        specifier: ^3.31.3
+        version: 3.31.3(@tiptap/pm@3.31.3)
+      '@tiptap/extension-placeholder':
+        specifier: ^3.31.3
+        version: 3.31.3(@tiptap/extensions@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3))
+      '@tiptap/pm':
+        specifier: ^3.31.3
+        version: 3.31.3
+      '@tiptap/starter-kit':
+        specifier: ^3.31.3
+        version: 3.31.3
+      '@tiptap/vue-3':
+        specifier: ^3.31.3
+        version: 3.31.3(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)(vue@3.5.43(typescript@6.0.3))
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
@@ -537,12 +504,27 @@ importers:
       '@types/turndown':
         specifier: ^5.0.6
         version: 5.0.6
+      '@vicons/fluent':
+        specifier: ^0.13.0
+        version: 0.13.0
       '@vitejs/plugin-vue':
         specifier: ^6.0.9
         version: 6.0.9(vite@8.3.0(@types/node@25.9.1)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))
       '@vue/tsconfig':
         specifier: ^0.9.1
         version: 0.9.1(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3))
+      '@vueuse/core':
+        specifier: ^14.3.0
+        version: 14.3.0(vue@3.5.43(typescript@6.0.3))
+      dayjs:
+        specifier: ^1.11.21
+        version: 1.11.21
+      dompurify:
+        specifier: ^3.4.15
+        version: 3.4.15
+      echarts:
+        specifier: ^6.1.0
+        version: 6.1.0
       electron:
         specifier: 44.4.3
         version: 44.4.3(supports-color@8.1.1)
@@ -552,6 +534,18 @@ importers:
       electron-vite:
         specifier: ^5.0.0
         version: 5.0.0(@swc/core@1.15.40)(supports-color@8.1.1)(vite@8.3.0(@types/node@25.9.1)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))
+      marked:
+        specifier: ^18.0.13
+        version: 18.0.13
+      markstream-vue:
+        specifier: ^2.0.11
+        version: 2.0.11(katex@0.16.47)(vue-i18n@11.4.5(vue@3.5.43(typescript@6.0.3)))(vue@3.5.43(typescript@6.0.3))
+      monaco-editor:
+        specifier: ^0.56.0
+        version: 0.56.0
+      naive-ui:
+        specifier: ^2.45.3
+        version: 2.45.3(vue@3.5.43(typescript@6.0.3))
       sass-embedded:
         specifier: ^1.103.1
         version: 1.103.1
@@ -564,6 +558,12 @@ importers:
       vite:
         specifier: ^8.3.0
         version: 8.3.0(@types/node@25.9.1)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0)
+      vue:
+        specifier: ^3.5.43
+        version: 3.5.43(typescript@6.0.3)
+      vue-router:
+        specifier: ^5.1.0
+        version: 5.1.0(@vue/compiler-sfc@3.5.43)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(vite@8.3.0(@types/node@25.9.1)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vue@3.5.43(typescript@6.0.3))
       vue-tsc:
         specifier: ^3.3.11
         version: 3.3.11(typescript@6.0.3)
