@@ -1,4 +1,4 @@
-import type { ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
+import type { ApplicationLogExportResult, ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
@@ -19,13 +19,15 @@ function fixture() {
   vi.useFakeTimers()
   const requests: { input: ApplicationLogQuery, response: ReturnType<typeof deferred<ApplicationLogPage>> }[] = []
   const scope = effectScope()
+  const exportResult = deferred<ApplicationLogExportResult>()
+  const exportDiagnostics = vi.fn(() => exportResult.promise)
   const logs = scope.run(() => useApplicationLogs({ query: (input) => {
     const response = deferred<ApplicationLogPage>()
     requests.push({ input, response })
     return response.promise
-  } }))!
+  }, exportDiagnostics }))!
   cleanups.push(() => scope.stop())
-  return { logs, requests, scope }
+  return { logs, requests, scope, exportDiagnostics, exportResult }
 }
 
 describe('application log browsing', () => {
@@ -127,5 +129,48 @@ describe('application log browsing', () => {
     await vi.advanceTimersByTimeAsync(6000)
     expect(logs.page.value).toBeNull()
     expect(requests).toHaveLength(1)
+  })
+
+  it('exports the selected launch independently of browsing filters and prevents duplicate exports', async () => {
+    const { logs, exportDiagnostics, exportResult } = fixture()
+    logs.launch.value = 'launch-history'
+    logs.category.value = 'models'
+    logs.search.value = 'no-match'
+    const pending = logs.exportDiagnostics()
+    expect(exportDiagnostics).toHaveBeenCalledExactlyOnceWith({ launch: 'launch-history' })
+    expect(logs.exporting.value).toBe(true)
+    await expect(logs.exportDiagnostics()).resolves.toEqual({ status: 'canceled' })
+    exportResult.resolve({ status: 'saved', errorCount: 2, contextCount: 10 })
+    await expect(pending).resolves.toEqual({ status: 'saved', errorCount: 2, contextCount: 10 })
+    expect(logs.exporting.value).toBe(false)
+  })
+
+  it.each(['empty', 'canceled'] as const)('preserves an export %s outcome without reporting success', async (status) => {
+    const { logs, exportResult } = fixture()
+    const pending = logs.exportDiagnostics()
+    exportResult.resolve({ status })
+    await expect(pending).resolves.toEqual({ status })
+    expect(logs.exporting.value).toBe(false)
+  })
+
+  it('allows retry after a failed export', async () => {
+    const { logs, exportDiagnostics, exportResult } = fixture()
+    const pending = logs.exportDiagnostics()
+    exportResult.reject(new Error('export failed'))
+    await expect(pending).rejects.toThrow('export failed')
+    expect(logs.exporting.value).toBe(false)
+    exportDiagnostics.mockResolvedValueOnce({ status: 'saved', errorCount: 1, contextCount: 1 })
+    await expect(logs.exportDiagnostics()).resolves.toMatchObject({ status: 'saved' })
+  })
+
+  it.each(['resolve', 'reject'] as const)('discards a late export %s outcome after leaving the page', async (outcome) => {
+    const { logs, scope, exportResult } = fixture()
+    const pending = logs.exportDiagnostics()
+    scope.stop()
+    if (outcome === 'resolve')
+      exportResult.resolve({ status: 'saved', errorCount: 1, contextCount: 1 })
+    else
+      exportResult.reject(new Error('late failure'))
+    await expect(pending).resolves.toEqual({ status: 'canceled' })
   })
 })

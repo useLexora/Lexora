@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { diagnosticIdentitySchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { isToolFailureCode } from '../../../../shared/runs/toolFailure'
+import { INFERRED_STREAM_COMPLETION } from '../../providers/withOpenAiStreamCompletion'
 
 export class PiApplicationObserver {
   readonly #events: ApplicationEvents
@@ -30,6 +31,8 @@ export class PiApplicationObserver {
       }
       case 'turn_end': {
         const reason = event.message.role === 'assistant' ? event.message.stopReason : undefined
+        if (event.message.role === 'assistant' && event.message.diagnostics?.some(diagnostic => diagnostic.type === INFERRED_STREAM_COMPLETION))
+          this.#events.publish({ event: INFERRED_STREAM_COMPLETION, level: 'warn', turnId: this.#turn?.id })
         this.#endTurn(reason === 'error' ? 'failed' : reason === 'aborted' ? 'cancelled' : 'completed')
         break
       }

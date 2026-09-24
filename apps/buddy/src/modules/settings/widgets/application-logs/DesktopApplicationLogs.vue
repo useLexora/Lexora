@@ -1,22 +1,54 @@
 <script setup lang="ts">
 import type { ApplicationLogApi } from '@buddy-shared/diagnostics/applicationLog'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NButton, NPagination } from 'naive-ui'
+import { NButton, NPagination, useDialog, useMessage } from 'naive-ui'
+import { h } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopPaneBoundary from '@/shared/ui/loading/DesktopPaneBoundary.vue'
 import { useApplicationLogs } from '../../state/useApplicationLogs'
 import DesktopApplicationLogDetails from './DesktopApplicationLogDetails.vue'
 import DesktopApplicationLogFilters from './DesktopApplicationLogFilters.vue'
 import DesktopApplicationLogList from './DesktopApplicationLogList.vue'
+import DesktopDiagnosticExportSummary from './DesktopDiagnosticExportSummary.vue'
 
 const props = defineProps<{ api: ApplicationLogApi, language: BuddyLocale }>()
 const { t } = useBuddyI18n(() => props.language)
-const { launch, category, level, search, live, page, selected, loading, failed, viewKey, refresh, pause, changePage, follow, select } = useApplicationLogs({ query: input => props.api.query(input) })
+const message = useMessage()
+const dialog = useDialog()
+const { launch, category, level, search, live, page, selected, loading, failed, exporting, viewKey, refresh, pause, changePage, follow, select, exportDiagnostics } = useApplicationLogs({
+  query: input => props.api.query(input),
+  exportDiagnostics: input => props.api.exportDiagnostics(input),
+})
+
+async function saveDiagnostics(): Promise<void> {
+  try {
+    const result = await exportDiagnostics()
+    if (result.status === 'saved')
+      message.success(t('applicationLogs.exportSucceeded', { count: result.errorCount }))
+    else if (result.status === 'empty')
+      message.info(t('applicationLogs.exportEmpty'))
+  }
+  catch {
+    message.error(t('applicationLogs.exportFailed'))
+  }
+}
+
+function confirmExport(): void {
+  dialog.create({
+    title: t('applicationLogs.exportDiagnostics'),
+    showIcon: false,
+    style: { width: 'min(480px, calc(100vw - 32px))' },
+    content: () => h(DesktopDiagnosticExportSummary, { language: props.language }),
+    positiveText: t('applicationLogs.exportSave'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: saveDiagnostics,
+  })
+}
 </script>
 
 <template>
   <div class="application-logs">
-    <DesktopApplicationLogFilters v-model:launch="launch" v-model:category="category" v-model:level="level" v-model:search="search" :language="language" :launches="page?.launches ?? []" :current-launch-id="page?.currentLaunchId" :live="live" :loading="loading" @refresh="refresh" @toggle-live="live ? pause() : follow()" />
+    <DesktopApplicationLogFilters v-model:launch="launch" v-model:category="category" v-model:level="level" v-model:search="search" :language="language" :launches="page?.launches ?? []" :current-launch-id="page?.currentLaunchId" :live="live" :loading="loading" :exporting="exporting" @refresh="refresh" @toggle-live="live ? pause() : follow()" @export-diagnostics="confirmExport" />
     <DesktopPaneBoundary :loading="!page && loading" :error="!page && failed ? t('applicationLogs.readFailed') : null" :label="t('desktop.loading.pane')" :retry-label="t('desktop.loading.retry')" @retry="refresh">
       <DesktopApplicationLogList :key="viewKey" :records="page?.records ?? []" :selected="selected" :language="language" @select="select" @pause="pause" />
     </DesktopPaneBoundary>

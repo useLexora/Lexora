@@ -58,6 +58,7 @@ type ModelRequestFailureCode
     | 'MODEL_INPUT_TOO_LARGE'
     | 'RESOURCE_MATERIALIZATION_FAILED'
     | 'MODEL_REQUEST_FAILED'
+    | 'MODEL_STREAM_INCOMPLETE'
     | 'MODEL_REQUEST_TIMED_OUT'
     | 'MODEL_SERVICE_UNAVAILABLE'
     | 'MODEL_SERVICE_UNREACHABLE'
@@ -628,6 +629,8 @@ function classifyModelRequestFailure(message: string | undefined): ModelRequestF
     return message
   if (!message)
     return 'MODEL_REQUEST_FAILED'
+  if (/stream ended without (?:a )?finish(?:_| )reason/i.test(message))
+    return 'MODEL_STREAM_INCOMPLETE'
   if (
     /(?:unknown|unsupported|invalid)\s+model|model.{0,80}(?:not found|does not exist|not supported|unsupported)|(?:不支持|找不到|不存在|未知).{0,20}模型|模型.{0,20}(?:不支持|找不到|不存在|未知)/i.test(message)
   ) {

@@ -362,6 +362,7 @@ describe('projectPiEvent product messages', () => {
       ['401 Unauthorized: invalid API key', 'PROVIDER_AUTHENTICATION_FAILED'],
       ['403 Forbidden: access denied for this model', 'PROVIDER_ACCESS_DENIED'],
       ['429 Too Many Requests: rate limit exceeded', 'PROVIDER_RATE_LIMITED'],
+      ['Stream ended without finish_reason', 'MODEL_STREAM_INCOMPLETE'],
       ['Request timed out while waiting for the model service', 'MODEL_REQUEST_TIMED_OUT'],
       ['fetch failed: ECONNREFUSED 127.0.0.1:4100', 'MODEL_SERVICE_UNREACHABLE'],
       ['503 Service Unavailable', 'MODEL_SERVICE_UNAVAILABLE'],

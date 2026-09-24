@@ -19,6 +19,7 @@ const SPECIFIC_FAILURE_MESSAGE_KEYS: Readonly<Record<string, BuddyI18nKey>> = {
   MODEL_INPUT_UNSUPPORTED: 'desktop.chat.modelInputUnsupported',
   MODEL_INPUT_TOO_LARGE: 'desktop.chat.modelInputTooLarge',
   RESOURCE_MATERIALIZATION_FAILED: 'desktop.chat.attachmentMaterializationFailed',
+  MODEL_STREAM_INCOMPLETE: 'desktop.chat.modelStreamIncomplete',
   MODEL_REQUEST_TIMED_OUT: 'desktop.chat.modelRequestTimedOut',
   MODEL_SERVICE_UNAVAILABLE: 'desktop.chat.modelServiceUnavailable',
   MODEL_SERVICE_UNREACHABLE: 'desktop.chat.modelServiceUnreachable',
