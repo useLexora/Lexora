@@ -3,9 +3,10 @@ import type { LocalProvider } from '@buddy-shared/providers/providerApi'
 
 import type { ProviderConnectionActions } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { isPlainHttpEndpointUrl } from '@buddy-shared/network/networkSecurity'
 import { providerRequestHeadersSchema } from '@buddy-shared/providers/providerHeaders'
-import { NButton, NCard, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NModal, NSelect } from 'naive-ui'
-import { nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NModal, NSelect } from 'naive-ui'
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { desktopProviderApiOptions } from '@/modules/models/model/desktopProviderApiOptions'
 import DesktopProviderHeadersEditor from './DesktopProviderHeadersEditor.vue'
@@ -23,6 +24,7 @@ const { saving, form, close, save } = useProviderConnectionForm(props, show)
 const formRef = useTemplateRef('formRef')
 const rules = useProviderFormRules(() => props.language)
 const expanded = shallowRef<string[]>([])
+const insecureBaseUrl = computed(() => isPlainHttpEndpointUrl(form.baseUrl.trim()))
 watch(show, () => {
   expanded.value = []
 })
@@ -76,6 +78,9 @@ async function submit() {
         <NFormItem v-if="provider.custom" path="baseUrl" label="Base URL">
           <NInput v-model:value="form.baseUrl" placeholder="https://api.example.com/v1" />
         </NFormItem>
+        <NAlert v-if="provider.custom && insecureBaseUrl" class="is-wide" type="warning" :bordered="false" :show-icon="false">
+          {{ t('desktop.providers.httpWarning') }}
+        </NAlert>
         <NFormItem v-if="provider.custom" path="description" class="is-wide" :label="t('desktop.providers.customProviderDescription')">
           <NInput
             v-model:value="form.description"

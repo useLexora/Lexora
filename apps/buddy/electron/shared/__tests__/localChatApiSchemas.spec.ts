@@ -292,7 +292,7 @@ describe('localChatResponseSchemas', () => {
     expect(() => conversationResponseSchemas.timelinePage.parse(missingRuns)).toThrow()
   })
 
-  it('rejects insecure remote custom provider URLs but allows loopback development', () => {
+  it('allows HTTP and HTTPS custom provider URLs without embedded credentials', () => {
     const provider = {
       api: 'openai-responses' as const,
       baseUrl: 'https://models.example.test/v1',
@@ -310,14 +310,16 @@ describe('localChatResponseSchemas', () => {
       }],
     }
 
-    expect(providersRequestSchemas.providerUpsert.parse({
-      provider: { ...provider, baseUrl: 'http://127.0.0.1:11434/v1' },
-    })).toBeTruthy()
+    for (const baseUrl of ['http://127.0.0.1:11434/v1', 'http://192.168.1.12:8153/v1', 'http://models.example.test/v1']) {
+      expect(providersRequestSchemas.providerUpsert.parse({
+        provider: { ...provider, baseUrl },
+      })).toBeTruthy()
+    }
     expect(() => providersRequestSchemas.providerUpsert.parse({
-      provider: { ...provider, baseUrl: 'http://models.example.test/v1' },
+      provider: { ...provider, baseUrl: 'http://user:secret@models.example.test/v1' },
     })).toThrow()
     expect(() => providersRequestSchemas.providerUpsert.parse({
-      provider: { ...provider, baseUrl: 'http://127.evil.example/v1' },
+      provider: { ...provider, baseUrl: 'ftp://models.example.test/v1' },
     })).toThrow()
   })
 

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection'
-import { isSecureOrLoopbackHttpUrl } from '../network/networkSecurity'
+import { isHttpEndpointUrl } from '../network/networkSecurity'
 import { modelCatalogReferenceSchema } from './providerCatalog'
 import { providerRequestHeadersSchema } from './providerHeaders'
 
@@ -10,7 +10,7 @@ export const DEFAULT_CUSTOM_MODEL_MAX_TOKENS = 16_384
 
 export const providerDisplayNameSchema = z.string().trim().min(1).max(100)
 
-export const providerBaseUrlSchema = z.url().refine(isSecureOrLoopbackHttpUrl)
+export const providerBaseUrlSchema = z.url().refine(isHttpEndpointUrl)
 
 const thinkingLevelMapSchema = z.partialRecord(
   z.enum(BUDDY_THINKING_LEVELS),

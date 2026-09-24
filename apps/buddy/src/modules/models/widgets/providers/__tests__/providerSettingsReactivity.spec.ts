@@ -277,11 +277,11 @@ describe('provider wizard ownership', () => {
     wizard.updateCustomName('Proxy')
     expect(wizard.customForm.baseUrl).toBe('')
     expect(wizard.canContinueCustom.value).toBe(false)
-    for (const url of ['   ', 'not-a-url', 'http://remote.example.test/v1']) {
+    for (const url of ['   ', 'not-a-url', 'ftp://models.example.test/v1', 'http://user:secret@models.example.test/v1']) {
       wizard.customForm.baseUrl = url
       expect(wizard.canContinueCustom.value).toBe(false)
     }
-    for (const url of ['https://models.example.test/v1', 'http://127.0.0.1:8000/v1']) {
+    for (const url of ['https://models.example.test/v1', 'http://models.example.test/v1', 'http://127.0.0.1:8000/v1']) {
       wizard.customForm.baseUrl = url
       expect(wizard.canContinueCustom.value).toBe(true)
     }
