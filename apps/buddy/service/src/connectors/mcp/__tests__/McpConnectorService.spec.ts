@@ -127,7 +127,7 @@ describe('mcpConnectorService', () => {
     expect(fixture.service.state('fixture').errorCode).toBe('MCP_COMMAND_NOT_FOUND')
   })
 
-  it('rejects plaintext secret fields and non-local insecure HTTP URLs', async () => {
+  it('allows public HTTP endpoints while rejecting plaintext secret fields and URL credentials', async () => {
     const fixture = await createFixture()
     await expect(fixture.service.upsert({
       ...stdioConfig(false),
@@ -135,11 +135,19 @@ describe('mcpConnectorService', () => {
     } as never)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     await expect(fixture.service.upsert({
       credentialRef: null,
-      enabled: true,
+      enabled: false,
       id: 'remote',
       name: 'Remote',
       transport: 'streamable-http',
       url: 'http://example.com/mcp',
+    })).resolves.toMatchObject({ id: 'remote', url: 'http://example.com/mcp' })
+    await expect(fixture.service.upsert({
+      credentialRef: null,
+      enabled: false,
+      id: 'remote',
+      name: 'Remote',
+      transport: 'streamable-http',
+      url: 'http://user:secret@example.com/mcp',
     })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
   })
 

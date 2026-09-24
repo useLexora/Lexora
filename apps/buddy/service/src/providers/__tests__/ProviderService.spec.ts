@@ -143,9 +143,9 @@ describe('providerService', () => {
     await expect(service.upsertCustomProvider({
       api: 'openai-responses',
       baseUrl: 'http://models.example.test/v1',
-      displayName: 'Insecure remote',
+      displayName: 'Public HTTP',
       enabled: true,
-      id: 'insecure-remote',
+      id: 'public-http',
       models: [{
         contextWindow: 4096,
         id: 'model-1',
@@ -154,7 +154,7 @@ describe('providerService', () => {
         name: 'Model',
         reasoning: false,
       }],
-    })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    })).resolves.toMatchObject({ id: 'public-http' })
     database.close()
   })
 

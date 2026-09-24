@@ -2,10 +2,11 @@
 import type { LocalCustomProvider } from '@buddy-shared/providers/providerApi'
 import type { ProviderRequestHeader } from '@buddy-shared/providers/providerHeaders'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { isPlainHttpEndpointUrl } from '@buddy-shared/network/networkSecurity'
 import { customProviderSchema } from '@buddy-shared/providers/providerApi'
 import { providerRequestHeadersSchema } from '@buddy-shared/providers/providerHeaders'
-import { NButton, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSelect } from 'naive-ui'
-import { nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { NAlert, NButton, NCollapse, NCollapseItem, NForm, NFormItem, NInput, NSelect } from 'naive-ui'
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { desktopProviderApiOptions } from '@/modules/models/model/desktopProviderApiOptions'
 import DesktopProviderHeadersEditor from './DesktopProviderHeadersEditor.vue'
@@ -38,6 +39,7 @@ const expanded = shallowRef<string[]>([])
 const validating = shallowRef(false)
 const identifierAvailable = (id: string) => !props.reservedIds.includes(id) && props.conflictId !== id
 const rules = useProviderFormRules(() => props.language, identifierAvailable)
+const insecureBaseUrl = computed(() => isPlainHttpEndpointUrl(props.value.baseUrl.trim()))
 
 function update<Key extends keyof CustomForm>(field: Key, value: CustomForm[Key]) {
   emit('update:value', { ...props.value, [field]: value })
@@ -84,6 +86,9 @@ watch(() => props.conflictId, async (id) => {
     <NFormItem path="baseUrl" class="is-wide" label="Base URL">
       <NInput :value="value.baseUrl" placeholder="https://api.example.com/v1" @update:value="update('baseUrl', $event)" />
     </NFormItem>
+    <NAlert v-if="insecureBaseUrl" class="desktop-custom-provider-form__http-warning is-wide" type="warning" :bordered="false" :show-icon="false">
+      {{ t('desktop.providers.httpWarning') }}
+    </NAlert>
     <NCollapse v-model:expanded-names="expanded" class="is-wide" arrow-placement="right">
       <NCollapseItem :title="t('desktop.providers.advancedSettings')" name="advanced" display-directive="show">
         <NFormItem path="id" :label="t('desktop.providers.identifier')">
@@ -108,6 +113,7 @@ watch(() => props.conflictId, async (id) => {
   padding: 2px;
 }
 .is-wide { grid-column: 1 / -1; }
+.desktop-custom-provider-form__http-warning { margin-bottom: 1.5rem; }
 .desktop-custom-provider-form__actions {
   display: flex;
   justify-content: flex-end;

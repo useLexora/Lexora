@@ -2,7 +2,7 @@ import type { RuntimeRequestContract } from '../runtime/apiContract'
 
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
-import { isSecureOrLoopbackHttpUrl } from '../network/networkSecurity'
+import { isHttpEndpointUrl } from '../network/networkSecurity'
 import { idSchema, isAbsolutePath, validationRequestSchemas, validationResponseSchemas } from '../runtime/apiValidation'
 import { editableConnectorCredentialSchema } from './connectorCredentials'
 import { connectorRuntimeStateSchema, connectorToolSummarySchema } from './connectorState'
@@ -25,7 +25,7 @@ export const connectorSchema = z.discriminatedUnion('transport', [
   }).strict(),
   connectorBaseSchema.extend({
     transport: z.literal('streamable-http'),
-    url: z.url().refine(isSecureOrLoopbackHttpUrl),
+    url: z.url().refine(isHttpEndpointUrl),
   }).strict(),
 ])
 
@@ -44,7 +44,7 @@ export const connectorConfigSchema = z.discriminatedUnion('transport', [
     id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
     name: z.string().trim().min(1).max(128),
     transport: z.literal('streamable-http'),
-    url: z.url().refine(isSecureOrLoopbackHttpUrl),
+    url: z.url().refine(isHttpEndpointUrl),
   }).strict(),
 ])
 

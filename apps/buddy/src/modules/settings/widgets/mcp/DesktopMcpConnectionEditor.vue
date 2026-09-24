@@ -3,6 +3,7 @@ import type { LocalConnector } from '@buddy-shared/connectors/connectorApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopConnectorFormValue, DesktopConnectorSavePlan } from '@/modules/settings/model/desktopConnectorForm'
 import { connectorsRequestSchemas } from '@buddy-shared/connectors/connectorApi'
+import { isPlainHttpEndpointUrl } from '@buddy-shared/network/networkSecurity'
 import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NSelect } from 'naive-ui'
 import { computed, reactive, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -24,6 +25,7 @@ const form = reactive<DesktopConnectorFormValue>({
   bearerToken: '',
 })
 const invalid = shallowRef(false)
+const insecureHttp = computed(() => form.transport === 'streamable-http' && isPlainHttpEndpointUrl(form.url.trim()))
 const transportOptions = computed(() => [{ label: t('desktop.mcp.stdio'), value: 'stdio' }, { label: t('desktop.mcp.http'), value: 'streamable-http' }])
 const commandOptions = ['npx', 'uvx', 'pnpm', 'bunx', 'docker', 'node'].map(value => ({ label: value, value }))
 
@@ -76,6 +78,9 @@ function submit() {
         <NFormItem :label="t('desktop.mcp.url')">
           <NInput v-model:value="form.url" :placeholder="t('desktop.mcp.urlHint')" :input-props="{ 'aria-label': t('desktop.mcp.url') }" />
         </NFormItem>
+        <NAlert v-if="insecureHttp" type="warning" :bordered="false" :show-icon="false" class="mcp-editor__alert">
+          {{ t('desktop.mcp.httpWarning') }}
+        </NAlert>
         <NFormItem :label="t('desktop.mcp.token')">
           <NInput v-model:value="form.bearerToken" type="password" show-password-on="click" :input-props="{ autocomplete: 'new-password' }" />
         </NFormItem>
