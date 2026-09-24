@@ -74,6 +74,22 @@ export interface DesktopWindowState {
   isMaximized: boolean
 }
 
+export interface SystemUserProfile {
+  username: string
+  displayName: string
+  hostname: string
+  avatarUrl: string | null
+}
+
+export const DESKTOP_PROFILE_AVATAR_MAX_BYTES = 2 * 1024 * 1024
+export const DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH = 3_000_000
+
+export interface DesktopUserProfileConfig {
+  userName: string
+  deviceName: string
+  avatar: string
+}
+
 export interface DesktopAppInfo {
   capabilities: BuddyCapabilities
   chromiumVersion: string
@@ -82,6 +98,7 @@ export interface DesktopAppInfo {
   nodeVersion: string
   platform: DesktopPlatform
   version: string
+  systemProfile: SystemUserProfile
 }
 
 export interface DesktopTaskPinnedItem {
@@ -149,6 +166,7 @@ export interface LexoraConfig {
     launchAtLogin: boolean
     notificationsEnabled: boolean
     notifyWhenFocused: boolean
+    profile: DesktopUserProfileConfig
     sidebarCollapsed: boolean
     theme: 'system' | 'light' | 'dark'
   }
@@ -163,9 +181,10 @@ export interface LexoraConfigPatch {
   runtime?: Partial<LexoraConfig['runtime']>
   browser?: Partial<LexoraConfig['browser']>
   proxy?: LexoraConfig['proxy']
-  desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar'>> & {
+  desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar' | 'profile'>> & {
     chat?: Partial<DesktopChatPreferences>
     taskSidebar?: Partial<DesktopTaskSidebarPreferences>
+    profile?: Partial<DesktopUserProfileConfig>
   }
   pet?: Partial<LexoraConfig['pet']>
 }
@@ -214,3 +233,4 @@ export interface LexoraDesktopApi {
 
 export { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from '../../shared/browser/browserDesktopApi'
 export type { DesktopBrowserApi, DesktopBrowserAttachGuestInput, DesktopBrowserEnsureSessionInput, DesktopBrowserError, DesktopBrowserErrorCode, DesktopBrowserGuestDescriptor, DesktopBrowserNavigateInput, DesktopBrowserOpenArtifactInput, DesktopBrowserProfileMode, DesktopBrowserSecurityKind, DesktopBrowserSecurityState, DesktopBrowserSessionInput, DesktopBrowserSetProfileModeInput, DesktopBrowserSetSurfaceInput, DesktopBrowserState, DesktopBrowserStatus } from '../../shared/browser/browserDesktopApi'
+export type { DesktopCommandId, DesktopPlatform } from './desktopCommands'

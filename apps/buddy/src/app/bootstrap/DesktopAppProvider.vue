@@ -178,8 +178,15 @@ const shellBindings: DesktopShellBindings = {
   appInfo: shell.appInfo,
   navigation,
   notifications: stores.notifications,
+  profileConfig: computed(() => stores.applicationSettings.config.value?.desktop.profile ?? { avatar: '', deviceName: '', userName: '' }),
   taskIndex: taskIndex.index,
   toggleAppSidebar,
+  updateProfile: async (patch) => {
+    const saved = await stores.applicationSettings.updateSettings({ desktop: { profile: patch } })
+    if (saved)
+      message.success(translateBuddy(stores.applicationSettings.language.value, 'desktop.account.saveSuccess'))
+    return saved
+  },
 }
 useProvideDesktopUi({
   isDark: toRef(() => props.isDark),

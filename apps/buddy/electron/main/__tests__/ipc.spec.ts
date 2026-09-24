@@ -70,5 +70,19 @@ describe('registerDesktopIpc', () => {
       throw new Error('Sandbox setup IPC handler was not registered')
     await expect(setupSandbox(trustedEvent)).resolves.toBe('cancelled')
     await expect(setupSandbox(untrustedEvent)).rejects.toThrow('Untrusted Desktop IPC sender')
+
+    const getInfo = electron.handlers.get('lexora:app:get-info')
+    if (!getInfo)
+      throw new Error('Get info IPC handler was not registered')
+    const info = await (getInfo(trustedEvent) as Promise<unknown>) as Record<string, unknown>
+    expect(info).toMatchObject({
+      configPath: '/home/example/.lexora/config.toml',
+      version: '0.1.0',
+      systemProfile: {
+        username: expect.any(String),
+        displayName: expect.any(String),
+        hostname: expect.any(String),
+      },
+    })
   })
 })

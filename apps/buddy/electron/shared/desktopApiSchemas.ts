@@ -7,6 +7,7 @@ import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
 import {
   DESKTOP_CHAT_OUTLINE_POSITIONS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
+  DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH,
   DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
 import { isLexoraReleaseUrl } from './productLinks'
@@ -37,6 +38,12 @@ const taskSidebarPreferencesSchema = z.object({
   width: taskSidebarWidthSchema.optional(),
 }).strict()
 
+const desktopUserProfilePatchSchema = z.object({
+  userName: z.string().max(30).optional(),
+  deviceName: z.string().max(30).optional(),
+  avatar: z.string().max(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH).optional(),
+}).strict()
+
 export const feedbackIssueInputSchema = z.object({
   feedback: z.string().max(4_000),
 }).strict()
@@ -64,6 +71,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     keybindings: keybindingsSchema.optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
     taskSidebar: taskSidebarPreferencesSchema.optional(),
+    profile: desktopUserProfilePatchSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
     language: z.enum(['zh-CN', 'en-US']).optional(),
     launchAtLogin: z.boolean().optional(),

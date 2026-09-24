@@ -165,6 +165,11 @@ describe('lexoraConfigStore', () => {
       launchAtLogin: false,
       notificationsEnabled: true,
       notifyWhenFocused: false,
+      profile: {
+        avatar: '',
+        deviceName: '',
+        userName: '',
+      },
       sidebarCollapsed: false,
       theme: 'dark',
     })
@@ -310,6 +315,34 @@ describe('lexoraConfigStore', () => {
     expect(content).toContain('[api]')
     expect(content).toContain('base_url = "https://lexora.example"')
     expect(content).toContain('future_setting = true')
+  })
+
+  it('persists and restores desktop user profile settings across restarts', async () => {
+    const { configPath, store } = await createConfigStore()
+    const initial = await store.read()
+    expect(initial.desktop.profile).toEqual({ userName: '', deviceName: '', avatar: '' })
+
+    await store.update({
+      desktop: {
+        profile: {
+          userName: 'Alice',
+          deviceName: 'Alice-Laptop',
+          avatar: 'data:image/png;base64,abc',
+        },
+      },
+    })
+
+    const restarted = new LexoraConfigStore({ configPath })
+    const restored = await restarted.read()
+    expect(restored.desktop.profile).toEqual({
+      userName: 'Alice',
+      deviceName: 'Alice-Laptop',
+      avatar: 'data:image/png;base64,abc',
+    })
+
+    const saved = await readFile(configPath, 'utf8')
+    expect(saved).toContain('user_name = "Alice"')
+    expect(saved).toContain('device_name = "Alice-Laptop"')
   })
 
   it('rejects malformed TOML with a stable configuration error', async () => {

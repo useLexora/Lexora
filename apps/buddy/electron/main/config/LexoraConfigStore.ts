@@ -10,7 +10,7 @@ import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
-import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
+import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().min(1).max(128), kind: z.literal('conversation') }).strict(),
@@ -48,6 +48,15 @@ const desktopConfigSchema = z.object({
     .refine(items => new Set(items.map(item => `${item.kind}:${item.id}`)).size === items.length)
     .default([]),
   task_sidebar: taskSidebarConfigSchema,
+  profile: z.object({
+    user_name: z.string().max(30).default(''),
+    device_name: z.string().max(30).default(''),
+    avatar: z.string().max(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH).default(''),
+  }).passthrough().default({
+    user_name: '',
+    device_name: '',
+    avatar: '',
+  }),
   developer_tools_enabled: z.boolean().default(false),
   language: z.enum(['zh-CN', 'en-US']).default('zh-CN'),
   launch_at_login: z.boolean().default(false),
@@ -66,6 +75,7 @@ const desktopConfigSchema = z.object({
   keybindings: {},
   task_sidebar_pinned_items: [],
   task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
+  profile: { user_name: '', device_name: '', avatar: '' },
   developer_tools_enabled: false,
   language: 'zh-CN',
   launch_at_login: false,
@@ -225,6 +235,11 @@ function decodeConfig(value: unknown): LexoraConfig {
         collapsedSpaces: config.desktop.task_sidebar.collapsed_spaces,
         width: config.desktop.task_sidebar.width ?? null,
       },
+      profile: {
+        userName: config.desktop.profile.user_name,
+        deviceName: config.desktop.profile.device_name,
+        avatar: config.desktop.profile.avatar,
+      },
       developerToolsEnabled: config.desktop.developer_tools_enabled,
       language: config.desktop.language,
       launchAtLogin: config.desktop.launch_at_login,
@@ -268,6 +283,11 @@ function encodeConfig(config: LexoraConfig) {
         collapsed_spaces: config.desktop.taskSidebar.collapsedSpaces,
         ...(config.desktop.taskSidebar.width === null ? {} : { width: config.desktop.taskSidebar.width }),
       },
+      profile: {
+        user_name: config.desktop.profile.userName,
+        device_name: config.desktop.profile.deviceName,
+        avatar: config.desktop.profile.avatar,
+      },
       developer_tools_enabled: config.desktop.developerToolsEnabled,
       language: config.desktop.language,
       launch_at_login: config.desktop.launchAtLogin,
@@ -301,6 +321,10 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
         ...current.desktop.taskSidebar,
         ...patch.desktop?.taskSidebar,
       },
+      profile: {
+        ...current.desktop.profile,
+        ...patch.desktop?.profile,
+      },
     },
     pet: {
       ...current.pet,
@@ -324,6 +348,10 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
     task_sidebar: {
       ...asRecord(desktop.task_sidebar),
       ...asRecord(encoded.desktop.task_sidebar),
+    },
+    profile: {
+      ...asRecord(desktop.profile),
+      ...asRecord(encoded.desktop.profile),
     },
   }
   delete nextDesktop.chat_sidebar_section_order

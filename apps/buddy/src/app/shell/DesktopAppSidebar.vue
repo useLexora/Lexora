@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import type { DesktopAppInfo, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
 import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
-
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopView } from '@/shared/navigation/desktopRoutes'
 import { Alert20Regular, VehicleShip20Regular } from '@vicons/fluent'
@@ -12,24 +12,28 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopNotificationCenter } from '@/modules/notifications/ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
+import { resolveUserProfile } from './userProfile'
 
 const props = defineProps<{
+  activeExtension: string | null
+  appInfo?: DesktopAppInfo | null
   appVersion: string | null
+  extensionNavigation: ReadonlyArray<{ id: string, title: string, iconUrl?: string }>
   language: BuddyLocale
   mode: DesktopView
-  extensionNavigation: ReadonlyArray<{ id: string, title: string, iconUrl?: string }>
-  activeExtension: string | null
   notificationItems: ReadonlyArray<LocalNotification>
   notificationLoading: boolean
   notificationUnseenCount: number
+  profileConfig?: DesktopUserProfileConfig | null
+  updateProfile: (patch: Partial<DesktopUserProfileConfig>) => Promise<boolean>
 }>()
 const emit = defineEmits<{
-  navigateAutomations: []
-  navigateTasks: []
-  navigateExtensions: []
-  navigateExtensionPage: [id: string]
-  navigateSettings: []
   markAllNotificationsSeen: []
+  navigateAutomations: []
+  navigateExtensionPage: [id: string]
+  navigateExtensions: []
+  navigateSettings: []
+  navigateTasks: []
   openNotification: [notification: LocalNotification]
   refreshNotifications: []
 }>()
@@ -38,6 +42,8 @@ const versionLabel = computed(() => props.appVersion ? `v${props.appVersion}` : 
 const showAccountDialog = shallowRef(false)
 const showNotifications = shallowRef(false)
 const notificationPopoverThemeOverrides = { padding: '0' } as const
+
+const resolvedProfile = computed(() => resolveUserProfile(props.profileConfig, props.appInfo))
 
 function updateNotificationVisibility(show: boolean) {
   showNotifications.value = show
@@ -104,10 +110,16 @@ function openNotification(notification: LocalNotification) {
         <button
           class="desktop-app-sidebar__profile"
           type="button"
+          :title="resolvedProfile.userName"
           @click="showAccountDialog = true"
         >
-          <DesktopAccountAvatar size="compact" />
-          <strong>{{ t('desktop.account.signedOut') }}</strong>
+          <DesktopAccountAvatar
+            size="compact"
+            :avatar-url="resolvedProfile.avatarUrl"
+            :name="resolvedProfile.userName"
+            :initials="resolvedProfile.initials"
+          />
+          <strong>{{ resolvedProfile.userName }}</strong>
         </button>
         <NPopover
           class="desktop-notification-popover"
@@ -158,6 +170,9 @@ function openNotification(notification: LocalNotification) {
     <DesktopAccountDialog
       v-model:show="showAccountDialog"
       :language="language"
+      :custom-profile="profileConfig"
+      :resolved-profile="resolvedProfile"
+      :update-profile="updateProfile"
     />
   </aside>
 </template>
