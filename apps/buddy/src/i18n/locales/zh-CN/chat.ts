@@ -433,6 +433,7 @@ export default {
   'desktop.chat.failureDetail': '错误详情：',
   'desktop.chat.modelNotSupported': '当前 API 不支持所选模型，请更换模型或检查 Provider 配置',
   'desktop.chat.modelRequestFailed': '模型请求失败，请检查模型服务配置或网络连接后重试',
+  'desktop.chat.modelStreamIncomplete': '未收到模型响应的完成标记，无法确认响应是否完整。请重试；若问题持续，请导出诊断包以便排查',
   'desktop.chat.modelRequestTimedOut': '模型服务响应超时，请稍后重试',
   'desktop.chat.modelServiceUnavailable': '模型服务暂时不可用，请稍后重试',
   'desktop.chat.modelServiceUnreachable': '无法连接模型服务，请检查 Provider 地址或网络连接后重试',

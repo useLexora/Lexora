@@ -1,6 +1,6 @@
 import type { ContextPanelCommand, ContextPanelState } from '../../shared/context-panel/contextPanel'
 import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
-import type { ApplicationLogQuery } from '../../shared/diagnostics/applicationLog'
+import type { ApplicationLogExport, ApplicationLogQuery } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
 import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
 import type { DesktopCommandId } from '../shared/desktopCommands'
@@ -25,6 +25,7 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
     }),
     app: Object.freeze({
       logs: Object.freeze({
+        exportDiagnostics: (input: ApplicationLogExport) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsExportDiagnostics, { launch: input.launch }),
         query: (input: ApplicationLogQuery) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsQuery, {
           ...input,
           anchor: input.anchor ? { launchId: input.anchor.launchId, sequence: input.anchor.sequence } : undefined,

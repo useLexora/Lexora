@@ -39,6 +39,10 @@ export const applicationLogQuerySchema = z.object({
 }).strict()
 
 export type ApplicationLogQuery = z.input<typeof applicationLogQuerySchema>
+
+export const applicationLogExportSchema = z.object({ launch: diagnosticIdentitySchema }).strict()
+export type ApplicationLogExport = z.infer<typeof applicationLogExportSchema>
+export type ApplicationLogExportResult = { status: 'saved', errorCount: number, contextCount: number } | { status: 'canceled' | 'empty' }
 export interface ApplicationLogLaunch {
   launchId: string
   firstRecordedAt: string
@@ -60,6 +64,7 @@ export interface ApplicationLogPage {
 
 export interface ApplicationLogApi {
   query: (input: ApplicationLogQuery) => Promise<ApplicationLogPage>
+  exportDiagnostics: (input: ApplicationLogExport) => Promise<ApplicationLogExportResult>
 }
 
 const domains: ReadonlyArray<readonly [ApplicationLogCategory, readonly string[]]> = [

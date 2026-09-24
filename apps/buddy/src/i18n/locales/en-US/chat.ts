@@ -435,6 +435,7 @@ export default {
   'desktop.chat.failureDetail': 'Error details:',
   'desktop.chat.modelNotSupported': 'The current API does not support the selected model. Choose another model or check the provider configuration.',
   'desktop.chat.modelRequestFailed': 'The model request failed. Check the model service configuration or network connection and try again.',
+  'desktop.chat.modelStreamIncomplete': 'No completion marker was received, so the response may be incomplete. Retry, or export a diagnostic bundle if the issue persists.',
   'desktop.chat.modelRequestTimedOut': 'The model service timed out. Try again later.',
   'desktop.chat.modelServiceUnavailable': 'The model service is temporarily unavailable. Try again later.',
   'desktop.chat.modelServiceUnreachable': 'The model service could not be reached. Check the provider endpoint or network connection and try again.',

@@ -14,6 +14,7 @@ export const DESKTOP_IPC_CHANNELS = {
   contextPanelExecute: 'lexora:context-panel:execute',
   contextPanelStateChanged: 'lexora:context-panel:state-changed',
   appLogsQuery: 'lexora:app:logs:query',
+  appLogsExportDiagnostics: 'lexora:app:logs:export-diagnostics',
   appStartupGetState: 'lexora:app:startup:get-state',
   appStartupReport: 'lexora:app:startup:report',
   appStartupStateChanged: 'lexora:app:startup:state-changed',

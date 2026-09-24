@@ -1,4 +1,4 @@
-import type { ApplicationLogAnchor, ApplicationLogApi, ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
+import type { ApplicationLogAnchor, ApplicationLogApi, ApplicationLogExportResult, ApplicationLogPage, ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
 import { applicationLogKey } from '@buddy-shared/diagnostics/applicationLog'
 import { onScopeDispose, shallowRef, watch } from 'vue'
 
@@ -13,6 +13,7 @@ export function useApplicationLogs(api: ApplicationLogApi) {
   const selected = shallowRef<ApplicationLogRecord | null>(null)
   const loading = shallowRef(false)
   const failed = shallowRef(false)
+  const exporting = shallowRef(false)
   const requestedPage = shallowRef(1)
   const anchor = shallowRef<ApplicationLogAnchor | undefined>()
   const viewKey = shallowRef(0)
@@ -103,6 +104,24 @@ export function useApplicationLogs(api: ApplicationLogApi) {
     selected.value = selected.value && applicationLogKey(selected.value) === applicationLogKey(record) ? null : record
   }
 
+  async function exportDiagnostics(): Promise<ApplicationLogExportResult> {
+    if (disposed || exporting.value)
+      return { status: 'canceled' }
+    exporting.value = true
+    try {
+      const result = await api.exportDiagnostics({ launch: launch.value })
+      return disposed ? { status: 'canceled' } : result
+    }
+    catch (error) {
+      if (disposed)
+        return { status: 'canceled' }
+      throw error
+    }
+    finally {
+      exporting.value = false
+    }
+  }
+
   const timer = setInterval(() => {
     if (live.value && requestedPage.value === 1 && !loading.value && globalThis.document?.visibilityState !== 'hidden')
       void request(true)
@@ -113,5 +132,5 @@ export function useApplicationLogs(api: ApplicationLogApi) {
     clearInterval(timer)
   })
 
-  return { launch, category, level, search, live, page, selected, loading, failed, viewKey, refresh, pause, changePage, follow, select }
+  return { launch, category, level, search, live, page, selected, loading, failed, exporting, viewKey, refresh, pause, changePage, follow, select, exportDiagnostics }
 }
