@@ -4,7 +4,7 @@
 :root {
   color-scheme: light;
   --buddy-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
-  --buddy-font-brand: "LXGW WenKai", "Kaiti SC", STKaiti, KaiTi, "Noto Serif CJK SC", serif;
+  --buddy-font-brand: "LXGW WenKai", var(--buddy-font-ui);
 
   font-family: var(--buddy-font-ui);
   font-synthesis: none;
