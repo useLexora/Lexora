@@ -21,7 +21,7 @@ const SENSITIVE_BASENAME_PATTERN
   = /^(?:\.env(?:\..+)?|\.netrc|_netrc|\.pgpass|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.pem|.*\.p12|.*\.pfx)$/i
 
 const SECRET_TEMPLATE_BASENAME_PATTERN
-  = /^\.env\.(?:example|sample|template|defaults?|dist)$/i
+  = /^\.env(?:\..+)?\.(?:example|sample|template|defaults?|dist|schema)$/i
 
 export interface SensitivePathMatcher {
   matches: (canonicalPath: string) => boolean

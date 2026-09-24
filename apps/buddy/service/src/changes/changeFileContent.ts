@@ -31,8 +31,9 @@ export function isSensitivePath(path: string): boolean {
   return path.split('/').some((segment) => {
     const name = segment.toLowerCase()
     const extension = extname(name)
-    return name === '.env'
-      || name.startsWith('.env.')
+    const isEnv = name === '.env' || name.startsWith('.env.')
+    const isTemplate = /\.(?:example|sample|template|defaults?|dist|schema)$/i.test(name)
+    return (isEnv && !isTemplate)
       || ['.credential', '.key', '.p12', '.pem'].includes(extension)
       || ['id_dsa', 'id_ecdsa', 'id_ed25519', 'id_rsa'].includes(name)
   })
