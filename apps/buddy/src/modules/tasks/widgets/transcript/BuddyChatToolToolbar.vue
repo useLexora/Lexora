@@ -2,6 +2,7 @@
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ArrowUpRight20Regular, Checkmark20Regular, Copy20Regular } from '@vicons/fluent'
 import { useTimeoutFn } from '@vueuse/core'
+import { useMessage } from 'naive-ui'
 import { onScopeDispose, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -15,8 +16,9 @@ const props = defineProps<{
   copyLabel?: string
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const actions = useChatContent()
-const copyState = shallowRef<'idle' | 'copied' | 'failed'>('idle')
+const copyState = shallowRef<'idle' | 'copied'>('idle')
 const copyReset = useTimeoutFn(() => copyState.value = 'idle', 1_400, { immediate: false })
 let disposed = false
 onScopeDispose(() => disposed = true)
@@ -36,8 +38,10 @@ async function copy() {
     }
   }
   catch {
-    if (!disposed && props.copyText === text)
-      copyState.value = 'failed'
+    if (!disposed && props.copyText === text) {
+      copyState.value = 'idle'
+      message.error(t('desktop.chat.copyFailed'))
+    }
   }
 }
 </script>
@@ -57,9 +61,6 @@ async function copy() {
       </button>
     </div>
   </header>
-  <p v-if="copyState === 'failed'" class="buddy-chat-tool-toolbar__error" role="alert">
-    {{ t('desktop.chat.copyFailed') }}
-  </p>
 </template>
 
 <style scoped lang="scss">
@@ -103,12 +104,5 @@ async function copy() {
   :deep(.n-icon) { width: 14px; height: 14px; }
   &:hover { color: var(--buddy-text-primary); background: var(--buddy-state-hover); }
   &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-}
-
-.buddy-chat-tool-toolbar__error {
-  margin: 0;
-  padding: 0 10px;
-  color: var(--buddy-status-danger-text);
-  font-size: var(--buddy-chat-caption-font-size);
 }
 </style>

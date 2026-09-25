@@ -2,17 +2,17 @@
 import type { ProxySettings } from '@buddy-shared/network/proxySettings'
 import type { ApplicationSettingsProps } from './typing'
 import { proxySettingsSchema } from '@buddy-shared/network/proxySettings'
-import { NButton, NInput } from 'naive-ui'
+import { NButton, NInput, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const groupId = useId()
 const mode = shallowRef<ProxySettings['mode']>('system')
 const server = shallowRef('')
 const pending = shallowRef(false)
-const failed = shallowRef(false)
 const invalid = shallowRef(false)
 const modes = computed(() => [
   { value: 'system' as const, label: t('desktop.settings.proxy.system') },
@@ -37,11 +37,12 @@ async function save() {
   if (!parsed.success)
     return
   pending.value = true
-  failed.value = false
   try {
-    failed.value = !await props.updateSettings({ proxy: parsed.data })
-    if (failed.value && props.config)
-      mode.value = props.config.proxy.mode
+    if (!await props.updateSettings({ proxy: parsed.data })) {
+      message.error(t('desktop.settings.saveFailed'))
+      if (props.config)
+        mode.value = props.config.proxy.mode
+    }
   }
   finally {
     pending.value = false
@@ -51,7 +52,6 @@ async function save() {
 async function select(next: ProxySettings['mode']) {
   mode.value = next
   invalid.value = false
-  failed.value = false
   if (next !== 'custom') {
     server.value = props.config?.proxy.server ?? ''
     await save()
@@ -100,9 +100,6 @@ async function select(next: ProxySettings['mode']) {
           </NButton>
         </div>
       </form>
-      <div v-if="failed" class="desktop-proxy-settings__status" role="alert">
-        <small class="is-error">{{ error ?? t('desktop.settings.saveFailed') }}</small>
-      </div>
     </div>
   </section>
 </template>
@@ -186,7 +183,6 @@ async function select(next: ProxySettings['mode']) {
 }
 
 .desktop-proxy-settings__actions { display: flex; justify-content: flex-end; }
-.desktop-proxy-settings__status { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.65rem; }
 
 @media (max-width: 760px) {
   .desktop-proxy-settings__row { grid-template-columns: minmax(0, 1fr); }

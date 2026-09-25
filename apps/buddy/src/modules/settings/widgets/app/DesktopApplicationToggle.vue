@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ApplicationSettingsProps } from './typing'
-import { NSwitch } from 'naive-ui'
+import { NSwitch, useMessage } from 'naive-ui'
 import { shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
@@ -10,17 +10,17 @@ const props = defineProps<ApplicationSettingsProps & {
   description: string
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const labelId = useId()
 const pending = shallowRef(false)
-const failed = shallowRef(false)
 
 async function update(value: boolean) {
   if (pending.value)
     return
   pending.value = true
-  failed.value = false
   try {
-    failed.value = !await props.updateSettings({ desktop: { [props.field]: value } })
+    if (!await props.updateSettings({ desktop: { [props.field]: value } }))
+      message.error(t('desktop.settings.saveFailed'))
   }
   finally {
     pending.value = false
@@ -35,9 +35,6 @@ async function update(value: boolean) {
       <small>{{ description }}</small>
     </div>
     <NSwitch :aria-labelledby="labelId" :round="false" :value="config.desktop[field]" :loading="pending" :disabled="pending" @update:value="update" />
-    <small v-if="failed" class="desktop-application-toggle__error" role="alert">
-      {{ error ?? t('desktop.settings.saveFailed') }}
-    </small>
   </div>
 </template>
 
@@ -69,10 +66,5 @@ async function update(value: boolean) {
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
   line-height: 1.5;
-}
-
-.desktop-application-toggle .desktop-application-toggle__error {
-  grid-column: 1 / -1;
-  color: var(--buddy-status-danger-text);
 }
 </style>

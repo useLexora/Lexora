@@ -25,6 +25,16 @@ function unpack(bytes: Uint8Array) {
 }
 
 describe('application diagnostic bundles', () => {
+  it('keeps successful startup steps and the launch network failure when exporting a later incident', async () => {
+    const { reader } = await fixture([
+      record(1, { event: 'network.start_failed', runId: undefined, level: 'warn', errorCode: 'NETWORK_START_FAILED', failure: { kind: 'network_startup', operation: 'listen', systemCode: 'UNKNOWN', errno: -4094 } }),
+      record(2, { timestamp: '2026-09-24T00:02:00.000Z', event: 'component.ready', component: 'runtime.database', level: 'info', runId: undefined, operationId: 'database-setup', errorCode: undefined }),
+      record(3, { timestamp: '2026-09-24T00:02:01.000Z', event: 'run.failed' }),
+    ])
+    const { context } = unpack((await createApplicationDiagnosticBundle(reader, 'current', { launchId: 'launch-current', sequence: 3 }))!.bytes)
+    expect(context.map(record => record.sequence)).toEqual([1, 2, 3])
+    expect(context[0].failure).toEqual({ kind: 'network_startup', operation: 'listen', systemCode: 'UNKNOWN', errno: -4094 })
+  })
   it('exports related activity before and after errors without free-form content or unrelated user files', async () => {
     const { reader } = await fixture([
       record(1, { launchId: 'launch-history' }),

@@ -42,6 +42,16 @@ function get(proxy: OutboundProxy, url: string, authenticated = true) {
 }
 
 describe('outbound proxy', () => {
+  it('can clean up before listening and after repeated shutdown', async () => {
+    const proxy = new OutboundProxy(async () => 'DIRECT')
+    await expect(proxy.stop()).resolves.toBeUndefined()
+    await expect(proxy.stop()).resolves.toBeUndefined()
+    const started = new OutboundProxy(async () => 'DIRECT')
+    await started.start()
+    expect(started.port).toBeGreaterThan(0)
+    await expect(started.stop()).resolves.toBeUndefined()
+    await expect(started.stop()).resolves.toBeUndefined()
+  })
   it.each([
     ['lexora', '[::1]:443', 'https://[::1]:443/'],
     ['lexora-http', 'fixture.invalid:80', 'http://fixture.invalid:80/'],

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LexoraConfigPatch } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from './typing'
-import { NSelect, NSpin, NSwitch } from 'naive-ui'
+import { NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
@@ -9,8 +9,8 @@ type GeneralSettingField = 'language' | 'contextPanelMode' | 'contextPanelGlobal
 
 const props = defineProps<ApplicationSettingsProps>()
 const { languageOptions, t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const pendingFields = shallowRef<ReadonlySet<GeneralSettingField>>(new Set())
-const failedField = shallowRef<GeneralSettingField | null>(null)
 const globalPanelLabelId = useId()
 const contextPanelModes = computed(() => [
   { label: t('desktop.settings.contextPanelTask'), value: 'task' },
@@ -21,9 +21,13 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
   if (pendingFields.value.has(field))
     return
   pendingFields.value = new Set([...pendingFields.value, field])
-  const succeeded = await props.updateSettings(patch)
-  pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
-  failedField.value = succeeded ? null : field
+  try {
+    if (!await props.updateSettings(patch))
+      message.error(t('desktop.settings.saveFailed'))
+  }
+  finally {
+    pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
+  }
 }
 </script>
 
@@ -44,9 +48,6 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
               @update:value="updateSetting('language', { desktop: { language: $event } })"
             />
             <NSpin v-if="pendingFields.has('language')" size="small" />
-            <small v-else-if="failedField === 'language'" class="is-error" role="alert">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
       </div>
@@ -69,9 +70,6 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
               @update:value="updateSetting('contextPanelMode', { desktop: { contextPanelMode: $event } })"
             />
             <NSpin v-if="pendingFields.has('contextPanelMode')" size="small" />
-            <small v-else-if="failedField === 'contextPanelMode'" class="is-error" role="alert">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
         <div class="desktop-settings-row" data-testid="context-panel-global-setting">
@@ -88,9 +86,6 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
               :disabled="pendingFields.has('contextPanelGlobal')"
               @update:value="updateSetting('contextPanelGlobal', { desktop: { contextPanelGlobal: $event } })"
             />
-            <small v-if="failedField === 'contextPanelGlobal'" class="is-error" role="alert">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
       </div>
@@ -163,12 +158,6 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
 .desktop-settings-row__control--toggle {
   grid-template-columns: auto;
   justify-items: end;
-}
-
-.desktop-settings-row__control .is-error {
-  grid-column: 1 / -1;
-  color: var(--buddy-status-danger-text);
-  text-align: right;
 }
 
 @container (max-width: 560px) {

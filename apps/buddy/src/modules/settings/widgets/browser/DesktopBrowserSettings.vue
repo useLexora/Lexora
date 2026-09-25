@@ -2,16 +2,16 @@
 import type { DesktopBrowserApi, LexoraConfigPatch } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from '../app/typing'
 import { BROWSER_ZOOM_FACTORS } from '@buddy-shared/browser/browserPreferences'
-import { NButton, NInputNumber, NSelect, NSwitch } from 'naive-ui'
+import { NButton, NInputNumber, NSelect, NSwitch, useMessage } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopBrowserClearDataDialog from './DesktopBrowserClearDataDialog.vue'
 
 const props = defineProps<ApplicationSettingsProps & { browser: Pick<DesktopBrowserApi, 'getDataSummary' | 'clearData'> }>()
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const clearing = shallowRef(false)
 const pending = shallowRef(false)
-const failed = shallowRef(false)
 const screenshotOptions = computed(() => [
   { label: t('desktop.browser.screenshotFile'), value: 'file' },
   { label: t('desktop.browser.screenshotClipboard'), value: 'clipboard' },
@@ -19,9 +19,12 @@ const screenshotOptions = computed(() => [
 const zoomOptions = BROWSER_ZOOM_FACTORS.map(value => ({ label: `${Math.round(value * 100)}%`, value }))
 
 async function update(patch: LexoraConfigPatch) {
+  if (pending.value)
+    return
   pending.value = true
   try {
-    failed.value = !await props.updateSettings(patch)
+    if (!await props.updateSettings(patch))
+      message.error(t('desktop.settings.saveFailed'))
   }
   finally { pending.value = false }
 }
@@ -95,9 +98,6 @@ async function update(patch: LexoraConfigPatch) {
         </div>
       </div>
     </section>
-    <p v-if="failed" class="desktop-browser-settings__error" role="alert">
-      {{ error ?? t('desktop.settings.saveFailed') }}
-    </p>
     <DesktopBrowserClearDataDialog v-if="clearing" :language="language" :browser="browser" @close="clearing = false" />
   </section>
 </template>
@@ -114,7 +114,6 @@ async function update(patch: LexoraConfigPatch) {
 .desktop-browser-settings__copy small { font-size: 0.72rem; line-height: 1.6; color: var(--buddy-text-secondary); }
 .desktop-browser-settings__clear, .desktop-browser-settings__switch { justify-self: end; }
 .desktop-browser-settings__hint { margin: 0; font-size: 0.72rem; line-height: 1.6; color: var(--buddy-text-secondary); }
-.desktop-browser-settings__error { margin: 0; color: var(--buddy-status-danger-text); font-size: 0.75rem; }
 @container (max-width: 560px) {
   .desktop-browser-settings__row { grid-template-columns: minmax(0, 1fr); gap: 0.8rem; }
   .desktop-browser-settings__clear, .desktop-browser-settings__switch { justify-self: start; }

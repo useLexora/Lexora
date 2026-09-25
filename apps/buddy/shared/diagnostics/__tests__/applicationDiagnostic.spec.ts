@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { applicationDiagnosticSchema, readDiagnosticError } from '../applicationDiagnostic'
+import { NetworkStartupError } from '../networkStartupFailure'
 
 describe('safe diagnostic errors', () => {
+  it('preserves network startup evidence without inferring a cause or copying endpoint details', () => {
+    const cause = Object.assign(new Error('listen UNKNOWN fixture-private-endpoint'), { code: 'UNKNOWN', errno: -4094, address: 'fixture-private-endpoint', port: 8080 })
+    const error = new NetworkStartupError('listen', cause)
+    const diagnostic = readDiagnosticError(error)
+    expect(diagnostic).toEqual({ errorCode: 'NETWORK_START_FAILED', errorType: 'NetworkStartupError', failure: { kind: 'network_startup', operation: 'listen', systemCode: 'UNKNOWN', errno: -4094 } })
+    expect(JSON.stringify(diagnostic)).not.toContain('fixture-private')
+    expect(applicationDiagnosticSchema.safeParse({ event: 'network.start_failed', level: 'warn', ...diagnostic }).success).toBe(true)
+    expect(applicationDiagnosticSchema.safeParse({ event: 'network.start_failed', level: 'warn', failure: { ...error.failure, address: 'fixture-private-endpoint' } }).success).toBe(false)
+    expect(new NetworkStartupError('configure_sessions', { code: 'fixture-secret', errno: 'fixture-secret' }).failure).toEqual({ kind: 'network_startup', operation: 'configure_sessions' })
+  })
   it('preserves bounded ACL evidence but rejects identities, paths and arbitrary failure details', () => {
     const acl = { reason: 'untrusted_access', aceIndex: 3, aceType: 0, aceFlags: 19, accessMask: 0xFFFFFFFF, principal: 'other' }
     const failure = { kind: 'private_directories', operation: 'validate_acl', acl }

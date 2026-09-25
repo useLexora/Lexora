@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import type { RuntimePreferences } from '@buddy-shared/runtime/runtimePreferences'
 import type { ApplicationSettingsProps } from '../app/typing'
-import { NSelect } from 'naive-ui'
+import { NSelect, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const labelId = useId()
 const descriptionId = useId()
 const pending = shallowRef(false)
-const failed = shallowRef(false)
 const modes = computed(() => [
   { label: t('desktop.settings.runtime.cacheWarmingOff'), value: 'off' },
   { label: t('desktop.settings.runtime.cacheWarmingStreaming'), value: 'streaming' },
@@ -20,9 +20,9 @@ async function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming
   if (pending.value)
     return
   pending.value = true
-  failed.value = false
   try {
-    failed.value = !await props.updateSettings({ runtime: { cacheWarming } })
+    if (!await props.updateSettings({ runtime: { cacheWarming } }))
+      message.error(t('desktop.settings.saveFailed'))
   }
   finally {
     pending.value = false
@@ -48,7 +48,6 @@ async function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming
           :disabled="pending"
           @update:value="updateCacheWarming"
         />
-        <small v-if="failed" class="is-error" role="alert">{{ error ?? t('desktop.settings.saveFailed') }}</small>
       </div>
     </div>
   </section>
@@ -93,11 +92,6 @@ async function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
   line-height: 1.5;
-}
-
-.runtime-settings .is-error {
-  color: var(--buddy-status-danger-text);
-  text-align: right;
 }
 
 @container (max-width: 560px) {

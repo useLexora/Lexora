@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { ChatAgentToolNode, ChatAgentTurn, ChatAgentTurnNode } from '../../../model/transcript/chatAgentTurn'
+import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
@@ -415,10 +416,10 @@ function mountTurn(nodes: ChatAgentTurnNode[], status: ChatAgentTurn['status'] =
       })
       useProvideChatContent({ canPreviewFile: () => false, previewFile: () => {}, writeClipboardText: async () => {} })
       const navigation = useChatActivityNavigation()
-      return () => [
+      return () => h(NMessageProvider, null, { default: () => [
         h(BuddyChatAgentTurn, { ref: view => navigation.register('run', view), language: 'zh-CN', turn: turn.value }),
         ...turn.value.status === 'running' ? [h(BuddyChatRunActivity, { language: 'zh-CN', turn: turn.value, onRevealActivity: nodeId => navigation.reveal('run', nodeId) })] : [],
-      ]
+      ] })
     },
   })
   app.mount(root)

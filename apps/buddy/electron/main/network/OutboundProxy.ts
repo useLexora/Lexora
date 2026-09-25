@@ -67,7 +67,13 @@ export class OutboundProxy {
 
   async stop(): Promise<void> {
     this.disconnect()
-    await this.#server.close(true)
+    try {
+      await this.#server.close(true)
+    }
+    catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ERR_SERVER_NOT_RUNNING')
+        throw error
+    }
   }
 }
 

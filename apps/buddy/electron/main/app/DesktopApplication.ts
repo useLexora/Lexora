@@ -135,6 +135,7 @@ class DesktopApplication {
     try {
       await this.#dispose()
     }
+    catch {}
     finally {
       try {
         if (!this.#environment.isSmokeTest)
