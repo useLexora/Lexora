@@ -10,13 +10,43 @@ import { WorkingCopyService } from '../WorkingCopyService'
 const resource = { scheme: 'file', id: 'example', data: { path: 'example.md' } }
 function registry() {
   const registry = new ContributionRegistry()
-  registry.register('files', scope => scope.view({ id: 'text', label: 'Text', supports: input => input.scheme === 'file', multiple: true }))
+  registry.register('files', scope => scope.view({ locations: ['main'], id: 'text', renderer: 'text', label: 'Text', supports: input => input.scheme === 'file', multiple: true }))
   return registry
 }
 describe('workbench resource ownership', () => {
+  it('uses only explicitly published context keys for declarative view conditions', async () => {
+    const contributions = registry()
+    const controller = new WorkbenchController(contributions)
+    const id = (await controller.open(resource, 'Document'))!
+    const definition = contributions.views.get('text')!
+    definition.when = { 'resource.scheme': 'file' }
+    expect(controller.context.values['resource.scheme']).toBe('file')
+    expect(controller.matchesViewContext(controller.layout.views[id]!)).toBe(false)
+    const dispose = controller.contextKeys.set('resource.scheme', 'file')
+    expect(controller.matchesViewContext(controller.layout.views[id]!)).toBe(true)
+    dispose()
+    expect(controller.matchesViewContext(controller.layout.views[id]!)).toBe(false)
+  })
+
+  it('keeps instance placement independent of the definition default and rejects unsupported locations', async () => {
+    const contributions = registry()
+    contributions.register('flexible', scope => scope.view({ id: 'flexible', renderer: 'flexible', label: 'Flexible', locations: ['context', 'main'], supports: value => value.scheme === 'flexible', multiple: false }))
+    const controller = new WorkbenchController(contributions)
+    const original = (await controller.open({ scheme: 'flexible', id: 'one', data: {} }, 'One', { location: 'main', state: { selection: 'retained' } }))!
+    await controller.open(resource, 'Other', { direction: 'right' })
+    await controller.move(original, controller.layout.activePane)
+    expect(controller.layout.views[original]).toMatchObject({ location: 'main', state: { selection: 'retained' } })
+    expect(controller.owner(original)).not.toBeNull()
+    expect(await controller.open({ scheme: 'flexible', id: 'one', data: {} }, 'One')).toBe(original)
+    expect(restoreWorkbenchLayout(JSON.parse(JSON.stringify(controller.layout))).views[original]?.location).toBe('main')
+    const saved = JSON.stringify(controller.layout)
+    await expect(controller.open(resource, 'Invalid', { location: 'context' })).rejects.toThrow('View location is unavailable')
+    expect(JSON.stringify(controller.layout)).toBe(saved)
+  })
+
   it('opens a retained context view without stealing focus and restores its owner state', async () => {
     const contributions = registry()
-    contributions.register('context', scope => scope.view({ id: 'context.file', label: 'File', location: 'context', supports: input => input.scheme === 'context-file', multiple: true }))
+    contributions.register('context', scope => scope.view({ id: 'context.file', renderer: 'context.file', label: 'File', locations: ['context'], supports: input => input.scheme === 'context-file', multiple: true }))
     const controller = new WorkbenchController(contributions)
     const task = await controller.open(resource, 'Task')
     const viewId = (await controller.open({ ...resource, scheme: 'context-file' }, 'Document', { focus: false, state: { contextTabId: 'directory-tab', mode: 'source' } }))!
@@ -130,7 +160,7 @@ describe('workbench resource ownership', () => {
 
   it('keeps context views outside task geometry and retains the last task focus', async () => {
     const contributions = registry()
-    contributions.register('browser', scope => scope.view({ id: 'browser', label: 'Browser', supports: r => r.scheme === 'browser', multiple: true, location: 'context' }))
+    contributions.register('browser', scope => scope.view({ id: 'browser', renderer: 'browser', label: 'Browser', supports: r => r.scheme === 'browser', multiple: true, locations: ['context'] }))
     const controller = new WorkbenchController(contributions)
     await controller.open(resource, 'Task')
     const pane = controller.layout.activePane
@@ -237,4 +267,62 @@ it('selects one direction at corners and leaves the center for replacement', () 
   expect(resolveWorkbenchDrop({ x: 400, y: 105 }, bounds)).toBe('up')
   expect(resolveWorkbenchDrop({ x: 400, y: 495 }, bounds)).toBe('down')
   expect(resolveWorkbenchDrop({ x: 800, y: 500 }, bounds)).toBeNull()
+})
+
+it('restores global dock views without changing main pane ownership or duplicating their state', async () => {
+  const contributions = registry()
+  contributions.register('dock', scope => scope.view({ id: 'dock', label: 'Dock', renderer: 'dock', locations: ['context', 'mount'], multiple: true, supports: value => value.scheme === 'dock' }))
+  const controller = new WorkbenchController(contributions)
+  const main = await controller.open(resource, 'Main')
+  const dockResource = { scheme: 'dock', id: 'music.top', data: {} }
+  const id = (await controller.open(dockResource, 'Player', { location: 'mount', focus: false, state: { volume: 0.25 } }))!
+  expect(controller.context.view?.id).toBe(main)
+  expect(controller.owner(id)).toBeNull()
+  expect(await controller.open(dockResource, 'Player', { location: 'mount', focus: false })).toBe(id)
+  expect(restoreWorkbenchLayout(JSON.parse(JSON.stringify(controller.layout))).views[id]).toMatchObject({ location: 'mount', state: { volume: 0.25 } })
+  controller.focus(id)
+  expect(controller.context.values['focus.area']).toBe('mount')
+  await controller.close(id)
+  expect(controller.context.view?.id).toBe(main)
+  expect(controller.layout.views[main!]).toBeDefined()
+})
+
+it('publishes complete contribution batches and removes the whole owner after cleanup failure', () => {
+  const registry = new ContributionRegistry()
+  const snapshots: string[][] = []
+  registry.subscribe(() => snapshots.push([...registry.commands.keys()]))
+  const remove = registry.register('owner', (scope) => {
+    scope.command({ id: 'one', label: 'One', execute() {} })
+    expect(registry.commands.size).toBe(0)
+    scope.command({ id: 'two', label: 'Two', execute() {} })
+    scope.cleanup(() => {
+      throw new Error('cleanup failed')
+    })
+  })
+  expect(snapshots).toEqual([['one', 'two']])
+  expect(() => remove()).toThrow('Scope cleanup failed')
+  expect(snapshots).toEqual([['one', 'two'], []])
+  registry.register('owner', scope => scope.command({ id: 'one', label: 'Recovered', execute() {} }))
+  expect(registry.commands.get('one')?.label).toBe('Recovered')
+})
+
+it('retains protected views when a close request is cancelled during its guard', async () => {
+  const gate = deferred<import('../WorkbenchController').ViewCloseDecision>()
+  const entered = deferred<void>()
+  let committed = false
+  let cancelled = false
+  const controller = new WorkbenchController(registry(), () => {
+    entered.resolve()
+    return gate.promise
+  })
+  const id = (await controller.open(resource, 'Protected'))!
+  const abort = new AbortController()
+  const closing = controller.close(id, abort.signal)
+  await entered.promise
+  abort.abort()
+  gate.resolve({ commit: () => committed = true, cancel: () => cancelled = true })
+  expect(await closing).toBe(false)
+  expect(controller.layout.views[id]).toBeDefined()
+  expect(committed).toBe(false)
+  expect(cancelled).toBe(true)
 })

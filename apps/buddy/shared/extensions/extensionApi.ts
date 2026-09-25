@@ -1,4 +1,5 @@
 import type { JsonValue } from '../workbench/workbenchState'
+import type { ControlProposal, WorkbenchPresentation } from '../workbench/workbenchUi'
 import type { ExtensionCatalogSnapshot } from './extensionCatalog'
 import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
@@ -22,6 +23,7 @@ export const extensionViewInputSchema = z.object({
   viewId: z.string().uuid(),
   extensionId: extensionIdSchema,
   viewType: z.string().max(180),
+  placementId: z.string().min(1).max(180).optional(),
   resource: extensionResourceSchema.nullable(),
   state: extensionJsonSchema,
   stateVersion: z.number().int().min(0).max(10000),
@@ -67,8 +69,12 @@ export interface ExtensionReview {
   addedPermissions: string[]
 }
 export type ExtensionWorkbenchEvent
-  = | { kind: 'open', requestId: string, extensionId: string, viewType: string, resource: ExtensionResource | null, state: JsonValue, stateVersion: number }
-    | { kind: 'state', requestId: string, viewId: string, generation: string, state: JsonValue, stateVersion: number }
+  = | { kind: 'cancel', requestId: string }
+    | { kind: 'open', requestId: string, extensionId: string, generation: string, viewType: string, resource: ExtensionResource | null, state: JsonValue, stateVersion: number }
+    | { kind: 'state', requestId: string, viewId: string, generation: string, token: string, state: JsonValue, stateVersion: number }
+    | { kind: 'placement', requestId: string, extensionId: string, generation: string, placementId: string, visible: boolean }
+    | { kind: 'control', requestId: string, viewId: string, generation: string, token: string, proposal: ControlProposal }
+    | { kind: 'presentation', requestId: string, viewId: string, generation: string, token: string, presentation: WorkbenchPresentation }
 
 export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
@@ -83,6 +89,7 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('restart'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('uninstall'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('devtools'), id: extensionIdSchema }).strict(),
+  z.object({ action: z.literal('revokeResources'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('execute'), id: extensionIdSchema, command: z.string().max(180), resource: spaceFileTargetSchema.nullable() }).strict(),
   z.object({ action: z.literal('openView'), view: extensionViewInputSchema }).strict(),
   z.object({ action: z.literal('closeView'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid() }).strict(),
@@ -102,6 +109,7 @@ export interface ExtensionApi {
   restart: (id: string) => Promise<void>
   uninstall: (id: string) => Promise<void>
   devtools: (id: string) => Promise<void>
+  revokeResources: (id: string) => Promise<void>
   execute: (id: string, command: string, resource: import('../spaces/spaceFileApi').SpaceFileTarget | null) => Promise<void>
   openView: (view: ExtensionViewInput) => Promise<ExtensionViewSession>
   closeView: (viewId: string, generation: string, token: string) => Promise<void>

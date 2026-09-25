@@ -11,7 +11,7 @@ import { TaskInputCleanup } from '../TaskInputCleanup'
 
 function controller() {
   const registry = new ContributionRegistry()
-  registry.register('tasks', scope => scope.view({ id: 'task', label: 'Task', supports: () => true, multiple: false }))
+  registry.register('tasks', scope => scope.view({ locations: ['main'], id: 'task', renderer: 'task', label: 'Task', supports: () => true, multiple: false }))
   return new WorkbenchController(registry)
 }
 

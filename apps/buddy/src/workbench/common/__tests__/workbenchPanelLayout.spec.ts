@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDesktopWorkbenchWidths } from '../desktopWorkbenchLayout'
+import { resolveDesktopWorkbenchWidths } from '../workbenchPanelLayout'
 
 describe('nested workbench width allocation', () => {
   it('keeps a hidden sidebar at zero when the outer layout cannot meet its workspace minimum', () => {

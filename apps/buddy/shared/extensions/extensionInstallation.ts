@@ -3,6 +3,8 @@ import { z } from 'zod'
 export const extensionInstallationSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(120),
+  extensionId: z.string().max(120).optional(),
+  version: z.string().max(80).optional(),
   startedAt: z.string(),
   status: z.enum(['running', 'review', 'completed', 'failed', 'cancelled']),
   stage: z.enum(['download', 'validate', 'review', 'compile', 'install', 'completed']),

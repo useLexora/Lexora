@@ -18,6 +18,7 @@ export function createExtensionApi(): ExtensionApi {
     restart: id => request({ action: 'restart', id }),
     uninstall: id => request({ action: 'uninstall', id }),
     devtools: id => request({ action: 'devtools', id }),
+    revokeResources: id => request({ action: 'revokeResources', id }),
     execute: (id, command, resource) => request({ action: 'execute', id, command, resource }),
     openView: view => request({ action: 'openView', view }),
     closeView: (viewId, generation, token) => request({ action: 'closeView', viewId, generation, token }),

@@ -45,7 +45,7 @@ it('writes an authorized installable output and requests review without installi
   const f = await fixture()
   const output = join(f.root, 'example.lexora-extension')
   const result = await f.execute({ source: 'source', output: 'example.lexora-extension', review: true })
-  expect(result.details).toMatchObject({ ok: true, packagePath: output, installed: false, runtimeTested: false })
+  expect(result.details).toMatchObject({ ok: true, packagePath: output, installation: 'review_requested', runtimeTested: false })
   expect(unpackExtension(await readFile(output)).has('view.js')).toBe(true)
   expect(f.notifications).toEqual([{ path: output }])
 })

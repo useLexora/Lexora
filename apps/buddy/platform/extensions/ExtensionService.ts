@@ -1,4 +1,6 @@
 import type { ExtensionResource, ExtensionStatus, ExtensionViewInput, ExtensionViewSession, ExtensionWorkbenchEvent } from '../../shared/extensions/extensionApi'
+import type { ExtensionInspection } from '../../shared/extensions/extensionAuthoring'
+import type { ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
@@ -9,12 +11,15 @@ import { z } from 'zod'
 import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
+import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
+import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
 import { unpackExtension } from './extensionFiles'
 import { ExtensionInstallations } from './ExtensionInstallations'
 import { extensionActivationOrder } from './ExtensionPackageStore'
+import { ExtensionResourceWriter } from './ExtensionResourceWriter'
 import { ExtensionScheduler } from './ExtensionScheduler'
 
 export interface ExtensionHost {
@@ -31,6 +36,8 @@ export interface ExtensionServicePorts {
   changed: () => void
   notify?: (id: string, notification: { title: string, body: string }) => boolean
   compile?: ExtensionCompiler
+  selectResources?: (name: string, selection: ExtensionResourceSelection & { directory?: boolean }, signal: AbortSignal) => Promise<string[]>
+  selectSavePath?: (name: string, suggestedName: string, signal: AbortSignal) => Promise<string | null>
 }
 interface RunningExtension {
   package: ExtensionPackage
@@ -46,6 +53,10 @@ interface RunningView {
   session: ExtensionViewSession
   running: RunningExtension
   dispose: () => void
+  abort: AbortController
+  ready: boolean
+  error: string | null
+  writers: Map<string, ExtensionResourceWriter>
 }
 
 export class ExtensionService {
@@ -56,6 +67,7 @@ export class ExtensionService {
   readonly #reviews = new Map<string, string>()
   readonly #ports: ExtensionServicePorts
   readonly #running = new Map<string, RunningExtension>()
+  readonly #viewOpenings = new Map<string, symbol>()
   readonly #views = new Map<string, RunningView>()
   readonly #diagnostics = new Map<string, Pick<ExtensionStatus, 'error' | 'activationMs' | 'logs'>>()
   readonly #notificationTimes = new Map<string, number>()
@@ -101,14 +113,34 @@ export class ExtensionService {
       const diagnostics = this.#diagnostics.get(id) ?? { error: null, activationMs: null, logs: [] }
       const running = this.#running.get(id)
       let blocked: string | null = null
-      try {
-        this.#order(id)
-      }
-      catch (error) {
-        blocked = extensionError(error)
+      if (record.enabled) {
+        try {
+          this.#order(id)
+        }
+        catch (error) {
+          blocked = extensionError(error)
+        }
       }
       return { manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
     }))
+  }
+
+  async inspect(id: string): Promise<ExtensionInspection> {
+    const item = (await this.list()).find(item => item.manifest.id === id)
+    return {
+      id,
+      installed: !!item,
+      version: item?.manifest.version ?? null,
+      pendingVersion: item?.pending?.manifest.version ?? null,
+      enabled: item?.enabled ?? false,
+      state: item?.state ?? 'not-installed',
+      error: item?.error ?? null,
+      commands: item?.manifest.contributes.commands.filter(command => !command.hidden).map(({ id, title }) => ({ id, title })) ?? [],
+      navigation: item?.manifest.contributes.navigation?.title ?? null,
+      views: [...this.#views.values()].filter(view => view.input.extensionId === id).map(view => ({ type: view.input.viewType, placement: view.input.placementId ?? null, ready: view.ready, error: view.error })),
+      installations: this.installations.list().filter(record => record.extensionId === id).slice(0, 5).map(record => ({ version: record.version!, status: record.status, stage: record.stage, error: record.error })),
+      logs: item?.logs ?? [],
+    }
   }
 
   async review(path: string, development = false) {
@@ -116,6 +148,7 @@ export class ExtensionService {
     const job = this.installations.begin(basename(path), 'validate')
     try {
       const review = await this.store.review(path, development)
+      this.installations.identify(job.id, review.manifest.id, review.manifest.version)
       job.signal.throwIfAborted()
       this.#reviews.set(review.token, job.id)
       this.installations.log(job.id, 'review', 'permissions')
@@ -148,6 +181,7 @@ export class ExtensionService {
       job.signal.throwIfAborted()
       const source = { catalog: EXTENSION_CATALOG_URL, artifact: entry.artifact.url, sha256: entry.artifact.sha256 }
       const review = await this.store.reviewFiles(files, false, source)
+      this.installations.identify(job.id, review.manifest.id, review.manifest.version)
       this.#reviews.set(review.token, job.id)
       this.installations.log(job.id, 'review', 'permissions')
       return { ...review, installationId: job.id, source }
@@ -209,10 +243,19 @@ export class ExtensionService {
     })
   }
 
+  revokeResources(id: string): Promise<void> {
+    return this.#mutate(async () => {
+      await this.store.resources.revoke(id)
+      await this.#stopClosure(id)
+      this.#log(id, 'resources.revoked')
+    })
+  }
+
   uninstall(id: string): Promise<void> {
     return this.#mutate(async () => {
       await this.store.uninstall(id)
       await this.#stopClosure(id)
+      await this.store.resources.revoke(id)
       await this.scheduler.remove(id)
       await this.store.removePackages(id)
       this.#diagnostics.delete(id)
@@ -242,21 +285,40 @@ export class ExtensionService {
   }
 
   async openView(input: ExtensionViewInput): Promise<ExtensionViewSession> {
-    const running = await this.#activate(input.extensionId)
-    const view = running.package.manifest.contributes.views.find(item => item.id === input.viewType)
-    if (!view)
-      throw new Error('EXTENSION_VIEW_UNAVAILABLE')
-    if (view.resource === 'selected-file' && !input.resource)
-      throw new Error('EXTENSION_RESOURCE_REQUIRED')
-    if (input.resource)
-      await this.#resource(running, input.resource.id)
-    this.#assertCurrent(running)
-    const old = this.#views.get(input.viewId)
-    old?.dispose()
-    const endpoint = this.#ports.createView(running.package)
-    const session = { id: input.viewId, extensionId: input.extensionId, generation: running.generation, token: endpoint.token, url: endpoint.url }
-    this.#views.set(input.viewId, { input, session, running, dispose: endpoint.dispose })
-    return session
+    const request = Symbol('view-open')
+    this.#viewOpenings.set(input.viewId, request)
+    try {
+      const running = await this.#activate(input.extensionId)
+      const view = running.package.manifest.contributes.views.find(item => item.id === input.viewType)
+      if (!view)
+        throw new Error('EXTENSION_VIEW_UNAVAILABLE')
+      if (input.placementId && !running.package.manifest.contributes.placements.some(placement => placement.id === input.placementId && placement.view === view.id))
+        throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
+      if (view.resource === 'selected-file' && !input.resource)
+        throw new Error('EXTENSION_RESOURCE_REQUIRED')
+      if (input.resource)
+        await this.#resource(running, input.resource.id)
+      this.#assertCurrent(running)
+      if (this.#viewOpenings.get(input.viewId) !== request)
+        throw new Error('EXTENSION_VIEW_EXPIRED')
+      const old = this.#views.get(input.viewId)
+      old?.dispose()
+      const endpoint = this.#ports.createView(running.package)
+      const abort = new AbortController()
+      const writers = new Map<string, ExtensionResourceWriter>()
+      const session = { id: input.viewId, extensionId: input.extensionId, generation: running.generation, token: endpoint.token, url: endpoint.url }
+      this.#views.set(input.viewId, { input, session, running, abort, ready: false, error: null, writers, dispose: () => {
+        abort.abort()
+        endpoint.dispose()
+        for (const writer of writers.values()) void writer.dispose().catch(() => {})
+        writers.clear()
+      } })
+      return session
+    }
+    finally {
+      if (this.#viewOpenings.get(input.viewId) === request)
+        this.#viewOpenings.delete(input.viewId)
+    }
   }
 
   closeView(id: string, generation: string, token: string): void {
@@ -273,23 +335,165 @@ export class ExtensionService {
       throw new Error('EXTENSION_VIEW_EXPIRED')
     this.#assertCurrent(view.running)
     const contribution = view.running.package.manifest.contributes.views.find(item => item.id === view.input.viewType)!
+    const placement = view.running.package.manifest.contributes.placements.find(placement => placement.id === view.input.placementId)
     let result: JsonValue
     if (method === 'bootstrap') {
-      result = { entry: contribution.entry, location: contribution.location, resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
+      result = { apiVersion: view.running.package.manifest.apiVersion, entry: contribution.entry, location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
     }
     else if (method === 'view.setState') {
-      if (contribution.location !== 'context')
+      if (contribution.location !== 'context' || (placement && placement.kind !== 'view'))
         throw new Error('EXTENSION_METHOD_DENIED')
       const state = extensionJsonSchema.parse(params)
-      const saved = await this.#ports.workbench({ kind: 'state', requestId: randomUUID(), viewId: id, generation, state, stateVersion: contribution.stateVersion }, view.running.abort.signal)
+      const saved = await this.#ports.workbench({ kind: 'state', requestId: randomUUID(), viewId: id, generation, token, state, stateVersion: contribution.stateVersion }, view.running.abort.signal)
       if (saved !== id)
         throw new Error('EXTENSION_STATE_SAVE_FAILED')
       view.input = { ...view.input, state, stateVersion: contribution.stateVersion }
       result = null
     }
-    else if (method === 'view.failed') {
-      this.#log(view.input.extensionId, 'view.failed', 'EXTENSION_VIEW_FAILED')
+    else if (method === 'control.propose') {
+      if (placement?.kind !== 'control' || !view.running.package.manifest.permissions.controls.includes(placement.target))
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const proposal = controlProposalSchema.parse(params)
+      const accepted = await this.#ports.workbench({ kind: 'control', requestId: randomUUID(), viewId: id, generation, token, proposal }, view.running.abort.signal)
+      if (accepted !== id)
+        throw new Error('EXTENSION_CONTROL_STALE')
       result = null
+    }
+    else if (method === 'view.setPresentation') {
+      if (placement?.kind !== 'view')
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const presentation = extensionPresentationRequestSchema.parse(params)
+      const saved = await this.#ports.workbench({ kind: 'presentation', requestId: randomUUID(), viewId: id, generation, token, presentation }, view.running.abort.signal)
+      if (saved !== id)
+        throw new Error('EXTENSION_PRESENTATION_FAILED')
+      result = null
+    }
+    else if (method === 'view.ready') {
+      view.ready = true
+      result = null
+    }
+    else if (method === 'view.failed') {
+      const failure = z.object({ code: z.enum(['EXTENSION_VIEW_FAILED', 'EXTENSION_VIEW_TIMEOUT']) }).safeParse(params)
+      view.error = failure.success ? failure.data.code : 'EXTENSION_VIEW_FAILED'
+      this.#log(view.input.extensionId, 'view.failed', failure.success ? failure.data.code : 'EXTENSION_VIEW_FAILED')
+      result = null
+    }
+    else if (['resources.beginSave', 'resources.writeChunk', 'resources.commitSave', 'resources.cancelSave'].includes(method)) {
+      if (!view.running.package.manifest.permissions.resourceExport || placement?.kind === 'decoration' || contribution.location === 'window-overlay')
+        throw new Error('EXTENSION_RESOURCE_EXPORT_DENIED')
+      const assertView = () => {
+        this.#assertCurrent(view.running)
+        if (view.abort.signal.aborted || this.#views.get(id) !== view)
+          throw new Error('EXTENSION_VIEW_EXPIRED')
+      }
+      if (method === 'resources.beginSave') {
+        if (!this.#ports.selectSavePath || view.writers.size >= 2)
+          throw new Error('EXTENSION_RESOURCE_SAVE_UNAVAILABLE')
+        const input = z.object({ name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/), size: z.number().int().min(0).max(2 * 1024 ** 3) }).strict().parse(params)
+        const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(120000)])
+        const path = await this.#ports.selectSavePath(view.running.package.manifest.name, input.name, signal)
+        signal.throwIfAborted()
+        assertView()
+        if (path) {
+          const writer = await ExtensionResourceWriter.create(path, input.size, assertView)
+          try {
+            assertView()
+          }
+          catch (error) {
+            await writer.dispose()
+            throw error
+          }
+          view.writers.set(writer.id, writer)
+          result = writer.id
+        }
+        else { result = null }
+      }
+      else {
+        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).optional(), base64: z.string().max(128 * 1024).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i).optional() }).strict().parse(params)
+        const writer = view.writers.get(input.id)
+        if (!writer)
+          throw new Error('EXTENSION_RESOURCE_WRITE_EXPIRED')
+        if (method === 'resources.writeChunk') {
+          if (input.offset === undefined || input.base64 === undefined)
+            throw new Error('EXTENSION_RESOURCE_WRITE_RANGE')
+          await writer.append(input.offset, input.base64)
+        }
+        else {
+          try {
+            if (method === 'resources.commitSave')
+              await writer.commit()
+          }
+          finally {
+            view.writers.delete(input.id)
+            await writer.dispose()
+          }
+        }
+        result = null
+      }
+    }
+    else if (method.startsWith('resources.') && (method !== 'resources.readText' || !view.input.resource || !params || typeof params !== 'object' || Array.isArray(params) || params.id !== view.input.resource.id)) {
+      if (!view.running.package.manifest.permissions.localResources || placement?.kind === 'decoration' || contribution.location === 'window-overlay')
+        throw new Error('EXTENSION_RESOURCE_DENIED')
+      const extensionId = view.input.extensionId
+      const assertView = () => {
+        this.#assertCurrent(view.running)
+        if (view.abort.signal.aborted || this.#views.get(id) !== view)
+          throw new Error('EXTENSION_VIEW_EXPIRED')
+      }
+      if (method === 'resources.pickFiles' || method === 'resources.pickDirectory') {
+        if (!this.#ports.selectResources)
+          throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+        const selection = method === 'resources.pickDirectory' ? { filters: [], multiple: false, directory: true } : extensionResourceSelectionSchema.parse(params)
+        const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(120000)])
+        const paths = await this.#ports.selectResources(view.running.package.manifest.name, selection, signal)
+        signal.throwIfAborted()
+        assertView()
+        const assertSelection = () => {
+          signal.throwIfAborted()
+          assertView()
+        }
+        result = method === 'resources.pickDirectory'
+          ? paths[0] ? await this.store.resources.grantDirectory(extensionId, paths[0], assertSelection) : null
+          : await this.store.resources.grant(extensionId, paths, assertSelection)
+      }
+      else if (method === 'resources.listFiles') {
+        result = await this.store.resources.list(extensionId)
+      }
+      else if (method === 'resources.listDirectories') {
+        result = await this.store.resources.directories(extensionId)
+      }
+      else if (method === 'resources.readBytes') {
+        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).max(2 * 1024 ** 3), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
+        result = await this.store.resources.readBytes(extensionId, input.id, input.offset, input.length, view.abort.signal)
+      }
+      else if (method === 'resources.readText') {
+        const input = z.object({ id: z.string().uuid() }).strict().parse(params)
+        result = await this.store.resources.readText(extensionId, input.id, view.abort.signal)
+      }
+      else if (method === 'resources.scanDirectory') {
+        const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(10000)])
+        result = await this.store.resources.scanDirectory(extensionId, extensionDirectoryScanSchema.parse(params), () => {
+          signal.throwIfAborted()
+          assertView()
+        })
+      }
+      else {
+        const input = z.object({ id: z.string().uuid() }).strict().parse(params)
+        if (method === 'resources.revokeDirectory') {
+          await this.store.resources.revokeDirectory(extensionId, input.id, assertView)
+          result = null
+        }
+        else if (method === 'resources.getUrl') {
+          if (!(await this.store.resources.list(extensionId)).some(resource => resource.id === input.id))
+            throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+          result = new URL(`/__resource/${input.id}`, view.session.url).href
+        }
+        else if (method === 'resources.revokeFile') {
+          await this.store.resources.revoke(extensionId, input.id, assertView)
+          result = null
+        }
+        else { throw new Error('EXTENSION_METHOD_DENIED') }
+      }
     }
     else if (method === 'commands.execute') {
       const input = z.object({ command: z.string().max(180), arguments: extensionJsonSchema }).strict().parse(params)
@@ -443,6 +647,15 @@ export class ExtensionService {
         const { id: resource } = z.object({ id: z.string().uuid() }).strict().parse(params)
         result = await this.#ports.readText(await this.#resource(running, resource), running.abort.signal)
       }
+      else if (method === 'placements.show' || method === 'placements.hide') {
+        const input = z.object({ id: z.string().max(180) }).strict().parse(params)
+        const placement = running.package.manifest.contributes.placements.find(placement => placement.id === input.id)
+        if (placement?.kind !== 'view')
+          throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
+        result = await this.#ports.workbench({ kind: 'placement', requestId: randomUUID(), extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show' }, running.abort.signal)
+        if (method === 'placements.show' && !result)
+          throw new Error('EXTENSION_VIEW_UNAVAILABLE')
+      }
       else if (method === 'views.open') {
         const input = z.object({ type: z.string().max(180), resource: extensionResourceSchema.nullable(), state: extensionJsonSchema }).strict().parse(params)
         const view = running.package.manifest.contributes.views.find(view => view.id === input.type)
@@ -455,7 +668,7 @@ export class ExtensionService {
         if (input.resource)
           await this.#resource(running, input.resource.id)
         this.#assertCurrent(running)
-        result = await this.#ports.workbench({ kind: 'open', requestId: randomUUID(), extensionId: id, viewType: view.id, resource: input.resource, state: input.state, stateVersion: view.stateVersion }, running.abort.signal)
+        result = await this.#ports.workbench({ kind: 'open', requestId: randomUUID(), extensionId: id, generation: running.generation, viewType: view.id, resource: input.resource, state: input.state, stateVersion: view.stateVersion }, running.abort.signal)
         if (!result)
           throw new Error('EXTENSION_VIEW_UNAVAILABLE')
       }

@@ -89,7 +89,7 @@
     "dayjs": "^1.11.21",
     "dompurify": "^3.4.15",
     "echarts": "^6.1.0",
-    "electron": "44.4.3",
+    "electron": "44.4.5",
     "electron-builder": "^26.16.1",
     "electron-vite": "^5.0.0",
     "marked": "^18.0.13",

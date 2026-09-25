@@ -1,4 +1,5 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
+import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { Router } from 'vue-router'
 import type { DesktopStores } from '../bootstrap/useDesktopAppState'
@@ -8,9 +9,12 @@ import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
 import { NButton, useDialog } from 'naive-ui'
 import { h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
+import { userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
+import { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import { panes, resourceKey } from '@/workbench/common/workbench'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
@@ -38,7 +42,8 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   })
   const controller = new WorkbenchController(new ContributionRegistry(), beforeClose)
   const models = new TextModelPool(copies)
-  registerDesktopContributions(controller, copies, () => language.value)
+  const renderers = new ViewRendererRegistry()
+  registerDesktopContributions(controller, renderers, copies, () => language.value)
   const persistence = new WorkbenchPersistence(api.workbench, controller, copies, error => backupError.value = error !== null)
   const pool = new TaskWorkspacePool({ api, index: options.taskIndex, applicationSettings: stores.applicationSettings, modelProviders: stores.modelProviders, runtimeSupervisor: stores.runtimeSupervisor, onDraftCommitted: (draftId, id) => options.resources().adoptDraft(draftId, id) }, (previous, task, id) => {
     for (const view of Object.values(controller.layout.views)) {
@@ -58,7 +63,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   })
   const confirmedDraftCloses = new Set<string>()
   const deletedTasks = new Set<string>()
-  let initialized = false
+  const initialized = shallowRef(false)
   let navigationVersion = 0
   onScopeDispose(router.beforeEach((to) => {
     if (to.path !== '/tasks')
@@ -73,6 +78,20 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   }
   function newTask(spaceId?: string | null, paneId = center(), direction?: SplitDirection): Promise<void> {
     return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: spaceId ?? null } }, labels().newTask, { paneId, direction })
+  }
+  async function startTaskWithSkill(name: string, prompt: string): Promise<void> {
+    const version = navigationVersion
+    const catalog = await api.localChat.skills.list(null)
+    if (version !== navigationVersion)
+      return
+    const skill = catalog.skills.find(skill => skill.name === name && isSkillAvailable(skill))
+    if (!skill)
+      throw new Error('SKILL_UNAVAILABLE')
+    const content: BuddyUserContentV1 = { version: 1, panelResourceIds: [], body: [{ type: 'paragraph', content: [
+      { type: 'prompt_directive', directive: 'skill', value: skill.name, skill: { id: skill.id, name: skill.name, revision: skill.revision } },
+      { type: 'text', text: ` ${prompt}` },
+    ] }] }
+    await activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: null } }, labels().newTask, { initialContent: content })
   }
   async function isDraftDirty(view: WorkbenchView): Promise<boolean> {
     if (view.resource.scheme !== 'draft')
@@ -175,7 +194,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     })
   }
 
-  async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal } = {}) {
+  async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal, initialContent?: BuddyUserContentV1 } = {}) {
     const targetPaneId = destination.paneId ?? center()
     const targetPane = controller.pane(targetPaneId)
     const currentViewId = targetPane?.view
@@ -187,7 +206,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     )
 
     if (!destination.direction && !isExistingTask && currentView && currentView.resource.scheme === 'draft') {
-      if (resource.scheme === 'draft') {
+      if (resource.scheme === 'draft' && !destination.initialContent) {
         const currentSpaceId = (currentView.resource.data.spaceId as string | null) ?? null
         const targetSpaceId = (resource.data.spaceId as string | null) ?? null
         if (currentSpaceId === targetSpaceId) {
@@ -197,6 +216,8 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
         }
       }
       if (await isDraftDirty(currentView)) {
+        if (destination.initialContent)
+          return activateTask(resource, title, { ...destination, direction: 'right' })
         const action = await promptUnsentDraftAction()
         if (action === 'cancel') {
           controller.focus(currentView.id)
@@ -223,8 +244,13 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     await router.push('/tasks')
     try {
       const task = await pool.open(resource)
-      if (!destination.signal?.aborted && controller.layout.views[id] && version === navigationVersion && controller.owner(id)?.id === controller.layout.activePane)
+      if (!destination.signal?.aborted && controller.layout.views[id] && version === navigationVersion && controller.owner(id)?.id === controller.layout.activePane) {
         activeTask.value = task
+        if (destination.initialContent) {
+          task.workspace.composer.updateComposerContent(buddyUserContentToText(destination.initialContent), userContentToChatComposerDocument(destination.initialContent))
+          await task.flushDrafts()
+        }
+      }
     }
     catch (error) {
       if (controller.layout.views[id])
@@ -315,7 +341,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   })
 
   async function initialize() {
-    if (initialized)
+    if (initialized.value)
       return
     const restored = await persistence.restore(layout => restoreTaskInputViews(layout, api.localChat.composerDrafts))
     const legacyDraftViews = Object.values(controller.layout.views).filter(view => view.resource.scheme === 'draft' && (view.resource.id === 'global' || view.resource.id === view.resource.data.spaceId))
@@ -342,7 +368,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
       else
         await newTask(previous?.value.spaceId)
     }
-    initialized = true
+    initialized.value = true
     controller.changed()
     await inputs.restore(restored)
   }
@@ -444,7 +470,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   }
 
   onScopeDispose(controller.subscribe(() => {
-    if (!initialized)
+    if (!initialized.value)
       return
     const resources = options.resources()
     pool.retain(Object.values(controller.layout.views).map(view => view.resource))
@@ -492,8 +518,8 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     await inputs.flush().catch(options.onError)
     return saved
   }
-  return { api, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, backupError, controller, copies, models, pool, persistence, initialize, flush, openTask, newTask, openFile, dropResource, language, get initialized() {
-    return initialized
+  return { api, renderers, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, backupError, controller, copies, models, pool, persistence, initialize, flush, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+    return initialized.value
   }, get navigationVersion() {
     return navigationVersion
   } }

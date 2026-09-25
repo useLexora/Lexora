@@ -31,7 +31,7 @@ describe('extension package contract', () => {
   })
   it('rejects foreign contribution ownership, duplicate IDs, and unsupported API versions', () => {
     const value = manifest()
-    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 2 }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 3 }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [{ id: 'another.reader.open', title: 'Open' }] } }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [value.contributes.commands[0], value.contributes.commands[0]] } }).success).toBe(false)
   })
@@ -147,4 +147,58 @@ describe('extension package contract', () => {
     b.version = '2.0.0'
     expect(() => extensionActivationOrder(installed, a.id)).toThrow('EXTENSION_DEPENDENCY_VERSION')
   })
+})
+
+it.each(['composer.input', 'workbench.pane'] as const)('preserves the declared decoration scope and requires permission: %s', (anchor) => {
+  const input = manifest({ apiVersion: 2, permissions: { windowEffects: true }, contributes: {
+    views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none' }],
+    placements: [{ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor }],
+  } })
+  expect(extensionManifestSchema.parse(input).contributes.placements[0]).toEqual({ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor })
+  expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
+})
+
+it.each([1, 2] as const)('accepts window overlays in API %s without adding local placements', (apiVersion) => {
+  const input = manifest({ apiVersion, permissions: { windowEffects: true }, contributes: {
+    views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none', location: 'window-overlay' }],
+  } })
+  expect(extensionManifestSchema.parse(input).contributes.views[0]?.location).toBe('window-overlay')
+  expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
+})
+
+it('keeps API 1 compatible and validates UI placements and permission upgrades in API 2', async () => {
+  const { root, store } = await fixture()
+  const old = manifest()
+  await store.install((await reviewPackage(root, store, old)).token)
+  const value = manifest({
+    apiVersion: 2,
+    version: '1.1.0',
+    permissions: { windowEffects: true, controls: ['model.reasoning'] },
+    contributes: {
+      views: [{ id: 'tests.reader.ui', title: 'UI', entry: 'view.js', resource: 'none' }],
+      navigation: { view: 'tests.reader.ui', title: 'Reader' },
+      placements: [
+        { id: 'tests.reader.top', view: 'tests.reader.ui', kind: 'view', location: 'workbench.top' },
+        { id: 'tests.reader.effect', view: 'tests.reader.ui', kind: 'decoration', anchor: 'composer.input' },
+        { id: 'tests.reader.reasoning', view: 'tests.reader.ui', kind: 'control', target: 'model.reasoning' },
+      ],
+    },
+  })
+  const review = await reviewPackage(root, store, value)
+  expect(review.addedPermissions).toEqual(['windowEffects', 'controls:model.reasoning'])
+  expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 1 }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [], views: [{ ...value.contributes.views[0], location: 'window-overlay' }] } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...value, permissions: { windowEffects: true } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...value, permissions: { controls: ['model.reasoning'] } }).success).toBe(false)
+  for (const placement of [
+    { ...value.contributes.placements[0], view: 'tests.reader.missing' },
+    { ...value.contributes.placements[0], id: 'other.plugin.top' },
+    { ...value.contributes.placements[0], location: 'arbitrary.selector' },
+    { ...value.contributes.placements[0], height: 9000 },
+    { ...value.contributes.placements[1], anchor: 'document.body' },
+    { ...value.contributes.placements[2], target: 'permissions.approval' },
+  ]) {
+    expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [placement] } }).success).toBe(false)
+  }
+  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, views: [{ ...value.contributes.views[0], resource: 'selected-file' }] }, permissions: { ...value.permissions, selectedResource: 'read' } }).success).toBe(false)
 })

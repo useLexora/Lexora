@@ -1,6 +1,7 @@
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
-import type { CommandContext, ResourceRef, SplitDirection, WorkbenchNode, WorkbenchPane, WorkbenchView } from '../common/workbench'
+import type { CommandContext, ResourceRef, SplitDirection, ViewLocation, WorkbenchNode, WorkbenchPane, WorkbenchView } from '../common/workbench'
 import type { ContributionRegistry } from './ContributionRegistry'
+import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
 import { createLayout, createPane, mapNode, panes, removePane, resourceKey } from '../common/workbench'
 import { ConfigurationService } from './ConfigurationService'
 import { ContextKeyService } from './ContextKeyService'
@@ -9,6 +10,8 @@ export interface OpenViewOptions {
   signal?: AbortSignal
   paneId?: string
   viewType?: string
+  location?: ViewLocation
+  placement?: string
   direction?: SplitDirection
   move?: boolean
   duplicate?: boolean
@@ -45,11 +48,17 @@ export class WorkbenchController {
     return () => this.#listeners.delete(listener)
   }
 
+  matchesViewContext(view: WorkbenchView): boolean {
+    const values = this.contextKeys.snapshot()
+    return matchesWorkbenchContext(this.registry.views.get(view.type)?.when, values)
+      && matchesWorkbenchContext(view.placement ? this.registry.placements.get(view.placement)?.when : undefined, values)
+  }
+
   get context(): CommandContext {
     const contextView = this.#contextView ? this.layout.views[this.#contextView] : null
     const pane = this.#contextFocused ? null : this.pane(this.layout.activePane)
     const view = contextView ?? (pane?.view ? this.layout.views[pane.view] ?? null : null)
-    return { pane, view, values: { ...this.contextKeys.snapshot(), 'focus.area': this.#contextFocused ? 'context' : 'main', 'view.type': view?.type ?? '', 'resource.scheme': view?.resource.scheme ?? '', 'pane.count': panes(this.layout.root).length } }
+    return { pane, view, values: { ...this.contextKeys.snapshot(), 'focus.area': this.#contextFocused ? view?.location ?? 'context' : 'main', 'view.type': view?.type ?? '', 'resource.scheme': view?.resource.scheme ?? '', 'pane.count': panes(this.layout.root).length } }
   }
 
   pane(id: string): WorkbenchPane | null {
@@ -65,16 +74,24 @@ export class WorkbenchController {
       if (options.signal?.aborted)
         return null
       const descriptor = this.registry.resolve(resource, options.viewType)
-      const location = descriptor.location ?? 'main'
+      const requestedLocation = options.location ?? descriptor.locations[0]
+      if (!descriptor.locations.includes(requestedLocation))
+        throw new Error(`View location is unavailable: ${descriptor.id}:${requestedLocation}`)
+      if (options.placement) {
+        const placement = this.registry.placements.get(options.placement)
+        if (!placement || placement.viewType !== descriptor.id || placement.location !== requestedLocation)
+          throw new Error('View placement is unavailable')
+      }
       const existing = Object.values(this.layout.views).find(view => view.type === descriptor.id && resourceKey(view.resource) === resourceKey(resource)
-        && (location === 'main' || !descriptor.multiple || !options.duplicate))
+        && (requestedLocation === 'main' || !descriptor.multiple || !options.duplicate))
       if (existing && !options.move) {
         if (options.focus !== false)
           this.focus(existing.id)
         return existing.id
       }
-      const view: WorkbenchView = existing ?? { id: crypto.randomUUID(), type: descriptor.id, location, resource: structuredClone(resource), title, state: structuredClone(options.state ?? {}) }
-      if (location === 'context') {
+      const location = existing?.location ?? requestedLocation
+      const view: WorkbenchView = existing ?? { id: crypto.randomUUID(), type: descriptor.id, location, ...(options.placement ? { placement: options.placement } : {}), resource: structuredClone(resource), title, state: structuredClone(options.state ?? {}) }
+      if (location !== 'main') {
         this.layout.views[view.id] = view
         if (options.focus !== false)
           this.focus(view.id)
@@ -135,13 +152,13 @@ export class WorkbenchController {
     if (pane) {
       this.activate(pane.id)
     }
-    else if (this.layout.views[id]?.location === 'context') {
+    else if (this.layout.views[id] && this.layout.views[id].location !== 'main') {
       this.focusContext(id)
     }
   }
 
   focusContext(id: string | null = null): void {
-    if (id && this.layout.views[id]?.location !== 'context')
+    if (id && (!this.layout.views[id] || this.layout.views[id].location === 'main'))
       return
     if (this.#contextFocused && this.#contextView === id)
       return
@@ -153,7 +170,7 @@ export class WorkbenchController {
   move(viewId: string, destination: string, direction?: SplitDirection): Promise<string | null> {
     const view = this.layout.views[viewId]
     return view?.location === 'main'
-      ? this.open(view.resource, view.title, { paneId: destination, direction, move: true, viewType: view.type })
+      ? this.open(view.resource, view.title, { paneId: destination, direction, move: true, viewType: view.type, location: view.location })
       : Promise.resolve(null)
   }
 
@@ -170,11 +187,23 @@ export class WorkbenchController {
     this.changed()
   }
 
-  updateView(id: string, change: Partial<Pick<WorkbenchView, 'title' | 'state' | 'resource'>>): void {
+  updateView(id: string, change: Partial<Pick<WorkbenchView, 'title' | 'state' | 'resource' | 'presentation'>>): void {
     const view = this.layout.views[id]
     if (!view)
       return
     this.layout.views[id] = { ...view, ...change }
+    this.changed()
+  }
+
+  rebindAuxiliary(id: string, change: Pick<WorkbenchView, 'type' | 'resource' | 'location' | 'title' | 'placement'>): void {
+    const view = this.layout.views[id]
+    if (!view || view.location === 'main' || change.location === 'main' || resourceKey(view.resource) !== resourceKey(change.resource))
+      throw new Error('Invalid auxiliary view replacement')
+    const descriptor = this.registry.resolve(change.resource, change.type)
+    const placement = change.placement ? this.registry.placements.get(change.placement) : null
+    if (!descriptor.locations.includes(change.location) || (change.placement && (!placement || placement.viewType !== change.type || placement.location !== change.location)))
+      throw new Error('View placement is unavailable')
+    this.layout.views[id] = { ...view, ...structuredClone(change) }
     this.changed()
   }
 
@@ -183,12 +212,14 @@ export class WorkbenchController {
     this.changed()
   }
 
-  close(id: string): Promise<boolean> {
-    return this.closeMany([id])
+  close(id: string, signal?: AbortSignal): Promise<boolean> {
+    return this.closeMany([id], signal)
   }
 
-  closeMany(ids: readonly string[]): Promise<boolean> {
+  closeMany(ids: readonly string[], signal?: AbortSignal): Promise<boolean> {
     return this.#enqueue(async () => {
+      if (signal?.aborted)
+        return false
       const plans: ViewClosePlan[] = []
       const targets = new Set(ids)
       try {
@@ -211,6 +242,10 @@ export class WorkbenchController {
         plans.forEach(plan => plan.cancel?.())
         throw error
       }
+      if (signal?.aborted) {
+        plans.forEach(plan => plan.cancel?.())
+        return false
+      }
       for (const target of targets) this.#removeView(target)
       plans.forEach(plan => plan.commit?.())
       this.changed()
@@ -230,8 +265,10 @@ export class WorkbenchController {
       pane.view = null
       this.#collapse(pane)
     }
-    if (this.#contextView === id)
+    if (this.#contextView === id) {
       this.#contextView = null
+      this.#contextFocused = false
+    }
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {

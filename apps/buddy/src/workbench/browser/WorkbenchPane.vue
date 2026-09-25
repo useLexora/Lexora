@@ -2,6 +2,7 @@
 import type { WorkbenchPane } from '../common/workbench'
 import { useDragDropMonitor, useDroppable } from '@dnd-kit/vue'
 import { computed, useTemplateRef } from 'vue'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { resolveWorkbenchDrop } from '../common/workbenchDrop'
 import { useWorkbench } from './workbenchContext'
 import WorkbenchSurface from './WorkbenchSurface.vue'
@@ -9,6 +10,7 @@ import WorkbenchSurface from './WorkbenchSurface.vue'
 const props = defineProps<{ pane: WorkbenchPane }>()
 const { controller, layout, labels, dropPosition } = useWorkbench()
 const element = useTemplateRef<HTMLElement>('element')
+useWorkbenchAnchor('workbench.pane', () => element.value)
 useDroppable({ id: () => `pane:${props.pane.id}`, accept: 'workbench-task', element, data: () => ({ paneId: props.pane.id }) })
 useDragDropMonitor({
   onDragMove(event) {

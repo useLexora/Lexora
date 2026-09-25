@@ -1,3 +1,4 @@
+import type { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
 import { buddyColorThemes, createBuddyColorVariables } from '@/theme/buddyTheme'
@@ -6,14 +7,17 @@ import { workbenchLabels } from '@/workbench/common/workbenchLabels'
 import DesktopFileContribution from './DesktopFileContribution.vue'
 import DesktopTaskContribution from './DesktopTaskContribution.vue'
 
-export function registerDesktopContributions(controller: WorkbenchController, copies: WorkingCopyService, language: () => string) {
+export function registerDesktopContributions(controller: WorkbenchController, renderers: ViewRendererRegistry, copies: WorkingCopyService, language: () => string) {
   const labels = () => workbenchLabels(language())
   controller.registry.register('lexora.tasks', (scope) => {
-    scope.view({ id: 'tasks.editor', factory: DesktopTaskContribution, label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false })
+    scope.configuration({ id: 'workbench.controls.model.reasoning', defaultValue: '', validate: value => typeof value === 'string' && value.length <= 180 })
+    scope.cleanup(renderers.register('tasks.editor', DesktopTaskContribution))
+    scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false })
   })
   controller.registry.register('lexora.files', (scope) => {
-    scope.view({ id: 'files.preview', factory: DesktopFileContribution, label: 'Preview', location: 'context', supports: resource => resource.scheme === 'file-preview', multiple: true })
-    scope.view({ id: 'files.editor', factory: DesktopFileContribution, label: 'Text editor', location: 'context', supports: resource => resource.scheme === 'file', multiple: true, priority: 10 })
+    scope.cleanup(renderers.register('files.view', DesktopFileContribution))
+    scope.view({ id: 'files.preview', renderer: 'files.view', label: 'Preview', locations: ['context'], supports: resource => resource.scheme === 'file-preview', multiple: true })
+    scope.view({ id: 'files.editor', renderer: 'files.view', label: 'Text editor', locations: ['context'], supports: resource => resource.scheme === 'file', multiple: true, priority: 10 })
     scope.command({ id: 'file.save', get label() {
       return labels().save
     }, keybinding: 'Mod+S', shortcutScope: 'context', enabled: context => !!context.view && copies.dirty(context.view.resource), execute: context => copies.save(context.view!.resource) })

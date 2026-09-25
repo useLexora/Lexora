@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
+import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { DropdownOption } from 'naive-ui'
+import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
 import { MoreHorizontal20Regular } from '@vicons/fluent'
 import { NButton, NDropdown, NEllipsis, NTag } from 'naive-ui'
 import { computed } from 'vue'
@@ -8,26 +10,47 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
 
-const props = defineProps<{ item: ExtensionStatus, language: string, busy: boolean }>()
+const props = defineProps<{ item: ExtensionStatus, language: string, busy: boolean, context: WorkbenchContextValues }>()
 const emit = defineEmits<{
   toggle: []
   restart: []
   diagnostics: []
   remove: []
   open: []
+  command: [id: string]
+  revokeResources: []
 }>()
 const labels = computed(() => extensionLabels(props.language))
 const status = computed(() => labels.value[props.item.state === 'failed' ? 'failedState' : props.item.state])
-const actions = computed<DropdownOption[]>(() => [
-  { key: 'diagnostics', label: labels.value.diagnostics, props: { role: 'menuitem' } },
-  { key: 'divider', type: 'divider' },
-  { key: 'remove', label: labels.value.remove, props: { 'role': 'menuitem', 'data-testid': 'extension-uninstall' } },
-])
+const commandsLabel = computed(() => props.language === 'en-US' ? 'Plugin commands' : '插件命令')
+const commands = computed(() => props.item.manifest.contributes.commands.filter(command => !command.hidden && matchesWorkbenchContext(command.when, props.context)).map(command => ({ key: command.id, label: command.title, props: { role: 'menuitem' } })))
+const canRun = computed(() => props.item.enabled && props.item.compatible)
+const actions = computed<DropdownOption[]>(() => {
+  const pluginActions: DropdownOption[] = []
+  if (canRun.value && props.item.manifest.contributes.navigation && commands.value.length)
+    pluginActions.push({ key: 'commands', label: commandsLabel.value, children: commands.value, props: { role: 'menuitem' } })
+  if (props.item.manifest.permissions.localResources)
+    pluginActions.push({ key: 'file-access', label: props.language === 'en-US' ? 'File access' : '文件访问', props: { role: 'menuitem' }, children: [{ key: 'revoke-resources', label: props.language === 'en-US' ? 'Revoke all access' : '撤销全部授权', props: { role: 'menuitem' } }] })
+  return [
+    ...pluginActions,
+    ...(pluginActions.length ? [{ key: 'plugin-actions-divider', type: 'divider' as const }] : []),
+    { key: 'restart', label: labels.value.restart, props: { 'role': 'menuitem', 'data-testid': 'extension-restart' } },
+    { key: 'diagnostics', label: labels.value.diagnostics, props: { role: 'menuitem' } },
+    { key: 'divider', type: 'divider' },
+    { key: 'remove', label: labels.value.remove, props: { 'role': 'menuitem', 'data-testid': 'extension-uninstall' } },
+  ]
+})
 function handleAction(key: string | number) {
-  if (key === 'diagnostics')
+  if (commands.value.some(command => command.key === key) && canRun.value)
+    emit('command', String(key))
+  else if (key === 'restart')
+    emit('restart')
+  else if (key === 'diagnostics')
     emit('diagnostics')
   else if (key === 'remove')
     emit('remove')
+  else if (key === 'revoke-resources')
+    emit('revokeResources')
 }
 </script>
 
@@ -56,14 +79,16 @@ function handleAction(key: string | number) {
     </p>
     <code v-if="item.error" class="extension-card__error">{{ item.error }}</code>
     <footer class="extension-card__actions">
-      <NButton v-if="item.enabled && item.compatible && item.manifest.contributes.navigation" size="small" secondary @click="emit('open')">
+      <NButton v-if="canRun && item.manifest.contributes.navigation" size="small" secondary :disabled="busy" @click="emit('open')">
         {{ language === 'en-US' ? 'Open' : '打开' }}
       </NButton>
+      <NDropdown v-else-if="canRun && commands.length" trigger="click" :options="commands" :disabled="busy" @select="id => emit('command', String(id))">
+        <NButton secondary size="small" :disabled="busy" data-testid="extension-commands">
+          {{ commandsLabel }}
+        </NButton>
+      </NDropdown>
       <NButton secondary size="small" :disabled="busy" :data-testid="item.enabled ? 'extension-disable' : 'extension-enable'" @click="emit('toggle')">
         {{ item.enabled ? labels.disable : labels.enable }}
-      </NButton>
-      <NButton quaternary size="small" :disabled="busy" data-testid="extension-restart" @click="emit('restart')">
-        {{ labels.restart }}
       </NButton>
       <NDropdown trigger="click" :options="actions" :disabled="busy" @select="handleAction">
         <NButton quaternary size="small" class="extension-card__more" :disabled="busy" :aria-label="labels.more" data-testid="extension-card-more">
@@ -87,6 +112,6 @@ function handleAction(key: string | number) {
 .extension-card__pending, .extension-card__error { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .extension-card__pending { color: var(--buddy-accent-text); }
 .extension-card__error { color: var(--buddy-status-danger-text); }
-.extension-card__actions { display: flex; align-items: center; gap: 4px; margin-top: auto; padding-top: 4px; }
-.extension-card__more { width: 28px; height: 28px; margin-left: auto; padding: 0; }
+.extension-card__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: auto; padding-top: 4px; }
+.extension-card__more { flex: none; width: 28px; height: 28px; margin-left: auto; padding: 0; }
 </style>

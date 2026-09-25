@@ -15,14 +15,17 @@ const permissions = computed(() => {
   const { permissions } = props.review.manifest
   return [
     ...(permissions.windowEffects ? [{ key: 'windowEffects', icon: Alert20Regular, title: english.value ? 'Display window effects' : '显示窗口特效', description: english.value ? 'Draw over Lexora and receive typing activity. Typed text and keys are never shared.' : '在 Lexora 窗口绘制效果，接收对话输入活动；不会获取输入文字或按键。' }] : []),
+    ...permissions.controls.map(target => ({ key: `controls:${target}`, icon: Alert20Regular, title: english.value ? 'Provide a reasoning control' : '提供思考等级控件', description: english.value ? 'After you select this style, display available levels and submit your selection.' : '由你选择启用后，展示可用等级并提交你的选择。' })),
     ...(permissions.notifications ? [{ key: 'notifications', icon: Alert20Regular, title: labels.value.notifications, description: english.value ? 'Show reminders in your system notification center.' : '通过系统通知向你发送提醒。' }] : []),
     ...(permissions.schedules ? [{ key: 'schedules', icon: Clock20Regular, title: english.value ? 'Run scheduled tasks' : '执行后台定时任务', description: english.value ? 'Continue running while Lexora is open, even when the plugin page is closed.' : 'Lexora 运行期间，关闭插件页面后仍可执行。' }] : []),
     ...(permissions.selectedResource === 'read' ? [{ key: 'selectedResource:read', icon: Document20Regular, title: labels.value.selected, description: english.value ? 'Read the content of files you select for this plugin.' : '读取你为此插件选中的文件内容。' }] : []),
+    ...(permissions.localResources ? [{ key: 'localResources', icon: Document20Regular, title: english.value ? 'Read files and folders you select' : '读取你选择的文件和目录', description: english.value ? 'Choose files or folders in a system dialog. The plugin can read selected files and scan selected folders until you revoke access.' : '通过系统窗口选择文件或目录；插件可读取所选文件、扫描所选目录，授权保留到你撤销。' }] : []),
+    ...(permissions.resourceExport ? [{ key: 'resourceExport', icon: Document20Regular, title: english.value ? 'Save files to a location you choose' : '保存文件到你选择的位置', description: english.value ? 'Each export opens a system save dialog. Reading a file does not grant permission to overwrite it.' : '每次导出都由你通过系统保存窗口选择目标；读取文件不会自动授予覆写权限。' }] : []),
     ...permissions.network.map(origin => ({ key: `network:${origin}`, icon: Globe20Regular, title: `${labels.value.network} ${origin}`, description: english.value ? 'Send requests to this website and read its responses.' : '向此网站发送请求并读取响应。' })),
   ]
 })
 const source = computed(() => props.review.development ? (english.value ? 'Development folder' : '开发目录') : props.review.source ? (english.value ? 'Lexora Marketplace' : 'Lexora 插件市场') : (english.value ? 'Local package' : '本地插件包'))
-const sharesFiles = computed(() => props.review.manifest.permissions.selectedResource === 'read' && props.review.manifest.permissions.network.length > 0)
+const sharesFiles = computed(() => (props.review.manifest.permissions.selectedResource === 'read' || props.review.manifest.permissions.localResources) && props.review.manifest.permissions.network.length > 0)
 </script>
 
 <template>

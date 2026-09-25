@@ -1,3 +1,4 @@
+export { default as DesktopExtensionControl } from './widgets/DesktopExtensionControl.vue'
 export { default as DesktopExtensionFrameHost } from './widgets/DesktopExtensionFrameHost.vue'
 export { default as DesktopExtensionManager } from './widgets/DesktopExtensionManager.vue'
 export { default as DesktopExtensionOverlays } from './widgets/DesktopExtensionOverlays.vue'

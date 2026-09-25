@@ -1,3 +1,4 @@
+import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { BrowserIntegration } from '../browser/BrowserIntegration'
 import type { DesktopFeature } from '../platform/desktopFeatures'
@@ -37,6 +38,7 @@ import { createCredentialVault } from '../secrets/CredentialVault'
 import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
 
 export class DesktopRuntimeHost {
+  inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
   readonly contextPanel: ContextPanelHost
   readonly configStore: LexoraConfigStore
   readonly #environment: DesktopEnvironment
@@ -160,7 +162,11 @@ export class DesktopRuntimeHost {
       bindPeer: (peer) => {
         const disposers = [
           peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
-          registerExtensionAuthoringRpc(peer),
+          registerExtensionAuthoringRpc(peer, (id) => {
+            if (!this.inspectExtension)
+              throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
+            return this.inspectExtension(id)
+          }),
           peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
             const source = contextPanelSourceSchema.parse(params)
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')

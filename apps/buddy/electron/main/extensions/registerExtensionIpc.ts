@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
+import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
 import { join } from 'node:path'
 import { dialog, ipcMain, Notification, powerMonitor, session } from 'electron'
@@ -20,13 +21,14 @@ export function registerExtensionIpc(options: {
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   developmentDirectory?: string
   notificationsEnabled?: () => boolean
-}): { dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void> } {
+}): { dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection> } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
   const hosts = new Set<SandboxedExtensionHost>()
   const replies = new Map<string, (value: string | null) => void>()
   const bound = new Set<BrowserWindow>()
+  let resourcePickerOpen = false
   const guardNavigation = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
     if (!event.isMainFrame && !protocol.validViewUrl(event.url))
       event.preventDefault()
@@ -44,6 +46,36 @@ export function registerExtensionIpc(options: {
     readText: options.readText,
     get: options.get,
     compile: compileExtension,
+    selectResources: async (name, selection, signal) => {
+      const owner = window()
+      if (!owner || owner.isDestroyed() || !owner.isVisible() || owner.isMinimized() || resourcePickerOpen)
+        throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
+      signal.throwIfAborted()
+      resourcePickerOpen = true
+      try {
+        const result = await dialog.showOpenDialog(owner, {
+          title: name,
+          properties: selection.directory ? ['openDirectory'] : selection.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+          ...(selection.directory || !selection.filters.length ? {} : { filters: selection.filters }),
+        })
+        signal.throwIfAborted()
+        return result.canceled ? [] : result.filePaths
+      }
+      finally { resourcePickerOpen = false }
+    },
+    selectSavePath: async (name, suggestedName, signal) => {
+      const owner = window()
+      if (!owner || owner.isDestroyed() || !owner.isVisible() || owner.isMinimized() || resourcePickerOpen)
+        throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
+      signal.throwIfAborted()
+      resourcePickerOpen = true
+      try {
+        const result = await dialog.showSaveDialog(owner, { title: name, defaultPath: suggestedName, properties: ['showOverwriteConfirmation', 'createDirectory'] })
+        signal.throwIfAborted()
+        return result.canceled ? null : result.filePath ?? null
+      }
+      finally { resourcePickerOpen = false }
+    },
     notify: (id, notification) => {
       if (!Notification.isSupported() || options.notificationsEnabled?.() === false)
         return false
@@ -65,9 +97,17 @@ export function registerExtensionIpc(options: {
         resolve(null)
         return
       }
-      const cancel = () => finish(null)
+      let settled = false
+      const cancel = () => {
+        if (!current.isDestroyed())
+          current.webContents.send(EXTENSION_IPC.workbench, { kind: 'cancel', requestId: event.requestId } satisfies ExtensionWorkbenchEvent)
+        finish(null)
+      }
       const timer = setTimeout(cancel, 10000)
       function finish(value: string | null) {
+        if (settled)
+          return
+        settled = true
         clearTimeout(timer)
         signal.removeEventListener('abort', cancel)
         replies.delete(event.requestId)
@@ -139,6 +179,7 @@ export function registerExtensionIpc(options: {
         case 'restart': return await service.restart(input.id)
         case 'uninstall': return await service.uninstall(input.id)
         case 'devtools': return await service.devtools(input.id)
+        case 'revokeResources': return await service.revokeResources(input.id)
         case 'execute': return await service.execute(input.id, input.command, input.resource)
         case 'openView': return await service.openView(input.view)
         case 'closeView': return service.closeView(input.viewId, input.generation, input.token)
@@ -191,6 +232,10 @@ export function registerExtensionIpc(options: {
   }
   return {
     dispose,
+    inspect: async (id) => {
+      await prepared
+      return service.inspect(id)
+    },
     async reviewPackage(path: string) {
       await prepared
       const review = await service.review(path, false)

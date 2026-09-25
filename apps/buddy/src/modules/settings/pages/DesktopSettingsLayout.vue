@@ -3,14 +3,14 @@ import { RouterView } from 'vue-router'
 import { useSettingsContext } from '@/modules/settings/settingsContext'
 import DesktopSettingsSidebar from '@/modules/settings/widgets/navigation/DesktopSettingsSidebar.vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
-import DesktopWorkbenchLayout from '@/shared/ui/workbench-layout/DesktopWorkbenchLayout.vue'
+import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
 
 const { platformCapabilities } = useSettingsContext()
 const { language, appSidebarCollapsed } = useDesktopUi()
 </script>
 
 <template>
-  <DesktopWorkbenchLayout :language="language">
+  <WorkbenchLayout :language="language">
     <template #sidebar>
       <DesktopSettingsSidebar
         :app-sidebar-collapsed="appSidebarCollapsed"
@@ -19,5 +19,5 @@ const { language, appSidebarCollapsed } = useDesktopUi()
       />
     </template>
     <RouterView />
-  </DesktopWorkbenchLayout>
+  </WorkbenchLayout>
 </template>

@@ -13,6 +13,7 @@ import { addedExtensionPermissions, extensionCompatible, extensionIdSchema, exte
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
 import { EXTENSION_PACKAGE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
+import { ExtensionResourceStore } from './ExtensionResourceStore'
 
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const sourceSchema = z.object({ catalog: z.string().url(), artifact: z.string().url(), sha256: revisionSchema }).strict()
@@ -27,6 +28,7 @@ export interface ExtensionCandidate { token: string, package: ExtensionPackage, 
 export class ExtensionPackageStore {
   readonly root: string
   readonly appVersion: string
+  readonly resources: ExtensionResourceStore
   readonly #candidates = new Map<string, ExtensionCandidate>()
   readonly #icons = new Map<string, { revision: string, url: Promise<string | undefined> }>()
   #index: z.infer<typeof indexSchema> = { version: 1, installed: {} }
@@ -37,6 +39,7 @@ export class ExtensionPackageStore {
   constructor(root: string, appVersion: string) {
     this.root = root
     this.appVersion = appVersion
+    this.resources = new ExtensionResourceStore(root)
   }
 
   async load(): Promise<void> {

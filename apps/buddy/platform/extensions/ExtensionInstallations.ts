@@ -49,6 +49,15 @@ export class ExtensionInstallations {
     return controller.signal
   }
 
+  identify(id: string, extensionId: string, version: string): void {
+    const record = this.#records.find(item => item.id === id)
+    if (record) {
+      record.extensionId = extensionId
+      record.version = version
+      this.#save()
+    }
+  }
+
   log(id: string, stage: ExtensionInstallationStage, message: string): void {
     const record = this.#records.find(item => item.id === id)
     if (!record || (stage !== 'completed' && ['completed', 'failed', 'cancelled'].includes(record.status)))

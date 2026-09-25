@@ -1,7 +1,9 @@
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ExtensionService } from '../ExtensionService'
 import { createStore, manifest, reviewPackage } from './fixtures'
@@ -124,7 +126,7 @@ it('binds every view to its token and resource, and acknowledges only persisted 
   await expect(service.viewRequest(second.id, second.generation, second.token, 'resources.readText', { id: randomUUID() })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   await expect(service.viewRequest(second.id, second.generation, second.token, 'storage.get', null)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await service.viewRequest(second.id, second.generation, second.token, 'view.setState', { position: 9 })
-  expect(events).toContainEqual(expect.objectContaining({ kind: 'state', viewId: second.id, generation: second.generation, state: { position: 9 } }))
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'state', viewId: second.id, generation: second.generation, token: second.token, state: { position: 9 } }))
   await service.enable('tests.reader', false)
   await expect(service.viewRequest(second.id, second.generation, second.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
@@ -161,5 +163,152 @@ it('stops dependent hosts when their dependency is disabled', async () => {
   expect(hosts).toHaveLength(2)
   await service.enable('tests.reader', false)
   expect(hosts.every(host => host.disposed)).toBe(true)
+  expect((await service.list()).find(item => item.manifest.id === 'tests.reader')).toMatchObject({ enabled: false, state: 'disabled', error: null, generation: null })
   expect((await service.list()).find(item => item.manifest.id === 'tests.dependent')).toMatchObject({ state: 'blocked', error: 'EXTENSION_DEPENDENCY_UNAVAILABLE' })
+  await service.enable('tests.dependent', false)
+  expect((await service.list()).every(item => !item.enabled && item.state === 'disabled' && item.error === null)).toBe(true)
+  await service.enable('tests.dependent', true)
+  expect((await service.list()).find(item => item.manifest.id === 'tests.dependent')).toMatchObject({ state: 'blocked', error: 'EXTENSION_DEPENDENCY_UNAVAILABLE' })
+  await service.enable('tests.reader', true)
+  expect((await service.list()).every(item => item.state === 'inactive' && item.error === null)).toBe(true)
+})
+
+it('authorizes each placement and control request against its own live view session', async () => {
+  const { root, store, service, hosts, events } = await fixture({ workbench: async (event) => {
+    events.push(event)
+    return event.kind === 'control' ? event.viewId : randomUUID()
+  } })
+  const value = manifest({ apiVersion: 2, id: 'tests.controls', permissions: { controls: ['model.reasoning'] }, contributes: {
+    views: [{ id: 'tests.controls.ui', title: 'Controls', entry: 'view.js', resource: 'none' }],
+    placements: [
+      { id: 'tests.controls.reasoning', view: 'tests.controls.ui', kind: 'control', target: 'model.reasoning' },
+      { id: 'tests.controls.top', view: 'tests.controls.ui', kind: 'view', location: 'workbench.top' },
+    ],
+  } })
+  await service.install((await reviewPackage(root, store, value)).token)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.controls.ui', resource: null, state: null, stateVersion: 1 }
+  await expect(service.openView({ ...input, placementId: 'tests.reader.top' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  const session = await service.openView({ ...input, placementId: 'tests.controls.reasoning' })
+  const proposal = { revision: randomUUID(), value: 'high' }
+  await service.viewRequest(session.id, session.generation, session.token, 'control.propose', proposal)
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'control', viewId: session.id, token: session.token, generation: session.generation, proposal }))
+  await expect(service.viewRequest(session.id, session.generation, randomUUID(), 'control.propose', proposal)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await expect(service.viewRequest(session.id, session.generation, session.token, 'view.setState', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  const ordinary = await service.openView({ ...input, viewId: randomUUID() })
+  await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await hosts[0]!.broker('placements.show', { id: 'tests.controls.top' })
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', extensionId: value.id, placementId: 'tests.controls.top', visible: true }))
+  await expect(hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await expect(hosts[0]!.broker('placements.show', { id: 'another.plugin.top' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await service.enable(value.id, false)
+  await expect(service.viewRequest(session.id, session.generation, session.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+})
+
+it('does not let an older concurrent open replace a newer view endpoint', async () => {
+  const { store, service } = await fixture()
+  const resource = await store.grant('tests.reader', target)
+  const original = store.resolveGrant.bind(store)
+  const pending = deferred<typeof target>()
+  const entered = deferred<void>()
+  let requests = 0
+  vi.spyOn(store, 'resolveGrant').mockImplementation(async (...args) => {
+    if (++requests === 1) {
+      entered.resolve()
+      return pending.promise
+    }
+    return original(...args)
+  })
+  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: {}, stateVersion: 1 }
+  const first = service.openView(input)
+  const rejected = expect(first).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await entered.promise
+  const current = await service.openView({ ...input, state: { restored: true } })
+  pending.resolve(target)
+  await rejected
+  expect(await service.viewRequest(current.id, current.generation, current.token, 'bootstrap', null)).toMatchObject({ state: { restored: true } })
+})
+
+it('records a failed view without failing its host or other views', async () => {
+  const { store, service } = await fixture()
+  const resource = await store.grant('tests.reader', target)
+  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: {}, stateVersion: 1 }
+  const failed = await service.openView(input)
+  const retained = await service.openView({ ...input, viewId: randomUUID() })
+  await service.viewRequest(failed.id, failed.generation, failed.token, 'view.failed', { code: 'EXTENSION_VIEW_TIMEOUT' })
+  service.closeView(failed.id, failed.generation, failed.token)
+  const status = (await service.list())[0]!
+  expect(status).toMatchObject({ state: 'active', error: null })
+  expect(status.logs.at(-1)).toMatchObject({ event: 'view.failed', code: 'EXTENSION_VIEW_TIMEOUT' })
+  expect(await service.viewRequest(retained.id, retained.generation, retained.token, 'bootstrap', null)).toMatchObject({ state: {} })
+})
+
+it('rejects unauthorized media and late picker selections without retaining grants', async () => {
+  const selection = deferred<string[]>()
+  const entered = deferred<void>()
+  const f = await fixture({ selectResources: async () => {
+    entered.resolve()
+    return selection.promise
+  } })
+  const value = manifest({ apiVersion: 2, id: 'tests.media', permissions: { localResources: true }, contributes: { views: [{ id: 'tests.media.page', title: 'Media', entry: 'view.js', resource: 'none' }] } })
+  const path = join(f.root, 'track.mp3')
+  await writeFile(path, 'media bytes')
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.media.page', resource: null, state: {}, stateVersion: 1 }
+  const view = await f.service.openView(input)
+  await expect(f.hosts.at(-1)!.broker('resources.pickFiles', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  const picking = f.service.viewRequest(view.id, view.generation, view.token, 'resources.pickFiles', {})
+  const rejected = expect(picking).rejects.toThrow()
+  await entered.promise
+  f.service.closeView(view.id, view.generation, view.token)
+  selection.resolve([path])
+  await rejected
+  expect(await f.store.resources.list(value.id)).toEqual([])
+  const resource = await f.store.grant('tests.reader', target)
+  const denied = await f.service.openView({ ...input, viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource })
+  await expect(f.service.viewRequest(denied.id, denied.generation, denied.token, 'resources.listFiles', null)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+})
+
+it('binds presentation changes to a current declared placement and reports real installation state', async () => {
+  const f = await fixture({ workbench: async event => event.kind === 'presentation' ? event.viewId : null })
+  const value = manifest({ apiVersion: 2, id: 'tests.panel', contributes: { views: [{ id: 'tests.panel.ui', title: 'Panel', entry: 'view.js', resource: 'none' }], placements: [{ id: 'tests.panel.float', kind: 'view', location: 'workbench.floating', view: 'tests.panel.ui' }] } })
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.panel.ui', resource: null, state: { secret: 'private-state' }, stateVersion: 1 }
+  const view = await f.service.openView({ ...input, placementId: 'tests.panel.float' })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  await request('view.setPresentation', { height: 260, width: 360, position: 'absolute', right: 0 })
+  await expect(request('view.setPresentation', { height: 99999 })).rejects.toThrow()
+  await request('view.ready', null)
+  const status = await f.service.inspect(value.id)
+  expect(status).toMatchObject({ installed: true, version: '1.0.0', state: 'active', views: [{ type: 'tests.panel.ui', placement: 'tests.panel.float', ready: true, error: null }] })
+  expect(JSON.stringify(status)).not.toContain('private-state')
+  const page = await f.service.openView({ ...input, viewId: randomUUID() })
+  await expect(f.service.viewRequest(page.id, page.generation, page.token, 'view.setPresentation', { height: 260 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await f.service.enable(value.id, false)
+  expect(await f.service.inspect(value.id)).toMatchObject({ state: 'disabled', views: [] })
+  await expect(request('view.setPresentation', { height: 100 })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+})
+
+it('keeps export permission separate from reads and expires writers with their owning view', async () => {
+  let destination = ''
+  const f = await fixture({ selectSavePath: async () => destination })
+  destination = join(f.root, 'export.binary')
+  await writeFile(destination, 'original')
+  const value = manifest({ apiVersion: 2, id: 'tests.export', permissions: { localResources: true }, contributes: { views: [{ id: 'tests.export.page', title: 'Export', entry: 'view.js', resource: 'none' }] } })
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.export.page', resource: null, state: null, stateVersion: 1 }
+  const readOnly = await f.service.openView(input)
+  const payload = { name: 'file.unknown', size: 4 }
+  await expect(f.service.viewRequest(readOnly.id, readOnly.generation, readOnly.token, 'resources.beginSave', payload)).rejects.toThrow('EXTENSION_RESOURCE_EXPORT_DENIED')
+  await f.service.install((await reviewPackage(f.root, f.store, manifest({ ...value, version: '1.1.0', permissions: { resourceExport: true } }))).token)
+  await f.service.restart(value.id)
+  const owner = await f.service.openView(input)
+  const other = await f.service.openView({ ...input, viewId: randomUUID() })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(owner.id, owner.generation, owner.token, method, params)
+  await expect(request('resources.listFiles', null)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  const id = await request('resources.beginSave', payload)
+  await expect(f.service.viewRequest(other.id, other.generation, other.token, 'resources.commitSave', { id })).rejects.toThrow('EXTENSION_RESOURCE_WRITE_EXPIRED')
+  await request('resources.writeChunk', { id, offset: 0, base64: Buffer.from('new!').toString('base64') })
+  f.service.closeView(owner.id, owner.generation, owner.token)
+  await expect(request('resources.commitSave', { id })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  expect(await readFile(destination, 'utf8')).toBe('original')
 })
