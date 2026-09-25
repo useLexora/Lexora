@@ -211,7 +211,9 @@ function incidentRecords(records: ApplicationLogRecord[], seed: ApplicationLogRe
   const times = related.map(record => Date.parse(record.timestamp))
   const from = Math.min(...times) - 30_000
   const to = Math.max(...times) + 30_000
-  return launch.filter(record => linked(record) || (!record.runId && (!record.operationId || /^(?:app|startup|runtime|recorder)\./.test(record.event)) && Date.parse(record.timestamp) >= from && Date.parse(record.timestamp) <= to))
+  return launch.filter(record => linked(record)
+    || record.event === 'network.start_failed'
+    || (!record.runId && (!record.operationId || /^(?:app|startup|runtime|recorder|component)\./.test(record.event)) && Date.parse(record.timestamp) >= from && Date.parse(record.timestamp) <= to))
 }
 
 function encodeRecords(records: ApplicationLogRecord[]): Uint8Array {

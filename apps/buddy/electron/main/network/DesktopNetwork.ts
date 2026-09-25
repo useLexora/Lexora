@@ -1,9 +1,13 @@
 import type { AuthenticationResponseDetails, AuthInfo, Event, ProxyConfig, Session, WebContents } from 'electron'
+import type { NetworkStartupFailure } from '../../../shared/diagnostics/networkStartupFailure'
 import type { ProxySettings } from '../../../shared/network/proxySettings'
 import { randomUUID } from 'node:crypto'
 import { app, session } from 'electron'
+import { NetworkStartupError } from '../../../shared/diagnostics/networkStartupFailure'
 import { OutboundProxy, toElectronProxyConfig } from './OutboundProxy'
 import { requestThroughHost } from './requestThroughHost'
+
+const UNAVAILABLE_PROXY_URL = 'http://127.0.0.1:0'
 
 export class DesktopNetwork {
   readonly #resolver = session.fromPartition(`lexora-proxy-resolver:${randomUUID()}`, { cache: false })
@@ -13,16 +17,26 @@ export class DesktopNetwork {
   #sessionConfig: ProxyConfig | null = null
   readonly #sessionSetup = new Set<Promise<void>>()
   #sessionFailure: unknown
+  #startupError: NetworkStartupError | null = null
 
-  get proxyUrl(): string { return this.#proxy.url }
-  get sandboxProxyUrl(): string { return this.#proxy.sandboxUrl }
+  get startupError(): NetworkStartupError | null { return this.#startupError }
+  get proxyUrl(): string { return this.#startupError ? UNAVAILABLE_PROXY_URL : this.#proxy.url }
+  get sandboxProxyUrl(): string { return this.#startupError ? UNAVAILABLE_PROXY_URL : this.#proxy.sandboxUrl }
 
-  readonly get = (url: string, init?: Pick<RequestInit, 'headers' | 'signal'>): Promise<Response> => requestThroughHost(
-    session.defaultSession,
-    { url, method: 'GET', headers: Object.fromEntries(new Headers(init?.headers)) },
-    init?.signal ?? AbortSignal.timeout(30_000),
-    this.authenticateProxy,
-  )
+  readonly assertAvailable = (): void => {
+    if (this.#startupError)
+      throw this.#startupError
+  }
+
+  readonly get = async (url: string, init?: Pick<RequestInit, 'headers' | 'signal'>): Promise<Response> => {
+    this.assertAvailable()
+    return requestThroughHost(
+      session.defaultSession,
+      { url, method: 'GET', headers: Object.fromEntries(new Headers(init?.headers)) },
+      init?.signal ?? AbortSignal.timeout(30_000),
+      this.authenticateProxy,
+    )
+  }
 
   readonly authenticateProxy = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void): boolean => {
     if (!authInfo.isProxy || authInfo.host !== '127.0.0.1' || authInfo.port !== this.#proxy.port)
@@ -32,7 +46,9 @@ export class DesktopNetwork {
   }
 
   readonly #onSessionCreated = (created: Session) => {
-    if (!this.#sessionConfig || created === this.#resolver)
+    if (created === this.#resolver)
+      return
+    if (!this.#sessionConfig)
       return
     const setup = created.setProxy(this.#sessionConfig)
     this.#sessionSetup.add(setup)
@@ -49,15 +65,30 @@ export class DesktopNetwork {
   }
 
   async start(settings: ProxySettings): Promise<void> {
-    await this.apply(settings)
-    await this.#proxy.start()
-    this.#sessionConfig = { mode: 'fixed_servers', proxyRules: this.#proxy.address, proxyBypassRules: '<-loopback>' }
+    let operation: NetworkStartupFailure['operation'] = 'configure_upstream'
+    try {
+      await this.apply(settings)
+      operation = 'listen'
+      await this.#proxy.start()
+    }
+    catch (cause) {
+      this.#startupError = new NetworkStartupError(operation, cause)
+      this.#proxy.disconnect()
+    }
+    this.#sessionConfig = { mode: 'fixed_servers', proxyRules: this.#startupError ? this.proxyUrl : this.#proxy.address, proxyBypassRules: '<-loopback>' }
     app.on('login', this.#onLogin)
     app.on('session-created', this.#onSessionCreated)
-    await Promise.all([app.setProxy(this.#sessionConfig), session.defaultSession.setProxy(this.#sessionConfig)])
+    try {
+      await Promise.all([app.setProxy(this.#sessionConfig), session.defaultSession.setProxy(this.#sessionConfig)])
+    }
+    catch (cause) {
+      throw new NetworkStartupError('configure_sessions', cause)
+    }
   }
 
   async apply(settings: ProxySettings): Promise<void> {
+    if (this.#startupError)
+      return
     if (settings.mode === this.#settings?.mode && settings.server === this.#settings.server)
       return
     const operation = this.#updating.then(async () => {
@@ -71,6 +102,8 @@ export class DesktopNetwork {
 
   async #resolve(url: string): Promise<string> {
     await this.#updating
+    if (this.#startupError)
+      throw this.#startupError
     if (this.#sessionFailure)
       throw this.#sessionFailure
     return this.#resolver.resolveProxy(url)

@@ -16,6 +16,7 @@ import { currentTarget } from '../../../platform/target'
 import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
+import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
 import { installAttachmentProtocol } from '../attachmentProtocol'
@@ -139,6 +140,8 @@ export class DesktopRuntimeHost {
     this.#config = config
     this.#network = new DesktopNetwork()
     await this.#network.start(config.proxy)
+    if (this.#network.startupError)
+      environment.events.publish({ event: 'network.start_failed', component: 'desktop.network', level: 'warn', ...readDiagnosticError(this.#network.startupError) })
     this.#windowsPowerShell = currentPlatform.shell === 'powershell'
       ? await resolveWindowsPowerShell()
       : undefined
@@ -162,7 +165,7 @@ export class DesktopRuntimeHost {
             const source = contextPanelSourceSchema.parse(params)
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
           }),
-          registerWebHostRpc(peer, this.#network!.authenticateProxy),
+          registerWebHostRpc(peer, this.#network!.authenticateProxy, this.#network!.assertAvailable),
           registerSandboxHostRpc(peer, {
             buddyHome: environment.paths.buddyHome,
             proxyUrl: this.#network!.sandboxProxyUrl,

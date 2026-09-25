@@ -15,20 +15,18 @@ const { t } = useBuddyI18n(() => props.language)
 const api = requireDesktopApi()
 const message = useMessage()
 const checking = shallowRef(false)
-const updateFailed = shallowRef(false)
 const updateResult = shallowRef<DesktopUpdateCheckResult | null>(null)
 
 async function checkForUpdates() {
   if (checking.value)
     return
   checking.value = true
-  updateFailed.value = false
   updateResult.value = null
   try {
     updateResult.value = await api.app.checkForUpdates()
   }
   catch {
-    updateFailed.value = true
+    message.error(t('desktop.update.failed'))
   }
   finally {
     checking.value = false
@@ -76,10 +74,7 @@ function openReleasePage() {
         {{ t('desktop.feedback.githubIssue') }}
       </NButton>
     </div>
-    <p v-if="updateFailed" class="desktop-about-settings__error" role="alert">
-      {{ t('desktop.update.failed') }}
-    </p>
-    <div v-else-if="updateResult?.status === 'update_available'" class="desktop-about-settings__update" role="status">
+    <div v-if="updateResult?.status === 'update_available'" class="desktop-about-settings__update" role="status">
       <span>{{ t('desktop.update.available') }}</span>
       <span>{{ t('desktop.about.version', { version: updateResult.latestVersion }) }}</span>
       <NButton text type="primary" @click="openReleasePage">
@@ -143,11 +138,5 @@ function openReleasePage() {
   color: var(--buddy-text-muted);
   font-family: var(--buddy-font-mono);
   font-size: 0.7rem;
-}
-
-.desktop-about-settings__error {
-  margin: 0;
-  color: var(--buddy-status-danger-text);
-  font-size: 0.8rem;
 }
 </style>

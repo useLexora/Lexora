@@ -5,7 +5,7 @@ import type {
 } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from './typing'
 import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '@buddy-electron/shared/desktopApi'
-import { NSelect, NSpin } from 'naive-ui'
+import { NSelect, NSpin, useMessage } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
@@ -15,8 +15,8 @@ type AppearanceSettingField = 'theme' | 'welcome' | 'outlinePosition'
 const props = defineProps<ApplicationSettingsProps>()
 
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
 const pendingFields = shallowRef<ReadonlySet<AppearanceSettingField>>(new Set())
-const failedField = shallowRef<AppearanceSettingField | null>(null)
 const pendingWelcomePreference = shallowRef<DesktopChatWelcomePreference | null>(null)
 const themeOptions = computed(() => [
   { label: t('desktop.settings.themeSystem'), value: 'system' },
@@ -34,10 +34,16 @@ const activeWelcomePreference = computed(() => (
 ))
 
 async function updateSetting(field: AppearanceSettingField, patch: LexoraConfigPatch) {
+  if (pendingFields.value.has(field))
+    return
   pendingFields.value = new Set([...pendingFields.value, field])
-  const succeeded = await props.updateSettings(patch)
-  pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
-  failedField.value = succeeded ? null : field
+  try {
+    if (!await props.updateSettings(patch))
+      message.error(t('desktop.settings.saveFailed'))
+  }
+  finally {
+    pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
+  }
 }
 
 async function updateWelcomePreference(preference: DesktopChatWelcomePreference) {
@@ -63,9 +69,6 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
               @update:value="updateSetting('theme', { desktop: { theme: $event } })"
             />
             <NSpin v-if="pendingFields.has('theme')" size="small" />
-            <small v-else-if="failedField === 'theme'" class="is-error">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
       </div>
@@ -86,9 +89,6 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
               @update:value="updateSetting('outlinePosition', { desktop: { chat: { outlinePosition: $event } } })"
             />
             <NSpin v-if="pendingFields.has('outlinePosition')" size="small" />
-            <small v-else-if="failedField === 'outlinePosition'" class="is-error" role="alert">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
         <div class="desktop-settings-row">
@@ -103,9 +103,6 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
               @select="updateWelcomePreference"
             />
             <NSpin v-if="pendingFields.has('welcome')" size="small" />
-            <small v-else-if="failedField === 'welcome'" class="is-error">
-              {{ error ?? t('desktop.settings.saveFailed') }}
-            </small>
           </div>
         </div>
       </div>
@@ -173,12 +170,6 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.55rem;
-}
-
-.desktop-settings-row__control .is-error {
-  grid-column: 1 / -1;
-  color: var(--buddy-status-danger-text);
-  text-align: right;
 }
 
 @container (max-width: 560px) {

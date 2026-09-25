@@ -2,7 +2,7 @@
 import type { ShortcutEntry } from '@buddy-shared/shortcuts/keybinding'
 import { conflictingShortcuts, formatKeybinding, keybindingFromInput } from '@buddy-shared/shortcuts/keybinding'
 import { ArrowCounterclockwise20Regular, Edit20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NInput, NModal, NTag, NTooltip } from 'naive-ui'
+import { NButton, NInput, NModal, NTag, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -11,6 +11,7 @@ import { useSettingsContext } from '../settingsContext'
 
 const { applicationSettings, shortcuts } = useSettingsContext()
 const { t } = useBuddyI18n(applicationSettings.language)
+const message = useMessage()
 const query = shallowRef('')
 const editing = shallowRef<ShortcutEntry | null>(null)
 const restoring = shallowRef<ShortcutEntry | null>(null)
@@ -18,9 +19,6 @@ const resetConfirming = shallowRef(false)
 const candidate = shallowRef('')
 const invalid = shallowRef(false)
 const saving = shallowRef(false)
-const editFailed = shallowRef(false)
-const restoreFailed = shallowRef(false)
-const resetFailed = shallowRef(false)
 const recorder = useTemplateRef<InstanceType<typeof NInput>>('recorder')
 const showEditor = computed({ get: () => !!editing.value, set: (value) => {
   if (!value)
@@ -43,7 +41,6 @@ async function edit(entry: ShortcutEntry) {
   editing.value = entry
   candidate.value = entry.binding
   invalid.value = false
-  editFailed.value = false
   await nextTick()
   recorder.value?.focus()
 }
@@ -61,12 +58,11 @@ function capture(event: KeyboardEvent) {
 }
 async function save(id: string, binding: string | null) {
   saving.value = true
-  editFailed.value = false
   try {
     if (await shortcuts.set(id, binding))
       editing.value = null
     else
-      editFailed.value = true
+      message.error(t('desktop.shortcuts.saveFailed'))
   }
   finally {
     saving.value = false
@@ -83,18 +79,16 @@ async function saveCandidate() {
 }
 function confirmRestore(entry: ShortcutEntry) {
   restoring.value = entry
-  restoreFailed.value = false
 }
 async function restoreShortcut() {
   if (!restoring.value)
     return
   saving.value = true
-  restoreFailed.value = false
   try {
     if (await shortcuts.set(restoring.value.id, null))
       restoring.value = null
     else
-      restoreFailed.value = true
+      message.error(t('desktop.shortcuts.saveFailed'))
   }
   finally {
     saving.value = false
@@ -102,19 +96,17 @@ async function restoreShortcut() {
 }
 async function resetAll() {
   saving.value = true
-  resetFailed.value = false
   try {
     if (await shortcuts.reset())
       resetConfirming.value = false
     else
-      resetFailed.value = true
+      message.error(t('desktop.shortcuts.saveFailed'))
   }
   finally {
     saving.value = false
   }
 }
 function confirmReset() {
-  resetFailed.value = false
   resetConfirming.value = true
 }
 </script>
@@ -134,9 +126,6 @@ function confirmReset() {
     </template>
     <div class="shortcut-settings" data-testid="shortcut-settings">
       <NInput v-model:value="query" clearable :placeholder="t('desktop.shortcuts.search')" />
-      <NAlert v-if="applicationSettings.settingsError.value" type="error" :show-icon="false">
-        {{ applicationSettings.settingsError.value }}
-      </NAlert>
       <div class="shortcut-settings__scroll">
         <table>
           <thead><tr><th>{{ t('desktop.shortcuts.command') }}</th><th>{{ t('desktop.shortcuts.binding') }}</th><th>{{ t('desktop.shortcuts.scope') }}</th><th>{{ t('desktop.shortcuts.actions') }}</th></tr></thead>
@@ -194,9 +183,6 @@ function confirmReset() {
       <p class="shortcut-dialog__description">
         {{ t('desktop.shortcuts.resetConfirm') }}
       </p>
-      <NAlert v-if="resetFailed" class="shortcut-dialog__alert" type="error" :show-icon="false">
-        {{ t('desktop.shortcuts.saveFailed') }}
-      </NAlert>
       <template #action>
         <NButton :disabled="saving" @click="resetConfirming = false">
           {{ t('desktop.shortcuts.cancel') }}
@@ -216,9 +202,6 @@ function confirmReset() {
           <kbd v-if="restoring.defaultBinding">{{ format(restoring.defaultBinding) }}</kbd>
           <span v-else>{{ t('desktop.shortcuts.unassigned') }}</span>
         </div>
-        <NAlert v-if="restoreFailed" type="error" :show-icon="false">
-          {{ t('desktop.shortcuts.saveFailed') }}
-        </NAlert>
       </div>
       <template #action>
         <NButton :disabled="saving" @click="restoring = null">
@@ -234,9 +217,6 @@ function confirmReset() {
         <p class="shortcut-dialog__description">
           {{ t('desktop.shortcuts.recordHint') }}
         </p>
-        <NAlert v-if="editFailed" type="error" :show-icon="false">
-          {{ t('desktop.shortcuts.saveFailed') }}
-        </NAlert>
         <NInput ref="recorder" :value="format(candidate)" readonly clearable :placeholder="t('desktop.shortcuts.pressKeys')" data-testid="shortcut-recorder" @keydown="capture" @update:value="updateCandidate" />
         <p v-if="invalid" class="shortcut-settings__error" role="alert">
           {{ t('desktop.shortcuts.invalid') }}
@@ -277,7 +257,6 @@ kbd { padding: 0.2rem 0.4rem; border: 1px solid var(--buddy-border-subtle); bord
 .shortcut-settings__note { margin: 0; color: var(--buddy-text-secondary); font-size: 0.75rem; line-height: 1.65; }
 .shortcut-settings__error { color: var(--buddy-status-danger-text); font-size: 0.8rem; }
 .shortcut-dialog__description { margin: 0; color: var(--buddy-text-secondary); font-size: 0.82rem; line-height: 1.6; }
-.shortcut-dialog__alert { margin-top: 1rem; }
 .shortcut-dialog__actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
 .shortcut-dialog__body { display: grid; gap: 1rem; }
 .shortcut-dialog__default { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border: 1px solid var(--buddy-border-subtle); border-radius: 0.5rem; padding: 0.75rem; color: var(--buddy-text-secondary); font-size: 0.75rem; }

@@ -8,7 +8,7 @@ import { HostWebNetwork } from './HostWebNetwork'
 import { requestThroughHost } from './requestThroughHost'
 import { renderWebDocument } from './WebRenderHost'
 
-export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticateProxy?: ProxyAuthenticator): () => void {
+export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticateProxy?: ProxyAuthenticator, assertAvailable?: () => void): () => void {
   const isolated = session.fromPartition(`buddy-web-network:${randomUUID()}`, { cache: false })
   isolated.setPermissionCheckHandler(() => false)
   isolated.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
@@ -21,6 +21,7 @@ export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticatePro
       peer.notify('host.web.chunk', params)
   }
   const begin = (id: string, timeout: number) => {
+    assertAvailable?.()
     if (disposed || active.has(id) || active.size >= 8)
       throw new WebError('WEB_BUSY')
     const controller = new AbortController()
@@ -38,6 +39,7 @@ export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticatePro
     peer.onRequest('host.web.authorize', async (params) => {
       const input = webRenderInputSchema.pick({ url: true }).parse(params)
       try {
+        assertAvailable?.()
         await network.authorizePublicUrl(input.url)
         return { ok: true }
       }
