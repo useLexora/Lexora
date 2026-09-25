@@ -31,3 +31,5 @@ API 1 不开放 Node、shell 或任意 Desktop API。文件只读，仅能访问
 更新安装后，当前版本继续运行，点击“重启扩展”应用更新。禁用停止插件，重新启用保留配置；卸载保留私有 JSON 与上下文视图位置，但移除代码和定时任务。
 
 需要独立开发窗口时，先构建 Electron，再运行 `node extensions/tools.mjs dev /path/to/plugin`。开发窗口使用单独的临时配置；修改后重新加载构建目录并重启扩展。SDK 快照可以通过 `node extensions/tools.mjs export-sdk /path/to/plugin-sdk/sdk` 导出。
+
+API 2 通过 `contributes.placements` 将视图挂到输入框或侧边栏装饰、工作台顶部/底部面板，以及用户选择的思考等级控件。内容仍在隔离视图运行；宿主提供锚点几何、允许的控件值与生命周期。清单和调用示例见 [插件协议](../service/resources/skills/plugin-creator/references/protocol.md)。API 1 插件继续可用。

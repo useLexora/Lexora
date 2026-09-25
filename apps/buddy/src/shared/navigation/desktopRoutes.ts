@@ -1,6 +1,6 @@
-import type { RouteLocationRaw } from 'vue-router'
+import type { RouteLocationNormalizedLoaded, RouteLocationRaw } from 'vue-router'
+import type { DesktopPageDefinition } from './desktopPages'
 
-export type DesktopView = 'extension-page' | 'extensions' | 'automations' | 'settings' | 'tasks'
 export type DesktopAutomationSection = 'history' | 'plans'
 export type DesktopSettingsCategory = 'runtime' | 'shortcuts' | 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'extensions' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
 
@@ -87,7 +87,8 @@ export const desktopRouteLocations = {
 declare module 'vue-router' {
   interface RouteMeta {
     automationSection?: DesktopAutomationSection
-    desktopView?: DesktopView
+    desktopPageDefinition?: DesktopPageDefinition
+    desktopPage?: string | ((route: RouteLocationNormalizedLoaded) => string)
     settingsCategory?: DesktopSettingsCategory
   }
 }

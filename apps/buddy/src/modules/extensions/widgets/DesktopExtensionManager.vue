@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { ExtensionReview, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
-import { Add20Regular, ChevronDown16Regular, MoreHorizontal20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NDropdown, NEmpty, NModal, useDialog } from 'naive-ui'
-import { computed, onScopeDispose, shallowRef } from 'vue'
+import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
+import { NAlert, NButton, NDropdown, NEmpty, NModal, useDialog, useMessage } from 'naive-ui'
+import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import { useExtensionContext } from '../extensionContext'
 import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionWorkbench from '../layouts/DesktopExtensionWorkbench.vue'
@@ -15,32 +16,45 @@ import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 
-const { state, language } = useExtensionContext()
+const { state, language, workbench, startCreation } = useExtensionContext()
+const { controller } = useWorkbench()
 const { installed } = state
 const labels = computed(() => extensionLabels(language.value))
 const section = shallowRef<'marketplace' | 'installed'>('installed')
 const toolbarActions = computed(() => [{ key: 'history', label: language.value === 'en-US' ? 'Installation log' : '安装记录', props: { 'role': 'menuitem', 'data-testid': 'extension-installation-history' } }])
-const installActions = computed(() => [{ key: 'development', label: labels.value.development, props: { 'role': 'menuitem', 'data-testid': 'extension-development' } }])
-const installMenuOpen = shallowRef(false)
+const acquisitionActions = computed(() => [
+  { key: 'package', label: labels.value.install, props: { 'role': 'menuitem', 'data-testid': 'extension-install' } },
+  { key: 'development', label: labels.value.development, props: { 'role': 'menuitem', 'data-testid': 'extension-development' } },
+])
+const acquisitionMenuOpen = shallowRef(false)
 const busy = shallowRef(false)
-const error = shallowRef('')
 const review = shallowRef<ExtensionReview | null>(null)
 const diagnostics = shallowRef<string | null>(null)
 const installationLog = shallowRef(false)
 const dialog = useDialog()
+const message = useMessage()
 const router = useRouter()
 const selected = computed(() => installed.value.find(item => item.manifest.id === diagnostics.value))
+function showError(code: string) {
+  message.error(`${labels.value.installFailed}: ${code}`)
+}
+watch(state.error, (error) => {
+  if (error)
+    showError(error)
+}, { immediate: true })
 async function run(action: () => Promise<unknown>) {
   if (busy.value)
     return
   busy.value = true
-  error.value = ''
   try {
     await action()
     await state.refresh()
   }
   catch (reason) {
-    error.value = extensionErrorCode(reason)
+    if (reason instanceof Error && reason.message === 'SKILL_UNAVAILABLE')
+      message.error(labels.value.creatorUnavailable)
+    else
+      showError(extensionErrorCode(reason))
   }
   finally {
     busy.value = false
@@ -50,6 +64,9 @@ function select(development = false) {
   void run(async () => {
     review.value = await state.api.selectPackage(development)
   })
+}
+function create() {
+  void run(() => startCreation(labels.value.creationPrompt))
 }
 function cancel() {
   const current = review.value
@@ -83,25 +100,22 @@ onScopeDispose(cancel)
           </template>
         </NButton>
       </NDropdown>
-      <div class="extension-manager__install-split">
-        <NButton class="extension-manager__install-button" type="primary" size="small" :disabled="busy" data-testid="extension-install" @click="select()">
+      <div class="extension-manager__acquisition-split">
+        <NButton class="extension-manager__create-button" type="primary" size="small" :disabled="busy" data-testid="extension-create" @click="create">
           <template #icon>
-            <DesktopIcon :component="Add20Regular" :size="16" />
+            <DesktopIcon :component="Wand20Regular" :size="16" />
           </template>
-          {{ labels.install }}
+          {{ labels.create }}
         </NButton>
-        <NDropdown v-model:show="installMenuOpen" trigger="click" placement="bottom-end" :options="installActions" :disabled="busy" @select="select(true)">
-          <NButton class="extension-manager__install-arrow" type="primary" size="small" :disabled="busy" :aria-label="language === 'en-US' ? 'More installation options' : '更多安装方式'" aria-haspopup="menu" :aria-expanded="installMenuOpen" data-testid="extension-install-options">
+        <NDropdown v-model:show="acquisitionMenuOpen" trigger="click" placement="bottom-end" :options="acquisitionActions" :disabled="busy" @select="key => select(key === 'development')">
+          <NButton class="extension-manager__acquisition-arrow" type="primary" size="small" :disabled="busy" :aria-label="labels.acquisitionOptions" aria-haspopup="menu" :aria-expanded="acquisitionMenuOpen" data-testid="extension-install-options">
             <template #icon>
-              <DesktopIcon :component="ChevronDown16Regular" :size="16" class="extension-manager__install-chevron" :class="{ 'is-open': installMenuOpen }" />
+              <DesktopIcon :component="ChevronDown16Regular" :size="16" class="extension-manager__acquisition-chevron" :class="{ 'is-open': acquisitionMenuOpen }" />
             </template>
           </NButton>
         </NDropdown>
       </div>
     </template>
-    <NAlert v-if="error || state.error.value" type="error" :title="labels.installFailed">
-      <code>{{ error || state.error.value }}</code>
-    </NAlert>
     <NAlert v-if="state.installations.value.some(job => job.status === 'running')" type="info">
       {{ language === 'en-US' ? 'Installing plugin. You can continue using Lexora.' : '正在安装插件，你可以继续使用 Lexora。' }}
       <NButton text @click="installationLog = true">
@@ -109,12 +123,12 @@ onScopeDispose(cancel)
       </NButton>
     </NAlert>
     <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { review = await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version) })" />
-    <NEmpty v-else-if="!installed.length && !error && !state.error.value" class="extension-manager__empty">
+    <NEmpty v-else-if="!installed.length && !state.error.value" class="extension-manager__empty">
       <template #default>
         <strong>{{ labels.empty }}</strong>
         <p>{{ labels.emptyDescription }}</p>
-        <NButton type="primary" :disabled="busy" @click="select()">
-          {{ labels.install }}
+        <NButton type="primary" :disabled="busy" @click="create">
+          {{ labels.create }}
         </NButton>
       </template>
     </NEmpty>
@@ -123,6 +137,7 @@ onScopeDispose(cancel)
         v-for="item in installed"
         :key="item.manifest.id"
         :item="item"
+        :context="workbench.values"
         :language="language"
         :busy="busy"
         @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled))"
@@ -130,6 +145,8 @@ onScopeDispose(cancel)
         @diagnostics="diagnostics = item.manifest.id"
         @remove="remove(item)"
         @open="router.push(desktopRouteLocations.extensionPage(item.manifest.id))"
+        @command="id => run(() => controller.registry.execute(id, controller.context))"
+        @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
       />
     </div>
   </DesktopExtensionWorkbench>
@@ -158,12 +175,12 @@ onScopeDispose(cancel)
 
 <style scoped lang="scss">
 .extension-manager__more { width: 28px; height: 28px; padding: 0; }
-.extension-manager__install-split { display: inline-flex; align-items: stretch; }
-.extension-manager__install-button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.extension-manager__install-arrow { width: 28px; margin-left: 1px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.extension-manager__install-chevron { transition: transform 140ms ease; }
-.extension-manager__install-chevron.is-open { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .extension-manager__install-chevron { transition: none; } }
+.extension-manager__acquisition-split { display: inline-flex; align-items: stretch; }
+.extension-manager__create-button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.extension-manager__acquisition-arrow { width: 28px; margin-left: 1px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.extension-manager__acquisition-chevron { transition: transform 140ms ease; }
+.extension-manager__acquisition-chevron.is-open { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .extension-manager__acquisition-chevron { transition: none; } }
 .extension-manager__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); align-items: stretch; gap: 12px; }
 .extension-manager__empty {
   min-height: 360px;

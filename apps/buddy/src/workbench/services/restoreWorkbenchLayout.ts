@@ -1,5 +1,6 @@
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type { WorkbenchLayout, WorkbenchNode, WorkbenchView } from '../common/workbench'
+import { workbenchPresentationSchema } from '@buddy-shared/workbench/workbenchUi'
 import { createLayout, panes, resourceKey } from '../common/workbench'
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -25,10 +26,17 @@ export function restoreWorkbenchLayout(value: unknown): WorkbenchLayout {
     }
     if (legacy && ['task-index', 'explorer', 'settings', 'automations', 'output'].includes(view.resource.scheme))
       continue
-    const location = legacy ? ['task', 'draft'].includes(view.resource.scheme) ? 'main' : 'context' : view.location
-    if (location !== 'main' && location !== 'context')
+    let location = legacy ? ['task', 'draft'].includes(view.resource.scheme) ? 'main' : 'context' : view.location
+    if (['workbench.top', 'workbench.bottom', 'workbench.floating'].includes(String(location)))
+      location = 'mount'
+    if (!['main', 'context', 'mount'].includes(String(location)))
       continue
     views[id] = { ...structuredClone(view), location } as unknown as WorkbenchView
+    const presentation = workbenchPresentationSchema.safeParse(view.presentation)
+    if (presentation.success)
+      views[id]!.presentation = presentation.data
+    else
+      delete views[id]!.presentation
   }
   const seenNodes = new Set<string>()
   const seenResources = new Set<string>()
@@ -65,5 +73,5 @@ export function restoreWorkbenchLayout(value: unknown): WorkbenchLayout {
   const auxiliary = !legacy && record(value.auxiliary) ? structuredClone(value.auxiliary) as Record<string, JsonValue> : {}
   if (legacyResources.length)
     auxiliary.legacyResources = legacyResources
-  return { version: 2, root, views: Object.fromEntries(Object.entries(views).filter(([id, view]) => retained.has(id) || view.location === 'context')), activePane, auxiliary }
+  return { version: 2, root, views: Object.fromEntries(Object.entries(views).filter(([id, view]) => retained.has(id) || view.location !== 'main')), activePane, auxiliary }
 }

@@ -1,14 +1,18 @@
 import type { ShortcutScope } from '@buddy-shared/shortcuts/keybinding'
+import type { WorkbenchCondition } from '@buddy-shared/workbench/workbenchContext'
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
+import type { WorkbenchMountTarget, WorkbenchPresentation } from '@buddy-shared/workbench/workbenchUi'
 
 export interface ResourceRef { scheme: string, id: string, data: Record<string, JsonValue> }
-export type ViewLocation = 'main' | 'context'
+export type ViewLocation = 'main' | 'context' | 'mount'
 export type SplitDirection = 'left' | 'right' | 'up' | 'down'
 export type DropPosition = SplitDirection | 'center'
 export interface WorkbenchView {
   id: string
   type: string
   location: ViewLocation
+  placement?: string
+  presentation?: WorkbenchPresentation
   resource: ResourceRef
   title: string
   state: Record<string, JsonValue>
@@ -31,14 +35,23 @@ export interface WorkbenchLayout {
   auxiliary: Record<string, JsonValue>
 }
 export interface ViewDescriptor {
-  factory?: unknown
+  when?: WorkbenchCondition
+  renderer: string
   id: string
   owner: string
   label: string
-  location?: ViewLocation
+  locations: readonly [ViewLocation, ...ViewLocation[]]
   supports: (resource: ResourceRef) => boolean
   priority?: number
   multiple: boolean
+}
+export interface ViewPlacement {
+  when?: WorkbenchCondition
+  id: string
+  viewType: string
+  location: 'mount'
+  target: WorkbenchMountTarget
+  presentation: WorkbenchPresentation
 }
 export interface CommandContext {
   view: WorkbenchView | null

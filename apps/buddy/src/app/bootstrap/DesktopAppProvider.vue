@@ -4,11 +4,11 @@ import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserG
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
 import { useMessage } from 'naive-ui'
 import { computed, nextTick, onScopeDispose, provide, toRef, useTemplateRef, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
 import { useExtensionState, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
-import { DesktopExtensionFrameHost, DesktopExtensionOverlays, DesktopExtensionReviewHost } from '@/modules/extensions/ui'
+import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionOverlays, DesktopExtensionReviewHost } from '@/modules/extensions/ui'
 import { useProvideSettingsContext } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
@@ -16,7 +16,11 @@ import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
+import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
+import WorkbenchSurfaceHost from '@/workbench/browser/surfaces/WorkbenchSurfaceHost.vue'
+import { useDesktopPages } from '../router/useDesktopPages'
 import { useDesktopShellState } from '../shell/useDesktopShellState'
 import { desktopWorkbenchKey } from '../workbench/desktopWorkbenchContext'
 import { useDesktopKeybindings } from '../workbench/useDesktopKeybindings'
@@ -36,7 +40,6 @@ defineSlots<{ default: (props: { shell: DesktopShellBindings }) => unknown }>()
 
 const api = requireDesktopApi()
 const router = useRouter()
-const route = useRoute()
 const message = useMessage()
 const appState = useDesktopAppState({ api })
 const { stores } = appState
@@ -51,11 +54,20 @@ const taskIndex = useTaskIndex({
 const workbench = useDesktopWorkbench({ api, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
 provide(desktopWorkbenchKey, workbench)
 const extensions = useExtensionState(api.extensions)
-const extensionViews = useExtensionViews(api.extensions, extensions.installed)
-useProvideExtensionContext({ state: extensions, views: extensionViews, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), focusView: (id) => {
+const pages = useDesktopPages(router, extensions.installed, stores.applicationSettings.language)
+const extensionViews = useExtensionViews(api.extensions, extensions.installed, computed(() => pages.context.value.values))
+watch(() => pages.context.value.values, (values, _, cleanup) => {
+  const leases = Object.entries(values).map(([key, value]) => workbench.controller.contextKeys.set(key, value))
+  cleanup(() => leases.forEach(dispose => dispose()))
+  workbench.controller.changed()
+}, { immediate: true, flush: 'sync' })
+const anchors = new SemanticAnchorRegistry()
+onScopeDispose(() => anchors.dispose())
+useProvideWorkbenchUi({ anchors, controlRenderer: DesktopExtensionControl })
+const controls = useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ready: () => workbench.initialized })
+useProvideExtensionContext({ state: extensions, views: extensionViews, anchors, controls, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), focusView: (id) => {
   workbench.controller.focus(id)
 } })
-useExtensionContributions(workbench.controller, workbench.persistence, extensions.installed, api.extensions, id => extensionViews.surfaces.get(id)?.session?.generation ?? null)
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))
 const selectedTask = workbench.activeTask
 const resources = useTaskResourcePanel({
@@ -68,7 +80,7 @@ const resources = useTaskResourcePanel({
   activeSpace: computed(() => selectedTask.value?.session.activeSpace.value ?? null),
   spaces: taskIndex.index.spaces,
   mode: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelMode ?? 'task'),
-  taskVisible: computed(() => route.meta.desktopView === 'tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
+  taskVisible: computed(() => pages.current.value === 'lexora.tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
   control: api.contextPanel,
   browser: api.browser,
   closeView: id => workbench.controller.close(id),
@@ -124,7 +136,7 @@ const lifecycle = useDesktopLifecycle({
   taskIndex,
   prepareSurface: async () => {
     await router.isReady()
-    await extensions.refresh()
+    void extensions.refresh()
     await workbench.initialize()
   },
   flushSurface: workbench.flush,
@@ -162,7 +174,7 @@ onScopeDispose(workbench.controller.subscribe(() => void nextTick(() => browserG
 const toggleAppSidebar = () => void shell.setAppSidebarCollapsed(!shell.appSidebarCollapsed.value)
 
 const shellBindings: DesktopShellBindings = {
-  extensionNavigation: extensions.navigation,
+  pages,
   shortcuts,
   contextPanelGlobal: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelGlobal ?? false),
   workbench,
@@ -244,8 +256,10 @@ watch(() => stores.applicationSettings.config.value?.desktop.theme, (theme) => {
 </script>
 
 <template>
-  <DesktopBrowserGuestHost ref="browserGuestHost" :api="api.browser" />
-  <DesktopExtensionFrameHost />
+  <WorkbenchSurfaceHost v-slot="{ layout }">
+    <DesktopBrowserGuestHost ref="browserGuestHost" :api="api.browser" :layout="layout" />
+    <DesktopExtensionFrameHost :layout="layout" />
+  </WorkbenchSurfaceHost>
   <DesktopExtensionOverlays />
   <DesktopExtensionReviewHost />
   <slot :shell="shellBindings" />

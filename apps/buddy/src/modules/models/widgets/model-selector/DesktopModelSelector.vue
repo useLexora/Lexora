@@ -19,6 +19,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopModelPicker from '@/modules/models/widgets/model-selector/DesktopModelPicker.vue'
 import DesktopReasoningMeter from '@/modules/models/widgets/model-selector/DesktopReasoningMeter.vue'
 import DesktopReasoningPicker from '@/modules/models/widgets/model-selector/DesktopReasoningPicker.vue'
+import WorkbenchControl from '@/shared/ui/contributions/WorkbenchControl.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import { useModelSelector } from './useModelSelector'
@@ -96,6 +97,11 @@ const {
   updateModel: value => emit('updateModel', value),
   updateServiceTier: value => emit('updateServiceTier', value),
 })
+function selectContributedEffort(value: string) {
+  const option = reasoningLevelOptions.value.find(option => option.value === value)
+  if (option && !props.disabled)
+    selectMeterEffort(option.value)
+}
 const modelTriggerLabel = computed(() => {
   if (!selectedEffortLabel.value)
     return modelLabel.value
@@ -216,22 +222,24 @@ defineExpose({
           </div>
 
           <div v-if="reasoningLevelOptions.length" class="desktop-model-selector__spell">
-            <DesktopReasoningPicker
-              v-if="isEffortUnavailable"
-              :language="language"
-              :options="reasoningLevelOptions"
-              :selected-effort="selectedEffortValue"
-              @select="selectEffort"
-            />
-            <DesktopReasoningMeter
-              v-else
-              :label="t('desktop.chat.effort')"
-              :options="reasoningLevelOptions"
-              :selected-effort="selectedEffortValue"
-              @dragging="updateMeterDragging"
-              @preview="previewMeterEffort"
-              @select="selectMeterEffort"
-            />
+            <WorkbenchControl target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="disabled" @change="selectContributedEffort" @dismiss="close">
+              <DesktopReasoningPicker
+                v-if="isEffortUnavailable"
+                :language="language"
+                :options="reasoningLevelOptions"
+                :selected-effort="selectedEffortValue"
+                @select="selectEffort"
+              />
+              <DesktopReasoningMeter
+                v-else
+                :label="t('desktop.chat.effort')"
+                :options="reasoningLevelOptions"
+                :selected-effort="selectedEffortValue"
+                @dragging="updateMeterDragging"
+                @preview="previewMeterEffort"
+                @select="selectMeterEffort"
+              />
+            </WorkbenchControl>
           </div>
           <div v-else class="desktop-model-selector__no-reasoning">
             {{ t('desktop.chat.noReasoningLevels') }}
@@ -284,13 +292,14 @@ defineExpose({
           </button>
         </section>
 
-        <DesktopReasoningPicker
-          v-if="activePanel === 'advanced' && secondaryPanel === 'reasoning'"
-          :language="language"
-          :options="reasoningLevelOptions"
-          :selected-effort="selectedEffortValue"
-          @select="selectEffort"
-        />
+        <WorkbenchControl v-if="activePanel === 'advanced' && secondaryPanel === 'reasoning'" target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="disabled" @change="selectContributedEffort" @dismiss="close">
+          <DesktopReasoningPicker
+            :language="language"
+            :options="reasoningLevelOptions"
+            :selected-effort="selectedEffortValue"
+            @select="selectEffort"
+          />
+        </WorkbenchControl>
 
         <DesktopModelPicker
           v-else-if="activePanel === 'advanced' && secondaryPanel === 'model'"

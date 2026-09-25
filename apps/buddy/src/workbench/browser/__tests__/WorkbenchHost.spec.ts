@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import type { Component, PropType } from 'vue'
+import type { PropType } from 'vue'
 import type { WorkbenchView } from '../../common/workbench'
 import { AutoScroller, Feedback } from '@dnd-kit/dom'
 import { expect, it, vi } from 'vitest'
-import { createApp, defineComponent, h, nextTick, onUnmounted } from 'vue'
+import { createApp, defineComponent, h, nextTick, onUnmounted, ref } from 'vue'
 import { panes } from '../../common/workbench'
 import { ContributionRegistry } from '../../services/ContributionRegistry'
 import { WorkbenchController } from '../../services/WorkbenchController'
 import { WorkingCopyService } from '../../services/WorkingCopyService'
+import WorkbenchMountPoint from '../mounts/WorkbenchMountPoint.vue'
+import { ViewRendererRegistry } from '../ViewRendererRegistry'
 import { useWorkbench } from '../workbenchContext'
 import { createWorkbenchDragPlugins } from '../workbenchDragPlugins'
 import WorkbenchHost from '../WorkbenchHost.vue'
@@ -35,7 +37,11 @@ it('keeps a contributed view instance alive across splits, moves and missing con
     },
   })
   const registry = new ContributionRegistry()
-  const register = () => registry.register('sample.preview', scope => scope.view({ id: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true, factory: CustomView }))
+  const renderers = new ViewRendererRegistry()
+  const register = () => registry.register('sample.preview', (scope) => {
+    scope.cleanup(renderers.register('sample.preview', CustomView))
+    scope.view({ locations: ['main'], id: 'sample.preview', renderer: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true })
+  })
   const unregister = register()
   const controller = new WorkbenchController(registry)
   const first = (await controller.open({ scheme: 'sample', id: 'one', data: {} }, 'Preview'))!
@@ -52,7 +58,7 @@ it('keeps a contributed view instance alive across splits, moves and missing con
   const app = createApp({
     render: () => h(WorkbenchHost, { controller, copies, language: 'en-US', backupError: false, active: true, keybindings: {}, platform: 'linux' }, {
       default: () => h(Layout),
-      view: ({ view }: { view: WorkbenchView }) => h(registry.views.get(view.type)!.factory as Component, { view }),
+      view: ({ view }: { view: WorkbenchView }) => h(renderers.resolve(registry.views.get(view.type)!.renderer)!, { view }),
     }),
   })
   app.mount(element)
@@ -106,7 +112,7 @@ it('configures workbench drag plugins without AutoScroller to avoid scrolling co
 
 it('hides close action in WorkbenchPaneActions when only a single pane exists', async () => {
   const registry = new ContributionRegistry()
-  registry.register('sample.preview', scope => scope.view({ id: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true }))
+  registry.register('sample.preview', scope => scope.view({ locations: ['main'], id: 'sample.preview', renderer: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true }))
   const controller = new WorkbenchController(registry)
   const first = (await controller.open({ scheme: 'sample', id: 'one', data: {} }, 'Task 1'))!
   const copies = new WorkingCopyService({
@@ -157,5 +163,66 @@ it('hides close action in WorkbenchPaneActions when only a single pane exists', 
     registry.dispose()
     element.remove()
     document.querySelectorAll('.v-binder-follower-container').forEach(el => el.remove())
+  }
+})
+
+it('preserves independent plugin content when changing mounts or removing the target', async () => {
+  let created = 0
+  let disposed = 0
+  const CustomView = defineComponent({ setup() {
+    const identity = ++created
+    onUnmounted(() => disposed++)
+    return () => h('input', { 'data-instance': identity })
+  } })
+  const registry = new ContributionRegistry()
+  for (const id of ['first', 'second']) {
+    registry.register(id, (scope) => {
+      scope.view({ id, renderer: id, label: id, locations: ['mount'], supports: () => true, multiple: true })
+      scope.placement({ id, viewType: id, location: 'mount', target: 'workbench', presentation: { position: 'absolute', left: 40, top: 60, width: 300, height: 150 } })
+    })
+  }
+  const controller = new WorkbenchController(registry)
+  const first = (await controller.open({ scheme: 'sample', id: 'first', data: {} }, 'First', { viewType: 'first', location: 'mount', placement: 'first' }))!
+  const second = (await controller.open({ scheme: 'sample', id: 'second', data: {} }, 'Second', { viewType: 'second', location: 'mount', placement: 'second' }))!
+  const copies = new WorkingCopyService({ read: async () => ({ text: '', etag: '' }), save: async () => {
+    throw new Error('unused')
+  } })
+  const sidebar = ref(true)
+  const element = document.createElement('div')
+  document.body.append(element)
+  const app = createApp({ render: () => h(WorkbenchHost, { controller, copies, language: 'en-US', backupError: false, active: true, keybindings: {}, platform: 'linux' }, {
+    default: () => [h(WorkbenchMountPoint, { target: 'workbench' }), sidebar.value ? h(WorkbenchMountPoint, { target: 'app.sidebar' }) : null],
+    view: () => h(CustomView),
+  }) })
+  app.mount(element)
+  try {
+    await nextTick()
+    const original = element.querySelector<HTMLInputElement>('[data-instance="1"]')!
+    original.value = 'plugin-owned state'
+    const surface = (id: string) => element.querySelector<HTMLElement>(`[data-mount-view="${id}"]`)!
+    expect(surface(first).style.top).toBe('60px')
+    expect(surface(second).style.top).toBe('60px')
+    controller.updateView(first, { presentation: { target: 'app.sidebar', width: 48, height: 48 } })
+    await nextTick()
+    expect(original.closest('[data-mount-point]')?.getAttribute('data-mount-point')).toBe('app.sidebar')
+    expect(surface(first).style.width).toBe('48px')
+    expect(surface(second).style.width).toBe('300px')
+    sidebar.value = false
+    await nextTick()
+    expect(original.closest('[hidden]')).not.toBeNull()
+    sidebar.value = true
+    await nextTick()
+    expect(element.querySelector('[data-instance="1"]')).toBe(original)
+    expect(original.value).toBe('plugin-owned state')
+    expect(created).toBe(2)
+    expect(disposed).toBe(0)
+    await controller.close(first)
+    await nextTick()
+    expect(disposed).toBe(1)
+  }
+  finally {
+    app.unmount()
+    registry.dispose()
+    element.remove()
   }
 })

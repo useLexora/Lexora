@@ -8,6 +8,7 @@ import { computed, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { createChatComposerContentFromText, findChatComposerTrigger, getChatComposerResourceIds, serializeChatComposerContent, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
 import { ChatComposerDocument, ChatComposerPromptDirective, ChatComposerResourceClipboard, ChatComposerResourceReference, moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { resolveFileIcon } from '@/shared/ui/file-icon'
 import { getChatImageLabels } from '../../model/attachments/chatAttachmentView'
 
@@ -222,6 +223,14 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
       currentEditor.state.doc.textBetween(0, from, '\n', '\n'),
     ))
   }
+
+  useWorkbenchAnchor('composer.input', () => editor.value && !editor.value.isDestroyed ? editor.value.view.dom : null, () => {
+    const current = editor.value
+    if (!current || current.isDestroyed)
+      return null
+    const position = current.view.coordsAtPos(current.state.selection.head)
+    return new DOMRect(position.left, position.top, position.right - position.left, position.bottom - position.top)
+  })
 
   return { contentJSON, editor, imageLabels, serializedContent }
 }

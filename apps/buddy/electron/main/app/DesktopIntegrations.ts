@@ -81,6 +81,10 @@ export class DesktopIntegrations {
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
     this.#subscriptions.push(extensions.dispose)
+    runtime.inspectExtension = extensions.inspect
+    this.#subscriptions.push(() => {
+      runtime.inspectExtension = null
+    })
     this.#subscriptions.push(registerWorkbenchIpc(new WorkbenchStateStore(paths.buddyHome), () => windows.window))
     this.#subscriptions.push(registerContextPanelIpc(runtime.contextPanel, () => windows.window))
     this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window, this.#environment.events))

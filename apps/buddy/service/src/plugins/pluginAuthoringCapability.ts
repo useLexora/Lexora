@@ -9,10 +9,12 @@ import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { readExtensionDirectory } from '../../../platform/extensions/extensionFiles'
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
-import { EXTENSION_BUILD_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema } from '../../../shared/extensions/extensionAuthoring'
+import { EXTENSION_BUILD_RPC, EXTENSION_INSPECT_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 
 const name = 'lexora_plugin_build'
+const inspectName = 'lexora_plugin_inspect'
+const inspectParameters = Type.Object({ id: Type.String({ maxLength: 120, pattern: '^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$', description: 'Plugin ID to inspect. This only reads host status; it does not start or install the plugin.' }) }, { additionalProperties: false })
 const parameters = Type.Object({
   source: Type.String({ minLength: 1, maxLength: 4096, description: 'Plugin source directory containing extension.json, relative to the workspace or absolute.' }),
   output: Type.String({ minLength: 1, maxLength: 4096, description: 'New .lexora-extension file outside the source directory. Existing files are never overwritten.' }),
@@ -22,16 +24,32 @@ const parameters = Type.Object({
 export function createPluginAuthoringCapability(context: BuddyCapabilityContext, peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>): BuddyCapability {
   return {
     classify(event) {
+      if (event.toolName === inspectName)
+        return Check(inspectParameters, event.input) ? { access: 'read', paths: [] } : { blocked: true, reason: 'VALIDATION_FAILED' }
       if (event.toolName !== name)
         return null
       if (!Check(parameters, event.input))
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: 'write', paths: [{ path: event.input.source, mode: 'existing' }, { path: event.input.output, mode: 'create' }] }
     },
-    disclosure: { group: 'plugins', keywords: 'plugin extension build create 插件 创建 编译 校验 安装', toolNames: [name] },
+    disclosure: { group: 'plugins', keywords: 'plugin extension build create inspect 插件 创建 编译 校验 安装 诊断', toolNames: [name, inspectName] },
     extension: {
       name: 'lexora-plugin-authoring',
       factory(pi) {
+        pi.registerTool(defineTool({
+          name: inspectName,
+          label: 'Inspect plugin',
+          parameters: inspectParameters,
+          description: 'Read a Lexora plugin installation, pending update, runtime views, errors and available entry commands from the actual desktop host. Does not install, activate, execute commands, read private plugin data or prove visual and media behavior.',
+          async execute(_toolCallId, input, signal) {
+            try {
+              const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
+              const status = extensionInspectionSchema.parse(await peer.request(EXTENSION_INSPECT_RPC, input, 10000, abort))
+              return response({ ok: true, ...status })
+            }
+            catch { return response({ ok: false, code: 'EXTENSION_INSPECTION_FAILED' }) }
+          },
+        }))
         pi.registerTool(defineTool({
           name,
           label: 'Build plugin',
@@ -74,7 +92,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
               finally { await handle.close() }
               if (input.review)
                 peer.notify(EXTENSION_REVIEW_REQUEST, { path: output.canonicalPath })
-              return response({ ok: true, id: result.id, version: result.version, packagePath: output.canonicalPath, diagnostics, reviewRequested: input.review === true, installed: false, runtimeTested: false })
+              return response({ ok: true, id: result.id, version: result.version, packagePath: output.canonicalPath, diagnostics, reviewRequested: input.review === true, installation: input.review ? 'review_requested' : 'not_requested', runtimeTested: false })
             }
             catch (error) {
               const code = (error as { code?: string }).code ?? (error instanceof Error ? error.message : '')
@@ -83,7 +101,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.on('tool_result', (event) => {
-          if (event.toolName === name && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
+          if ([name, inspectName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
             return { isError: true }
         })
       },

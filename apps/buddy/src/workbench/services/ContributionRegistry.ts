@@ -1,5 +1,5 @@
 import type { Cleanup } from '@buddy-shared/lifecycle/DisposableScope'
-import type { CommandContext, ResourceRef, ViewDescriptor, WorkbenchCommand } from '../common/workbench'
+import type { CommandContext, ResourceRef, ViewDescriptor, ViewPlacement, WorkbenchCommand } from '../common/workbench'
 import { DisposableScope } from '@buddy-shared/lifecycle/DisposableScope'
 
 export interface WorkbenchConfiguration {
@@ -15,6 +15,7 @@ export interface WorkbenchTheme {
 
 export class ContributionRegistry {
   readonly views = new Map<string, ViewDescriptor>()
+  readonly placements = new Map<string, ViewPlacement>()
   readonly commands = new Map<string, WorkbenchCommand>()
   readonly configurations = new Map<string, WorkbenchConfiguration>()
   readonly themes = new Map<string, WorkbenchTheme>()
@@ -28,6 +29,7 @@ export class ContributionRegistry {
 
   register(owner: string, activate: (scope: {
     view: (descriptor: Omit<ViewDescriptor, 'owner'>) => void
+    placement: (placement: ViewPlacement) => void
     command: (command: WorkbenchCommand) => void
     configuration: (configuration: WorkbenchConfiguration) => void
     theme: (theme: WorkbenchTheme) => void
@@ -37,19 +39,23 @@ export class ContributionRegistry {
     if (this.#owners.has(owner))
       throw new Error(`Contribution already registered: ${owner}`)
     const scope = new DisposableScope()
+    const staged = new Map<Map<string, unknown>, Map<string, unknown>>()
     const add = <T>(map: Map<string, T>, id: string, value: T) => {
-      if (map.has(id))
+      const entries = staged.get(map) ?? new Map<string, unknown>()
+      staged.set(map, entries)
+      if (map.has(id) || entries.has(id))
         throw new Error(`Contribution ID conflict: ${id}`)
-      map.set(id, value)
+      entries.set(id, value)
       scope.add(() => {
-        map.delete(id)
-        this.#notify()
+        if (map.get(id) === value)
+          map.delete(id)
       })
     }
     this.#owners.set(owner, scope)
     try {
       activate({
         view: descriptor => add(this.views, descriptor.id, { ...descriptor, owner }),
+        placement: placement => add(this.placements, placement.id, placement),
         command: command => add(this.commands, command.id, command),
         configuration: configuration => add(this.configurations, configuration.id, configuration),
         theme: theme => add(this.themes, theme.id, theme),
@@ -62,12 +68,20 @@ export class ContributionRegistry {
       scope.dispose()
       throw error
     }
+    for (const [map, entries] of staged) {
+      for (const [id, value] of entries) map.set(id, value)
+    }
     this.#notify()
     return () => {
       if (this.#owners.get(owner) !== scope)
         return
       this.#owners.delete(owner)
-      scope.dispose()
+      try {
+        scope.dispose()
+      }
+      finally {
+        this.#notify()
+      }
     }
   }
 

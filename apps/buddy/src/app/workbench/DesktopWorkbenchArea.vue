@@ -6,7 +6,8 @@ import { computed, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import { DesktopTaskIndexView, DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
-import DesktopWorkbenchLayout from '@/shared/ui/workbench-layout/DesktopWorkbenchLayout.vue'
+import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
+import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import WorkbenchLayoutNode from '@/workbench/browser/WorkbenchLayoutNode.vue'
 import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
@@ -44,9 +45,11 @@ function focusContext() {
 </script>
 
 <template>
-  <DesktopWorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
+  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
     <template v-if="tasksVisible" #sidebar>
-      <DesktopTaskIndexView :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTask.value?.session.activeTaskId.value ?? null" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />
+      <WorkbenchMountPoint target="workbench.sidebar">
+        <DesktopTaskIndexView :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTask.value?.session.activeTaskId.value ?? null" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />
+      </WorkbenchMountPoint>
     </template>
     <div v-show="tasksVisible" class="desktop-workbench-area__tasks">
       <WorkbenchLayoutNode :node="layout.root" />
@@ -70,7 +73,7 @@ function focusContext() {
         </DesktopTaskResourcePanel>
       </div>
     </template>
-  </DesktopWorkbenchLayout>
+  </WorkbenchLayout>
 </template>
 
 <style scoped>

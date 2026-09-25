@@ -38,6 +38,7 @@ bridge.subscribe(async ({ id, method, params }) => {
           return disposable(() => commands.delete(id))
         } },
         views: { open: (type, options = {}) => request('views.open', { type, resource: options.resource ?? null, state: options.state ?? {} }) },
+        placements: { show: id => request('placements.show', { id }), hide: id => request('placements.hide', { id }) },
         resources: { readText: resource => request('resources.readText', { id: resource.id }) },
         storage: { get: () => request('storage.get'), set: value => request('storage.set', { value, version: manifest.dataVersion }) },
         network: { get: url => request('network.get', { url }) },

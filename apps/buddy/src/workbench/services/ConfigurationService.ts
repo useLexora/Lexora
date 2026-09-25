@@ -26,6 +26,8 @@ export class ConfigurationService {
 
   restore(values: Record<string, boolean | number | string>): void {
     this.#values = { ...values }
+    for (const listener of this.#listeners)
+      listener()
   }
 
   snapshot(): Record<string, boolean | number | string> {

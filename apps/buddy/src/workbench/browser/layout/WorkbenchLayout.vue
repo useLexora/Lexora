@@ -2,8 +2,9 @@
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed, nextTick, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { useDesktopWorkbenchResize } from './useDesktopWorkbenchResize'
+import { useWorkbenchPanelResize } from './useWorkbenchPanelResize'
 
 const props = withDefaults(defineProps<{
   language: BuddyLocale
@@ -28,6 +29,7 @@ const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const context = useTemplateRef<HTMLElement>('context')
 const sidebar = useTemplateRef<HTMLElement>('sidebar')
+useWorkbenchAnchor('workbench.sidebar', () => sidebar.value)
 function sidebarVisible() {
   const collapsible = props.sidebarCollapsible
   const collapsed = sidebarCollapsed.value
@@ -48,7 +50,7 @@ const {
   layoutStyle,
   sidebarRange,
   sidebarWidth,
-} = useDesktopWorkbenchResize({
+} = useWorkbenchPanelResize({
   container,
   context,
   contextVisible: () => props.contextVisible,

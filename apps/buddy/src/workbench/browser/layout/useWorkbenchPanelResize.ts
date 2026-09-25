@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import type { DesktopWorkbenchResizablePanel } from './desktopWorkbenchLayout'
+import type { DesktopWorkbenchResizablePanel } from '../../common/workbenchPanelLayout'
 import {
   computed,
   nextTick,
@@ -14,7 +14,7 @@ import {
   DESKTOP_WORKBENCH_WIDTH_LIMITS,
   resolveDesktopWorkbenchPanelRange,
   resolveDesktopWorkbenchWidths,
-} from './desktopWorkbenchLayout'
+} from '../../common/workbenchPanelLayout'
 
 interface UseDesktopWorkbenchResizeOptions {
   workspaceMinimumWidth?: () => number
@@ -31,7 +31,7 @@ interface UseDesktopWorkbenchResizeOptions {
 const KEYBOARD_RESIZE_STEP = 16
 const KEYBOARD_RESIZE_LARGE_STEP = 48
 
-export function useDesktopWorkbenchResize(options: UseDesktopWorkbenchResizeOptions) {
+export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOptions) {
   const activePanel = shallowRef<DesktopWorkbenchResizablePanel | null>(null)
   const containerWidth = shallowRef(0)
   const preferredContextWidth = shallowRef<number | null>(null)

@@ -2,25 +2,25 @@
 import type { DesktopAppInfo, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
 import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import type { DesktopView } from '@/shared/navigation/desktopRoutes'
-import { Alert20Regular, VehicleShip20Regular } from '@vicons/fluent'
+import type { DesktopNavigationEntry } from '@/shared/navigation/desktopPages'
+import { Alert20Regular } from '@vicons/fluent'
 import { NBadge, NButton, NPopover } from 'naive-ui'
-import { computed, shallowRef } from 'vue'
+import { computed, shallowRef, useTemplateRef } from 'vue'
 import DesktopAccountAvatar from '@/app/shell/DesktopAccountAvatar.vue'
 import DesktopAccountDialog from '@/app/shell/DesktopAccountDialog.vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopNotificationCenter } from '@/modules/notifications/ui'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
+import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import { resolveUserProfile } from './userProfile'
 
 const props = defineProps<{
-  activeExtension: string | null
   appInfo?: DesktopAppInfo | null
   appVersion: string | null
-  extensionNavigation: ReadonlyArray<{ id: string, title: string, iconUrl?: string }>
+  navigation: readonly DesktopNavigationEntry[]
   language: BuddyLocale
-  mode: DesktopView
   notificationItems: ReadonlyArray<LocalNotification>
   notificationLoading: boolean
   notificationUnseenCount: number
@@ -29,14 +29,12 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   markAllNotificationsSeen: []
-  navigateAutomations: []
-  navigateExtensionPage: [id: string]
-  navigateExtensions: []
-  navigateSettings: []
-  navigateTasks: []
+  navigate: [id: string]
   openNotification: [notification: LocalNotification]
   refreshNotifications: []
 }>()
+const sidebar = useTemplateRef<HTMLElement>('sidebar')
+useWorkbenchAnchor('app.sidebar', () => sidebar.value)
 const { t } = useBuddyI18n(() => props.language)
 const versionLabel = computed(() => props.appVersion ? `v${props.appVersion}` : '')
 const showAccountDialog = shallowRef(false)
@@ -58,115 +56,86 @@ function openNotification(notification: LocalNotification) {
 </script>
 
 <template>
-  <aside id="desktop-app-sidebar" class="desktop-app-sidebar">
-    <header class="desktop-app-sidebar__header">
-      <div class="desktop-app-sidebar__identity">
-        <strong>Lexora Buddy</strong>
-        <span>{{ versionLabel }}</span>
-      </div>
-    </header>
+  <aside id="desktop-app-sidebar" ref="sidebar" class="desktop-app-sidebar">
+    <WorkbenchMountPoint target="app.sidebar">
+      <header class="desktop-app-sidebar__header">
+        <div class="desktop-app-sidebar__identity">
+          <strong>Lexora Buddy</strong>
+          <span>{{ versionLabel }}</span>
+        </div>
+      </header>
 
-    <nav class="desktop-app-sidebar__primary">
-      <button
-        class="desktop-app-sidebar__nav-item"
-        :class="{ 'is-active': mode === 'tasks' }"
-        :aria-current="mode === 'tasks' ? 'page' : undefined"
-        type="button"
-        @click="emit('navigateTasks')"
-      >
-        <DesktopIcon name="navigationTask" />
-        <span>{{ t('desktop.navigation.tasks') }}</span>
-      </button>
-      <button
-        class="desktop-app-sidebar__nav-item"
-        :class="{ 'is-active': mode === 'automations' }"
-        :aria-current="mode === 'automations' ? 'page' : undefined"
-        type="button"
-        @click="emit('navigateAutomations')"
-      >
-        <DesktopIcon name="navigationAutomation" />
-        <span>{{ t('desktop.navigation.automations') }}</span>
-      </button>
-      <button v-for="item in extensionNavigation" :key="item.id" class="desktop-app-sidebar__nav-item" :class="{ 'is-active': mode === 'extension-page' && activeExtension === item.id }" :aria-current="mode === 'extension-page' && activeExtension === item.id ? 'page' : undefined" :data-extension-navigation="item.id" type="button" @click="emit('navigateExtensionPage', item.id)">
-        <DesktopPluginIcon :src="item.iconUrl" /><span>{{ item.title }}</span>
-      </button>
-      <button class="desktop-app-sidebar__nav-item" :class="{ 'is-active': mode === 'extensions' }" :aria-current="mode === 'extensions' ? 'page' : undefined" type="button" @click="emit('navigateExtensions')">
-        <DesktopIcon class="desktop-app-sidebar__extension-icon" :component="VehicleShip20Regular" /><span>{{ language === 'en-US' ? 'Plugins' : '插件' }}</span>
-      </button>
-      <button
-        class="desktop-app-sidebar__nav-item"
-        :class="{ 'is-active': mode === 'settings' }"
-        :aria-current="mode === 'settings' ? 'page' : undefined"
-        type="button"
-        @click="emit('navigateSettings')"
-      >
-        <DesktopIcon name="navigationSettings" />
-        <span>{{ t('desktop.navigation.settings') }}</span>
-      </button>
-    </nav>
-
-    <footer class="desktop-app-sidebar__footer">
-      <div class="desktop-app-sidebar__account">
-        <button
-          class="desktop-app-sidebar__profile"
-          type="button"
-          :title="resolvedProfile.userName"
-          @click="showAccountDialog = true"
-        >
-          <DesktopAccountAvatar
-            size="compact"
-            :avatar-url="resolvedProfile.avatarUrl"
-            :name="resolvedProfile.userName"
-            :initials="resolvedProfile.initials"
-          />
-          <strong>{{ resolvedProfile.userName }}</strong>
+      <nav class="desktop-app-sidebar__primary">
+        <button v-for="item in navigation" :key="item.id" class="desktop-app-sidebar__nav-item" :class="{ 'is-active': item.active }" :aria-current="item.active ? 'page' : undefined" :data-extension-navigation="item.extensionId" type="button" @click="emit('navigate', item.id)">
+          <DesktopPluginIcon v-if="item.icon.kind === 'plugin'" :src="item.icon.url" />
+          <DesktopIcon v-else-if="item.icon.kind === 'named'" :name="item.icon.name" />
+          <DesktopIcon v-else class="desktop-app-sidebar__extension-icon" :component="item.icon.component" />
+          <span>{{ item.title }}</span>
         </button>
-        <NPopover
-          class="desktop-notification-popover"
-          content-class="desktop-notification-popover__content"
-          content-style="padding: 0"
-          :show="showNotifications"
-          trigger="click"
-          placement="top-end"
-          to=".buddy-app"
-          :theme-overrides="notificationPopoverThemeOverrides"
-          :width="320"
-          @update:show="updateNotificationVisibility"
-        >
-          <template #trigger>
-            <NBadge
-              :show="notificationUnseenCount > 0"
-              :value="notificationUnseenCount"
-              :max="99"
-              :offset="[-3, 3]"
-              type="info"
-            >
-              <NButton
-                class="buddy-icon-button desktop-app-sidebar__notification-trigger"
-                :class="{ 'is-open': showNotifications }"
-                quaternary
-                :aria-label="t('desktop.notifications.open')"
-                :aria-expanded="showNotifications"
-              >
-                <template #icon>
-                  <DesktopIcon :component="Alert20Regular" />
-                </template>
-              </NButton>
-            </NBadge>
-          </template>
-          <DesktopNotificationCenter
-            v-if="showNotifications"
-            :items="notificationItems"
-            :language="language"
-            :loading="notificationLoading"
-            :unseen-count="notificationUnseenCount"
-            @mark-all-seen="emit('markAllNotificationsSeen')"
-            @open="openNotification"
-          />
-        </NPopover>
-      </div>
-    </footer>
+      </nav>
 
+      <footer class="desktop-app-sidebar__footer">
+        <div class="desktop-app-sidebar__account">
+          <button
+            class="desktop-app-sidebar__profile"
+            type="button"
+            :title="resolvedProfile.userName"
+            @click="showAccountDialog = true"
+          >
+            <DesktopAccountAvatar
+              size="compact"
+              :avatar-url="resolvedProfile.avatarUrl"
+              :name="resolvedProfile.userName"
+              :initials="resolvedProfile.initials"
+            />
+            <strong>{{ resolvedProfile.userName }}</strong>
+          </button>
+          <NPopover
+            class="desktop-notification-popover"
+            content-class="desktop-notification-popover__content"
+            content-style="padding: 0"
+            :show="showNotifications"
+            trigger="click"
+            placement="top-end"
+            to=".buddy-app"
+            :theme-overrides="notificationPopoverThemeOverrides"
+            :width="320"
+            @update:show="updateNotificationVisibility"
+          >
+            <template #trigger>
+              <NBadge
+                :show="notificationUnseenCount > 0"
+                :value="notificationUnseenCount"
+                :max="99"
+                :offset="[-3, 3]"
+                type="info"
+              >
+                <NButton
+                  class="buddy-icon-button desktop-app-sidebar__notification-trigger"
+                  :class="{ 'is-open': showNotifications }"
+                  quaternary
+                  :aria-label="t('desktop.notifications.open')"
+                  :aria-expanded="showNotifications"
+                >
+                  <template #icon>
+                    <DesktopIcon :component="Alert20Regular" />
+                  </template>
+                </NButton>
+              </NBadge>
+            </template>
+            <DesktopNotificationCenter
+              v-if="showNotifications"
+              :items="notificationItems"
+              :language="language"
+              :loading="notificationLoading"
+              :unseen-count="notificationUnseenCount"
+              @mark-all-seen="emit('markAllNotificationsSeen')"
+              @open="openNotification"
+            />
+          </NPopover>
+        </div>
+      </footer>
+    </WorkbenchMountPoint>
     <DesktopAccountDialog
       v-model:show="showAccountDialog"
       :language="language"

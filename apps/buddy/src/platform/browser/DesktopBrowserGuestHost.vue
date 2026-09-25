@@ -4,24 +4,25 @@ import type {
   DesktopBrowserGuestDescriptor,
 } from '@buddy-electron/shared/desktopApi'
 import type { WebviewTag } from 'electron'
+import type { SurfaceLayout, SurfaceLayoutLease } from '@/shared/ui/surfaces/surfaceLayout'
 import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue'
 
 const props = defineProps<{
   api: DesktopBrowserApi
+  layout: SurfaceLayout
 }>()
 
 const hostElement = useTemplateRef<HTMLElement>('hostElement')
 const guests = new Map<string, BrowserGuestEntry>()
 const surfaces = new Map<string, BrowserGuestSurface>()
-let animationFrame: number | null = null
 let mounted = false
 let refreshSequence = 0
-let resizeObserver: ResizeObserver | null = null
 let stopGuestsChanged: (() => void) | null = null
 
 interface BrowserGuestEntry {
   descriptor: DesktopBrowserGuestDescriptor
   element: WebviewTag
+  layout: SurfaceLayoutLease
   onDestroyed: () => void
   onReady: () => void
 }
@@ -34,8 +35,6 @@ interface BrowserGuestSurface {
 onMounted(() => {
   mounted = true
   stopGuestsChanged = props.api.onGuestsChanged(scheduleRefresh)
-  window.addEventListener('resize', scheduleLayout)
-  document.addEventListener('scroll', scheduleLayout, true)
   scheduleRefresh()
 })
 
@@ -44,13 +43,6 @@ onBeforeUnmount(() => {
   refreshSequence += 1
   stopGuestsChanged?.()
   stopGuestsChanged = null
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  window.removeEventListener('resize', scheduleLayout)
-  document.removeEventListener('scroll', scheduleLayout, true)
-  if (animationFrame !== null)
-    cancelAnimationFrame(animationFrame)
-  animationFrame = null
   for (const entry of guests.values())
     removeGuest(entry)
   guests.clear()
@@ -62,11 +54,7 @@ function show(sessionId: string, element: HTMLElement): void {
     scheduleLayout()
     return
   }
-  if (previous)
-    resizeObserver?.unobserve(previous.element)
-  resizeObserver ??= new ResizeObserver(scheduleLayout)
   surfaces.set(sessionId, { sessionId, element })
-  resizeObserver.observe(element)
   scheduleLayout()
 }
 
@@ -74,9 +62,8 @@ function hide(sessionId: string, element?: HTMLElement): void {
   const current = surfaces.get(sessionId)
   if (!current || (element && current.element !== element))
     return
-  resizeObserver?.unobserve(current.element)
   surfaces.delete(sessionId)
-  parkGuest(sessionId)
+  scheduleLayout()
 }
 
 defineExpose({ hide, show, layout: scheduleLayout })
@@ -113,6 +100,7 @@ function createGuest(descriptor: DesktopBrowserGuestDescriptor): void {
   const entry: BrowserGuestEntry = {
     descriptor,
     element,
+    layout: props.layout.attach(element, { anchor: null, visible: false, interactive: true, layer: 'content' }),
     onReady: () => {
       if (guests.get(descriptor.sessionId)?.element !== element)
         return
@@ -143,61 +131,22 @@ function createGuest(descriptor: DesktopBrowserGuestDescriptor): void {
   element.addEventListener('destroyed', entry.onDestroyed)
   element.addEventListener('dom-ready', entry.onReady)
   guests.set(descriptor.sessionId, entry)
-  parkElement(element)
   host.append(element)
 }
 
 function removeGuest(entry: BrowserGuestEntry): void {
+  entry.layout.dispose()
   entry.element.removeEventListener('destroyed', entry.onDestroyed)
   entry.element.removeEventListener('dom-ready', entry.onReady)
   entry.element.remove()
 }
 
-function parkGuest(sessionId: string): void {
-  const entry = guests.get(sessionId)
-  if (entry)
-    parkElement(entry.element)
-}
-
-function parkElement(element: WebviewTag): void {
-  Object.assign(element.style, {
-    height: '1px',
-    left: '-10000px',
-    pointerEvents: 'none',
-    position: 'absolute',
-    top: '0',
-    visibility: 'hidden',
-    width: '1px',
-  })
-}
-
 function scheduleLayout(): void {
-  if (!mounted || animationFrame !== null)
-    return
-  animationFrame = requestAnimationFrame(() => {
-    animationFrame = null
-    updateLayout()
-  })
-}
-
-function updateLayout(): void {
   for (const [sessionId, entry] of guests) {
     const surface = surfaces.get(sessionId)
-    const rect = surface?.element.isConnected ? surface.element.getBoundingClientRect() : null
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      parkElement(entry.element)
-      continue
-    }
-    Object.assign(entry.element.style, {
-      height: `${rect.height}px`,
-      left: `${rect.left}px`,
-      pointerEvents: 'auto',
-      position: 'absolute',
-      top: `${rect.top}px`,
-      visibility: 'visible',
-      width: `${rect.width}px`,
-    })
+    entry.layout.update({ anchor: surface?.element ?? null, visible: !!surface, interactive: true, layer: 'content' })
   }
+  props.layout.invalidate()
 }
 </script>
 
@@ -210,11 +159,5 @@ function updateLayout(): void {
 </template>
 
 <style scoped>
-.desktop-browser-guest-host {
-  position: fixed;
-  z-index: 1;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
+.desktop-browser-guest-host { display: contents; }
 </style>
