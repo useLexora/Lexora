@@ -2,7 +2,7 @@
   "name": "@uselexora/lexora-buddy",
   "productName": "Lexora Buddy",
   "type": "module",
-  "version": "0.8.9",
+  "version": "0.8.10",
   "private": true,
   "packageManager": "pnpm@12.5.1",
   "description": "Sovereign, self-evolved personal desktop AI agent",
