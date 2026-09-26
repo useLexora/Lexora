@@ -17,8 +17,11 @@ export function useWorkbenchResize(controller: WorkbenchController) {
   let end: (() => void) | null = null
 
   function register(id: string, element: HTMLElement, node: () => WorkbenchNode) {
-    nodes.set(id, { element, node })
+    const entry = { element, node }
+    nodes.set(id, entry)
     return () => {
+      if (nodes.get(id) !== entry)
+        return
       if (active.value.includes(id))
         end?.()
       nodes.delete(id)
