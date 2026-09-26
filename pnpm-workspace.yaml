@@ -40,8 +40,8 @@ allowBuilds:
   vue-demi: true
 patchedDependencies:
   '@anthropic-ai/sandbox-runtime@0.0.77': patches/@anthropic-ai__sandbox-runtime@0.0.77.patch
-  '@earendil-works/pi-ai@0.86.1': patches/@earendil-works__pi-ai@0.86.1.patch
-  '@earendil-works/pi-coding-agent@0.86.1': patches/@earendil-works__pi-coding-agent@0.86.1.patch
+  '@earendil-works/pi-ai@0.87.1': patches/@earendil-works__pi-ai@0.87.1.patch
+  '@earendil-works/pi-coding-agent@0.87.1': patches/@earendil-works__pi-coding-agent@0.87.1.patch
 catalog:
   '@types/node': ^25.6.0
   dotenv: ^17.4.2
@@ -52,9 +52,9 @@ catalog:
   typescript: ^6.0.3
   zod: ^4.3.6
 minimumReleaseAgeExclude:
-  - '@earendil-works/chord@0.86.1'
-  - '@earendil-works/pi-agent-core@0.86.1'
-  - '@earendil-works/pi-ai@0.86.1'
-  - '@earendil-works/pi-coding-agent@0.86.1'
-  - '@earendil-works/pi-telemetry@0.86.1'
-  - '@earendil-works/pi-tui@0.86.1'
+  - '@earendil-works/chord@0.87.1'
+  - '@earendil-works/pi-agent-core@0.87.1'
+  - '@earendil-works/pi-ai@0.87.1'
+  - '@earendil-works/pi-coding-agent@0.87.1'
+  - '@earendil-works/pi-telemetry@0.87.1'
+  - '@earendil-works/pi-tui@0.87.1'
