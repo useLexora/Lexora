@@ -54,6 +54,31 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-tool-details')).toBe(details)
   })
 
+  it('collapses the complete process when a turn completes and keeps it visible while running', async () => {
+    const { root, turn } = mountTurn([
+      { id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Reviewing the task' },
+      readTool('one', 'completed'),
+      { id: 'commentary', kind: 'text', messageId: 'commentary', text: 'I have finished checking.' },
+    ])
+    const toggle = root.querySelector<HTMLButtonElement>('.buddy-chat-agent-turn__process-toggle')!
+    const content = root.querySelector<HTMLElement>('.buddy-chat-agent-turn__process-content')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.disabled).toBe(true)
+    expect(content.style.display).not.toBe('none')
+
+    turn.value = { ...turn.value, status: 'completed', completedAt: '2026-09-09T00:00:10Z' }
+    await nextTick()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.disabled).toBe(false)
+    expect(content.style.display).toBe('none')
+
+    toggle.click()
+    await nextTick()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(content.style.display).not.toBe('none')
+    expect(root.textContent).toContain('I have finished checking.')
+  })
+
   it('finishes a mixed group without borrowing progress and avoids duplicate loaders during another call', async () => {
     const first = readTool('one', 'running')
     const second = readTool('two', 'completed')
@@ -181,7 +206,7 @@ describe('activity disclosure', () => {
   it('shows a single finished tool directly and retains its open output when a group forms', async () => {
     const node = readTool('one', 'completed')
     const { root, turn } = mountTurn([node], 'completed')
-    expect(root.querySelectorAll('button[aria-expanded]')).toHaveLength(1)
+    expect(root.querySelectorAll('.buddy-chat-tool__header[aria-expanded]')).toHaveLength(1)
     root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
     await nextTick()
     const tool = root.querySelector('.buddy-chat-tool')
