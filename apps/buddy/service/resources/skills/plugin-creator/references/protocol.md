@@ -10,18 +10,21 @@
 {
   "schemaVersion": 1,
   "format": "source",
-  "id": "local.my-plugin",
+  "id": "<plugin-id>",
   "name": "插件名称",
+  "author": "作者署名",
   "description": "插件完成的用户行为。",
   "version": "1.0.0",
-  "apiVersion": 2,
-  "engines": { "lexora": ">=0.8.7 <1.0.0" },
+  "apiVersion": 3,
+  "engines": { "lexora": ">=0.9.0 <1.0.0" },
   "permissions": {},
   "contributes": {}
 }
 ```
 
-可选字段：`icon`（包内 SVG/PNG/JPEG/WebP，≤64 KiB）、`categories`、`tags`、宿主 `entry`、`dataVersion`。不要添加未定义的字段。命令、视图和挂载声明的 ID 以插件 ID 加 `.` 开头且不重复。文件路径相对包根，不能包含 `..` 或符号链接；512 文件、单文件 4 MiB、合计 16 MiB 上限。
+`<plugin-id>` 是占位符，填写时必须替换为新插件身份工具返回的 ID，或正在维护的源码清单中的既有 ID；后续声明中的占位符同样替换。宿主代码通过 `context.extension.id` 引用当前插件，不复制示例身份。作者署名 `author` 可选，支持 Unicode，最多 80 个用户可见字符，不含换行或控制字符；留空表示未署名。不符合规则时说明原因，给出候选并通过对话确定，不静默截断或替换。作者与显示名可变，ID 和末尾的调用名保持稳定。使用作者字段的包要求 Lexora 0.9.0 或更新版本。
+
+可选字段：`author`、`icon`（包内 SVG/PNG/JPEG/WebP，≤64 KiB）、`categories`、`tags`、宿主 `entry`、`dataVersion`。不要添加未定义的字段。命令、视图和挂载声明的 ID 以插件 ID 加 `.` 开头且不重复。文件路径相对包根，不能包含 `..` 或符号链接；512 文件、单文件 4 MiB、合计 16 MiB 上限。
 
 `contributes` 内的声明结构如下。省略不用的项；每项权限和运行方式见后文，无需查找应用实现或复制某个示例清单。
 
@@ -47,7 +50,7 @@
 
 装饰、替换控件和普通挂载面板的 `container` 默认填满隔离视图，无内边距，支持子元素使用百分比高度。装饰的绘制范围仍受锚点及祖先裁剪约束；页面保持普通文档流，可按内容滚动。
 
-导航入口位于自动化下方，声明 `contributes.navigation: { "title": "插件名称", "view": "local.plugin.settings" }`，引用一个 `resource: "none"` 的视图（API 1 仍需 `location: "page"`）。不需要设置页的效果插件可以没有导航。
+导航入口位于自动化下方，声明 `contributes.navigation: { "title": "插件名称", "view": "<plugin-id>.settings" }`，引用一个 `resource: "none"` 的视图（API 1 仍需 `location: "page"`）。不需要设置页的效果插件可以没有导航。
 
 导航页面、装饰、内容插槽和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
 
@@ -114,7 +117,7 @@
 
 ## 操作菜单
 
-API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操作」。先用 `lexora_plugin_capabilities({kind:"menu"})` 查询目标与输入契约，再声明 `{id,command,target,order?,when?}`。`hidden` 仅隐藏命令面板与管理卡片入口，不隐藏显式声明的菜单。
+API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操作」。先用 `lexora_plugin_capabilities({kind:"menu"})` 查询目标与输入契约，再声明 `{id,command,target,order?,when?}`。`hidden` 隐藏命令面板入口，不隐藏显式声明的菜单。
 
 命令参数中的 `invocation` 包含 `target`、`instanceId`，仅在声明 `selectedContent` 且用户点击对应操作后附带 `content`。文件菜单通过原有 `selectedResource` 权限提供 `resource` 句柄。视图调用自己的命令时 `invocation.target` 为 `view`，只附带该视图的实例标识；命令面板和定时调用的 `invocation` 为空。
 
@@ -162,19 +165,19 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 import type { ExtensionContext } from './lexora'
 
 export function activate(context: ExtensionContext) {
-  context.subscriptions.add(context.commands.register('local.example.read-settings', async () => context.storage.get()))
+  context.subscriptions.add(context.commands.register(`${context.extension.id}.read-settings`, async () => context.storage.get()))
 }
 ```
 
-该命令须出现在 `contributes.commands` 中，例如 `{ "id":"local.example.read-settings", "title":"读取设置", "hidden":true }`。视图通过 `context.commands.execute(command, arguments)` 调用自身命令，返回 JSON。私有数据使用 JSON；更改结构时递增 `dataVersion` 并导出 `migrate(previous, from, to)`。
+该命令须出现在 `contributes.commands` 中，例如 `{ "id":"<plugin-id>.read-settings", "title":"读取设置", "hidden":true }`。视图通过 `context.commands.execute(command, arguments)` 调用自身命令，返回 JSON。私有数据使用 JSON；更改结构时递增 `dataVersion` 并导出 `migrate(previous, from, to)`。
 
 文件工具需要一个可见命令作为打开入口。用户先在文件面板打开文件，再从命令面板执行它；宿主将收到的资源句柄传入视图：
 
 ```ts
-context.subscriptions.add(context.commands.register('local.example.open', async ({ resource }) => {
+context.subscriptions.add(context.commands.register(`${context.extension.id}.open`, async ({ resource }) => {
   if (!resource)
     throw new Error('请先打开一个文件')
-  await context.views.open('local.example.reader', { resource, state: {} })
+  await context.views.open(`${context.extension.id}.reader`, { resource, state: {} })
 }))
 ```
 

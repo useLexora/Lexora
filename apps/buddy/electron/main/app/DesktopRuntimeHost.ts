@@ -166,7 +166,7 @@ export class DesktopRuntimeHost {
             if (!this.inspectExtension)
               throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
             return this.inspectExtension(id)
-          }),
+          }, () => this.#config?.desktop.pluginAuthor ?? ''),
           peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
             const source = contextPanelSourceSchema.parse(params)
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')

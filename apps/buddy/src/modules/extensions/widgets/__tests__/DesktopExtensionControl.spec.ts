@@ -63,7 +63,7 @@ async function setup() {
     setup() {
       provide(workbenchKey, { controller } as WorkbenchContext)
       views = useExtensionViews(api, installed, context)
-      useProvideExtensionContext({ endInteraction: () => {}, views, workbench: shallowRef({ values: context.value, pages: [] }), state: { installed, api } as ExtensionContext['state'], anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, startCreation: async () => {} })
+      useProvideExtensionContext({ endInteraction: () => {}, views, workbench: shallowRef({ values: context.value, pages: [] }), state: { installed, api } as ExtensionContext['state'], anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h('div', [
         h(DesktopExtensionUiSettings, { language: 'en-US' }),
         mounted.value

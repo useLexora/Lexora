@@ -152,6 +152,7 @@ describe('lexoraConfigStore', () => {
       contextPanelGlobal: false,
       keybindings: {},
       backgroundCloseNoticeShown: false,
+      pluginAuthor: '',
       chat: { outlinePosition: 'top-right', welcome: 'writing' },
       taskSidebarPinnedItems: [],
       taskSidebar: {
@@ -354,4 +355,18 @@ describe('lexoraConfigStore', () => {
       code: 'INVALID_CONFIG',
     })
   })
+})
+
+it('persists an optional Unicode plugin signature without changing profile or previous data on invalid input', async () => {
+  const { store, configPath } = await createConfigStore()
+  expect((await store.read()).desktop.pluginAuthor).toBe('')
+  await store.update({ desktop: { pluginAuthor: '山雨海 · Équipe 🎨', profile: { userName: '个人名称' } } })
+  const saved = await readFile(configPath, 'utf8')
+  const reopened = new LexoraConfigStore({ configPath })
+  expect((await reopened.read()).desktop.pluginAuthor).toBe('山雨海 · Équipe 🎨')
+  await expect(store.update({ desktop: { pluginAuthor: '名'.repeat(81) } })).rejects.toThrow()
+  expect(await readFile(configPath, 'utf8')).toBe(saved)
+  await store.update({ desktop: { pluginAuthor: '' } })
+  expect((await reopened.read()).desktop.profile.userName).toBe('个人名称')
+  expect((await reopened.read()).desktop.pluginAuthor).toBe('')
 })

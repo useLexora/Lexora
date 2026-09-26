@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ExtensionCatalogEntry, ExtensionCatalogSnapshot } from '@buddy-shared/extensions/extensionCatalog'
-import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NEllipsis, NEmpty, NInput, NSelect, NSpin, NTag } from 'naive-ui'
 import { gt } from 'semver'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
@@ -20,7 +20,7 @@ let revision = 0
 const categories = computed(() => [...new Set(snapshot.value?.plugins.flatMap(item => item.manifest.categories) ?? [])].map(value => ({ label: value, value })))
 const plugins = computed(() => (snapshot.value?.plugins ?? []).filter((item) => {
   const { manifest } = item
-  const text = [manifest.id, manifest.name, manifest.description, ...manifest.tags].join(' ').toLocaleLowerCase()
+  const text = [manifest.id, manifest.author, manifest.name, manifest.description, ...manifest.tags].join(' ').toLocaleLowerCase()
   return (!category.value || manifest.categories.includes(category.value)) && text.includes(query.value.trim().toLocaleLowerCase())
 }).map((item) => {
   const installed = state.installed.value.find(next => next.manifest.id === item.manifest.id)
@@ -71,7 +71,9 @@ onScopeDispose(() => {
       <div v-else class="extension-catalog__grid">
         <article v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card">
           <header><DesktopPluginIcon :src="item.iconUrl" :size="28" /><h2>{{ item.manifest.name }}</h2><span>{{ item.manifest.version }}</span></header>
-          <small>{{ item.manifest.id }}</small>
+          <NEllipsis class="extension-catalog__author">
+            {{ item.manifest.author || (en ? 'Unsigned' : '未署名') }}
+          </NEllipsis>
           <p>{{ item.manifest.description }}</p>
           <div class="extension-catalog__tags">
             <NTag v-for="tag in item.manifest.tags" :key="tag" size="small" :bordered="false">
@@ -98,7 +100,7 @@ onScopeDispose(() => {
 .extension-catalog__card { display: flex; flex-direction: column; min-width: 0; gap: 10px; padding: 18px; border: 1px solid var(--buddy-border-subtle); border-radius: var(--buddy-radius-micro); }
 .extension-catalog__card header { display: flex; gap: 10px; justify-content: space-between; align-items: center; }
 .extension-catalog__card h2 { flex: 1; min-width: 0; font-size: 14px; color: var(--buddy-text-strong); font-weight: 600; margin: 0; overflow-wrap: anywhere; }
-.extension-catalog__card small, .extension-catalog__card header span { color: var(--buddy-text-secondary); font-size: 11px; }
+.extension-catalog__author, .extension-catalog__card header span { color: var(--buddy-text-secondary); font-size: 11px; }
 .extension-catalog__card p { margin: 0; font-size: 13px; color: var(--buddy-text-secondary); line-height: 1.7; }
 .extension-catalog__tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .extension-catalog__card footer { margin-top: auto; padding-top: 8px; }

@@ -14,6 +14,7 @@ import { describeChatComposerSource, getChatComposerSourceRoot } from './chatCom
 
 const props = withDefaults(defineProps<{
   activeIndex?: number
+  keyboardNavigation?: boolean
   accessibleLabel: string
   emptyLabel: string
   filesOnly?: boolean
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
   deepSearch?: boolean
 }>(), {
   activeIndex: -1,
+  keyboardNavigation: undefined,
   filesOnly: false,
   loading: false,
   deepSearch: false,
@@ -60,7 +62,7 @@ watch(() => [props.activeIndex, props.options], () => {
 const visibleOptions = computed(() => props.options.filter(option => (
   (!props.filesOnly || option.kind === 'file') && (!props.filesOnly || option.source || option.resourceId)
 )))
-const keyboardNavigation = computed(() => props.activeIndex >= 0)
+const keyboardNavigation = computed(() => props.keyboardNavigation ?? props.activeIndex >= 0)
 const selectionLabel = computed(() => t(visibleOptions.value.every(option => option.kind === 'file')
   ? 'desktop.chat.sourcePickerReference'
   : 'desktop.chat.sourcePickerChoose'))
@@ -140,7 +142,7 @@ function highlight(index: number) {
         </span>
         <div
           v-for="{ option, index, description } in group.rows"
-          :key="`${option.value}:${option.path ?? ''}`"
+          :key="option.commandId ?? `${option.value}:${option.path ?? ''}`"
           class="chat-composer-source-picker__row"
           :class="{
             'is-active': index === activeIndex,
@@ -182,7 +184,7 @@ function highlight(index: number) {
                   {{ skillScopeLabel(option.skillScope) }}
                 </span>
               </span>
-              <small v-if="description">{{ description }}</small>
+              <small v-if="description" :title="description">{{ description }}</small>
             </span>
           </button>
           <div v-if="keyboardNavigation" class="chat-composer-source-picker__actions">

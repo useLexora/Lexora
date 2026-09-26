@@ -6,23 +6,22 @@ import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import { useExtensionContext } from '../extensionContext'
 import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionWorkbench from '../layouts/DesktopExtensionWorkbench.vue'
 import { extensionErrorCode } from '../state/useExtensionState'
+import DesktopExtensionAuthoringSettings from './DesktopExtensionAuthoringSettings.vue'
 import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 import DesktopExtensionUiSettings from './DesktopExtensionUiSettings.vue'
 
-const { state, language, workbench, startCreation } = useExtensionContext()
-const { controller } = useWorkbench()
+const { state, language, startCreation, authoring } = useExtensionContext()
 const { installed } = state
 const labels = computed(() => extensionLabels(language.value))
 const section = shallowRef<'marketplace' | 'installed'>('installed')
-const toolbarActions = computed(() => [{ key: 'history', label: language.value === 'en-US' ? 'Installation log' : '安装记录', props: { 'role': 'menuitem', 'data-testid': 'extension-installation-history' } }])
+const toolbarActions = computed(() => [{ key: 'author', label: language.value === 'en-US' ? 'Author signature' : '作者署名', props: { 'role': 'menuitem', 'data-testid': 'extension-author-settings' } }, { key: 'history', label: language.value === 'en-US' ? 'Installation log' : '安装记录', props: { 'role': 'menuitem', 'data-testid': 'extension-installation-history' } }])
 const acquisitionActions = computed(() => [
   { key: 'package', label: labels.value.install, props: { 'role': 'menuitem', 'data-testid': 'extension-install' } },
   { key: 'development', label: labels.value.development, props: { 'role': 'menuitem', 'data-testid': 'extension-development' } },
@@ -32,6 +31,7 @@ const busy = shallowRef(false)
 const review = shallowRef<ExtensionReview | null>(null)
 const diagnostics = shallowRef<string | null>(null)
 const installationLog = shallowRef(false)
+const authorSettings = shallowRef(false)
 const dialog = useDialog()
 const message = useMessage()
 const router = useRouter()
@@ -94,7 +94,7 @@ onScopeDispose(cancel)
 <template>
   <DesktopExtensionWorkbench v-model:section="section" :language="language" data-testid="extension-manager">
     <template #actions>
-      <NDropdown trigger="click" :options="toolbarActions" @select="installationLog = true">
+      <NDropdown trigger="click" :options="toolbarActions" @select="key => { if (key === 'author') authorSettings = true; else installationLog = true }">
         <NButton quaternary size="small" class="extension-manager__more" :aria-label="labels.more" data-testid="extension-toolbar-more">
           <template #icon>
             <DesktopIcon :component="MoreHorizontal20Regular" :size="16" />
@@ -138,7 +138,6 @@ onScopeDispose(cancel)
         v-for="item in installed"
         :key="item.manifest.id"
         :item="item"
-        :context="workbench.values"
         :language="language"
         :busy="busy"
         @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled))"
@@ -146,12 +145,14 @@ onScopeDispose(cancel)
         @diagnostics="diagnostics = item.manifest.id"
         @remove="remove(item)"
         @open="router.push(desktopRouteLocations.extensionPage(item.manifest.id))"
-        @command="id => run(() => controller.registry.execute(id, controller.context))"
         @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
       />
     </div>
     <DesktopExtensionUiSettings v-if="section === 'installed'" :language="language" />
   </DesktopExtensionWorkbench>
+  <NModal v-model:show="authorSettings" preset="card" :title="language === 'en-US' ? 'Author signature' : '作者署名'" class="extension-dialog">
+    <DesktopExtensionAuthoringSettings v-if="authorSettings" :author="authoring.author.value" :language="language" :save="authoring.save" @saved="authorSettings = false" />
+  </NModal>
   <NModal v-model:show="installationLog" preset="card" :title="language === 'en-US' ? 'Installation log' : '安装记录'" class="extension-dialog">
     <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />
   </NModal>
@@ -159,6 +160,9 @@ onScopeDispose(cancel)
   <NModal :show="!!selected" preset="card" :title="labels.diagnostics" class="extension-dialog" @update:show="value => { if (!value) diagnostics = null }">
     <template v-if="selected">
       <h2>{{ selected.manifest.name }}</h2>
+      <p>{{ selected.manifest.author || (language === 'en-US' ? 'Unsigned' : '未署名') }}</p>
+      <p><code>{{ selected.manifest.id }}</code></p>
+      <p>{{ selected.source ? (language === 'en-US' ? 'Marketplace' : '插件市场') : (language === 'en-US' ? 'Local installation' : '本地安装') }}</p>
       <p>{{ labels.version }} {{ selected.manifest.version }} · API {{ selected.manifest.apiVersion }}</p>
       <p v-if="selected.activationMs !== null">
         {{ labels.activation }} {{ selected.activationMs }} ms

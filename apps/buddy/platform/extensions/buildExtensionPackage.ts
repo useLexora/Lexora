@@ -35,7 +35,7 @@ export async function buildExtensionPackage(input: unknown, compile: ExtensionCo
     signal.throwIfAborted()
     validateExtensionFiles(compiled)
     const bytes = zipSync(Object.fromEntries(compiled), { level: 6 })
-    return { ok: true, id: manifest.id, version: manifest.version, archive: Buffer.from(bytes).toString('base64'), diagnostics }
+    return { ok: true, id: manifest.id, name: manifest.name, author: manifest.author ?? '', version: manifest.version, archive: Buffer.from(bytes).toString('base64'), diagnostics }
   }
   catch (error) {
     signal.throwIfAborted()

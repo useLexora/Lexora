@@ -71,7 +71,7 @@ useProvideWorkbenchCommands({
   reportFailure: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.inputFailed')),
   entries: computed(() => {
     void commandRevision.value
-    return [...workbench.controller.registry.commands.values()].flatMap(command => command.slash && (!command.enabled || command.enabled(workbench.controller.context)) ? [{ id: command.id, name: command.slash.name, title: command.label, description: command.slash.description }] : [])
+    return [...workbench.controller.registry.commands.values()].flatMap(command => command.slash && (!command.enabled || command.enabled(workbench.controller.context)) ? [{ id: command.id, name: command.slash.name, title: command.label, description: command.slash.description, origin: command.slash.origin }] : [])
   }),
   execute: async (id, argumentsText, instanceId) => {
     const controller = workbench.controller
@@ -94,7 +94,7 @@ onScopeDispose(() => anchors.dispose())
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ready: () => workbench.initialized })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
-useProvideExtensionContext({ state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
+useProvideExtensionContext({ authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)
 } })
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))

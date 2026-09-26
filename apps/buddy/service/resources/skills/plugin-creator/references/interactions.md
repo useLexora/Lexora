@@ -16,7 +16,7 @@ API 3 提供真实布局快照和可取消的交互会话。先查询 `lexora_pl
 const interaction = await context.interactions.start('互动游戏')
 interaction.signal.addEventListener('abort', cleanup, { once: true })
 try {
-  await context.placements.show('local.example.game', {
+  await context.placements.show(`${context.extension.id}.game`, {
     interactionId: interaction.id,
     instanceId: originPaneId,
   })

@@ -1,12 +1,16 @@
 import { z } from 'zod'
 import { workbenchCapabilityKinds } from '../workbench/workbenchContributionCatalog'
 import { workbenchCapabilityQuerySchema } from '../workbench/workbenchUi'
+import { extensionAuthorSchema, extensionSlugSchema } from './extensionIdentity'
 import { extensionIdSchema, extensionVersionSchema } from './extensionManifest'
 
 export const EXTENSION_BUILD_RPC = 'extensions.build'
 export const EXTENSION_REVIEW_REQUEST = 'extensions.reviewPackage'
 export const EXTENSION_INSPECT_RPC = 'extensions.inspect'
 export const EXTENSION_CAPABILITIES_RPC = 'extensions.capabilities'
+export const EXTENSION_IDENTITY_RPC = 'extensions.identity'
+export const extensionIdentityRequestSchema = z.object({ slug: extensionSlugSchema, author: extensionAuthorSchema.optional() }).strict()
+export const extensionIdentitySchema = z.object({ id: extensionIdSchema, author: extensionAuthorSchema, engines: z.object({ lexora: z.string() }).strict() }).strict()
 export { workbenchCapabilityQuerySchema as extensionCapabilitiesRequestSchema }
 export const extensionCapabilitiesSchema = z.object({
   apiVersion: z.number().int().positive(),
@@ -39,7 +43,7 @@ export type ExtensionInspection = z.infer<typeof extensionInspectionSchema>
 export const extensionArchiveSchema = z.string().max(24 * 1024 * 1024).regex(/^[A-Z0-9+/]+={0,2}$/i)
 export const extensionBuildRequestSchema = z.object({ archive: extensionArchiveSchema }).strict()
 export const extensionBuildResultSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), archive: extensionArchiveSchema, id: z.string(), version: z.string(), diagnostics: z.array(z.string().max(600)).max(30) }).strict(),
+  z.object({ ok: z.literal(true), archive: extensionArchiveSchema, id: extensionIdSchema, name: z.string().min(1).max(100), author: extensionAuthorSchema, version: extensionVersionSchema, diagnostics: z.array(z.string().max(600)).max(30) }).strict(),
   z.object({ ok: z.literal(false), code: z.string(), diagnostics: z.array(z.string().max(600)).max(30) }).strict(),
 ])
 export type ExtensionBuildResult = z.infer<typeof extensionBuildResultSchema>

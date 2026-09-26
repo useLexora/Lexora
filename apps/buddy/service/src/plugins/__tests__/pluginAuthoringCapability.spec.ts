@@ -23,6 +23,7 @@ async function fixture() {
   await writeFile(join(source, 'view.ts'), 'export function render(_context: unknown, container: HTMLElement) { container.textContent = "Hello" }')
   const notifications: unknown[] = []
   let tool: ToolDefinition | undefined
+  let identityTool: ToolDefinition | undefined
   const capability = createPluginAuthoringCapability({ conversationId: 'task', cwd: root, executionProfile: 'workspace_write', getRunId: () => 'run', grants: [{ kind: 'workspace', canonicalRoot: root, root, grantId: 'workspace' }], sessionMode: 'interactive', signal: new AbortController().signal }, {
     request: async (_method, input, _timeout, signal) => buildExtensionPackage(input, async (files, manifest, _signal, report) => compileExtensionSource(files, manifest, report), signal!),
     notify: (_method, input) => {
@@ -31,12 +32,15 @@ async function fixture() {
   })
   await capability.extension.factory({ registerTool(value: ToolDefinition) {
     tool = value
+    if (value.name === 'lexora_plugin_identity')
+      identityTool = value
   }, on() {} } as never)
   return {
     root,
     source,
     notifications,
     capability,
+    identity: async (input: unknown) => await identityTool!.execute('identity', input as never, undefined, undefined, {} as never),
     execute: async (input: unknown) => await tool!.execute('call', input as never, undefined, undefined, {} as never) as { details: { ok: boolean, code?: string, packagePath?: string, installed?: boolean, runtimeTested?: boolean } },
   }
 }
@@ -45,7 +49,7 @@ it('writes an authorized installable output and requests review without installi
   const f = await fixture()
   const output = join(f.root, 'example.lexora-extension')
   const result = await f.execute({ source: 'source', output: 'example.lexora-extension', review: true })
-  expect(result.details).toMatchObject({ ok: true, packagePath: output, installation: 'review_requested', runtimeTested: false })
+  expect(result.details).toMatchObject({ ok: true, id: 'local.example', name: 'Example', author: '', version: '1.0.0', packagePath: output, installation: 'review_requested', runtimeTested: false })
   expect(unpackExtension(await readFile(output)).has('view.js')).toBe(true)
   expect(f.notifications).toEqual([{ path: output }])
 })
@@ -67,4 +71,22 @@ it('rejects symlinked source files instead of packaging unrelated user data', as
   await symlink(join(f.root, 'private.txt'), join(f.source, 'linked.txt'))
   expect((await f.execute({ source: 'source', output: 'bad.lexora-extension', review: true })).details).toMatchObject({ ok: false, code: 'EXTENSION_UNSAFE_PATH' })
   expect(f.notifications).toEqual([])
+})
+
+it('reports invalid author fields and asks for a user choice without substituting an identity', async () => {
+  const f = await fixture()
+  const result = await f.identity({ slug: 'music', author: '名'.repeat(81) })
+  expect(result.details).toMatchObject({ ok: false, code: 'EXTENSION_IDENTITY_INVALID', diagnostics: [expect.stringContaining('author:')], nextAction: expect.stringContaining('ask the user') })
+  expect(result.details).not.toHaveProperty('id')
+})
+
+it('returns the explicit signature and keeps the existing identity when rebuilding', async () => {
+  const f = await fixture()
+  const manifestPath = join(f.source, 'extension.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, author: '山雨海', engines: { lexora: '>=0.9.0 <1' } }))
+  const result = await f.execute({ source: 'source', output: 'signed.lexora-extension' })
+  expect(result.details).toMatchObject({ ok: true, id: 'local.example', name: 'Example', author: '山雨海', version: '1.0.0' })
+  const files = unpackExtension(await readFile(join(f.root, 'signed.lexora-extension')))
+  expect(JSON.parse(new TextDecoder().decode(files.get('extension.json')))).toMatchObject({ id: 'local.example', author: '山雨海' })
 })

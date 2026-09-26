@@ -43,7 +43,14 @@ export function useChatComposerSuggestions(
     })
   })
   const sourceOptions = computed(() => [...createChatComposerSourceOptions(currentOptions.value, fileQuery.value), ...createChatComposerSourceOptions(contextOptions.value.files)])
-  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: sourceOptions.value, commands: commands?.entries.value.map(command => ({ commandId: command.id, description: command.description ?? command.title, kind: 'slashCommand', label: `/${command.name}`, value: `/${command.name}`, path: null })) }, key => t(key)))
+  const commandOptions = computed<ChatPromptContextOption[]>(() => (commands?.entries.value ?? []).map((command) => {
+    const origin = command.origin
+    const repeated = origin && commands?.entries.value.some(other => other.id !== command.id && other.name === command.name && other.origin?.name === origin.name && (other.origin.author || '') === (origin.author || ''))
+    const identity = origin ? [origin.name, origin.author || (options.language.value === 'en-US' ? 'Unsigned' : '未署名'), origin.version, ...(repeated ? [origin.source ? new URL(origin.source).host : (options.language.value === 'en-US' ? 'Local' : '本地'), origin.id] : [])] : []
+    return { commandId: command.id, description: [...identity, command.description ?? command.title].join(' · '), kind: 'slashCommand', label: `/${command.name}`, value: `/${command.name}`, path: null }
+  }))
+  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: sourceOptions.value, commands: commandOptions.value }, key => t(key)))
+  const needsCommandChoice = computed(() => activeTrigger.value?.kind === 'slash' && suggestions.value.filter(({ option }) => option.value === `/${activeTrigger.value?.query}`).length > 1)
 
   function invalidateQuery() {
     contextRequestId += 1
@@ -51,7 +58,7 @@ export function useChatComposerSuggestions(
   }
 
   watch(activeTrigger, (trigger) => {
-    activeSuggestionIndex.value = 0
+    activeSuggestionIndex.value = needsCommandChoice.value ? -1 : 0
     if (!trigger || trigger.kind === 'slash') {
       deepSearch.value = false
       loadedSkillDraftId = null
@@ -66,6 +73,10 @@ export function useChatComposerSuggestions(
       return
     loadedSkillDraftId = trigger.kind === 'skill' ? draftId : null
     void loadContextOptions(trigger.kind === 'mention' ? trigger.query : null)
+  }, { flush: 'sync' })
+  watch(needsCommandChoice, (required) => {
+    if (required)
+      activeSuggestionIndex.value = -1
   }, { flush: 'sync' })
   watch(options.draftId, () => {
     activeTrigger.value = null
@@ -125,11 +136,15 @@ export function useChatComposerSuggestions(
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       const delta = event.key === 'ArrowDown' ? 1 : -1
-      activeSuggestionIndex.value = (activeSuggestionIndex.value + delta + suggestions.value.length) % suggestions.value.length
+      activeSuggestionIndex.value = activeSuggestionIndex.value < 0
+        ? (delta === 1 ? 0 : suggestions.value.length - 1)
+        : (activeSuggestionIndex.value + delta + suggestions.value.length) % suggestions.value.length
       return true
     }
     if ((event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) || shouldSubmitChatComposerKey(event)) {
       event.preventDefault()
+      if (activeSuggestionIndex.value < 0)
+        return true
       onSelect(suggestions.value[activeSuggestionIndex.value]?.option, event.key === 'Tab' ? 'complete' : 'select')
       return true
     }
