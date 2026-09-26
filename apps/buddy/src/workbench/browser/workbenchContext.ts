@@ -13,8 +13,8 @@ export interface WorkbenchContext {
   copies: WorkingCopyService
   layout: Readonly<Ref<WorkbenchLayout>>
   revision: Readonly<Ref<number>>
-  mountPoints: Readonly<Ref<ReadonlyMap<WorkbenchMountTarget, HTMLElement>>>
-  registerMountPoint: (target: WorkbenchMountTarget, element: HTMLElement) => () => void
+  mountPoints: Readonly<Ref<ReadonlyMap<string, HTMLElement>>>
+  registerMountPoint: (target: WorkbenchMountTarget, element: HTMLElement, instanceId?: string) => () => void
   viewTarget: (id: string) => HTMLElement | null
   labels: Readonly<Ref<ReturnType<typeof workbenchLabels>>>
   dropPosition: Ref<{ paneId: string, position: DropPosition } | null>

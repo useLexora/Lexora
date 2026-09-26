@@ -2,6 +2,7 @@
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Chat20Regular } from '@vicons/fluent'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
@@ -26,6 +27,7 @@ const { t } = useBuddyI18n(() => props.language)
     </div>
 
     <div class="desktop-chat-workspace-header__actions">
+      <WorkbenchMenu target="task.actions" />
       <slot name="leadingActions" />
       <button
         v-if="canToggleCanvas"

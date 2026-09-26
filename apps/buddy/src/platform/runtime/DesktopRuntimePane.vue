@@ -9,7 +9,8 @@ const props = withDefaults(defineProps<{
   enabled?: boolean
   loading?: boolean
   language?: BuddyLocale
-}>(), { enabled: true, loading: false })
+  animate?: boolean
+}>(), { enabled: true, loading: false, animate: true })
 const runtime = inject(runtimeAvailabilityKey, null)
 const { t } = useBuddyI18n(() => props.language ?? runtime?.language.value ?? 'zh-CN')
 const pending = computed(() => props.loading || (props.enabled && runtime?.loading.value) || false)
@@ -18,6 +19,7 @@ const error = computed(() => props.enabled && runtime?.failed.value ? t('desktop
 
 <template>
   <DesktopPaneBoundary
+    :animate="animate"
     :loading="pending"
     :error="error"
     :label="t('desktop.loading.pane')"

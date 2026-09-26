@@ -1,9 +1,25 @@
 import { z } from 'zod'
+import { workbenchCapabilityKinds } from '../workbench/workbenchContributionCatalog'
+import { workbenchCapabilityQuerySchema } from '../workbench/workbenchUi'
 import { extensionIdSchema, extensionVersionSchema } from './extensionManifest'
 
 export const EXTENSION_BUILD_RPC = 'extensions.build'
 export const EXTENSION_REVIEW_REQUEST = 'extensions.reviewPackage'
 export const EXTENSION_INSPECT_RPC = 'extensions.inspect'
+export const EXTENSION_CAPABILITIES_RPC = 'extensions.capabilities'
+export { workbenchCapabilityQuerySchema as extensionCapabilitiesRequestSchema }
+export const extensionCapabilitiesSchema = z.object({
+  apiVersion: z.number().int().positive(),
+  targets: z.array(z.object({
+    kind: z.enum(workbenchCapabilityKinds),
+    target: z.string(),
+    title: z.object({ 'zh-CN': z.string(), 'en-US': z.string() }).strict(),
+    scope: z.enum(['application', 'page', 'pane', 'composer', 'resource', 'message']),
+    description: z.string().optional(),
+    selection: z.enum(['single', 'multiple']).optional(),
+    height: z.object({ min: z.number(), max: z.number(), default: z.number() }).strict().optional(),
+  }).strict()),
+}).strict()
 export const extensionInspectRequestSchema = z.object({ id: extensionIdSchema }).strict()
 export const extensionInspectionSchema = z.object({
   id: extensionIdSchema,

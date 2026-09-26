@@ -35,6 +35,8 @@ export default {
   'desktop.command.app.about': 'About Lexora Buddy',
   'desktop.command.app.checkUpdates': 'Check for updates…',
   'desktop.command.app.quit': 'Quit',
+  'desktop.command.run': 'Run command',
+  'desktop.command.inputFailed': 'Command unavailable or failed. Your input was kept.',
   'desktop.command.failed': 'The action failed. Try again.',
   'desktop.command.help.feedback': 'Feedback',
   'desktop.command.help.openDocumentation': 'Documentation',

@@ -44,12 +44,12 @@ function inlineNodeToEditorNode(node: BuddyInlineNodeV1): JSONContent {
       attrs: { resourceId: node.resourceId },
       type: CHAT_RESOURCE_REFERENCE_NODE_NAME,
     }
-    case 'prompt_directive': return node.directive === 'slash_command' && isRetiredBuddyPromptCommand(node.value)
+    case 'prompt_directive': return node.directive === 'slash_command' && !node.commandId && isRetiredBuddyPromptCommand(node.value)
       ? { text: node.value, type: 'text' }
       : {
           attrs: node.directive === 'skill'
             ? { directive: node.directive, value: node.value, ...(node.skill ? { skill: { ...node.skill } } : {}) }
-            : { commandMode: node.commandMode, directive: node.directive, value: node.value },
+            : { commandMode: node.commandMode, ...(node.commandId ? { commandId: node.commandId } : {}), directive: node.directive, value: node.value },
           type: CHAT_PROMPT_DIRECTIVE_NODE_NAME,
         }
   }
@@ -71,7 +71,7 @@ function editorNodeToInlineNode(node: JSONContent): unknown {
       if (attrs.directive === 'skill' && attrs.commandMode != null)
         throw new Error('Skill directives cannot have a command mode')
       return {
-        ...(attrs.directive === 'skill' ? (attrs.skill ? { skill: attrs.skill } : {}) : { commandMode: attrs.commandMode }),
+        ...(attrs.directive === 'skill' ? (attrs.skill ? { skill: attrs.skill } : {}) : { commandMode: attrs.commandMode, ...(attrs.commandId ? { commandId: attrs.commandId } : {}) }),
         directive: attrs.directive,
         type: 'prompt_directive',
         value: attrs.value,

@@ -17,5 +17,5 @@ onScopeDispose(() => layout.dispose())
 
 <style scoped>
 .workbench-surface-host { display: contents; }
-:global(body:has(.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing) [data-workbench-surface]) { pointer-events: none !important; }
+:global(body:has(.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing) [data-workbench-surface], body:has(.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing) [data-workbench-hit-regions] button) { pointer-events: none !important; }
 </style>

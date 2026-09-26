@@ -326,3 +326,121 @@ it('retains protected views when a close request is cancelled during its guard',
   expect(committed).toBe(false)
   expect(cancelled).toBe(true)
 })
+
+describe('prepared view navigation', () => {
+  async function fixture() {
+    const contributions = registry()
+    const controller = new WorkbenchController(contributions)
+    const original = (await controller.open(resource, 'Original'))!
+    contributions.views.get('text')!.prepareBeforeOpen = true
+    return { controller, original, paneId: controller.layout.activePane }
+  }
+
+  it('retains the displayed view, command context and persisted layout until the replacement is ready', async () => {
+    const { controller, original, paneId } = await fixture()
+    const snapshot = JSON.stringify(controller.layout)
+    const opening = controller.open({ ...resource, id: 'next' }, 'Next')
+    const candidate = controller.navigation.entries.get(paneId)!.view
+    expect(JSON.stringify(controller.layout)).toBe(snapshot)
+    expect(controller.context.view?.id).toBe(original)
+    expect(controller.renderedViews.map(view => view.id)).toEqual([original, candidate.id])
+    controller.updateView(candidate.id, { title: 'Loaded title' })
+    controller.navigation.ready(candidate.id)
+    expect(await opening).toBe(candidate.id)
+    expect(controller.pane(paneId)?.view).toBe(candidate.id)
+    expect(controller.context.view?.title).toBe('Loaded title')
+    expect(controller.layout.views[original]).toBeUndefined()
+    expect(controller.navigation.entries.size).toBe(0)
+  })
+
+  it('only commits the latest same-pane request and keeps the original on failure or cancellation', async () => {
+    const { controller, original, paneId } = await fixture()
+    const first = controller.open({ ...resource, id: 'slow' }, 'Slow')
+    const stale = controller.navigation.entries.get(paneId)!.view.id
+    const second = controller.open({ ...resource, id: 'failed' }, 'Failed')
+    const failed = controller.navigation.entries.get(paneId)!.view.id
+    controller.navigation.ready(stale)
+    expect(await first).toBeNull()
+    controller.navigation.fail(failed)
+    expect(await second).toBeNull()
+    expect(controller.pane(paneId)?.view).toBe(original)
+    expect(controller.navigation.entries.get(paneId)?.status).toBe('failed')
+    expect(controller.renderedViews.map(view => view.id)).toEqual([original])
+    const retry = controller.open({ ...resource, id: 'failed' }, 'Retry')
+    const replacement = controller.navigation.entries.get(paneId)!.view.id
+    controller.navigation.ready(replacement)
+    expect(await retry).toBe(replacement)
+    const cancelled = controller.open({ ...resource, id: 'cancelled' }, 'Cancelled')
+    controller.navigation.cancel(paneId)
+    expect(await cancelled).toBeNull()
+    expect(controller.pane(paneId)?.view).toBe(replacement)
+  })
+
+  it('prepares different panes concurrently and does not steal focus when a background pane finishes', async () => {
+    const { controller, paneId } = await fixture()
+    await controller.open({ ...resource, id: 'right' }, 'Right', { direction: 'right' })
+    const right = controller.layout.activePane
+    const leftOpen = controller.open({ ...resource, id: 'left-next' }, 'Left next', { paneId })
+    const rightOpen = controller.open({ ...resource, id: 'right-next' }, 'Right next', { paneId: right })
+    const leftView = controller.navigation.entries.get(paneId)!.view.id
+    const rightView = controller.navigation.entries.get(right)!.view.id
+    controller.navigation.ready(rightView)
+    expect(await rightOpen).toBe(rightView)
+    expect(controller.navigation.entries.get(paneId)?.view.id).toBe(leftView)
+    controller.navigation.ready(leftView)
+    expect(await leftOpen).toBe(leftView)
+    expect(controller.pane(paneId)?.view).toBe(leftView)
+    expect(controller.layout.activePane).toBe(right)
+    expect(controller.context.view?.id).toBe(rightView)
+  })
+
+  it('cancels a preparation when its pane is closed', async () => {
+    const { controller, original, paneId } = await fixture()
+    await controller.open({ ...resource, id: 'other' }, 'Other', { direction: 'right' })
+    const pending = controller.open({ ...resource, id: 'next' }, 'Next', { paneId })
+    const candidate = controller.navigation.entries.get(paneId)!.view.id
+    await controller.close(original)
+    expect(await pending).toBeNull()
+    controller.navigation.ready(candidate)
+    expect(controller.pane(paneId)).toBeNull()
+    expect(controller.navigation.entries.size).toBe(0)
+    expect(controller.renderedViews.map(view => view.resource.id)).toEqual(['other'])
+  })
+
+  it('releases pending views when their contribution is removed', async () => {
+    const contributions = new ContributionRegistry()
+    const unregister = contributions.register('preview', scope => scope.view({ id: 'preview', renderer: 'preview', locations: ['main'], label: 'Preview', supports: () => true, multiple: false, prepareBeforeOpen: true }))
+    const controller = new WorkbenchController(contributions)
+    const original = await controller.open(resource, 'Original')
+    const opening = controller.open({ ...resource, id: 'next' }, 'Next')
+    unregister()
+    expect(await opening).toBeNull()
+    expect(controller.navigation.entries.size).toBe(0)
+    expect(controller.context.view?.id).toBe(original)
+    controller.dispose()
+  })
+
+  it('releases a prepared close guard when cancelled before the commit', async () => {
+    const contributions = registry()
+    const gate = deferred<import('../WorkbenchController').ViewCloseDecision>()
+    const entered = deferred<void>()
+    const controller = new WorkbenchController(contributions, () => {
+      entered.resolve()
+      return gate.promise
+    })
+    const original = (await controller.open(resource, 'Original'))!
+    contributions.views.get('text')!.prepareBeforeOpen = true
+    const opening = controller.open({ ...resource, id: 'next' }, 'Next')
+    const candidate = controller.navigation.entries.get(controller.layout.activePane)!
+    controller.navigation.ready(candidate.view.id)
+    await entered.promise
+    controller.navigation.cancel(candidate.paneId)
+    let editable = false
+    gate.resolve({ cancel: () => editable = true, commit: () => {
+      throw new Error('Must preserve the original')
+    } })
+    expect(await opening).toBeNull()
+    expect(editable).toBe(true)
+    expect(controller.context.view?.id).toBe(original)
+  })
+})

@@ -670,6 +670,8 @@ async function materializeComposerDirectives(
   skills: Pick<SkillService, 'materializeForSpace'>,
 ) {
   const directives = content.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
+  if (directives.some(node => node.directive === 'slash_command' && node.commandId))
+    throw new BuddyServiceError('VALIDATION_FAILED')
   const textCommand = parseBuddyChatCommand(buddyUserContentToText(content))
   if (textCommand && isBuddyRunChatCommand(textCommand.name))
     throw new BuddyServiceError('VALIDATION_FAILED')

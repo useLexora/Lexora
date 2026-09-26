@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
-import { extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
+import { addedExtensionPermissions, extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
 import { compileExtensionSource } from '../compileExtensionSource'
 import { readExtensionDirectory, unpackExtension } from '../extensionFiles'
 import { extensionActivationOrder, ExtensionPackageStore } from '../ExtensionPackageStore'
@@ -31,7 +31,7 @@ describe('extension package contract', () => {
   })
   it('rejects foreign contribution ownership, duplicate IDs, and unsupported API versions', () => {
     const value = manifest()
-    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 3 }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 4 }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [{ id: 'another.reader.open', title: 'Open' }] } }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [value.contributes.commands[0], value.contributes.commands[0]] } }).success).toBe(false)
   })
@@ -201,4 +201,59 @@ it('keeps API 1 compatible and validates UI placements and permission upgrades i
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [placement] } }).success).toBe(false)
   }
   expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, views: [{ ...value.contributes.views[0], resource: 'selected-file' }] }, permissions: { ...value.permissions, selectedResource: 'read' } }).success).toBe(false)
+})
+
+it('requires API 3 and a bounded declaration for a content slot', () => {
+  const value = manifest({
+    apiVersion: 3,
+    id: 'tests.footer',
+    contributes: {
+      views: [{ id: 'tests.footer.content', title: 'Footer', entry: 'view.js', resource: 'none' }],
+      placements: [{ id: 'tests.footer.slot', kind: 'slot', target: 'composer.footer', view: 'tests.footer.content' }],
+    },
+  })
+  const previous = manifest({ id: 'tests.footer', apiVersion: 2, contributes: { views: [] } })
+  expect(addedExtensionPermissions(previous.permissions, value.permissions)).toEqual([])
+  expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 2 }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [{ ...value.contributes.placements[0], presentation: { position: 'absolute' } }] } }).success).toBe(false)
+})
+
+it('validates each content target size and menu command ownership with API compatibility', () => {
+  const content = (target: string, height: number) => ({ id: 'tests.reader.content', kind: 'slot', target, height, view: 'tests.reader.view' })
+  const base = { schemaVersion: 1, id: 'tests.reader', name: 'Regions', version: '1.0.0', apiVersion: 3, engines: { lexora: '*' }, entry: 'extension.js', contributes: { commands: [{ id: 'tests.reader.run', title: 'Run' }], views: [{ id: 'tests.reader.view', title: 'View', entry: 'view.js', resource: 'none' }] } }
+  const parse = (placement: unknown) => extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [placement] } })
+  expect(parse(content('composer.footer', 64)).success).toBe(false)
+  expect(parse(content('composer.accessory', 64)).success).toBe(true)
+  expect(parse(content('task.welcome', 400)).success).toBe(true)
+  expect(parse(content('workbench.pane.empty', 641)).success).toBe(false)
+  expect(parse(content('arbitrary.selector', 64)).success).toBe(false)
+  const withMenu = { ...base, contributes: { ...base.contributes, menus: [{ id: 'tests.reader.menu', command: 'tests.reader.run', target: 'message.actions' }] } }
+  expect(extensionManifestSchema.safeParse(withMenu).success).toBe(true)
+  expect(extensionManifestSchema.safeParse({ ...withMenu, apiVersion: 2 }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...withMenu, contributes: { ...withMenu.contributes, commands: [] } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2, permissions: { selectedContent: true } }).success).toBe(false)
+  const previous = manifest()
+  const next = manifest({ apiVersion: 3, permissions: { selectedResource: 'read', selectedContent: true } })
+  expect(addedExtensionPermissions(previous.permissions, next.permissions)).toEqual(['selectedContent'])
+})
+
+it('validates ASCII command names while allowing localized descriptions and system names inside plugin namespaces', () => {
+  const base = manifest({ apiVersion: 3, contributes: { commands: [{ id: 'tests.reader.run', title: 'Run', slash: { name: 'read-file' } }] } })
+  const command = base.contributes.commands[0]!
+  for (const name of ['/read', 'Read', '读取', 'café', 'read file', 'read:1', '-read', 'read\u202E', '', 'a'.repeat(65)]) {
+    expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, slash: { name } }] } }).success, name).toBe(false)
+  }
+  for (const name of ['read-file', 'compact', 'review', 'start-2'])
+    expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, slash: { name } }] } }).success, name).toBe(true)
+  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2 }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, hidden: true }] } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [command, { ...command, id: 'tests.reader.other' }] } }).success).toBe(false)
+})
+
+it('restricts transient interactions to absolute API 3 workbench and pane mounts', () => {
+  const base = manifest({ apiVersion: 3, contributes: { views: [{ id: 'tests.reader.game', title: 'Game', entry: 'view.js', resource: 'none' }], placements: [{ id: 'tests.reader.layer', view: 'tests.reader.game', kind: 'view', target: 'workbench', interaction: 'regions', presentation: { position: 'absolute' } }] } })
+  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2 }).success).toBe(false)
+  for (const target of ['app.sidebar', 'workbench.sidebar'])
+    expect(extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [{ ...base.contributes.placements[0], target }] } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [{ ...base.contributes.placements[0], presentation: { position: 'static' } }] } }).success).toBe(false)
 })

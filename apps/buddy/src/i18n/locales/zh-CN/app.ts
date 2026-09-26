@@ -33,6 +33,8 @@ export default {
   'desktop.command.app.about': '关于 Lexora Buddy',
   'desktop.command.app.checkUpdates': '检查更新…',
   'desktop.command.app.quit': '退出',
+  'desktop.command.run': '执行命令',
+  'desktop.command.inputFailed': '命令不可用或执行失败，输入已保留。',
   'desktop.command.failed': '操作失败，请稍后重试',
   'desktop.command.help.feedback': '意见反馈',
   'desktop.command.help.openDocumentation': '使用文档',

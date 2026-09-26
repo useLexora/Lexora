@@ -6,6 +6,7 @@ import { readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUse
 import { computed, defineAsyncComponent, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
+import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
@@ -18,7 +19,7 @@ import DesktopTaskComposer from './DesktopTaskComposer.vue'
 import DesktopTaskNotices from './DesktopTaskNotices.vue'
 import { useChatWorkspace } from './useChatWorkspace'
 
-const props = defineProps<ChatWorkspaceProps>()
+const props = withDefaults(defineProps<ChatWorkspaceProps>(), { active: true })
 const emit = defineEmits<ChatWorkspaceEmits>()
 defineSlots<{
   composerLeadingContext?: () => unknown
@@ -62,11 +63,21 @@ watch(() => props.viewMode, (value) => {
 }, { immediate: true })
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
 const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
+watch([pageRef, isLoading], ([element, loading], _, cleanup) => {
+  if (!element || loading)
+    return
+  let cancelled = false
+  cleanup(() => cancelled = true)
+  void nextTick(() => {
+    if (!cancelled)
+      emit('ready')
+  })
+}, { flush: 'post' })
 useTaskResultRead({
   root: pageRef,
   conversationId: computed(() => props.workspace.session.activeConversationId.value),
   marks: () => props.workspace.marks,
-  disabled: computed(() => isLoading.value || props.workspace.status.isClosing.value || props.workspace.status.runtimeState.value.status !== 'ready'),
+  disabled: computed(() => !props.active || isLoading.value || props.workspace.status.isClosing.value || props.workspace.status.runtimeState.value.status !== 'ready'),
 })
 
 async function focusComposer() {
@@ -166,7 +177,7 @@ function openDetailChanges(id: string) {
 </script>
 
 <template>
-  <DesktopRuntimePane :loading="isLoading" :language="language">
+  <DesktopRuntimePane :loading="isLoading" :language="language" :animate="false">
     <section ref="pageRef" class="desktop-chat-page" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode">
       <main class="desktop-chat-page__content">
         <DesktopConversationCanvas
@@ -182,11 +193,12 @@ function openDetailChanges(id: string) {
           @edit-node="editNode"
           @open-node-artifact="nodeDetail.close(); emit('openNodeArtifact', $event)"
         />
-        <DesktopChatWelcome
-          v-if="viewMode !== 'canvas' && isEmpty && !isLoading && welcomeVariant"
-          :language="language"
-          :variant="welcomeVariant"
-        />
+        <WorkbenchSlot v-if="viewMode !== 'canvas' && isEmpty && !isLoading && welcomeVariant" target="task.welcome">
+          <DesktopChatWelcome
+            :language="language"
+            :variant="welcomeVariant"
+          />
+        </WorkbenchSlot>
 
         <DesktopChatTranscript
           v-else-if="viewMode !== 'canvas' && transcriptBindings"
@@ -243,7 +255,7 @@ function openDetailChanges(id: string) {
             ref="composerRef"
             :composer="workspace.composer"
             :skill-scope-id="workspace.session.spaceId.value"
-            :focus-ready="composerVisible && !isLoading && workspace.status.runtimeState.value.status === 'ready'"
+            :focus-ready="active && composerVisible && !isLoading && workspace.status.runtimeState.value.status === 'ready'"
             :execution="workspace.execution"
             :language="language"
           >

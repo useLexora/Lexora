@@ -65,9 +65,13 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
   const deletedTasks = new Set<string>()
   const initialized = shallowRef(false)
   let navigationVersion = 0
+  let routeVersion = 0
   onScopeDispose(router.beforeEach((to) => {
-    if (to.path !== '/tasks')
+    if (to.path !== '/tasks') {
       navigationVersion += 1
+      routeVersion += 1
+      controller.cancelNavigation()
+    }
   }))
 
   function center(): string {
@@ -230,22 +234,26 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
       }
     }
 
-    const version = ++navigationVersion
+    navigationVersion += 1
+    const version = routeVersion
     let id: string | null = null
     try {
+      await router.push('/tasks')
+      if (destination.signal?.aborted || version !== routeVersion)
+        return
       id = await controller.open(resource, title, { paneId: targetPaneId, ...destination })
     }
     finally {
       if (currentView)
         confirmedDraftCloses.delete(currentView.id)
     }
-    if (!id || destination.signal?.aborted || version !== navigationVersion)
+    if (!id || destination.signal?.aborted || version !== routeVersion)
       return
-    await router.push('/tasks')
     try {
       const task = await pool.open(resource)
-      if (!destination.signal?.aborted && controller.layout.views[id] && version === navigationVersion && controller.owner(id)?.id === controller.layout.activePane) {
-        activeTask.value = task
+      if (!destination.signal?.aborted && controller.layout.views[id] && version === routeVersion) {
+        if (controller.owner(id)?.id === controller.layout.activePane)
+          activeTask.value = task
         if (destination.initialContent) {
           task.workspace.composer.updateComposerContent(buddyUserContentToText(destination.initialContent), userContentToChatComposerDocument(destination.initialContent))
           await task.flushDrafts()
@@ -473,7 +481,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     if (!initialized.value)
       return
     const resources = options.resources()
-    pool.retain(Object.values(controller.layout.views).map(view => view.resource))
+    pool.retain(controller.renderedViews.map(view => view.resource))
     const referencedFiles = new Set(Object.values(controller.layout.views).map(view => resourceKey(view.resource)))
     for (const copy of copies.copies.values()) {
       if (!referencedFiles.has(resourceKey(copy.resource)))
@@ -507,6 +515,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
       resources.selectTab(typeof focused.state.contextTabId === 'string' ? focused.state.contextTabId : focused.id)
   }))
   onScopeDispose(() => {
+    controller.dispose()
     pool.dispose()
     models.dispose()
     persistence.dispose()

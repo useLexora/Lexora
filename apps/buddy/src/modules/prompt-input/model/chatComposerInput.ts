@@ -11,6 +11,7 @@ import { chatComposerDocumentToUserContent } from './chatComposerDocument'
 export interface ChatPromptContextOption extends LocalPromptContextItem {
   description: string | null
   category?: 'artifact' | 'current' | 'history' | 'space' | 'external'
+  commandId?: string
   resourceId?: string
   entryKind?: 'file' | 'directory'
   fileName?: string
@@ -31,6 +32,7 @@ export interface ChatComposerContextOptions {
   directory?: BuddyComposerDirectory
   files: ReadonlyArray<ChatPromptContextOption>
   skills: ReadonlyArray<ChatPromptContextOption>
+  commands?: ReadonlyArray<ChatPromptContextOption>
 }
 
 export function createChatComposerSourceOptions(
@@ -113,14 +115,16 @@ export function createChatComposerSuggestions(
   if (!trigger)
     return []
   const candidates = trigger.kind === 'slash'
-    ? BUDDY_CHAT_COMMANDS.map(command => ({
+    ? [...BUDDY_CHAT_COMMANDS.map(command => ({
         description: translateCommand(command.descriptionKey),
         kind: 'slashCommand' as const,
         label: `/${command.name}`,
         path: null,
         value: `/${command.name}`,
-      }))
+      })), ...options.commands ?? []]
     : trigger.kind === 'skill' ? options.skills : createChatComposerSourceOptions(options.files)
+  if (trigger.kind === 'slash')
+    return candidates.filter(option => option.value.slice(1).startsWith(trigger.query)).slice(0, CHAT_COMPOSER_SUGGESTION_LIMIT).map(option => ({ option }))
   if (trigger.kind === 'mention')
     return candidates.map(option => ({ option }))
   return rankChatComposerOptions(candidates, trigger.query)

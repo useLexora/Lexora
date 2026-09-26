@@ -63,6 +63,7 @@ export class ChatCommandService {
       || draft.content.quotes?.length
       || directives.length !== 1
       || directives[0]?.commandMode !== 'action'
+      || directives[0].commandId
       || directives[0].value !== `/${command.name}`
     ) {
       throw new BuddyServiceError('VALIDATION_FAILED')

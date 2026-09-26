@@ -29,6 +29,7 @@ import DesktopTaskMarkManager from './DesktopTaskMarkManager.vue'
 
 const props = defineProps<{
   activeConversationId: string | null
+  pendingConversationIds?: readonly string[]
   marks: TaskMarks
   appSidebarCollapsed: boolean
   language: BuddyLocale
@@ -55,6 +56,7 @@ const marksOpen = shallowRef(false)
 const searchOpen = shallowRef(false)
 function markBindings(conversationId: string) {
   return {
+    loading: props.pendingConversationIds?.includes(conversationId),
     marks: props.marks.items.value,
     markState: props.marks.states.value.get(conversationId),
     marksBusy: props.marks.busy.value,

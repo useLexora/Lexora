@@ -5,6 +5,7 @@ import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerAp
 import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceView } from '../../../state/composer/typing'
 import type { ChatComposerContextOptions, ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
+import type { WorkbenchCommandPort } from '@/shared/ui/contributions/workbenchCommands'
 import { deferred } from '@buddy-tests/deferred'
 import { EditorContent } from '@tiptap/vue-3'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -12,6 +13,7 @@ import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
 import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatComposerResourceEditing'
 import { insertChatComposerResources } from '@/modules/prompt-input/ui'
+import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { CONVERSATION_STATUS_PANEL_KEY } from '../../../state/runs/conversationStatusPanel'
 import { useChatComposer } from '../useChatComposer'
 
@@ -45,6 +47,7 @@ async function mountComposer(options: {
   selectSource?: (source: BuddyComposerSource) => Promise<string | null>
   model?: LocalRuntimeModelOption
   statusPanel?: boolean
+  commands?: WorkbenchCommandPort
 } = {}) {
   const canSend = shallowRef(true)
   const statusPanelOpen = shallowRef(false)
@@ -60,7 +63,7 @@ async function mountComposer(options: {
   let composer!: ReturnType<typeof useChatComposer>
   const root = document.createElement('div')
   document.body.append(root)
-  const app = createApp(defineComponent({
+  const component = defineComponent({
     setup() {
       composer = useChatComposer({
         canSend,
@@ -92,6 +95,13 @@ async function mountComposer(options: {
         h(EditorContent, { editor: composer.editor.value }),
         statusPanelOpen.value ? h('aside', { 'data-testid': 'conversation-status-panel' }, 'Conversation status') : null,
       ]
+    },
+  })
+  const app = createApp(defineComponent({
+    setup() {
+      if (options.commands)
+        useProvideWorkbenchCommands(options.commands)
+      return () => h(component)
     },
   }))
   if (options.statusPanel !== false)
@@ -609,4 +619,82 @@ describe('chat composer editing', () => {
     expect(flow.composer.sourceOptions.value).toEqual([])
     expect(flow.composer.isLoadingContext.value).toBe(false)
   })
+})
+
+function localCommands(execute: WorkbenchCommandPort['execute']) {
+  const errors: string[] = []
+  const entries = shallowRef([{ id: 'tests.game.start', name: 'game:start', title: 'Start game' }])
+  return { errors, entries, execute, reportFailure: () => {
+    errors.push('failed')
+  } }
+}
+
+it('inserts a stable local command reference without executing, then runs without a model', async () => {
+  const executions: { id: string, args: string }[] = []
+  const commands = localCommands(async (id, args) => {
+    executions.push({ id, args })
+    return null
+  })
+  const flow = await mountComposer({ commands })
+  flow.canSend.value = false
+  flow.editor.commands.setContent(createChatComposerContentFromText('/game:star'))
+  flow.editor.commands.setTextSelection('/game:star'.length + 1)
+  flow.composer.activeTrigger.value = { kind: 'slash', query: 'game:star' }
+  flow.composer.selectSuggestion({ kind: 'slashCommand', commandId: 'tests.game.start', value: '/game:start', label: '/game:start', description: null, path: null })
+  expect(executions).toEqual([])
+  expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).body[0]!.content[0]).toMatchObject({ commandId: 'tests.game.start', value: '/game:start', commandMode: 'action' })
+  flow.editor.commands.insertContent('level=2')
+  expect(flow.composer.canSubmit.value).toBe(true)
+  flow.keydown('Enter')
+  await nextTick()
+  expect(executions).toEqual([{ id: 'tests.game.start', args: 'level=2' }])
+  expect(flow.sent).toEqual([])
+  expect(flow.editor.getText()).toBe('')
+})
+
+it.each(['/game:star', '/GAME:start', '/start', '/game:started'])('keeps an unmatched local command %s out of the model path', async (text) => {
+  let executed = false
+  const commands = localCommands(async () => {
+    executed = true
+    return null
+  })
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent(createChatComposerContentFromText(text))
+  flow.keydown('Enter')
+  await nextTick()
+  expect(flow.editor.getText()).toBe(text)
+  expect(flow.sent).toEqual([])
+  expect(executed).toBe(false)
+  expect(commands.errors).toEqual(['failed'])
+})
+
+it('retains a failed or removed command draft and never dispatches it as a prompt', async () => {
+  const commands = localCommands(async () => {
+    throw new Error('Unavailable')
+  })
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent(createChatComposerContentFromText('/game:start'))
+  flow.keydown('Enter')
+  await nextTick()
+  expect(flow.editor.getText()).toBe('/game:start')
+  commands.entries.value = []
+  flow.keydown('Enter')
+  await nextTick()
+  expect(flow.editor.getText()).toBe('/game:start')
+  expect(commands.errors).toEqual(['failed', 'failed'])
+  expect(flow.sent).toEqual([])
+})
+
+it('does not clear edits or a different draft after an asynchronous local command completes', async () => {
+  const result = deferred<null>()
+  const commands = localCommands(async () => result.promise)
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent(createChatComposerContentFromText('/game:start'))
+  flow.keydown('Enter')
+  flow.editor.commands.setContent(createChatComposerContentFromText('New work'))
+  flow.draftId.value = 'draft-2'
+  result.resolve(null)
+  await nextTick()
+  expect(flow.editor.getText()).toBe('New work')
+  expect(flow.sent).toEqual([])
 })

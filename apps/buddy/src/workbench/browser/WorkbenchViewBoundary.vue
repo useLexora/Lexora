@@ -2,11 +2,13 @@
 import { onErrorCaptured, shallowRef } from 'vue'
 import { useWorkbench } from './workbenchContext'
 
+const emit = defineEmits<{ error: [] }>()
 const { labels } = useWorkbench()
 const failed = shallowRef(false)
 const attempt = shallowRef(0)
 onErrorCaptured(() => {
   failed.value = true
+  emit('error')
   return false
 })
 </script>

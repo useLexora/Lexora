@@ -32,4 +32,4 @@ API 1 不开放 Node、shell 或任意 Desktop API。文件只读，仅能访问
 
 需要独立开发窗口时，先构建 Electron，再运行 `node extensions/tools.mjs dev /path/to/plugin`。开发窗口使用单独的临时配置；修改后重新加载构建目录并重启扩展。SDK 快照可以通过 `node extensions/tools.mjs export-sdk /path/to/plugin-sdk/sdk` 导出。
 
-API 2 通过 `contributes.placements` 将视图挂到输入框或侧边栏装饰、工作台顶部/底部面板，以及用户选择的思考等级控件。内容仍在隔离视图运行；宿主提供锚点几何、允许的控件值与生命周期。清单和调用示例见 [插件协议](../service/resources/skills/plugin-creator/references/protocol.md)。API 1 插件继续可用。
+API 2 通过 `contributes.placements` 提供装饰、工作台面板与思考等级控件。API 3 增加可选择的内容区、操作菜单、独立分屏挂载、带插件命名空间的输入命令与可取消交互。创作时用 `lexora_plugin_capabilities` 按需查询当前宿主支持的位置。内容仍在隔离视图运行；清单和调用示例见 [插件协议](../service/resources/skills/plugin-creator/references/protocol.md)。旧版插件继续可用。

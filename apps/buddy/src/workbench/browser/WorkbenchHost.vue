@@ -5,20 +5,24 @@ import type { DropPosition, ResourceRef, WorkbenchView } from '../common/workben
 import type { WorkbenchController } from '../services/WorkbenchController'
 import type { WorkingCopyService } from '../services/WorkingCopyService'
 import { formatKeybinding, matchesKeybinding } from '@buddy-shared/shortcuts/keybinding'
+import { workbenchMountKey } from '@buddy-shared/workbench/workbenchUi'
 import { PointerActivationConstraints } from '@dnd-kit/dom'
 import { DragDropProvider, DragOverlay, KeyboardSensor, PointerSensor } from '@dnd-kit/vue'
 import { NInput, NModal } from 'naive-ui'
 import { computed, onMounted, onScopeDispose, provide, shallowRef, triggerRef } from 'vue'
+import { useOptionalWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { workbenchLabels } from '../common/workbenchLabels'
 import WorkbenchMountPortals from './mounts/WorkbenchMountPortals.vue'
 import { useWorkbenchResize } from './useWorkbenchResize'
 import { workbenchKey } from './workbenchContext'
 import { createWorkbenchDragPlugins } from './workbenchDragPlugins'
+import WorkbenchInteractionControls from './WorkbenchInteractionControls.vue'
 import WorkbenchViewPortals from './WorkbenchViewPortals.vue'
 
 const props = defineProps<{ controller: WorkbenchController, copies: WorkingCopyService, language: string, backupError: boolean, active: boolean, keybindings: Readonly<Record<string, readonly string[]>>, platform: string }>()
 const emit = defineEmits<{ retryBackup: [], dropResource: [resource: ResourceRef, paneId: string, position: DropPosition] }>()
 defineSlots<{ default: () => unknown, view: (props: { view: WorkbenchView, visible: boolean }) => unknown }>()
+const ui = useOptionalWorkbenchUi()
 const plugins = createWorkbenchDragPlugins()
 const sensors = [PointerSensor.configure({ activationConstraints: () => [new PointerActivationConstraints.Distance({ value: 6 })] }), KeyboardSensor]
 const resize = useWorkbenchResize(props.controller)
@@ -29,13 +33,16 @@ const palette = shallowRef(false)
 const query = shallowRef('')
 const commandFailed = shallowRef(false)
 const dragging = shallowRef(false)
-const mountPoints = shallowRef(new Map<WorkbenchMountTarget, HTMLElement>())
-function registerMountPoint(target: WorkbenchMountTarget, element: HTMLElement): () => void {
-  mountPoints.value = new Map(mountPoints.value).set(target, element)
+const mountPoints = shallowRef(new Map<string, HTMLElement>())
+function registerMountPoint(target: WorkbenchMountTarget, element: HTMLElement, instanceId?: string): () => void {
+  const unregisterPane = target === 'workbench' || (target === 'workbench.pane' && instanceId) ? ui?.panes?.register(target === 'workbench' ? null : instanceId!, element) : undefined
+  const key = workbenchMountKey(target, instanceId)
+  mountPoints.value = new Map(mountPoints.value).set(key, element)
   return () => {
-    if (mountPoints.value.get(target) === element) {
+    unregisterPane?.()
+    if (mountPoints.value.get(key) === element) {
       const next = new Map(mountPoints.value)
-      next.delete(target)
+      next.delete(key)
       mountPoints.value = next
     }
   }
@@ -57,7 +64,6 @@ function refresh() {
   revision.value++
 }
 onScopeDispose(props.controller.subscribe(refresh))
-onScopeDispose(props.controller.registry.subscribe(refresh))
 onScopeDispose(props.copies.subscribe(refresh))
 const commands = computed(() => {
   void revision.value
@@ -99,7 +105,16 @@ onScopeDispose(props.controller.registry.register('lexora.commandPalette', (scop
     query.value = ''
   } })
 }))
+const interactions = computed(() => {
+  void revision.value
+  return [...props.controller.interactions.entries.values()]
+})
 function keyboard(event: KeyboardEvent) {
+  if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && interactions.value.length) {
+    event.preventDefault()
+    props.controller.interactions.end(interactions.value.at(-1)!.id)
+    return
+  }
   if (event.isComposing || event.defaultPrevented || event.repeat)
     return
   if ((event.target as Element | null)?.closest('[role="dialog"], .n-modal'))
@@ -140,6 +155,7 @@ provide(workbenchKey, { resize, controller: props.controller, copies: props.copi
       </div>
       <slot />
       <div v-if="resize.active.value.length" class="workbench__resize-shield" />
+      <WorkbenchInteractionControls :entries="interactions" :language="language" @end="controller.interactions.end($event)" />
       <WorkbenchMountPortals />
       <WorkbenchViewPortals>
         <template #default="{ view, visible }">

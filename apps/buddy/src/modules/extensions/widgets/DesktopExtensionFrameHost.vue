@@ -4,6 +4,7 @@ import type { ExtensionSurface } from './useExtensionViews'
 import type { SurfaceLayout, SurfaceLayoutLease } from '@/shared/ui/surfaces/surfaceLayout'
 import { extensionJsonSchema } from '@buddy-shared/extensions/extensionApi'
 import { onMounted, onScopeDispose, useTemplateRef, watch } from 'vue'
+import { SurfaceHitRegions } from '@/workbench/browser/surfaces/SurfaceHitRegions'
 import { useExtensionContext } from '../extensionContext'
 import { extensionErrorCode } from '../state/useExtensionState'
 
@@ -11,6 +12,7 @@ interface Frame {
   element: HTMLIFrameElement
   surface: ExtensionSurface
   layout: SurfaceLayoutLease
+  hitRegions: SurfaceHitRegions | null
   geometry: AnchorGeometry | null
   mount: MountGeometry | null
   visible: boolean
@@ -19,7 +21,7 @@ interface Frame {
   ping: { id: string, time: number } | null
 }
 const props = defineProps<{ layout: SurfaceLayout }>()
-const { state, views, anchors, focusView, language, isDark, workbench } = useExtensionContext()
+const { state, views, endInteraction, anchors, focusView, language, isDark, workbench } = useExtensionContext()
 const root = useTemplateRef<HTMLElement>('root')
 const frames = new Map<string, Frame>()
 function isOverlay(surface: ExtensionSurface) {
@@ -50,6 +52,12 @@ function environment() {
 watch([language, isDark], () => {
   for (const [token, frame] of frames) send(token, frame, { environment: environment() })
 }, { flush: 'post' })
+onScopeDispose(views.onMessage((extensionId, generation, message) => {
+  for (const [token, frame] of frames) {
+    if (frame.surface.session?.extensionId === extensionId && frame.surface.session.generation === generation)
+      send(token, frame, { message })
+  }
+}))
 watch(() => [...views.surfaces.values()].map(surface => surface.control?.snapshot()), () => {
   for (const [token, frame] of frames) {
     const control = frame.surface.control?.snapshot()
@@ -71,6 +79,7 @@ function sync() {
   const retained = new Set([...views.surfaces.values()].map(surface => surface.session?.token).filter(Boolean))
   for (const [token, frame] of frames) {
     if (!retained.has(token)) {
+      frame.hitRegions?.dispose()
       frame.layout.dispose()
       frame.element.remove()
       frames.delete(token)
@@ -84,7 +93,7 @@ function sync() {
     const options = {
       anchor: surface.element,
       visible: surface.visible && surface.eligible,
-      interactive: !overlay,
+      interactive: !overlay && surface.interactionMode !== 'regions',
       layer: overlay ? 'decoration' as const : 'content' as const,
       onLayout: (geometry: { visible: boolean, width: number, height: number }) => {
         const frame = frames.get(session.token)
@@ -97,7 +106,7 @@ function sync() {
         if (surface.mount) {
           const bounds = surface.mount.element.getBoundingClientRect()
           const rect = surface.element.getBoundingClientRect()
-          const mount = { target: surface.mount.target, visible: geometry.visible, width: bounds.width, height: bounds.height, rect: { x: rect.left - bounds.left, y: rect.top - bounds.top, width: geometry.width, height: geometry.height } }
+          const mount = { target: surface.mount.target, instanceId: surface.mount.instanceId, visible: geometry.visible, width: bounds.width, height: bounds.height, rect: { x: rect.left - bounds.left, y: rect.top - bounds.top, width: geometry.width, height: geometry.height } }
           if (JSON.stringify(mount) !== JSON.stringify(frame.mount)) {
             frame.mount = mount
             send(session.token, frame, { mount })
@@ -120,6 +129,7 @@ function sync() {
     if (existing) {
       existing.surface = surface
       existing.layout.update(options)
+      existing.hitRegions?.update({ ...options, visible: options.visible && surface.ready, onLayout: undefined }, surface.regions)
       continue
     }
     const element = document.createElement('iframe')
@@ -131,9 +141,20 @@ function sync() {
     if (overlay)
       element.dataset.extensionOverlay = session.extensionId
     element.style.cssText = 'position:fixed;border:0;visibility:hidden;left:-10000px;width:1px;height:1px'
-    frames.set(session.token, { element, surface, layout: props.layout.attach(element, options), geometry: null, mount: null, visible: false, control: surface.control?.snapshot() ?? null, started: performance.now(), ping: null })
+    const hitRegions = surface.interactionMode === 'regions'
+      ? new SurfaceHitRegions(props.layout, { ...options, visible: false }, (activation) => {
+          const frame = frames.get(session.token)
+          if (frame?.visible && frame.surface.ready && frame.surface.eligible)
+            send(session.token, frame, { activation })
+        })
+      : null
+    frames.set(session.token, { element, hitRegions, surface, layout: props.layout.attach(element, options), geometry: null, mount: null, visible: false, control: surface.control?.snapshot() ?? null, started: performance.now(), ping: null })
     element.src = session.url
     root.value.append(element)
+    if (hitRegions) {
+      root.value.append(hitRegions.element)
+      hitRegions.update({ ...options, visible: options.visible && surface.ready }, surface.regions)
+    }
   }
   props.layout.invalidate()
 }
@@ -145,6 +166,10 @@ async function receive(event: MessageEvent) {
   const session = frame?.surface.session
   if (!frame || !session || event.source !== frame.element.contentWindow)
     return
+  if (data.endInteraction === true && frame.surface.input.interactionId) {
+    endInteraction(frame.surface.input.interactionId)
+    return
+  }
   if (typeof data.pong === 'string' && data.pong === frame.ping?.id) {
     frame.ping = null
     return
@@ -165,8 +190,10 @@ async function receive(event: MessageEvent) {
       return
     if (data.method === 'bootstrap' && value && typeof value === 'object')
       value = { ...value, workbench: workbench.value, visible: frame.visible && document.visibilityState === 'visible', environment: environment(), anchor: frame.geometry, mount: frame.mount, control: frame.surface.control?.snapshot() ?? null }
-    if (data.method === 'view.ready')
+    if (data.method === 'view.ready') {
       frame.surface.ready = true
+      sync()
+    }
     if (data.method === 'view.failed') {
       views.fail(frame.surface, 'EXTENSION_VIEW_FAILED')
       return
@@ -235,6 +262,7 @@ onScopeDispose(() => {
   window.removeEventListener('blur', focused)
   document.removeEventListener('visibilitychange', visibilityChanged)
   for (const frame of frames.values()) {
+    frame.hitRegions?.dispose()
     frame.layout.dispose()
     frame.element.remove()
   }

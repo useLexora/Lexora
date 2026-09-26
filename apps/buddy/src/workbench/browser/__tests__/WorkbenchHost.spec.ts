@@ -71,11 +71,20 @@ it('keeps a contributed view instance alive across splits, moves and missing con
     await nextTick()
     expect(created).toBe(2)
     expect(element.querySelector('[data-instance="1"]')).toBe(original)
+    const previousPane = controller.pane(secondPane)!
+    const replacement = await controller.open({ scheme: 'sample', id: 'three', data: {} }, 'Replacement', { paneId: secondPane })
+    await nextTick()
+    expect(created).toBe(3)
+    expect(disposed).toBe(1)
+    expect(controller.pane(secondPane)).not.toBe(previousPane)
+    expect(previousPane.view).not.toBe(replacement)
+    expect(element.querySelector('[data-instance="3"]')?.closest('[data-pane-id]')?.getAttribute('data-pane-id')).toBe(secondPane)
+    expect(element.querySelector('[data-instance="1"]')).toBe(original)
     await controller.move(first, secondPane)
     await nextTick()
     expect(element.querySelector('[data-instance="1"]')).toBe(original)
     expect(original.closest('[data-pane-id]')?.getAttribute('data-pane-id')).toBe(secondPane)
-    expect(disposed).toBe(1)
+    expect(disposed).toBe(2)
     controller.updateView(first, { state: { message: 'Updated view state' } })
     await nextTick()
     expect(element.querySelector('[data-instance="1"]')).toBe(original)
@@ -83,13 +92,13 @@ it('keeps a contributed view instance alive across splits, moves and missing con
     const saved = JSON.stringify(controller.layout)
     unregister()
     await nextTick()
-    expect(disposed).toBe(2)
+    expect(disposed).toBe(3)
     expect(element.textContent).toContain('This view is unavailable')
     expect(JSON.stringify(controller.layout)).toBe(saved)
     register()
     await nextTick()
     expect(element.textContent).toContain('Updated view state')
-    expect(created).toBe(3)
+    expect(created).toBe(4)
   }
   finally {
     app.unmount()
@@ -219,6 +228,57 @@ it('preserves independent plugin content when changing mounts or removing the ta
     await controller.close(first)
     await nextTick()
     expect(disposed).toBe(1)
+  }
+  finally {
+    app.unmount()
+    registry.dispose()
+    element.remove()
+  }
+})
+
+it('prepares a view inside its destination pane and reveals the same DOM without an empty intermediate layout', async () => {
+  const registry = new ContributionRegistry()
+  registry.register('sample', scope => scope.view({ id: 'sample', renderer: 'sample', locations: ['main'], label: 'Sample', supports: () => true, multiple: false, prepareBeforeOpen: true }))
+  const controller = new WorkbenchController(registry)
+  const original = (await controller.open({ scheme: 'sample', id: 'original', data: {} }, 'Original'))!
+  const copies = new WorkingCopyService({ read: async () => ({ text: '', etag: '' }), save: async () => {
+    throw new Error('unused')
+  } })
+  const element = document.createElement('div')
+  document.body.append(element)
+  const Layout = defineComponent({ setup() {
+    const { layout } = useWorkbench()
+    return () => h(WorkbenchLayoutNode, { node: layout.value.root })
+  } })
+  const app = createApp({
+    render: () => h(WorkbenchHost, { controller, copies, language: 'en-US', backupError: false, active: true, keybindings: {}, platform: 'linux' }, {
+      default: () => h(Layout),
+      view: ({ view, visible }: { view: WorkbenchView, visible: boolean }) => h('input', { 'data-ready-view': view.id, 'data-visible': visible, 'value': view.title }),
+    }),
+  })
+  app.mount(element)
+  try {
+    await nextTick()
+    const originalNode = element.querySelector(`[data-ready-view="${original}"]`)!
+    const opening = controller.open({ scheme: 'sample', id: 'next', data: {} }, 'Next')
+    const candidate = controller.navigation.entries.get(controller.layout.activePane)!.view.id
+    await nextTick()
+    const preparedNode = element.querySelector(`[data-ready-view="${candidate}"]`)!
+    const preparedSurface = preparedNode.closest('.workbench-surface')!
+    expect(preparedSurface.classList.contains('is-preparing')).toBe(true)
+    expect(preparedSurface.hasAttribute('inert')).toBe(true)
+    expect(preparedNode.getAttribute('data-visible')).toBe('false')
+    expect(preparedNode.closest('[data-pane-id]')).toBe(originalNode.closest('[data-pane-id]'))
+    expect(originalNode.closest('.is-preparing')).toBeNull()
+    controller.navigation.ready(candidate)
+    await opening
+    await nextTick()
+    expect(element.querySelector(`[data-ready-view="${candidate}"]`)).toBe(preparedNode)
+    expect(preparedNode.closest('.workbench-surface')).toBe(preparedSurface)
+    expect(preparedSurface.classList.contains('is-preparing')).toBe(false)
+    expect(preparedSurface.hasAttribute('inert')).toBe(false)
+    expect(preparedNode.getAttribute('data-visible')).toBe('true')
+    expect(element.contains(originalNode)).toBe(false)
   }
   finally {
     app.unmount()

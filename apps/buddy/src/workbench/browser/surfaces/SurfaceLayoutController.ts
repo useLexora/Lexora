@@ -164,7 +164,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     Object.assign(element.style, {
       position: 'fixed',
       visibility: 'visible',
-      pointerEvents: options.interactive ? 'auto' : 'none',
+      pointerEvents: options.interactive && !options.childrenOnly ? 'auto' : 'none',
       left: `${bounds.left}px`,
       top: `${bounds.top}px`,
       width: `${bounds.width}px`,
@@ -173,7 +173,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
       clipPath: `inset(${clip.top - bounds.top}px ${bounds.right - clip.right}px ${bounds.bottom - clip.bottom}px ${clip.left - bounds.left}px)`,
     })
     options.onLayout?.({ visible: true, width: bounds.width, height: bounds.height })
-    element.tabIndex = options.interactive ? 0 : -1
+    element.tabIndex = options.interactive && !options.childrenOnly ? 0 : -1
     element.inert = !options.interactive
     if (options.interactive)
       element.removeAttribute('aria-hidden')

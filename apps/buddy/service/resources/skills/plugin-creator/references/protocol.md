@@ -1,4 +1,4 @@
-# Lexora 插件 API 2
+# Lexora 插件协议
 
 一个包包含根 `extension.json` 和包内文件。源码包支持自包含 `.ts`、`.mts`、`.js`、`.mjs`，以及静态 CSS、图片等资源；原始 HTML、Vue 单文件组件、npm 裸导入不属于当前编译协议。第三方库需作者预先打包。不要生成 `package.json`、锁文件、构建脚本、`node_modules` 或远程 CDN 依赖。
 
@@ -27,9 +27,10 @@
 
 | 字段 | 结构 |
 | --- | --- |
-| `commands` | 数组，每项必填 `id`、`title`；`hidden` 可选，默认 false。存在命令时必须设置清单顶层的宿主 `entry` |
+| `commands` | 数组，每项必填 `id`、`title`；`hidden` 可选，默认 false；API 3 可声明 `slash: {name, description?}`，规则见 [注册命令](commands.md)。存在命令时必须设置清单顶层的宿主 `entry` |
+| `menus` | API 3；数组，每项必填 `id`、`command`、`target`，可选 `order`（-1000 至 1000，默认 0）、`when`；引用自己的已声明命令 |
 | `views` | 数组，每项必填 `id`、`title`、`entry`；`resource` 为 `selected-file`（默认）或 `none`；`location` 默认 `context`；`stateVersion` 为正整数，默认 1 |
-| `placements` | 数组，每项必填 `id`、`view`、`kind`，并按 kind 添加后文规定的 `anchor`、`target` 和 `presentation`；不要把它们写入视图定义 |
+| `placements` | 数组，每项必填 `id`、`view`、`kind`，并按 kind 添加后文规定的 `anchor`、`target` 或 `presentation`；不要把它们写入视图定义 |
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
 
 插件 ID 使用小写字母开头的两段名称，中间以 `.` 分隔，每段可含小写字母、数字与 `-`；贡献 ID 在插件 ID 后追加由小写字母、数字、`.`、`-` 组成的后缀。声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
@@ -42,13 +43,13 @@
 | `context` | `selected-file` 或 `none` | 工作区资源页签，由用户打开 |
 | `window-overlay` | `none` | 启用后自动挂载的透明窗口效果，每插件最多一个；无法点击或聚焦 |
 
-页面与小视图由插件绘制，均使用 `render(context, container)`，共用隔离和通信 API。API 2 将视图内容与挂载位置分开，通过 `contributes.placements` 选择正式扩展点；`page` 和 `window-overlay` 在 API 1、API 2 中均可使用。插件不能查询或修改宿主 DOM。
+页面与小视图由插件绘制，均使用 `render(context, container)`，共用隔离和通信 API。API 2 起将视图内容与挂载位置分开，通过 `contributes.placements` 选择正式扩展点；`page` 和 `window-overlay` 继续可用。插件不能查询或修改宿主 DOM。
 
 装饰、替换控件和普通挂载面板的 `container` 默认填满隔离视图，无内边距，支持子元素使用百分比高度。装饰的绘制范围仍受锚点及祖先裁剪约束；页面保持普通文档流，可按内容滚动。
 
 导航入口位于自动化下方，声明 `contributes.navigation: { "title": "插件名称", "view": "local.plugin.settings" }`，引用一个 `resource: "none"` 的视图（API 1 仍需 `location: "page"`）。不需要设置页的效果插件可以没有导航。
 
-导航页面、装饰和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
+导航页面、装饰、内容插槽和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
 
 ## 权限
 
@@ -58,7 +59,8 @@
 | `controls: ["model.reasoning"]` | 提供可由用户选用的思考等级控件 |
 | `notifications: true` | 宿主 `context.notifications.show({title,body})` |
 | `schedules: true` | 宿主持久间隔任务，需要宿主入口与已声明命令 |
-| `selectedResource: "read"` | 读取明确分配给视图的文件资源 |
+| `selectedResource: "read"` | 读取用户选择并明确分配的文件资源 |
+| `selectedContent: true` | API 3；用户点击插件操作时获取当前草稿或该条消息文本，不订阅输入或读取对话历史 |
 | `localResources: true` | 用户通过系统窗口选择文件或目录，视图读取文本、二进制或受控 URL |
 | `resourceExport: true` | 用户通过系统另存为窗口确认目标后，保存插件提供的字节 |
 | `network: ["https://example.com"]` | 通过宿主向列出的 HTTPS origin 发 GET 请求 |
@@ -90,14 +92,15 @@
 | kind | 必填字段 | 行为 |
 | --- | --- | --- |
 | `decoration` | `anchor` | 自动挂载至 `app.sidebar`、`workbench.sidebar`、`workbench.pane` 或 `composer.input`；每个锚点实例分别挂载，只在该区域内绘制，不接收指针和焦点 |
-| `view` | `target` | `workbench`、`app.sidebar` 或 `workbench.sidebar`；`presentation` 描述区域内布局；宿主入口调用 `context.placements.show(id)` / `hide(id)` 显示或关闭 |
-| `control` | `target` | 当前支持 `model.reasoning`；用户在控件样式选择中启用后才替换内置控件 |
+| `view` | `target` | 用 `lexora_plugin_capabilities({kind:"mount"})` 查询目标；`presentation` 描述区域内布局，宿主入口调用 `context.placements.show(id, instanceId?)` / `hide(id, instanceId?)` |
+| `control` | `target` | 当前支持 `model.reasoning`；用户在插件管理页选择后才替换内置控件 |
+| `slot` | `target` | 需要将 `apiVersion` 设为 3；用户在插件管理页选择后替换目标内容，具体目标和尺寸按需查 [内容插槽目录](slots.md) |
 
-挂载口只提供容器，不提供面板外壳或交互。声明示意：`{id,view,kind:"view",target:"workbench",presentation:{position:"absolute",width:420,height:180,right:16,bottom:16}}`。三个目标分别属于持续存在的工作台、应用侧栏和任务侧栏。挂载口暂时不可用时保留实例，恢复后继续投影。插件自行渲染全部内容、样式与交互；插件之间保留独立实例，宿主不生成切换器、不自动避让或折叠。
+挂载口只提供容器，不提供面板外壳或交互。声明示意：`{id,view,kind:"view",target:"workbench",presentation:{position:"absolute",width:420,height:180,right:16,bottom:16}}`。目标所属范围由能力目录返回。API 3 的分屏挂载以 `instanceId` 区分实例；从命令 `invocation.instanceId` 传入发起操作的分屏，不要在异步完成后重新选择焦点。省略时使用调用时的活动分屏，标识失效则拒绝打开。每个分屏分别保存状态，分屏移除时结束该实例。挂载口暂时不可用时保留实例，恢复后继续投影。插件自行渲染全部内容、样式与交互；插件之间保留独立实例，宿主不生成切换器、不自动避让或折叠。
 
 `presentation` 是隔离视图外框的布局声明：`position` 为 `static`（默认，正常布局）或 `absolute`（相对挂载口）；`order` 为 -1000 至 1000（默认 1，与核心内容的 0 比较）；`zIndex` 为 0–20 的扩展层内顺序，不覆盖核心弹窗。`width/height/top/right/bottom/left` 使用 0–8192 的像素数或 0%–100% 字符串；`null` 清除该 CSS 值。未指定尺寸时宽度 100%、高度 56px，最大尺寸及可见内容受目标容器边界约束。内容内部自由使用 DOM/CSS、Canvas 等；不访问父页面 DOM。
 
-`context.setPresentation({...})` 合并更新上述字段，传 `target` 可转移挂载口。实例、会话与状态保留；插件的定时器、媒体等不会因为换位置而重建。布局值由宿主持久化，业务状态由插件自己保存。`context.mount` / `onMountChange` 提供目标容器宽高、可见性和当前视图的局部矩形，供插件响应尺寸变化或实现拖动等交互，不包含屏幕坐标、其他插件信息或父 DOM。
+`context.setPresentation({...})` 合并更新上述字段，传 `target` 可转移挂载口。进入分屏区域要求该视图在创建时已绑定分屏，不会把全局实例隐式移入当前焦点分屏。实例、会话与状态保留；插件的定时器、媒体等不会因为换位置而重建。布局值由宿主持久化，业务状态由插件自己保存。`context.mount` / `onMountChange` 提供目标容器宽高、可见性和当前视图的局部矩形，供插件响应尺寸变化或实现拖动等交互，不包含屏幕坐标、其他插件信息或父 DOM。
 
 宿主不认识“折叠”“展开”“贴边”或“播放器”。需要这些效果时，插件自己渲染触发入口、控制布局并保存自己的状态。缩小视图外框不销毁内容；调用宿主命令中的 `placements.hide` 才关闭实例。插件负责再次打开的入口，可以使用自己的可见 UI、已声明命令或导航。不要依赖宿主替插件提供关闭栏或恢复按钮。
 
@@ -109,11 +112,19 @@
 
 组合视图可用导航页管理设置、挂载面板展示持续内容、隐藏命令连接私有存储。设置更新后的刷新时机由插件明确处理，页面之间没有隐式共享 JS 状态。
 
+## 操作菜单
+
+API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操作」。先用 `lexora_plugin_capabilities({kind:"menu"})` 查询目标与输入契约，再声明 `{id,command,target,order?,when?}`。`hidden` 仅隐藏命令面板与管理卡片入口，不隐藏显式声明的菜单。
+
+命令参数中的 `invocation` 包含 `target`、`instanceId`，仅在声明 `selectedContent` 且用户点击对应操作后附带 `content`。文件菜单通过原有 `selectedResource` 权限提供 `resource` 句柄。视图调用自己的命令时 `invocation.target` 为 `view`，只附带该视图的实例标识；命令面板和定时调用的 `invocation` 为空。
+
+输入操作可返回 `{insertText:string}`。宿主在原草稿仍可编辑且内容未改变时，将结果作为纯文本插入原选择位置；更换草稿、编辑内容或关闭视图后忽略迟到结果，不自动发送。其他菜单忽略命令返回值。`when` 支持宿主公开上下文，消息菜单额外提供 `message.role`，文件菜单提供当前 `resource.scheme`；不能用条件读取未公开的数据。
+
 ## 页面上下文与生效条件
 
 视图通过 `context.workbench` 读取只读快照：`values` 是公开语义上下文，`pages` 列出已登记页面的稳定 `id/title`。`onWorkbenchChange` 订阅变化。当前 `page.id` 使用 `lexora.tasks`、`lexora.automations`、`lexora.extensions`、`lexora.settings` 或 `extension:<插件ID>`；自动化和设置通过 `page.section` 提供子页标识，如 `plans`、`history`、`general`、`models`。其他页面不保留上一个页面的 section。未来页面通过登记扩展，不以名称、URL 或 DOM 选择器识别。这里不提供任务正文、输入内容、文件路径、路由参数或 Provider/模型身份。
 
-`contributes.views`、`placements`、`commands` 和 `navigation` 可声明可选的 `when`。例如 `"when": {"page.id": ["lexora.tasks", "lexora.automations"]}`；对象中的不同 key 为 AND，数组内为 OR，标量严格相等，缺失 key 不匹配。空对象或省略表示不限定，不执行表达式代码。最多 32 个 key，每个数组最多 32 项，值限字符串（256 字符）、布尔和有限数字。视图定义与挂载的条件同时满足才显示。只限定某个挂载实例时优先在 placement 声明；view 的条件影响该定义的所有实例，navigation 的条件只限定入口。
+`contributes.views`、`placements`、`commands`、`menus` 和 `navigation` 可声明可选的 `when`。例如 `"when": {"page.id": ["lexora.tasks", "lexora.automations"]}`；对象中的不同 key 为 AND，数组内为 OR，标量严格相等，缺失 key 不匹配。空对象或省略表示不限定，不执行表达式代码。最多 32 个 key，每个数组最多 32 项，值限字符串（256 字符）、布尔和有限数字。视图定义与挂载的条件同时满足才显示。只限定某个挂载实例时优先在 placement 声明；view 的条件影响该定义的所有实例，navigation 的条件只限定入口。
 
 条件只控制 UI 的可用性，不授予权限、不启动插件，也不阻止插件自身调用命令或后台调度。命令菜单与导航入口随上下文更新。首次不满足条件的视图不激活；已打开视图离开范围时隐藏，挂载面板退出布局占位，实例、状态与会话保留，返回后恢复。控件不匹配时使用内置控件并拒绝旧提交。`placements.hide` 仍表示关闭实例，与条件隐藏不同。
 
@@ -174,3 +185,5 @@ context.subscriptions.add(context.commands.register('local.example.open', async 
 ## 主题与样式
 
 直接创建元素、设置样式，或引入包内 CSS：`link.href = new URL('./style.css', import.meta.url).href`。使用 `--lexora-background`、`--lexora-text`、`--lexora-muted`、`--lexora-border`、`--lexora-accent`、`--lexora-accent-solid`。`context.environment` 提供语言、配色与颜色；`context.onEnvironmentChange` 订阅切换。效果应柔和短暂，不遮挡正文或确认操作。
+
+临时覆盖层、分屏布局订阅与局部点击区域见 [交互会话](interactions.md)。

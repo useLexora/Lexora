@@ -1,7 +1,8 @@
-import type { ExtensionResource, ExtensionStatus, ExtensionViewInput, ExtensionViewSession, ExtensionWorkbenchEvent } from '../../shared/extensions/extensionApi'
+import type { ExtensionMenuInvocation, ExtensionResource, ExtensionStatus, ExtensionViewInput, ExtensionViewSession, ExtensionWorkbenchEvent } from '../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../shared/extensions/extensionAuthoring'
 import type { ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
+import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
@@ -10,9 +11,11 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
+import { extensionCommandNamespace } from '../../shared/extensions/extensionCommands'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
+import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
@@ -47,6 +50,7 @@ interface RunningExtension {
   ready: Promise<void>
   active: boolean
   inFlight: number
+  panesPending?: boolean
 }
 interface RunningView {
   input: ExtensionViewInput
@@ -71,6 +75,8 @@ export class ExtensionService {
   readonly #views = new Map<string, RunningView>()
   readonly #diagnostics = new Map<string, Pick<ExtensionStatus, 'error' | 'activationMs' | 'logs'>>()
   readonly #notificationTimes = new Map<string, number>()
+  readonly #interactions = new Map<string, { running: RunningExtension, title: string, abort: AbortController }>()
+  #panes: WorkbenchPaneSnapshot[] = []
   #loading: Promise<void> | undefined
   #mutating = Promise.resolve()
   #compiling = Promise.resolve()
@@ -271,17 +277,80 @@ export class ExtensionService {
 
   async execute(id: string, command: string, target: SpaceFileTarget | null): Promise<void> {
     const running = await this.#activate(id)
+    await this.#executeCommand(running, command, target)
+  }
+
+  updatePanes(panes: WorkbenchPaneSnapshot[]): void {
+    this.#panes = panes
+    for (const running of this.#running.values()) {
+      if (running.active)
+        this.#publishPanes(running)
+    }
+  }
+
+  #publishPanes(running: RunningExtension): void {
+    if (running.package.manifest.apiVersion < 3 || running.panesPending || running.abort.signal.aborted)
+      return
+    const panes = this.#panes
+    running.panesPending = true
+    void running.host.call('panes', { panes }).catch(() => {}).finally(() => {
+      running.panesPending = false
+      if (panes !== this.#panes)
+        this.#publishPanes(running)
+    })
+  }
+
+  async executeSlash(id: string, command: string, argumentsText: string, instanceId?: string): Promise<JsonValue> {
+    const running = await this.#activate(id)
+    const contribution = running.package.manifest.contributes.commands.find(item => item.id === command)
+    if (!contribution?.slash || contribution.hidden)
+      throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
+    if (instanceId && !this.#panes.some(pane => pane.id === instanceId && pane.visible))
+      throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
+    return this.#executeCommand(running, command, null, { target: 'slash', instanceId: instanceId ?? null }, argumentsText)
+  }
+
+  async endInteraction(id: string): Promise<void> {
+    const interaction = this.#interactions.get(id)
+    if (!interaction)
+      return
+    this.#interactions.delete(id)
+    interaction.abort.abort()
+    for (const [viewId, view] of this.#views) {
+      if (view.input.interactionId === id) {
+        view.dispose()
+        this.#views.delete(viewId)
+      }
+    }
+    const { running } = interaction
+    const removing = this.#ports.workbench({ kind: 'interaction', requestId: randomUUID(), extensionId: running.package.manifest.id, generation: running.generation, interactionId: id, title: null }, AbortSignal.timeout(10000))
+    if (!running.abort.signal.aborted)
+      void running.host.call('interactionEnded', { id }).catch(() => {})
+    await removing
+  }
+
+  async executeMenu(id: string, menuId: string, input: ExtensionMenuInvocation): Promise<JsonValue> {
+    const running = await this.#activate(id)
+    const menu = running.package.manifest.contributes.menus.find(menu => menu.id === menuId && menu.target === input.target)
+    if (!menu)
+      throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
+    const invocation = { target: input.target, instanceId: input.instanceId ?? null, ...(running.package.manifest.permissions.selectedContent && ['composer.actions', 'message.actions'].includes(input.target) && input.content !== undefined ? { content: input.content } : {}) }
+    return this.#executeCommand(running, menu.command, input.target === 'resource.actions' ? input.resource : null, invocation)
+  }
+
+  async #executeCommand(running: RunningExtension, command: string, target: SpaceFileTarget | null, invocation: JsonValue = null, argumentsValue: JsonValue = null): Promise<JsonValue> {
     if (!running.package.manifest.contributes.commands.some(item => item.id === command))
       throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
     let resource: ExtensionResource | null = null
     if (target && running.package.manifest.permissions.selectedResource === 'read') {
       await this.#ports.readText(target, running.abort.signal)
       this.#assertCurrent(running)
-      resource = await this.store.grant(id, target)
+      resource = await this.store.grant(running.package.manifest.id, target)
     }
     this.#assertCurrent(running)
-    await running.host.call('command', { command, resource, arguments: null })
+    const result = await running.host.call('command', { command, resource, arguments: argumentsValue, invocation })
     this.#assertCurrent(running)
+    return extensionJsonSchema.parse(result)
   }
 
   async openView(input: ExtensionViewInput): Promise<ExtensionViewSession> {
@@ -296,9 +365,20 @@ export class ExtensionService {
         throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
       if (view.resource === 'selected-file' && !input.resource)
         throw new Error('EXTENSION_RESOURCE_REQUIRED')
+      if (input.interactionId) {
+        const interaction = this.#interactions.get(input.interactionId)
+        const placement = running.package.manifest.contributes.placements.find(item => item.id === input.placementId)
+        if (interaction?.running !== running || placement?.kind !== 'view' || !placement.interaction)
+          throw new Error('EXTENSION_INTERACTION_ENDED')
+      }
+      else if (running.package.manifest.contributes.placements.some(item => item.id === input.placementId && item.kind === 'view' && item.interaction)) {
+        throw new Error('EXTENSION_INTERACTION_REQUIRED')
+      }
       if (input.resource)
         await this.#resource(running, input.resource.id)
       this.#assertCurrent(running)
+      if (input.interactionId && !this.#interactions.has(input.interactionId))
+        throw new Error('EXTENSION_INTERACTION_ENDED')
       if (this.#viewOpenings.get(input.viewId) !== request)
         throw new Error('EXTENSION_VIEW_EXPIRED')
       const old = this.#views.get(input.viewId)
@@ -338,7 +418,7 @@ export class ExtensionService {
     const placement = view.running.package.manifest.contributes.placements.find(placement => placement.id === view.input.placementId)
     let result: JsonValue
     if (method === 'bootstrap') {
-      result = { apiVersion: view.running.package.manifest.apiVersion, entry: contribution.entry, location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
+      result = { apiVersion: view.running.package.manifest.apiVersion, instanceId: view.input.instanceId ?? null, interactionId: view.input.interactionId ?? null, interactionMode: placement?.kind === 'view' ? placement.interaction ?? null : null, entry: contribution.entry, location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
     }
     else if (method === 'view.setState') {
       if (contribution.location !== 'context' || (placement && placement.kind !== 'view'))
@@ -363,6 +443,8 @@ export class ExtensionService {
       if (placement?.kind !== 'view')
         throw new Error('EXTENSION_METHOD_DENIED')
       const presentation = extensionPresentationRequestSchema.parse(params)
+      if (placement.interaction && ((presentation.target && !['workbench', 'workbench.pane'].includes(presentation.target)) || presentation.position === 'static'))
+        throw new Error('EXTENSION_METHOD_DENIED')
       const saved = await this.#ports.workbench({ kind: 'presentation', requestId: randomUUID(), viewId: id, generation, token, presentation }, view.running.abort.signal)
       if (saved !== id)
         throw new Error('EXTENSION_PRESENTATION_FAILED')
@@ -495,11 +577,20 @@ export class ExtensionService {
         else { throw new Error('EXTENSION_METHOD_DENIED') }
       }
     }
+    else if (method === 'interaction.setRegions') {
+      if (placement?.kind !== 'view' || placement.interaction !== 'regions' || !view.input.interactionId || !this.#interactions.has(view.input.interactionId))
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const regions = workbenchHitRegionsSchema.parse(params)
+      const saved = await this.#ports.workbench({ kind: 'regions', requestId: randomUUID(), viewId: id, generation, token, regions }, view.abort.signal)
+      if (!saved)
+        throw new Error('EXTENSION_VIEW_EXPIRED')
+      result = null
+    }
     else if (method === 'commands.execute') {
       const input = z.object({ command: z.string().max(180), arguments: extensionJsonSchema }).strict().parse(params)
       if (!view.running.package.manifest.contributes.commands.some(item => item.id === input.command))
         throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-      result = extensionJsonSchema.parse(await view.running.host.call('command', { ...input, resource: view.input.resource }))
+      result = extensionJsonSchema.parse(await view.running.host.call('command', { ...input, resource: view.input.resource, invocation: { target: 'view', instanceId: view.input.instanceId ?? null } }))
     }
     else {
       if (method === 'resources.readText') {
@@ -543,17 +634,29 @@ export class ExtensionService {
       let running = this.#running.get(dependency)
       if (!running) {
         const pkg = this.store.installed[dependency]!.current
+        if (pkg.manifest.contributes.commands.some(command => command.slash) && [...this.#running.values()].some(other => other.package.manifest.contributes.commands.some(command => command.slash) && extensionCommandNamespace(other.package.manifest.id) === extensionCommandNamespace(dependency))) {
+          this.#log(dependency, 'activation.failed', 'EXTENSION_COMMAND_NAMESPACE_CONFLICT')
+          throw new Error('EXTENSION_COMMAND_NAMESPACE_CONFLICT')
+        }
         const generation = randomUUID()
         const abort = new AbortController()
-        const host = this.#ports.createHost(pkg, (method, params) => this.#brokerByGeneration(dependency, generation, method, params), () => this.#failed(dependency, generation))
+        let host: ExtensionHost
+        try {
+          host = this.#ports.createHost(pkg, (method, params) => this.#brokerByGeneration(dependency, generation, method, params), () => this.#failed(dependency, generation))
+        }
+        catch (error) {
+          this.#log(dependency, 'activation.failed', extensionError(error))
+          throw error
+        }
         running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0 }
         this.#running.set(dependency, running)
         const start = performance.now()
         const instance = running
         this.#clearError(dependency)
-        running.ready = host.call('activate', { manifest: pkg.manifest }).then(() => {
+        running.ready = host.call('activate', { manifest: pkg.manifest, panes: pkg.manifest.apiVersion >= 3 ? this.#panes : [] }).then(() => {
           this.#assertCurrent(instance)
           instance.active = true
+          this.#publishPanes(instance)
           this.#log(dependency, 'activated', undefined, Math.round(performance.now() - start))
         }).catch(async (error: unknown) => {
           if (this.#running.get(dependency) === instance) {
@@ -647,12 +750,46 @@ export class ExtensionService {
         const { id: resource } = z.object({ id: z.string().uuid() }).strict().parse(params)
         result = await this.#ports.readText(await this.#resource(running, resource), running.abort.signal)
       }
+      else if (method === 'interactions.start') {
+        const input = z.object({ id: z.string().uuid(), title: z.string().min(1).max(100) }).strict().parse(params)
+        if (running.package.manifest.apiVersion < 3 || this.#interactions.has(input.id) || [...this.#interactions.values()].filter(item => item.running === running).length >= 4)
+          throw new Error('EXTENSION_INTERACTION_UNAVAILABLE')
+        const abort = new AbortController()
+        this.#interactions.set(input.id, { running, title: input.title, abort })
+        try {
+          const created = await this.#ports.workbench({ kind: 'interaction', requestId: randomUUID(), extensionId: id, generation: running.generation, interactionId: input.id, title: input.title }, AbortSignal.any([running.abort.signal, abort.signal]))
+          if (created !== input.id || abort.signal.aborted)
+            throw new Error('EXTENSION_INTERACTION_ENDED')
+        }
+        catch (error) {
+          await this.endInteraction(input.id).catch(() => {})
+          throw error
+        }
+        result = input.id
+      }
+      else if (method === 'interactions.end') {
+        const input = z.object({ id: z.string().uuid() }).strict().parse(params)
+        const interaction = this.#interactions.get(input.id)
+        if (interaction && interaction.running !== running)
+          throw new Error('EXTENSION_METHOD_DENIED')
+        await this.endInteraction(input.id)
+        result = null
+      }
+      else if (method === 'views.broadcast') {
+        if (running.package.manifest.apiVersion < 3)
+          throw new Error('EXTENSION_METHOD_DENIED')
+        await this.#ports.workbench({ kind: 'message', requestId: randomUUID(), extensionId: id, generation: running.generation, message: extensionJsonSchema.parse(params) }, running.abort.signal)
+        result = null
+      }
       else if (method === 'placements.show' || method === 'placements.hide') {
-        const input = z.object({ id: z.string().max(180) }).strict().parse(params)
+        const input = z.object({ id: z.string().max(180), instanceId: z.string().uuid().optional(), interactionId: z.string().uuid().optional() }).strict().parse(params)
         const placement = running.package.manifest.contributes.placements.find(placement => placement.id === input.id)
-        if (placement?.kind !== 'view')
+        if (placement?.kind !== 'view' || (input.instanceId && placement.target !== 'workbench.pane'))
           throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
-        result = await this.#ports.workbench({ kind: 'placement', requestId: randomUUID(), extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show' }, running.abort.signal)
+        const interaction = input.interactionId ? this.#interactions.get(input.interactionId) : null
+        if (!!placement.interaction !== !!input.interactionId || (input.interactionId && interaction?.running !== running))
+          throw new Error('EXTENSION_INTERACTION_ENDED')
+        result = await this.#ports.workbench({ kind: 'placement', requestId: randomUUID(), extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show', ...(input.instanceId ? { instanceId: input.instanceId } : {}), ...(input.interactionId ? { interactionId: input.interactionId } : {}) }, interaction ? AbortSignal.any([running.abort.signal, interaction.abort.signal]) : running.abort.signal)
         if (method === 'placements.show' && !result)
           throw new Error('EXTENSION_VIEW_UNAVAILABLE')
       }
@@ -731,6 +868,10 @@ export class ExtensionService {
       return
     this.#running.delete(id)
     running.abort.abort()
+    for (const [interactionId, interaction] of this.#interactions) {
+      if (interaction.running === running)
+        void this.endInteraction(interactionId).catch(() => {})
+    }
     for (const [viewId, view] of this.#views) {
       if (view.running === running) {
         view.dispose()

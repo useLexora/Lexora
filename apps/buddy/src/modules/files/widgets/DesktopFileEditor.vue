@@ -3,8 +3,10 @@ import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
 import type { TextModelPool } from '@/workbench/browser/TextModelPool'
 import type { WorkbenchView } from '@/workbench/common/workbench'
+import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, useTemplateRef, watch } from 'vue'
+import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, isMarkdownFile, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
@@ -99,6 +101,7 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
+          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
           <NButton v-if="mode === 'edit' || copies.dirty(view.resource)" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copies.dirty(view.resource)" @click="copies.save(view.resource)">
             {{ labels.save }}
           </NButton>

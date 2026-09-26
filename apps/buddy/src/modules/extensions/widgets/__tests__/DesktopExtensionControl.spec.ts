@@ -3,12 +3,18 @@ import type { ExtensionApi, ExtensionStatus, ExtensionViewInput } from '@buddy-s
 import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { ExtensionContext } from '../../extensionContext'
 import type { ExtensionViews } from '../useExtensionViews'
+import type { WorkbenchContext } from '@/workbench/browser/workbenchContext'
 import { extensionManifestSchema } from '@buddy-shared/extensions/extensionManifest'
 import { afterEach, expect, it, vi } from 'vitest'
-import { createApp, h, nextTick, shallowRef } from 'vue'
+import { createApp, h, nextTick, provide, shallowRef } from 'vue'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
+import { workbenchKey } from '@/workbench/browser/workbenchContext'
+import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
+import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { useProvideExtensionContext } from '../../extensionContext'
+import { useExtensionUiContributions } from '../../state/useExtensionUiContributions'
 import DesktopExtensionControl from '../DesktopExtensionControl.vue'
+import DesktopExtensionUiSettings from '../DesktopExtensionUiSettings.vue'
 import { useExtensionViews } from '../useExtensionViews'
 
 const disposables: (() => void)[] = []
@@ -34,7 +40,9 @@ async function setup() {
   const status: ExtensionStatus = { manifest, revision: 'package-1', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }
   const installed = shallowRef([status])
   const context = shallowRef<WorkbenchContextValues>({ 'page.id': 'lexora.tasks' })
-  const selection = shallowRef({ 'model.reasoning': 'tests.control.reasoning' })
+  const controller = new WorkbenchController(new ContributionRegistry())
+  controller.registry.register('configuration', scope => scope.configuration({ id: 'workbench.controls.model.reasoning', defaultValue: '', validate: value => typeof value === 'string' }))
+  controller.configuration.set('workbench.controls.model.reasoning', 'tests.control.reasoning')
   const value = shallowRef('low')
   const mounted = shallowRef(true)
   const opened: ExtensionViewInput[] = []
@@ -53,28 +61,22 @@ async function setup() {
   document.body.append(element)
   const app = createApp({
     setup() {
+      provide(workbenchKey, { controller } as WorkbenchContext)
       views = useExtensionViews(api, installed, context)
-      useProvideExtensionContext({
-        views,
-        workbench: shallowRef({ values: context.value, pages: [] }),
-        state: { installed, api } as ExtensionContext['state'],
-        anchors: new SemanticAnchorRegistry(),
-        controls: { selection, select: (target, id) => { selection.value = { ...selection.value, [target]: id } } },
-        language: shallowRef('en-US'),
-        isDark: shallowRef(false),
-        focusView: () => {},
-        startCreation: async () => {},
-      })
-      return () => mounted.value
-        ? h(DesktopExtensionControl, {
-            target: 'model.reasoning',
-            contextKey: 'model-a',
-            value: value.value,
-            options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }],
-            disabled: false,
-            onChange: next => value.value = next,
-          }, { default: () => h('div', { 'data-native-control': '' }, value.value) })
-        : null
+      useProvideExtensionContext({ endInteraction: () => {}, views, workbench: shallowRef({ values: context.value, pages: [] }), state: { installed, api } as ExtensionContext['state'], anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, startCreation: async () => {} })
+      return () => h('div', [
+        h(DesktopExtensionUiSettings, { language: 'en-US' }),
+        mounted.value
+          ? h(DesktopExtensionControl, {
+              target: 'model.reasoning',
+              contextKey: 'model-a',
+              value: value.value,
+              options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }],
+              disabled: false,
+              onChange: next => value.value = next,
+            }, { default: () => h('div', { 'data-native-control': '' }, value.value) })
+          : null,
+      ])
     },
   })
   app.mount(element)

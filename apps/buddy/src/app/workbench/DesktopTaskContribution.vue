@@ -41,12 +41,14 @@ async function load() {
     if (disposed)
       return
     task.value = loaded
-    if (workbench.controller.owner(props.view.id)?.id === workbench.controller.layout.activePane)
+    if (props.visible && workbench.controller.owner(props.view.id)?.id === workbench.controller.layout.activePane)
       workbench.activeTask.value = loaded
   }
   catch {
-    if (!disposed)
+    if (!disposed) {
       failed.value = true
+      workbench.controller.navigation.fail(props.view.id)
+    }
   }
 }
 watch(() => props.view.resource.id, load, { immediate: true })
@@ -62,7 +64,7 @@ watch(() => props.visible, (visible) => {
 
 <template>
   <DesktopTaskViewProvider v-if="task" :context="context">
-    <DesktopTaskEditor :reading-positions="workbench.readingPositions">
+    <DesktopTaskEditor :active="visible" :reading-positions="workbench.readingPositions" @ready="workbench.controller.navigation.ready(view.id)">
       <template #title>
         <WorkbenchPaneTitle :view="view" />
       </template>
