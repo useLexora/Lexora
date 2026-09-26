@@ -3,9 +3,11 @@ import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMess
 
 import type { ChatAgentTurn } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { computed, useTemplateRef } from 'vue'
+import { ChevronRight20Regular } from '@vicons/fluent'
+import { computed, shallowRef, useId, useTemplateRef, watch } from 'vue'
 
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import {
   resolveChatAgentTurnFailurePresentation,
   resolveChatAgentTurnNotice,
@@ -35,12 +37,21 @@ const { t } = useBuddyI18n(() => props.language)
 const flow = useTemplateRef('flow')
 defineExpose({ revealActivity: (nodeId: string) => flow.value?.revealActivity(nodeId) })
 const isActive = computed(() => props.turn.status === 'queued' || props.turn.status === 'running')
+const collapsed = shallowRef(props.turn.status === 'completed')
+const disclosureId = useId()
+watch(() => [isActive.value, props.turn.status === 'completed'] as const, ([active, completed]) => {
+  if (active)
+    collapsed.value = false
+  else if (completed)
+    collapsed.value = true
+})
 const duration = computed(() => formatChatRunDuration(
   props.turn.startedAt,
   props.turn.completedAt,
   Date.now(),
 ))
 const statusLabel = computed(() => t(`run.status.${props.turn.status}`))
+const showTopProcessToggle = computed(() => props.showIdentity !== false && props.showOutcome !== false && props.turn.nodes.length > 0)
 const notice = computed(() => resolveChatAgentTurnNotice(
   props.turn.status,
   props.turn.failureMessage ?? null,
@@ -84,7 +95,23 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     class="buddy-chat-agent-turn"
     :class="`is-${turn.status}`"
   >
-    <div v-if="showIdentity !== false" class="buddy-chat-agent-turn__heading">
+    <button
+      v-if="showTopProcessToggle"
+      class="buddy-chat-agent-turn__heading buddy-chat-agent-turn__process-toggle"
+      type="button"
+      :aria-expanded="!collapsed"
+      :aria-controls="disclosureId"
+      :disabled="isActive"
+      @click="collapsed = !collapsed"
+    >
+      <BuddyChatAgentIdentity :as="'span'" :language="language" />
+      <span class="buddy-chat-agent-turn__status">
+        <span class="buddy-chat-agent-turn__status-label">{{ statusLabel }}</span>
+        <span class="buddy-chat-agent-turn__duration">{{ duration }}</span>
+        <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-agent-turn__process-chevron" :class="{ 'is-open': !collapsed }" aria-hidden="true" />
+      </span>
+    </button>
+    <div v-else-if="showIdentity !== false" class="buddy-chat-agent-turn__heading">
       <BuddyChatAgentIdentity :language="language" />
       <div v-if="!isActive && showOutcome !== false" class="buddy-chat-agent-turn__status">
         <span class="buddy-chat-agent-turn__status-label">{{ statusLabel }}</span>
@@ -94,9 +121,17 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     <BuddyChatAgentTurnFlow
       v-if="turn.nodes.length || failureDetailText"
       ref="flow"
+      :active="isActive"
+      :collapsed="collapsed"
+      :completed="turn.status === 'completed'"
+      :disclosure-id="disclosureId"
+      :duration="duration"
       :failure-detail-text="failureDetailText"
       :language="language"
       :nodes="turn.nodes"
+      :status-label="statusLabel"
+      :top-toggle="showTopProcessToggle"
+      @toggle="collapsed = !collapsed"
     />
     <p
       v-if="resultNoticeText"
@@ -139,6 +174,30 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
   gap: 12px;
 }
 
+.buddy-chat-agent-turn__process-toggle {
+  width: 100%;
+  max-width: none;
+  padding: 0 0 8px;
+  border: 0;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--buddy-border-subtle) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--buddy-focus-ring);
+    outline-offset: 3px;
+  }
+}
+
 .buddy-chat-agent-turn__status {
   display: inline-flex;
   flex: none;
@@ -151,6 +210,19 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 
 .buddy-chat-agent-turn__duration {
   font-variant-numeric: tabular-nums;
+}
+
+.buddy-chat-agent-turn__process-chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--buddy-text-muted);
+  opacity: 0.7;
+  transition: transform 120ms ease;
+
+  &.is-open {
+    transform: rotate(90deg);
+  }
 }
 
 .buddy-chat-agent-turn.is-failed .buddy-chat-agent-turn__status {
@@ -182,7 +254,8 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buddy-chat-agent-turn__actions {
+  .buddy-chat-agent-turn__actions,
+  .buddy-chat-agent-turn__process-chevron {
     transition: none;
   }
 }

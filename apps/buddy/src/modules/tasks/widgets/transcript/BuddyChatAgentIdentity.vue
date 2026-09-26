@@ -4,6 +4,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { BRAND_ASSET_URLS } from '@/shared/branding/brandAssets'
 
 const props = defineProps<{
+  as?: 'header' | 'span'
   language: BuddyLocale
 }>()
 
@@ -11,7 +12,7 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <header class="buddy-chat-agent-identity">
+  <component :is="props.as ?? 'header'" class="buddy-chat-agent-identity">
     <span class="buddy-chat-agent-identity__avatar">
       <img
         :src="BRAND_ASSET_URLS.chatAvatar"
@@ -22,7 +23,7 @@ const { t } = useBuddyI18n(() => props.language)
     <span class="buddy-chat-agent-identity__name">
       {{ t('desktop.chat.agentName') }}
     </span>
-  </header>
+  </component>
 </template>
 
 <style scoped lang="scss">
