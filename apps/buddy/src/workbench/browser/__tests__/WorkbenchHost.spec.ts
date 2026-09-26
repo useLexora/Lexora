@@ -119,6 +119,77 @@ it('configures workbench drag plugins without AutoScroller to avoid scrolling co
   expect(feedbackPlugin?.options.dropAnimation).toBeNull()
 })
 
+it.each(['right', 'down'] as const)('keeps both split axes resizable after collapsing and rebuilding a three-pane layout (%s)', async (direction) => {
+  const registry = new ContributionRegistry()
+  registry.register('sample', scope => scope.view({ locations: ['main'], id: 'sample', renderer: 'sample', label: 'Sample', supports: resource => resource.scheme === 'sample', multiple: true }))
+  const controller = new WorkbenchController(registry)
+  const open = (id: string, split?: 'right' | 'down') => controller.open({ scheme: 'sample', id, data: {} }, id, { direction: split })
+  const first = (await open('first'))!
+  await open('second', direction)
+  await open('third', direction === 'right' ? 'down' : 'right')
+  const root = controller.layout.root
+  if (root.kind !== 'split' || root.second.kind !== 'split')
+    throw new Error('Expected nested splits')
+  const retainedSplitId = root.second.id
+  const copies = new WorkingCopyService({ read: async () => ({ text: '', etag: '' }), save: async () => {
+    throw new Error('unused')
+  } })
+  const element = document.createElement('div')
+  document.body.append(element)
+  const Layout = defineComponent({ setup() {
+    const { layout } = useWorkbench()
+    return () => h(WorkbenchLayoutNode, { node: layout.value.root })
+  } })
+  const app = createApp({
+    render: () => h(WorkbenchHost, { controller, copies, language: 'en-US', backupError: false, active: true, keybindings: {}, platform: 'linux' }, {
+      default: () => h(Layout),
+      view: () => h('div'),
+    }),
+  })
+  app.mount(element)
+  try {
+    await nextTick()
+    await controller.close(first)
+    await nextTick()
+    expect(controller.layout.root.id).toBe(retainedSplitId)
+    await open('fourth', direction)
+    await nextTick()
+    expect(panes(controller.layout.root)).toHaveLength(3)
+    const handles = [...element.querySelectorAll<HTMLElement>('.workbench-split__handle')]
+    expect(handles).toHaveLength(2)
+    for (const handle of handles) {
+      const split = handle.parentElement!
+      vi.spyOn(split, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 800))
+      let captured: number | null = null
+      Object.assign(handle, {
+        setPointerCapture: (id: number) => captured = id,
+        hasPointerCapture: (id: number) => captured === id,
+        releasePointerCapture: () => captured = null,
+      })
+      const before = Number(handle.getAttribute('aria-valuenow'))
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientX: 100, clientY: 100 }))
+      await nextTick()
+      expect(element.querySelector('.workbench__resize-shield')).not.toBeNull()
+      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 180, clientY: 180 }))
+      await nextTick()
+      expect(Number(handle.getAttribute('aria-valuenow'))).toBeGreaterThan(before)
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
+      await nextTick()
+      expect(element.querySelector('.workbench__resize-shield')).toBeNull()
+      expect(captured).toBeNull()
+      const beforeKey = Number(handle.getAttribute('aria-valuenow'))
+      handle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: split.classList.contains('horizontal') ? 'ArrowLeft' : 'ArrowUp' }))
+      await nextTick()
+      expect(Number(handle.getAttribute('aria-valuenow'))).toBe(beforeKey - 3)
+    }
+  }
+  finally {
+    app.unmount()
+    registry.dispose()
+    element.remove()
+  }
+})
+
 it('hides close action in WorkbenchPaneActions when only a single pane exists', async () => {
   const registry = new ContributionRegistry()
   registry.register('sample.preview', scope => scope.view({ locations: ['main'], id: 'sample.preview', renderer: 'sample.preview', label: 'Preview', supports: input => input.scheme === 'sample', multiple: true }))
