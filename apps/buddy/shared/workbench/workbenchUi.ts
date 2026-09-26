@@ -1,8 +1,8 @@
+import type { WorkbenchAnchor, WorkbenchMountTarget } from './workbenchContributionCatalog'
 import { z } from 'zod'
+import { workbenchMountTargetSchema } from './workbenchContributionCatalog'
 
-export const workbenchAnchorSchema = z.enum(['app.sidebar', 'workbench.sidebar', 'workbench.pane', 'composer.input'])
-export const workbenchControlSchema = z.enum(['model.reasoning'])
-export const workbenchMountTargetSchema = z.enum(['workbench', 'app.sidebar', 'workbench.sidebar'])
+export * from './workbenchContributionCatalog'
 const mountLengthSchema = z.union([z.number().min(0).max(8192), z.string().regex(/^(?:100|\d{1,2})(?:\.\d{1,3})?%$/).refine(value => Number.parseFloat(value) <= 100)])
 export const workbenchPresentationSchema = z.object({
   target: workbenchMountTargetSchema.optional(),
@@ -18,12 +18,10 @@ export const workbenchPresentationSchema = z.object({
 }).strict()
 export const extensionPresentationRequestSchema = workbenchPresentationSchema
 export type WorkbenchPresentation = z.infer<typeof workbenchPresentationSchema>
-export type WorkbenchMountTarget = z.infer<typeof workbenchMountTargetSchema>
-export type WorkbenchAnchor = z.infer<typeof workbenchAnchorSchema>
-export type WorkbenchControl = z.infer<typeof workbenchControlSchema>
 
 export interface MountGeometry {
   target: WorkbenchMountTarget
+  instanceId?: string
   visible: boolean
   width: number
   height: number

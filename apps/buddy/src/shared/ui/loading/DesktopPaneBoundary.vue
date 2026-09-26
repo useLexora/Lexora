@@ -1,22 +1,23 @@
 <script setup lang="ts">
 import { NButton } from 'naive-ui'
 
-defineProps<{
+withDefaults(defineProps<{
+  animate?: boolean
   loading: boolean
   error?: string | null
   label: string
   retryLabel: string
-}>()
+}>(), { animate: true })
 const emit = defineEmits<{ retry: [] }>()
 defineSlots<{ default: () => unknown }>()
 </script>
 
 <template>
-  <div class="desktop-pane-boundary" :aria-busy="loading">
+  <div class="desktop-pane-boundary" :class="{ 'is-animated': animate }" :aria-busy="loading">
     <div class="desktop-pane-boundary__content" :class="{ 'is-covered': loading || error }" :inert="loading || !!error" :aria-hidden="loading || !!error">
       <slot />
     </div>
-    <Transition name="pane-reveal">
+    <Transition name="pane-reveal" :css="animate">
       <div v-if="loading || error" class="desktop-pane-boundary__cover" :role="error ? 'alert' : 'status'">
         <div class="desktop-pane-boundary__status">
           <span v-if="!error" class="desktop-pane-boundary__spinner" aria-hidden="true" />
@@ -41,7 +42,7 @@ defineSlots<{ default: () => unknown }>()
   flex-direction: column;
 }
 .desktop-pane-boundary { position: relative; isolation: isolate; }
-.desktop-pane-boundary__content { transition: opacity 160ms ease; }
+.is-animated > .desktop-pane-boundary__content { transition: opacity 160ms ease; }
 .desktop-pane-boundary__content.is-covered { opacity: 0; pointer-events: none; }
 .desktop-pane-boundary__cover {
   position: absolute;
@@ -76,6 +77,6 @@ defineSlots<{ default: () => unknown }>()
 @keyframes pane-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .desktop-pane-boundary__spinner { animation: none; }
-  .desktop-pane-boundary__content, .pane-reveal-enter-active, .pane-reveal-leave-active { transition: none; }
+  .is-animated > .desktop-pane-boundary__content, .pane-reveal-enter-active, .pane-reveal-leave-active { transition: none; }
 }
 </style>

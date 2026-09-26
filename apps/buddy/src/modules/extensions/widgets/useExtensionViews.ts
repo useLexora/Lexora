@@ -1,5 +1,7 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionViewInput, ExtensionViewSession } from '@buddy-shared/extensions/extensionApi'
 import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
+import type { WorkbenchHitRegion } from '@buddy-shared/workbench/workbenchInteraction'
+import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type { ControlProposal, ControlSnapshot, WorkbenchMountTarget } from '@buddy-shared/workbench/workbenchUi'
 import type { Ref } from 'vue'
 import type { SemanticAnchor } from '@/shared/ui/contributions/workbenchUiContext'
@@ -21,9 +23,11 @@ export interface ExtensionSurface {
   opening: boolean
   ready: boolean
   anchor: SemanticAnchor | null
-  mount: { target: WorkbenchMountTarget, element: HTMLElement } | null
+  mount: { target: WorkbenchMountTarget, element: HTMLElement, instanceId?: string } | null
   control: ExtensionControlBinding | null
   error: string
+  regions: readonly WorkbenchHitRegion[]
+  interactionMode: 'regions' | 'exclusive' | null
 }
 interface SurfaceLifecycle {
   revision: string | null
@@ -38,13 +42,14 @@ interface ControlFailure {
 }
 
 function identity(input: ExtensionViewInput): string {
-  return JSON.stringify([input.extensionId, input.viewType, input.placementId, input.resource])
+  return JSON.stringify([input.extensionId, input.viewType, input.placementId, input.interactionId, input.resource])
 }
 
 export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<ExtensionStatus[]>>, context: Readonly<Ref<WorkbenchContextValues>>) {
   const surfaces = shallowReactive(new Map<string, ExtensionSurface>())
   const lifecycles = new WeakMap<ExtensionSurface, SurfaceLifecycle>()
   const controlFailures = new Map<string, ControlFailure>()
+  const messageListeners = new Set<(extensionId: string, generation: string, message: JsonValue) => void>()
   let layout = () => {}
   const close = (session: ExtensionViewSession) => void api.closeView(session.id, session.generation, session.token).catch(() => {})
   function reset(surface: ExtensionSurface) {
@@ -55,6 +60,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     surface.opening = false
     surface.ready = false
     surface.error = ''
+    surface.regions = []
   }
   async function open(surface: ExtensionSurface) {
     const lifecycle = lifecycles.get(surface)!
@@ -101,6 +107,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
       const manifest = status?.manifest
       const view = manifest?.contributes.views.find(view => view.id === surface.input.viewType)
       const placement = manifest?.contributes.placements.find(placement => placement.id === surface.input.placementId)
+      surface.interactionMode = placement?.kind === 'view' ? placement.interaction ?? null : null
       surface.eligible = matchesWorkbenchContext(view?.when, context.value) && matchesWorkbenchContext(placement?.when, context.value)
       if (!status?.enabled || !status.compatible || ['failed', 'blocked'].includes(status.state)) {
         reset(surface)
@@ -142,7 +149,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
       previous.control = binding?.control ?? null
     }
     else {
-      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '' })
+      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '', regions: [], interactionMode: null })
       lifecycles.set(surface, { revision: null, generation: null, request: 0 })
       surfaces.set(input.viewId, surface)
     }
@@ -183,8 +190,22 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   }
   onScopeDispose(() => {
     for (const id of surfaces.keys()) hide(id)
+    messageListeners.clear()
   })
-  return { surfaces, show, hide, fail, retryControl, proposeControl, layout: () => layout(), setLayout: (callback: () => void) => {
+  function setRegions(id: string, generation: string, token: string, regions: WorkbenchHitRegion[]): boolean {
+    const surface = surfaces.get(id)
+    if (!surface || surface.interactionMode !== 'regions' || surface.session?.generation !== generation || surface.session.token !== token)
+      return false
+    surface.regions = regions
+    layout()
+    return true
+  }
+  return { setRegions, onMessage: (listener: (extensionId: string, generation: string, message: JsonValue) => void) => {
+    messageListeners.add(listener)
+    return () => messageListeners.delete(listener)
+  }, broadcast: (extensionId: string, generation: string, message: JsonValue) => {
+    for (const listener of messageListeners) listener(extensionId, generation, message)
+  }, surfaces, show, hide, fail, retryControl, proposeControl, layout: () => layout(), setLayout: (callback: () => void) => {
     layout = callback
   } }
 }

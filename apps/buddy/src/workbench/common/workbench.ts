@@ -12,19 +12,21 @@ export interface WorkbenchView {
   type: string
   location: ViewLocation
   placement?: string
+  interactionId?: string
+  mountInstanceId?: string
   presentation?: WorkbenchPresentation
   resource: ResourceRef
   title: string
   state: Record<string, JsonValue>
 }
-export interface WorkbenchPane { kind: 'pane', id: string, view: string | null }
+export interface WorkbenchPane { readonly kind: 'pane', readonly id: string, readonly view: string | null }
 export interface WorkbenchSplit {
-  kind: 'split'
-  id: string
-  axis: 'horizontal' | 'vertical'
-  ratio: number
-  first: WorkbenchNode
-  second: WorkbenchNode
+  readonly kind: 'split'
+  readonly id: string
+  readonly axis: 'horizontal' | 'vertical'
+  readonly ratio: number
+  readonly first: WorkbenchNode
+  readonly second: WorkbenchNode
 }
 export type WorkbenchNode = WorkbenchPane | WorkbenchSplit
 export interface WorkbenchLayout {
@@ -43,6 +45,7 @@ export interface ViewDescriptor {
   locations: readonly [ViewLocation, ...ViewLocation[]]
   supports: (resource: ResourceRef) => boolean
   priority?: number
+  prepareBeforeOpen?: boolean
   multiple: boolean
 }
 export interface ViewPlacement {
@@ -51,9 +54,12 @@ export interface ViewPlacement {
   viewType: string
   location: 'mount'
   target: WorkbenchMountTarget
+  interaction?: 'regions' | 'exclusive'
   presentation: WorkbenchPresentation
 }
 export interface CommandContext {
+  source?: 'palette' | 'slash'
+  arguments?: string
   view: WorkbenchView | null
   pane: WorkbenchPane | null
   values: Readonly<Record<string, boolean | string | number>>
@@ -61,6 +67,7 @@ export interface CommandContext {
 export interface WorkbenchCommand {
   id: string
   label: string
+  slash?: { name: string, description?: string }
   keybinding?: string
   alternateKeybindings?: readonly string[]
   shortcutScope?: ShortcutScope
@@ -83,7 +90,11 @@ export function panes(node: WorkbenchNode): WorkbenchPane[] {
 export function mapNode(node: WorkbenchNode, id: string, replace: (node: WorkbenchNode) => WorkbenchNode): WorkbenchNode {
   if (node.id === id)
     return replace(node)
-  return node.kind === 'pane' ? node : { ...node, first: mapNode(node.first, id, replace), second: mapNode(node.second, id, replace) }
+  if (node.kind === 'pane')
+    return node
+  const first = mapNode(node.first, id, replace)
+  const second = mapNode(node.second, id, replace)
+  return first === node.first && second === node.second ? node : { ...node, first, second }
 }
 export function removePane(node: WorkbenchNode, id: string): WorkbenchNode | null {
   if (node.id === id)
@@ -92,5 +103,7 @@ export function removePane(node: WorkbenchNode, id: string): WorkbenchNode | nul
     return node
   const first = removePane(node.first, id)
   const second = removePane(node.second, id)
-  return first && second ? { ...node, first, second } : first ?? second
+  if (!first || !second)
+    return first ?? second
+  return first === node.first && second === node.second ? node : { ...node, first, second }
 }

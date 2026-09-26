@@ -16,8 +16,10 @@ import { composerParentDirectory } from './chatComposerSourcePresentation'
 import { addChatQuote, removeChatQuote } from './chatQuoteEditing'
 import { useChatComposerEditor } from './useChatComposerEditor'
 import { useChatComposerSuggestions } from './useChatComposerSuggestions'
+import { useComposerCommands } from './useComposerCommands'
 
 export function useChatComposer(options: UseChatComposerOptions) {
+  const localCommands = useComposerCommands(options.draftId)
   const conversationStatusPanel = useConversationStatusPanel()
   let editingSession = 0
   watch(options.draftId, () => {
@@ -66,9 +68,12 @@ export function useChatComposer(options: UseChatComposerOptions) {
     resourceIds: resourceIds.value,
     resources: options.resources.value,
   }))
-  const canSubmit = computed(() => options.canSend.value && modelInputIssue.value === null && (
-    serializedContent.value.content.length > 0 || resourceIds.value.length > 0 || quotes.value.length > 0
-  ) && resourceIds.value.every(id => resourceById.value.get(id)?.resource.state === 'ready'))
+  const isLocalCommand = computed(() => localCommands.handles(serializedContent.value))
+  const canSubmit = computed(() => isLocalCommand.value
+    ? !localCommands.pending.value && !options.isSending.value
+    : options.canSend.value && modelInputIssue.value === null && (
+      serializedContent.value.content.length > 0 || resourceIds.value.length > 0 || quotes.value.length > 0
+    ) && resourceIds.value.every(id => resourceById.value.get(id)?.resource.state === 'ready'))
   const panelResources = computed(() => (contentJSON.value.attrs?.panelResourceIds as string[] ?? [])
     .flatMap(id => resourceById.value.get(id) ?? []))
   const resourceStripResources = computed<ComposerResourceCard[]>(() => {
@@ -92,7 +97,12 @@ export function useChatComposer(options: UseChatComposerOptions) {
     const current = editor.value
     if (!current?.isEditable)
       return
-    const command = parseBuddyChatCommand(serializeChatComposerContent(current.getJSON()).content)
+    const payload = serializeChatComposerContent(current.getJSON())
+    if (localCommands.handles(payload)) {
+      void localCommands.execute(current, payload)
+      return
+    }
+    const command = parseBuddyChatCommand(payload.content)
     if (command) {
       const definition = getBuddyChatCommandDefinition(command.name)
       if (definition.kind === 'action' && definition.action !== 'run') {
@@ -210,6 +220,11 @@ export function useChatComposer(options: UseChatComposerOptions) {
       void insertResolvedChatComposerResource(currentEditor, { from, to }, () => resolveOption(option))
       return
     }
+    if (option.kind === 'slashCommand' && option.commandId) {
+      query.closeSuggestions()
+      currentEditor.chain().focus().insertContentAt({ from, to }, [{ type: CHAT_PROMPT_DIRECTIVE_NODE_NAME, attrs: { directive: 'slash_command', commandMode: 'action', commandId: option.commandId, value: option.value } }, { type: 'text', text: ' ' }]).run()
+      return
+    }
     const command = option.kind === 'slashCommand' ? parseBuddyChatCommand(option.value) : null
     if (option.kind === 'slashCommand') {
       if (!command)
@@ -258,6 +273,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     activeTrigger: query.activeTrigger,
     attachFiles,
     canSubmit,
+    isLocalCommand,
     closeSuggestions: query.closeSuggestions,
     contextOptions: query.contextOptions,
     editor,

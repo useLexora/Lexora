@@ -9,11 +9,17 @@ import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { readExtensionDirectory } from '../../../platform/extensions/extensionFiles'
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
-import { EXTENSION_BUILD_RPC, EXTENSION_INSPECT_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { EXTENSION_BUILD_RPC, EXTENSION_CAPABILITIES_RPC, EXTENSION_INSPECT_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema, extensionCapabilitiesSchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { workbenchCapabilityKinds } from '../../../shared/workbench/workbenchContributionCatalog'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 
 const name = 'lexora_plugin_build'
 const inspectName = 'lexora_plugin_inspect'
+const capabilitiesName = 'lexora_plugin_capabilities'
+const capabilitiesParameters = Type.Object({
+  kind: Type.Optional(Type.Union(workbenchCapabilityKinds.map(kind => Type.Literal(kind)))),
+  target: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Exact target from the host catalog. Omit both filters for a compact index; specify either for detailed contracts.' })),
+}, { additionalProperties: false })
 const inspectParameters = Type.Object({ id: Type.String({ maxLength: 120, pattern: '^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$', description: 'Plugin ID to inspect. This only reads host status; it does not start or install the plugin.' }) }, { additionalProperties: false })
 const parameters = Type.Object({
   source: Type.String({ minLength: 1, maxLength: 4096, description: 'Plugin source directory containing extension.json, relative to the workspace or absolute.' }),
@@ -24,6 +30,8 @@ const parameters = Type.Object({
 export function createPluginAuthoringCapability(context: BuddyCapabilityContext, peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>): BuddyCapability {
   return {
     classify(event) {
+      if (event.toolName === capabilitiesName)
+        return Check(capabilitiesParameters, event.input) ? { access: 'read', paths: [] } : { blocked: true, reason: 'VALIDATION_FAILED' }
       if (event.toolName === inspectName)
         return Check(inspectParameters, event.input) ? { access: 'read', paths: [] } : { blocked: true, reason: 'VALIDATION_FAILED' }
       if (event.toolName !== name)
@@ -32,10 +40,24 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: 'write', paths: [{ path: event.input.source, mode: 'existing' }, { path: event.input.output, mode: 'create' }] }
     },
-    disclosure: { group: 'plugins', keywords: 'plugin extension build create inspect 插件 创建 编译 校验 安装 诊断', toolNames: [name, inspectName] },
+    disclosure: { group: 'plugins', keywords: 'plugin extension build create inspect capabilities 插件 创建 编译 校验 安装 诊断 插槽', toolNames: [name, inspectName, capabilitiesName] },
     extension: {
       name: 'lexora-plugin-authoring',
       factory(pi) {
+        pi.registerTool(defineTool({
+          name: capabilitiesName,
+          label: 'Discover plugin capabilities',
+          parameters: capabilitiesParameters,
+          description: 'Query the actual Lexora host for contribution targets and runtime capabilities. No filters returns a compact index; filter by kind or exact target for sizing, selection, scope and interaction rules. Read-only.',
+          async execute(_toolCallId, input, signal) {
+            try {
+              const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
+              const capabilities = extensionCapabilitiesSchema.parse(await peer.request(EXTENSION_CAPABILITIES_RPC, input, 10000, abort))
+              return response({ ok: true, ...capabilities })
+            }
+            catch { return response({ ok: false, code: 'EXTENSION_CAPABILITIES_FAILED' }) }
+          },
+        }))
         pi.registerTool(defineTool({
           name: inspectName,
           label: 'Inspect plugin',
@@ -101,7 +123,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.on('tool_result', (event) => {
-          if ([name, inspectName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
+          if ([name, inspectName, capabilitiesName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
             return { isError: true }
         })
       },

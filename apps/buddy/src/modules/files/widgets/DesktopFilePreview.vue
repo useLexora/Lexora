@@ -2,7 +2,9 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalSpaceFilePreview, SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { WorkbenchView } from '@/workbench/common/workbench'
+import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { computed, shallowRef, watch } from 'vue'
+import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, isMarkdownFile, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
@@ -31,7 +33,11 @@ watch(() => props.view.resource, () => void loadPreview(), { immediate: true })
 <template>
   <div class="file-preview">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
-      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget" />
+      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
+        <template #actions>
+          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
+        </template>
+      </DesktopDocumentToolbar>
     </Teleport>
     <div v-if="failed" class="file-preview__notice" role="alert">
       <span>{{ labels.failed }}</span>

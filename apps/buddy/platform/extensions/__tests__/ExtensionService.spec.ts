@@ -40,7 +40,7 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}) {
     createView: () => ({ token: randomUUID(), url: 'lexora-extension://fixture/__view.html', dispose: () => {} }),
     workbench: async (event) => {
       events.push(event)
-      return event.kind === 'state' ? event.viewId : randomUUID()
+      return event.kind === 'interaction' ? event.interactionId : event.kind === 'state' || event.kind === 'regions' ? event.viewId : randomUUID()
     },
     readText: async target => `Content of ${target.path}`,
     get: async () => new Response('network'),
@@ -204,6 +204,22 @@ it('authorizes each placement and control request against its own live view sess
   await expect(service.viewRequest(session.id, session.generation, session.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
+it('keeps a content slot limited to its selected view surface', async () => {
+  const { root, store, service, hosts } = await fixture()
+  const value = manifest({ apiVersion: 3, id: 'tests.footer', contributes: {
+    views: [{ id: 'tests.footer.content', title: 'Footer', entry: 'view.js', resource: 'none' }],
+    placements: [{ id: 'tests.footer.slot', view: 'tests.footer.content', kind: 'slot', target: 'composer.footer' }],
+  } })
+  await service.install((await reviewPackage(root, store, value)).token)
+  const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.footer.content', placementId: 'tests.footer.slot', resource: null, state: null, stateVersion: 0 })
+  const request = (method: string, params: JsonValue) => service.viewRequest(session.id, session.generation, session.token, method, params)
+  expect(await request('bootstrap', null)).toEqual(expect.objectContaining({ apiVersion: 3, presentation: 'slot' }))
+  await expect(request('view.setState', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(request('view.setPresentation', { height: 200 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(request('control.propose', { revision: randomUUID(), value: 'high' })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(hosts[0]!.broker('placements.show', { id: 'tests.footer.slot' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+})
+
 it('does not let an older concurrent open replace a newer view endpoint', async () => {
   const { store, service } = await fixture()
   const resource = await store.grant('tests.reader', target)
@@ -311,4 +327,130 @@ it('keeps export permission separate from reads and expires writers with their o
   f.service.closeView(owner.id, owner.generation, owner.token)
   await expect(request('resources.commitSave', { id })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
   expect(await readFile(destination, 'utf8')).toBe('original')
+})
+
+it.each([false, true])('limits menu invocation to user-selected content with permission %s', async (selectedContent) => {
+  const { root, store, service, hosts } = await fixture()
+  const value = manifest({ apiVersion: 3, id: 'tests.actions', permissions: { selectedContent, selectedResource: 'read' }, contributes: {
+    commands: [{ id: 'tests.actions.run', title: 'Run', hidden: true }],
+    menus: ['composer', 'message', 'task', 'resource'].map(kind => ({ id: `tests.actions.${kind}`, command: 'tests.actions.run', target: `${kind}.actions` as 'composer.actions' | 'message.actions' | 'task.actions' | 'resource.actions' })),
+    views: [{ id: 'tests.actions.view', title: 'View', entry: 'view.js', resource: 'none' }],
+  } })
+  await service.install((await reviewPackage(root, store, value)).token)
+  const instanceId = randomUUID()
+  await service.executeMenu(value.id, 'tests.actions.composer', { target: 'composer.actions', instanceId, content: 'Selected draft', resource: target })
+  expect(hosts[0]!.commands.at(-1)).toEqual({ command: 'tests.actions.run', resource: null, arguments: null, invocation: { target: 'composer.actions', instanceId, ...(selectedContent ? { content: 'Selected draft' } : {}) } })
+  await service.executeMenu(value.id, 'tests.actions.task', { target: 'task.actions', instanceId, content: 'Unrelated text', resource: target })
+  expect(hosts[0]!.commands.at(-1)).toMatchObject({ resource: null, invocation: { target: 'task.actions', instanceId } })
+  expect(JSON.stringify(hosts[0]!.commands.at(-1))).not.toContain('Unrelated text')
+  await service.executeMenu(value.id, 'tests.actions.resource', { target: 'resource.actions', instanceId, content: 'Unrelated text', resource: target })
+  const fileCommand = hosts[0]!.commands.at(-1) as { resource: { id: string, name: string } }
+  expect(fileCommand.resource).toEqual({ id: expect.any(String), name: 'README.md' })
+  expect(await hosts[0]!.broker('resources.readText', { id: fileCommand.resource.id })).toBe('Content of README.md')
+  await expect(service.executeMenu(value.id, 'tests.actions.composer', { target: 'message.actions', resource: null })).rejects.toThrow('EXTENSION_COMMAND_UNAVAILABLE')
+  const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, instanceId, viewType: 'tests.actions.view', resource: null, state: {}, stateVersion: 1 })
+  await service.viewRequest(session.id, session.generation, session.token, 'commands.execute', { command: 'tests.actions.run', arguments: null })
+  expect(hosts[0]!.commands.at(-1)).toEqual({ command: 'tests.actions.run', arguments: null, resource: null, invocation: { target: 'view', instanceId } })
+  await expect(service.viewRequest(session.id, session.generation, session.token, 'commands.execute', { command: 'tests.actions.run', arguments: null, invocation: { target: 'composer.actions', content: 'forged' } })).rejects.toThrow()
+})
+
+it('carries pane identity through scoped placement requests and rejects scope on global mounts', async () => {
+  const { root, store, service, hosts, events } = await fixture()
+  const value = manifest({ apiVersion: 3, id: 'tests.panes', contributes: {
+    views: [{ id: 'tests.panes.view', title: 'Pane', entry: 'view.js', resource: 'none' }],
+    placements: [
+      { id: 'tests.panes.local', kind: 'view', target: 'workbench.pane', view: 'tests.panes.view' },
+      { id: 'tests.panes.global', kind: 'view', target: 'workbench', view: 'tests.panes.view' },
+    ],
+  } })
+  await service.install((await reviewPackage(root, store, value)).token)
+  const instanceId = randomUUID()
+  const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.panes.view', instanceId, placementId: 'tests.panes.local', resource: null, state: {}, stateVersion: 1 })
+  expect(await service.viewRequest(session.id, session.generation, session.token, 'bootstrap', null)).toMatchObject({ instanceId })
+  await hosts[0]!.broker('placements.show', { id: 'tests.panes.local', instanceId })
+  await hosts[0]!.broker('placements.hide', { id: 'tests.panes.local', instanceId })
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'placement', instanceId, visible: true }),
+    expect.objectContaining({ kind: 'placement', instanceId, visible: false }),
+  ])
+  await expect(hosts[0]!.broker('placements.show', { id: 'tests.panes.global', instanceId })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+})
+
+async function interactionFixture() {
+  const f = await fixture()
+  const value = manifest({ apiVersion: 3, id: 'tests.game', contributes: {
+    commands: [{ id: 'tests.game.start', title: 'Start', slash: { name: 'game-start' } }],
+    views: [{ id: 'tests.game.view', title: 'Game', entry: 'view.js', resource: 'none' }],
+    placements: [{ id: 'tests.game.layer', kind: 'view', view: 'tests.game.view', target: 'workbench', interaction: 'regions', presentation: { position: 'absolute', width: '100%', height: '100%' } }],
+  } })
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  await f.service.execute(value.id, 'tests.game.start', null)
+  return { ...f, broker: f.hosts[0]!.broker, input: { extensionId: value.id, viewId: randomUUID(), viewType: 'tests.game.view', placementId: 'tests.game.layer', resource: null, state: {}, stateVersion: 1 } }
+}
+
+it('passes explicit slash arguments and origin only, and rejects obsolete panes', async () => {
+  const f = await interactionFixture()
+  const pane = { id: randomUUID(), active: true, visible: true, rect: { x: 0, y: 0, width: 300, height: 400 } }
+  f.service.updatePanes([pane])
+  await f.service.executeSlash('tests.game', 'tests.game.start', 'level=2', pane.id)
+  expect(f.hosts[0]!.commands.at(-1)).toEqual({ command: 'tests.game.start', resource: null, arguments: 'level=2', invocation: { target: 'slash', instanceId: pane.id } })
+  f.service.updatePanes([{ ...pane, visible: false }])
+  await expect(f.service.executeSlash('tests.game', 'tests.game.start', '', pane.id)).rejects.toThrow('EXTENSION_COMMAND_UNAVAILABLE')
+  await expect(f.service.executeSlash('tests.reader', 'tests.reader.open', '')).rejects.toThrow('EXTENSION_COMMAND_UNAVAILABLE')
+})
+
+it('allows the same local name in different plugin namespaces without sharing handlers', async () => {
+  const f = await interactionFixture()
+  const value = manifest({ id: 'tests.other', apiVersion: 3, contributes: { commands: [{ id: 'tests.other.start', title: 'Start', slash: { name: 'game-start' } }] } })
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  await f.service.executeSlash(value.id, 'tests.other.start', 'second')
+  await f.service.executeSlash('tests.game', 'tests.game.start', 'first')
+  expect((await f.service.list()).filter(item => item.state === 'active').map(item => item.manifest.id).sort()).toEqual(['tests.game', 'tests.other'])
+  expect(f.hosts[0]!.commands.at(-1)).toMatchObject({ command: 'tests.game.start', arguments: 'first' })
+  expect(f.hosts[1]!.commands.at(-1)).toMatchObject({ command: 'tests.other.start', arguments: 'second' })
+})
+
+it('requires an owned live interaction and immediately revokes its views on exit', async () => {
+  const f = await interactionFixture()
+  await expect(f.service.openView(f.input)).rejects.toThrow('EXTENSION_INTERACTION_REQUIRED')
+  const id = randomUUID()
+  await f.broker('interactions.start', { id, title: 'Game' })
+  await f.broker('placements.show', { id: 'tests.game.layer', interactionId: id })
+  const view = await f.service.openView({ ...f.input, interactionId: id })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  expect(await request('bootstrap', null)).toMatchObject({ interactionId: id, interactionMode: 'regions' })
+  await request('interaction.setRegions', [{ id: 'target', label: 'Hit target', rect: { x: 20, y: 20, width: 48, height: 48 } }])
+  await expect(request('interaction.setRegions', [{ id: 'target', label: '', rect: { x: 0, y: 0, width: -1, height: 20 } }])).rejects.toThrow()
+  await expect(request('view.setPresentation', { target: 'app.sidebar' })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await f.service.execute('tests.reader', 'tests.reader.open', null)
+  await expect(f.hosts[1]!.broker('interactions.end', { id })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await f.service.endInteraction(id)
+  await expect(request('bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await expect(f.broker('placements.show', { id: 'tests.game.layer', interactionId: id })).rejects.toThrow('EXTENSION_INTERACTION_ENDED')
+  await expect(f.service.openView({ ...f.input, interactionId: id })).rejects.toThrow('EXTENSION_INTERACTION_ENDED')
+  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: id, title: null }))
+})
+
+it('cancels interaction endpoints when the host stops and keeps broadcasts owned', async () => {
+  const f = await interactionFixture()
+  const id = randomUUID()
+  await f.broker('interactions.start', { id, title: 'Game' })
+  const view = await f.service.openView({ ...f.input, interactionId: id })
+  await f.broker('views.broadcast', { score: 3 })
+  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'message', extensionId: 'tests.game', generation: view.generation, message: { score: 3 } }))
+  await f.service.enable('tests.game', false)
+  await expect(f.service.viewRequest(view.id, view.generation, view.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: id, title: null }))
+})
+
+it('rejects a duplicate plugin namespace and releases it when the original host stops', async () => {
+  const f = await interactionFixture()
+  const value = manifest({ id: 'other.game', apiVersion: 3, contributes: { commands: [{ id: 'other.game.run', title: 'Run', slash: { name: 'run' } }] } })
+  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  await expect(f.service.executeSlash(value.id, 'other.game.run', '')).rejects.toThrow('EXTENSION_COMMAND_NAMESPACE_CONFLICT')
+  expect((await f.service.list()).find(item => item.manifest.id === 'tests.game')?.state).toBe('active')
+  await f.service.enable('tests.game', false)
+  await f.service.restart(value.id)
+  await f.service.executeSlash(value.id, 'other.game.run', '')
+  expect((await f.service.list()).find(item => item.manifest.id === value.id)?.state).toBe('active')
 })

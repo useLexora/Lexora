@@ -3,12 +3,12 @@ import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
 import { useMessage } from 'naive-ui'
-import { computed, nextTick, onScopeDispose, provide, toRef, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onScopeDispose, provide, ref, toRef, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
-import { useExtensionState, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
-import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionOverlays, DesktopExtensionReviewHost } from '@/modules/extensions/ui'
+import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
+import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
 import { useProvideSettingsContext } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
@@ -16,9 +16,11 @@ import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
+import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
+import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
 import WorkbenchSurfaceHost from '@/workbench/browser/surfaces/WorkbenchSurfaceHost.vue'
 import { useDesktopPages } from '../router/useDesktopPages'
 import { useDesktopShellState } from '../shell/useDesktopShellState'
@@ -55,6 +57,32 @@ const workbench = useDesktopWorkbench({ api, stores, taskIndex, router, resource
 provide(desktopWorkbenchKey, workbench)
 const extensions = useExtensionState(api.extensions)
 const pages = useDesktopPages(router, extensions.installed, stores.applicationSettings.language)
+const paneRegistry = new WorkbenchPaneRegistry(() => workbench.controller.layout.activePane)
+onMounted(() => paneRegistry.start())
+onScopeDispose(() => paneRegistry.dispose())
+onScopeDispose(workbench.controller.subscribe(paneRegistry.invalidate))
+onScopeDispose(paneRegistry.subscribe(() => {
+  void api.extensions.updatePanes(paneRegistry.snapshot).catch(() => {})
+}))
+const commandRevision = ref(0)
+onScopeDispose(workbench.controller.registry.subscribe(() => commandRevision.value++))
+onScopeDispose(workbench.controller.subscribe(() => commandRevision.value++))
+useProvideWorkbenchCommands({
+  reportFailure: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.inputFailed')),
+  entries: computed(() => {
+    void commandRevision.value
+    return [...workbench.controller.registry.commands.values()].flatMap(command => command.slash && (!command.enabled || command.enabled(workbench.controller.context)) ? [{ id: command.id, name: command.slash.name, title: command.label, description: command.slash.description }] : [])
+  }),
+  execute: async (id, argumentsText, instanceId) => {
+    const controller = workbench.controller
+    const command = controller.registry.commands.get(id)
+    const pane = instanceId ? controller.pane(instanceId) : controller.context.pane
+    const context = { ...controller.context, pane, source: 'slash' as const, arguments: argumentsText }
+    if (!command?.slash || (instanceId && !pane) || (command.enabled && !command.enabled(context)))
+      throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
+    return (await command.execute(context) ?? null) as import('@buddy-shared/workbench/workbenchState').JsonValue
+  },
+})
 const extensionViews = useExtensionViews(api.extensions, extensions.installed, computed(() => pages.context.value.values))
 watch(() => pages.context.value.values, (values, _, cleanup) => {
   const leases = Object.entries(values).map(([key, value]) => workbench.controller.contextKeys.set(key, value))
@@ -63,9 +91,10 @@ watch(() => pages.context.value.values, (values, _, cleanup) => {
 }, { immediate: true, flush: 'sync' })
 const anchors = new SemanticAnchorRegistry()
 onScopeDispose(() => anchors.dispose())
-useProvideWorkbenchUi({ anchors, controlRenderer: DesktopExtensionControl })
-const controls = useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ready: () => workbench.initialized })
-useProvideExtensionContext({ state: extensions, views: extensionViews, anchors, controls, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), focusView: (id) => {
+useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
+useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ready: () => workbench.initialized })
+const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
+useProvideExtensionContext({ state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)
 } })
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))

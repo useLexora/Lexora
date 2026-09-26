@@ -30,23 +30,26 @@ export class TaskWorkspacePool {
     const existing = this.#entries.get(key)
     if (existing)
       return Promise.resolve(existing.task)
-    const open = this.#load(resource).finally(() => this.#loading.delete(key))
+    const open: Promise<TaskCapability> = Promise.resolve().then(() => this.#load(resource, () => this.#loading.get(key) === open)).finally(() => {
+      if (this.#loading.get(key) === open)
+        this.#loading.delete(key)
+    })
     this.#loading.set(key, open)
     return open
   }
 
-  async #load(resource: ResourceRef): Promise<TaskCapability> {
+  async #load(resource: ResourceRef, current: () => boolean): Promise<TaskCapability> {
     if (resource.scheme === 'draft')
       await this.prepareLayout()
     const conversation = resource.scheme === 'task' ? await this.#options.api.localChat.conversations.get(resource.id) : null
-    if ((resource.scheme === 'task' && !conversation) || this.#disposed || conversation?.deletedAt || (this.#retained && !this.#retained.has(resourceKey(resource))))
+    if (!current() || (resource.scheme === 'task' && !conversation) || this.#disposed || conversation?.deletedAt || (this.#retained && !this.#retained.has(resourceKey(resource))))
       throw new Error('TASK_UNAVAILABLE')
     if (conversation) {
       if (!this.#options.index.data.conversations.value.some(item => item.id === conversation.id))
         await this.#options.index.data.refreshConversations()
       this.#options.index.data.applyConversation(conversation)
     }
-    if (this.#disposed || (this.#retained && !this.#retained.has(resourceKey(resource))))
+    if (!current() || this.#disposed || (this.#retained && !this.#retained.has(resourceKey(resource))))
       throw new Error('TASK_UNAVAILABLE')
     const scope = effectScope(true)
     let currentResource = resource
@@ -96,6 +99,10 @@ export class TaskWorkspacePool {
   retain(resources: ResourceRef[]): void {
     const keys = new Set(resources.map(resourceKey))
     this.#retained = keys
+    for (const key of this.#loading.keys()) {
+      if (!keys.has(key))
+        this.#loading.delete(key)
+    }
     for (const [key, entry] of this.#entries) {
       if (keys.has(key))
         continue

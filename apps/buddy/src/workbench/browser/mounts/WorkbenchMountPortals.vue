@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { workbenchMountKey } from '@buddy-shared/workbench/workbenchUi'
 import { computed, useTemplateRef } from 'vue'
 import { useWorkbench } from '../workbenchContext'
 import WorkbenchSurface from '../WorkbenchSurface.vue'
@@ -13,7 +14,7 @@ const mounts = computed(() => {
     if (view.location !== 'mount' || !placement || placement.viewType !== view.type)
       return []
     const presentation = { target: placement.target, ...placement.presentation, ...view.presentation }
-    return [{ view, target: controller.matchesViewContext(view) ? mountPoints.value.get(presentation.target) : null, style: workbenchMountStyle(presentation) }]
+    return [{ view, target: controller.matchesViewContext(view) ? mountPoints.value.get(workbenchMountKey(presentation.target, view.mountInstanceId)) : null, style: { ...workbenchMountStyle(presentation), ...(placement.interaction === 'regions' ? { pointerEvents: 'none' as const } : {}) } }]
   })
 })
 </script>

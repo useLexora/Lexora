@@ -1,3 +1,4 @@
+import type { WorkbenchHitRegion, WorkbenchPaneSnapshot } from '../workbench/workbenchInteraction'
 import type { JsonValue } from '../workbench/workbenchState'
 import type { ControlProposal, WorkbenchPresentation } from '../workbench/workbenchUi'
 import type { ExtensionCatalogSnapshot } from './extensionCatalog'
@@ -5,6 +6,8 @@ import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
 import { z } from 'zod'
 import { spaceFileTargetSchema } from '../spaces/spaceFileApi'
+import { workbenchPanesSchema } from '../workbench/workbenchInteraction'
+import { workbenchMenuSchema } from '../workbench/workbenchUi'
 import { extensionIdSchema } from './extensionManifest'
 
 export const EXTENSION_IPC = {
@@ -24,12 +27,21 @@ export const extensionViewInputSchema = z.object({
   extensionId: extensionIdSchema,
   viewType: z.string().max(180),
   placementId: z.string().min(1).max(180).optional(),
+  interactionId: z.string().uuid().optional(),
+  instanceId: z.string().uuid().optional(),
   resource: extensionResourceSchema.nullable(),
   state: extensionJsonSchema,
   stateVersion: z.number().int().min(0).max(10000),
 }).strict()
 export type ExtensionResource = z.infer<typeof extensionResourceSchema>
 export type ExtensionViewInput = z.infer<typeof extensionViewInputSchema>
+export const extensionMenuInvocationSchema = z.object({
+  target: workbenchMenuSchema,
+  instanceId: z.string().uuid().optional(),
+  content: z.string().max(131072).optional(),
+  resource: spaceFileTargetSchema.nullable().default(null),
+}).strict()
+export type ExtensionMenuInvocation = z.infer<typeof extensionMenuInvocationSchema>
 export interface ExtensionViewSession {
   id: string
   extensionId: string
@@ -72,7 +84,10 @@ export type ExtensionWorkbenchEvent
   = | { kind: 'cancel', requestId: string }
     | { kind: 'open', requestId: string, extensionId: string, generation: string, viewType: string, resource: ExtensionResource | null, state: JsonValue, stateVersion: number }
     | { kind: 'state', requestId: string, viewId: string, generation: string, token: string, state: JsonValue, stateVersion: number }
-    | { kind: 'placement', requestId: string, extensionId: string, generation: string, placementId: string, visible: boolean }
+    | { kind: 'interaction', requestId: string, extensionId: string, generation: string, interactionId: string, title: string | null }
+    | { kind: 'message', requestId: string, extensionId: string, generation: string, message: JsonValue }
+    | { kind: 'regions', requestId: string, viewId: string, generation: string, token: string, regions: WorkbenchHitRegion[] }
+    | { kind: 'placement', requestId: string, extensionId: string, generation: string, placementId: string, visible: boolean, instanceId?: string, interactionId?: string }
     | { kind: 'control', requestId: string, viewId: string, generation: string, token: string, proposal: ControlProposal }
     | { kind: 'presentation', requestId: string, viewId: string, generation: string, token: string, presentation: WorkbenchPresentation }
 
@@ -91,6 +106,10 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('devtools'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('revokeResources'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('execute'), id: extensionIdSchema, command: z.string().max(180), resource: spaceFileTargetSchema.nullable() }).strict(),
+  z.object({ action: z.literal('executeMenu'), id: extensionIdSchema, menu: z.string().max(180), invocation: extensionMenuInvocationSchema }).strict(),
+  z.object({ action: z.literal('executeSlash'), id: extensionIdSchema, command: z.string().max(180), arguments: z.string().max(8192), instanceId: z.string().uuid().optional() }).strict(),
+  z.object({ action: z.literal('updatePanes'), panes: workbenchPanesSchema }).strict(),
+  z.object({ action: z.literal('endInteraction'), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal('openView'), view: extensionViewInputSchema }).strict(),
   z.object({ action: z.literal('closeView'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid() }).strict(),
   z.object({ action: z.literal('viewRequest'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid(), method: z.string().max(80), params: extensionJsonSchema }).strict(),
@@ -111,6 +130,10 @@ export interface ExtensionApi {
   devtools: (id: string) => Promise<void>
   revokeResources: (id: string) => Promise<void>
   execute: (id: string, command: string, resource: import('../spaces/spaceFileApi').SpaceFileTarget | null) => Promise<void>
+  executeMenu: (id: string, menu: string, invocation: ExtensionMenuInvocation) => Promise<JsonValue>
+  executeSlash: (id: string, command: string, argumentsText: string, instanceId?: string) => Promise<JsonValue>
+  updatePanes: (panes: WorkbenchPaneSnapshot[]) => Promise<void>
+  endInteraction: (id: string) => Promise<void>
   openView: (view: ExtensionViewInput) => Promise<ExtensionViewSession>
   closeView: (viewId: string, generation: string, token: string) => Promise<void>
   viewRequest: (viewId: string, generation: string, token: string, method: string, params: JsonValue) => Promise<JsonValue>

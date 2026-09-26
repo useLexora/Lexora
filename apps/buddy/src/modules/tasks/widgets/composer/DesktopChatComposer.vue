@@ -5,6 +5,7 @@ import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMo
 import type { JSONContent } from '@tiptap/core'
 import type { DesktopChatComposerProps } from './typing'
 import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
+import type { WorkbenchMenuSelection } from '@/shared/ui/contributions/workbenchUiContext'
 import { EditorContent } from '@tiptap/vue-3'
 import {
   ArrowUp20Regular,
@@ -14,10 +15,13 @@ import { NButton, NTooltip } from 'naive-ui'
 import { computed, shallowRef, toRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopModelSelector } from '@/modules/models/ui'
+import { createChatComposerContentFromText } from '@/modules/prompt-input'
 import { DesktopChatComposerFrame, DesktopPermissionModeSelector } from '@/modules/prompt-input/ui'
 import ChatContextUsage from '@/modules/tasks/widgets/composer/ChatContextUsage.vue'
 import DesktopChatComposerInteractionHost from '@/modules/tasks/widgets/composer/DesktopChatComposerInteractionHost.vue'
 import { useChatComposer } from '@/modules/tasks/widgets/composer/useChatComposer'
+import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
+import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
 import ChatComposerSourceMenu from './ChatComposerSourceMenu.vue'
@@ -43,13 +47,13 @@ defineSlots<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
-const queuesSubmission = computed(() => props.isRunning || props.hasQueuedMessages)
 const resourceStrip = useTemplateRef('resourceStrip')
 const {
   activeSuggestionIndex,
   activeTrigger,
   attachFiles,
   canSubmit,
+  isLocalCommand,
   closeSuggestions,
   editor,
   isLoadingContext,
@@ -91,6 +95,7 @@ const {
   onLocateResource: resourceId => resourceStrip.value?.highlightResource(resourceId),
 })
 
+const queuesSubmission = computed(() => !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
 const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
 
 defineExpose({
@@ -145,6 +150,24 @@ async function selectConversationFile(option: ChatPromptContextOption) {
   if (await selectPanelResource(option))
     sourceMenuOpen.value = false
 }
+function captureDraft(): WorkbenchMenuSelection {
+  const current = editor.value
+  if (!current || !current.isEditable || current.isDestroyed)
+    return {}
+  const draftId = props.draftId
+  const { doc, selection } = current.state
+  return {
+    content: current.getText(),
+    apply(result) {
+      if (editor.value !== current || current.isDestroyed || !current.isEditable || props.isSending || props.draftId !== draftId || !current.state.doc.eq(doc))
+        return
+      if (!result || typeof result !== 'object' || Array.isArray(result) || typeof result.insertText !== 'string' || !result.insertText || result.insertText.length > 131072)
+        return
+      const content = createChatComposerContentFromText(result.insertText).content ?? []
+      current.chain().focus().insertContentAt({ from: selection.from, to: selection.to }, content).run()
+    },
+  }
+}
 </script>
 
 <template>
@@ -155,6 +178,7 @@ async function selectConversationFile(option: ChatPromptContextOption) {
     @drop="handleFileDrop"
   >
     <template #attachments>
+      <WorkbenchSlot target="composer.accessory" class="desktop-chat-composer__accessory" />
       <ChatQuoteStrip :quotes="quotes" :language="language" :disabled="isSending" removable @remove="removeQuote" />
       <ComposerResourceStrip
         ref="resourceStrip"
@@ -212,6 +236,7 @@ async function selectConversationFile(option: ChatPromptContextOption) {
     </template>
 
     <template #leading>
+      <WorkbenchMenu target="composer.actions" :disabled="isSending" :capture="captureDraft" />
       <ChatComposerSourceMenu
         v-model:show="sourceMenuOpen"
         :disabled="isSelectingFiles || isSending"
@@ -309,7 +334,7 @@ async function selectConversationFile(option: ChatPromptContextOption) {
             <NButton
               class="buddy-icon-button desktop-chat-composer__send-action"
               type="primary"
-              :aria-label="t('desktop.chat.send')"
+              :aria-label="isLocalCommand ? t('desktop.command.run') : t('desktop.chat.send')"
               :disabled="!canSubmit"
               :loading="isSending"
               @click="submit"
@@ -320,14 +345,16 @@ async function selectConversationFile(option: ChatPromptContextOption) {
             </NButton>
           </span>
         </template>
-        {{ modelInputIssueMessage || t('desktop.chat.send') }}
+        {{ isLocalCommand ? t('desktop.command.run') : modelInputIssueMessage || t('desktop.chat.send') }}
       </NTooltip>
     </template>
 
     <template #footer>
-      <p class="desktop-chat-composer__disclaimer">
-        {{ t('desktop.chat.disclaimer') }}
-      </p>
+      <WorkbenchSlot target="composer.footer" class="desktop-chat-composer__footer">
+        <p class="desktop-chat-composer__disclaimer">
+          {{ t('desktop.chat.disclaimer') }}
+        </p>
+      </WorkbenchSlot>
     </template>
   </DesktopChatComposerFrame>
 </template>
@@ -437,8 +464,12 @@ async function selectConversationFile(option: ChatPromptContextOption) {
     }
   }
 
+  &__accessory { max-height: min(240px, 30vh); overflow: auto; }
+
+  &__footer { margin-top: 0.45rem; }
+
   &__disclaimer {
-    margin: 0.45rem 0 0;
+    margin: 0;
     color: var(--buddy-text-muted);
     font-size: 0.68rem;
     text-align: center;

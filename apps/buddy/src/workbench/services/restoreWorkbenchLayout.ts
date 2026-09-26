@@ -46,6 +46,8 @@ export function restoreWorkbenchLayout(value: unknown): WorkbenchLayout {
       return null
     seenNodes.add(node.id)
     if (node.kind === 'pane') {
+      if (!legacy && node.view === null)
+        return { kind: 'pane', id: node.id, view: null }
       const candidates = legacy && Array.isArray(node.views) ? [node.active, ...node.views] : [node.view]
       const id = candidates.find(id => typeof id === 'string' && views[id]?.location === 'main' && !seenResources.has(resourceKey(views[id]!.resource)))
       if (typeof id !== 'string')
@@ -73,5 +75,6 @@ export function restoreWorkbenchLayout(value: unknown): WorkbenchLayout {
   const auxiliary = !legacy && record(value.auxiliary) ? structuredClone(value.auxiliary) as Record<string, JsonValue> : {}
   if (legacyResources.length)
     auxiliary.legacyResources = legacyResources
-  return { version: 2, root, views: Object.fromEntries(Object.entries(views).filter(([id, view]) => retained.has(id) || view.location !== 'main')), activePane, auxiliary }
+  const paneIds = new Set(panes(root).map(pane => pane.id))
+  return { version: 2, root, views: Object.fromEntries(Object.entries(views).filter(([id, view]) => (!view.interactionId) && (retained.has(id) || view.location !== 'main') && (view.mountInstanceId === undefined || (typeof view.mountInstanceId === 'string' && paneIds.has(view.mountInstanceId))))), activePane, auxiliary }
 }

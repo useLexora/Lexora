@@ -14,7 +14,11 @@ import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
 import DesktopDirectoryFileSurface from './DesktopDirectoryFileSurface.vue'
 
 const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean }>()
-const { layout, revision, labels } = useWorkbench()
+const { controller, layout, revision, labels } = useWorkbench()
+const pendingTaskIds = computed(() => {
+  void revision.value
+  return [...controller.navigation.entries.values()].filter(entry => entry.status === 'loading' && entry.view.resource.scheme === 'task').map(entry => entry.view.resource.id)
+})
 const { language } = useDesktopUi()
 const sidebar = props.bindings.taskIndex.sidebar
 const collapsed = computed({ get: () => sidebar.collapsed.value, set: value => void sidebar.setCollapsed(value) })
@@ -48,7 +52,7 @@ function focusContext() {
   <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
     <template v-if="tasksVisible" #sidebar>
       <WorkbenchMountPoint target="workbench.sidebar">
-        <DesktopTaskIndexView :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTask.value?.session.activeTaskId.value ?? null" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />
+        <DesktopTaskIndexView :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTask.value?.session.activeTaskId.value ?? null" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />
       </WorkbenchMountPoint>
     </template>
     <div v-show="tasksVisible" class="desktop-workbench-area__tasks">

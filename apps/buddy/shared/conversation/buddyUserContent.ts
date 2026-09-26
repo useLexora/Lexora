@@ -36,6 +36,7 @@ const skillDirectiveSchema = z.object({
 
 const slashDirectiveSchema = z.object({
   commandMode: z.enum(['prompt', 'action']),
+  commandId: z.string().min(1).max(180).regex(/^[a-z][a-z0-9.-]+$/).optional(),
   directive: z.literal('slash_command'),
   type: z.literal('prompt_directive'),
   value: z.string().min(1),

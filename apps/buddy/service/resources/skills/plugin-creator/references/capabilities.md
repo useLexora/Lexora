@@ -5,9 +5,13 @@
 | 用户需要 | 清单与入口 | 状态和边界 |
 | --- | --- | --- |
 | 对当前文件提供阅读、统计或专用展示 | `selectedResource: "read"`；`resource: "selected-file"` 的视图；宿主可见命令将收到的 `resource` 传给 `views.open`，视图用 `resources.readText(context.resource)` 读取 | 用户先打开文件，再执行插件命令。句柄不包含任意路径，每次打开是独立实例；不能枚举目录、读其他视图的文件或写回文件 |
+| 输入 `/插件名:命令` 执行插件动作 | API 3 命令声明 `slash`，并在 `activate` 注册处理函数；见 [注册命令](commands.md) | 精确匹配，包内校验注册，跨插件命名空间隔离，不请求模型 |
+| 需要真实分屏布局或临时覆盖交互 | API 3；见 [交互会话](interactions.md) | 订阅布局；稀疏点击区域或独占交互；宿主提供独立退出入口 |
 | 执行一次动作，无需常驻页面 | 宿主 `activate` 注册 `contributes.commands` 中的命令 | 可见命令进入命令面板和已安装插件卡片的“运行命令”菜单；命令收到的 `resource` 可能为空。只供自己视图调用的命令设为 `hidden: true` |
 | 目录入口、较完整的页面或设置表单 | `contributes.navigation` 引用 `resource: "none"` 的视图 | API 2 可省略视图 `location`；页面由 `render` 绘制。需要持久配置时通过自身隐藏命令调用宿主私有存储 |
-| 将自定义内容挂到页面区域 | `kind: "view"`、`target` 与 `presentation`；宿主命令调用 `placements.show/hide` | 区域包括 `workbench`、`app.sidebar`、`workbench.sidebar`。插件渲染隔离内容，通过通用外框布局接口声明定位和尺寸。挂载口没有面板 UI 或交互 |
+| 将自定义内容挂到页面区域 | `kind: "view"`、`target` 与 `presentation`；宿主命令调用 `placements.show/hide` | 通过能力查询选择全局、页面或分屏目标。插件渲染隔离内容，通过通用外框布局接口声明定位和尺寸。挂载口没有面板 UI 或交互 |
+| 在业务区域执行操作 | `contributes.menus` 引用已声明命令；用能力查询选目标 | 输入、消息、文件或任务操作共享一套协议；仅点击时按权限提供所选内容，分屏标识固定到发起位置 |
+| 替换或追加宿主内容 | `kind: "slot"`；按需查 [内容插槽目录](slots.md) | 按目录的单选或多选策略由用户选择提供者；不可用时回退。位置和外框归宿主，插件只绘制自己的内容 |
 | 限定生效页面或响应页面变化 | 贡献的 `when`；视图的 `workbench/onWorkbenchChange` 与 `visible/onVisibilityChange` | 按稳定页面 ID 与公开上下文匹配；离开范围隐藏而保留实例，业务暂停或继续由插件决定。未知上下文不匹配，不读取父页面 DOM |
 | 自定义浮动内容或运行时换区域 | `presentation.position: "absolute"`；`setPresentation` 更新目标及外框 CSS 布局；`mount/onMountChange` 获取局部几何 | 拖动、折叠、恢复入口等由插件自行实现。宿主不理解这些行为，只维持独立实例、投影和边界；换位置保留会话，关闭销毁 |
 | 用户选择的文件或目录 | `localResources: true`；交互视图的 `resources.pickFiles/pickDirectory` | 返回不透明句柄；任意文件格式都可读取。以 `scanDirectory` 按需筛选授权目录，`readText/readBytes/getUrl` 分别用于文本、分段二进制和受控 URL；只保存 ID，URL 按视图重新获取 |
@@ -23,7 +27,7 @@
 ## 状态与模块
 
 - `activate(context)` 管理命令、私有设置、通知和定时任务；`render(context, container)` 管理自己的隔离 UI。只需要视图时不创建空宿主；需要命令时必须同时声明宿主入口和命令 ID。
-- 资源页签及普通挂载面板用 `ViewContext.state/setState` 保存该实例的筛选、阅读位置等 JSON。升级比较 `stateVersion` 与 `expectedStateVersion`，转换后再保存。导航页面、装饰和替换控件不支持这条持久化路径。
+- 资源页签及普通挂载面板用 `ViewContext.state/setState` 保存该实例的筛选、阅读位置等 JSON。升级比较 `stateVersion` 与 `expectedStateVersion`，转换后再保存。导航页面、装饰、内容插槽和替换控件不支持这条持久化路径。
 - 挂载目标和外框布局通过 `setPresentation` 更新；内容样式、交互及业务状态完全由插件实现，业务状态使用 `setState` 或宿主私有存储。宿主不会依据插件数量提供面板切换或自动避让。不能用父页面 CSS 选择器或 Vue Teleport 穿透隔离。
 - 扩展级配置用宿主 `storage.get/set`。视图通过自身命令读写，不访问宿主内存；更改数据结构时增加 `dataVersion` 并提供 `migrate`。不要把一个文件的阅读位置存成覆盖所有文件的全局值。
 - 每个视图具有独立 JS 环境。没有通用跨视图广播；需要设置同步时设计明确刷新入口或有界的读取周期，并在销毁时取消，不能承诺不存在的订阅事件。源码中的纯函数可通过包内相对导入复用。
@@ -33,4 +37,4 @@
 
 验收从用户行为出发，不以采用某个样例的文件名或界面作为成功依据。例如文件阅读工具应验证两份不同文件、空内容、各自筛选状态及重开恢复；网络信息条应验证允许来源、请求失败后的状态、关闭与再次显示；自定义控件应验证当前快照、禁用或隐藏时提交被拒绝，以及故障后内置控件可用。
 
-对每项需求明确已有 API 是否覆盖。没有任意插槽、父页面 DOM、静默覆写用户文件、通用 IPC 或 Agent 调用权限；核心要求超出已开放能力时先明确缺口与可实现范围，不能把样例资源或相近布局当作已经满足核心要求，也不用内部接口模拟完整实现。
+对每项需求明确已有 API 是否覆盖。只有当前宿主能力查询返回的正式位置，没有任意 DOM 插槽、父页面 DOM、静默覆写用户文件、通用 IPC 或 Agent 调用权限；核心要求超出已开放能力时先明确缺口与可实现范围，不能把样例资源或相近布局当作已经满足核心要求，也不用内部接口模拟完整实现。

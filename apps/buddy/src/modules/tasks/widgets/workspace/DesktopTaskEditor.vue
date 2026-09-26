@@ -17,7 +17,8 @@ import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
-defineProps<{ readingPositions?: ChatReadingPositions }>()
+withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
+const emit = defineEmits<{ ready: [] }>()
 const router = useRouter()
 const {
   resources: contextActions,
@@ -109,10 +110,12 @@ useProvideChatContent({
       </template>
     </DesktopChatWorkspaceHeader>
     <DesktopChatWorkspace
+      :active="active"
       :reading-positions="readingPositions"
       :view-mode="viewMode"
       :reveal-message-id="notificationTargetMessageId"
       :workspace="workspace"
+      @ready="emit('ready')"
       @show-canvas="viewMode = 'canvas'"
       @open-settings="router.push(desktopRouteLocations.settings($event))"
       @open-artifact="contextActions.openArtifact"

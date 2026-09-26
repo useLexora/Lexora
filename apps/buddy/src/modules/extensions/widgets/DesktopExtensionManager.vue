@@ -15,6 +15,7 @@ import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
+import DesktopExtensionUiSettings from './DesktopExtensionUiSettings.vue'
 
 const { state, language, workbench, startCreation } = useExtensionContext()
 const { controller } = useWorkbench()
@@ -149,6 +150,7 @@ onScopeDispose(cancel)
         @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
       />
     </div>
+    <DesktopExtensionUiSettings v-if="section === 'installed'" :language="language" />
   </DesktopExtensionWorkbench>
   <NModal v-model:show="installationLog" preset="card" :title="language === 'en-US' ? 'Installation log' : '安装记录'" class="extension-dialog">
     <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />

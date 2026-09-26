@@ -61,7 +61,7 @@ export class WorkbenchPersistence {
     this.#tail = this.#tail.catch(() => {}).then(async () => {
       while (this.#saved !== this.#revision) {
         const revision = this.#revision
-        const snapshot = JSON.parse(JSON.stringify({ version: 1, layout: this.#controller.layout, backups: this.#copies.backups(), configuration: this.#controller.configuration.snapshot() }))
+        const snapshot = JSON.parse(JSON.stringify({ version: 1, layout: { ...this.#controller.layout, views: Object.fromEntries(Object.entries(this.#controller.layout.views).filter(([, view]) => !view.interactionId)) }, backups: this.#copies.backups(), configuration: this.#controller.configuration.snapshot() }))
         await this.#api.write(snapshot)
         this.#saved = revision
       }

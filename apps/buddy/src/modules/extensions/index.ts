@@ -1,4 +1,5 @@
 export { useProvideExtensionContext } from './extensionContext'
 export { useExtensionState } from './state/useExtensionState'
+export { useExtensionUiContributions } from './state/useExtensionUiContributions'
 export { useExtensionViews } from './widgets/useExtensionViews'
 export type { ExtensionViews } from './widgets/useExtensionViews'

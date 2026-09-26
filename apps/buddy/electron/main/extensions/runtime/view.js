@@ -13,6 +13,9 @@ let mount = null
 let anchor = null
 let control = null
 let overlay = false
+let interactionId = null
+const activationListeners = new Set()
+const messageListeners = new Set()
 const environmentListeners = new Set()
 const mountListeners = new Set()
 const anchorListeners = new Set()
@@ -45,6 +48,14 @@ addEventListener('message', (event) => {
   const data = event.data
   if (typeof data.ping === 'string') {
     parent.postMessage({ channel: 'lexora-extension', token, pong: data.ping }, '*')
+    return
+  }
+  if (data.activation) {
+    for (const listener of activationListeners) listener(Object.freeze(data.activation))
+    return
+  }
+  if (Object.hasOwn(data, 'message')) {
+    for (const listener of messageListeners) listener(data.message)
     return
   }
   if (data.workbench) {
@@ -91,6 +102,10 @@ addEventListener('message', (event) => {
   else item.reject(new Error(data.value))
 })
 addEventListener('keydown', (event) => {
+  if (interactionId && event.isTrusted && event.key === 'Escape') {
+    event.preventDefault()
+    parent.postMessage({ channel: 'lexora-extension', token, endInteraction: true }, '*')
+  }
   if (control && event.isTrusted && event.key === 'Escape')
     parent.postMessage({ channel: 'lexora-extension', token, dismiss: true }, '*')
 })
@@ -104,11 +119,12 @@ addEventListener('pagehide', () => {
 async function initialize() {
   try {
     const initial = await request('bootstrap')
+    interactionId = initial.interactionId
     overlay = initial.presentation === 'decoration'
     anchor = initial.anchor ?? anchor
     mount = initial.mount ?? mount
     control = initial.control
-    if (overlay || initial.presentation === 'control' || initial.location === 'mount') {
+    if (overlay || initial.presentation === 'control' || initial.presentation === 'slot' || initial.location === 'mount') {
       const style = document.createElement('style')
       style.textContent = 'html,body{height:100%;background:transparent}body>main{height:100%;box-sizing:border-box;padding:0}'
       document.head.append(style)
@@ -131,6 +147,9 @@ async function initialize() {
     }
     const api = Object.freeze({
       apiVersion: initial.apiVersion,
+      instanceId: initial.instanceId,
+      interaction: interactionId ? Object.freeze({ id: interactionId, setRegions: regions => request('interaction.setRegions', regions), onActivate: listener => subscribe(activationListeners, listener) }) : null,
+      onMessage: listener => subscribe(messageListeners, listener),
       get workbench() { return workbench },
       onWorkbenchChange: listener => subscribe(workbenchListeners, listener),
       get visible() { return visible },

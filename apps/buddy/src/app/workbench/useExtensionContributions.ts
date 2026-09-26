@@ -1,33 +1,23 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionWorkbenchEvent } from '@buddy-shared/extensions/extensionApi'
-import type { WorkbenchControl } from '@buddy-shared/workbench/workbenchUi'
 import type { Ref } from 'vue'
 import type { ExtensionViews } from '@/modules/extensions'
 import type { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import type { ViewLocation } from '@/workbench/common/workbench'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
+import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCommands'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
+import { qualifyWorkbenchCommand } from '@buddy-shared/workbench/workbenchCommand'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
-import { computed, onScopeDispose, shallowRef, watch } from 'vue'
+import { onScopeDispose, watch } from 'vue'
 import { DesktopExtensionView } from '@/modules/extensions/ui'
 
 export function useExtensionContributions(options: { controller: WorkbenchController, renderers: ViewRendererRegistry, persistence: WorkbenchPersistence, installed: Readonly<Ref<ExtensionStatus[]>>, api: ExtensionApi, views: ExtensionViews, ready: () => boolean }) {
   const { controller, renderers, persistence, installed, api, views } = options
   onScopeDispose(renderers.register('extensions.view', DesktopExtensionView))
   const owners = new Map<string, { revision: string, dispose: () => void }>()
-  const configurationRevision = shallowRef(0)
-  onScopeDispose(controller.configuration.subscribe(() => configurationRevision.value++))
-  const selection = computed(() => {
-    void configurationRevision.value
-    return { 'model.reasoning': String(controller.configuration.get('workbench.controls.model.reasoning') ?? '') }
-  })
-  function select(target: WorkbenchControl, id: string) {
-    if (id && !installed.value.some(item => item.enabled && item.compatible && item.manifest.contributes.placements.some(placement => placement.kind === 'control' && placement.target === target && placement.id === id)))
-      return
-    controller.configuration.set(`workbench.controls.${target}`, id)
-  }
   watch(installed, (items) => {
-    const enabled = items.filter(item => item.enabled && item.compatible)
+    const enabled = items.filter(item => item.enabled && item.compatible && !['failed', 'blocked'].includes(item.state))
     for (const [id, owner] of owners) {
       if (!enabled.some(item => item.manifest.id === id && item.revision === owner.revision)) {
         owner.dispose()
@@ -45,10 +35,12 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         }
         for (const placement of item.manifest.contributes.placements) {
           if (placement.kind === 'view')
-            scope.placement({ id: placement.id, viewType: placement.view, location: 'mount', target: placement.target, presentation: placement.presentation, when: placement.when })
+            scope.placement({ id: placement.id, viewType: placement.view, location: 'mount', target: placement.target, presentation: placement.presentation, interaction: placement.interaction, when: placement.when })
         }
         for (const command of item.manifest.contributes.commands.filter(command => !command.hidden)) {
-          scope.command({ id: command.id, label: command.title, enabled: () => matchesWorkbenchContext(command.when, controller.contextKeys.snapshot()), execute: async ({ view }) => {
+          scope.command({ id: command.id, label: command.title, slash: command.slash ? { ...command.slash, name: qualifyWorkbenchCommand(extensionCommandNamespace(id), command.slash.name) } : undefined, enabled: () => matchesWorkbenchContext(command.when, controller.contextKeys.snapshot()), execute: async ({ view, pane, source, arguments: argumentsText }) => {
+            if (source === 'slash')
+              return api.executeSlash(id, command.id, argumentsText ?? '', pane?.id)
             const parsed = view && ['file', 'file-preview'].includes(view.resource.scheme) ? spaceFileTargetSchema.safeParse(view.resource.data) : null
             await api.execute(id, command.id, parsed?.success ? parsed.data : null)
           } })
@@ -70,8 +62,9 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       const descriptor = plugin?.manifest.contributes.views.find(descriptor => descriptor.id === placement?.view)
       if (!descriptor || placement?.kind !== 'view')
         continue
-      if (view.type !== descriptor.id || view.location !== 'mount' || view.placement !== placement.id || view.title !== descriptor.title) {
-        controller.rebindAuxiliary(view.id, { type: descriptor.id, placement: placement.id, title: descriptor.title, location: 'mount', resource: { ...view.resource, data: { ...view.resource.data, viewType: descriptor.id } } })
+      const mountInstanceId = placement.target === 'workbench.pane' ? view.mountInstanceId ?? controller.layout.activePane : undefined
+      if (view.type !== descriptor.id || view.location !== 'mount' || view.placement !== placement.id || view.title !== descriptor.title || view.mountInstanceId !== mountInstanceId) {
+        controller.rebindAuxiliary(view.id, { type: descriptor.id, placement: placement.id, title: descriptor.title, location: 'mount', mountInstanceId, resource: { ...view.resource, data: { ...view.resource.data, viewType: descriptor.id } } })
       }
     }
   }
@@ -82,7 +75,7 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       return
     for (const request of requests.values()) {
       const { event, abort } = request
-      if (event.kind === 'open' || event.kind === 'placement') {
+      if (event.kind === 'open' || event.kind === 'placement' || (event.kind === 'interaction' && event.title !== null) || event.kind === 'message') {
         const plugin = installed.value.find(item => item.manifest.id === event.extensionId)
         const current = plugin?.enabled && plugin.compatible && plugin.generation === event.generation
         if (!current) {
@@ -119,7 +112,26 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
     try {
       if (signal.aborted)
         return
-      if (event.kind === 'control') {
+      if (event.kind === 'interaction') {
+        if (event.title === null) {
+          controller.removeInteraction(event.interactionId)
+        }
+        else {
+          controller.interactions.add({ id: event.interactionId, title: event.title }, () => {
+            controller.removeInteraction(event.interactionId)
+            void api.endInteraction(event.interactionId).catch(() => {})
+          })
+        }
+        viewId = event.interactionId
+      }
+      else if (event.kind === 'message') {
+        views.broadcast(event.extensionId, event.generation, event.message)
+      }
+      else if (event.kind === 'regions') {
+        if (views.setRegions(event.viewId, event.generation, event.token, event.regions))
+          viewId = event.viewId
+      }
+      else if (event.kind === 'control') {
         if (views.proposeControl(event.viewId, event.generation, event.token, event.proposal))
           viewId = event.viewId
       }
@@ -129,9 +141,12 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         const descriptor = plugin?.manifest.contributes.views.find(view => view.id === placement?.view)
         if (placement?.kind !== 'view' || !descriptor)
           return
-        const existing = Object.values(controller.layout.views).find(view => view.resource.scheme === 'extension' && view.resource.data.extensionId === event.extensionId && view.resource.data.placementId === placement.id)
+        const instanceId = placement.target === 'workbench.pane' ? event.instanceId ?? controller.layout.activePane : undefined
+        if (instanceId && !controller.pane(instanceId))
+          return
+        const existing = Object.values(controller.layout.views).find(view => view.resource.scheme === 'extension' && view.resource.data.extensionId === event.extensionId && view.resource.data.placementId === placement.id && view.mountInstanceId === instanceId && view.interactionId === event.interactionId)
         if (event.visible) {
-          viewId = await controller.open({ scheme: 'extension', id: placement.id, data: { extensionId: event.extensionId, viewType: placement.view, resource: null, placementId: placement.id } }, descriptor.title, { signal, placement: placement.id, viewType: placement.view, location: 'mount', focus: false, state: { version: descriptor.stateVersion, value: {} } })
+          viewId = await controller.open({ scheme: 'extension', id: placement.id, data: { extensionId: event.extensionId, viewType: placement.view, resource: null, placementId: placement.id } }, descriptor.title, { signal, placement: placement.id, mountInstanceId: instanceId, interactionId: event.interactionId, viewType: placement.view, location: 'mount', focus: false, state: { version: descriptor.stateVersion, value: {} } })
         }
         else if (existing && await controller.close(existing.id, signal)) {
           viewId = existing.id
@@ -154,6 +169,8 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         if (event.kind === 'presentation') {
           const placement = view.placement ? controller.registry.placements.get(view.placement) : null
           if (!placement || placement.viewType !== view.type)
+            return
+          if (event.presentation.target === 'workbench.pane' && !view.mountInstanceId)
             return
           controller.updateView(view.id, { presentation: { ...view.presentation, ...event.presentation } })
         }
@@ -182,5 +199,4 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
     for (const owner of owners.values()) owner.dispose()
     owners.clear()
   })
-  return { selection, select }
 }

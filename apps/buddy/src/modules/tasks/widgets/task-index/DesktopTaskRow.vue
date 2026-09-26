@@ -15,7 +15,7 @@ import {
   TagDismiss20Regular,
 } from '@vicons/fluent'
 import { NDropdown, NTooltip } from 'naive-ui'
-import { computed, h, useId, useTemplateRef } from 'vue'
+import { computed, h, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -27,6 +27,7 @@ import { useTaskHistoryDrag } from './useTaskHistoryDrag'
 const props = defineProps<{
   taskId: string
   active: boolean
+  loading?: boolean
   marks: readonly LocalTaskMark[]
   markState?: LocalTaskMarkState
   marksBusy: boolean
@@ -59,6 +60,14 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
+const opening = shallowRef(false)
+watch(() => props.loading, (loading, _, cleanup) => {
+  opening.value = false
+  if (loading) {
+    const timer = setTimeout(() => opening.value = true, 200)
+    cleanup(() => clearTimeout(timer))
+  }
+}, { immediate: true })
 const relativeTimeLabel = computed(() => (
   formatTaskRelativeTime(props.occurredAt, props.now, props.language)
 ))
@@ -174,8 +183,10 @@ useTaskHistoryDrag({
         class="desktop-task-sidebar__task"
         :class="{ 'is-active': active }"
         type="button"
+        :aria-busy="loading || undefined"
         @click="emit('open')"
       >
+        <span v-if="opening" class="desktop-task-row__opening" aria-hidden="true"><DesktopIcon :component="SpinnerIos20Regular" /></span>
         <DesktopOverflowingLabel :paused="dragging" :text="title" />
       </button>
       <div class="desktop-task-row__trailing">
@@ -393,6 +404,14 @@ button {
   }
 }
 
+.desktop-task-row__opening {
+  display: flex;
+  flex: none;
+  margin-right: 6px;
+  color: var(--buddy-text-muted);
+  .n-icon { font-size: 16px; animation: desktop-task-row-spin 1s linear infinite; }
+}
+
 .desktop-task-row__activity {
   display: grid;
   width: var(--buddy-task-sidebar-action-size, 1.75rem);
@@ -456,7 +475,8 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .desktop-task-row__activity.is-running .n-icon {
+  .desktop-task-row__activity.is-running .n-icon,
+  .desktop-task-row__opening .n-icon {
     animation: none;
   }
 }

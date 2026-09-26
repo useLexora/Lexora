@@ -6,6 +6,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopSettingsCategory } from '@/shared/navigation/desktopRoutes'
 
 export interface ChatWorkspaceProps {
+  active?: boolean
   readingPositions?: ChatReadingPositions
   viewMode?: 'chat' | 'canvas'
   revealMessageId: string | null
@@ -13,6 +14,7 @@ export interface ChatWorkspaceProps {
 }
 
 export interface ChatWorkspaceEmits {
+  ready: []
   showCanvas: []
   openNodeArtifact: [artifact: LocalArtifact]
   openNodeChanges: [changes: LocalChangeSetSummary]

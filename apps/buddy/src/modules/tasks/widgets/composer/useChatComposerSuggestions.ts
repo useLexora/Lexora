@@ -3,12 +3,14 @@ import type { ChatComposerContextOptions, ChatComposerTrigger, ChatPromptContext
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { createChatComposerSourceOptions, createChatComposerSuggestions, getChatComposerResourceIds, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
+import { useWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 
 export function useChatComposerSuggestions(
   options: Pick<UseChatComposerOptions, 'composerContent' | 'draftId' | 'language' | 'loadContextOptions' | 'resources'>,
   onSelect: (option: ChatPromptContextOption | undefined, action?: 'complete' | 'select') => void,
   getImageLabel: (resourceId: string) => string | undefined,
 ) {
+  const commands = useWorkbenchCommands()
   const { t } = useBuddyI18n(options.language)
   const contextOptions = shallowRef<ChatComposerContextOptions>({ files: [], skills: [] })
   const activeTrigger = shallowRef<ChatComposerTrigger | null>(null)
@@ -41,7 +43,7 @@ export function useChatComposerSuggestions(
     })
   })
   const sourceOptions = computed(() => [...createChatComposerSourceOptions(currentOptions.value, fileQuery.value), ...createChatComposerSourceOptions(contextOptions.value.files)])
-  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: sourceOptions.value }, key => t(key)))
+  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: sourceOptions.value, commands: commands?.entries.value.map(command => ({ commandId: command.id, description: command.description ?? command.title, kind: 'slashCommand', label: `/${command.name}`, value: `/${command.name}`, path: null })) }, key => t(key)))
 
   function invalidateQuery() {
     contextRequestId += 1

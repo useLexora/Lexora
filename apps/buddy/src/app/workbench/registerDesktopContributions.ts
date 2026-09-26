@@ -1,6 +1,7 @@
 import type { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
+import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCatalog } from '@buddy-shared/workbench/workbenchUi'
 import { buddyColorThemes, createBuddyColorVariables } from '@/theme/buddyTheme'
 import { panes } from '@/workbench/common/workbench'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
@@ -10,9 +11,8 @@ import DesktopTaskContribution from './DesktopTaskContribution.vue'
 export function registerDesktopContributions(controller: WorkbenchController, renderers: ViewRendererRegistry, copies: WorkingCopyService, language: () => string) {
   const labels = () => workbenchLabels(language())
   controller.registry.register('lexora.tasks', (scope) => {
-    scope.configuration({ id: 'workbench.controls.model.reasoning', defaultValue: '', validate: value => typeof value === 'string' && value.length <= 180 })
     scope.cleanup(renderers.register('tasks.editor', DesktopTaskContribution))
-    scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false })
+    scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false, prepareBeforeOpen: true })
   })
   controller.registry.register('lexora.files', (scope) => {
     scope.cleanup(renderers.register('files.view', DesktopFileContribution))
@@ -23,6 +23,8 @@ export function registerDesktopContributions(controller: WorkbenchController, re
     }, keybinding: 'Mod+S', shortcutScope: 'context', enabled: context => !!context.view && copies.dirty(context.view.resource), execute: context => copies.save(context.view!.resource) })
   })
   controller.registry.register('lexora.workbench', (scope) => {
+    for (const target of workbenchUiTargetCatalog)
+      scope.configuration({ id: workbenchUiSelectionKey(target), defaultValue: '', validate: value => parseWorkbenchUiSelection(value, target.selection === 'multiple') !== null })
     for (const theme of Object.values(buddyColorThemes))
       scope.theme({ id: theme.colorScheme, colorScheme: theme.colorScheme, tokens: createBuddyColorVariables(theme) })
     scope.command({ id: 'editor.wordWrap', label: language() === 'en-US' ? 'Toggle word wrap' : '切换自动换行', enabled: context => context.values['resource.scheme'] === 'file', execute: (context) => {
