@@ -142,6 +142,7 @@ describe('lexoraConfigStore', () => {
     const updated = await store.update({
       desktop: {
         theme: 'dark',
+        minimizeToTrayOnClose: false,
         chat: { welcome: 'writing' },
       },
       pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
@@ -150,6 +151,7 @@ describe('lexoraConfigStore', () => {
     expect(updated.desktop).toEqual({
       contextPanelMode: 'task',
       contextPanelGlobal: false,
+      minimizeToTrayOnClose: false,
       keybindings: {},
       backgroundCloseNoticeShown: false,
       pluginAuthor: '',
@@ -176,6 +178,7 @@ describe('lexoraConfigStore', () => {
     })
     const content = await readFile(configPath, 'utf8')
     expect(content).toContain('[desktop]')
+    expect(content).toContain('minimize_to_tray_on_close = false')
     expect(content).toContain('[pet]')
     expect(content).toContain('always_on_top = false')
     expect(content).toContain('enabled = false')

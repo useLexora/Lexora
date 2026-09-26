@@ -69,6 +69,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     }).strict().optional(),
     contextPanelMode: z.enum(['task', 'independent']).optional(),
     contextPanelGlobal: z.boolean().optional(),
+    minimizeToTrayOnClose: z.boolean().optional(),
     keybindings: keybindingsSchema.optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
     taskSidebar: taskSidebarPreferencesSchema.optional(),

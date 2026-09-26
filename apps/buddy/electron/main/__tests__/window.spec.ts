@@ -73,6 +73,29 @@ vi.mock('electron', () => ({
 }))
 
 describe('createDesktopWindow lifecycle', () => {
+  it('requests application quit instead of hiding when tray minimization is disabled', () => {
+    const onCloseToQuit = vi.fn()
+    const onHidden = vi.fn()
+    createDesktopWindow({
+      appName: 'Lexora Buddy Dev',
+      iconPath: '/tmp/icon.png',
+      isQuitting: () => false,
+      minimizeToTrayOnClose: () => false,
+      onCloseToQuit,
+      onHidden,
+      rendererUrl: null,
+    })
+    const window = electron.FakeBrowserWindow.instances.at(-1)!
+    const event = { preventDefault: vi.fn() }
+
+    window.emit('close', event)
+
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(onCloseToQuit).toHaveBeenCalledOnce()
+    expect(onHidden).not.toHaveBeenCalled()
+    expect(window.hide).not.toHaveBeenCalled()
+  })
+
   it('hides to tray on ordinary close and lets a committed quit close the window', () => {
     let isQuitting = false
     const onHidden = vi.fn()
@@ -80,6 +103,8 @@ describe('createDesktopWindow lifecycle', () => {
       appName: 'Lexora Buddy Dev',
       iconPath: '/tmp/icon.png',
       isQuitting: () => isQuitting,
+      minimizeToTrayOnClose: () => true,
+      onCloseToQuit: vi.fn(),
       onHidden,
       rendererUrl: null,
     })

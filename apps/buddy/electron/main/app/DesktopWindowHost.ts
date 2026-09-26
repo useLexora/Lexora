@@ -12,6 +12,8 @@ import { observeRendererDiagnostics } from './desktopProcessDiagnostics'
 
 interface WindowBindings {
   isQuitting: () => boolean
+  minimizeToTrayOnClose: () => boolean
+  onCloseToQuit: () => void
   onHidden: () => void
   onWindowCreated: (window: BrowserWindow) => void
 }
@@ -46,6 +48,8 @@ export class DesktopWindowHost {
           appName: environment.paths.appName,
           iconPath: environment.desktopIconPath,
           isQuitting: bindings.isQuitting,
+          minimizeToTrayOnClose: bindings.minimizeToTrayOnClose,
+          onCloseToQuit: bindings.onCloseToQuit,
           onHidden() {
             if (!handle.window.webContents.isDestroyed())
               handle.window.webContents.send(DESKTOP_IPC_CHANNELS.appHidden)

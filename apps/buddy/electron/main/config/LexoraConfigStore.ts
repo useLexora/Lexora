@@ -44,6 +44,7 @@ const desktopConfigSchema = z.object({
   }).passthrough().prefault({}),
   context_panel_mode: z.enum(['task', 'independent']).default('task'),
   context_panel_global: z.boolean().default(false),
+  minimize_to_tray_on_close: z.boolean().default(true),
   keybindings: keybindingsSchema.default({}),
   task_sidebar_pinned_items: z.array(taskSidebarPinnedItemSchema)
     .max(500)
@@ -75,6 +76,7 @@ const desktopConfigSchema = z.object({
   },
   context_panel_mode: 'task',
   context_panel_global: false,
+  minimize_to_tray_on_close: true,
   keybindings: {},
   task_sidebar_pinned_items: [],
   task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
@@ -231,6 +233,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       },
       contextPanelMode: config.desktop.context_panel_mode,
       contextPanelGlobal: config.desktop.context_panel_global,
+      minimizeToTrayOnClose: config.desktop.minimize_to_tray_on_close,
       keybindings: config.desktop.keybindings,
       taskSidebarPinnedItems: config.desktop.task_sidebar_pinned_items,
       taskSidebar: {
@@ -280,6 +283,7 @@ function encodeConfig(config: LexoraConfig) {
       },
       context_panel_mode: config.desktop.contextPanelMode,
       context_panel_global: config.desktop.contextPanelGlobal,
+      minimize_to_tray_on_close: config.desktop.minimizeToTrayOnClose,
       keybindings: config.desktop.keybindings,
       task_sidebar_pinned_items: config.desktop.taskSidebarPinnedItems,
       task_sidebar: {
