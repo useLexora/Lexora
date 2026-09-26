@@ -16,6 +16,7 @@ export interface ExtensionContext {
   isDark: Readonly<Ref<boolean>>
   endInteraction: (id: string) => void
   focusView: (id: string) => void
+  authoring: { author: Readonly<Ref<string>>, save: (author: string) => Promise<boolean> }
   startCreation: (prompt: string) => Promise<void>
 }
 const [useProvideExtensionContext, injectExtensionContext] = createInjectionState((context: ExtensionContext) => context)

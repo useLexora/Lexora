@@ -14,7 +14,7 @@ node extensions/tools.mjs pack .output/extensions/my-plugin .output/extensions/m
 
 在「插件 → 安装插件包」中安装生成的包。安装按钮右侧箭头可以加载开发目录；「更多操作 → 安装记录」查看进度、编译错误与取消操作。
 
-`extension.json` 中的 ID 使用 `发布者.插件名`；命令和视图 ID 以插件 ID 加 `.` 开头。清单声明版本、`engines.lexora`、API 版本、贡献项、依赖与权限。`categories` 和 `tags` 用于市场分类与搜索。
+`extension.json` 中的 `id` 是稳定的插件身份，创建后在修改、升级和发布时持续复用；可选的 `author` 独立保存作者署名，修改署名不改变 ID。命令和视图 ID 以插件 ID 加 `.` 开头。清单声明版本、`engines.lexora`、API 版本、贡献项、依赖与权限。`categories` 和 `tags` 用于市场分类与搜索。
 
 `icon` 可指定包内 SVG、PNG、JPEG 或 WebP 图标（最多 64 KiB），用于导航、插件卡片与安装弹窗。未提供图标时显示默认线框图标。
 

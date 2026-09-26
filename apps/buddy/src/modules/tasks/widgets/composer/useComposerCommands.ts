@@ -8,7 +8,7 @@ import { computed, shallowRef } from 'vue'
 import { useWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useWorkbenchUiScope } from '@/shared/ui/contributions/workbenchUiContext'
 
-export function useComposerCommands(draftId: Readonly<Ref<string>>) {
+export function useComposerCommands(draftId: Readonly<Ref<string>>, choose: (name: string) => void) {
   const port = useWorkbenchCommands()
   const scope = useWorkbenchUiScope()
   const pending = shallowRef(false)
@@ -28,8 +28,15 @@ export function useComposerCommands(draftId: Readonly<Ref<string>>) {
     const directives = content?.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive')) ?? []
     const reference = directives.find(node => node.directive === 'slash_command' && node.commandId)
     const candidates = entries.value.filter(entry => entry.name === invocation?.name && (!reference || (reference.directive === 'slash_command' && entry.id === reference.commandId)))
-    if (!port || !content || !invocation || candidates.length !== 1 || directives.length > (reference ? 1 : 0) || getBuddyUserContentResourceIds(content).length || content.quotes?.length) {
+    if (!port || !content || !invocation || directives.length > (reference ? 1 : 0) || getBuddyUserContentResourceIds(content).length || content.quotes?.length) {
       port?.reportFailure()
+      return
+    }
+    if (candidates.length !== 1) {
+      if (candidates.length > 1 && !reference)
+        choose(invocation.name)
+      else
+        port.reportFailure()
       return
     }
     const id = draftId.value

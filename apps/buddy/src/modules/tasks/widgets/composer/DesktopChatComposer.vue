@@ -200,6 +200,7 @@ function captureDraft(): WorkbenchMenuSelection {
         <template #chooser>
           <ChatComposerSourcePicker
             :active-index="activeSuggestionIndex"
+            keyboard-navigation
             :accessible-label="t('desktop.chat.sourcePickerSuggestions')"
             :empty-label="suggestionEmptyLabel"
             :language="language"

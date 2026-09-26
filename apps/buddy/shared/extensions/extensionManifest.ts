@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { workbenchSlashSchema } from '../workbench/workbenchCommand'
 import { workbenchConditionSchema } from '../workbench/workbenchContext'
 import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi'
+import { extensionAuthorSchema } from './extensionIdentity'
 
 export const EXTENSION_API_VERSION = 3
 export const EXTENSION_PROTOCOL = 'lexora-extension'
@@ -70,6 +71,7 @@ export const extensionManifestSchema = z.object({
   format: z.enum(['compiled', 'source']).default('compiled'),
   id: extensionIdSchema,
   name: z.string().min(1).max(100),
+  author: extensionAuthorSchema.optional(),
   description: z.string().max(500).default(''),
   icon: extensionPathSchema.refine(value => /\.(?:svg|png|jpe?g|webp)$/i.test(value), 'Expected an SVG, PNG, JPEG or WebP icon').optional(),
   categories: z.array(z.string().min(1).max(40)).max(8).default([]),

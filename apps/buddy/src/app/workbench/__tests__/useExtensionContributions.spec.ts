@@ -272,5 +272,5 @@ it('exposes plugin short names as namespaces without publisher prefixes or globa
   const f = setup()
   f.installed.value = [{ ...f.status, revision: 'next', manifest: extensionManifestSchema.parse({ ...f.status.manifest, entry: 'host.js', apiVersion: 3, contributes: { ...f.status.manifest.contributes, commands: [{ id: 'tests.music.review', title: '检查播放列表', slash: { name: 'review', description: '检查当前播放列表' } }] } }) }]
   await settle()
-  expect([...f.controller.registry.commands.values()].filter(command => command.slash).map(command => command.slash)).toEqual([{ name: 'music:review', description: '检查当前播放列表' }])
+  expect([...f.controller.registry.commands.values()].filter(command => command.slash).map(command => command.slash)).toEqual([{ name: 'music:review', description: '检查当前播放列表', origin: { id: 'tests.music', name: 'Music', author: undefined, version: '1.0.0', source: undefined } }])
 })

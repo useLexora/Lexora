@@ -19,7 +19,7 @@ import { useChatComposerSuggestions } from './useChatComposerSuggestions'
 import { useComposerCommands } from './useComposerCommands'
 
 export function useChatComposer(options: UseChatComposerOptions) {
-  const localCommands = useComposerCommands(options.draftId)
+  const localCommands = useComposerCommands(options.draftId, chooseCommand)
   const conversationStatusPanel = useConversationStatusPanel()
   let editingSession = 0
   watch(options.draftId, () => {
@@ -93,6 +93,17 @@ export function useChatComposer(options: UseChatComposerOptions) {
     return imageLabels.value.get(resourceId)
   }
 
+  function chooseCommand(name: string) {
+    const current = editor.value
+    if (!current || !current.isEditable)
+      return
+    const range = findTypedCommandRange(name)
+    if (!range)
+      return
+    current.chain().focus().setTextSelection(range.to).run()
+    query.activeTrigger.value = { kind: 'slash', query: name, exactCommand: true }
+  }
+
   function submit() {
     const current = editor.value
     if (!current?.isEditable)
@@ -151,12 +162,17 @@ export function useChatComposer(options: UseChatComposerOptions) {
   }
 
   function replaceTypedCommand(name: BuddyChatCommandName): boolean {
+    const range = findTypedCommandRange(name)
+    return range ? applyCommand(name, range) : false
+  }
+
+  function findTypedCommandRange(name: string): { from: number, to: number } | null {
     let range: { from: number, to: number } | null = null
     let foundContent = false
     editor.value?.state.doc.descendants((node, position) => {
       if (foundContent || !node.isInline)
         return !foundContent
-      if (node.isText && !node.text?.trim())
+      if (node.type.name === 'hardBreak' || (node.isText && !node.text?.trim()))
         return
       foundContent = true
       const match = node.isText ? new RegExp(`^(\\s*)/${name}(?=\\s|$)`, 'i').exec(node.text!) : null
@@ -166,7 +182,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
       }
       return false
     })
-    return range ? applyCommand(name, range) : false
+    return range
   }
 
   async function resolveSource(source: BuddyComposerSource): Promise<string | null> {

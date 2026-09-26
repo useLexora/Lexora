@@ -67,7 +67,7 @@ export interface CommandContext {
 export interface WorkbenchCommand {
   id: string
   label: string
-  slash?: { name: string, description?: string }
+  slash?: { name: string, description?: string, origin?: import('@buddy-shared/workbench/workbenchCommand').WorkbenchCommandOrigin }
   keybinding?: string
   alternateKeybindings?: readonly string[]
   shortcutScope?: ShortcutScope

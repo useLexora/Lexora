@@ -1,6 +1,7 @@
 import type { LexoraConfigPatch } from './desktopApi'
 import { z } from 'zod'
 import { browserPreferencesSchema } from '../../shared/browser/browserPreferences'
+import { extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
 import { runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
@@ -73,6 +74,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     taskSidebar: taskSidebarPreferencesSchema.optional(),
     profile: desktopUserProfilePatchSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
+    pluginAuthor: extensionAuthorSchema.optional(),
     language: z.enum(['zh-CN', 'en-US']).optional(),
     launchAtLogin: z.boolean().optional(),
     notificationsEnabled: z.boolean().optional(),

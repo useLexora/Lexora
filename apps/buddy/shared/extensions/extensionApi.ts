@@ -56,6 +56,7 @@ export interface ExtensionLog {
   durationMs?: number
 }
 export interface ExtensionStatus {
+  source?: ExtensionReview['source']
   manifest: ExtensionManifest
   iconUrl?: string
   revision: string

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import { Alert20Regular, Clock20Regular, Document20Regular, Globe20Regular } from '@vicons/fluent'
-import { NButton, NModal } from 'naive-ui'
+import { NButton, NEllipsis, NModal } from 'naive-ui'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
@@ -53,10 +53,13 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
       <div class="extension-install-review__heading">
         <h2>{{ review.manifest.name }}</h2>
         <p class="extension-install-review__meta">
-          <span>{{ source }}</span>
           <span class="extension-install-review__version">
             <template v-if="review.currentVersion">{{ review.currentVersion }} → </template>{{ review.manifest.version }}
           </span>
+          <NEllipsis>{{ review.manifest.author || (english ? 'Unsigned' : '未署名') }}</NEllipsis>
+        </p>
+        <p class="extension-install-review__meta">
+          {{ source }}
         </p>
       </div>
     </div>

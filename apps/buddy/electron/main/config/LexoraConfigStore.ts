@@ -7,6 +7,7 @@ import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
+import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
@@ -35,6 +36,7 @@ const taskSidebarConfigSchema = z.object({
 })
 
 const desktopConfigSchema = z.object({
+  plugin_author: extensionAuthorSchema.default(''),
   background_close_notice_shown: z.boolean().default(false),
   chat: z.object({
     outline_position: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition),
@@ -66,6 +68,7 @@ const desktopConfigSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).default('system'),
 }).passthrough().default({
   background_close_notice_shown: false,
+  plugin_author: '',
   chat: {
     outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
     welcome: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome,
@@ -221,6 +224,7 @@ function decodeConfig(value: unknown): LexoraConfig {
     proxy: config.proxy,
     desktop: {
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
+      pluginAuthor: config.desktop.plugin_author,
       chat: {
         outlinePosition: config.desktop.chat.outline_position,
         welcome: config.desktop.chat.welcome,
@@ -269,6 +273,7 @@ function encodeConfig(config: LexoraConfig) {
     proxy: config.proxy,
     desktop: {
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
+      plugin_author: config.desktop.pluginAuthor,
       chat: {
         outline_position: config.desktop.chat.outlinePosition,
         welcome: config.desktop.chat.welcome,
@@ -312,6 +317,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      pluginAuthor: extensionAuthorSchema.parse(patch.desktop?.pluginAuthor ?? current.desktop.pluginAuthor),
       chat: {
         ...current.desktop.chat,
         ...patch.desktop?.chat,

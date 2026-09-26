@@ -168,6 +168,7 @@ export interface LexoraConfig {
     notificationsEnabled: boolean
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig
+    pluginAuthor: string
     sidebarCollapsed: boolean
     theme: 'system' | 'light' | 'dark'
   }

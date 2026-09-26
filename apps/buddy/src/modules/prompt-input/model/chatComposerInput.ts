@@ -47,6 +47,7 @@ export interface ChatComposerTrigger {
   kind: 'slash' | 'skill' | 'mention'
   query: string
   rawQuery?: string
+  exactCommand?: boolean
 }
 
 export interface ChatComposerSubmitPayload {
@@ -123,8 +124,12 @@ export function createChatComposerSuggestions(
         value: `/${command.name}`,
       })), ...options.commands ?? []]
     : trigger.kind === 'skill' ? options.skills : createChatComposerSourceOptions(options.files)
-  if (trigger.kind === 'slash')
+  if (trigger.kind === 'slash') {
+    const exact = candidates.filter(option => option.value.slice(1) === trigger.query)
+    if (trigger.exactCommand || exact.length > 1)
+      return exact.map(option => ({ option }))
     return candidates.filter(option => option.value.slice(1).startsWith(trigger.query)).slice(0, CHAT_COMPOSER_SUGGESTION_LIMIT).map(option => ({ option }))
+  }
   if (trigger.kind === 'mention')
     return candidates.map(option => ({ option }))
   return rankChatComposerOptions(candidates, trigger.query)

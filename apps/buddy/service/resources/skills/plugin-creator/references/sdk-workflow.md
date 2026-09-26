@@ -17,3 +17,5 @@ pnpm run package:source <插件仓库>
 在 Lexora 的「插件 → 安装插件包」选择输出包并确认权限。只有用户要求发布时才同步远端。
 
 离线开发可从 SDK 的 `authoring.mjs` 导入 `queryWorkbenchCapabilities` 查询该 SDK 快照支持的目标；它不代表用户已安装宿主的版本。应用内优先查询 `lexora_plugin_capabilities`。
+
+新建插件从 `authoring.mjs` 导入 `createExtensionId`，传入简短调用名（例如 `my-plugin`），将结果保存到清单并持续复用。独立 `author` 字段保存可选署名，支持中文；使用该字段时 `engines.lexora` 至少要求 `>=0.9.0 <1.0.0`。不要为重新打包或发布生成新身份。

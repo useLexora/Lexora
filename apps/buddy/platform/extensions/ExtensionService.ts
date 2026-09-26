@@ -11,7 +11,6 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
-import { extensionCommandNamespace } from '../../shared/extensions/extensionCommands'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
@@ -127,7 +126,7 @@ export class ExtensionService {
           blocked = extensionError(error)
         }
       }
-      return { manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
+      return { source: record.current.source ?? undefined, manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
     }))
   }
 
@@ -634,10 +633,6 @@ export class ExtensionService {
       let running = this.#running.get(dependency)
       if (!running) {
         const pkg = this.store.installed[dependency]!.current
-        if (pkg.manifest.contributes.commands.some(command => command.slash) && [...this.#running.values()].some(other => other.package.manifest.contributes.commands.some(command => command.slash) && extensionCommandNamespace(other.package.manifest.id) === extensionCommandNamespace(dependency))) {
-          this.#log(dependency, 'activation.failed', 'EXTENSION_COMMAND_NAMESPACE_CONFLICT')
-          throw new Error('EXTENSION_COMMAND_NAMESPACE_CONFLICT')
-        }
         const generation = randomUUID()
         const abort = new AbortController()
         let host: ExtensionHost

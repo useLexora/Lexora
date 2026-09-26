@@ -1,4 +1,5 @@
 export { compileExtensionSource } from '../../platform/extensions/compileExtensionSource'
 export { extensionIconUrl } from '../../platform/extensions/extensionIcon'
+export { createExtensionId, extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 export { extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 export { queryWorkbenchCapabilities, workbenchCapabilityQuerySchema } from '../../shared/workbench/workbenchUi'

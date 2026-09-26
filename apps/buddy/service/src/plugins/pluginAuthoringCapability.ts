@@ -9,13 +9,18 @@ import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { readExtensionDirectory } from '../../../platform/extensions/extensionFiles'
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
-import { EXTENSION_BUILD_RPC, EXTENSION_CAPABILITIES_RPC, EXTENSION_INSPECT_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema, extensionCapabilitiesSchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { EXTENSION_BUILD_RPC, EXTENSION_CAPABILITIES_RPC, EXTENSION_IDENTITY_RPC, EXTENSION_INSPECT_RPC, EXTENSION_REVIEW_REQUEST, extensionBuildResultSchema, extensionCapabilitiesSchema, extensionIdentityRequestSchema, extensionIdentitySchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
 import { workbenchCapabilityKinds } from '../../../shared/workbench/workbenchContributionCatalog'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 
 const name = 'lexora_plugin_build'
 const inspectName = 'lexora_plugin_inspect'
 const capabilitiesName = 'lexora_plugin_capabilities'
+const identityName = 'lexora_plugin_identity'
+const identityParameters = Type.Object({
+  slug: Type.String({ minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: 'A short readable plugin command namespace, chosen from its purpose. This is not an author name and need not be unique.' }),
+  author: Type.Optional(Type.String({ maxLength: 1024, description: 'Optional author display name, at most 80 visible characters. Unicode is supported. Omit to use the saved default; empty means unsigned. Do not infer from OS or Git accounts.' })),
+}, { additionalProperties: false })
 const capabilitiesParameters = Type.Object({
   kind: Type.Optional(Type.Union(workbenchCapabilityKinds.map(kind => Type.Literal(kind)))),
   target: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Exact target from the host catalog. Omit both filters for a compact index; specify either for detailed contracts.' })),
@@ -30,6 +35,8 @@ const parameters = Type.Object({
 export function createPluginAuthoringCapability(context: BuddyCapabilityContext, peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>): BuddyCapability {
   return {
     classify(event) {
+      if (event.toolName === identityName)
+        return Check(identityParameters, event.input) ? { access: 'read', paths: [] } : { blocked: true, reason: 'VALIDATION_FAILED' }
       if (event.toolName === capabilitiesName)
         return Check(capabilitiesParameters, event.input) ? { access: 'read', paths: [] } : { blocked: true, reason: 'VALIDATION_FAILED' }
       if (event.toolName === inspectName)
@@ -40,10 +47,27 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: 'write', paths: [{ path: event.input.source, mode: 'existing' }, { path: event.input.output, mode: 'create' }] }
     },
-    disclosure: { group: 'plugins', keywords: 'plugin extension build create inspect capabilities 插件 创建 编译 校验 安装 诊断 插槽', toolNames: [name, inspectName, capabilitiesName] },
+    disclosure: { group: 'plugins', keywords: 'plugin extension build create identity author inspect capabilities 插件 创建 身份 作者 编译 校验 安装 诊断 插槽', toolNames: [name, inspectName, capabilitiesName, identityName] },
     extension: {
       name: 'lexora-plugin-authoring',
       factory(pi) {
+        pi.registerTool(defineTool({
+          name: identityName,
+          label: 'Prepare plugin identity',
+          parameters: identityParameters,
+          description: 'Generate a new stable plugin ID and read the default author signature. Call only when creating a new independent plugin, then save the returned identity and engine requirement into extension.json. For edits or rebuilding, reuse the existing manifest ID. If a supplied author or slug is invalid, explain the rule and ask the user to choose a suitable name; never silently replace it. Does not write files, install or authenticate an author.',
+          async execute(_toolCallId, input, signal) {
+            const parsed = extensionIdentityRequestSchema.safeParse(input)
+            if (!parsed.success)
+              return response({ ok: false, code: 'EXTENSION_IDENTITY_INVALID', diagnostics: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`), nextAction: 'Explain the invalid fields and ask the user to choose suitable names before retrying. Do not silently replace or truncate them.' })
+            try {
+              const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
+              const identity = extensionIdentitySchema.parse(await peer.request(EXTENSION_IDENTITY_RPC, parsed.data, 10000, abort))
+              return response({ ok: true, ...identity })
+            }
+            catch { return response({ ok: false, code: 'EXTENSION_IDENTITY_FAILED' }) }
+          },
+        }))
         pi.registerTool(defineTool({
           name: capabilitiesName,
           label: 'Discover plugin capabilities',
@@ -76,7 +100,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           name,
           label: 'Build plugin',
           parameters,
-          description: 'Validate and compile a self-contained Lexora TS/JS plugin using the isolated built-in compiler, and write an installable package. Returns diagnostics for repair. Does not run plugin code, install dependencies or install plugins. Optionally opens the user installation review.',
+          description: 'Validate and compile a self-contained Lexora TS/JS plugin using the isolated built-in compiler, and write an installable package. Returns the actual id, name, author (empty means unsigned), version and diagnostics. Author signature is the manifest author field, independent of the ID prefix; changing an author must not regenerate or rename the ID. Does not run plugin code, install dependencies or install plugins. Optionally opens the user installation review.',
           async execute(toolCallId, input, signal) {
             const diagnostics: string[] = []
             try {
@@ -114,7 +138,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
               finally { await handle.close() }
               if (input.review)
                 peer.notify(EXTENSION_REVIEW_REQUEST, { path: output.canonicalPath })
-              return response({ ok: true, id: result.id, version: result.version, packagePath: output.canonicalPath, diagnostics, reviewRequested: input.review === true, installation: input.review ? 'review_requested' : 'not_requested', runtimeTested: false })
+              return response({ ok: true, id: result.id, name: result.name, author: result.author, version: result.version, packagePath: output.canonicalPath, diagnostics, reviewRequested: input.review === true, installation: input.review ? 'review_requested' : 'not_requested', runtimeTested: false })
             }
             catch (error) {
               const code = (error as { code?: string }).code ?? (error instanceof Error ? error.message : '')
@@ -123,7 +147,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.on('tool_result', (event) => {
-          if ([name, inspectName, capabilitiesName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
+          if ([name, inspectName, capabilitiesName, identityName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
             return { isError: true }
         })
       },

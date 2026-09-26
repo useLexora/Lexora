@@ -53,7 +53,7 @@ it('keeps the built-in footer until a selected slot view is ready and restores i
     setup() {
       provide(workbenchKey, { controller } as WorkbenchContext)
       views = useExtensionViews(api, installed, context)
-      useProvideExtensionContext({ endInteraction: () => {}, workbench: shallowRef({ values: context.value, pages: [] }), anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), state: { installed, api } as ExtensionContext['state'], views, language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, startCreation: async () => {} })
+      useProvideExtensionContext({ endInteraction: () => {}, workbench: shallowRef({ values: context.value, pages: [] }), anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), state: { installed, api } as ExtensionContext['state'], views, language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h('div', [
         h(DesktopExtensionUiSettings, { language: 'en-US' }),
         ...[0, 1].map(index => h(DesktopExtensionSlot, { target: 'composer.footer' }, { default: () => h('p', `Verify results ${index}`) })),

@@ -698,3 +698,91 @@ it('does not clear edits or a different draft after an asynchronous local comman
   expect(flow.editor.getText()).toBe('New work')
   expect(flow.sent).toEqual([])
 })
+
+it.each(['', '  ', '\n', '\n\n', ' \n\n  '])('offers every same-name command and preserves arguments with prefix %j', async (prefix) => {
+  const executions: { id: string, args: string }[] = []
+  const commands = localCommands(async (id, args) => {
+    executions.push({ id, args })
+    return null
+  })
+  commands.entries.value = Array.from({ length: 10 }, (_, index) => ({ id: `author${index}.game.start`, name: 'game:start', title: `Game ${index}` }))
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent(createChatComposerContentFromText(`${prefix}/game:start level=2`))
+  const before = flow.editor.getJSON()
+  flow.composer.submit()
+  await nextTick()
+  expect(flow.editor.getJSON()).toEqual(before)
+  expect(flow.composer.suggestions.value).toHaveLength(10)
+  expect(flow.composer.activeSuggestionIndex.value).toBe(-1)
+  flow.keydown('Enter')
+  expect(executions).toEqual([])
+  flow.composer.selectSuggestion(flow.composer.suggestions.value[9]!.option)
+  const { body } = chatComposerDocumentToUserContent(flow.editor.getJSON())
+  expect(body.slice(0, -1)).toEqual(chatComposerDocumentToUserContent(before).body.slice(0, -1))
+  const leadingSpace = prefix.split('\n').at(-1)!
+  expect(body.at(-1)!.content).toEqual([
+    ...leadingSpace ? [{ type: 'text', text: leadingSpace }] : [],
+    { type: 'prompt_directive', directive: 'slash_command', commandMode: 'action', commandId: 'author9.game.start', value: '/game:start' },
+    { type: 'text', text: '  level=2' },
+  ])
+  flow.composer.submit()
+  await nextTick()
+  expect(executions).toEqual([{ id: 'author9.game.start', args: 'level=2' }])
+  expect(flow.sent).toEqual([])
+  expect(commands.errors).toEqual([])
+})
+
+it('preserves leading hard breaks when disambiguating a local command', async () => {
+  const executions: { id: string, args: string }[] = []
+  const commands = localCommands(async (id, args) => {
+    executions.push({ id, args })
+    return null
+  })
+  commands.entries.value.push({ id: 'other.game.start', name: 'game:start', title: 'Another game' })
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'hardBreak' },
+    { type: 'text', text: '  ' },
+    { type: 'hardBreak' },
+    { type: 'text', text: '/game:start level=2' },
+  ] }] })
+  const before = flow.editor.getJSON()
+  flow.composer.submit()
+  await nextTick()
+  expect(flow.editor.getJSON()).toEqual(before)
+  flow.composer.selectSuggestion(flow.composer.suggestions.value[1]!.option)
+  expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).body[0]!.content).toEqual([
+    { type: 'hard_break' },
+    { type: 'text', text: '  ' },
+    { type: 'hard_break' },
+    { type: 'prompt_directive', directive: 'slash_command', commandMode: 'action', commandId: 'other.game.start', value: '/game:start' },
+    { type: 'text', text: '  level=2' },
+  ])
+  expect(executions).toEqual([])
+  flow.composer.submit()
+  await nextTick()
+  expect(executions).toEqual([{ id: 'other.game.start', args: 'level=2' }])
+  expect(flow.sent).toEqual([])
+  expect(commands.errors).toEqual([])
+})
+
+it('does not retarget a selected command when its plugin is removed', async () => {
+  const executions: string[] = []
+  const commands = localCommands(async (id) => {
+    executions.push(id)
+    return null
+  })
+  commands.entries.value.push({ id: 'other.game.start', name: 'game:start', title: 'Another game' })
+  const flow = await mountComposer({ commands })
+  flow.editor.commands.setContent(createChatComposerContentFromText('/game:start keep'))
+  flow.composer.submit()
+  await nextTick()
+  flow.composer.selectSuggestion(flow.composer.suggestions.value[1]!.option)
+  commands.entries.value = commands.entries.value.slice(0, 1)
+  const before = flow.editor.getJSON()
+  flow.composer.submit()
+  await nextTick()
+  expect(executions).toEqual([])
+  expect(flow.editor.getJSON()).toEqual(before)
+  expect(commands.errors).toEqual(['failed'])
+})
