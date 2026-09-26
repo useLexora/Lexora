@@ -11,6 +11,8 @@ export interface CreateDesktopWindowOptions {
   appName: string
   iconPath: string
   isQuitting: () => boolean
+  minimizeToTrayOnClose: () => boolean
+  onCloseToQuit: () => void
   onHidden?: () => void
   onPlacementChanged?: (placement: DesktopWindowPlacement) => void
   placement?: DesktopWindowPlacement | null
@@ -104,8 +106,13 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
       return
 
     event.preventDefault()
-    window.hide()
-    options.onHidden?.()
+    if (options.minimizeToTrayOnClose()) {
+      window.hide()
+      options.onHidden?.()
+    }
+    else {
+      options.onCloseToQuit()
+    }
   })
 
   window.once('ready-to-show', () => {

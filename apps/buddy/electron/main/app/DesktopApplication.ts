@@ -115,6 +115,8 @@ class DesktopApplication {
         return this.#windows.initialize({
           onWindowCreated: window => this.#browser.bindWindow(window),
           isQuitting: () => this.#quit.quitting,
+          minimizeToTrayOnClose: () => this.#runtime.config?.desktop.minimizeToTrayOnClose ?? true,
+          onCloseToQuit: () => this.#requestQuit(),
           onHidden: () => { void showBackgroundCloseNotice(this.#runtime.configStore) },
         })
       }, ['desktop.integrations'])

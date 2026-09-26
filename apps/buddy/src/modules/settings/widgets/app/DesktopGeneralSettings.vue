@@ -5,13 +5,14 @@ import { NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
-type GeneralSettingField = 'language' | 'contextPanelMode' | 'contextPanelGlobal'
+type GeneralSettingField = 'language' | 'contextPanelMode' | 'contextPanelGlobal' | 'minimizeToTrayOnClose'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { languageOptions, t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const pendingFields = shallowRef<ReadonlySet<GeneralSettingField>>(new Set())
 const globalPanelLabelId = useId()
+const minimizeToTrayLabelId = useId()
 const contextPanelModes = computed(() => [
   { label: t('desktop.settings.contextPanelTask'), value: 'task' },
   { label: t('desktop.settings.contextPanelIndependent'), value: 'independent' },
@@ -48,6 +49,29 @@ async function updateSetting(field: GeneralSettingField, patch: LexoraConfigPatc
               @update:value="updateSetting('language', { desktop: { language: $event } })"
             />
             <NSpin v-if="pendingFields.has('language')" size="small" />
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="desktop-general-settings__section">
+      <h2 class="desktop-general-settings__title">
+        {{ t('desktop.settings.windowBehavior') }}
+      </h2>
+      <div class="desktop-general-settings__group">
+        <div class="desktop-settings-row" data-testid="minimize-to-tray-setting">
+          <div class="desktop-settings-row__copy">
+            <strong :id="minimizeToTrayLabelId">{{ t('desktop.settings.minimizeToTrayOnClose') }}</strong>
+            <small>{{ t('desktop.settings.minimizeToTrayOnCloseDescription') }}</small>
+          </div>
+          <div class="desktop-settings-row__control desktop-settings-row__control--toggle">
+            <NSwitch
+              :aria-labelledby="minimizeToTrayLabelId"
+              :round="false"
+              :value="config.desktop.minimizeToTrayOnClose"
+              :loading="pendingFields.has('minimizeToTrayOnClose')"
+              :disabled="pendingFields.has('minimizeToTrayOnClose')"
+              @update:value="updateSetting('minimizeToTrayOnClose', { desktop: { minimizeToTrayOnClose: $event } })"
+            />
           </div>
         </div>
       </div>
