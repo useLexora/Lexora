@@ -48,7 +48,10 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          include: ['{src,shared,eslint,__tests__}/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+          include: [
+            '{src,shared,eslint,__tests__}/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+            '../../.playwright/scripts/__tests__/*.spec.mjs',
+          ],
         },
       },
       {

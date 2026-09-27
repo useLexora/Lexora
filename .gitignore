@@ -151,13 +151,15 @@ components.d.ts
 .agents
 .claude
 .codex
-.playwright
+__tests__
+.playwright/*
+!.playwright/scripts/
+!/.playwright/scripts/**
 .playwright-cli
 AGENTS.md
 CLAUDE.md
 skills-lock.json
 todos/
-__tests__
 !/apps/buddy/**/__tests__/
 !/apps/buddy/**/__tests__/**
 !/apps/buddy/native/**

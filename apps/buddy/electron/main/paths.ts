@@ -1,9 +1,12 @@
+import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
+import { lstatSync, realpathSync } from 'node:fs'
 import process from 'node:process'
 import { resolveBuddyPlatform, supportsBuddyFeature } from '../../shared/platform'
+import { BUDDY_RUNTIME_PROFILES } from '../../shared/runtime/profile'
 import { runtimePathLayouts } from './platform/runtimePathLayouts'
 
-export type BuddyRuntimeProfile = 'development' | 'stable' | 'test'
-type PlatformPath = Pick<typeof import('node:path'), 'isAbsolute' | 'normalize' | 'join'>
+export type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
+type PlatformPath = Pick<typeof import('node:path'), 'isAbsolute' | 'normalize' | 'join' | 'relative' | 'dirname' | 'basename' | 'sep'>
 
 export interface BuddyRuntimePathOptions {
   defaultUserData: string
@@ -34,7 +37,6 @@ export interface BuddyRuntimePaths {
   configPath: string
   crashDumps: string
   desktopName: string
-  iconVariant: 'development' | 'stable'
   lexoraHome: string
   logs: string
   namespace: string
@@ -49,16 +51,9 @@ export interface BuddyRuntimePaths {
 export interface BuddyRuntimeIdentity {
   appName: string
   desktopName: string
-  iconVariant: 'development' | 'stable'
   namespace: string
   profile: BuddyRuntimeProfile
 }
-
-const BUDDY_RUNTIME_PROFILES = new Set<BuddyRuntimeProfile>([
-  'development',
-  'stable',
-  'test',
-])
 
 export function resolveBuddyRuntimePaths(
   options: BuddyRuntimePathOptions,
@@ -90,13 +85,38 @@ export function resolveBuddyRuntimePaths(
     path,
   ) ?? runtimeDirectories.userData
   const buddyHome = joinPath(lexoraHome, 'buddy')
+  const configPath = joinPath(lexoraHome, 'config.toml')
+
+  if (identity.profile === 'test') {
+    const canonical = (value: string) => canonicalTestPath(value, path, platform.id === process.platform)
+    const statePaths = [buddyHome, configPath, userData, runtimeDirectories.sessionData, runtimeDirectories.stateRoot, nativePetState].filter(value => value !== null)
+    const socketPaths = platform.id === 'win32' ? [] : [nativePetSocket, runtimeDirectories.browserAdapterSocket].filter(value => value !== null)
+    const protectedRoots = (['stable', 'development'] as const).flatMap((profile) => {
+      const protectedIdentity = resolveBuddyRuntimeIdentity({ ...options, smokeTest: false, profileOverride: profile })
+      const home = joinPath(options.userHome, profile === 'stable' ? '.lexora' : '.lexora-dev')
+      return [options, { ...options, xdgCacheHome: undefined, xdgConfigHome: undefined, xdgStateHome: undefined }].flatMap((directoryOptions) => {
+        const directories = layout.resolveDirectories(protectedIdentity, home, directoryOptions)
+        const sockets = platform.id === 'win32' ? [] : [directories.nativePetSocket, directories.browserAdapterSocket]
+        return [home, directories.userData, directories.sessionData, directories.stateRoot, ...sockets].filter(value => value !== null).map(canonical)
+      })
+    })
+    for (const candidate of [lexoraHome, ...statePaths, ...socketPaths]) {
+      const target = canonical(candidate)
+      if (protectedRoots.some(root => containsPath(root, target, path) || containsPath(target, root, path)))
+        throw new Error('Test profile paths must not overlap stable or development data')
+    }
+    for (const candidate of statePaths) {
+      if (!containsPath(canonical(lexoraHome), canonical(candidate), path))
+        throw new Error('Test profile state must stay inside LEXORA_HOME')
+    }
+  }
 
   return {
     ...identity,
     agentDirectory: joinPath(buddyHome, 'agent'),
     browserAdapterSocket: runtimeDirectories.browserAdapterSocket,
     buddyHome,
-    configPath: joinPath(lexoraHome, 'config.toml'),
+    configPath,
     crashDumps: joinPath(runtimeDirectories.stateRoot, 'crashes'),
     lexoraHome,
     logs: joinPath(runtimeDirectories.stateRoot, 'logs'),
@@ -116,7 +136,6 @@ function resolveBuddyRuntimeIdentity(
     return {
       appName: 'Lexora Buddy',
       desktopName: options.desktopName,
-      iconVariant: 'stable',
       namespace: 'lexora-buddy',
       profile,
     }
@@ -125,7 +144,6 @@ function resolveBuddyRuntimeIdentity(
     return {
       appName: 'Lexora Buddy Dev',
       desktopName: `${options.desktopName}.Development`,
-      iconVariant: 'development',
       namespace: 'lexora-buddy-dev',
       profile,
     }
@@ -133,7 +151,6 @@ function resolveBuddyRuntimeIdentity(
   return {
     appName: 'Lexora Buddy Test',
     desktopName: `${options.desktopName}.Test`,
-    iconVariant: 'stable',
     namespace: 'lexora-buddy-test',
     profile,
   }
@@ -142,13 +159,39 @@ function resolveBuddyRuntimeIdentity(
 function resolveBuddyRuntimeProfile(
   options: BuddyRuntimePathOptions,
 ): BuddyRuntimeProfile {
-  if (options.smokeTest)
+  if (options.smokeTest) {
+    if (options.profileOverride && options.profileOverride !== 'test')
+      throw new Error('Smoke verification requires the test profile')
     return 'test'
+  }
   if (options.profileOverride === undefined)
     return options.isPackaged ? 'stable' : 'development'
-  if (!BUDDY_RUNTIME_PROFILES.has(options.profileOverride as BuddyRuntimeProfile))
+  if (!BUDDY_RUNTIME_PROFILES.includes(options.profileOverride as BuddyRuntimeProfile))
     throw new Error('LEXORA_BUDDY_PROFILE must be stable, development, or test')
   return options.profileOverride as BuddyRuntimeProfile
+}
+
+function containsPath(root: string, candidate: string, path: PlatformPath): boolean {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
+}
+
+function canonicalTestPath(value: string, path: PlatformPath, nativePlatform: boolean): string {
+  if (!nativePlatform)
+    return value
+  try {
+    return realpathSync.native(value)
+  }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw error
+    if (lstatSync(value, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error('Test profile paths must not use dangling symbolic links')
+    const parent = path.dirname(value)
+    if (parent === value)
+      throw error
+    return path.join(canonicalTestPath(parent, path, true), path.basename(value))
+  }
 }
 
 function resolveLexoraHome(

@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer'
-import { dirname } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import process from 'node:process'
 import { describe, expect, it } from 'vitest'
 import { isLocalNamedPipe as isWindowsPipe } from '../../../shared/platform/localEndpoint'
 import { resolveBuddyRuntimePaths } from '../paths'
@@ -46,7 +49,6 @@ describe('resolveBuddyRuntimePaths', () => {
       configPath: '/home/lexora/.lexora-dev/config.toml',
       crashDumps: '/var/state/user/lexora-buddy-dev/crashes',
       desktopName: 'site.haohaoxue.LexoraBuddy.Development',
-      iconVariant: 'development',
       lexoraHome: '/home/lexora/.lexora-dev',
       logs: '/var/state/user/lexora-buddy-dev/logs',
       namespace: 'lexora-buddy-dev',
@@ -71,7 +73,6 @@ describe('resolveBuddyRuntimePaths', () => {
       configPath: '/home/lexora/.lexora/config.toml',
       crashDumps: '/var/state/user/lexora-buddy/crashes',
       desktopName: 'site.haohaoxue.LexoraBuddy',
-      iconVariant: 'stable',
       lexoraHome: '/home/lexora/.lexora',
       logs: '/var/state/user/lexora-buddy/logs',
       namespace: 'lexora-buddy',
@@ -115,7 +116,6 @@ describe('resolveBuddyRuntimePaths', () => {
       configPath: '/tmp/lexora-smoke/home/config.toml',
       crashDumps: '/tmp/lexora-smoke/home/.runtime/state/crashes',
       desktopName: 'site.haohaoxue.LexoraBuddy.Test',
-      iconVariant: 'stable',
       lexoraHome: '/tmp/lexora-smoke/home',
       logs: '/tmp/lexora-smoke/home/.runtime/state/logs',
       namespace: 'lexora-buddy-test',
@@ -172,6 +172,37 @@ describe('resolveBuddyRuntimePaths', () => {
       ...BASE_OPTIONS,
       profileOverride: 'test',
     })).toThrow('LEXORA_HOME is required for the test profile')
+  })
+
+  it('rejects test roots that overlap product profiles, including ancestors and symbolic links', () => {
+    for (const root of ['/home/lexora/.lexora', '/home/lexora/.lexora-dev/buddy', '/home/lexora', '/var/cache/user/lexora-buddy-dev/chromium']) {
+      expect(() => resolveBuddyRuntimePaths({ ...BASE_OPTIONS, profileOverride: 'test', lexoraHomeOverride: root })).toThrow('must not overlap')
+    }
+    if (process.platform !== 'linux')
+      return
+    const temporary = mkdtempSync(join(tmpdir(), 'buddy-profile-'))
+    try {
+      mkdirSync(join(temporary, '.lexora'))
+      symlinkSync(join(temporary, '.lexora'), join(temporary, 'linked'), 'junction')
+      expect(() => resolveBuddyRuntimePaths({ ...BASE_OPTIONS, userHome: temporary, profileOverride: 'test', lexoraHomeOverride: join(temporary, 'linked') })).toThrow('must not overlap')
+      const testHome = join(temporary, 'test')
+      mkdirSync(join(testHome, '.runtime'), { recursive: true })
+      symlinkSync(join(temporary, '.lexora'), join(testHome, '.runtime/cache'), 'junction')
+      expect(() => resolveBuddyRuntimePaths({ ...BASE_OPTIONS, userHome: temporary, profileOverride: 'test', lexoraHomeOverride: testHome })).toThrow('must not overlap')
+    }
+    finally { rmSync(temporary, { recursive: true, force: true }) }
+  })
+
+  it('isolates three test instances and preserves their paths across restarts', () => {
+    const options = { ...BASE_OPTIONS, profileOverride: 'test', isPackaged: true }
+    const roots = ['one', 'two', 'three'].map(name => `/home/lexora/.lexora-test/runs/task/instances/${name}`)
+    const instances = roots.map(lexoraHomeOverride => resolveBuddyRuntimePaths({ ...options, lexoraHomeOverride }))
+    for (const key of ['buddyHome', 'configPath', 'userData', 'sessionData', 'browserAdapterSocket', 'nativePetSocket'] as const)
+      expect(new Set(instances.map(paths => paths[key])).size).toBe(3)
+    expect(resolveBuddyRuntimePaths({ ...options, lexoraHomeOverride: roots[0] })).toEqual(instances[0])
+    expect(() => resolveBuddyRuntimePaths({ ...options, lexoraHomeOverride: roots[0], userDataOverride: '/tmp/shared-browser' })).toThrow('state must stay inside')
+    expect(() => resolveBuddyRuntimePaths({ ...options, lexoraHomeOverride: roots[0], nativePetSocketOverride: '/run/user/1000/lexora-buddy/native-pet.sock' })).toThrow('must not overlap')
+    expect(() => resolveBuddyRuntimePaths({ ...options, smokeTest: true, profileOverride: 'stable', lexoraHomeOverride: roots[0] })).toThrow('requires the test profile')
   })
 
   it('isolates Windows profiles and uses named pipes without pet paths', () => {

@@ -9,7 +9,7 @@ const electron = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.1.0' },
+  app: { getVersion: () => '0.1.0', isPackaged: false },
   clipboard: { writeText: electron.writeText },
   ipcMain: {
     handle: vi.fn((channel, handler) => electron.handlers.set(channel, handler)),
@@ -27,6 +27,7 @@ describe('registerDesktopIpc', () => {
     registerDesktopIpc({
       checkForUpdates: vi.fn(),
       configPath: '/home/example/.lexora/config.toml',
+      runtimeProfile: 'test',
       configStore: {
         read: vi.fn(),
         update: vi.fn(),
@@ -76,6 +77,8 @@ describe('registerDesktopIpc', () => {
       throw new Error('Get info IPC handler was not registered')
     const info = await (getInfo(trustedEvent) as Promise<unknown>) as Record<string, unknown>
     expect(info).toMatchObject({
+      runtimeProfile: 'test',
+      isPackaged: false,
       configPath: '/home/example/.lexora/config.toml',
       version: '0.1.0',
       systemProfile: {

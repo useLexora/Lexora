@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { LexoraConfig } from '../shared/desktopApi'
 import type { LexoraConfigStore } from './config/LexoraConfigStore'
 import type { ExecuteDesktopCommand } from './desktopCommands'
@@ -25,6 +26,7 @@ export interface RegisterDesktopIpcOptions {
   getSandboxStatus: () => Promise<unknown>
   setupSandbox: () => Promise<unknown>
   configPath: string
+  runtimeProfile: BuddyRuntimeProfile
   configStore: LexoraConfigStore
   getWindow: () => BrowserWindow | null
   onConfigUpdated: (config: LexoraConfig) => Promise<void> | void
@@ -53,6 +55,8 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
       capabilities: describeBuddyCapabilities(currentPlatform),
       chromiumVersion: process.versions.chrome,
       configPath: options.configPath,
+      runtimeProfile: options.runtimeProfile,
+      isPackaged: app.isPackaged,
       electronVersion: process.versions.electron,
       nodeVersion: process.versions.node,
       platform: currentPlatform.id,

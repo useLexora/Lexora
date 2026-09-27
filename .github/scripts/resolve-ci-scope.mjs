@@ -52,6 +52,7 @@ const websitePrefixes = [
   'apps/website/',
 ]
 const buddyPrefixes = [
+  '.playwright/scripts/',
   'apps/buddy/',
   'packaging/buddy/',
   'patches/',

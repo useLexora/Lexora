@@ -7,9 +7,6 @@ import { app, crashReporter, Menu, protocol } from 'electron'
 import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
-import developmentDesktopIconPath from '../../../resources/icons/app-icon-dev.png?asset'
-import stableDesktopIconPath from '../../../resources/icons/app-icon.png?asset'
-import developmentTrayIconPath from '../../../resources/icons/tray-icon-dev.png?asset'
 import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
@@ -21,6 +18,7 @@ import { desktopHosts } from '../platform/desktopHost'
 import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { bootstrapStep } from './desktopBootstrap'
+import { desktopIcons } from './desktopIcons'
 import { DesktopStartup } from './DesktopStartup'
 import { checkDesktopDirectories, criticalDesktopDirectories, prepareDesktopPrivateStorage } from './desktopStorage'
 
@@ -61,13 +59,13 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
     diagnostics,
     events,
     startup,
-    desktopIconPath: paths.iconVariant === 'development' ? developmentDesktopIconPath : stableDesktopIconPath,
+    desktopIconPath: desktopIcons[paths.profile].app,
     initialLaunchIntent: resolveDesktopLaunchIntent(process.argv, currentPlatform.id === OPERATING_SYSTEM.MacOS && app.getLoginItemSettings().wasOpenedAtLogin),
     isSmokeTest,
     paths,
     windowStateAvailable: true,
     setAutostart: desktopHost.setAutostart,
-    trayIconPath: paths.iconVariant === 'development' ? developmentTrayIconPath : stableDesktopIconPath,
+    trayIconPath: desktopIcons[paths.profile].tray,
   }
 }
 

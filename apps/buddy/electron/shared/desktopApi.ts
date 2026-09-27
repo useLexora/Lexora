@@ -4,6 +4,7 @@ import type { ApplicationLogApi } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
 import type { BuddyCapabilities } from '../../shared/platform'
+import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
 import type { LocalChatApi } from './localChatApi'
 
@@ -92,6 +93,8 @@ export interface DesktopUserProfileConfig {
 }
 
 export interface DesktopAppInfo {
+  runtimeProfile: BuddyRuntimeProfile
+  isPackaged: boolean
   capabilities: BuddyCapabilities
   chromiumVersion: string
   configPath: string

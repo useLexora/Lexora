@@ -74,7 +74,7 @@ export class DesktopIntegrations {
     const extensions = registerExtensionIpc({
       home: paths.buddyHome,
       version: buddyVersion.version,
-      developmentDirectory: !app.isPackaged && process.env.LEXORA_BUDDY_PROFILE === 'test' && process.env.LEXORA_HOME ? process.env.LEXORA_EXTENSION_DEVELOPMENT_PATH : undefined,
+      developmentDirectory: !app.isPackaged && paths.profile === 'test' ? process.env.LEXORA_EXTENSION_DEVELOPMENT_PATH : undefined,
       getWindow: () => windows.window,
       get: runtime.network.get,
       notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
@@ -132,6 +132,7 @@ export class DesktopIntegrations {
       setupSandbox: () => this.#runtime.setupSandbox(),
       checkForUpdates: () => checkForDesktopUpdate({ currentVersion: app.getVersion(), fetchRelease: runtime.network.get }),
       configPath: paths.configPath,
+      runtimeProfile: paths.profile,
       configStore: runtime.configStore,
       executeCommand: this.executeCommand,
       getWindow: () => windows.window,

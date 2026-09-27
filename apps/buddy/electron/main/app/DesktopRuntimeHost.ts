@@ -209,7 +209,7 @@ export class DesktopRuntimeHost {
     if (previous?.cacheWarming !== config.runtime.cacheWarming)
       this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
     await Promise.all(this.#features.map(feature => feature.applyConfig(config)))
-    if (app.isPackaged && !this.#environment.isSmokeTest)
+    if (app.isPackaged && this.#environment.paths.profile === 'stable')
       await this.#environment.setAutostart(config.desktop.launchAtLogin)
   }
 

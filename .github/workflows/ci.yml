@@ -155,7 +155,7 @@ jobs:
         run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
 
       - name: Lint workspace
-        run: pnpm exec eslint apps/buddy packaging/buddy
+        run: pnpm exec eslint .playwright/scripts apps/buddy packaging/buddy
 
       - name: Type-check workspace
         run: pnpm --filter @uselexora/lexora-buddy type-check
@@ -177,7 +177,7 @@ jobs:
           fi
 
       - name: Test workspace
-        run: pnpm --filter @uselexora/lexora-buddy test
+        run: pnpm test
 
   native-test-runtime:
     name: Native test runtime
