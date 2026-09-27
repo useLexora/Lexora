@@ -83,7 +83,9 @@ pnpm dev
 pnpm dev:website
 ```
 
-遇到问题，或有个值得一试的点子？欢迎[提个 Issue](https://github.com/useLexora/Lexora/issues)，也欢迎通过 PR 一起把 Lexora 打磨得更顺手。
+## 参与贡献
+
+发现问题，欢迎[提个 Issue](https://github.com/useLexora/Lexora/issues)。若你已经动手实现了自己的想法，欢迎按[贡献说明](CONTRIBUTING.md)提交 PR，和大家分享你的方案。
 
 ## 许可证
 

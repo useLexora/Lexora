@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞私密报告 / Private security report
+    url: https://github.com/useLexora/Lexora/security/advisories
+    about: 如怀疑存在安全漏洞，请点击 Report a vulnerability 私密提交。 / For suspected vulnerabilities, click Report a vulnerability to submit privately.

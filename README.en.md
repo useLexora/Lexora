@@ -83,7 +83,9 @@ pnpm dev
 pnpm dev:website
 ```
 
-Found a rough edge, or have an idea worth trying? [Open an issue](https://github.com/useLexora/Lexora/issues) or send a PR. Help make Lexora feel a little more at home on your desktop.
+## Contributing
+
+Found a rough edge? [Open an issue](https://github.com/useLexora/Lexora/issues). If you have already turned an idea into an implementation, follow the [contribution guide](CONTRIBUTING.md) and send a PR to share your approach with the community.
 
 ## License
 

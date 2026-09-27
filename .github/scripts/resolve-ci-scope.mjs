@@ -38,11 +38,16 @@ const websiteInputs = new Set([
   '.github/workflows/website-pages.yml',
 ])
 const ignoredInputs = new Set([
+  '.github/PULL_REQUEST_TEMPLATE.md',
+  'CONTRIBUTING.md',
   'README.en.md',
   'README.md',
   'apps/buddy/README.md',
   'packaging/buddy/README.md',
 ])
+const ignoredPrefixes = [
+  '.github/ISSUE_TEMPLATE/',
+]
 const websitePrefixes = [
   'apps/website/',
 ]
@@ -77,7 +82,7 @@ export function classifyCiScope(files) {
   for (const input of files) {
     const path = normalizePath(input)
 
-    if (ignoredInputs.has(path) || inactivePrefixes.some(prefix => path.startsWith(prefix)))
+    if (ignoredInputs.has(path) || ignoredPrefixes.some(prefix => path.startsWith(prefix)) || inactivePrefixes.some(prefix => path.startsWith(prefix)))
       continue
 
     if (ciInputs.has(path)) {
