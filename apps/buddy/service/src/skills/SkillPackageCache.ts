@@ -3,7 +3,7 @@ import type { LoadedSkill } from './skillFiles'
 import { createHash } from 'node:crypto'
 import { lstat, readdir } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
-import { MAX_SKILL_BYTES, MAX_SKILL_FILES, MAX_SKILL_PACKAGE_BYTES, readSkill, requireSkillPath, SkillError } from './skillFiles'
+import { MAX_SKILL_BYTES, MAX_SKILL_FILES, MAX_SKILL_PACKAGE_BYTES, readSkill, readSkillDocument, requireSkillPath, SkillError } from './skillFiles'
 
 export type ResolvedSkill = Omit<LoadedSkill, 'files' | 'modes'>
 
@@ -29,6 +29,13 @@ export class SkillPackageCache {
     })
     this.#pending.set(path, loading)
     return loading
+  }
+
+  async loadMetadata(filePath: string, allowedRoot: string): Promise<ResolvedSkill> {
+    const document = await readSkillDocument(filePath, allowedRoot)
+    if (!document.description)
+      throw new SkillError('SKILL_INVALID')
+    return { ...document, revision: document.referenceRevision }
   }
 
   clear() {

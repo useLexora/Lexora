@@ -139,6 +139,7 @@ export async function readSkillDocument(filePath: string, allowedRoot = dirname(
     hasDeclaredName: typeof frontmatter.name === 'string' && !!frontmatter.name.trim(),
     description: typeof frontmatter.description === 'string' ? frontmatter.description.trim() : '',
     content: text,
+    referenceRevision: createHash('sha256').update(content).digest('hex'),
     body: body.trim(),
     metadata: Object.entries(frontmatter).map(([name, value]) => ({ name, value: typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '' })),
     path,

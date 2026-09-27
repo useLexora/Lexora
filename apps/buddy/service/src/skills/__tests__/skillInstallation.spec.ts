@@ -157,6 +157,7 @@ describe('skill installation lifecycle', () => {
     expect((await f.service.list('space-a')).skills.find(skill => skill.id === global.id)?.status).toBe('shadowed')
     await f.service.setEnabled({ spaceId: 'space-a', id: local.id, revision: local.revision, enabled: true })
     await writeFile(local.filePath, 'broken')
+    await f.service.list('space-a')
     expect((await f.service.loadForSpace('space-a')).skills).toEqual([])
     expect((await f.service.list('space-a')).skills.find(skill => skill.id === local.id)?.status).toBe('invalid')
   })
@@ -216,8 +217,10 @@ describe('skill installation lifecycle', () => {
     expect((await f.service.materializeForSpace('space-a', [{ id: winner.id, name: winner.name, revision: winner.revision }]))[0]?.body).toBe('Directory instructions')
     await expect(f.service.materializeForSpace('space-a', [{ id: app.id, name: app.name, revision: app.revision }])).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
     await writeFile(join(skillRoot, 'SKILL.md'), 'broken')
+    await f.service.list('space-a')
     expect((await f.service.loadForSpace('space-a')).skills).toEqual([])
     await rm(skillRoot, { recursive: true })
+    await f.service.list('space-a')
     expect((await f.service.loadForSpace('space-a')).skills.map(skill => skill.id)).toEqual([local.id])
   })
 

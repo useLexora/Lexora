@@ -48,7 +48,7 @@ describe('skillService', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'SKILL_NAME_COLLISION' }))
   })
 
-  it('changes the session resource revision when trusted skill content changes', async () => {
+  it('reuses lightweight metadata and invalidates it when a selected skill document changes', async () => {
     const fixture = await createFixture()
     await writeSkill(fixture.global, 'mutable', 'first revision')
 
@@ -57,7 +57,12 @@ describe('skillService', () => {
     const second = await fixture.service.loadForSpace(null)
 
     expect(first.paths).toEqual(second.paths)
-    expect(first.revision).not.toBe(second.revision)
+    expect(second.revision).toBe(first.revision)
+    await expect(fixture.service.materializeForSpace(null, first.references)).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+
+    const third = await fixture.service.loadForSpace(null)
+    expect(third.revision).not.toBe(first.revision)
+    expect((await fixture.service.materializeForSpace(null, third.references))[0]?.body).toBe('# mutable')
   })
 
   it('unloads revoked Space skills and rejects symlink escapes', async () => {
@@ -84,18 +89,26 @@ describe('skillService', () => {
     expect((await fixture.service.list(null)).skills).toEqual([])
   })
 
-  it('rejects a queued reference immediately after a supporting resource changes', async () => {
+  it('does not make supporting resource changes part of the lightweight session revision', async () => {
     const fixture = await createFixture()
     await writeSkill(fixture.global, 'mutable', 'unchanged entry')
     const resource = join(fixture.global, 'mutable', 'guide.md')
     await writeFile(resource, 'version one')
     const first = await fixture.service.loadForSpace(null)
+    const listed = await fixture.service.list(null)
+    const listedSkill = listed.skills[0]!
+    const packageReference = {
+      id: listedSkill.id,
+      name: listedSkill.name,
+      revision: listedSkill.referenceRevision ?? listedSkill.revision,
+      packageRevision: listedSkill.revision,
+    }
     await writeFile(resource, 'version two')
 
-    await expect(fixture.service.materializeForSpace(null, first.references)).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    await expect(fixture.service.materializeForSpace(null, [packageReference])).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    expect((await fixture.service.materializeForSpace(null, first.references))[0]?.body).toBe('# mutable')
     const second = await fixture.service.loadForSpace(null)
-    expect(second.revision).not.toBe(first.revision)
-    expect((await fixture.service.materializeForSpace(null, second.references))[0]?.body).toBe('# mutable')
+    expect(second.revision).toBe(first.revision)
   })
 
   it('rejects a pending resolution when the Space directory binding is cleared', async () => {

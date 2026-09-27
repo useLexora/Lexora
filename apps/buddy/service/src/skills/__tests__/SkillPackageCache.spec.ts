@@ -15,6 +15,24 @@ afterEach(async () => {
 })
 
 describe('skillPackageCache', () => {
+  it('loads skill metadata without traversing bundled resources', async () => {
+    const f = await fixture()
+    await rm(join(f.root, 'references'), { recursive: true })
+    let nested = f.root
+    for (let depth = 0; depth < 18; depth++) {
+      nested = join(nested, `level-${depth}`)
+      await mkdir(nested)
+    }
+    await writeFile(join(nested, 'guide.md'), 'resource')
+
+    const metadata = await f.cache.loadMetadata(f.path, f.root)
+
+    expect(metadata.name).toBe('workflow')
+    expect(metadata.description).toBe('A local workflow')
+    expect(metadata.referenceRevision).toBeTruthy()
+    await expect(f.cache.load(f.path, f.root)).rejects.toMatchObject({ code: 'SKILL_TOO_LARGE' })
+  })
+
   it('shares a complete revision across concurrent loads and reuses unchanged packages without reading content', async () => {
     const f = await fixture()
     const expected = await readSkill(f.path, f.root)
