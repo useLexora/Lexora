@@ -1,4 +1,3 @@
-import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../../shared/conversation/modelSelection'
 import type { LocalCacheWarmingStatus } from '../../../../shared/runs/conversationStatusApi'
@@ -28,7 +27,6 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
   compact: (customInstructions?: string) => Promise<CompactionResult>
   prompt: (text: string, options?: {
     expandPromptTemplates?: boolean
-    images?: ImageContent[]
     inputReference?: BuddyInputReferenceV1
     source?: 'rpc'
   }) => Promise<void>

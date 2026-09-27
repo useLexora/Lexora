@@ -27,7 +27,7 @@ export interface BuddySessionExtensionServices {
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
   approvalService: Pick<ApprovalService, 'request'>
-  attachmentService: Pick<AttachmentService, 'materializePiInputImages' | 'materializeDocumentInputs' | 'materializeInputResources' | 'getInputMetadata'>
+  attachmentService: Pick<AttachmentService, 'prepareInputImages' | 'materializeDocumentInputs' | 'materializeInputResources' | 'getInputMetadata'>
   changeCaptureService: Pick<ChangeCaptureService, 'beginFileTool' | 'beginWorkspaceTool' | 'finalizeRun' | 'finishFileTool' | 'finishWorkspaceTool' | 'markPartial'>
   createCapabilities: BuddyCapabilityFactory
   directoryGrants: Pick<DirectoryGrantService, 'grant'>

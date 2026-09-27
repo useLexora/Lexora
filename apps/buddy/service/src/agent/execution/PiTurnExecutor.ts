@@ -137,11 +137,6 @@ export class PiTurnExecutor implements RunExecutionBackend {
       signal.throwIfAborted()
       await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, () => binding.session.prompt(input.userInput.prompt, {
         expandPromptTemplates: false,
-        images: input.userInput.images.map(image => ({
-          data: '',
-          mimeType: image.mimeType,
-          type: 'image',
-        })),
         inputReference: input.userInput,
         source: 'rpc',
       }))

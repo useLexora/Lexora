@@ -6,6 +6,9 @@ import type {
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { AttachmentFileInput } from '../../attachments/AttachmentDocumentReference'
+import type { AttachmentImageReference } from '../../attachments/AttachmentImageReference'
+import type { PreparedAttachmentImage } from '../../attachments/AttachmentImageStore'
+import type { InputModel } from '../../providers/modelCapabilities'
 import type {
   BuddyInputReferenceStore,
   BuddyInputReferenceV1,
@@ -16,15 +19,12 @@ import type { BuddyConversationTreeCursor } from './tree/BuddyConversationTree'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
-import {
-  findCutPoint,
-  sessionEntryToContextMessages,
-} from '@earendil-works/pi-coding-agent'
+import { prepareCompaction } from '@earendil-works/pi-coding-agent'
 import { BUDDY_DEFAULT_THINKING_LEVEL } from '../../../../shared/conversation/modelSelection'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../shared/runtime/runtimePreferences'
 import { applyDocumentInputPayload } from '../../providers/documentInputPayload'
 import { supportsModelFileInput, supportsModelToolCalls } from '../../providers/modelCapabilities'
-import { getModelRequestBytesLimit } from '../../providers/modelInputBudget'
+import { getModelImageLimits, getModelRequestBytesLimit, getModelRequestOverheadReserve } from '../../providers/modelInputBudget'
 import { SkillError } from '../../skills/skillFiles'
 import { createBuddyInputReferenceMessage, readBuddyInputReference } from '../context/BuddyInputReference'
 import { createContextUsageBreakdown } from '../context/contextUsageBreakdown'
@@ -44,7 +44,8 @@ export interface CreateReusableBuddySessionOptions {
   ) => Promise<Model<Api>>
   inputReferences: BuddyInputReferenceStore
   getInputMetadata?: (ids: readonly string[]) => readonly { id: string, sizeBytes: number }[]
-  materializeInput: (input: BuddyInputReferenceV1) => Promise<UserMessage['content']>
+  prepareInputImages?: (images: readonly AttachmentImageReference[], model: InputModel) => Promise<ReadonlyMap<string, PreparedAttachmentImage | null>>
+  materializeInput: (input: BuddyInputReferenceV1, images?: ReadonlyMap<string, PreparedAttachmentImage | null>) => Promise<UserMessage['content']>
   materializeDocuments?: (input: BuddyInputReferenceV1) => Promise<AttachmentFileInput[]>
   runContext: BuddyExtensionRunContextStore
   session: AgentSession
@@ -81,25 +82,55 @@ export function createReusableBuddySession(
     return true
   }
   session.agent.convertToLlm = async (messages) => {
-    const request = { failed: false, documents: new Map<string, AttachmentFileInput>() }
+    const request = { failed: options.inputReferences.pending !== null, documents: new Map<string, AttachmentFileInput>() }
     const materialized = []
     const projected = new Map<string, BuddyInputReferenceV1>()
+    const preparedImages = new Map<string, PreparedAttachmentImage | null>()
+    const projectedMessages = new Map<AgentSession['messages'][number], AgentSession['messages'][number]>()
     const model = session.model
     if (!model)
       throw new Error('Missing input model')
-    const history = prepareBuddyInputHistory(messages).map(message => message.role === 'user' && 'buddyInput' in message ? message : projectMessageImages(message, model))
-    let remainingBytes = (getModelRequestBytesLimit(model.api) ?? Number.POSITIVE_INFINITY) - 1024 * 1024
-      - Buffer.byteLength(JSON.stringify(history), 'utf8')
+    const history = prepareBuddyInputHistory(messages)
+    const imageLimits = getModelImageLimits(model)
+    const mergeToolImages = ['openai-completions', 'anthropic-messages', 'bedrock-converse-stream'].includes(model.api)
+    const budget = {
+      remainingBytes: getModelRequestBytesLimit(model) - getModelRequestOverheadReserve(model)
+        - Buffer.byteLength(JSON.stringify(history.map(message => projectMessageImages(message, { ...model, input: ['text'] }))), 'utf8'),
+      remainingImages: imageLimits.maxPerRequest,
+      remainingMessageImages: imageLimits.maxPerMessage,
+    }
     try {
+      let previousRole: AgentSession['messages'][number]['role'] | undefined
       for (const message of [...history].reverse()) {
+        if (!mergeToolImages || message.role !== 'toolResult' || previousRole !== 'toolResult')
+          budget.remainingMessageImages = imageLimits.maxPerMessage
+        previousRole = message.role
         const reference = readBuddyInputReference(message)
-        if (!reference)
+        if (!reference) {
+          projectedMessages.set(message, projectMessageImages(message, model, budget))
           continue
+        }
         const ids = reference.attachmentIds ?? [...reference.images, ...reference.documents ?? []].map(file => file.attachmentId)
         const sizes = new Map(options.getInputMetadata?.(ids).map(file => [file.id, file.sizeBytes]) ?? [])
-        const projection = projectBuddyInput(reference, model, sizes, remainingBytes)
+        let images: ReadonlyMap<string, PreparedAttachmentImage | null> | undefined
+        if (model.input.includes('image') && options.prepareInputImages) {
+          images = budget.remainingBytes > 512 && budget.remainingImages > 0
+            ? await options.prepareInputImages(reference.images, model)
+            : new Map<string, PreparedAttachmentImage | null>()
+          for (const image of reference.images) {
+            const prepared = images.get(image.attachmentId) ?? null
+            sizes.set(image.attachmentId, prepared ? Buffer.byteLength(prepared.image.data, 'base64') : Number.POSITIVE_INFINITY)
+          }
+        }
+        const projection = projectBuddyInput(reference, model, sizes, budget.remainingBytes, budget.remainingImages)
+        for (const image of projection.input.images) {
+          const prepared = images?.get(image.attachmentId)
+          if (prepared)
+            preparedImages.set(image.attachmentId, prepared)
+        }
         projected.set(reference.messageId, projection.input)
-        remainingBytes -= projection.bytes
+        budget.remainingBytes -= projection.bytes
+        budget.remainingImages -= projection.input.images.length
       }
     }
     catch {
@@ -109,13 +140,13 @@ export function createReusableBuddySession(
       try {
         const reference = readBuddyInputReference(message)
         if (!reference) {
-          materialized.push(message)
+          materialized.push(projectedMessages.get(message) ?? message)
           continue
         }
         const input = projected.get(reference.messageId)
         if (!input)
           throw new Error('Missing input projection')
-        const content = await options.materializeInput(input)
+        const content = await options.materializeInput(input, preparedImages)
         if (
           !Array.isArray(content)
           || content.some(block => block.type === 'image' && !block.data)
@@ -162,7 +193,7 @@ export function createReusableBuddySession(
       ...streamOptions,
       onPayload: async (payload, target) => {
         const previous = await streamOptions?.onPayload?.(payload, target)
-        return applyDocumentInputPayload(previous ?? payload, target.api, request?.documents ?? new Map(), target.baseUrl)
+        return applyDocumentInputPayload(previous ?? payload, target, request?.documents ?? new Map())
       },
     })
   }
@@ -199,7 +230,7 @@ export function createReusableBuddySession(
     abortCompaction: () => session.abortCompaction(),
     canCompact: () => canPreparePiCompaction(
       session.sessionManager.getBranch(),
-      session.settingsManager.getCompactionSettings(),
+      session.settingsManager.getCompactionSettings(session.model),
     ),
     async activateTurn(input) {
       input.signal.throwIfAborted()
@@ -340,47 +371,7 @@ async function applyModelSelection(
 
 export function canPreparePiCompaction(
   pathEntries: SessionEntry[],
-  settings: { keepRecentTokens: number },
+  settings: Parameters<typeof prepareCompaction>[1],
 ): boolean {
-  if (pathEntries.at(-1)?.type === 'compaction')
-    return false
-  const previousCompactionIndex = pathEntries.findLastIndex(entry => entry.type === 'compaction')
-  let boundaryStart = 0
-  if (previousCompactionIndex >= 0) {
-    const previousCompaction = pathEntries[previousCompactionIndex]!
-    if (previousCompaction.type !== 'compaction')
-      return false
-    const firstKeptEntryIndex = pathEntries.findIndex(
-      entry => entry.id === previousCompaction.firstKeptEntryId,
-    )
-    boundaryStart = firstKeptEntryIndex >= 0
-      ? firstKeptEntryIndex
-      : previousCompactionIndex + 1
-  }
-  const cutPoint = findCutPoint(
-    pathEntries,
-    boundaryStart,
-    pathEntries.length,
-    settings.keepRecentTokens,
-  )
-  if (!pathEntries[cutPoint.firstKeptEntryIndex]?.id)
-    return false
-  const historyEnd = cutPoint.isSplitTurn
-    ? cutPoint.turnStartIndex
-    : cutPoint.firstKeptEntryIndex
-  return hasContextMessages(pathEntries, boundaryStart, historyEnd)
-    || (cutPoint.isSplitTurn && hasContextMessages(
-      pathEntries,
-      cutPoint.turnStartIndex,
-      cutPoint.firstKeptEntryIndex,
-    ))
-}
-
-function hasContextMessages(entries: SessionEntry[], start: number, end: number): boolean {
-  for (let index = start; index < end; index += 1) {
-    const entry = entries[index]
-    if (entry?.type !== 'compaction' && sessionEntryToContextMessages(entry).length > 0)
-      return true
-  }
-  return false
+  return prepareCompaction(pathEntries, settings) !== undefined
 }

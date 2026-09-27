@@ -61,4 +61,16 @@ describe('request attachment projection', () => {
     expect(projectMessageImages(tool, model)).toBe(tool)
     expect(tool.content[1]).toMatchObject({ type: 'image', data: 'image-bytes' })
   })
+
+  it('shares an image budget between attachment references and tool results without modifying either', () => {
+    const limited = { ...model, inputLimits: { images: { maxPerMessage: 1, maxPerRequest: 1 } } }
+    const twoImages = { ...input, images: [...input.images, { attachmentId: 'other', mimeType: 'image/png' }] }
+    const projected = projectBuddyInput(twoImages, limited, new Map([...sizes, ['other', 1000]]), 10_000, 1)
+    expect(projected.input.images).toEqual(input.images)
+    const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'image' as const, mimeType: 'image/png', data: 'AAAA' }] }
+    const budget = { remainingBytes: 10_000 - projected.bytes, remainingImages: 0, remainingMessageImages: 1 }
+    expect(projectMessageImages(tool, limited, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('not supplied') }] })
+    expect(twoImages.images).toHaveLength(2)
+    expect(tool.content[0]?.data).toBe('AAAA')
+  })
 })

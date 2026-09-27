@@ -25,6 +25,14 @@ describe('chat input validation', () => {
     await expect(fixture.service.validate({ ...input(), prompt: 'x'.repeat(20 * 1024 * 1024), attachments: [fixture.attach('application/pdf', 5 * 1024 * 1024)] })).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
   })
 
+  it('lets request projection trim historical tool images before enforcing the complete payload limit', async () => {
+    const fixture = createFixture({ api: 'openai-completions', inputLimits: { maxRequestBytes: 2000 } })
+    const image = { type: 'image' as const, mimeType: 'image/png', data: 'A'.repeat(4096) }
+    fixture.active.messages = [{ role: 'toolResult', toolName: 'read', toolCallId: 'image-read', content: [image], isError: false, timestamp: 0 }]
+    await expect(fixture.service.validate(input())).resolves.toBeUndefined()
+    expect(fixture.active.messages[0]).toMatchObject({ content: [image] })
+  })
+
   it('uses the compacted branch context instead of all historical attachment records', async () => {
     const fixture = createFixture()
     fixture.history.appendMessage(reference(fixture.attach('audio/wav', 8 * 1024 * 1024)))

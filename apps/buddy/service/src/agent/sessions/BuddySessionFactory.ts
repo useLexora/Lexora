@@ -148,22 +148,25 @@ export class BuddySessionFactory {
       },
       inputReferences: extensions.inputReferences,
       getInputMetadata: ids => this.#options.services.attachmentService.getInputMetadata(ids, blueprint.conversationId),
+      prepareInputImages: (images, model) => this.#options.services.attachmentService.prepareInputImages(images, blueprint.conversationId, model),
       materializeDocuments: input => this.#options.services.attachmentService.materializeDocumentInputs(
         input.documents ?? [],
         blueprint.conversationId,
       ),
-      materializeInput: async (input) => {
+      materializeInput: async (input, images) => {
         const resources = await this.#options.services.attachmentService.materializeInputResources(input, blueprint.conversationId, inputWorkspace)
         return [
           { text: input.prompt, type: 'text' as const },
           ...resources ? [{ text: resources, type: 'text' as const }] : [],
-          ...(await this.#options.services.attachmentService.materializePiInputImages(
-            input.images,
-            blueprint.conversationId,
-          )).flatMap((image, index) => [
-            { type: 'text' as const, text: `Native attachment: ${input.images[index]!.attachmentId}` },
-            image,
-          ]),
+          ...input.images.flatMap((reference) => {
+            const prepared = images?.get(reference.attachmentId)
+            if (!prepared)
+              throw new Error('RESOURCE_MATERIALIZATION_FAILED')
+            return [
+              { type: 'text' as const, text: `Native attachment: ${reference.attachmentId}${prepared.note ? `\n${prepared.note}` : ''}` },
+              prepared.image,
+            ]
+          }),
         ]
       },
     })

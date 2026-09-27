@@ -61,7 +61,7 @@ export class ChatInputValidationService {
     for (const message of prepareBuddyInputHistory(context.messages)) {
       const reference = readBuddyInputReference(message)
       if (!reference) {
-        bytes += Buffer.byteLength(JSON.stringify(projectMessageImages(message, model)), 'utf8')
+        bytes += Buffer.byteLength(JSON.stringify(projectMessageImages(message, { ...model, input: ['text'] })), 'utf8')
         continue
       }
       const ids = reference.attachmentIds ?? [...reference.images, ...reference.documents ?? []].map(file => file.attachmentId)
@@ -69,7 +69,7 @@ export class ChatInputValidationService {
       bytes += Buffer.byteLength(JSON.stringify(reference.prompt), 'utf8') + records.length * 1024
     }
     try {
-      assertModelInputBudget(model.api, bytes)
+      assertModelInputBudget(model, bytes)
     }
     catch {
       throw new BuddyServiceError('MODEL_INPUT_TOO_LARGE')

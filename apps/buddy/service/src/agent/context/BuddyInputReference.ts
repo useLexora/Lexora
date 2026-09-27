@@ -97,18 +97,12 @@ export function readBuddyInputReference(message: unknown): BuddyInputReferenceV1
   return result.data
 }
 
-export function matchesBuddyInputPlaceholder(
+export function matchesBuddyInputText(
   content: UserMessage['content'],
   input: BuddyInputReferenceV1,
 ): boolean {
-  if (!Array.isArray(content) || content.length !== input.images.length + 1)
-    return false
-  const [text, ...images] = content
-  return text?.type === 'text'
-    && text.text === input.prompt
-    && images.every((image, index) => (
-      image.type === 'image'
-      && image.data === ''
-      && image.mimeType === input.images[index]?.mimeType
-    ))
+  return Array.isArray(content)
+    && content.length === 1
+    && content[0]?.type === 'text'
+    && content[0].text === input.prompt
 }

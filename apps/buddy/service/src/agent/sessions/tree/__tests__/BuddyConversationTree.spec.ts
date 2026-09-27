@@ -142,14 +142,17 @@ describe('native conversation tree', () => {
     await regenerated.session.shutdown('quit')
   })
 
-  it('imports an old native journal without losing tool results or rewriting its bytes', async () => {
+  it('imports native context edits and tool results without rewriting the source journal', async () => {
     const fixture = await createFixture()
     const old = fixture.run('old', 'b0', 'q1')
     const legacy = await createIsolatedBuddySession(fixture.sessionOptions('b0'))
     const manager = legacy.session.sessionManager
     const userEntry = manager.appendMessage(user('q1', 'legacy question'))
     manager.appendMessage(assistant([{ type: 'toolCall', id: 'old-read', name: 'read', arguments: { path: 'fixture.txt' } }], 'toolUse'))
-    manager.appendMessage({ role: 'toolResult', toolCallId: 'old-read', toolName: 'read', content: [{ type: 'text', text: 'LEGACY_NATIVE_TOOL' }], isError: false, timestamp: Date.now() })
+    const toolResult = manager.appendMessage({ role: 'toolResult', toolCallId: 'old-read', toolName: 'read', content: [{ type: 'text', text: 'ORIGINAL_TOOL_OUTPUT' }], isError: false, timestamp: Date.now() })
+    manager.appendContextEdit(toolResult, { content: 'LEGACY_NATIVE_TOOL' })
+    const failedAttempt = manager.appendMessage(assistant([{ type: 'text', text: 'OMITTED_ATTEMPT' }], 'error'))
+    manager.appendContextEdit(failedAttempt, null)
     manager.appendMessage(assistant([{ type: 'text', text: 'legacy answer' }]))
     manager.appendCompaction('LEGACY_NATIVE_COMPACTION', userEntry, 4000)
     fixture.complete(old, 'old-answer')
@@ -163,9 +166,17 @@ describe('native conversation tree', () => {
     await opened.cursor.begin(opened.session.session, next.id)
     expect(JSON.stringify(opened.session.session.messages)).toContain('LEGACY_NATIVE_TOOL')
     expect(JSON.stringify(opened.session.session.messages)).toContain('LEGACY_NATIVE_COMPACTION')
+    expect(JSON.stringify(opened.session.session.messages)).not.toContain('ORIGINAL_TOOL_OUTPUT')
+    expect(JSON.stringify(opened.session.session.messages)).not.toContain('OMITTED_ATTEMPT')
     expect(opened.cursor.recoveredFromProductHistory).toBe(false)
     expect(await readFile(legacy.piSessionFile, 'utf8')).toBe(original)
     expect(opened.cursor.manager.getSessionFile()).not.toBe(legacy.piSessionFile)
+    const importedFile = opened.cursor.manager.getSessionFile()!
+    const importedBytes = await readFile(importedFile, 'utf8')
+    expect(importedBytes).toContain('ORIGINAL_TOOL_OUTPUT')
+    expect(importedBytes).toContain('OMITTED_ATTEMPT')
+    const reloaded = SessionManager.open(importedFile)
+    expect(reloaded.buildSessionContext().messages).toEqual(opened.session.session.messages)
     await opened.session.shutdown('quit')
   })
   it('reports an unavailable journal directory before starting a session', async () => {

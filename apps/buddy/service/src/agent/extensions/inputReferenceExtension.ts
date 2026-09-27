@@ -2,7 +2,8 @@ import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import {
   BuddyInputReferenceError,
-  matchesBuddyInputPlaceholder,
+  createBuddyInputReferenceMessage,
+  matchesBuddyInputText,
 } from '../context/BuddyInputReference'
 
 export function createInputReferenceExtension(
@@ -15,10 +16,10 @@ export function createInputReferenceExtension(
         const input = store.pending
         if (!input || event.message.role !== 'user')
           return
-        if (!matchesBuddyInputPlaceholder(event.message.content, input))
+        if (!matchesBuddyInputText(event.message.content, input))
           throw new BuddyInputReferenceError('INPUT_REFERENCE_MISMATCH')
         store.pending = null
-        return { message: { ...event.message, buddyInput: input } }
+        return { message: { ...event.message, ...createBuddyInputReferenceMessage(input, event.message.timestamp) } }
       })
     },
   }

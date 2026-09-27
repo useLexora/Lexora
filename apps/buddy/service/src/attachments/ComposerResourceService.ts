@@ -39,7 +39,6 @@ import { buddyComposerResourceAcceptSchema, buddyComposerSourceListSchema, buddy
 import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
-import { base64BytesLength, getModelRequestBytesLimit } from '../providers/modelInputBudget'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
 import { ComposerResourceConflictError } from '../storage/composerResourceRepository'
@@ -200,24 +199,20 @@ export class ComposerResourceService {
     const result: BuddyUserMessageResourceSnapshot[] = []
     const orderedResources = resources.toSorted((left, right) => Number(isNewLocalReference(left)) - Number(isNewLocalReference(right)))
     let totalBytes = 0
-    let remainingNativeBytes = Math.min(base64BytesLength(BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT), (model ? getModelRequestBytesLimit(model.api) : null) ?? Number.POSITIVE_INFINITY) - 1024 * 1024
     for (const resource of orderedResources) {
       if (resource.source && 'localReference' in resource.source) {
-        const snapshot = await this.#resolveLocalInput(resource, resource.source, scope, model, Math.min(remainingNativeBytes, base64BytesLength(BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT - totalBytes)))
+        const snapshot = await this.#resolveLocalInput(resource, resource.source, scope, model, BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT - totalBytes)
         result.push(snapshot.input)
         totalBytes += snapshot.bytes
-        remainingNativeBytes -= base64BytesLength(snapshot.bytes) + 512
         continue
       }
       if (!resource.source) {
         totalBytes += resource.sizeBytes
-        remainingNativeBytes -= base64BytesLength(resource.sizeBytes) + 512
         result.push({ attachmentId: resource.attachmentId!, resourceId: resource.resourceId })
         continue
       }
       const resolved = await this.#resolveSourceOrigin(resource.source, scope)
       totalBytes += resolved.metadata.sizeBytes
-      remainingNativeBytes -= base64BytesLength(resolved.metadata.sizeBytes) + 512
       if (totalBytes > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
         throw new AttachmentError('VALIDATION_FAILED')
       if (resolved.attachmentId) {
@@ -393,7 +388,7 @@ export class ComposerResourceService {
     const nativeSupported = model && (localReference.mimeType.startsWith('image/')
       ? model.input.includes('image')
       : (model.fileInputMimeTypes as readonly string[]).includes(localReference.mimeType))
-    if (localReference.kind !== 'file' || !nativeSupported || base64BytesLength(localReference.sizeBytes) + 512 > remainingBytes)
+    if (localReference.kind !== 'file' || !nativeSupported || localReference.sizeBytes > remainingBytes)
       return { bytes: 0, input }
     try {
       normalizeAttachmentMetadata(localReference)

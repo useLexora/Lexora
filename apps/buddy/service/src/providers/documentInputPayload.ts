@@ -1,16 +1,17 @@
 import type { AttachmentFileInput } from '../attachments/AttachmentDocumentReference'
+import type { InputModel } from './modelCapabilities'
 import { supportsAudioInputMimeType, supportsVideoInputApi, usesAudioDataUrl } from '../../../shared/providers/mediaInput'
 import { supportsPdfInputApi } from '../../../shared/providers/pdfInput'
 import { assertModelRequestBytes } from './modelInputBudget'
 
 export function applyDocumentInputPayload(
   payload: unknown,
-  api: string,
+  model: Pick<InputModel, 'api' | 'inputLimits' | 'baseUrl'>,
   files: ReadonlyMap<string, AttachmentFileInput>,
-  baseUrl?: string,
 ): unknown {
+  const { api, baseUrl } = model
   if (!files.size) {
-    assertModelRequestBytes(api, payload)
+    assertModelRequestBytes(model, payload)
     return payload
   }
   if (!supportsPdfInputApi(api) || !isRecord(payload))
@@ -48,7 +49,7 @@ export function applyDocumentInputPayload(
   if (inserted.size !== files.size)
     throw new Error('RESOURCE_MATERIALIZATION_FAILED')
   const result = { ...payload, [messageKey]: transformed }
-  assertModelRequestBytes(api, result)
+  assertModelRequestBytes(model, result)
   return result
 }
 

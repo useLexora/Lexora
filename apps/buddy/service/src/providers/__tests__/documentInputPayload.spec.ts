@@ -9,7 +9,7 @@ describe('pDF provider payloads', () => {
   it.each(['audio/wav', 'audio/mpeg', 'audio/mp4'] as const)('sends Xiaomi %s bytes as a MIME-qualified data URL', (mimeType) => {
     const media = { name: 'recording', data: 'AAECAw==', mimeType }
     const payload = { messages: [{ role: 'user', content: [{ type: 'text', text: token }] }] }
-    expect(applyDocumentInputPayload(payload, 'openai-completions', new Map([[token, media]]), 'https://token-plan-cn.xiaomimimo.com/v1'))
+    expect(applyDocumentInputPayload(payload, { api: 'openai-completions', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' }, new Map([[token, media]])))
       .toEqual({ messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${mimeType};base64,${media.data}` } }] }] })
   })
 
@@ -17,28 +17,28 @@ describe('pDF provider payloads', () => {
     const media = { name: 'recording.m4a', data: 'AAECAw==', mimeType: 'audio/mp4' as const }
     const payload = { messages: [{ role: 'user', content: [{ type: 'text', text: token }] }] }
     for (const baseUrl of ['https://api.openai.com/v1', 'https://example.test/v1', 'https://token-plan-cn.xiaomimimo.com.example.test/v1'])
-      expect(() => applyDocumentInputPayload(payload, 'openai-completions', new Map([[token, media]]), baseUrl)).toThrow('MODEL_INPUT_UNSUPPORTED')
+      expect(() => applyDocumentInputPayload(payload, { api: 'openai-completions', baseUrl }, new Map([[token, media]]))).toThrow('MODEL_INPUT_UNSUPPORTED')
   })
 
   it.each(['audio/wav', 'audio/mpeg', 'video/mp4', 'video/webm'] as const)('sends native Gemini %s input without altering bytes', (mimeType) => {
     const media = { name: 'fixture', data: 'AAECAw==', mimeType }
     const payload = { contents: [{ role: 'user', parts: [{ text: token }] }] }
-    expect(applyDocumentInputPayload(payload, 'google-generative-ai', new Map([[token, media]])))
+    expect(applyDocumentInputPayload(payload, { api: 'google-generative-ai', baseUrl: 'https://example.test' }, new Map([[token, media]])))
       .toEqual({ contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: media.data } }] }] })
-    expect(() => applyDocumentInputPayload({ messages: [{ role: 'user', content: [{ text: token }] }] }, 'anthropic-messages', new Map([[token, media]])))
+    expect(() => applyDocumentInputPayload({ messages: [{ role: 'user', content: [{ text: token }] }] }, { api: 'anthropic-messages', baseUrl: 'https://example.test' }, new Map([[token, media]])))
       .toThrow('MODEL_INPUT_UNSUPPORTED')
   })
 
   it.each([{ mimeType: 'audio/wav', format: 'wav' }, { mimeType: 'audio/mpeg', format: 'mp3' }] as const)('sends OpenAI audio with the explicit $format encoding', ({ mimeType, format }) => {
     const media = { name: 'fixture', data: 'AAECAw==', mimeType }
     const payload = { messages: [{ role: 'user', content: [{ type: 'text', text: token }] }] }
-    expect(applyDocumentInputPayload(payload, 'openai-completions', new Map([[token, media]])))
+    expect(applyDocumentInputPayload(payload, { api: 'openai-completions', baseUrl: 'https://example.test' }, new Map([[token, media]])))
       .toEqual({ messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: media.data, format } }] }] })
   })
 
   it('rejects the full Gemini inline request when accumulated history exceeds 20 MB', () => {
     const payload = { contents: [{ role: 'user', parts: [{ text: token }, { text: 'x'.repeat(20_000_000) }] }] }
-    expect(() => applyDocumentInputPayload(payload, 'google-generative-ai', files)).toThrow('MODEL_INPUT_TOO_LARGE')
+    expect(() => applyDocumentInputPayload(payload, { api: 'google-generative-ai', baseUrl: 'https://example.test' }, files)).toThrow('MODEL_INPUT_TOO_LARGE')
   })
 
   it.each([
@@ -53,7 +53,7 @@ describe('pDF provider payloads', () => {
     const history = { role: 'assistant', [parts]: [{ ...text }] }
     const payload = { [messages]: [history, { role: 'user', [parts]: [prompt, image, { ...text, cache_control: { type: 'ephemeral' } }] }], service_tier: 'priority' }
     const original = structuredClone(payload)
-    const result = applyDocumentInputPayload(payload, api, files)
+    const result = applyDocumentInputPayload(payload, { api, baseUrl: 'https://example.test' }, files)
     expect(result).toEqual({
       ...payload,
       [messages]: [history, { role: 'user', [parts]: [prompt, image, { ...pdf, cache_control: { type: 'ephemeral' } }] }],
@@ -63,14 +63,14 @@ describe('pDF provider payloads', () => {
 
   it('fails closed if an earlier transform drops, duplicates, or embeds a document placeholder', () => {
     for (const content of [[], [{ type: 'text', text: `prefix ${token}` }], [{ type: 'text', text: token }, { type: 'text', text: token }]]) {
-      expect(() => applyDocumentInputPayload({ messages: [{ role: 'user', content }] }, 'openai-completions', files))
+      expect(() => applyDocumentInputPayload({ messages: [{ role: 'user', content }] }, { api: 'openai-completions', baseUrl: 'https://example.test' }, files))
         .toThrow('RESOURCE_MATERIALIZATION_FAILED')
     }
   })
 
   it('rejects unimplemented protocols and leaves requests without PDFs unchanged', () => {
     const payload = { input: [{ role: 'user', content: [{ type: 'input_text', text: token }] }] }
-    expect(() => applyDocumentInputPayload(payload, 'azure-openai-responses', files)).toThrow('RESOURCE_MATERIALIZATION_FAILED')
-    expect(applyDocumentInputPayload(payload, 'openai-codex-responses', new Map())).toBe(payload)
+    expect(() => applyDocumentInputPayload(payload, { api: 'azure-openai-responses', baseUrl: 'https://example.test' }, files)).toThrow('RESOURCE_MATERIALIZATION_FAILED')
+    expect(applyDocumentInputPayload(payload, { api: 'openai-codex-responses', baseUrl: 'https://example.test' }, new Map())).toBe(payload)
   })
 })

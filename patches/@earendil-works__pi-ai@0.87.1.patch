@@ -1,7 +1,8 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index fc8e893..04c2c95 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -1141,6 +1141,14 @@ export function convertMessages(model, context, compat, options) {
+@@ -1123,6 +1123,14 @@ export function convertMessages(model, context, compat, options) {
          }
          lastRole = msg.role;
      }
@@ -17,7 +18,7 @@ diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
  }
  function convertTools(tools, compat) {
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index a2049d5a1f633d7a96aa3cf080ded6310df8f97f..cd1f08e0f8300d04cae27662d8815731cd0a7083 100644
+index 53597d2..170d9a4 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
 @@ -355,7 +355,11 @@ export async function processResponsesStream(openaiStream, output, stream, model

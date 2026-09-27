@@ -1,71 +1,6 @@
-diff --git a/dist/core/cache-warmer.d.ts b/dist/core/cache-warmer.d.ts
-index bdce629931762b514185bcb034ef5aada0bbbd78..444f9743f456e691dce238636816031307738bf2 100644
---- a/dist/core/cache-warmer.d.ts
-+++ b/dist/core/cache-warmer.d.ts
-@@ -91,6 +91,7 @@ export declare class CacheWarmer {
-     private stop;
-     private schedule;
-     private refresh;
-+    private refreshDeadlineMissed;
-     private validateRun;
-     private getModeStopReason;
-     private evaluate;
-diff --git a/dist/core/cache-warmer.js b/dist/core/cache-warmer.js
-index 78eb34bbe48f82f0ce5f0db4ca5c94781d9d9491..e8edc7cdc56ffd3a0859db8e5d6f42854b6a5ccd 100644
---- a/dist/core/cache-warmer.js
-+++ b/dist/core/cache-warmer.js
-@@ -135,7 +135,9 @@ export class CacheWarmer {
-         this.run = {
-             ...request,
-             isCurrent,
-+            ttlMs,
-             delayMs,
-+            refreshDeadlineAt: 0,
-             startedAt: Date.now(),
-             controller: new AbortController(),
-             phase: "streaming",
-@@ -186,6 +188,7 @@ export class CacheWarmer {
-     schedule(run) {
-         run.extensionOverride = false;
-         run.nextWarmAt = Date.now() + run.delayMs;
-+        run.refreshDeadlineAt = run.nextWarmAt + Math.floor((run.ttlMs - run.delayMs) / 2);
-         const deadline = run.startedAt + (run.phase === "idle" ? MAX_IDLE_WARMING_AGE_MS : MAX_WARMING_AGE_MS);
-         if (run.nextWarmAt > deadline || Date.now() >= deadline) {
-             this.stop(run.phase === "idle" ? "30-minute idle safety limit reached" : "one-hour safety limit reached");
-@@ -196,7 +199,7 @@ export class CacheWarmer {
-     }
-     async refresh(run) {
-         run.timer = undefined;
--        if (!this.validateRun(run))
-+        if (!this.validateRun(run) || this.refreshDeadlineMissed(run))
-             return;
-         const decision = this.evaluate(run);
-         const { warmCost, missCost, continuationProbability } = decision;
-@@ -213,7 +216,7 @@ export class CacheWarmer {
-         catch {
-             // Extension failures fall back to pi's own decision.
-         }
--        if (!this.validateRun(run))
-+        if (!this.validateRun(run) || this.refreshDeadlineMissed(run))
-             return;
-         const extensionOverride = action !== decision.action;
-         if (action === "stop") {
-@@ -248,6 +251,12 @@ export class CacheWarmer {
-         if (this.run === run)
-             this.schedule(run);
-     }
-+    refreshDeadlineMissed(run) {
-+        if (Date.now() <= run.refreshDeadlineAt)
-+            return false;
-+        this.stop("cache refresh deadline missed");
-+        return true;
-+    }
-     validateRun(run) {
-         if (this.run !== run)
-             return false;
 diff --git a/dist/core/tools/find-execution.js b/dist/core/tools/find-execution.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b6742421290949
+index 0000000..dd03780
 --- /dev/null
 +++ b/dist/core/tools/find-execution.js
 @@ -0,0 +1,67 @@
@@ -137,7 +72,7 @@ index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b67424
 +    };
 +}
 diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
-index a3bab76c952c2a03d6534aba80a72f7743a52b94..5a01803160a07a0a10939100876428ecaed4cebf 100644
+index a3bab76..de47f3e 100644
 --- a/dist/core/tools/find.js
 +++ b/dist/core/tools/find.js
 @@ -1,12 +1,9 @@
@@ -380,7 +315,7 @@ index a3bab76c952c2a03d6534aba80a72f7743a52b94..5a01803160a07a0a10939100876428ec
      };
 diff --git a/dist/core/tools/grep-execution.js b/dist/core/tools/grep-execution.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b72872c74e6c615946bc1a0ae0f791c85d160475
+index 0000000..b72872c
 --- /dev/null
 +++ b/dist/core/tools/grep-execution.js
 @@ -0,0 +1,82 @@
@@ -467,7 +402,7 @@ index 0000000000000000000000000000000000000000..b72872c74e6c615946bc1a0ae0f791c8
 +    };
 +}
 diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
-index d427d071582ead6e0c876121a8b67ad9fe6c45f7..082d3dde3f0985bf968013121cc5db9f65a2ad4f 100644
+index d427d07..d564283 100644
 --- a/dist/core/tools/grep.js
 +++ b/dist/core/tools/grep.js
 @@ -1,13 +1,9 @@
@@ -705,7 +640,7 @@ index d427d071582ead6e0c876121a8b67ad9fe6c45f7..082d3dde3f0985bf968013121cc5db9f
      };
 diff --git a/dist/core/tools/search-process.js b/dist/core/tools/search-process.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb851743d3e
+index 0000000..a897970
 --- /dev/null
 +++ b/dist/core/tools/search-process.js
 @@ -0,0 +1,74 @@
@@ -783,8 +718,34 @@ index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb8
 +    if (!Number.isSafeInteger(value) || value < 0) throw new Error("Search limits must be non-negative integers");
 +    return Math.min(Math.max(1, value), maximum);
 +}
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 52dcaaf..8053eec 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -3,7 +3,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+ export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
+ export { readStoredCredential } from "./core/auth-storage.ts";
+ export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
+-export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
++export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, prepareCompaction, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
+ export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolInfo, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
+diff --git a/dist/index.js b/dist/index.js
+index d833966..e7503c1 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -5,7 +5,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+ export { AgentSession, parseSkillBlock, } from "./core/agent-session.js";
+ export { readStoredCredential } from "./core/auth-storage.js";
+ // Compaction
+-export { calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, findCutPoint, findTurnStartIndex, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.js";
++export { calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, findCutPoint, findTurnStartIndex, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, prepareCompaction, serializeConversation, shouldCompact, } from "./core/compaction/index.js";
+ export { createEventBus } from "./core/event-bus.js";
+ export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.js";
+ export { convertToLlm } from "./core/messages.js";
 diff --git a/dist/utils/shell.js b/dist/utils/shell.js
-index 19605cc7dbd8b6752777e47c5c310c613b35c505..5777711e4ef72900066da6115b183fbac28c09b6 100644
+index 19605cc..5777711 100644
 --- a/dist/utils/shell.js
 +++ b/dist/utils/shell.js
 @@ -1,5 +1,5 @@
@@ -808,7 +769,7 @@ index 19605cc7dbd8b6752777e47c5c310c613b35c505..5777711e4ef72900066da6115b183fba
      if (!shell) {
          throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
-index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb78681e1f9022 100644
+index 39b1f1a..f2747a3 100644
 --- a/dist/utils/tools-manager.js
 +++ b/dist/utils/tools-manager.js
 @@ -1,7 +1,7 @@

@@ -19,7 +19,6 @@ import { createToolPolicyExtension } from '../../extensions/toolPolicyExtension'
 import { createIsolatedBuddySession as createBuddySession } from '../../sessions/__tests__/isolatedBuddySession'
 import { createReusableBuddySession } from '../../sessions/createReusableBuddySession'
 import {
-  createBuddyInputPlaceholderContent,
   createBuddyInputReference,
   readBuddyInputReference,
 } from '../BuddyInputReference'
@@ -147,6 +146,108 @@ describe('composer input at the Buddy session boundary', () => {
     expect(userMessages(fixture.contexts[0])[0]?.content).toEqual(materializedContent(fixture))
     expect(fixture.contexts[0]?.systemPrompt).toContain('Current offline run: run-after-repair')
     await expectSafePersistence(fixture)
+  })
+
+  it('blocks transport when an input hook prevents binding the frozen input reference', async () => {
+    const fixture = await createFixture({
+      extensions: [{
+        name: 'lexora-fixture-input-transform',
+        factory(pi) {
+          pi.on('input', () => ({ action: 'transform', text: 'Unexpected transformed input' }))
+        },
+      }],
+    })
+    await fixture.send(plan())
+
+    expect(fixture.contexts).toEqual([])
+    expect(fixture.session.messages.at(-1)).toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'RESOURCE_MATERIALIZATION_FAILED',
+    })
+    expect(fixture.session.isIdle).toBe(true)
+  })
+
+  it('restores old reference messages with empty image blocks without rewriting their history', async () => {
+    const fixture = await createFixture()
+    await fixture.send(plan())
+    await fixture.shutdown('quit')
+    const original = await readFile(fixture.piSessionFile, 'utf8')
+    const legacy = `${original.trimEnd().split('\n').map((line) => {
+      const entry = JSON.parse(line)
+      if (entry.type === 'message' && readBuddyInputReference(entry.message)) {
+        entry.message.content = [
+          { type: 'text', text: entry.message.buddyInput.prompt },
+          ...entry.message.buddyInput.images.map((image: { mimeType: string }) => ({
+            type: 'image',
+            data: '',
+            mimeType: image.mimeType,
+          })),
+        ]
+      }
+      return JSON.stringify(entry)
+    }).join('\n')}\n`
+    await writeFile(fixture.piSessionFile, legacy)
+
+    const restored = await createFixture({ root: fixture.root, piSessionFile: fixture.piSessionFile })
+    await restored.send({ ...plan('follow'), text: 'Continue from the original images', images: [] })
+
+    expect(imageMessages(restored.contexts[0]).map(message => message.content)).toEqual([materializedContent(restored)])
+    expect((await readFile(restored.piSessionFile, 'utf8')).startsWith(legacy)).toBe(true)
+    await expectSafePersistence(restored)
+  })
+
+  it('uses edited context for compaction eligibility and recovery summaries while preserving raw history', async () => {
+    const fixture = await createFixture()
+    const manager = fixture.session.sessionManager
+    const old = manager.appendMessage({ role: 'user', content: 'OMITTED_OLD_INPUT '.repeat(100), timestamp: 1 })
+    manager.appendMessage({ role: 'user', content: 'CURRENT_VISIBLE_INPUT '.repeat(100), timestamp: 2 })
+    manager.appendContextEdit(old, null)
+    enableCompaction(fixture, 1)
+    expect(fixture.reusable.canCompact()).toBe(false)
+
+    const failed = manager.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'OMITTED_FAILED_ATTEMPT' }],
+      api: fixture.session.model!.api,
+      provider: fixture.session.model!.provider,
+      model: fixture.session.model!.id,
+      stopReason: 'error',
+      timestamp: 3,
+      usage: usage(),
+    })
+    manager.appendContextEdit(failed, null)
+    fixture.session.agent.state.messages = manager.buildSessionContext().messages
+    expect(fixture.reusable.canCompact()).toBe(true)
+
+    await fixture.reusable.compact()
+    expect(fixture.contexts).toHaveLength(1)
+    const summaryRequest = JSON.stringify(fixture.contexts[0])
+    expect(summaryRequest).toContain('CURRENT_VISIBLE_INPUT')
+    expect(summaryRequest).not.toContain('OMITTED_OLD_INPUT')
+    expect(summaryRequest).not.toContain('OMITTED_FAILED_ATTEMPT')
+    expect(fixture.reusable.canCompact()).toBe(false)
+
+    manager.appendCustomEntry('offline-metadata', {})
+    expect(fixture.reusable.canCompact()).toBe(false)
+    const raw = await readFile(fixture.piSessionFile, 'utf8')
+    expect(raw).toContain('OMITTED_OLD_INPUT')
+    expect(raw).toContain('OMITTED_FAILED_ATTEMPT')
+  })
+
+  it('uses replacement sizes for compaction without compacting unsent input after metadata', async () => {
+    const fixture = await createFixture()
+    const manager = fixture.session.sessionManager
+    manager.appendMessage({ role: 'user', content: 'First input', timestamp: 1 })
+    const latest = manager.appendMessage({ role: 'user', content: 'Second input', timestamp: 2 })
+    manager.appendCustomEntry('offline-metadata', {})
+    enableCompaction(fixture, 200)
+    expect(fixture.reusable.canCompact()).toBe(false)
+
+    manager.appendContextEdit(latest, { content: 'EXPANDED_INPUT '.repeat(100) })
+    expect(fixture.reusable.canCompact()).toBe(true)
+
+    manager.appendContextEdit(latest, { content: 'Short input' })
+    expect(fixture.reusable.canCompact()).toBe(false)
   })
 
   it('rematerializes input for a real Buddy tool continuation without appending it again', async () => {
@@ -452,10 +553,14 @@ describe('composer input at the Buddy session boundary', () => {
     await fixture.send(plan())
     await fixture.send(plan('message-2'))
 
-    expect(fixture.contexts).toHaveLength(4)
+    expect(fixture.contexts).toHaveLength(5)
     expectSafeSummary(fixture, fixture.contexts[2])
-    expect(imageMessages(fixture.contexts[3]).map(message => message.content)).toEqual([materializedContent(fixture)])
+    expectSafeSummary(fixture, fixture.contexts[3])
+    expect(imageMessages(fixture.contexts[4])).toEqual([])
+    expect(JSON.stringify(fixture.contexts[4])).toContain('Turn Context (split turn)')
+    expect(JSON.stringify(fixture.contexts[4])).not.toContain('prompt is too long')
     expect(referenceEntries(fixture)).toHaveLength(2)
+    expect(fixture.session.sessionManager.getBranch().filter(entry => entry.type === 'context_edit')).toHaveLength(1)
     expect(fixture.lifecycle).toContain('compaction_end:overflow')
     await expectSafePersistence(fixture)
   })
@@ -509,6 +614,7 @@ async function createFixture(options: {
   contextWindow?: number
   toolCall?: boolean
   stream?: Stream
+  extensions?: BuddyInProcessExtension[]
 } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), 'buddy-composer-s0-'))
   if (!options.root)
@@ -610,6 +716,7 @@ async function createFixture(options: {
         },
       },
       probe,
+      ...options.extensions ?? [],
     ],
     model,
     modelRuntime,
@@ -701,7 +808,6 @@ async function createFixture(options: {
     try {
       await reusable!.prompt(input.text, {
         expandPromptTemplates: false,
-        images: referenceImages(input),
         inputReference: reference,
         source: 'rpc',
       })
@@ -739,10 +845,6 @@ function appendHistoricalRead(fixture: Awaited<ReturnType<typeof createFixture>>
   })
   fixture.session.agent.state.messages = fixture.session.sessionManager.buildSessionContext().messages
   return structuredClone(fixture.session.sessionManager.getEntry(id)!)
-}
-
-function referenceImages(input: InputPlan): ImageContent[] {
-  return createBuddyInputPlaceholderContent(toBuddyInputReference(input)).slice(1) as ImageContent[]
 }
 
 function isReferenceMessage(message: AgentSession['messages'][number]): message is ReferenceMessage {

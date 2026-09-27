@@ -3,10 +3,12 @@ import type { Buffer } from 'node:buffer'
 import type { BuddyAttachmentUpload } from '../../../shared/conversation/attachmentPolicy'
 import type { BuddyPromptDirective, BuddyUserContentV1, BuddyUserMessageResourceSnapshot } from '../../../shared/conversation/buddyUserContent'
 import type { BuddyInputReferenceV1 } from '../agent/context/BuddyInputReference'
+import type { InputModel } from '../providers/modelCapabilities'
 import type { AttachmentRecord, AttachmentRepository } from '../storage/attachmentRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { AttachmentDocumentReference, AttachmentFileInput } from './AttachmentDocumentReference'
 import type { AttachmentImageReference } from './AttachmentImageReference'
+import type { PreparedAttachmentImage } from './AttachmentImageStore'
 import type { AttachmentToolWorkspace } from './AttachmentToolWorkspace'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -21,6 +23,7 @@ import {
   getAttachmentKind,
 } from '../../../shared/conversation/attachmentPolicy'
 import { projectBuddyUserContent } from '../../../shared/conversation/buddyUserContentProjection'
+import { AttachmentImageStore } from './AttachmentImageStore'
 import { getAttachmentLabels } from './attachmentLabels'
 import { hasDocumentSignature } from './validateDocumentBytes'
 
@@ -95,6 +98,7 @@ export interface PreparedMessageAttachments {
 }
 
 export class AttachmentService {
+  readonly #images = new AttachmentImageStore()
   readonly #paths: BuddyDataPaths
   readonly #readFile: AttachmentFileReader
   readonly #repository: AttachmentRepository
@@ -548,6 +552,26 @@ export class AttachmentService {
         throw error
       }
     }))
+  }
+
+  async prepareInputImages(
+    references: readonly AttachmentImageReference[],
+    conversationId: string,
+    model: InputModel,
+  ): Promise<ReadonlyMap<string, PreparedAttachmentImage | null>> {
+    const images = new Map<string, PreparedAttachmentImage | null>()
+    for (const reference of references) {
+      const record = this.#requireForPrompt(reference.attachmentId, conversationId, null)
+      if (record.mimeType !== reference.mimeType)
+        throw new AttachmentError('VALIDATION_FAILED')
+      const metadata = await stat(record.storedPath)
+      if (!metadata.isFile() || metadata.size !== record.sizeBytes || metadata.size > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
+        throw new AttachmentError('ATTACHMENT_INVALID')
+      const bytes = await this.#readFile(record.storedPath)
+      const directory = join(this.#paths.conversationDirectory(conversationId), 'image-inputs')
+      images.set(record.id, await this.#images.prepare(record, bytes, directory, model))
+    }
+    return images
   }
 
   async materializeDocumentInputs(

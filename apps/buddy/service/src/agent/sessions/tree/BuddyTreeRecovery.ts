@@ -69,13 +69,15 @@ export class BuddyTreeRecovery {
     for (const entry of entries) {
       if (entry.parentId && !sourceIds.has(entry.parentId))
         throw new BuddyAgentRunError('SESSION_STORAGE_UNAVAILABLE')
+      if (entry.type === 'context_edit' && !sourceIds.has(entry.targetId))
+        throw new BuddyAgentRunError('SESSION_STORAGE_UNAVAILABLE')
     }
     const imported: FileEntry[] = entries.filter(entry => !this.journal.manager.getEntry(mappedId(entry.id))).map(entry => ({
       ...entry,
       id: mappedId(entry.id),
       parentId: entry.parentId ? mappedId(entry.parentId) : this.journal.rootId,
       ...(entry.type === 'compaction' ? { firstKeptEntryId: mappedId(entry.firstKeptEntryId) } : {}),
-      ...(entry.type === 'label' ? { targetId: mappedId(entry.targetId) } : {}),
+      ...(entry.type === 'label' || entry.type === 'context_edit' ? { targetId: mappedId(entry.targetId) } : {}),
       ...(entry.type === 'branch_summary' ? { fromId: mappedId(entry.fromId) } : {}),
     }))
     this.journal.appendEntries(imported)
