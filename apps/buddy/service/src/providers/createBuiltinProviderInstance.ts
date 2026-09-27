@@ -10,6 +10,7 @@ interface BuiltinProviderInstanceOptions {
 
 export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOptions): Provider {
   const { id, name, source } = options
+  let models = source.getModels()
   const toSourceModel = <T extends Api>(model: Model<T>): Model<T> => ({ ...model, provider: source.id })
   const toInstanceModel = (model: Model<Api>): Model<Api> => ({ ...model, provider: id })
   const toSourceContext = (context: TranscriptContext): TranscriptContext => ({
@@ -34,7 +35,7 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
     baseUrl: source.baseUrl,
     headers: source.headers,
     auth: source.auth,
-    getModels: () => (source.refreshModels ? source.getModels() : options.getCatalogModels()).map(toInstanceModel),
+    getModels: () => (source.refreshModels ? models : options.getCatalogModels()).map(toInstanceModel),
     filterModels: source.filterModels
       ? (models, credential) => source.filterModels!(models.map(toSourceModel), credential).map(toInstanceModel)
       : undefined,
@@ -44,6 +45,10 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
         stored: context.stored && { ...context.stored, models: context.stored.models.map(toSourceModel) },
         publish: publication => context.publish({
           ...publication,
+          update: () => {
+            publication.update?.()
+            models = source.getModels()
+          },
           persist: publication.persist && {
             ...publication.persist,
             models: publication.persist.models.map(toInstanceModel),

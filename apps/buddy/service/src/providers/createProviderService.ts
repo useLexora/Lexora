@@ -6,7 +6,6 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { registerBunOAuthFlows } from '@earendil-works/pi-ai/bun-oauth'
-import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { createProviderRepository } from '../storage/providerRepository'
 import { AuthInteractionService } from './AuthInteractionService'
@@ -50,8 +49,6 @@ export async function createProviderService(
   const providers = options.providers ?? createProviderRepository(options.database)
   const requestHeaders = new ProviderRequestHeaders(providers.states)
   const providerRuntime = createProviderModelRuntime(modelRuntime, requestHeaders, options.record)
-  for (const provider of builtinProviders())
-    providerRuntime.registerNativeProvider(provider)
   const service = new ProviderService({
     authInteractions: new AuthInteractionService({
       notify: (method, params) => options.peer.notify(method, params),

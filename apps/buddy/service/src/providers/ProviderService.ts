@@ -92,7 +92,10 @@ export class ProviderService {
     this.#requestHeaders = options.requestHeaders ?? new ProviderRequestHeaders(options.providers.states)
     this.#builtins = options.providers.builtins
     this.#builtinTemplates = new Map(options.modelRuntime.getProviders().map(provider => [provider.id, provider]))
-    this.#createBuiltinSource = options.createBuiltinSource ?? (id => builtinProviders().find(provider => provider.id === id))
+    this.#createBuiltinSource = options.createBuiltinSource ?? ((id) => {
+      const source = builtinProviders().find(provider => provider.id === id)
+      return source?.refreshModels ? source : this.#builtinTemplates.get(id)
+    })
     this.#authInteractions = options.authInteractions
     this.#configs = options.providers.configs
     this.#credentialStatus = options.credentialStatus
@@ -544,17 +547,15 @@ export class ProviderService {
     const template = this.#builtinTemplates.get(instance.builtinProviderId)
     if (!template)
       return false
-    if (instance.id !== instance.builtinProviderId) {
-      const source = this.#createBuiltinSource(instance.builtinProviderId)
-      if (!source)
-        return false
-      this.#modelRuntime.registerNativeProvider(createBuiltinProviderInstance({
-        id: instance.id,
-        name: instance.displayName ?? template.name,
-        source,
-        getCatalogModels: () => this.#modelRuntime.getModels(instance.builtinProviderId),
-      }))
-    }
+    const source = this.#createBuiltinSource(instance.builtinProviderId)
+    if (!source)
+      return false
+    this.#modelRuntime.registerNativeProvider(createBuiltinProviderInstance({
+      id: instance.id,
+      name: instance.displayName ?? template.name,
+      source,
+      getCatalogModels: () => template.getModels(),
+    }))
     return true
   }
 

@@ -6,6 +6,14 @@ import { withProviderRequestHeaders } from './withProviderRequestHeaders'
 import { withProviderStream } from './withProviderStream'
 
 export function createProviderModelRuntime(runtime: ModelRuntime, headers: ProviderRequestHeaders, record?: ApplicationDiagnosticReporter): ProviderModelRuntime {
+  const refresh = runtime.refresh.bind(runtime)
+  let refreshing = Promise.resolve()
+  // Pi registration also starts refreshes; serialize them with explicit cache restoration and discovery.
+  runtime.refresh = (options) => {
+    const result = refreshing.then(() => refresh(options))
+    refreshing = result.then(() => {}, () => {})
+    return result
+  }
   return {
     getModels: runtime.getModels.bind(runtime),
     getProvider: runtime.getProvider.bind(runtime),

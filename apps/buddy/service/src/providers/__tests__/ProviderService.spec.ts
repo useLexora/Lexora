@@ -917,7 +917,7 @@ class FakeModelRuntime {
   }
 
   getProviders(): readonly Provider[] {
-    return this.providers
+    return this.providers.map(provider => ({ ...provider, getModels: () => this.getModels(provider.id) }))
   }
 
   listCredentials(): Promise<readonly CredentialInfo[]> {
