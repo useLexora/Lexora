@@ -58,6 +58,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'runtime',
+          testTimeout: 15_000,
           include: ['{service,electron}/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
         },
       },

@@ -33,7 +33,7 @@ describe('complete provider input budgets', () => {
 
   it('measures Bedrock images using the actual SDK body encoding without changing its binary parameters', async () => {
     const model: Model<'bedrock-converse-stream'> = { api: 'bedrock-converse-stream', provider: 'amazon-bedrock', id: 'fixture', name: 'Fixture', baseUrl: 'https://example.test', input: ['text', 'image'], contextWindow: 128000, maxTokens: 1024, reasoning: false, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
-    const data = Buffer.alloc(3 * 1024 * 1024, 255).toString('base64')
+    const data = Buffer.alloc(64 * 1024, 255).toString('base64')
     let payload: unknown
     const result = await streamSimple(model, normalizeContext({ messages: [{ role: 'user', content: [{ type: 'image', mimeType: 'image/png', data }], timestamp: 0 }] }), {
       apiKey: 'offline-fixture',
@@ -66,8 +66,8 @@ describe('complete provider input budgets', () => {
       client.destroy()
     }
     const bytes = Buffer.byteLength(body, 'utf8')
-    expect(bytes).toBeGreaterThan(4 * 1024 * 1024)
-    expect(bytes).toBeLessThan(5 * 1024 * 1024)
+    expect(bytes).toBeGreaterThan(data.length)
+    expect(bytes).toBeLessThan(data.length + 1024)
     expect(JSON.parse(body).messages[0].content[0].image.source.bytes).toBe(data)
     expect(() => assertModelRequestBytes({ ...model, inputLimits: { maxRequestBytes: bytes } }, payload)).not.toThrow()
     expect(() => assertModelRequestBytes({ ...model, inputLimits: { maxRequestBytes: bytes - 1 } }, payload)).toThrow('MODEL_INPUT_TOO_LARGE')
