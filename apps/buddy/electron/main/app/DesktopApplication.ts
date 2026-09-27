@@ -13,7 +13,8 @@ import { confirmDesktopQuit, showBackgroundCloseNotice, showDesktopStartupFailur
 import { DesktopIntegrations } from './DesktopIntegrations'
 import { describeProcessExit } from './desktopProcessDiagnostics'
 import { createDesktopQuitLifecycle } from './desktopQuitLifecycle'
-import { readPreviousLaunchId } from './desktopRecovery'
+import { readPreviousLaunchId, recoveryRelaunchArgs } from './desktopRecovery'
+import { showDesktopRendererRecovery } from './desktopRendererRecovery'
 import { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import { checkDesktopSmokeBridge } from './desktopSmokeCheck'
 import { DesktopWindowHost } from './DesktopWindowHost'
@@ -28,6 +29,7 @@ class DesktopApplication {
   readonly #host: ServiceHost
   readonly #quit: ReturnType<typeof createDesktopQuitLifecycle>
   #disposePromise: Promise<void> | null = null
+  #rendererRecoveryPrompt: Promise<void> | null = null
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
@@ -53,9 +55,13 @@ class DesktopApplication {
         }
         finally { await environment.diagnostics.close() }
       },
-      quit: () => app.quit(),
+      quit: (restart) => {
+        if (restart)
+          app.relaunch({ args: recoveryRelaunchArgs(process.argv, environment.diagnostics.launchId) })
+        app.quit()
+      },
     })
-    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, this.#browser, () => this.#requestQuit())
+    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, this.#browser, () => this.#requestQuit(), () => this.#requestRestart())
   }
 
   bindEvents(): void {
@@ -116,6 +122,7 @@ class DesktopApplication {
           onWindowCreated: window => this.#browser.bindWindow(window),
           isQuitting: () => this.#quit.quitting,
           onHidden: () => { void showBackgroundCloseNotice(this.#runtime.configStore) },
+          onRecoveryExhausted: () => this.#presentRendererRecovery(),
         })
       }, ['desktop.integrations'])
     })
@@ -155,6 +162,35 @@ class DesktopApplication {
       this.#environment.events.publish({ level: 'error', event: 'app.stop_failed', errorCode: readDiagnosticErrorCode(error) })
       if (this.#quit.quitting)
         app.exit(1)
+    })
+  }
+
+  #requestRestart(): void {
+    void this.#quit.request({ restart: true }).catch((error) => {
+      this.#environment.events.publish({ level: 'error', event: 'app.restart_failed', errorCode: readDiagnosticErrorCode(error) })
+      if (this.#quit.quitting)
+        app.exit(1)
+    })
+  }
+
+  #presentRendererRecovery(): void {
+    if (this.#quit.quitting || this.#rendererRecoveryPrompt)
+      return
+    this.#rendererRecoveryPrompt = showDesktopRendererRecovery(
+      this.#runtime.language,
+      this.#environment,
+      async () => {
+        await this.#quit.request({ discardDraftsOnFailure: true, restart: true })
+        return this.#quit.committed
+      },
+      async () => {
+        await this.#quit.request({ discardDraftsOnFailure: true })
+        return this.#quit.committed
+      },
+    ).catch((error) => {
+      this.#environment.events.publish({ level: 'error', event: 'renderer.recovery.dialog_failed', errorCode: readDiagnosticErrorCode(error) })
+    }).finally(() => {
+      this.#rendererRecoveryPrompt = null
     })
   }
 

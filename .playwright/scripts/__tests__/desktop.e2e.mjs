@@ -54,6 +54,59 @@ test('graceful restart preserves the same instance configuration and browser sta
   expect(await restarted.page.evaluate(() => localStorage.getItem('restart-marker'))).toBe('persisted')
 })
 
+test('renderer crashes recover once and then stop without a reload loop', async ({ buddy }) => {
+  const instance = await buddy.createInstance('renderer-recovery')
+  const { app, page } = await instance.launch()
+  await page.evaluate(() => localStorage.setItem('recovery-marker', 'preserved'))
+
+  const firstRendererPid = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().startsWith('lexora-app:')).webContents.getOSProcessId())
+  process.kill(firstRendererPid, 'SIGKILL')
+  await expect.poll(async () => {
+    const files = await fs.readdir(instance.home, { recursive: true })
+    const log = files.find(file => file.endsWith('application.jsonl'))
+    if (!log)
+      return 0
+    return (await fs.readFile(path.join(instance.home, log), 'utf8')).split('\n').filter(line => line.includes('"event":"window.loaded"')).length
+  }, { timeout: 30000 }).toBe(2)
+  await expect.poll(async () => {
+    try {
+      return await app.evaluate(async ({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find(candidate => candidate.webContents.getURL().startsWith('lexora-app:'))
+        return window?.webContents.executeJavaScript('localStorage.getItem("recovery-marker")')
+      })
+    }
+    catch {
+      return null
+    }
+  }, { timeout: 30000 }).toBe('preserved')
+
+  const secondRendererPid = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().startsWith('lexora-app:')).webContents.getOSProcessId())
+  process.kill(secondRendererPid, 'SIGKILL')
+  await expect.poll(async () => {
+    const files = await fs.readdir(instance.home, { recursive: true })
+    const log = files.find(file => file.endsWith('application.jsonl'))
+    if (!log)
+      return 0
+    return (await fs.readFile(path.join(instance.home, log), 'utf8')).split('\n').filter(line => line.includes('renderer.recovery.exhausted')).length
+  }).toBe(1)
+  await expect.poll(async () => {
+    const files = await fs.readdir(instance.home, { recursive: true })
+    const log = files.find(file => file.endsWith('application.jsonl'))
+    if (!log)
+      return 0
+    return (await fs.readFile(path.join(instance.home, log), 'utf8')).split('\n').filter(line => line.includes('renderer.recovery.presented')).length
+  }).toBe(1)
+  const files = await fs.readdir(instance.home, { recursive: true })
+  const log = files.find(file => file.endsWith('application.jsonl'))
+  const events = (await fs.readFile(path.join(instance.home, log), 'utf8')).split('\n')
+  expect(events.filter(line => line.includes('"event":"window.created"'))).toHaveLength(1)
+  expect(events.filter(line => line.includes('"event":"window.loaded"'))).toHaveLength(2)
+  expect(app.process().exitCode).toBeNull()
+  const exited = once(app.process(), 'exit')
+  app.process().kill('SIGKILL')
+  await exited
+})
+
 test('test profile preserves system autostart entries even with the packaged flag', async ({ buddy }) => {
   test.skip(process.platform !== 'linux', 'Linux autostart integration')
   const instance = await buddy.createInstance('autostart')

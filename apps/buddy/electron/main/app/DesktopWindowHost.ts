@@ -13,12 +13,14 @@ import { observeRendererDiagnostics } from './desktopProcessDiagnostics'
 interface WindowBindings {
   isQuitting: () => boolean
   onHidden: () => void
+  onRecoveryExhausted: () => void
   onWindowCreated: (window: BrowserWindow) => void
 }
 
 export class DesktopWindowHost {
   readonly #environment: DesktopEnvironment
   #manager: DesktopWindowManager | null = null
+  #onRecoveryExhausted: (() => void) | null = null
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
@@ -41,6 +43,12 @@ export class DesktopWindowHost {
       screen.getAllDisplays().map(display => display.bounds),
     )
     const manager = new DesktopWindowManager({
+      onRecoveryStarted: () => environment.events.publish({ level: 'warn', event: 'renderer.recovery.started', attempt: 1 }),
+      onRecoveryRebuilding: () => environment.events.publish({ level: 'info', event: 'renderer.recovery.rebuilding', attempt: 1 }),
+      onRecoveryExhausted: () => {
+        environment.events.publish({ level: 'error', event: 'renderer.recovery.exhausted', attempt: 1 })
+        bindings.onRecoveryExhausted()
+      },
       createWindow: () => {
         const handle = createDesktopWindow({
           appName: environment.paths.appName,
@@ -61,7 +69,7 @@ export class DesktopWindowHost {
         })
         applyDesktopWindowAppearance(handle.window, nativeTheme.shouldUseDarkColors)
         environment.events.publish({ level: 'info', event: 'window.created' })
-        handle.window.webContents.once('did-finish-load', () => {
+        handle.window.webContents.on('did-finish-load', () => {
           environment.events.publish({ level: 'info', event: 'window.loaded' })
         })
         handle.window.once('closed', () => {
@@ -76,12 +84,17 @@ export class DesktopWindowHost {
       },
     })
     this.#manager = manager
+    this.#onRecoveryExhausted = bindings.onRecoveryExhausted
     if (!environment.isSmokeTest && environment.initialLaunchIntent === 'foreground')
       await manager.open()
     return manager.window ?? manager.load()
   }
 
   show(): void {
+    if (this.#manager?.recoveryExhausted) {
+      this.#onRecoveryExhausted?.()
+      return
+    }
     void this.#manager?.open().catch((error) => {
       this.#environment.diagnostics.record({ scope: 'desktop', level: 'error', event: 'window.activate_failed', error })
     })
@@ -90,6 +103,10 @@ export class DesktopWindowHost {
   async openTarget(target: { conversationId: string, runId: string }): Promise<void> {
     if (!this.#manager)
       return
+    if (this.#manager.recoveryExhausted) {
+      this.#onRecoveryExhausted?.()
+      return
+    }
     await this.#manager.open()
     this.window?.webContents.send(DESKTOP_IPC_CHANNELS.appOpenTarget, target)
   }
@@ -110,5 +127,6 @@ export class DesktopWindowHost {
   close(): void {
     this.#manager?.dispose()
     this.#manager = null
+    this.#onRecoveryExhausted = null
   }
 }

@@ -5,7 +5,7 @@ interface DesktopQuitLifecycleOptions {
   events?: ApplicationEvents
   confirm: (options: DesktopQuitOptions) => Promise<boolean>
   dispose: () => Promise<void>
-  quit: () => void
+  quit: (restart: boolean) => void
 }
 
 export function createDesktopQuitLifecycle(options: DesktopQuitLifecycleOptions) {
@@ -29,7 +29,7 @@ export function createDesktopQuitLifecycle(options: DesktopQuitLifecycleOptions)
         quitting = true
         await options.dispose()
         committed = true
-        options.quit()
+        options.quit(input.restart === true)
       }).finally(() => {
         if (!committed)
           pending = null

@@ -21,6 +21,7 @@ export interface DesktopEnvironment {
 
 export interface DesktopQuitOptions {
   discardDraftsOnFailure?: boolean
+  restart?: boolean
 }
 
 export interface DesktopQuitHost {

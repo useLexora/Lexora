@@ -77,4 +77,15 @@ describe('desktop quit lifecycle', () => {
     await expect(lifecycle.request()).rejects.toThrow('Cleanup failed')
     expect(lifecycle.committed).toBe(false)
   })
+
+  it('passes an explicit restart request only after cleanup completes', async () => {
+    const events: string[] = []
+    const lifecycle = createDesktopQuitLifecycle({
+      confirm: async () => true,
+      dispose: async () => { events.push('cleanup') },
+      quit: (restart) => { events.push(restart ? 'restart' : 'quit') },
+    })
+    await lifecycle.request({ restart: true })
+    expect(events).toEqual(['cleanup', 'restart'])
+  })
 })

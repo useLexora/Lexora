@@ -40,15 +40,17 @@ export class DesktopIntegrations {
   readonly #windows: DesktopWindowHost
   readonly #browser: BrowserIntegration
   readonly #requestQuit: () => void
+  readonly #requestRestart: () => void
   readonly #subscriptions: Array<() => void | Promise<void>> = []
   #tray: DesktopTrayController | null = null
 
-  constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, browser: BrowserIntegration, requestQuit: () => void) {
+  constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, browser: BrowserIntegration, requestQuit: () => void, requestRestart: () => void) {
     this.#environment = environment
     this.#runtime = runtime
     this.#windows = windows
     this.#browser = browser
     this.#requestQuit = requestQuit
+    this.#requestRestart = requestRestart
     this.executeCommand = createDesktopCommandExecutor({
       getWindow: () => windows.window,
       isDeveloperToolsEnabled: () => runtime.config?.desktop.developerToolsEnabled ?? false,
@@ -95,9 +97,8 @@ export class DesktopIntegrations {
       language: runtime.language,
       onOpenDesktop: () => windows.show(),
       onQuit: this.#requestQuit,
-      runtime: service,
+      onRestart: this.#requestRestart,
     })
-    this.#subscriptions.push(service.onStateChange(state => this.#tray?.setRuntimeState(state)))
     const notifications = new DesktopNotificationService({
       createNotification(input) {
         const notification = new Notification(input)
