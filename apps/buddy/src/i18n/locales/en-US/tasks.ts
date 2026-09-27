@@ -147,6 +147,7 @@ export default {
   'desktop.context.directory': 'Folder',
   'desktop.context.noCapturedChanges': 'No captured file changes to show',
   'desktop.context.open': 'Expand resource panel',
+  'desktop.context.swapPosition': 'Swap chat and resource panel positions',
   'desktop.context.openBrowser': 'Open browser',
   'desktop.context.preview': 'Preview',
   'desktop.context.source': 'Source',

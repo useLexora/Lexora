@@ -89,6 +89,18 @@ export function resolveDesktopWorkbenchWidths(
   }
 }
 
+export function resolveDesktopWorkbenchContextResizeWidth(input: {
+  clientX: number
+  containerLeft: number
+  containerRight: number
+  contextOnLeft: boolean
+  sidebarWidth: number
+}): number {
+  return input.contextOnLeft
+    ? input.clientX - input.containerLeft - input.sidebarWidth
+    : input.containerRight - input.clientX
+}
+
 export function resolveDesktopWorkbenchPanelRange(
   panel: DesktopWorkbenchResizablePanel,
   input: DesktopWorkbenchPanelRangeInput,

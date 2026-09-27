@@ -13,7 +13,7 @@ import WorkbenchLayoutNode from '@/workbench/browser/WorkbenchLayoutNode.vue'
 import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
 import DesktopDirectoryFileSurface from './DesktopDirectoryFileSurface.vue'
 
-const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean }>()
+const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean, contextOnLeft: boolean }>()
 const { controller, layout, revision, labels } = useWorkbench()
 const pendingTaskIds = computed(() => {
   void revision.value
@@ -49,7 +49,7 @@ function focusContext() {
 </script>
 
 <template>
-  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
+  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :context-on-left="tasksVisible && contextOnLeft" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
     <template v-if="tasksVisible" #sidebar>
       <WorkbenchMountPoint target="workbench.sidebar">
         <DesktopTaskIndexView :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTask.value?.session.activeTaskId.value ?? null" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />

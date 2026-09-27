@@ -145,6 +145,7 @@ export default {
   'desktop.context.directory': '目录',
   'desktop.context.noCapturedChanges': '没有可展示的已捕获文件变更',
   'desktop.context.open': '展开资源面板',
+  'desktop.context.swapPosition': '交换聊天区与资源面板位置',
   'desktop.context.openBrowser': '打开浏览器',
   'desktop.context.preview': '预览',
   'desktop.context.source': '源码',

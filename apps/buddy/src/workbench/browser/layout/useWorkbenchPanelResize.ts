@@ -12,6 +12,7 @@ import {
 import {
   clampDesktopWorkbenchPanelWidth,
   DESKTOP_WORKBENCH_WIDTH_LIMITS,
+  resolveDesktopWorkbenchContextResizeWidth,
   resolveDesktopWorkbenchPanelRange,
   resolveDesktopWorkbenchWidths,
 } from '../../common/workbenchPanelLayout'
@@ -21,6 +22,7 @@ interface UseDesktopWorkbenchResizeOptions {
   container: Readonly<Ref<HTMLElement | null>>
   context: Readonly<Ref<HTMLElement | null>>
   contextVisible?: () => boolean
+  contextOnLeft?: () => boolean
   sidebar: Readonly<Ref<HTMLElement | null>>
   sidebarResizable: () => boolean
   sidebarVisible: () => boolean
@@ -114,10 +116,21 @@ export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOption
     const bounds = resizeBounds
     if (!bounds)
       return
-    setPanelWidth(
-      panel,
-      panel === 'sidebar' ? clientX - bounds.left : bounds.right - clientX,
-    )
+    if (panel === 'sidebar') {
+      setPanelWidth(panel, clientX - bounds.left)
+      return
+    }
+    const contextOnLeft = options.contextOnLeft?.() ?? false
+    const sidebarWidth = options.sidebarVisible()
+      ? options.sidebar.value?.getBoundingClientRect().width ?? widths.value.sidebarWidth
+      : 0
+    setPanelWidth(panel, resolveDesktopWorkbenchContextResizeWidth({
+      clientX,
+      containerLeft: bounds.left,
+      containerRight: bounds.right,
+      contextOnLeft,
+      sidebarWidth,
+    }))
   }
 
   function flushResize(): void {
@@ -204,10 +217,14 @@ export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOption
       nextWidth = range.minimum
     else if (event.key === 'End')
       nextWidth = range.maximum
-    else if (event.key === 'ArrowLeft')
-      nextWidth = currentWidth + (panel === 'context' ? step : -step)
-    else if (event.key === 'ArrowRight')
-      nextWidth = currentWidth + (panel === 'context' ? -step : step)
+    else if (event.key === 'ArrowLeft') {
+      const contextDelta = options.contextOnLeft?.() ? -step : step
+      nextWidth = currentWidth + (panel === 'context' ? contextDelta : -step)
+    }
+    else if (event.key === 'ArrowRight') {
+      const contextDelta = options.contextOnLeft?.() ? step : -step
+      nextWidth = currentWidth + (panel === 'context' ? contextDelta : step)
+    }
 
     if (nextWidth === null)
       return

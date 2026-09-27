@@ -9,11 +9,13 @@ import { useWorkbenchPanelResize } from './useWorkbenchPanelResize'
 const props = withDefaults(defineProps<{
   language: BuddyLocale
   contextVisible?: boolean
+  contextOnLeft?: boolean
   sidebarCollapsible?: boolean
   sidebarResizable?: boolean
   workspaceMinimumWidth?: number
 }>(), {
   contextVisible: true,
+  contextOnLeft: false,
   sidebarCollapsible: false,
   sidebarResizable: false,
   workspaceMinimumWidth: 288,
@@ -54,6 +56,7 @@ const {
   container,
   context,
   contextVisible: () => props.contextVisible,
+  contextOnLeft: () => props.contextOnLeft,
   workspaceMinimumWidth: () => props.workspaceMinimumWidth,
   onSidebarWidthCommit: (width) => {
     sidebarWidthPreference.value = width
@@ -110,6 +113,7 @@ onBeforeUnmount(() => {
     :class="{
       'is-resizing': activePanel !== null,
       'is-sidebar-transitioning': sidebarTransitioning,
+      'is-context-leading': contextOnLeft,
     }"
     :style="layoutStyle"
   >
@@ -161,13 +165,13 @@ onBeforeUnmount(() => {
     >
       <DesktopIcon class="desktop-workbench-layout__sidebar-chevron" name="sidebarChevron" />
     </button>
-    <main class="desktop-workbench-layout__workspace">
+    <main class="desktop-workbench-layout__workspace" :class="{ 'is-context-leading': contextOnLeft }">
       <slot />
     </main>
     <div
       v-if="$slots.context && contextVisible"
       class="desktop-workbench-layout__resizer"
-      :class="{ 'is-active': activePanel === 'context' }"
+      :class="{ 'is-active': activePanel === 'context', 'is-context-leading': contextOnLeft }"
       data-testid="workbench-context-resizer"
       role="separator"
       :aria-label="t('desktop.layout.resizeContext')"
@@ -179,7 +183,7 @@ onBeforeUnmount(() => {
       @keydown="handleResizeKeydown('context', $event)"
       @pointerdown="beginResize('context', $event)"
     />
-    <aside v-if="$slots.context" v-show="contextVisible" ref="context" class="desktop-workbench-layout__context" :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible">
+    <aside v-if="$slots.context" v-show="contextVisible" ref="context" class="desktop-workbench-layout__context" :class="{ 'is-context-leading': contextOnLeft }" :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible">
       <slot name="context" />
     </aside>
     <div v-if="activePanel" class="desktop-workbench-layout__resize-shield" />
@@ -237,6 +241,22 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: none;
   border-left: 1px solid var(--buddy-border-subtle);
+}
+
+.desktop-workbench-layout.is-context-leading .desktop-workbench-layout__context {
+  order: 1;
+  border-right: 1px solid var(--buddy-border-subtle);
+  border-left: 0;
+}
+
+.desktop-workbench-layout.is-context-leading .desktop-workbench-layout__resizer:not(.desktop-workbench-layout__sidebar-resizer) {
+  order: 2;
+  margin-right: 0;
+  margin-left: -1px;
+}
+
+.desktop-workbench-layout.is-context-leading .desktop-workbench-layout__workspace {
+  order: 3;
 }
 
 .desktop-workbench-layout__resizer {
@@ -375,6 +395,17 @@ onBeforeUnmount(() => {
   content: '';
   transform: translateX(-0.5px);
   transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
+}
+
+.desktop-workbench-layout.is-context-leading .desktop-workbench-layout__resizer:not(.desktop-workbench-layout__sidebar-resizer)::before {
+  right: -4px;
+  left: auto;
+}
+
+.desktop-workbench-layout.is-context-leading .desktop-workbench-layout__resizer:not(.desktop-workbench-layout__sidebar-resizer)::after {
+  right: 0;
+  left: auto;
+  transform: translateX(0.5px);
 }
 
 .desktop-workbench-layout__resizer:hover::after,

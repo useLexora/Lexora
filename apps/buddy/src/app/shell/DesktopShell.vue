@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DesktopShellBindings } from './desktopShellBindings'
-import { computed } from 'vue'
+import { computed, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DesktopStartupScreen from '@/app/bootstrap/DesktopStartupScreen.vue'
 import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
@@ -19,6 +19,7 @@ const { appSidebarCollapsed, language } = useDesktopUi()
 const startupVisible = computed(() => !bindings.lifecycle.state.value.hasBeenReady && route.meta.settingsCategory !== 'logs')
 const activeView = computed(() => bindings.pages.current.value)
 const navigation = computed(() => bindings.pages.navigation.value)
+const contextOnLeft = shallowRef(false)
 function navigate(id: string) {
   const entry = navigation.value.find(entry => entry.id === id)
   if (entry)
@@ -35,7 +36,10 @@ function navigate(id: string) {
       :language="language"
       :context-available="bindings.contextPanelGlobal.value || activeView === 'lexora.tasks'"
       :context-open="bindings.resources.isOpen.value"
+      :context-swap-available="activeView === 'lexora.tasks' && bindings.resources.isOpen.value"
+      :context-swapped="contextOnLeft"
       @toggle-context="bindings.resources.toggle"
+      @toggle-context-position="contextOnLeft = !contextOnLeft"
       @toggle-app-sidebar="bindings.toggleAppSidebar"
     />
     <div class="desktop-shell__body">
@@ -60,7 +64,7 @@ function navigate(id: string) {
             />
           </Transition>
           <WorkbenchMountPoint target="workbench" class="desktop-shell__workbench">
-            <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="activeView === 'lexora.tasks'" />
+            <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="activeView === 'lexora.tasks'" :context-on-left="contextOnLeft" />
           </WorkbenchMountPoint>
         </div>
         <template #view="{ view, visible }">
