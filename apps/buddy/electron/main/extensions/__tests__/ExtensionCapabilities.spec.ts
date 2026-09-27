@@ -22,8 +22,10 @@ it('discovers a compact host index and exact target contracts without loading pl
     expect(index.targets.every(target => !target.description && !target.height)).toBe(true)
     const detail = extensionCapabilitiesSchema.parse(await query({ target: 'composer.accessory' }))
     expect(detail.targets).toEqual([expect.objectContaining({ kind: 'slot', selection: 'multiple', height: { min: 32, max: 240, default: 64 } })])
+    expect(detail.targets[0]!.description).toContain('ViewContext.setActive(false)')
+    expect(detail.targets[0]!.description).toContain('Plugin-owned settings')
     const placement = { id: 'tests.content.slot', view: 'tests.content.view', kind: 'slot', target: detail.targets[0]!.target }
-    expect(extensionPlacementSchema.parse(placement)).toMatchObject({ height: detail.targets[0]!.height!.default })
+    expect(extensionPlacementSchema.parse({ ...placement, enabled: false })).toMatchObject({ height: detail.targets[0]!.height!.default, enabled: false })
     expect(extensionPlacementSchema.safeParse({ ...placement, height: detail.targets[0]!.height!.max + 1 }).success).toBe(false)
     expect(extensionCapabilitiesSchema.parse(await query({ target: 'document.body' })).targets).toEqual([])
     expect(extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' })).targets.map(target => target.target)).toEqual(['commands', 'workbench.panes', 'workbench.interactions'])

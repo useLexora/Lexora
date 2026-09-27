@@ -40,7 +40,7 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}) {
     createView: () => ({ token: randomUUID(), url: 'lexora-extension://fixture/__view.html', dispose: () => {} }),
     workbench: async (event) => {
       events.push(event)
-      return event.kind === 'interaction' ? event.interactionId : event.kind === 'state' || event.kind === 'regions' ? event.viewId : randomUUID()
+      return event.kind === 'placement' ? event.requestId : event.kind === 'interaction' ? event.interactionId : event.kind === 'state' || event.kind === 'regions' || event.kind === 'activity' ? event.viewId : randomUUID()
     },
     readText: async target => `Content of ${target.path}`,
     get: async () => new Response('network'),
@@ -176,7 +176,7 @@ it('stops dependent hosts when their dependency is disabled', async () => {
 it('authorizes each placement and control request against its own live view session', async () => {
   const { root, store, service, hosts, events } = await fixture({ workbench: async (event) => {
     events.push(event)
-    return event.kind === 'control' ? event.viewId : randomUUID()
+    return event.kind === 'control' ? event.viewId : event.kind === 'placement' ? event.requestId : randomUUID()
   } })
   const value = manifest({ apiVersion: 2, id: 'tests.controls', permissions: { controls: ['model.reasoning'] }, contributes: {
     views: [{ id: 'tests.controls.ui', title: 'Controls', entry: 'view.js', resource: 'none' }],
@@ -198,14 +198,17 @@ it('authorizes each placement and control request against its own live view sess
   await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await hosts[0]!.broker('placements.show', { id: 'tests.controls.top' })
   expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', extensionId: value.id, placementId: 'tests.controls.top', visible: true }))
-  await expect(hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning' })
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', placementId: 'tests.controls.reasoning', visible: true }))
+  await expect(hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning', instanceId: randomUUID() })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'view.setActive', { active: false })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(hosts[0]!.broker('placements.show', { id: 'another.plugin.top' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
   await service.enable(value.id, false)
   await expect(service.viewRequest(session.id, session.generation, session.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
-it('keeps a content slot limited to its selected view surface', async () => {
-  const { root, store, service, hosts } = await fixture()
+it('authorizes slot activation and withdrawal without expanding layout or control permissions', async () => {
+  const { root, store, service, hosts, events } = await fixture()
   const value = manifest({ apiVersion: 3, id: 'tests.footer', contributes: {
     views: [{ id: 'tests.footer.content', title: 'Footer', entry: 'view.js', resource: 'none' }],
     placements: [{ id: 'tests.footer.slot', view: 'tests.footer.content', kind: 'slot', target: 'composer.footer' }],
@@ -217,7 +220,17 @@ it('keeps a content slot limited to its selected view surface', async () => {
   await expect(request('view.setState', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(request('view.setPresentation', { height: 200 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(request('control.propose', { revision: randomUUID(), value: 'high' })).rejects.toThrow('EXTENSION_METHOD_DENIED')
-  await expect(hosts[0]!.broker('placements.show', { id: 'tests.footer.slot' })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await hosts[0]!.broker('placements.show', { id: 'tests.footer.slot' })
+  await hosts[0]!.broker('placements.hide', { id: 'tests.footer.slot' })
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', placementId: 'tests.footer.slot', visible: false }))
+  await request('view.setActive', { active: false })
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'activity', viewId: session.id, token: session.token, active: false }))
+  await request('view.setActive', { active: true })
+  await expect(request('view.setActive', { active: 'yes' })).rejects.toThrow()
+  await expect(service.viewRequest(session.id, session.generation, randomUUID(), 'view.setActive', { active: false })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await expect(hosts[0]!.broker('placements.hide', { id: 'tests.footer.slot', interactionId: randomUUID() })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
+  await service.enable(value.id, false)
+  await expect(request('view.setActive', { active: true })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
 it('does not let an older concurrent open replace a newer view endpoint', async () => {

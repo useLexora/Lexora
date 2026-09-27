@@ -7,10 +7,10 @@ import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
 import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { useExtensionUiContributions } from '../useExtensionUiContributions'
 
-it('retains ordered selections through disabled providers and rejects malformed settings', () => {
+it('discovers contributions automatically, preserves legacy ordering and isolates runtime overrides by generation', () => {
   const manifest = extensionManifestSchema.parse({ schemaVersion: 1, apiVersion: 3, id: 'tests.accessories', name: 'Accessories', version: '1.0.0', engines: { lexora: '*' }, contributes: {
     views: [{ id: 'tests.accessories.view', title: 'Panel', entry: 'view.js', resource: 'none' }],
-    placements: ['first', 'second'].map(name => ({ id: `tests.accessories.${name}`, view: 'tests.accessories.view', kind: 'slot', target: 'composer.accessory' })),
+    placements: ['first', 'second', 'optional'].map(name => ({ id: `tests.accessories.${name}`, view: 'tests.accessories.view', kind: 'slot', target: 'composer.accessory', ...(name === 'optional' ? { enabled: false } : {}) })),
   } })
   const status: ExtensionStatus = { manifest, revision: 'one', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }
   const installed = shallowRef([status])
@@ -19,19 +19,25 @@ it('retains ordered selections through disabled providers and rejects malformed 
   const scope = effectScope()
   const ui = scope.run(() => useExtensionUiContributions(installed, controller.configuration))!
   const target = { kind: 'slot', target: 'composer.accessory' } as const
-  const selected = ['tests.accessories.second', 'tests.accessories.first']
+  const ids = () => ui.providers(target).filter(provider => provider.enabled).map(provider => provider.placement.id)
   try {
-    ui.choose(target, selected)
-    expect(ui.selected(target).map(provider => provider.placement.id)).toEqual(selected)
-    expect(() => controller.configuration.set(workbenchUiSelectionKey(target), 'unparsed')).toThrow()
-    ui.choose(target, [selected[0]!, selected[0]!])
-    expect(ui.selected(target).map(provider => provider.placement.id)).toEqual(selected)
+    expect(ids()).toEqual(['tests.accessories.first', 'tests.accessories.second'])
+    const previous = ['tests.accessories.second', 'tests.accessories.first']
+    controller.configuration.set(workbenchUiSelectionKey(target), JSON.stringify(previous))
+    expect(ids()).toEqual(previous)
+    expect(ui.setEnabled('tests.other', status.generation!, previous[0]!, false)).toBeNull()
+    expect(ui.setEnabled(manifest.id, crypto.randomUUID(), previous[0]!, false)).toBeNull()
+    expect(ui.setEnabled(manifest.id, status.generation!, previous[0]!, false)).toEqual({ changed: true })
+    expect(ids()).toEqual([previous[1]])
+    expect(ui.setEnabled(manifest.id, status.generation!, 'tests.accessories.optional', true)).toEqual({ changed: true })
+    expect(ids()).toEqual([previous[1], 'tests.accessories.optional'])
+    installed.value = [{ ...status }]
+    expect(ids()).toEqual([previous[1], 'tests.accessories.optional'])
+    installed.value = [{ ...status, generation: crypto.randomUUID() }]
+    expect(ids()).toEqual(previous)
+    expect(controller.configuration.get(workbenchUiSelectionKey(target))).toBe(JSON.stringify(previous))
     installed.value = [{ ...status, enabled: false }]
-    expect(ui.selected(target)).toEqual([])
-    expect(controller.configuration.get(workbenchUiSelectionKey(target))).toBe(JSON.stringify(selected))
-    ui.choose(target, [selected[1]!])
-    installed.value = [status]
-    expect(ui.selected(target).map(provider => provider.placement.id)).toEqual([selected[1]])
+    expect(ui.providers(target)).toEqual([])
   }
   finally { scope.stop() }
 })

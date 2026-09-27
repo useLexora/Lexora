@@ -12,7 +12,7 @@ interface ContentDefinition extends TargetDefinition {
 
 export const workbenchSlots = {
   'composer.footer': { title: { 'zh-CN': '输入区下方', 'en-US': 'Below the composer' }, scope: 'composer', selection: 'single', height: { min: 20, max: 48, default: 28 }, description: 'Replace the short footer below each composer. The built-in reminder returns when unavailable.' },
-  'composer.accessory': { title: { 'zh-CN': '输入辅助区', 'en-US': 'Composer accessories' }, scope: 'composer', selection: 'multiple', height: { min: 32, max: 240, default: 64 }, description: 'Add independent panels above each composer. Selected providers appear in user order; no draft content is shared.' },
+  'composer.accessory': { title: { 'zh-CN': '输入辅助区', 'en-US': 'Composer accessories' }, scope: 'composer', selection: 'multiple', height: { min: 32, max: 240, default: 64 }, description: 'Add independent panels above each composer. Available providers appear in stable order; no draft content is shared.' },
   'task.welcome': { title: { 'zh-CN': '新任务欢迎区', 'en-US': 'New task welcome' }, scope: 'pane', selection: 'single', height: { min: 64, max: 400, default: 240 }, description: 'Replace the welcome artwork and greeting while a task has no messages. The composer remains host-owned.' },
   'workbench.pane.empty': { title: { 'zh-CN': '空白分屏', 'en-US': 'Empty pane' }, scope: 'pane', selection: 'single', height: { min: 64, max: 640, default: 240 }, description: 'Replace the empty surface of a pane without a view. Unavailable providers restore the built-in launcher.' },
 } as const satisfies Record<string, ContentDefinition>
@@ -67,7 +67,7 @@ function catalog<K extends string, T extends Record<string, TargetDefinition>>(k
 }
 export const workbenchUiTargetCatalog = [...catalog('control', workbenchControls), ...catalog('slot', workbenchSlots)]
 export type WorkbenchUiSelectionTarget = Pick<(typeof workbenchUiTargetCatalog)[number], 'kind' | 'target'>
-export const workbenchContributionCatalog = [...workbenchUiTargetCatalog, ...catalog('mount', workbenchMounts), ...catalog('menu', workbenchMenus), ...catalog('decoration', workbenchDecorations), ...catalog('runtime', workbenchRuntimeCapabilities)]
+export const workbenchContributionCatalog = [...workbenchUiTargetCatalog.map(target => ({ ...target, description: `${target.description} Plugin-owned settings: enabled defaults to true; placements.show/hide toggles an owned contribution for the current host generation. ViewContext.setActive(false) yields native fallback without destroying the view. First available provider wins a single target; legacy order then contribution ID. See slots.md.` })), ...catalog('mount', workbenchMounts), ...catalog('menu', workbenchMenus), ...catalog('decoration', workbenchDecorations), ...catalog('runtime', workbenchRuntimeCapabilities)]
 export const workbenchCapabilityKinds = ['slot', 'control', 'mount', 'menu', 'decoration', 'runtime'] as const
 export const workbenchCapabilityQuerySchema = z.object({ kind: z.enum(workbenchCapabilityKinds).optional(), target: z.string().min(1).max(100).optional() }).strict()
 export function queryWorkbenchCapabilities(query: z.infer<typeof workbenchCapabilityQuerySchema>) {

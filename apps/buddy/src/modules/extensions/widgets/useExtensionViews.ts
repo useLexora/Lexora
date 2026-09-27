@@ -18,6 +18,7 @@ export interface ExtensionSurface {
   input: ExtensionViewInput
   element: HTMLElement
   visible: boolean
+  active: boolean
   eligible: boolean
   session: ExtensionViewSession | null
   opening: boolean
@@ -59,6 +60,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     surface.session = null
     surface.opening = false
     surface.ready = false
+    surface.active = true
     surface.error = ''
     surface.regions = []
   }
@@ -149,7 +151,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
       previous.control = binding?.control ?? null
     }
     else {
-      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '', regions: [], interactionMode: null })
+      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, active: true, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '', regions: [], interactionMode: null })
       lifecycles.set(surface, { revision: null, generation: null, request: 0 })
       surfaces.set(input.viewId, surface)
     }
@@ -186,7 +188,16 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   }
   function proposeControl(id: string, generation: string, token: string, proposal: ControlProposal): boolean {
     const surface = surfaces.get(id)
-    return !!surface?.ready && surface.eligible && surface.visible && !surface.error && surface.session?.generation === generation && surface.session.token === token && !!surface.control?.propose(proposal)
+    return !!surface?.ready && surface.active && surface.eligible && surface.visible && !surface.error && surface.session?.generation === generation && surface.session.token === token && !!surface.control?.propose(proposal)
+  }
+  function setActive(id: string, generation: string, token: string, active: boolean): boolean {
+    const surface = surfaces.get(id)
+    const placement = installed.value.find(item => item.manifest.id === surface?.input.extensionId)?.manifest.contributes.placements.find(item => item.id === surface?.input.placementId)
+    if (!surface || surface.session?.generation !== generation || surface.session.token !== token || (placement?.kind !== 'slot' && placement?.kind !== 'control'))
+      return false
+    surface.active = active
+    layout()
+    return true
   }
   onScopeDispose(() => {
     for (const id of surfaces.keys()) hide(id)
@@ -205,7 +216,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     return () => messageListeners.delete(listener)
   }, broadcast: (extensionId: string, generation: string, message: JsonValue) => {
     for (const listener of messageListeners) listener(extensionId, generation, message)
-  }, surfaces, show, hide, fail, retryControl, proposeControl, layout: () => layout(), setLayout: (callback: () => void) => {
+  }, surfaces, show, hide, fail, retryControl, proposeControl, setActive, layout: () => layout(), setLayout: (callback: () => void) => {
     layout = callback
   } }
 }

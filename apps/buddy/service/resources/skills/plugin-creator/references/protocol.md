@@ -96,8 +96,8 @@
 | --- | --- | --- |
 | `decoration` | `anchor` | 自动挂载至 `app.sidebar`、`workbench.sidebar`、`workbench.pane` 或 `composer.input`；每个锚点实例分别挂载，只在该区域内绘制，不接收指针和焦点 |
 | `view` | `target` | 用 `lexora_plugin_capabilities({kind:"mount"})` 查询目标；`presentation` 描述区域内布局，宿主入口调用 `context.placements.show(id, instanceId?)` / `hide(id, instanceId?)` |
-| `control` | `target` | 当前支持 `model.reasoning`；用户在插件管理页选择后才替换内置控件 |
-| `slot` | `target` | 需要将 `apiVersion` 设为 3；用户在插件管理页选择后替换目标内容，具体目标和尺寸按需查 [内容插槽目录](slots.md) |
+| `control` | `target` | 当前支持 `model.reasoning`；由插件自身配置启停，运行规则见 [内容插槽与替换控件](slots.md) |
+| `slot` | `target` | 需要将 `apiVersion` 设为 3；由插件自身配置启停，目标、尺寸和默认内容回退见 [内容插槽](slots.md) |
 
 挂载口只提供容器，不提供面板外壳或交互。声明示意：`{id,view,kind:"view",target:"workbench",presentation:{position:"absolute",width:420,height:180,right:16,bottom:16}}`。目标所属范围由能力目录返回。API 3 的分屏挂载以 `instanceId` 区分实例；从命令 `invocation.instanceId` 传入发起操作的分屏，不要在异步完成后重新选择焦点。省略时使用调用时的活动分屏，标识失效则拒绝打开。每个分屏分别保存状态，分屏移除时结束该实例。挂载口暂时不可用时保留实例，恢复后继续投影。插件自行渲染全部内容、样式与交互；插件之间保留独立实例，宿主不生成切换器、不自动避让或折叠。
 
@@ -105,7 +105,7 @@
 
 `context.setPresentation({...})` 合并更新上述字段，传 `target` 可转移挂载口。进入分屏区域要求该视图在创建时已绑定分屏，不会把全局实例隐式移入当前焦点分屏。实例、会话与状态保留；插件的定时器、媒体等不会因为换位置而重建。布局值由宿主持久化，业务状态由插件自己保存。`context.mount` / `onMountChange` 提供目标容器宽高、可见性和当前视图的局部矩形，供插件响应尺寸变化或实现拖动等交互，不包含屏幕坐标、其他插件信息或父 DOM。
 
-宿主不认识“折叠”“展开”“贴边”或“播放器”。需要这些效果时，插件自己渲染触发入口、控制布局并保存自己的状态。缩小视图外框不销毁内容；调用宿主命令中的 `placements.hide` 才关闭实例。插件负责再次打开的入口，可以使用自己的可见 UI、已声明命令或导航。不要依赖宿主替插件提供关闭栏或恢复按钮。
+宿主不认识“折叠”“展开”“贴边”或“播放器”。需要这些效果时，插件自己渲染触发入口、控制布局并保存自己的状态。缩小视图外框不销毁内容；普通挂载调用宿主命令中的 `placements.hide` 才关闭实例。插件负责再次打开的入口，可以使用自己的可见 UI、已声明命令或导航。不要依赖宿主替插件提供关闭栏或恢复按钮。
 
 旧版 `location: workbench.top/workbench.bottom` 与 `height` 在读取时转换为工作台的 static/-1 或 static/1，旧悬浮声明转换为 absolute。新源码使用 target/presentation，不增加业务专用 location。`control.height` 仍为 32–160，默认 64。
 
@@ -129,7 +129,7 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 
 `contributes.views`、`placements`、`commands`、`menus` 和 `navigation` 可声明可选的 `when`。例如 `"when": {"page.id": ["lexora.tasks", "lexora.automations"]}`；对象中的不同 key 为 AND，数组内为 OR，标量严格相等，缺失 key 不匹配。空对象或省略表示不限定，不执行表达式代码。最多 32 个 key，每个数组最多 32 项，值限字符串（256 字符）、布尔和有限数字。视图定义与挂载的条件同时满足才显示。只限定某个挂载实例时优先在 placement 声明；view 的条件影响该定义的所有实例，navigation 的条件只限定入口。
 
-条件只控制 UI 的可用性，不授予权限、不启动插件，也不阻止插件自身调用命令或后台调度。命令菜单与导航入口随上下文更新。首次不满足条件的视图不激活；已打开视图离开范围时隐藏，挂载面板退出布局占位，实例、状态与会话保留，返回后恢复。控件不匹配时使用内置控件并拒绝旧提交。`placements.hide` 仍表示关闭实例，与条件隐藏不同。
+条件只控制 UI 的可用性，不授予权限、不启动插件，也不阻止插件自身调用命令或后台调度。命令菜单与导航入口随上下文更新。首次不满足条件的视图不激活；已打开视图离开范围时隐藏，挂载面板退出布局占位，实例、状态与会话保留，返回后恢复。控件不匹配时使用内置控件并拒绝旧提交。普通挂载的 `placements.hide` 仍表示关闭实例；slot/control 的运行期启停和视图 active 状态见 [内容插槽](slots.md)。
 
 `context.visible/onVisibilityChange` 表达当前视图实际可见性（包含页面范围、区域隐藏和窗口隐藏）。插件自行决定隐藏时暂停动画、查询或媒体，宿主不推断业务行为。订阅随视图销毁自动释放；插件也可提前调用返回对象的 `dispose()`。受范围限制的功能应验收首次不匹配、进入、离开、返回、子页切换和重启后的条件恢复。
 

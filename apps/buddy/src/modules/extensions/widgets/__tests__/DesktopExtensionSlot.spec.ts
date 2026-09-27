@@ -14,13 +14,12 @@ import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { useProvideExtensionContext } from '../../extensionContext'
 import { useExtensionUiContributions } from '../../state/useExtensionUiContributions'
 import DesktopExtensionSlot from '../DesktopExtensionSlot.vue'
-import DesktopExtensionUiSettings from '../DesktopExtensionUiSettings.vue'
 import { useExtensionViews } from '../useExtensionViews'
 
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
-it('keeps the built-in footer until a selected slot view is ready and restores it when unavailable', async () => {
+it('keeps the built-in footer until a declared slot view is ready and restores it when unavailable', async () => {
   const manifest = extensionManifestSchema.parse({
     schemaVersion: 1,
     id: 'tests.footer',
@@ -55,7 +54,6 @@ it('keeps the built-in footer until a selected slot view is ready and restores i
       views = useExtensionViews(api, installed, context)
       useProvideExtensionContext({ endInteraction: () => {}, workbench: shallowRef({ values: context.value, pages: [] }), anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), state: { installed, api } as ExtensionContext['state'], views, language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h('div', [
-        h(DesktopExtensionUiSettings, { language: 'en-US' }),
         ...[0, 1].map(index => h(DesktopExtensionSlot, { target: 'composer.footer' }, { default: () => h('p', `Verify results ${index}`) })),
       ])
     },
@@ -67,10 +65,6 @@ it('keeps the built-in footer until a selected slot view is ready and restores i
   })
 
   expect(element.textContent).toContain('Verify results 0')
-  expect(opened).toHaveLength(0)
-  const select = element.querySelector('select')!
-  select.value = 'tests.footer.placement'
-  select.dispatchEvent(new Event('change', { bubbles: true }))
   await nextTick()
   await nextTick()
   expect(opened).toHaveLength(2)
@@ -81,9 +75,22 @@ it('keeps the built-in footer until a selected slot view is ready and restores i
   await nextTick()
   expect(element.textContent).not.toContain('Verify results')
 
+  const first = [...views.surfaces.values()][0]!
+  const session = first.session!
+  expect(views.setActive(session.id, session.generation, crypto.randomUUID(), false)).toBe(false)
+  expect(views.setActive(session.id, session.generation, session.token, false)).toBe(true)
+  await nextTick()
+  expect(element.textContent).toContain('Verify results 0')
+  expect(element.textContent).not.toContain('Verify results 1')
+  expect(first.session).toEqual(session)
+  expect(views.setActive(session.id, session.generation, session.token, true)).toBe(true)
+  await nextTick()
+  expect(element.textContent).not.toContain('Verify results')
+  expect(opened).toHaveLength(2)
+
   installed.value = [{ ...status, enabled: false, state: 'disabled' }]
   await nextTick()
   expect(element.textContent).toContain('Verify results 0')
   expect(element.textContent).toContain('Verify results 1')
-  expect(controller.configuration.get('workbench.slots.composer.footer')).toBe('tests.footer.placement')
+  expect(controller.configuration.get('workbench.slots.composer.footer')).toBe('')
 })

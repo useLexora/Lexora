@@ -14,7 +14,6 @@ import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { useProvideExtensionContext } from '../../extensionContext'
 import { useExtensionUiContributions } from '../../state/useExtensionUiContributions'
 import DesktopExtensionControl from '../DesktopExtensionControl.vue'
-import DesktopExtensionUiSettings from '../DesktopExtensionUiSettings.vue'
 import { useExtensionViews } from '../useExtensionViews'
 
 const disposables: (() => void)[] = []
@@ -49,7 +48,7 @@ async function setup() {
   const api = {
     openView: async (input: ExtensionViewInput) => {
       opened.push(input)
-      return { id: input.viewId, extensionId: input.extensionId, generation: installed.value[0]!.generation!, token: crypto.randomUUID(), url: 'about:blank' }
+      return { id: input.viewId, extensionId: input.extensionId, generation: installed.value.find(item => item.manifest.id === input.extensionId)!.generation!, token: crypto.randomUUID(), url: 'about:blank' }
     },
     closeView: async () => {},
     viewRequest: async () => null,
@@ -65,7 +64,6 @@ async function setup() {
       views = useExtensionViews(api, installed, context)
       useProvideExtensionContext({ endInteraction: () => {}, views, workbench: shallowRef({ values: context.value, pages: [] }), state: { installed, api } as ExtensionContext['state'], anchors: new SemanticAnchorRegistry(), ui: useExtensionUiContributions(installed, controller.configuration), language: shallowRef('en-US'), isDark: shallowRef(false), focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h('div', [
-        h(DesktopExtensionUiSettings, { language: 'en-US' }),
         mounted.value
           ? h(DesktopExtensionControl, {
               target: 'model.reasoning',
@@ -89,17 +87,10 @@ async function setup() {
     surface().ready = true
     await nextTick()
   }
-  const choose = async (id: string) => {
-    const select = element.querySelector('select')!
-    select.value = id
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-    await nextTick()
-    await nextTick()
-  }
   await nextTick()
   await nextTick()
   await ready()
-  return { context, views, surface, ready, choose, value, mounted, opened, installed, status, visibility, element }
+  return { context, views, surface, ready, value, mounted, opened, installed, status, visibility, element }
 }
 
 it('rejects current proposals while the document is hidden even when the control has layout', async () => {
@@ -136,7 +127,7 @@ it('falls back outside its page scope and invalidates proposals made before leav
   expect(f.value.value).toBe('high')
 })
 
-it('keeps the native fallback across popover remounts until the user explicitly reselects the control', async () => {
+it('keeps the native fallback across popover remounts until explicitly retried', async () => {
   const fixture = await setup()
   fixture.views.fail(fixture.surface(), 'EXTENSION_VIEW_TIMEOUT')
   fixture.mounted.value = false
@@ -150,8 +141,9 @@ it('keeps the native fallback across popover remounts until the user explicitly 
   expect(fixture.surface().session).toBeNull()
   expect(fixture.opened).toHaveLength(1)
   expect(fixture.element.querySelector('[data-native-control]')?.textContent).toBe('low')
-  await fixture.choose('')
-  await fixture.choose('tests.control.reasoning')
+  fixture.views.retryControl('tests.control.reasoning')
+  await nextTick()
+  await nextTick()
   await fixture.ready()
   expect(fixture.surface().session).not.toBeNull()
   expect(fixture.surface().error).toBe('')
@@ -173,4 +165,45 @@ it('recovers a failed control after the host restarts while the popover is close
   expect(fixture.surface().session?.generation).toBe(fixture.installed.value[0]!.generation)
   expect(fixture.surface().error).toBe('')
   expect(fixture.element.querySelector('[data-native-control]')).toBeNull()
+})
+
+it('arbitrates competing controls and invalidates a proposal after a provider yields its surface', async () => {
+  const f = await setup()
+  const primary = f.surface()
+  const primarySession = primary.session!
+  const oldProposal = { revision: primary.control!.snapshot().revision, value: 'high' }
+  const secondary: ExtensionStatus = {
+    ...f.status,
+    generation: crypto.randomUUID(),
+    manifest: extensionManifestSchema.parse({
+      ...f.status.manifest,
+      id: 'tests.secondary',
+      contributes: {
+        views: [{ id: 'tests.secondary.slider', title: 'Other slider', entry: 'slider.js', resource: 'none' }],
+        placements: [{ id: 'tests.secondary.control', view: 'tests.secondary.slider', kind: 'control', target: 'model.reasoning' }],
+      },
+    }),
+  }
+  f.installed.value = [secondary, f.status]
+  await nextTick()
+  await nextTick()
+  const other = [...f.views.surfaces.values()].find(surface => surface.input.extensionId === secondary.manifest.id)!
+  other.ready = true
+  await nextTick()
+  expect(primary.visible).toBe(true)
+  expect(other.visible).toBe(false)
+  const session = other.session!
+  expect(f.views.proposeControl(session.id, session.generation, session.token, oldProposal)).toBe(false)
+  expect(f.views.setActive(primarySession.id, primarySession.generation, primarySession.token, false)).toBe(true)
+  await nextTick()
+  expect(primary.visible).toBe(false)
+  expect(other.visible).toBe(true)
+  expect(f.element.querySelector('[data-native-control]')).toBeNull()
+  expect(f.views.proposeControl(session.id, session.generation, session.token, oldProposal)).toBe(false)
+  expect(f.views.setActive(primarySession.id, primarySession.generation, primarySession.token, true)).toBe(true)
+  await nextTick()
+  expect(f.views.proposeControl(primarySession.id, primarySession.generation, primarySession.token, oldProposal)).toBe(false)
+  const current = { revision: primary.control!.snapshot().revision, value: 'high' }
+  expect(f.views.proposeControl(primarySession.id, primarySession.generation, primarySession.token, current)).toBe(true)
+  expect(f.value.value).toBe('high')
 })

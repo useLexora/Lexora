@@ -419,6 +419,15 @@ export class ExtensionService {
     if (method === 'bootstrap') {
       result = { apiVersion: view.running.package.manifest.apiVersion, instanceId: view.input.instanceId ?? null, interactionId: view.input.interactionId ?? null, interactionMode: placement?.kind === 'view' ? placement.interaction ?? null : null, entry: contribution.entry, location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
     }
+    else if (method === 'view.setActive') {
+      if (placement?.kind !== 'slot' && placement?.kind !== 'control')
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const { active } = z.object({ active: z.boolean() }).strict().parse(params)
+      const accepted = await this.#ports.workbench({ kind: 'activity', requestId: randomUUID(), viewId: id, generation, token, active }, view.abort.signal)
+      if (accepted !== id)
+        throw new Error('EXTENSION_VIEW_UNAVAILABLE')
+      result = null
+    }
     else if (method === 'view.setState') {
       if (contribution.location !== 'context' || (placement && placement.kind !== 'view'))
         throw new Error('EXTENSION_METHOD_DENIED')
@@ -779,14 +788,21 @@ export class ExtensionService {
       else if (method === 'placements.show' || method === 'placements.hide') {
         const input = z.object({ id: z.string().max(180), instanceId: z.string().uuid().optional(), interactionId: z.string().uuid().optional() }).strict().parse(params)
         const placement = running.package.manifest.contributes.placements.find(placement => placement.id === input.id)
-        if (placement?.kind !== 'view' || (input.instanceId && placement.target !== 'workbench.pane'))
+        if (!placement || placement.kind === 'decoration' || (placement.kind !== 'view' && (input.instanceId || input.interactionId)) || (input.instanceId && placement.target !== 'workbench.pane'))
           throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
         const interaction = input.interactionId ? this.#interactions.get(input.interactionId) : null
-        if (!!placement.interaction !== !!input.interactionId || (input.interactionId && interaction?.running !== running))
+        if (!!(placement.kind === 'view' && placement.interaction) !== !!input.interactionId || (input.interactionId && interaction?.running !== running))
           throw new Error('EXTENSION_INTERACTION_ENDED')
-        result = await this.#ports.workbench({ kind: 'placement', requestId: randomUUID(), extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show', ...(input.instanceId ? { instanceId: input.instanceId } : {}), ...(input.interactionId ? { interactionId: input.interactionId } : {}) }, interaction ? AbortSignal.any([running.abort.signal, interaction.abort.signal]) : running.abort.signal)
-        if (method === 'placements.show' && !result)
+        const requestId = randomUUID()
+        result = await this.#ports.workbench({ kind: 'placement', requestId, extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show', ...(input.instanceId ? { instanceId: input.instanceId } : {}), ...(input.interactionId ? { interactionId: input.interactionId } : {}) }, interaction ? AbortSignal.any([running.abort.signal, interaction.abort.signal]) : running.abort.signal)
+        if (placement.kind !== 'view') {
+          if (result !== requestId)
+            throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
+          result = placement.id
+        }
+        else if (method === 'placements.show' && !result) {
           throw new Error('EXTENSION_VIEW_UNAVAILABLE')
+        }
       }
       else if (method === 'views.open') {
         const input = z.object({ type: z.string().max(180), resource: extensionResourceSchema.nullable(), state: extensionJsonSchema }).strict().parse(params)

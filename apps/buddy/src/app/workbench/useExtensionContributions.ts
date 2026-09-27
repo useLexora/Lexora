@@ -1,6 +1,6 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionWorkbenchEvent } from '@buddy-shared/extensions/extensionApi'
 import type { Ref } from 'vue'
-import type { ExtensionViews } from '@/modules/extensions'
+import type { ExtensionUiContributions, ExtensionViews } from '@/modules/extensions'
 import type { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import type { ViewLocation } from '@/workbench/common/workbench'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
@@ -9,11 +9,11 @@ import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCom
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { qualifyWorkbenchCommand } from '@buddy-shared/workbench/workbenchCommand'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
-import { onScopeDispose, watch } from 'vue'
+import { nextTick, onScopeDispose, watch } from 'vue'
 import { DesktopExtensionView } from '@/modules/extensions/ui'
 
-export function useExtensionContributions(options: { controller: WorkbenchController, renderers: ViewRendererRegistry, persistence: WorkbenchPersistence, installed: Readonly<Ref<ExtensionStatus[]>>, api: ExtensionApi, views: ExtensionViews, ready: () => boolean }) {
-  const { controller, renderers, persistence, installed, api, views } = options
+export function useExtensionContributions(options: { controller: WorkbenchController, renderers: ViewRendererRegistry, persistence: WorkbenchPersistence, installed: Readonly<Ref<ExtensionStatus[]>>, api: ExtensionApi, views: ExtensionViews, ui: ExtensionUiContributions, ready: () => boolean }) {
+  const { controller, renderers, persistence, installed, api, views, ui } = options
   onScopeDispose(renderers.register('extensions.view', DesktopExtensionView))
   const owners = new Map<string, { revision: string, dispose: () => void }>()
   watch(installed, (items) => {
@@ -135,10 +135,26 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         if (views.proposeControl(event.viewId, event.generation, event.token, event.proposal))
           viewId = event.viewId
       }
+      else if (event.kind === 'activity') {
+        if (views.setActive(event.viewId, event.generation, event.token, event.active)) {
+          await nextTick()
+          viewId = event.viewId
+        }
+      }
       else if (event.kind === 'placement') {
         const plugin = installed.value.find(item => item.manifest.id === event.extensionId && item.enabled && item.compatible)
         const placement = plugin?.manifest.contributes.placements.find(placement => placement.id === event.placementId)
         const descriptor = plugin?.manifest.contributes.views.find(view => view.id === placement?.view)
+        if ((placement?.kind === 'slot' || placement?.kind === 'control') && !event.instanceId && !event.interactionId) {
+          const result = ui.setEnabled(event.extensionId, event.generation, placement.id, event.visible)
+          if (result) {
+            if (result.changed && event.visible && placement.kind === 'control')
+              views.retryControl(placement.id)
+            await nextTick()
+            viewId = event.requestId
+          }
+          return
+        }
         if (placement?.kind !== 'view' || !descriptor)
           return
         const instanceId = placement.target === 'workbench.pane' ? event.instanceId ?? controller.layout.activePane : undefined

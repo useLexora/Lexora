@@ -40,8 +40,8 @@ export const extensionPlacementSchema = z.discriminatedUnion('kind', [
     presentation: location ? { position: location === 'workbench.floating' ? 'absolute' as const : 'static' as const, order: location === 'workbench.top' ? -1 : 1, height: height ?? 56, ...(width === undefined ? {} : { width }), ...presentation } : presentation,
   })),
   z.object({ ...placementBase, kind: z.literal('decoration'), anchor: workbenchAnchorSchema }).strict(),
-  z.object({ ...placementBase, kind: z.literal('control'), target: workbenchControlSchema, height: z.number().int().optional() }).strict(),
-  z.object({ ...placementBase, kind: z.literal('slot'), target: workbenchSlotSchema, height: z.number().int().optional() }).strict(),
+  z.object({ ...placementBase, kind: z.literal('control'), target: workbenchControlSchema, height: z.number().int().optional(), enabled: z.boolean().optional() }).strict(),
+  z.object({ ...placementBase, kind: z.literal('slot'), target: workbenchSlotSchema, height: z.number().int().optional(), enabled: z.boolean().optional() }).strict(),
 ]).transform((placement, context) => {
   if (placement.kind !== 'slot' && placement.kind !== 'control')
     return placement

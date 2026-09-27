@@ -123,6 +123,7 @@ export interface ViewContext {
   readonly commands: { execute: (command: string, args?: Json) => Promise<Json> }
   setPresentation: (presentation: ViewPresentation) => Promise<void>
   setState: (state: Json) => Promise<void>
+  setActive: (active: boolean) => Promise<void>
 }
 export interface ExtensionModule {
   activate: (context: ExtensionContext) => void | Promise<void>

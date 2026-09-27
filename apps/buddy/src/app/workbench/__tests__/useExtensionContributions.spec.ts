@@ -26,12 +26,12 @@ function setup() {
     receive = listener
     return () => {}
   }, replyWorkbench: (id, view) => replies.set(id, view) }
-  const views = { surfaces: new Map(), proposeControl: () => false } as unknown as ExtensionViews
+  const views = { surfaces: new Map(), proposeControl: () => false, retryControl: () => {} } as unknown as ExtensionViews
   const persistence = { flush: async () => {} } as unknown as WorkbenchPersistence
   const scope = effectScope()
   scopes.push(scope)
-  scope.run(() => useExtensionContributions({ controller, renderers: new ViewRendererRegistry(), persistence, installed, api: api as ExtensionApi, views, ready: () => ready.value }))!
   const contributions = scope.run(() => useExtensionUiContributions(installed, controller.configuration))!
+  scope.run(() => useExtensionContributions({ controller, renderers: new ViewRendererRegistry(), persistence, installed, api: api as ExtensionApi, views, ui: contributions, ready: () => ready.value }))!
   const show = (): Extract<ExtensionWorkbenchEvent, { kind: 'placement' }> => ({ kind: 'placement', requestId: crypto.randomUUID(), extensionId: status.manifest.id, generation: status.generation!, placementId: 'tests.music.dock', visible: true })
   return { installed, ready, controller, status, contributions, views, replies, show, receive: (event: ExtensionWorkbenchEvent) => receive(event) }
 }
@@ -166,12 +166,6 @@ it('migrates a pane placement to global scope without retaining the old pane lif
   expect(restoreWorkbenchLayout(JSON.parse(JSON.stringify(f.controller.layout))).views[id]).toMatchObject({ id, state })
 })
 
-it('restores control selection without relying on unrelated layout changes', () => {
-  const fixture = setup()
-  fixture.controller.configuration.restore({ 'workbench.controls.model.reasoning': 'tests.reasoning.control' })
-  expect(fixture.contributions.entries.value.find(entry => entry.target === 'model.reasoning')!.selected[0]).toBe('tests.reasoning.control')
-})
-
 it('rejects an obsolete token when a view is reopened in the same host', async () => {
   const fixture = setup()
   fixture.ready.value = true
@@ -273,4 +267,35 @@ it('exposes plugin short names as namespaces without publisher prefixes or globa
   f.installed.value = [{ ...f.status, revision: 'next', manifest: extensionManifestSchema.parse({ ...f.status.manifest, entry: 'host.js', apiVersion: 3, contributes: { ...f.status.manifest.contributes, commands: [{ id: 'tests.music.review', title: '检查播放列表', slash: { name: 'review', description: '检查当前播放列表' } }] } }) }]
   await settle()
   expect([...f.controller.registry.commands.values()].filter(command => command.slash).map(command => command.slash)).toEqual([{ name: 'music:review', description: '检查当前播放列表', origin: { id: 'tests.music', name: 'Music', author: undefined, version: '1.0.0', source: undefined } }])
+})
+
+it.each(['slot', 'control'] as const)('acknowledges %s activation with a request UUID and keeps it out of persisted layout', async (kind) => {
+  const f = setup()
+  const target = kind === 'slot' ? 'composer.footer' : 'model.reasoning'
+  f.status.manifest = extensionManifestSchema.parse({
+    ...f.status.manifest,
+    apiVersion: 3,
+    permissions: { controls: ['model.reasoning'] },
+    contributes: { ...f.status.manifest.contributes, placements: [{ id: 'tests.music.dock', view: 'tests.music.player', kind, target }] },
+  })
+  f.installed.value = [{ ...f.status }]
+  f.ready.value = true
+  const provider = () => f.contributions.providers(kind === 'slot' ? { kind, target: 'composer.footer' } : { kind, target: 'model.reasoning' })[0]!
+  const hide = { ...f.show(), visible: false }
+  f.receive(hide)
+  await settle()
+  expect(f.replies.get(hide.requestId)).toBe(hide.requestId)
+  expect(provider().enabled).toBe(false)
+  const show = f.show()
+  f.receive(show)
+  await settle()
+  expect(f.replies.get(show.requestId)).toBe(show.requestId)
+  expect(provider().enabled).toBe(true)
+  expect(f.controller.layout.views).toEqual({})
+  expect(f.controller.configuration.snapshot()).toEqual({})
+  const invalid = { ...f.show(), instanceId: crypto.randomUUID(), visible: false }
+  f.receive(invalid)
+  await settle()
+  expect(f.replies.get(invalid.requestId)).toBeNull()
+  expect(provider().enabled).toBe(true)
 })

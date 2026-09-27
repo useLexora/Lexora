@@ -182,6 +182,7 @@ async function initialize() {
         return subscribe(activityListeners, listener)
       },
       setState: state => request('view.setState', state),
+      setActive: active => request('view.setActive', { active }),
       setPresentation: presentation => request('view.setPresentation', presentation),
       resources: {
         readText: resource => request('resources.readText', { id: resource.id }),

@@ -15,7 +15,6 @@ import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
-import DesktopExtensionUiSettings from './DesktopExtensionUiSettings.vue'
 
 const { state, language, startCreation, authoring } = useExtensionContext()
 const { installed } = state
@@ -148,7 +147,6 @@ onScopeDispose(cancel)
         @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
       />
     </div>
-    <DesktopExtensionUiSettings v-if="section === 'installed'" :language="language" />
   </DesktopExtensionWorkbench>
   <NModal v-model:show="authorSettings" preset="card" :title="language === 'en-US' ? 'Author signature' : '作者署名'" class="extension-dialog">
     <DesktopExtensionAuthoringSettings v-if="authorSettings" :author="authoring.author.value" :language="language" :save="authoring.save" @saved="authorSettings = false" />

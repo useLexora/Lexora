@@ -90,6 +90,7 @@ export type ExtensionWorkbenchEvent
     | { kind: 'regions', requestId: string, viewId: string, generation: string, token: string, regions: WorkbenchHitRegion[] }
     | { kind: 'placement', requestId: string, extensionId: string, generation: string, placementId: string, visible: boolean, instanceId?: string, interactionId?: string }
     | { kind: 'control', requestId: string, viewId: string, generation: string, token: string, proposal: ControlProposal }
+    | { kind: 'activity', requestId: string, viewId: string, generation: string, token: string, active: boolean }
     | { kind: 'presentation', requestId: string, viewId: string, generation: string, token: string, presentation: WorkbenchPresentation }
 
 export const extensionManagementSchema = z.discriminatedUnion('action', [
