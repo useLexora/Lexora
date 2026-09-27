@@ -111,6 +111,7 @@ export class ProviderService {
     this.executionModels = new ProviderExecutionModelResolver({
       builtins: options.providers.builtins,
       credentialStatus: options.credentialStatus,
+      metadata: this.#modelSnapshot,
       modelCatalog: this.#modelCatalog,
       sessionRuntime: options.sessionRuntime,
       states: options.providers.states,

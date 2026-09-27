@@ -11,6 +11,7 @@ export interface CatalogModel {
   audioInput?: boolean
   videoInput?: boolean
   toolCall?: boolean
+  fastMode?: boolean
   reasoning: boolean
   thinkingLevelMap?: Model<Api>['thinkingLevelMap']
   contextWindow: number
@@ -63,6 +64,7 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
           audioInput: model.modalities.input.includes('audio'),
           videoInput: model.modalities.input.includes('video'),
           toolCall: typeof model.tool_call === 'boolean' ? model.tool_call : undefined,
+          fastMode: supportsFastMode(model),
           reasoning: model.reasoning === true,
           thinkingLevelMap: reasoningMap(model),
           contextWindow: model.limit.context,
@@ -87,6 +89,14 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
   getModels(providerId?: string): readonly CatalogModel[] {
     return providerId ? this.#byProvider.get(providerId) ?? [] : this.#models
   }
+}
+
+function supportsFastMode(model: Record<string, unknown>): boolean {
+  const modes = isRecord(model.experimental) ? model.experimental.modes : undefined
+  const fast = isRecord(modes) ? modes.fast : undefined
+  const provider = isRecord(fast) ? fast.provider : undefined
+  const body = isRecord(provider) ? provider.body : undefined
+  return isRecord(body) && (body.service_tier === 'priority' || body.service_tier === 'fast')
 }
 
 function reasoningMap(model: Record<string, unknown>): Model<Api>['thinkingLevelMap'] {

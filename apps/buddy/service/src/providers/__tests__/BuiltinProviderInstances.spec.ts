@@ -8,8 +8,10 @@ import { createProviderRepository } from '../../storage/providerRepository'
 import { AuthInteractionService } from '../AuthInteractionService'
 import { createBuiltinProviderInstance } from '../createBuiltinProviderInstance'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
+import { ProviderModelSnapshotService } from '../ProviderModelSnapshotService'
 import { providerAuthChallengeSchema } from '../providerSchemas'
 import { ProviderService } from '../ProviderService'
+import { resolveInteractiveModelSelection } from '../resolveInteractiveModelSelection'
 
 const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
@@ -132,8 +134,68 @@ describe('built-in provider instances', () => {
     const instance = await service.addProvider('openai-codex')
     expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-5.6-sol', api: 'openai-codex-responses' }))
       .toEqual([{ displayName: 'Fast', id: 'priority' }])
+    expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-6-astra', api: 'openai-codex-responses' }))
+      .toEqual([{ displayName: 'Fast', id: 'priority' }])
+    expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-6-astra', api: 'openai-responses' }))
+      .toEqual([])
     expect(service.executionModels.getServiceTiers({ providerId: 'custom-proxy', modelId: 'gpt-5.6-sol', api: 'openai-codex-responses' }))
       .toEqual([])
+    const openai = await service.addProvider('openai')
+    expect(service.executionModels.getServiceTiers({ providerId: openai.id, modelId: 'gpt-6-astra', api: 'openai-responses' }))
+      .toEqual([{ displayName: 'Fast', id: 'priority' }])
+    expect(service.executionModels.getServiceTiers({ providerId: openai.id, modelId: 'gpt-5.4-nano', api: 'openai-responses' }))
+      .toEqual([])
+    expect(service.executionModels.getServiceTiers({ providerId: openai.id, modelId: 'gpt-6-astra', api: 'openai-completions' }))
+      .toEqual([])
+    expect(service.executionModels.getServiceTiers({ providerId: 'custom-proxy', modelId: 'gpt-6-astra', api: 'openai-responses' }))
+      .toEqual([])
+  })
+
+  it('updates Fast selection with the active snapshot without changing model availability or reasoning', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const credentials = new InMemoryCredentialStore()
+    const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
+    const data = (fast: boolean) => ({ openai: { name: 'OpenAI', npm: '@ai-sdk/openai', models: {
+      'gpt-5.5': {
+        name: 'GPT-5.5',
+        modalities: { input: ['text'], output: ['text'] },
+        limit: { context: 128_000, output: 16_384 },
+        experimental: fast ? { modes: { fast: { provider: { body: { service_tier: 'priority' } } } } } : undefined,
+      },
+    } } })
+    let fast = true
+    const service = new ProviderService({
+      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      credentialStatus: createProviderCredentialStatus(credentials),
+      modelDiscovery: { supports: () => false, discover: async () => [] },
+      modelRuntime: runtime,
+      modelSnapshot: new ProviderModelSnapshotService({
+        builtin: { version: 1, updatedAt: '2026-01-01T00:00:00.000Z', data: data(false) },
+        fetch: async () => Response.json(data(fast)),
+      }),
+      providers: createProviderRepository(database),
+    })
+    const instance = await service.addProvider('openai')
+    await runtime.login(instance.id, 'api_key', { notify: () => {}, prompt: async () => 'fixture-not-a-real-key' })
+    await service.setModelEnabled(instance.id, 'gpt-5.5', true)
+    await service.setProviderEnabled(instance.id, true)
+    const input = { providerId: instance.id, modelId: 'gpt-5.5', api: 'openai-responses' }
+    const selection = { providerId: instance.id, modelId: 'gpt-5.5', reasoning: 'high' as const, serviceTier: 'priority' as const }
+    expect(service.executionModels.getServiceTiers(input)).toEqual([])
+    await expect(resolveInteractiveModelSelection(service, selection)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+
+    const before = await service.listModels(instance.id)
+    await expect(service.refreshModelSnapshot()).resolves.toMatchObject({ errorCount: 0 })
+    expect(service.executionModels.getServiceTiers(input)).toEqual([{ displayName: 'Fast', id: 'priority' }])
+    await expect(resolveInteractiveModelSelection(service, selection)).resolves.toMatchObject(selection)
+    expect(await service.listModels(instance.id)).toEqual(before)
+
+    fast = false
+    await service.refreshModelSnapshot()
+    expect(service.executionModels.getServiceTiers(input)).toEqual([])
+    await expect(resolveInteractiveModelSelection(service, selection)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(resolveInteractiveModelSelection(service, { ...selection, serviceTier: null })).resolves.toMatchObject({ serviceTier: null })
   })
 
   it('keeps independent credentials, model overrides, names and defaults across runtime recreation', async () => {

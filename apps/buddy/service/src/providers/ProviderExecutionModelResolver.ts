@@ -1,10 +1,12 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import type { BuddyServiceTierOption } from '../../../shared/conversation/modelSelection'
 import type { BuiltinProviderConfigRepository } from '../storage/builtinProviderConfigRepository'
 import type { ProviderStateRepository } from '../storage/providerStateRepository'
+import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import type { ProviderCredentialStatus } from './ProviderCredentialStatus'
 import type { ProviderModelCatalog } from './ProviderModelCatalog'
-import { resolveBuddyServiceTiers } from '../../../shared/conversation/modelSelection'
+import { BUDDY_FAST_SERVICE_TIER } from '../../../shared/conversation/modelSelection'
 import {
   ProviderAuthenticationRequiredError,
   ProviderUnavailableError,
@@ -27,6 +29,7 @@ export interface ResolvedProviderSessionModel {
 export interface ProviderExecutionModelResolverOptions {
   builtins: Pick<BuiltinProviderConfigRepository, 'findById'>
   credentialStatus: ProviderCredentialStatus
+  metadata: Pick<ModelMetadataCatalog, 'getModels'>
   modelCatalog: Pick<
     ProviderModelCatalog,
     'isEnabledAvailable' | 'resolve'
@@ -38,6 +41,7 @@ export interface ProviderExecutionModelResolverOptions {
 export class ProviderExecutionModelResolver {
   readonly #builtins: ProviderExecutionModelResolverOptions['builtins']
   readonly #credentialStatus: ProviderCredentialStatus
+  readonly #metadata: ProviderExecutionModelResolverOptions['metadata']
   readonly #modelCatalog: ProviderExecutionModelResolverOptions['modelCatalog']
   readonly #sessionRuntime?: ModelRuntime
   readonly #states: ProviderExecutionModelResolverOptions['states']
@@ -45,6 +49,7 @@ export class ProviderExecutionModelResolver {
   constructor(options: ProviderExecutionModelResolverOptions) {
     this.#builtins = options.builtins
     this.#credentialStatus = options.credentialStatus
+    this.#metadata = options.metadata
     this.#modelCatalog = options.modelCatalog
     this.#sessionRuntime = options.sessionRuntime
     this.#states = options.states
@@ -91,11 +96,12 @@ export class ProviderExecutionModelResolver {
     return this.#sessionRuntime
   }
 
-  getServiceTiers(input: { api: string, modelId: string, providerId: string }) {
-    return resolveBuddyServiceTiers({
-      ...input,
-      providerId: this.resolveSourceProviderId(input.providerId),
-    })
+  getServiceTiers(input: { api: string, modelId: string, providerId: string }): ReadonlyArray<BuddyServiceTierOption> {
+    const providerId = this.resolveSourceProviderId(input.providerId)
+    const supportsFast = (providerId === 'openai-codex' && input.api === 'openai-codex-responses')
+      || (providerId === 'openai' && input.api === 'openai-responses'
+        && this.#metadata.getModels('openai').some(model => model.id === input.modelId && model.fastMode))
+    return supportsFast ? [{ displayName: 'Fast', id: BUDDY_FAST_SERVICE_TIER }] : []
   }
 
   resolveSourceProviderId(providerId: string): string {

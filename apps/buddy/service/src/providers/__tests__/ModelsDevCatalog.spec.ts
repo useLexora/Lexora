@@ -6,6 +6,29 @@ import snapshot from '../data/models-dev.json'
 import { ModelsDevCatalog } from '../ModelsDevCatalog'
 
 describe('models.dev metadata', () => {
+  it.each([
+    { tier: 'priority', supported: true },
+    { tier: 'fast', supported: true },
+    { tier: 'flex', supported: false },
+    { tier: undefined, supported: false },
+  ])('reads Fast support from its request tier: $tier', ({ tier, supported }) => {
+    const catalog = new ModelsDevCatalog({ openai: { name: 'OpenAI', models: {
+      'new-model': {
+        name: 'New model',
+        modalities: { input: ['text'], output: ['text'] },
+        limit: { context: 128_000, output: 16_384 },
+        experimental: { modes: { fast: { cost: { input: 2 }, provider: { body: { service_tier: tier } } } } },
+      },
+    } } })
+    expect(catalog.getModels('openai')[0]?.fastMode).toBe(supported)
+  })
+
+  it('retains bundled Fast metadata independently of the model generation', () => {
+    const catalog = new ModelsDevCatalog(snapshot.data)
+    expect(catalog.getModels('openai').find(model => model.id === 'gpt-6-astra')?.fastMode).toBe(true)
+    expect(catalog.getModels('openai').find(model => model.id === 'gpt-5.4-nano')?.fastMode).toBe(false)
+  })
+
   it('reads individual modalities, prices and raw reasoning levels without inferring PDF from attachment', () => {
     const catalog = new ModelsDevCatalog({ google: { name: 'Google', npm: '@ai-sdk/google', models: {
       multimodal: { name: 'Multimodal', attachment: true, reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'low', 'high', 'max'] }], modalities: { input: ['text', 'image', 'audio', 'video'], output: ['text'] }, limit: { context: 200_000, output: 32_000 }, cost: { input: 1.2, cache_read: 0.1 }, tool_call: false },
