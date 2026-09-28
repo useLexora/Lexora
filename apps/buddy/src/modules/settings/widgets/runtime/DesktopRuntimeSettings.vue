@@ -1,63 +1,139 @@
 <script setup lang="ts">
+import type { LexoraConfigPatch } from '@buddy-electron/shared/desktopApi'
+import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { RuntimePreferences } from '@buddy-shared/runtime/runtimePreferences'
 import type { ApplicationSettingsProps } from '../app/typing'
+import { BUDDY_PERMISSION_MODES } from '@buddy-shared/permissions/permissionMode'
 import { NSelect, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { DesktopFullAccessConfirmationDialog } from '@/modules/prompt-input/ui'
+
+type RuntimeSettingField = 'cacheWarming' | 'defaultPermissionMode'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
+const fullAccessConfirmationText = computed(() => ({
+  acknowledgement: t('desktop.settings.runtime.fullAccessDefaultAcknowledgement'),
+  cancelLabel: t('common.cancel'),
+  confirmLabel: t('desktop.settings.runtime.fullAccessDefaultConfirm'),
+  description: t('desktop.settings.runtime.fullAccessDefaultDescription'),
+  title: t('desktop.settings.runtime.fullAccessDefaultTitle'),
+}))
 const message = useMessage()
-const labelId = useId()
-const descriptionId = useId()
-const pending = shallowRef(false)
-const modes = computed(() => [
+const cacheWarmingLabelId = useId()
+const cacheWarmingDescriptionId = useId()
+const defaultPermissionLabelId = useId()
+const defaultPermissionDescriptionId = useId()
+const pendingFields = shallowRef<ReadonlySet<RuntimeSettingField>>(new Set())
+const fullAccessConfirmationOpen = shallowRef(false)
+const cacheWarmingModes = computed(() => [
   { label: t('desktop.settings.runtime.cacheWarmingOff'), value: 'off' },
   { label: t('desktop.settings.runtime.cacheWarmingStreaming'), value: 'streaming' },
 ])
+const permissionModeLabelKeys: Record<BuddyPermissionMode, 'desktop.chat.executionProfileReadOnly' | 'desktop.chat.permissionModeManual' | 'desktop.chat.permissionModePolicy' | 'desktop.chat.executionProfileFull'> = {
+  full_access: 'desktop.chat.executionProfileFull',
+  manual_approval: 'desktop.chat.permissionModeManual',
+  policy_approval: 'desktop.chat.permissionModePolicy',
+  read_only: 'desktop.chat.executionProfileReadOnly',
+}
+const permissionModes = computed(() => BUDDY_PERMISSION_MODES.map(value => ({
+  label: t(permissionModeLabelKeys[value]),
+  value,
+})))
 
-async function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
-  if (pending.value)
+async function save(field: RuntimeSettingField, patch: LexoraConfigPatch) {
+  if (pendingFields.value.has(field))
     return
-  pending.value = true
+  pendingFields.value = new Set([...pendingFields.value, field])
   try {
-    if (!await props.updateSettings({ runtime: { cacheWarming } }))
+    if (!await props.updateSettings(patch))
       message.error(t('desktop.settings.saveFailed'))
   }
   finally {
-    pending.value = false
+    pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
   }
+}
+
+function selectDefaultPermissionMode(permissionMode: BuddyPermissionMode) {
+  if (permissionMode === props.config?.desktop.chat.permissionMode)
+    return
+  if (permissionMode === 'full_access') {
+    fullAccessConfirmationOpen.value = true
+    return
+  }
+  void save('defaultPermissionMode', { desktop: { chat: { permissionMode } } })
+}
+
+function confirmFullAccess() {
+  void save('defaultPermissionMode', { desktop: { chat: { permissionMode: 'full_access' } } })
+}
+
+function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
+  void save('cacheWarming', { runtime: { cacheWarming } })
 }
 </script>
 
 <template>
   <section v-if="config" class="runtime-settings">
-    <h2>{{ t('desktop.settings.runtime.context') }}</h2>
-    <div class="runtime-settings__row" data-testid="cache-warming-setting">
-      <div class="runtime-settings__copy">
-        <strong :id="labelId">{{ t('desktop.settings.runtime.cacheWarming') }}</strong>
-        <small :id="descriptionId">{{ t('desktop.settings.runtime.cacheWarmingDescription') }}</small>
+    <section class="runtime-settings__section">
+      <h2>{{ t('desktop.settings.runtime.taskPermissions') }}</h2>
+      <div class="runtime-settings__row" data-testid="default-permission-mode-setting">
+        <div class="runtime-settings__copy">
+          <strong :id="defaultPermissionLabelId">{{ t('desktop.settings.runtime.defaultPermissionMode') }}</strong>
+          <small :id="defaultPermissionDescriptionId">{{ t('desktop.settings.runtime.defaultPermissionModeDescription') }}</small>
+        </div>
+        <div class="runtime-settings__control">
+          <NSelect
+            :aria-labelledby="defaultPermissionLabelId"
+            :aria-describedby="defaultPermissionDescriptionId"
+            :value="config.desktop.chat.permissionMode"
+            :options="permissionModes"
+            :loading="pendingFields.has('defaultPermissionMode')"
+            :disabled="pendingFields.has('defaultPermissionMode')"
+            @update:value="selectDefaultPermissionMode"
+          />
+        </div>
       </div>
-      <div class="runtime-settings__control">
-        <NSelect
-          :aria-labelledby="labelId"
-          :aria-describedby="descriptionId"
-          :value="config.runtime.cacheWarming"
-          :options="modes"
-          :loading="pending"
-          :disabled="pending"
-          @update:value="updateCacheWarming"
-        />
+    </section>
+    <section class="runtime-settings__section">
+      <h2>{{ t('desktop.settings.runtime.context') }}</h2>
+      <div class="runtime-settings__row" data-testid="cache-warming-setting">
+        <div class="runtime-settings__copy">
+          <strong :id="cacheWarmingLabelId">{{ t('desktop.settings.runtime.cacheWarming') }}</strong>
+          <small :id="cacheWarmingDescriptionId">{{ t('desktop.settings.runtime.cacheWarmingDescription') }}</small>
+        </div>
+        <div class="runtime-settings__control">
+          <NSelect
+            :aria-labelledby="cacheWarmingLabelId"
+            :aria-describedby="cacheWarmingDescriptionId"
+            :value="config.runtime.cacheWarming"
+            :options="cacheWarmingModes"
+            :loading="pendingFields.has('cacheWarming')"
+            :disabled="pendingFields.has('cacheWarming')"
+            @update:value="updateCacheWarming"
+          />
+        </div>
       </div>
-    </div>
+    </section>
+    <DesktopFullAccessConfirmationDialog
+      v-model:show="fullAccessConfirmationOpen"
+      :text="fullAccessConfirmationText"
+      @confirm="confirmFullAccess"
+    />
   </section>
 </template>
 
 <style scoped>
 .runtime-settings {
   display: grid;
-  gap: 0.8rem;
+  gap: 1.8rem;
   container-type: inline-size;
+}
+
+.runtime-settings__section {
+  display: grid;
+  gap: 0.8rem;
 }
 
 .runtime-settings h2 {

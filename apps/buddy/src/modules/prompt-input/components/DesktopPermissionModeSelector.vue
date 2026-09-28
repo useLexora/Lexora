@@ -62,6 +62,13 @@ const permissionOptions = [
 ] as const
 
 const { t } = useBuddyI18n(() => props.language)
+const fullAccessConfirmationText = computed(() => ({
+  acknowledgement: t('desktop.chat.executionProfileFullConfirmAcknowledgement'),
+  cancelLabel: t('common.cancel'),
+  confirmLabel: t('desktop.chat.executionProfileAllowFull'),
+  description: t('desktop.chat.executionProfileFullConfirmDescription'),
+  title: t('desktop.chat.executionProfileFullConfirmTitle'),
+}))
 const isBackground = computed(() => props.sessionMode === 'automation_background')
 const availableOptions = computed(() => permissionOptions.filter(
   option => !isBackground.value || option.value !== 'manual_approval',
@@ -92,7 +99,6 @@ function selectMode(value: BuddyPermissionMode) {
 }
 
 function confirmFullAccess() {
-  confirmationOpen.value = false
   emit('updatePermissionMode', 'full_access')
 }
 
@@ -196,9 +202,8 @@ async function confirmSetup() {
   </NPopover>
 
   <DesktopFullAccessConfirmationDialog
-    :language="language"
-    :show="confirmationOpen"
-    @cancel="confirmationOpen = false"
+    v-model:show="confirmationOpen"
+    :text="fullAccessConfirmationText"
     @confirm="confirmFullAccess"
   />
 

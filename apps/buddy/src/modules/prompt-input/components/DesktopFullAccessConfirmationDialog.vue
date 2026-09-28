@@ -1,63 +1,66 @@
 <script setup lang="ts">
-import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NButton, NCheckbox, NModal } from 'naive-ui'
 import { shallowRef, watch } from 'vue'
-import { useBuddyI18n } from '@/i18n/buddyI18n'
 
-const props = defineProps<{
-  language: BuddyLocale
-  show: boolean
+interface FullAccessConfirmationText {
+  acknowledgement: string
+  cancelLabel: string
+  confirmLabel: string
+  description: string
+  title: string
+}
+
+defineProps<{
+  text: FullAccessConfirmationText
 }>()
-
 const emit = defineEmits<{
-  cancel: []
   confirm: []
 }>()
-
+const show = defineModel<boolean>('show', { required: true })
 const acknowledged = shallowRef(false)
-const { t } = useBuddyI18n(() => props.language)
 
-watch(() => props.show, (show) => {
-  if (show)
+watch(show, (open) => {
+  if (open)
     acknowledged.value = false
 })
 
 function cancel() {
-  emit('cancel')
+  show.value = false
 }
 
 function confirm() {
-  if (acknowledged.value)
-    emit('confirm')
+  if (!acknowledged.value)
+    return
+  show.value = false
+  emit('confirm')
 }
 </script>
 
 <template>
   <NModal
-    :show="show"
+    v-model:show="show"
     preset="dialog"
     type="error"
     class="desktop-full-access-confirmation"
     :style="{ width: 'min(25rem, calc(100vw - 2rem))' }"
     :closable="false"
     :mask-closable="false"
-    :title="t('desktop.chat.executionProfileFullConfirmTitle')"
-    @update:show="!$event && cancel()"
+    :title="text.title"
   >
     <p class="desktop-full-access-confirmation__description">
-      {{ t('desktop.chat.executionProfileFullConfirmDescription') }}
+      {{ text.description }}
     </p>
     <NCheckbox v-model:checked="acknowledged" class="desktop-full-access-confirmation__acknowledgement">
-      {{ t('desktop.chat.executionProfileFullConfirmAcknowledgement') }}
+      {{ text.acknowledgement }}
     </NCheckbox>
 
     <template #action>
       <div class="desktop-full-access-confirmation__actions">
         <NButton @click="cancel">
-          {{ t('common.cancel') }}
+          {{ text.cancelLabel }}
         </NButton>
         <NButton type="error" :disabled="!acknowledged" @click="confirm">
-          {{ t('desktop.chat.executionProfileAllowFull') }}
+          {{ text.confirmLabel }}
         </NButton>
       </div>
     </template>
