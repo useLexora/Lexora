@@ -33,6 +33,26 @@ describe('skillPackageCache', () => {
     await expect(f.cache.load(f.path, f.root)).rejects.toMatchObject({ code: 'SKILL_TOO_LARGE' })
   })
 
+  it('reuses unchanged document bytes while detecting same-size edits and path escapes', async () => {
+    const f = await fixture()
+    const first = await f.cache.loadMetadata(f.path, f.root)
+    const read = vi.spyOn(boundedFile, 'readBoundedFile').mockRejectedValue(new Error('Unchanged content must not be read'))
+    expect(await f.cache.loadMetadata(f.path, f.root)).toEqual(first)
+    read.mockRestore()
+    const metadata = await stat(f.path)
+    await writeFile(f.path, first.content.replace('A local workflow', 'A newer workflow'))
+    await utimes(f.path, metadata.atime, metadata.mtime)
+    const changed = await f.cache.loadMetadata(f.path, f.root)
+    expect(changed.description).toBe('A newer workflow')
+    expect(changed.referenceRevision).not.toBe(first.referenceRevision)
+    const outside = await mkdtemp(join(tmpdir(), 'buddy-metadata-outside-'))
+    directories.push(outside)
+    await writeFile(join(outside, 'SKILL.md'), first.content)
+    await rm(f.path)
+    await symlink(join(outside, 'SKILL.md'), f.path)
+    await expect(f.cache.loadMetadata(f.path, f.root)).rejects.toMatchObject({ code: 'SKILL_INVALID' })
+  })
+
   it('shares a complete revision across concurrent loads and reuses unchanged packages without reading content', async () => {
     const f = await fixture()
     const expected = await readSkill(f.path, f.root)

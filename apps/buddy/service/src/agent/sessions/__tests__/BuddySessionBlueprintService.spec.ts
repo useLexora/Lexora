@@ -51,7 +51,7 @@ describe('buddySessionBlueprintService', () => {
         { canonicalRoot: spaceRoot, grantId: 'directory-1', kind: 'workspace' as const, root: spaceRoot },
         { canonicalRoot: scratchRoot, grantId: 'space-1', kind: 'workspace' as const, root: scratchRoot },
       ],
-      resources: { skillReadRoots: [], skillReferences: [], approvedSkillPaths: ['/skills/space/SKILL.md'] },
+      resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [] },
       scratchRoot,
       space: {
         additionalDirectoryBindings: [],

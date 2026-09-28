@@ -2,8 +2,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as boundedFile from '../../../../platform/filesystem/boundedFile'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSkillRepository } from '../../storage/skillRepository'
@@ -15,6 +16,7 @@ const directories: string[] = []
 const now = '2026-08-14T00:00:00.000Z'
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const database of databases.splice(0))
     database.close()
   await Promise.all(directories.splice(0).map(path => rm(path, { force: true, recursive: true })))
@@ -48,7 +50,7 @@ describe('skillService', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'SKILL_NAME_COLLISION' }))
   })
 
-  it('reuses lightweight metadata and invalidates it when a selected skill document changes', async () => {
+  it('refreshes changed skill documents without accepting an older selection', async () => {
     const fixture = await createFixture()
     await writeSkill(fixture.global, 'mutable', 'first revision')
 
@@ -57,12 +59,79 @@ describe('skillService', () => {
     const second = await fixture.service.loadForSpace(null)
 
     expect(first.paths).toEqual(second.paths)
-    expect(second.revision).toBe(first.revision)
+    expect(second.revision).not.toBe(first.revision)
     await expect(fixture.service.materializeForSpace(null, first.references)).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
 
     const third = await fixture.service.loadForSpace(null)
     expect(third.revision).not.toBe(first.revision)
     expect((await fixture.service.materializeForSpace(null, third.references))[0]?.body).toBe('# mutable')
+  })
+
+  it.each(['document', 'source'] as const)('rejects a cached %s replaced by a symlink outside its source', async (target) => {
+    const fixture = await createFixture()
+    const root = join(fixture.trustedSpace, '.agents', 'skills')
+    await writeSkill(root, 'trusted', 'trusted metadata')
+    fixture.spaces.create(spaceInput('space-trusted', fixture.trustedSpace))
+    expect((await fixture.service.loadForSpace('space-trusted')).skills).toHaveLength(1)
+    const outside = join(fixture.root, 'outside')
+    await writeSkill(outside, 'trusted', 'outside metadata')
+    const replaced = target === 'document' ? join(root, 'trusted', 'SKILL.md') : root
+    const replacement = target === 'document' ? join(outside, 'trusted', 'SKILL.md') : outside
+    await rm(replaced, { recursive: true })
+    await symlink(replacement, replaced, target === 'source' ? 'junction' : 'file')
+
+    const current = await fixture.service.loadForSpace('space-trusted')
+    expect(current.skills).toEqual([])
+    expect(current.readRoots).toEqual([])
+    expect(current.diagnostics.length).toBeGreaterThan(0)
+  })
+
+  it('keeps discovery and the picker lightweight after a full management inspection', async () => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.global, 'large', 'large skill')
+    let nested = join(fixture.global, 'large')
+    for (let depth = 0; depth < 18; depth++) {
+      nested = join(nested, 'nested')
+      await mkdir(nested)
+    }
+    await writeFile(join(nested, 'reference.md'), 'resource')
+    const initial = await fixture.service.loadForSpace(null)
+    expect(initial.skills.map(skill => skill.name)).toEqual(['large'])
+    await fixture.service.list(null)
+    const picker = await fixture.service.list(null, true)
+    expect(picker.skills.map(skill => skill.name)).toEqual(['large'])
+    expect((await fixture.service.loadForSpace(null)).revision).toBe(initial.revision)
+    await writeSkill(fixture.global, 'new-skill', 'new skill')
+    expect((await fixture.service.list(null, true)).skills.map(skill => skill.name)).toEqual(['large', 'new-skill'])
+  })
+
+  it('rejects revocation while a selected package is being materialized', async () => {
+    const fixture = await createFixture()
+    const root = join(fixture.trustedSpace, '.agents', 'skills')
+    await writeSkill(root, 'trusted', 'trusted skill')
+    const resource = join(root, 'trusted', 'reference.md')
+    await writeFile(resource, 'reference')
+    fixture.spaces.create(spaceInput('space-trusted', fixture.trustedSpace))
+    const initial = await fixture.service.loadForSpace('space-trusted')
+    const read = boundedFile.readBoundedFile
+    vi.spyOn(boundedFile, 'readBoundedFile').mockImplementation(async (...args) => {
+      const content = await read(...args)
+      if (args[1] === resource) {
+        fixture.spaces.update({
+          id: 'space-trusted',
+          name: 'Trusted',
+          memoryScope: 'space_only',
+          primaryDirectory: null,
+          additionalDirectories: [],
+          updatedAt: now,
+          event: { id: 'revoke-during-load', eventType: 'space.config.updated', spaceId: 'space-trusted', createdAt: now, payload: {} },
+        })
+      }
+      return content
+    })
+
+    await expect(fixture.service.materializeForSpace('space-trusted', initial.references)).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    expect((await fixture.service.loadForSpace('space-trusted')).skills).toEqual([])
   })
 
   it('unloads revoked Space skills and rejects symlink escapes', async () => {

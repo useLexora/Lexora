@@ -55,7 +55,7 @@ async function fixture() {
     model,
     modelRuntime: runtime,
     inProcessExtensions: [extension, discovery.extension],
-    resources: { skillReadRoots: [], skillReferences: [], approvedSkillPaths: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
+    resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
   }
   return { root, options, runtime, model }
 }

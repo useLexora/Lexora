@@ -67,7 +67,7 @@ describe('buddy in-process Pi extensions', () => {
         resources: {
           skillReadRoots: [],
           skillReferences: [],
-          approvedSkillPaths: [],
+          approvedSkills: [],
           context: { agentsFiles: [], diagnostics: [] },
           directoryContext: '',
           revision: 'resources-1',
@@ -124,7 +124,7 @@ describe('buddy in-process Pi extensions', () => {
           resources: {
             skillReadRoots: [],
             skillReferences: [],
-            approvedSkillPaths: [],
+            approvedSkills: [],
             context: { agentsFiles: [], diagnostics: [] },
             directoryContext: '',
             revision: 'resources-1',
@@ -216,7 +216,7 @@ describe('buddy in-process Pi extensions', () => {
       resources: {
         skillReadRoots: [],
         skillReferences: [],
-        approvedSkillPaths: [],
+        approvedSkills: [],
         context: { agentsFiles: [], diagnostics: [] },
         directoryContext: '',
         revision: 'resources-1',
@@ -370,7 +370,7 @@ describe('buddy in-process Pi extensions', () => {
       resources: {
         skillReadRoots: [],
         skillReferences: [],
-        approvedSkillPaths: [],
+        approvedSkills: [],
         context: { agentsFiles: [], diagnostics: [] },
         directoryContext: '',
         revision: 'resources-1',

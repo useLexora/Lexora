@@ -1483,7 +1483,7 @@ function emptyResources() {
   return {
     skillReadRoots: [],
     skillReferences: [],
-    approvedSkillPaths: [],
+    approvedSkills: [],
     context: { agentsFiles: [], diagnostics: [] },
     directoryContext: '',
     revision: 'resources-1',

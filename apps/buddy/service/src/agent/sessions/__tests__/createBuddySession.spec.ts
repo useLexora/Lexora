@@ -1,10 +1,15 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createImageGenerationCapability } from '../../../images/imageGenerationExtension'
+import { SkillService } from '../../../skills/SkillService'
+import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
+import { openBuddyDatabase } from '../../../storage/database'
+import { createSkillRepository } from '../../../storage/skillRepository'
+import { createSpaceRepository } from '../../../storage/spaceRepository'
 import { createToolDiscoveryCapability } from '../../extensions/discovery/toolDiscoveryExtension'
 
 import { createBuddySession as createPreparedBuddySession } from '../createBuddySession'
@@ -76,6 +81,21 @@ describe('createBuddySession', () => {
     const skillPath = join(directory, 'SKILL.md')
     await writeFile(skillPath, '---\nname: sample-workflow\ndescription: Inspect sample workflow inputs\n---\nBODY_ONLY_ON_DEMAND\nSee reference.md when needed.\n')
     await writeFile(join(directory, 'reference.md'), 'REFERENCE_ONLY_ON_DEMAND')
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const skills = new SkillService({
+      agentDirectory: join(root, 'agent'),
+      builtinSkillsDirectories: [join(root, 'skills')],
+      paths: new BuddyDataPaths(root),
+      repository: createSkillRepository(database),
+      spaces: createSpaceRepository(database),
+    })
+    const approved = await skills.loadForSpace(null)
+    await skills.dispose()
+    database.close()
+    const outside = join(root, 'outside.md')
+    await writeFile(outside, '---\nname: sample-workflow\ndescription: OUTSIDE_METADATA\n---\nOUTSIDE_BODY')
+    await rm(skillPath)
+    await symlink(outside, skillPath)
     const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
     const model = modelRuntime.getModels()[0]!
     const result = await createBuddySession({
@@ -88,7 +108,7 @@ describe('createBuddySession', () => {
       ...createRuntimeOptions(),
       model,
       modelRuntime,
-      resources: { ...emptyResources(), skillReadRoots: [], skillReferences: [], approvedSkillPaths: [skillPath] },
+      resources: { ...emptyResources(), skillReadRoots: [], skillReferences: [], approvedSkills: approved.skills },
     })
     try {
       expect(result.session.systemPrompt).toContain('<available_skills>')
@@ -98,6 +118,7 @@ describe('createBuddySession', () => {
       expect(result.session.systemPrompt).toContain('Use the read tool to load a skill')
       expect(result.session.systemPrompt).not.toContain('BODY_ONLY_ON_DEMAND')
       expect(result.session.systemPrompt).not.toContain('REFERENCE_ONLY_ON_DEMAND')
+      expect(result.session.systemPrompt).not.toContain('OUTSIDE_METADATA')
     }
     finally {
       await result.shutdown('quit')
@@ -238,7 +259,7 @@ function emptyResources() {
   return {
     skillReadRoots: [],
     skillReferences: [],
-    approvedSkillPaths: [],
+    approvedSkills: [],
     context: { agentsFiles: [], diagnostics: [] },
     directoryContext: '',
     revision: 'empty',

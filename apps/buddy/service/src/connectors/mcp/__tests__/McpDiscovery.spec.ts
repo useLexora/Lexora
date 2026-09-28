@@ -129,7 +129,7 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
       model,
       modelRuntime: runtime,
       inProcessExtensions: [mcp.extension, discovery.extension, policy],
-      resources: { skillReadRoots: [], skillReferences: [], approvedSkillPaths: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
+      resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
     }
     const preview = await createIsolatedBuddyContextSnapshot(options)
     created = await createIsolatedBuddySession(options)

@@ -1,9 +1,11 @@
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { LocalSkill } from '../../../../shared/skills/skillApi'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BoundedContextFile } from './loadBoundedContextFiles'
+import { dirname } from 'node:path'
 import process from 'node:process'
 
 import {
@@ -18,7 +20,7 @@ import { createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
   getPendingInput?: () => BuddyInputReferenceV1 | null
-  approvedSkillPaths: readonly string[]
+  approvedSkills: readonly LocalSkill[]
   agentDir: string
   approvalPolicy: BuddyApprovalPolicy
   boundedContextFiles: readonly BoundedContextFile[]
@@ -56,7 +58,7 @@ export async function createBuddyResourceLoader(
   const loader = new DefaultResourceLoader({
     additionalExtensionPaths: [],
     additionalPromptTemplatePaths: [],
-    additionalSkillPaths: [...options.approvedSkillPaths],
+    additionalSkillPaths: [],
     additionalThemePaths: [],
     agentDir: options.agentDir,
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
@@ -67,6 +69,22 @@ export async function createBuddyResourceLoader(
     noExtensions: true,
     noPromptTemplates: true,
     noSkills: true,
+    skillsOverride: () => ({
+      skills: options.approvedSkills.map(skill => ({
+        name: skill.name,
+        description: skill.description,
+        filePath: skill.filePath,
+        baseDir: dirname(skill.filePath),
+        disableModelInvocation: skill.status === 'manual_only',
+        sourceInfo: {
+          path: skill.filePath,
+          source: 'lexora',
+          scope: skill.source === 'directory' ? 'project' : 'user',
+          origin: 'top-level',
+        },
+      })),
+      diagnostics: [],
+    }),
     noThemes: true,
     settingsManager: options.settingsManager ?? createBuddySettingsManager(),
     systemPrompt,

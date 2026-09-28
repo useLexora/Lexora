@@ -488,6 +488,7 @@ export async function startBuddyService(
       runInputs,
       runs,
       sessions: sessionBlueprints,
+      skills: skillService,
     })
     const turnLauncher = new BuddyTurnLauncher({
       lifecycle: runLifecycleService,

@@ -139,7 +139,7 @@ describe('buddy runtime cross-subsystem contract', () => {
         resources: {
           skillReadRoots: [],
           skillReferences: [],
-          approvedSkillPaths: [],
+          approvedSkills: [],
           context: { agentsFiles: [], diagnostics: [] },
           directoryContext: '',
           revision: 'resources-1',

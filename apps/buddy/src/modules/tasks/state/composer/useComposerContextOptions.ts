@@ -32,7 +32,7 @@ export function useComposerContextOptions(options: ComposerContextOptions) {
       deepSearch,
       spaceId,
     }
-    const catalog = fileQuery === null ? await options.listSkills(spaceId) : null
+    const catalog = fileQuery === null ? await options.listSkills(spaceId, true) : null
     const sources = fileQuery === null ? null : await options.listSources(request)
     if (current !== scopeVersion)
       return { files: [], skills: [] }
@@ -69,7 +69,6 @@ export function useComposerContextOptions(options: ComposerContextOptions) {
             id: skill.id,
             name: skill.name,
             revision: skill.referenceRevision ?? skill.revision,
-            packageRevision: skill.revision,
           },
         })),
     }

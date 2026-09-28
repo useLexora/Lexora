@@ -1,5 +1,6 @@
 import type { AttachmentService } from '../../attachments/AttachmentService'
 import type { ProviderExecutionModelResolver } from '../../providers/ProviderExecutionModelResolver'
+import type { SkillService } from '../../skills/SkillService'
 import type { CommandRequestRepository } from '../../storage/commandRequestRepository'
 import type { ConversationRepository } from '../../storage/conversationRepository'
 import type { RunInputRepository } from '../../storage/runInputRepository'
@@ -25,6 +26,7 @@ export interface BuddyRunExecutionPlannerOptions {
   runInputs: Pick<RunInputRepository, 'findByRunId'>
   runs: Pick<RunRepository, 'findById'>
   sessions: Pick<BuddySessionBlueprintService, 'createForConversation'>
+  skills: Pick<SkillService, 'materializeForSpace'>
 }
 
 export class BuddyRunExecutionPlanner {
@@ -88,10 +90,13 @@ export class BuddyRunExecutionPlanner {
     const input = this.#options.runInputs.findByRunId(run.id)
     if (!input?.prompt.trim())
       throw new BuddyAgentRunError('RUN_INPUT_NOT_FOUND')
-    for (const item of input.contextItems) {
-      if (item.kind !== 'skill' || !item.skill)
-        continue
-      const selected = item.skill
+    const selections = input.contextItems.flatMap(item => item.kind === 'skill' ? [item.skill ?? item.value] : [])
+    for (const selection of selections) {
+      if (typeof selection !== 'string' && !session.resources.skillReferences.some(skill => skill.id === selection.id && skill.name === selection.name))
+        throw new SkillError('SKILL_CHANGED')
+    }
+    const selectedSkills = await this.#options.skills.materializeForSpace(conversation.spaceId, selections)
+    for (const { reference: selected } of selectedSkills) {
       if (!session.resources.skillReferences.some(skill => skill.id === selected.id && skill.name === selected.name && skill.revision === selected.revision))
         throw new SkillError('SKILL_CHANGED')
     }

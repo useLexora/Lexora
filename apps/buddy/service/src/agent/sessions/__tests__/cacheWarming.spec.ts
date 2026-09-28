@@ -65,7 +65,7 @@ describe('buddy cache warming', () => {
       model,
       modelRuntime: runtime,
       thinkingLevel: 'off',
-      resources: { skillReadRoots: [], skillReferences: [], approvedSkillPaths: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
+      resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
       inProcessExtensions: [{
         name: 'lexora-warm-fixture',
         factory(pi) {

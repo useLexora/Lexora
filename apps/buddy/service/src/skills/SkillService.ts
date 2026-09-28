@@ -6,7 +6,7 @@ import type { SpaceRepository } from '../storage/spaceRepository'
 import type { LoadedSkill } from './skillFiles'
 import type { ResolvedSkill } from './SkillPackageCache'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
 import { isSkillAvailable, skillsRpc } from '../../../shared/skills/skillApi'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
@@ -69,6 +69,7 @@ export class SkillService {
   readonly #resolutions = new Map<string, Promise<ResolvedCatalog>>()
   readonly #resolved = new Map<string, { key: string, result: ResolvedCatalog }>()
   #mutation: Promise<unknown> = Promise.resolve()
+  #generation = 0
 
   constructor(options: SkillServiceOptions) {
     this.#options = options
@@ -91,9 +92,9 @@ export class SkillService {
     }
   }
 
-  async list(spaceId: string | null): Promise<LocalSkillCatalog> {
+  async list(spaceId: string | null, metadataOnly = false): Promise<LocalSkillCatalog> {
     this.#invalidateResolutions(spaceId)
-    return (await this.#resolve(spaceId)).catalog
+    return (await this.#resolve(spaceId, metadataOnly)).catalog
   }
 
   async loadForSpace(spaceId: string | null): Promise<BuddySkillResolution> {
@@ -119,6 +120,7 @@ export class SkillService {
     if (!selections.length)
       return []
     const { candidates } = await this.#resolve(spaceId, true)
+    const state = this.#resolutionKey(spaceId, true)
     const selected = new Map<string, BuddyMaterializedSkill>()
     for (const selection of selections) {
       const name = typeof selection === 'string' ? selection : selection.name
@@ -152,6 +154,8 @@ export class SkillService {
         reference: reference(candidate.entry, candidate.referenceRevision, loaded.revision),
       })
     }
+    if (this.#resolutionKey(spaceId, true) !== state)
+      throw new SkillError('SKILL_CHANGED')
     return [...selected.values()]
   }
 
@@ -358,24 +362,32 @@ export class SkillService {
     await Promise.all([...this.#previews.keys()].map(id => this.discard(id)))
   }
 
-  #resolve(spaceId: string | null, lightweight = false) {
+  async #resolve(spaceId: string | null, lightweight = false): Promise<ResolvedCatalog> {
     const space = this.#requireSpace(spaceId)
     const scope = JSON.stringify(space?.primaryDirectory ?? null)
     const cacheId = this.#resolutionCacheId(spaceId, lightweight)
-    const key = JSON.stringify([spaceId, scope, this.#options.repository.list(), lightweight])
+    const state = this.#resolutionKey(spaceId, lightweight)
+    const generation = this.#generation
+    const key = JSON.stringify([state, generation])
     const cached = this.#resolved.get(cacheId)
-    if (cached?.key === key)
-      return Promise.resolve(cached.result)
+    if (cached?.key === key && await this.#isCatalogCurrent(cached.result)) {
+      if (this.#resolutionKey(spaceId, lightweight) !== state)
+        throw new SkillError('SKILL_CHANGED')
+      if (this.#generation === generation)
+        return cached.result
+    }
+    if (this.#generation !== generation)
+      return this.#resolve(spaceId, lightweight)
     const pending = this.#resolutions.get(key)
     if (pending)
       return pending
     const resolving = this.#resolveCatalog(spaceId, lightweight).then((result) => {
       if (JSON.stringify(this.#requireSpace(spaceId)?.primaryDirectory ?? null) !== scope)
         throw new SkillError('SKILL_CHANGED')
-      const currentKey = this.#resolutionKey(spaceId, lightweight)
-      this.#resolved.set(cacheId, { key: currentKey, result })
-      if (!lightweight)
-        this.#resolved.set(this.#resolutionCacheId(spaceId, true), { key: this.#resolutionKey(spaceId, true), result })
+      if (lightweight && this.#resolutionKey(spaceId, lightweight) !== state)
+        throw new SkillError('SKILL_CHANGED')
+      if (lightweight && this.#generation === generation)
+        this.#resolved.set(cacheId, { key, result })
       return result
     }).finally(() => {
       if (this.#resolutions.get(key) === resolving)
@@ -390,8 +402,25 @@ export class SkillService {
   }
 
   #invalidateResolutions(spaceId: string | null) {
+    this.#generation++
     this.#resolved.delete(this.#resolutionCacheId(spaceId, false))
     this.#resolved.delete(this.#resolutionCacheId(spaceId, true))
+  }
+
+  async #isCatalogCurrent(result: ResolvedCatalog): Promise<boolean> {
+    for (const candidate of result.candidates) {
+      if (!candidate.loaded || !candidate.allowedRoot)
+        continue
+      try {
+        if (await realpath(candidate.allowedRoot) !== candidate.allowedRoot)
+          return false
+        const document = await this.#packages.loadMetadata(candidate.entry.filePath, candidate.allowedRoot)
+        if (document.path !== candidate.loaded.path || document.referenceRevision !== candidate.referenceRevision)
+          return false
+      }
+      catch { return false }
+    }
+    return true
   }
 
   #resolutionKey(spaceId: string | null, lightweight: boolean) {
@@ -653,7 +682,7 @@ export function formatBuddySkillPrompt(skill: BuddyMaterializedSkill): string {
 
 export function registerSkillServiceRpc(rpc: RuntimeRequestRegistrar, service: SkillService): () => void {
   const stops = [
-    registerRuntimeRequest(rpc, skillsRpc.list, input => service.list(input.spaceId)),
+    registerRuntimeRequest(rpc, skillsRpc.list, input => service.list(input.spaceId, input.metadataOnly)),
     registerRuntimeRequest(rpc, skillsRpc.get, input => service.get(input.spaceId, input.id)),
     registerRuntimeRequest(rpc, skillsRpc.listFiles, input => service.listFiles(input)),
     registerRuntimeRequest(rpc, skillsRpc.readFile, input => service.readFile(input)),

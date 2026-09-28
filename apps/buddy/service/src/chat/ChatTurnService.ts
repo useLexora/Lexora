@@ -298,7 +298,7 @@ export class ChatTurnService {
 
   async validatePreparedInput(input: PrepareTurnRequestInput, validateSkills = true): Promise<void> {
     if (validateSkills)
-      await this.#validateSkillItems(input.spaceId, input.runInput.contextItems)
+      input.runInput.contextItems = await this.#validateSkillItems(input.spaceId, input.runInput.contextItems)
     await this.#options.inputValidation.validate({
       conversationId: input.conversationId,
       branchId: input.branchId,
@@ -617,7 +617,9 @@ export class ChatTurnService {
 
   async #validateSkillItems(spaceId: string | null, items: readonly RunInputRecord['contextItems'][number][]) {
     const selections = items.filter(item => item.kind === 'skill').map(item => item.skill ?? item.value)
-    await this.#options.skills.materializeForSpace(spaceId, selections)
+    const loaded = await this.#options.skills.materializeForSpace(spaceId, selections)
+    const references = new Map(loaded.map(skill => [skill.name, skill.reference]))
+    return items.map(item => item.kind === 'skill' ? { ...item, skill: references.get(item.value)! } : item)
   }
 
   #resolveConversationSpace(conversation: ConversationRecord): SpaceRecord | null {

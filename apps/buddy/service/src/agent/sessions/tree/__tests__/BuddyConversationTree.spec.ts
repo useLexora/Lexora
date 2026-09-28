@@ -261,7 +261,7 @@ async function createFixture(recovery?: BuddySessionRecoveryService['create']) {
       }),
     },
   })
-  const sessionOptions = (branchId: string) => ({ agentDir: join(root, 'agent'), branchId, canonicalRoot: root, conversationId: 'conversation', conversationsDirectory: join(root, 'conversations'), cwd: root, approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const, inProcessExtensions: [], model, modelRuntime, resources: { skillReadRoots: [], skillReferences: [], approvedSkillPaths: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'test' } })
+  const sessionOptions = (branchId: string) => ({ agentDir: join(root, 'agent'), branchId, canonicalRoot: root, conversationId: 'conversation', conversationsDirectory: join(root, 'conversations'), cwd: root, approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const, inProcessExtensions: [], model, modelRuntime, resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'test' } })
   return {
     root,
     tree,

@@ -5,12 +5,13 @@ import type {
   BuddyTurnHandle,
   StartBuddyTurnInput,
 } from '../turnTypes'
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
+import { SkillService } from '../../../skills/SkillService'
 import { prepareTestTurnRequest } from '../../../storage/__tests__/composerDraftTestFixture'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
 import { createCommandRequestRepository } from '../../../storage/commandRequestRepository'
@@ -18,6 +19,7 @@ import { createConversationRepository } from '../../../storage/conversationRepos
 import { openBuddyDatabase } from '../../../storage/database'
 import { createRunInputRepository } from '../../../storage/runInputRepository'
 import { createRunRepository } from '../../../storage/runRepository'
+import { createSkillRepository } from '../../../storage/skillRepository'
 import { createSpaceRepository } from '../../../storage/spaceRepository'
 import { BuddySessionBlueprintService } from '../../sessions/BuddySessionBlueprintService'
 import { BuddyRunExecutionPlanner } from '../BuddyRunExecutionPlanner'
@@ -36,6 +38,30 @@ describe('buddyTurnLauncher', () => {
   it('rejects a saved Skill reference missing from the launch resource snapshot', async () => {
     const fixture = await createFixture({ selectedSkill: { id: 'writer-id', name: 'writer', revision: 'old' } })
     fixture.prepareTurn({ spaceId: null })
+    await expect(fixture.planner.resolve('run-1')).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    expect(fixture.runs.findById('run-1')?.status).toBe('queued')
+  })
+
+  it.each(['legacy', 'current'] as const)('launches an unchanged %s Skill reference and rejects later package changes', async (format) => {
+    const fixture = await createFixture()
+    const directory = join(fixture.root, 'agent', 'skills', 'writer')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'SKILL.md'), '---\nname: writer\ndescription: Write text\n---\nWrite carefully.')
+    const resource = join(directory, 'reference.md')
+    await writeFile(resource, 'first version')
+    const [materialized] = await fixture.skills.materializeForSpace(null, ['writer'])
+    const selectedSkill = format === 'legacy'
+      ? { id: materialized!.reference.id, name: 'writer', revision: materialized!.reference.packageRevision! }
+      : materialized!.reference
+    fixture.prepareTurn({ spaceId: null, selectedSkill })
+
+    const plan = await fixture.planner.resolve('run-1')
+    expect(plan.kind).toBe('turn')
+    expect(plan.input.session.resources.skillReferences).toContainEqual(expect.objectContaining({
+      id: selectedSkill.id,
+      revision: materialized!.reference.revision,
+    }))
+    await writeFile(resource, 'second version')
     await expect(fixture.planner.resolve('run-1')).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
     expect(fixture.runs.findById('run-1')?.status).toBe('queued')
   })
@@ -177,19 +203,16 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
     database,
   })
   const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
+  const skills = new SkillService({
+    agentDirectory: join(root, 'agent'),
+    paths,
+    repository: createSkillRepository(database),
+    spaces,
+  })
   const blueprints = new BuddySessionBlueprintService({
     conversationGrants: { listActive: () => [] },
     paths,
-    skills: {
-      loadForSpace: async () => ({
-        diagnostics: [],
-        readRoots: [],
-        references: [],
-        paths: [],
-        revision: 'skills-revision-1',
-        skills: [],
-      }),
-    },
+    skills,
     spaces,
   })
   const planner = new BuddyRunExecutionPlanner({
@@ -200,6 +223,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
     runInputs: createRunInputRepository(database),
     runs,
     sessions: blueprints,
+    skills,
   })
   return {
     createLauncher(overrides: {
@@ -222,7 +246,8 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
     planner,
     resolveInputReferences,
     paths,
-    prepareTurn({ spaceId }: { spaceId: string | null }) {
+    skills,
+    prepareTurn({ spaceId, selectedSkill = options.selectedSkill }: { spaceId: string | null, selectedSkill?: SkillReference }) {
       prepareTestTurnRequest(database, {
         attachmentBindings: [],
         branchId: 'branch-1',
@@ -239,7 +264,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
         runId: 'run-1',
         runInput: {
           attachmentIds: [],
-          contextItems: options.selectedSkill ? [{ kind: 'skill', value: options.selectedSkill.name, skill: options.selectedSkill }] : [],
+          contextItems: selectedSkill ? [{ kind: 'skill', value: selectedSkill.name, skill: selectedSkill }] : [],
           prompt: 'Persisted prompt',
           reasoning: 'high',
           serviceTier: 'priority',

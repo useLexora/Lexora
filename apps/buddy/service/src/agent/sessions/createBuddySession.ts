@@ -220,7 +220,7 @@ async function createConfiguredBuddySession(
   const settingsManager = createBuddySettingsManager()
   const resourceLoader = await createBuddyResourceLoader({
     getPendingInput: options.getPendingInput,
-    approvedSkillPaths: [...options.resources.approvedSkillPaths],
+    approvedSkills: [...options.resources.approvedSkills],
     agentDir: runtime.agentDir,
     approvalPolicy: options.approvalPolicy,
     boundedContextFiles: context.agentsFiles,

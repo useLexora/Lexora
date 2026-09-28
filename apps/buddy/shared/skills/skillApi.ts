@@ -83,7 +83,7 @@ const previewSchema = z.object({
 export type SkillInstallPreview = DeepReadonly<z.infer<typeof previewSchema>>
 
 export const skillsRequestSchemas = {
-  skillScope: scopeSchema,
+  skillScope: scopeSchema.extend({ metadataOnly: z.boolean().optional() }),
   target: targetSchema,
   file: fileTargetSchema,
   directory: directoryRequestSchema,

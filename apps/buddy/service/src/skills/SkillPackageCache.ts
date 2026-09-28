@@ -16,6 +16,7 @@ const MAX_CACHED_PACKAGES = 256
 
 export class SkillPackageCache {
   readonly #packages = new Map<string, CachedPackage>()
+  readonly #documents = new Map<string, CachedPackage>()
   readonly #pending = new Map<string, Promise<ResolvedSkill>>()
 
   async load(filePath: string, allowedRoot: string): Promise<ResolvedSkill> {
@@ -32,14 +33,30 @@ export class SkillPackageCache {
   }
 
   async loadMetadata(filePath: string, allowedRoot: string): Promise<ResolvedSkill> {
-    const document = await readSkillDocument(filePath, allowedRoot)
+    const path = await requireSkillPath(allowedRoot, filePath)
+    const signature = fileSignature(path, await lstat(path, { bigint: true }))
+    const cached = this.#documents.get(path)
+    if (cached?.signature === signature) {
+      this.#documents.delete(path)
+      this.#documents.set(path, cached)
+      return cached.skill
+    }
+    this.#documents.delete(path)
+    const document = await readSkillDocument(path, allowedRoot)
     if (!document.description)
       throw new SkillError('SKILL_INVALID')
-    return { ...document, revision: document.referenceRevision }
+    if (fileSignature(path, await lstat(path, { bigint: true })) !== signature)
+      throw new SkillError('SKILL_CHANGED')
+    const skill = { ...document, revision: document.referenceRevision }
+    this.#documents.set(path, { signature, skill })
+    while (this.#documents.size > MAX_CACHED_PACKAGES)
+      this.#documents.delete(this.#documents.keys().next().value!)
+    return skill
   }
 
   clear() {
     this.#packages.clear()
+    this.#documents.clear()
   }
 
   async #load(path: string, allowedRoot: string): Promise<ResolvedSkill> {
