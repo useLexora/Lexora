@@ -185,6 +185,10 @@ export const BUDDY_DEFAULT_PERMISSION_MODE: BuddyPermissionMode = 'policy_approv
 
 已实现本方案的配置持久化、设置页入口和新草稿默认值注入。配置仍以 `desktop.chat.permissionMode` 表示，并通过既有双向转换得到底层审批策略与执行档位；后台自动化不读取该设置。选择"完全访问"时复用现有确认对话框，保存失败时复用设置页错误提示，选择器由配置值控制。
 
+设置页效果截图：
+
+![新任务默认权限设置截图](assets/feature-005-default-permission-mode.png)
+
 自动化测试覆盖配置默认值、TOML 读写、非法值拒绝及新建草稿使用配置模式/既有草稿不追溯。验收清单暂不勾选：设置页完整交互、应用重启后生效及相关边界仍需手动验收；规范中未列出的组件级 UI 自动化测试也未补充。
 
 ---
