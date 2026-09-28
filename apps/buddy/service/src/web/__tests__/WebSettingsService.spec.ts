@@ -10,18 +10,70 @@ function fixture() {
   for (const migration of BUDDY_SCHEMA_MIGRATIONS)
     database.exec(migration.sql)
   let key: string | null = null
+  let failing = false
   const service = new WebSettingsService(createWorkspaceRepository(database), {
     request: async (method, input) => {
       if (method === 'host.secrets.read')
         return { ok: true, value: key }
+      if (failing)
+        throw new Error('fixture-private-credential-failure')
       key = method === 'host.secrets.delete' ? null : (input as { value: string }).value
       return { ok: true }
     },
   })
-  return { service, database }
+  return { service, database, fail: () => {
+    failing = true
+  } }
 }
 
 describe('web settings ownership', () => {
+  it('publishes the durable disable before a credential mutation fails', async () => {
+    const { service, database, fail } = fixture()
+    try {
+      await service.saveCredential({ key: 'fixture-private-credential' })
+      const settings = service.get()
+      settings.fetch.remote = true
+      await service.save(settings)
+      const changes: unknown[] = []
+      service.onDidChange(change => changes.push(change))
+      fail()
+      await expect(service.saveCredential({ key: null })).rejects.toThrow('fixture-private-credential-failure')
+      expect(service.get().fetch.remote).toBe(false)
+      expect(changes).toMatchObject([{ kind: 'settings-committed', settings: { fetch: { remote: false } } }, { kind: 'credential-failed', tavilyKeyConfigured: null }])
+      expect(JSON.stringify(changes)).not.toContain('fixture-private')
+      await service.dispose()
+    }
+    finally { database.close() }
+  })
+  it('fences a late credential read and suppresses unchanged read observations', async () => {
+    const { service, database } = fixture()
+    const delayed = Promise.withResolvers<unknown>()
+    const original = service.peer.request
+    let delay = true
+    service.peer.request = (method, input) => {
+      if (method === 'host.secrets.read' && delay) {
+        delay = false
+        return delayed.promise
+      }
+      return original(method, input)
+    }
+    try {
+      const changes: unknown[] = []
+      service.onDidChange(change => changes.push(change))
+      const reading = service.getTavilyKey()
+      await service.saveCredential({ key: 'fixture-only-key' })
+      const revision = service.state.revision
+      delayed.resolve({ ok: true, value: null })
+      await reading
+      expect(service.state).toMatchObject({ revision, tavilyKeyConfigured: true })
+      await service.getTavilyKey()
+      expect(service.state.revision).toBe(revision)
+      expect(JSON.stringify(changes)).not.toContain('fixture-only-key')
+      await service.dispose()
+    }
+    finally { database.close() }
+  })
+
   it('saving credentials grants no usage, clearing them revokes both uses, readding does not reenable', async () => {
     const { service, database } = fixture()
     try {

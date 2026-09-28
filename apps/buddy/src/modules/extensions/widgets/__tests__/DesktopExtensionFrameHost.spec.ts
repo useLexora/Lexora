@@ -31,7 +31,7 @@ it('delivers each broadcast once per frame only within the matching extension an
   const app = createApp({
     setup() {
       views = useExtensionViews(api as ExtensionApi, installed, shallowRef({}))
-      useProvideExtensionContext({ state: { installed, api } as ExtensionContext['state'], views, ui: useExtensionUiContributions(installed, controller.configuration), anchors: new SemanticAnchorRegistry(), workbench: shallowRef({ values: {}, pages: [] }), language: shallowRef('en-US'), isDark: shallowRef(false), endInteraction: () => {}, focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
+      useProvideExtensionContext({ settingsLocation: () => null, state: { installed, api } as ExtensionContext['state'], views, ui: useExtensionUiContributions(installed, controller.configuration), anchors: new SemanticAnchorRegistry(), workbench: shallowRef({ values: {}, pages: [] }), language: shallowRef('en-US'), isDark: shallowRef(false), endInteraction: () => {}, focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h(DesktopExtensionFrameHost, { layout })
     },
   })
@@ -49,7 +49,7 @@ it('delivers each broadcast once per frame only within the matching extension an
     const messages: unknown[] = []
     const target = frame.contentWindow!
     target.addEventListener('message', ({ data }) => {
-      if (data?.channel === 'lexora-extension' && 'message' in data)
+      if (data?.channel === 'lexora-extension' && data.event?.type === 'view:message:received')
         messages.push(data)
     })
     return { target, messages, session: views.surfaces.get(frame.dataset.extensionView!)!.session! }
@@ -69,9 +69,9 @@ it('delivers each broadcast once per frame only within the matching extension an
     target.addEventListener('message', receive)
     target.postMessage(marker, '*')
   })))
-  expect(frames.map(frame => frame.messages)).toEqual([
-    [{ channel: 'lexora-extension', token: frames[0]!.session.token, message }],
-    [{ channel: 'lexora-extension', token: frames[1]!.session.token, message }],
+  expect(frames.map(frame => frame.messages)).toMatchObject([
+    [{ channel: 'lexora-extension', token: frames[0]!.session.token, streamId: expect.any(String), sequence: expect.any(Number), event: { type: 'view:message:received', data: { message } } }],
+    [{ channel: 'lexora-extension', token: frames[1]!.session.token, streamId: expect.any(String), sequence: expect.any(Number), event: { type: 'view:message:received', data: { message } } }],
     [],
   ])
 })

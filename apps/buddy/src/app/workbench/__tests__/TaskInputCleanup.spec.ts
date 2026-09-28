@@ -103,7 +103,9 @@ describe('task input cleanup', () => {
     const discarded = (await workbench.open({ scheme: 'draft', id: 'discarded', data: {} }, 'Gone'))!
     const sent = (await workbench.open({ scheme: 'draft', id: 'sent', data: {} }, 'Sent', { direction: 'right' }))!
     const record: LocalComposerDraft = { draftId: 'sent', scope: { kind: 'conversation_branch', conversationId: 'task', branchId: 'branch' }, content: createBuddyUserContent(), revision: 1, executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, modelSelection: null, updatedAt: '2026-09-18T00:00:00.000Z' }
-    await restoreTaskInputViews(workbench.layout, { find: async id => id === 'sent' ? record : null })
+    const restoredLayout = restoreWorkbenchLayout(workbench.layout)
+    await restoreTaskInputViews(restoredLayout, { find: async id => id === 'sent' ? record : null })
+    workbench.restoreLayout(restoredLayout)
     expect(workbench.layout.views[discarded]).toBeUndefined()
     expect(workbench.layout.views[sent]?.resource).toEqual({ scheme: 'task', id: 'task', data: {} })
     expect(workbench.layout.root).toMatchObject({ kind: 'pane', view: sent })

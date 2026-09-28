@@ -20,6 +20,7 @@ export interface ChatComposerNoticeInteraction {
 export type ChatComposerInteraction = ChatComposerNoticeInteraction
 
 export interface ComposerResourcesState {
+  dispose: () => void
   begin: (files: readonly File[], origin?: 'file' | 'clipboard') => readonly string[]
   rejectedIds: ReadonlySet<string>
   resources: Readonly<Ref<readonly ComposerResourceView[]>>

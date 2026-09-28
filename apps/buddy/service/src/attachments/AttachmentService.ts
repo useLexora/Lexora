@@ -7,6 +7,7 @@ import type { InputModel } from '../providers/modelCapabilities'
 import type { AttachmentRecord, AttachmentRepository } from '../storage/attachmentRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { AttachmentDocumentReference, AttachmentFileInput } from './AttachmentDocumentReference'
+import type { AttachmentChange } from './attachmentEvents'
 import type { AttachmentImageReference } from './AttachmentImageReference'
 import type { PreparedAttachmentImage } from './AttachmentImageStore'
 import type { AttachmentToolWorkspace } from './AttachmentToolWorkspace'
@@ -23,6 +24,8 @@ import {
   getAttachmentKind,
 } from '../../../shared/conversation/attachmentPolicy'
 import { projectBuddyUserContent } from '../../../shared/conversation/buddyUserContentProjection'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { AttachmentImageStore } from './AttachmentImageStore'
 import { getAttachmentLabels } from './attachmentLabels'
 import { hasDocumentSignature } from './validateDocumentBytes'
@@ -92,12 +95,24 @@ export interface MessageAttachmentBinding {
 }
 
 export interface PreparedMessageAttachments {
-  bindings: readonly MessageAttachmentBinding[]
+  bindings: readonly Readonly<MessageAttachmentBinding>[]
+  commit: () => Promise<void>
+  rollback: () => Promise<void>
+}
+
+export interface PreparedAttachmentUploads {
+  readonly records: readonly Readonly<AttachmentRecord>[]
   commit: () => Promise<void>
   rollback: () => Promise<void>
 }
 
 export class AttachmentService {
+  readonly #changes = new Emitter<AttachmentChange>(() => console.error('ATTACHMENT_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  readonly #leasedPaths = new Map<string, number>()
+  #revision = 0
+  #storageTail = Promise.resolve()
+  #stopping = false
   readonly #images = new AttachmentImageStore()
   readonly #paths: BuddyDataPaths
   readonly #readFile: AttachmentFileReader
@@ -109,7 +124,98 @@ export class AttachmentService {
     this.#repository = options.repository
   }
 
-  async registerFiles(
+  registerFiles(draftId: string, paths: readonly string[], limits = { count: BUDDY_ATTACHMENT_COUNT_LIMIT, errorCode: 'VALIDATION_FAILED', totalBytes: BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT }): Promise<AttachmentRecord[]> {
+    const owned = [...paths]
+    const ownedLimits = { ...limits }
+    return this.#storage(() => this.#registerFiles(draftId, owned, ownedLimits))
+  }
+
+  registerUploads(draftId: string, uploads: readonly BuddyAttachmentUpload[]): Promise<AttachmentRecord[]> {
+    const owned = uploads.map(upload => ({ ...upload, bytes: Uint8Array.from(upload.bytes) }))
+    return this.#storage(() => this.#registerUploads(draftId, owned))
+  }
+
+  prepareUploads(draftId: string, uploads: readonly BuddyAttachmentUpload[]): Promise<PreparedAttachmentUploads> {
+    const owned = uploads.map(upload => ({ ...upload, bytes: Uint8Array.from(upload.bytes) }))
+    return this.#storage(async () => {
+      const records = await this.#registerUploads(draftId, owned)
+      for (const record of records) {
+        const path = normalize(record.storedPath)
+        this.#leasedPaths.set(path, (this.#leasedPaths.get(path) ?? 0) + 1)
+      }
+      let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
+      const settle = (outcome: 'commit' | 'rollback'): Promise<void> => {
+        if (settlement) {
+          return settlement.outcome === outcome
+            ? settlement.promise
+            : Promise.reject(new Error('ATTACHMENT_PREPARATION_SETTLED'))
+        }
+        const promise = this.#storage(async () => {
+          for (const record of records) {
+            const path = normalize(record.storedPath)
+            const remaining = (this.#leasedPaths.get(path) ?? 1) - 1
+            if (remaining)
+              this.#leasedPaths.set(path, remaining)
+            else this.#leasedPaths.delete(path)
+          }
+          if (outcome === 'rollback') {
+            const ownedIds = records.filter((record) => {
+              const current = this.#repository.findById(record.id)
+              return current?.draftId === draftId && current.storedPath === record.storedPath
+            }).map(record => record.id)
+            await this.#release(ownedIds)
+          }
+        }, true)
+        settlement = { outcome, promise }
+        return promise
+      }
+      return Object.freeze({ records: copyEventSnapshot(records), commit: () => settle('commit'), rollback: () => settle('rollback') })
+    })
+  }
+
+  prepareMessageAttachments(input: { attachmentIds: readonly string[], conversationId: string, draftId: string, messageId: string }): Promise<PreparedMessageAttachments> {
+    const owned = { ...input, attachmentIds: [...input.attachmentIds] }
+    return this.#storage(() => this.#prepareMessageAttachments(owned))
+  }
+
+  release(ids: readonly string[]): Promise<string[]> {
+    const owned = [...ids]
+    return this.#storage(() => this.#release(owned))
+  }
+
+  releaseDraft(draftId: string): Promise<void> {
+    return this.#storage(() => this.#releaseDraft(draftId))
+  }
+
+  reconcileStorage(): Promise<AttachmentStorageReconciliation> {
+    return this.#storage(() => this.#reconcileStorage())
+  }
+
+  async dispose(): Promise<void> {
+    this.#stopping = true
+    let tail: Promise<void>
+    do {
+      tail = this.#storageTail
+      await tail
+    } while (tail !== this.#storageTail)
+    if (this.#leasedPaths.size)
+      throw new Error('ATTACHMENT_PREPARATIONS_PENDING')
+    this.#changes.dispose()
+  }
+
+  #storage<T>(operation: () => Promise<T>, finishing = false): Promise<T> {
+    if (this.#stopping && !finishing)
+      return Promise.reject(new AttachmentError('RUNTIME_OFFLINE'))
+    const result = this.#storageTail.then(operation)
+    this.#storageTail = result.then(() => {}, () => {})
+    return result
+  }
+
+  #publish(kind: AttachmentChange['kind'], phase: AttachmentChange['phase'], attachmentIds: readonly string[], operationId: string = randomUUID(), count = attachmentIds.length): void {
+    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, operationId, kind, phase, attachmentIds, count }))
+  }
+
+  async #registerFiles(
     draftId: string,
     paths: readonly string[],
     limits = {
@@ -133,6 +239,7 @@ export class AttachmentService {
     validateTotalBytes(sources.map(source => source.metadata.size), limits.totalBytes, limits.errorCode)
     const directory = this.#paths.draftAttachments(draftId)
     await mkdir(directory, { mode: 0o700, recursive: true })
+    const operationId = randomUUID()
     const records: AttachmentRecord[] = []
     const attempted: AttachmentRecord[] = []
     try {
@@ -153,20 +260,25 @@ export class AttachmentService {
         }
         attempted.push(record)
         await publishFile(sourcePath, storedPath)
+        this.#publish('file-published', 'import', [record.id], operationId)
         if (isDocumentMimeType(mimeType) && !hasDocumentSignature(mimeType, await this.#readFile(storedPath)))
           throw new AttachmentError('ATTACHMENT_INVALID')
         this.#repository.create(record)
+        this.#publish('registered', 'import', [record.id], operationId)
         records.push(record)
       }
     }
     catch (error) {
-      await this.#rollbackRegistration(attempted)
+      try {
+        await this.#rollbackRegistration(attempted, operationId)
+      }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'Attachment import and cleanup failed') }
       throw error
     }
     return records
   }
 
-  async registerUploads(
+  async #registerUploads(
     draftId: string,
     uploads: readonly BuddyAttachmentUpload[],
   ): Promise<AttachmentRecord[]> {
@@ -181,6 +293,7 @@ export class AttachmentService {
     validateTotalBytes(sources.map(source => source.bytes.byteLength))
     const directory = this.#paths.draftAttachments(draftId)
     await mkdir(directory, { mode: 0o700, recursive: true })
+    const operationId = randomUUID()
     const records: AttachmentRecord[] = []
     const attempted: AttachmentRecord[] = []
     try {
@@ -202,18 +315,23 @@ export class AttachmentService {
         }
         attempted.push(record)
         await publishBytes(source.bytes, storedPath)
+        this.#publish('file-published', 'import', [record.id], operationId)
         this.#repository.create(record)
+        this.#publish('registered', 'import', [record.id], operationId)
         records.push(record)
       }
     }
     catch (error) {
-      await this.#rollbackRegistration(attempted)
+      try {
+        await this.#rollbackRegistration(attempted, operationId)
+      }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'Attachment import and cleanup failed') }
       throw error
     }
     return records
   }
 
-  async prepareMessageAttachments(input: {
+  async #prepareMessageAttachments(input: {
     attachmentIds: readonly string[]
     conversationId: string
     draftId: string
@@ -234,12 +352,34 @@ export class AttachmentService {
     }
     const directory = this.#paths.messageInputs(input.conversationId, input.messageId)
     await mkdir(directory, { mode: 0o700, recursive: true })
+    const operationId = randomUUID()
     const bindings: MessageAttachmentBinding[] = []
+    const attemptedPaths: string[] = []
+    const leasedPaths: string[] = []
+    const lease = (path: string) => {
+      const key = normalize(path)
+      this.#leasedPaths.set(key, (this.#leasedPaths.get(key) ?? 0) + 1)
+      leasedPaths.push(key)
+    }
+    const releaseLeases = () => {
+      for (const path of leasedPaths.splice(0)) {
+        const remaining = (this.#leasedPaths.get(path) ?? 1) - 1
+        if (remaining)
+          this.#leasedPaths.set(path, remaining)
+        else this.#leasedPaths.delete(path)
+      }
+    }
     try {
       for (const record of records) {
         const id = record.draftId === input.draftId ? record.id : randomUUID()
         const storedPath = join(directory, `${id}${safeExtension(record.name)}`)
+        if (this.#leasedPaths.has(normalize(storedPath)) || this.#repository.listAll().some(owned => normalize(owned.storedPath) === normalize(storedPath)))
+          throw new AttachmentError('VALIDATION_FAILED')
+        lease(record.storedPath)
+        lease(storedPath)
+        attemptedPaths.push(storedPath)
         await publishFile(record.storedPath, storedPath)
+        this.#publish('file-published', 'message', [id], operationId)
         bindings.push({
           createdAt: new Date().toISOString(),
           id,
@@ -256,15 +396,51 @@ export class AttachmentService {
       }
     }
     catch (error) {
-      await removeFiles(bindings.map(binding => binding.storedPath))
+      try {
+        await removeFiles(attemptedPaths)
+        if (attemptedPaths.length)
+          this.#publish('cleanup-completed', 'rollback', bindings.map(binding => binding.id), operationId, attemptedPaths.length)
+      }
+      catch (cleanup) {
+        this.#publish('cleanup-failed', 'rollback', bindings.map(binding => binding.id), operationId)
+        throw new AggregateError([error, cleanup], 'Attachment preparation and cleanup failed')
+      }
+      finally { releaseLeases() }
       throw error
     }
+    this.#publish('prepared', 'message', bindings.map(binding => binding.id), operationId)
+    let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
+    const settle = (outcome: 'commit' | 'rollback'): Promise<void> => {
+      if (settlement) {
+        return settlement.outcome === outcome
+          ? settlement.promise
+          : Promise.reject(new Error('ATTACHMENT_PREPARATION_SETTLED'))
+      }
+      const promise = this.#storage(async () => {
+        try {
+          const owned = new Set(this.#repository.listAll().map(record => normalize(record.storedPath)))
+          if (outcome === 'commit' && bindings.some(binding => !owned.has(normalize(binding.storedPath))))
+            throw new Error('ATTACHMENT_OWNERSHIP_NOT_COMMITTED')
+          const candidates = outcome === 'commit'
+            ? bindings.flatMap(binding => binding.sourceDraftId ? [binding.sourceStoredPath] : [])
+            : bindings.map(binding => binding.storedPath)
+          const removable = candidates.filter(path => !owned.has(normalize(path)))
+          await removeFiles(removable)
+          this.#publish('cleanup-completed', outcome, bindings.map(binding => binding.id), operationId, removable.length)
+        }
+        catch (error) {
+          this.#publish('cleanup-failed', outcome, bindings.map(binding => binding.id), operationId)
+          throw error
+        }
+        finally { releaseLeases() }
+      }, true)
+      settlement = { outcome, promise }
+      return promise
+    }
     return {
-      bindings,
-      commit: () => removeFiles(bindings.flatMap(
-        binding => binding.sourceDraftId ? [binding.sourceStoredPath] : [],
-      )),
-      rollback: () => removeFiles(bindings.map(binding => binding.storedPath)),
+      bindings: copyEventSnapshot(bindings),
+      commit: () => settle('commit'),
+      rollback: () => settle('rollback'),
     }
   }
 
@@ -277,21 +453,30 @@ export class AttachmentService {
     return { mimeType: record.mimeType, path: record.storedPath }
   }
 
-  async release(ids: readonly string[]): Promise<string[]> {
+  async #release(ids: readonly string[]): Promise<string[]> {
     const released: string[] = []
     for (const id of ids) {
       const record = this.#repository.findById(id)
       if (!record?.draftId)
         continue
-      await unlinkAvailableFile(record.storedPath)
-      if (this.#repository.removeDraft(id))
-        released.push(id)
+      if (this.#leasedPaths.has(normalize(record.storedPath)) || !this.#repository.removeDraft(id))
+        continue
+      released.push(id)
+      this.#publish('released', 'release', [id])
+      try {
+        await unlinkAvailableFile(record.storedPath)
+        this.#publish('cleanup-completed', 'release', [id])
+      }
+      catch (error) {
+        this.#publish('cleanup-failed', 'release', [id])
+        throw error
+      }
     }
     return released
   }
 
-  async releaseDraft(draftId: string): Promise<void> {
-    await this.release(this.#repository.listAll().filter(record => record.draftId === draftId).map(record => record.id))
+  async #releaseDraft(draftId: string): Promise<void> {
+    await this.#release(this.#repository.listAll().filter(record => record.draftId === draftId).map(record => record.id))
     const directory = this.#paths.draftAttachments(draftId)
     for (const path of [directory, dirname(directory)]) {
       try {
@@ -311,7 +496,7 @@ export class AttachmentService {
       .map(record => record.id))
   }
 
-  async reconcileStorage(): Promise<AttachmentStorageReconciliation> {
+  async #reconcileStorage(): Promise<AttachmentStorageReconciliation> {
     const records = this.#repository.listAll()
     const ownedPaths = new Set(records.map(record => normalize(record.storedPath)))
     const invalidAttachmentIds: string[] = []
@@ -338,13 +523,14 @@ export class AttachmentService {
     let removedOrphanFiles = 0
     for (const root of roots) {
       for (const path of await listFilesRecursively(root)) {
-        if (ownedPaths.has(normalize(path)))
+        if (ownedPaths.has(normalize(path)) || this.#leasedPaths.has(normalize(path)))
           continue
         await unlinkAvailableFile(path)
         removedOrphanFiles += 1
       }
     }
 
+    this.#publish('reconciled', 'recovery', [...invalidAttachmentIds, ...missingAttachmentIds], randomUUID(), removedOrphanFiles)
     return {
       invalidAttachmentIds: invalidAttachmentIds.sort(),
       missingAttachmentIds: missingAttachmentIds.sort(),
@@ -673,14 +859,24 @@ export class AttachmentService {
     throw new AttachmentError('VALIDATION_FAILED')
   }
 
-  async #rollbackRegistration(records: readonly AttachmentRecord[]): Promise<void> {
+  async #rollbackRegistration(records: readonly AttachmentRecord[], operationId: string): Promise<void> {
+    const failures: unknown[] = []
     for (const record of records.toReversed()) {
-      await unlinkAvailableFile(record.storedPath).catch(() => undefined)
       try {
-        this.#repository.removeDraft(record.id)
+        if (this.#repository.removeDraft(record.id))
+          this.#publish('released', 'rollback', [record.id], operationId)
+        if (this.#repository.findById(record.id))
+          continue
+        await unlinkAvailableFile(record.storedPath)
+        this.#publish('cleanup-completed', 'rollback', [record.id], operationId)
       }
-      catch {}
+      catch (error) {
+        this.#publish('cleanup-failed', 'rollback', [record.id], operationId)
+        failures.push(error)
+      }
     }
+    if (failures.length)
+      throw new AggregateError(failures, 'Attachment rollback cleanup failed')
   }
 }
 

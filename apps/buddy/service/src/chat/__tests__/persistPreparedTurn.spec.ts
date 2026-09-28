@@ -1,5 +1,5 @@
-import type { PreparedMessageAttachments } from '../../attachments/AttachmentService'
 import type { TurnRequestRecord } from '../../storage/turnRequestRepository'
+import type { PreparedTurnAttachments } from '../persistPreparedTurn'
 import { describe, expect, it } from 'vitest'
 import { persistPreparedTurn } from '../persistPreparedTurn'
 
@@ -39,9 +39,10 @@ describe('persistPreparedTurn', () => {
 function attachments(options: {
   commit: () => void
   rollback: () => void
-}): PreparedMessageAttachments {
+}): PreparedTurnAttachments {
   return {
     bindings: [],
+    validate: () => {},
     commit: async () => options.commit(),
     rollback: async () => options.rollback(),
   }

@@ -26,7 +26,13 @@ export function contextPanelFixture(overrides: Partial<UseTaskContextPanelOption
     control: {
       getState: async () => host.getState(),
       execute: command => host.execute(command),
-      onStateChanged: listener => host.subscribe(listener),
+      onStateChanged: (listener) => {
+        const subscription = host.onDidChange((change) => {
+          if (change.kind === 'state')
+            listener(structuredClone(change.state))
+        })
+        return () => subscription.dispose()
+      },
     },
     onError: vi.fn(),
     ...overrides,

@@ -107,7 +107,7 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
     await absent(join(workspace, 'late'))
   }
   finally {
-    client.dispose()
+    await client.dispose()
     disposeHost()
     host.close(new Error('Installation verification completed'))
     runtime.close(new Error('Installation verification completed'))

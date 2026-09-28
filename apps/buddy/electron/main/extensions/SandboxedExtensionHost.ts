@@ -109,7 +109,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       throw new Error('EXTENSION_HOST_STOPPED')
     if (this.#pending.size >= 64)
       throw new Error('EXTENSION_REQUEST_LIMIT')
-    return this.#send(method, params, 15000)
+    return this.#send(method, params, method === 'agent.invoke' ? 125000 : 15000)
   }
 
   devtools(): void {

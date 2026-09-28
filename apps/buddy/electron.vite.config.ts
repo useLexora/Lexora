@@ -5,6 +5,7 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import UnoCSS from 'unocss/vite'
+import { extensionRuntimePlugin } from './electron/extensionRuntimePlugin.ts'
 
 const PRODUCTION_CONNECT_SRC = 'connect-src \'self\';'
 const DEVELOPMENT_CONNECT_SRC
@@ -33,7 +34,7 @@ const electronCacheRoot = fileURLToPath(
 export default defineConfig({
   main: {
     cacheDir: join(electronCacheRoot, 'main'),
-    plugins: [externalizeDepsPlugin({ exclude: ['typescript'] })],
+    plugins: [extensionRuntimePlugin(), externalizeDepsPlugin({ exclude: ['typescript'] })],
     build: {
       outDir: join(electronOutputRoot, 'main'),
       rollupOptions: {

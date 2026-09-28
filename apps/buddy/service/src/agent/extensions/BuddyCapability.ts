@@ -6,7 +6,15 @@ import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import type { BuddyToolDisclosurePolicy } from './discovery/toolDiscoveryContract'
 
+export interface BuddyCapabilityResourceRevision {
+  readonly source: 'connector'
+  readonly id: string
+  readonly revision: string
+}
+
 export interface BuddyCapability {
+  dispose?: () => void | Promise<void>
+  resourceRevisions?: readonly BuddyCapabilityResourceRevision[]
   extension: BuddyInProcessExtension
   classify: (event: ToolCallEvent, signal: AbortSignal) =>
     BuddyToolClassificationResult | null | Promise<BuddyToolClassificationResult | null>

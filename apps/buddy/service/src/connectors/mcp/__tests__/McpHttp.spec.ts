@@ -198,6 +198,7 @@ describe('mCP HTTP and authorization', () => {
     await service.upsert({ id: 'http', name: 'HTTP', url: `${fixture.base}/mcp`, transport: 'streamable-http', enabled: false, credentialRef: null })
     await service.saveCredential('http', secret as never)
     expect(await service.test('http')).toMatchObject({ authorization: 'oauth', status: 'needs_auth' })
+    expect(service.state('http')).toMatchObject({ authorization: 'oauth', status: 'disabled', errorCode: 'MCP_AUTHENTICATION_REQUIRED' })
     service.login('http')
     await vi.waitUntil(() => service.state('http').errorCode === 'MCP_AUTHENTICATION_FAILED')
     expect(secret).toEqual({ type: 'http', bearerToken: 'previous-fixture-token' })

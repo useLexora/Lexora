@@ -1,8 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { SpaceCommit } from '../SpaceService'
 import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { Emitter } from '../../../../shared/events/Emitter'
+import { BuddySessionRegistry } from '../../agent/sessions/BuddySessionRegistry'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
 import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from '../../storage/__tests__/migrationFixture'
 import { openBuddyDatabase } from '../../storage/database'
@@ -11,6 +14,7 @@ import { BUDDY_V2_CHANGE_SCHEMA_SQL } from '../../storage/migrations/v2Change'
 import { BUDDY_V3_SPACE_SCHEMA_SQL } from '../../storage/migrations/v3Space'
 import { createRunRepository } from '../../storage/runRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
+import { SpaceDependents } from '../SpaceDependents'
 import { SpaceService } from '../SpaceService'
 
 const databases: DatabaseSync[] = []
@@ -25,6 +29,75 @@ afterEach(async () => {
 })
 
 describe('spaceService', () => {
+  it('keeps consumers attached until an accepted asynchronous directory grant commits', async () => {
+    const fixture = await createFixture()
+    const space = await fixture.service.create(spaceInput('Space', fixture.directory))
+    const sessions = new BuddySessionRegistry<{ shutdown: () => Promise<void> }>()
+    let closed = 0
+    await sessions.getOrCreate({ approvalPolicy: 'policy', branchId: 'branch', canonicalRoot: fixture.directory, conversationId: 'conversation', executionProfile: 'workspace_write', grantRevision: 'grant', resourceRevision: 'resources', scratchRoot: '/scratch', sessionMode: 'interactive', spaceId: space.id }, null, async () => ({ piSessionFile: '/session', session: { shutdown: async () => {
+      closed++
+    } } }))
+    const consumer = new SpaceDependents({ source: fixture.service, grants: { onDidCommit: new Emitter<never>(() => {}).event, quiesce: async () => {} }, sessions, resources: { reconcileInvalidation: input => sessions.invalidateMatching(input.matches, { sessionIds: input.sessionIds ?? [] }), resync: async () => {}, snapshot: () => [] }, automations: { blockSpace: () => [] }, record: () => {} })
+    const accepted = fixture.service.grantAdditionalDirectory({ spaceId: space.id, root: join(fixture.root, 'accepted-directory') })
+    const stopping = consumer.dispose()
+    const receipt = await accepted
+    await stopping
+    expect(fixture.service.list()[0]!.additionalDirectories.map(directory => directory.id)).toEqual([receipt.grant.id])
+    expect(closed).toBe(1)
+    expect(consumer.snapshot.status).toBe('stopped')
+    await expect(fixture.service.delete(space.id)).rejects.toThrow('SPACE_SERVICE_STOPPED')
+    await fixture.service.dispose()
+    await sessions.dispose()
+  })
+
+  it('publishes only semantic committed changes and isolates observers from the stored Space', async () => {
+    const fixture = await createFixture()
+    const events: SpaceCommit[] = []
+    fixture.service.onDidCommit(event => events.push(event))
+    fixture.service.onDidCommit(() => {
+      throw new Error('observer failure')
+    })
+    const created = await fixture.service.create(spaceInput('Private Space name', fixture.directory))
+    const update = { ...spaceInput(created.name, fixture.directory), spaceId: created.id, primaryDirectory: { id: created.primaryDirectory!.id, root: fixture.directory } }
+    await fixture.service.update(update)
+    expect(events).toHaveLength(1)
+    await fixture.service.update({ ...update, name: 'Renamed' })
+    expect(events[1]).toMatchObject({ revision: 2, kind: 'updated', facets: ['presentation'] })
+    expect(Object.isFrozen(events[0]?.directories[0])).toBe(true)
+    expect(JSON.stringify(events)).not.toContain(fixture.directory)
+    expect(JSON.stringify(events)).not.toContain('Private Space name')
+    created.name = 'External mutation'
+    expect(fixture.service.list()[0]?.name).toBe('Renamed')
+    await fixture.service.delete(created.id)
+    expect(events[2]).toMatchObject({ kind: 'deleted', revokedDirectoryIds: [created.primaryDirectory!.id], directories: [] })
+  })
+
+  it('serializes a configuration update behind a pending directory grant without losing the grant', async () => {
+    const fixture = await createFixture()
+    const created = await fixture.service.create(spaceInput('Space', fixture.directory))
+    const grant = fixture.service.grantAdditionalDirectory({ spaceId: created.id, root: join(fixture.root, 'new-directory') })
+    const update = fixture.service.update({ ...spaceInput('Renamed', fixture.directory), spaceId: created.id, primaryDirectory: { id: created.primaryDirectory!.id, root: fixture.directory } })
+    const [mutation, updated] = await Promise.all([grant, update])
+    expect(updated.additionalDirectories.map(directory => directory.id)).toEqual([mutation.grant.id])
+    expect(updated.name).toBe('Renamed')
+  })
+
+  it('queues observer reentry after the committed event snapshot', async () => {
+    const fixture = await createFixture()
+    const events: SpaceCommit[] = []
+    let reentered: Promise<unknown> | undefined
+    fixture.service.onDidCommit((event) => {
+      if (event.kind === 'created')
+        reentered = fixture.service.delete(event.spaceId)
+    })
+    fixture.service.onDidCommit(event => events.push(event))
+    const created = await fixture.service.create(spaceInput('Space', fixture.directory))
+    await reentered
+    expect(events.map(event => [event.revision, event.kind])).toEqual([[1, 'created'], [2, 'deleted']])
+    expect(events[0]?.directories).toHaveLength(1)
+    expect(fixture.service.list()[0]).toMatchObject({ id: created.id, revokedAt: expect.any(String) })
+  })
+
   it('creates independent Spaces that bind the same real directory', async () => {
     const fixture = await createFixture()
 
@@ -236,7 +309,7 @@ async function createFixture() {
     database,
     directory,
     root,
-    service: new SpaceService(createSpaceRepository(database)),
+    service: new SpaceService(createSpaceRepository(database), () => {}),
   }
 }
 

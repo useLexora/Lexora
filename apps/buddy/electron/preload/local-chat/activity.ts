@@ -1,16 +1,21 @@
+import type { ArtifactChangeNotice } from '../../../shared/artifacts/artifactApi'
+import type { ChangeSetChangeNotice } from '../../../shared/changes/changeApi'
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
+import { subscribe } from '../subscribe'
 
 export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notifications' | 'changes' | 'runs' | 'approvals' | 'usage'> {
   return {
     artifacts: Object.freeze({
+      onChanged: listener => subscribe<ArtifactChangeNotice>(LOCAL_CHAT_IPC_CHANNELS.artifactsChanged, listener),
       readText: artifactId => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.artifactsReadText,
         { artifactId },
       ),
     }),
     notifications: Object.freeze({
+      onChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.notificationsChanged, listener),
       list: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.notificationsList),
       markAllSeen: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.notificationsMarkAllSeen),
       markSeen: (notificationId, revision) => ipcRenderer.invoke(
@@ -19,6 +24,7 @@ export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notificat
       ),
     }),
     changes: Object.freeze({
+      onChanged: listener => subscribe<ChangeSetChangeNotice>(LOCAL_CHAT_IPC_CHANNELS.changesChanged, listener),
       overview: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesOverview, { ...input }),
       get: changeSetId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesGet, { changeSetId }),
     }),

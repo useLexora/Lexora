@@ -102,3 +102,12 @@ export const spacesRpc = {
   searchFiles: { method: 'spaces.searchFiles', input: spacesRequestSchemas.spaceFileSearch, response: spacesResponseSchemas.spaceFiles },
   update: { method: 'spaces.update', input: spacesRequestSchemas.spaceUpdate.extend({ primaryDirectorySelectionVerified: z.boolean() }).strict(), response: spacesResponseSchemas.space },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const spaceChangeNoticeSchema = z.object({
+  sourceId: z.uuid(),
+  revision: z.number().int().positive(),
+  spaceId: idSchema,
+  kind: z.enum(['created', 'updated', 'directory-granted', 'deleted']),
+}).strict()
+export type SpaceChangeNotice = z.infer<typeof spaceChangeNoticeSchema>
+export const spaceChanged = { method: 'spaces.changed', params: spaceChangeNoticeSchema } as const

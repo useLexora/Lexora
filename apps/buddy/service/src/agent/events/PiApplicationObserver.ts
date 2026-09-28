@@ -26,7 +26,7 @@ export class PiApplicationObserver {
       case 'turn_start': {
         this.#endTurn('interrupted')
         this.#turn = { id: `${this.#runId}:${++this.#turnSequence}`, startedAt: performance.now() }
-        this.#events.publish({ event: 'turn.started', level: 'info', turnId: this.#turn.id })
+        this.#events.publish({ event: 'pi.turn.started', level: 'info', turnId: this.#turn.id })
         break
       }
       case 'turn_end': {
@@ -38,34 +38,34 @@ export class PiApplicationObserver {
       }
       case 'tool_execution_start': {
         this.#tools.set(event.toolCallId, { startedAt: performance.now(), turnId: this.#turn?.id, authorized: false })
-        this.#events.publish({ event: 'tool.requested', level: 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: this.#turn?.id })
+        this.#events.publish({ event: 'pi.tool.requested', level: 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: this.#turn?.id })
         break
       }
       case 'tool_execution_end': {
         const tool = this.#tools.get(event.toolCallId)
         if (tool?.authorized)
-          this.#events.publish({ event: event.isError ? 'tool.failed' : 'tool.completed', level: event.isError ? 'warn' : 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: tool.turnId, durationMs: Math.round(performance.now() - tool.startedAt) })
+          this.#events.publish({ event: event.isError ? 'pi.tool.failed' : 'pi.tool.completed', level: event.isError ? 'warn' : 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: tool.turnId, durationMs: Math.round(performance.now() - tool.startedAt) })
         this.#tools.delete(event.toolCallId)
         break
       }
       case 'auto_retry_start':
         this.#retryStartedAt = performance.now()
-        this.#events.publish({ event: 'model.retry.started', level: 'warn', attempt: event.attempt, turnId: this.#turn?.id })
+        this.#events.publish({ event: 'pi.model.retry.started', level: 'warn', attempt: event.attempt, turnId: this.#turn?.id })
         break
       case 'auto_retry_end':
-        this.#events.publish({ event: event.success ? 'model.retry.completed' : 'model.retry.failed', level: event.success ? 'info' : 'error', attempt: event.attempt, durationMs: elapsed(this.#retryStartedAt) })
+        this.#events.publish({ event: event.success ? 'pi.model.retry.completed' : 'pi.model.retry.failed', level: event.success ? 'info' : 'error', attempt: event.attempt, durationMs: elapsed(this.#retryStartedAt) })
         this.#retryStartedAt = undefined
         break
       case 'compaction_start':
         this.#compactionStartedAt = performance.now()
-        this.#events.publish({ event: 'model.compaction.started', level: 'info' })
+        this.#events.publish({ event: 'pi.model.compaction.started', level: 'info' })
         break
       case 'compaction_end':
-        this.#events.publish({ event: `model.compaction.${event.aborted ? 'cancelled' : event.result ? 'completed' : 'failed'}`, level: event.aborted || event.result ? 'info' : 'error', durationMs: elapsed(this.#compactionStartedAt) })
+        this.#events.publish({ event: `pi.model.compaction.${event.aborted ? 'cancelled' : event.result ? 'completed' : 'failed'}`, level: event.aborted || event.result ? 'info' : 'error', durationMs: elapsed(this.#compactionStartedAt) })
         this.#compactionStartedAt = undefined
         break
       case 'agent_settled':
-        this.#events.publish({ event: 'execution.settled', level: 'info' })
+        this.#events.publish({ event: 'pi.agent.settled', level: 'info' })
         break
     }
   }
@@ -76,30 +76,30 @@ export class PiApplicationObserver {
       tool.authorized = true
       tool.startedAt = performance.now()
     }
-    this.#events.publish({ event: 'tool.authorized', level: 'info', toolCallId: diagnosticToolCallId(toolCallId), turnId: tool?.turnId ?? this.#turn?.id })
+    this.#events.publish({ event: 'pi.tool.authorized', level: 'info', toolCallId: diagnosticToolCallId(toolCallId), turnId: tool?.turnId ?? this.#turn?.id })
   }
 
   denied(toolCallId: string, errorCode: string): void {
-    this.#events.publish({ event: isToolFailureCode(errorCode) ? 'tool.failed' : 'tool.denied', level: 'warn', toolCallId: diagnosticToolCallId(toolCallId), turnId: this.#tools.get(toolCallId)?.turnId ?? this.#turn?.id, errorCode })
+    this.#events.publish({ event: isToolFailureCode(errorCode) ? 'pi.tool.failed' : 'pi.tool.denied', level: 'warn', toolCallId: diagnosticToolCallId(toolCallId), turnId: this.#tools.get(toolCallId)?.turnId ?? this.#turn?.id, errorCode })
     this.#tools.delete(toolCallId)
   }
 
   settle(): void {
     this.#endTurn('interrupted')
     for (const [toolCallId, tool] of this.#tools)
-      this.#events.publish({ event: 'tool.interrupted', level: 'warn', toolCallId: diagnosticToolCallId(toolCallId), turnId: tool.turnId, durationMs: elapsed(tool.startedAt) })
+      this.#events.publish({ event: 'pi.tool.interrupted', level: 'warn', toolCallId: diagnosticToolCallId(toolCallId), turnId: tool.turnId, durationMs: elapsed(tool.startedAt) })
     this.#tools.clear()
     if (this.#retryStartedAt !== undefined)
-      this.#events.publish({ event: 'model.retry.cancelled', level: 'info', durationMs: elapsed(this.#retryStartedAt) })
+      this.#events.publish({ event: 'pi.model.retry.cancelled', level: 'info', durationMs: elapsed(this.#retryStartedAt) })
     if (this.#compactionStartedAt !== undefined)
-      this.#events.publish({ event: 'model.compaction.cancelled', level: 'info', durationMs: elapsed(this.#compactionStartedAt) })
+      this.#events.publish({ event: 'pi.model.compaction.cancelled', level: 'info', durationMs: elapsed(this.#compactionStartedAt) })
     this.#retryStartedAt = this.#compactionStartedAt = undefined
   }
 
   #endTurn(status: 'completed' | 'failed' | 'cancelled' | 'interrupted'): void {
     if (!this.#turn)
       return
-    this.#events.publish({ event: `turn.${status}`, level: status === 'failed' ? 'error' : status === 'interrupted' ? 'warn' : 'info', turnId: this.#turn.id, durationMs: elapsed(this.#turn.startedAt) })
+    this.#events.publish({ event: `pi.turn.${status}`, level: status === 'failed' ? 'error' : status === 'interrupted' ? 'warn' : 'info', turnId: this.#turn.id, durationMs: elapsed(this.#turn.startedAt) })
     this.#turn = null
   }
 }

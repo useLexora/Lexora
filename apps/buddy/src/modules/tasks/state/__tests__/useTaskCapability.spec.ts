@@ -17,6 +17,28 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
+  it('refreshes committed content for the active task without inventing a run output', async () => {
+    const api = createBranchingDesktopApi()
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
+    await chat.initialize()
+    const changed = { changeSetId: 'run-1', conversationId: 'conversation-1', runId: 'run-1', coverage: 'partial' as const, status: 'completed' as const, fileCount: 1, updatedAt: '2026-09-06T00:00:02.000Z' }
+    vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({ changeSets: [changed], items: [], nextCursor: null, outputs: [], runEvents: [], runs: [] })
+    const notice = vi.mocked(api.localChat.changes.onChanged).mock.calls[0]![0]
+    const artifactNotice = vi.mocked(api.localChat.artifacts.onChanged).mock.calls[0]![0]
+    notice({ sourceId: 'changes-source', revision: 1, conversationId: 'conversation-1', runId: 'run-1' })
+    artifactNotice({ sourceId: 'artifact-source', revision: 1, conversationId: 'conversation-1' })
+    await vi.waitFor(() => expect(chat.workspace.transcript.changeSets.value).toEqual([changed]))
+    expect(chat.workspace.transcript.runOutputs.value).toEqual([])
+    const calls = vi.mocked(api.localChat.conversations.listTimeline).mock.calls.length
+    notice({ sourceId: 'changes-source', revision: 1, conversationId: 'conversation-1', runId: 'run-1' })
+    artifactNotice({ sourceId: 'artifact-source', revision: 2, conversationId: 'other-task' })
+    chat.dispose()
+    notice({ sourceId: 'changes-source', revision: 3, conversationId: 'conversation-1', runId: 'run-1' })
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(vi.mocked(api.localChat.conversations.listTimeline).mock.calls.length).toBe(calls)
+  })
+
   it('restores saved attachments when the new-task pane keeps the same draft identity', async () => {
     const api = createDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
@@ -1083,6 +1105,7 @@ function createDesktopApi() {
         }),
       },
       composerResources: {
+        onChanged: () => () => {},
         accept: vi.fn(async (input: BuddyComposerResourceAccept) => input.resources.map(resource => ({ ...resource, draftId: input.draftId, kind: 'image', state: 'importing' }))),
         complete: vi.fn(),
         fail: vi.fn(),
@@ -1093,6 +1116,7 @@ function createDesktopApi() {
         selectSource: vi.fn(),
       },
       artifacts: {
+        onChanged: vi.fn(() => () => {}),
         readText: vi.fn(),
       },
       automations: {
@@ -1141,6 +1165,7 @@ function createDesktopApi() {
         }),
       },
       changes: {
+        onChanged: vi.fn(() => () => {}),
         get: vi.fn(),
       },
       connectors: { list: vi.fn(async () => []) },
@@ -1159,11 +1184,13 @@ function createDesktopApi() {
         })),
       },
       notifications: {
+        onChanged: () => () => {},
         list: vi.fn(async () => ({ items: [], unseenCount: 0 })),
         markAllSeen: vi.fn(async () => ({ items: [], unseenCount: 0 })),
         markSeen: vi.fn(async () => ({ items: [], unseenCount: 0 })),
       },
       conversations: {
+        onChanged: () => () => {},
         activateBranch: vi.fn(),
         delete: vi.fn(),
         list: conversationsList,
@@ -1174,6 +1201,7 @@ function createDesktopApi() {
         setModelSelection: vi.fn(),
       },
       spaces: {
+        onChanged: () => () => {},
         create: vi.fn(),
         delete: vi.fn(),
         list: vi.fn(async () => []),
@@ -1182,6 +1210,7 @@ function createDesktopApi() {
         update: vi.fn(),
       },
       providers: {
+        onChanged: () => () => {},
         listBuiltinPresets: vi.fn(async () => []),
         getDefaultModel: vi.fn(async () => ({ modelId: 'model-1', providerId: 'provider-1' })),
         list: vi.fn(async () => [{

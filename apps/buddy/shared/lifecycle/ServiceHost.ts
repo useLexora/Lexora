@@ -1,31 +1,33 @@
-import type { ComponentEvent, OperationEvent } from '../observability/ApplicationEvents'
-import { readDiagnosticError } from '../diagnostics/applicationDiagnostic'
-import { ApplicationEvents } from '../observability/ApplicationEvents'
+import type { LifecycleComponent, ServiceLifecycleReader } from './serviceLifecycle'
+import { readLifecycleFailure } from './lifecycleFailure'
+import { lifecycleComponentSchema } from './serviceLifecycle'
+import { ServiceLifecycleSource } from './ServiceLifecycleSource'
 
 type Cleanup = () => void | Promise<void>
 
 export interface ServiceScope {
-  events: ApplicationEvents
   defer: (cleanup: Cleanup) => void
 }
 
 interface Component {
   kind: 'service' | 'operation'
   id: string
-  events: ApplicationEvents
+  operationId: string
   cleanups: Cleanup[]
   status: 'starting' | 'ready' | 'failed' | 'stopped'
   pending: Promise<unknown> | null
 }
 
 export class ServiceHost {
-  readonly events: ApplicationEvents
+  readonly lifecycle: ServiceLifecycleReader
+  readonly #lifecycle: ServiceLifecycleSource
   readonly #components = new Map<string, Component>()
   #stopping = false
   #stopPromise: Promise<void> | null = null
 
-  constructor(events = new ApplicationEvents()) {
-    this.events = events
+  constructor(lifecycle = new ServiceLifecycleSource()) {
+    this.#lifecycle = lifecycle
+    this.lifecycle = lifecycle.reader
   }
 
   start<T>(id: string, initialize: (scope: ServiceScope) => T | Promise<T>, dependencies: readonly string[] = []): Promise<T> {
@@ -41,6 +43,7 @@ export class ServiceHost {
       return Promise.reject(new Error('Service host is stopping'))
     if (this.#components.has(id))
       return Promise.reject(new Error(`Component already registered: ${id}`))
+    lifecycleComponentSchema.shape.component.parse(id)
     for (const dependency of dependencies) {
       if (this.#components.get(dependency)?.status !== 'ready')
         return Promise.reject(new Error(`Component dependency is not ready: ${dependency}`))
@@ -48,36 +51,39 @@ export class ServiceHost {
     const component: Component = {
       kind,
       id,
-      events: this.events.scope({ component: id, operationId: crypto.randomUUID() }),
+      operationId: crypto.randomUUID(),
       cleanups: [],
       status: 'starting',
       pending: null,
     }
-    this.#components.set(id, component)
-    if (kind === 'service')
-      this.#publish(component, 'component.registered')
-    this.#publish(component, kind === 'service' ? 'component.starting' : 'startup.step.started')
     const startedAt = performance.now()
     const pending = Promise.resolve().then(() => initialize({
-      events: component.events,
       defer: cleanup => component.cleanups.push(cleanup),
     })).then((value) => {
       component.status = 'ready'
       if (kind === 'operation' || !this.#stopping)
-        this.#publish(component, kind === 'service' ? 'component.ready' : 'startup.step.completed', startedAt)
+        this.#publish(component, 'ready', startedAt)
       return value
     }, (error: unknown) => {
       component.status = 'failed'
-      this.#publish(component, kind === 'service' ? 'component.start_failed' : 'startup.step.failed', startedAt, error)
+      this.#publish(component, 'start_failed', startedAt, error)
       throw error
     })
     component.pending = pending
+    this.#components.set(id, component)
+    if (kind === 'service')
+      this.#publish(component, 'registered')
+    this.#publish(component, 'starting')
     return pending
   }
 
   stop(): Promise<void> {
+    if (this.#stopPromise)
+      return this.#stopPromise
     this.#stopping = true
-    return this.#stopPromise ??= this.#stop()
+    this.#stopPromise = Promise.resolve().then(() => this.#stop())
+    this.#lifecycle.stopping()
+    return this.#stopPromise
   }
 
   async #stop(): Promise<void> {
@@ -87,7 +93,7 @@ export class ServiceHost {
       if (component.kind === 'operation')
         continue
       const startedAt = performance.now()
-      this.#publish(component, 'component.stopping')
+      this.#publish(component, 'stopping')
       const componentFailures: unknown[] = []
       for (const cleanup of component.cleanups.splice(0).reverse()) {
         try {
@@ -100,23 +106,25 @@ export class ServiceHost {
       component.status = componentFailures.length ? 'failed' : 'stopped'
       if (componentFailures.length) {
         const error = new AggregateError(componentFailures, 'Component cleanup failed')
-        this.#publish(component, 'component.stop_failed', startedAt, error)
+        this.#publish(component, 'stop_failed', startedAt, error)
         failures.push(error)
       }
       else {
-        this.#publish(component, 'component.stopped', startedAt)
+        this.#publish(component, 'stopped', startedAt)
       }
     }
     if (failures.length)
       throw new AggregateError(failures, 'Service host cleanup failed')
   }
 
-  #publish(component: Component, event: ComponentEvent | OperationEvent, startedAt?: number, error?: unknown): void {
-    component.events.publish({
-      event,
-      level: event.endsWith('failed') ? 'error' : 'info',
+  #publish(component: Component, status: LifecycleComponent['status'], startedAt?: number, error?: unknown): void {
+    this.#lifecycle.update({
+      component: component.id,
+      kind: component.kind,
+      operationId: component.operationId,
+      status,
       ...(startedAt === undefined ? {} : { durationMs: Math.round(performance.now() - startedAt) }),
-      ...(error === undefined ? {} : readDiagnosticError(error)),
+      ...(error === undefined ? {} : { failure: readLifecycleFailure(error) }),
     })
   }
 }

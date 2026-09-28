@@ -45,12 +45,12 @@ describe('piEventBridge', () => {
     emit({ type: 'turn_start' })
     await channel.settle()
     expect(recorded.map(event => [event.event, event.runId, event.turnId])).toEqual([
-      ['turn.started', 'run-1', 'run-1:1'],
-      ['turn.completed', 'run-1', 'run-1:1'],
-      ['turn.started', 'run-1', 'run-1:2'],
-      ['turn.failed', 'run-1', 'run-1:2'],
-      ['turn.started', 'run-1', 'run-1:3'],
-      ['turn.interrupted', 'run-1', 'run-1:3'],
+      ['pi.turn.started', 'run-1', 'run-1:1'],
+      ['pi.turn.completed', 'run-1', 'run-1:1'],
+      ['pi.turn.started', 'run-1', 'run-1:2'],
+      ['pi.turn.failed', 'run-1', 'run-1:2'],
+      ['pi.turn.started', 'run-1', 'run-1:3'],
+      ['pi.turn.interrupted', 'run-1', 'run-1:3'],
     ])
     expect(JSON.stringify(recorded)).not.toContain('fixture-private')
   })

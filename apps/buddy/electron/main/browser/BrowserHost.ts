@@ -17,11 +17,14 @@ import type {
   DesktopBrowserSetSurfaceInput,
   DesktopBrowserState,
 } from '../../../shared/browser/browserDesktopApi'
+import type { BrowserHostChange, BrowserHostFact } from './BrowserHostEvents'
 import type { BrowserPage } from './BrowserPageSession'
 import type { BrowserSessionTeardownReason } from './BrowserSessionRegistry'
 import type { SemanticBrowserDriver, SemanticBrowserScreenshot, SemanticBrowserScreenshotReference } from './SemanticBrowserDriver'
 import { randomUUID } from 'node:crypto'
 import { BROWSER_WAIT_DEFAULT_QUIET_MS } from '../../../shared/browser'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { BrowserHostError } from './BrowserHostError'
 import { BrowserOperationGuard } from './BrowserOperationGuard'
 import { BrowserPageSession, snapshot } from './BrowserPageSession'
@@ -51,12 +54,8 @@ interface BrowserHostOptions {
   operations?: BrowserOperationGuard
   createId?: () => string
   createPage?: (descriptor: DesktopBrowserGuestDescriptor) => BrowserPage
-  onGuestSetChanged?: () => void
-  onSessionClosed?: (
-    state: DesktopBrowserState,
-    reason: BrowserSessionTeardownReason,
-  ) => void
-  onStateChanged?: (state: DesktopBrowserState) => void
+  requestGuestAttachment?: () => void
+  revokeSession?: (sessionId: string) => void
   window: BrowserWindow
 }
 
@@ -85,6 +84,9 @@ export interface BrowserPageScreenshot {
 }
 
 export class BrowserHost {
+  readonly #changes = new Emitter<BrowserHostChange>(() => console.error('BROWSER_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
   readonly #getFreezeDelay: (visible: boolean) => number | null
   readonly #onActivityError: () => void
   readonly #getDefaultZoomFactor: () => number
@@ -92,13 +94,8 @@ export class BrowserHost {
   readonly #createId: () => string
   readonly #createPage: ((descriptor: DesktopBrowserGuestDescriptor) => BrowserPage) | null
   readonly #evictedConversationIds = new Set<string>()
-  readonly #onSessionClosed: (
-    state: DesktopBrowserState,
-    reason: BrowserSessionTeardownReason,
-  ) => void
-
-  readonly #onStateChanged: (state: DesktopBrowserState) => void
-  readonly #onGuestSetChanged: () => void
+  readonly #requestGuestAttachment: () => void
+  readonly #revokeSession: (sessionId: string) => void
   readonly #sessions: BrowserSessionRegistry<BrowserPageSession>
   readonly #window: BrowserWindow
   readonly #windowClosedListener: () => void
@@ -109,6 +106,7 @@ export class BrowserHost {
   ) => void
 
   #disposed = false
+  #drained: Promise<void> = Promise.resolve()
   constructor(options: BrowserHostOptions) {
     this.#getFreezeDelay = options.getFreezeDelay ?? (() => null)
     this.#onActivityError = options.onActivityError ?? (() => {})
@@ -116,9 +114,8 @@ export class BrowserHost {
     this.#getDefaultZoomFactor = options.getDefaultZoomFactor ?? (() => 1)
     this.#createId = options.createId ?? randomUUID
     this.#createPage = options.createPage ?? null
-    this.#onGuestSetChanged = options.onGuestSetChanged ?? (() => {})
-    this.#onSessionClosed = options.onSessionClosed ?? (() => {})
-    this.#onStateChanged = options.onStateChanged ?? (() => {})
+    this.#requestGuestAttachment = options.requestGuestAttachment ?? (() => {})
+    this.#revokeSession = options.revokeSession ?? (() => {})
     this.#sessions = new BrowserSessionRegistry({
       createId: this.#createId,
       maxSessions: 4,
@@ -134,6 +131,10 @@ export class BrowserHost {
 
   get isDisposed(): boolean {
     return this.#disposed
+  }
+
+  get snapshot() {
+    return copyEventSnapshot({ revision: this.#revision, disposed: this.#disposed, sessions: this.#sessions.values().map(session => snapshot(session.state)), guests: this.#sessions.values().map(session => ({ ...session.descriptor, attached: !!session.page })) })
   }
 
   hasAgentControl(): boolean {
@@ -193,10 +194,13 @@ export class BrowserHost {
         }
         session.state.status = 'error'
       }
-      if (wasCreated)
-        this.#onGuestSetChanged()
-      if (wasCreated)
+      if (wasCreated) {
+        this.#emit({ kind: 'session', status: 'opened', state: snapshot(session.state) })
+        const page = this.#createPage?.(session.descriptor)
+        if (page)
+          session.attach(page)
         this.#publish(session)
+      }
       return snapshot(session.state)
     }
     catch (error) {
@@ -259,6 +263,7 @@ export class BrowserHost {
     session.state.controller = 'agent'
     this.#sessions.setProtected(input.sessionId, 'runtime', true)
     this.#publish(session)
+    this.#emit({ kind: 'control', sessionId: input.sessionId, pageId: session.state.pageId, controller: 'agent', controlEpoch: session.state.controlEpoch })
     return {
       controller: 'agent',
       controlEpoch: session.state.controlEpoch,
@@ -345,6 +350,8 @@ export class BrowserHost {
       releaseQueue = resolve
     })
     await predecessor
+    const identity = { operationId: randomUUID(), sessionId: input.sessionId, pageId: input.pageId, action: input.action.kind }
+    let effect: 'not-dispatched' | 'unknown' | 'confirmed' = 'not-dispatched'
     try {
       this.#operations.assertCanMutate()
       const session = this.#requireSession(input.sessionId)
@@ -367,6 +374,8 @@ export class BrowserHost {
         observationId: input.observationId,
       }
       let mayStartNavigation = false
+      effect = 'unknown'
+      this.#emit({ kind: 'action', ...identity, phase: 'dispatched', effect })
       switch (input.action.kind) {
         case 'navigate':
           semanticDriver.assertObservation(reference)
@@ -427,16 +436,24 @@ export class BrowserHost {
           this.#publish(session)
       }
 
+      effect = 'confirmed'
+      this.#emit({ kind: 'action', ...identity, phase: 'confirmed', effect })
       await this.#waitForPostActionSettlement(session, mayStartNavigation)
       const observation = await this.observe({
         pageId: session.state.pageId,
         sessionId: session.state.sessionId,
       })
+      this.#emit({ kind: 'action', ...identity, phase: 'verified', effect })
       return {
         actionKind: input.action.kind,
         observation,
         state: snapshot(session.state),
       }
+    }
+    catch (error) {
+      const errorCode = error instanceof BrowserHostError || error instanceof SemanticBrowserDriverError ? error.code : 'BROWSER_PAGE_FAILED'
+      this.#emit({ kind: 'action', ...identity, phase: 'failed', effect, errorCode })
+      throw error
     }
     finally {
       releaseQueue()
@@ -923,8 +940,14 @@ export class BrowserHost {
     this.#disposed = true
     this.#window.off('closed', this.#windowClosedListener)
     this.#window.webContents.off('will-attach-webview', this.#willAttachWebviewListener)
+    const pending = this.#sessions.values().map(session => session.actionTail)
     this.#sessions.dispose()
     this.#evictedConversationIds.clear()
+    this.#drained = Promise.allSettled(pending).then(() => this.#changes.dispose())
+  }
+
+  whenIdle(): Promise<void> {
+    return this.#drained
   }
 
   #assertActive(): void {
@@ -950,8 +973,8 @@ export class BrowserHost {
       createId: this.#createId,
       getDefaultZoomFactor: this.#getDefaultZoomFactor,
       operations: this.#operations,
-      onStateChanged: this.#onStateChanged,
-      onGuestSetChanged: this.#onGuestSetChanged,
+      onStateChanged: state => this.#emit({ kind: 'state', state }),
+      onGuestChanged: status => this.#emit({ kind: 'guest', status, sessionId, pageId: session.state.pageId }),
       onHumanInput: () => this.#acceptHumanPageInput(session),
       isCurrent: () => this.#sessions.get(sessionId) === session,
       state: {
@@ -971,9 +994,6 @@ export class BrowserHost {
         visible: false,
       },
     })
-    const page = this.#createPage?.(descriptor)
-    if (page)
-      session.attach(page)
     return session
   }
 
@@ -992,13 +1012,13 @@ export class BrowserHost {
       this.#publish(session)
     }
     session.state.visible = false
-    this.#onSessionClosed(snapshot(session.state), reason)
+    this.#revokeSession(session.state.sessionId)
     const page = session.page
     session.releasePage()
     session.pageReady.reject(this.#sessionNotFound(session.state.sessionId))
     if (page && !page.isDestroyed())
       page.close()
-    this.#onGuestSetChanged()
+    this.#emit({ kind: 'session', state: snapshot(session.state), status: 'closed', reason })
   }
 
   #hide(session: BrowserPageSession): void {
@@ -1038,6 +1058,10 @@ export class BrowserHost {
 
   #publish(session: BrowserPageSession): void {
     session.publish()
+  }
+
+  #emit(fact: BrowserHostFact): void {
+    this.#changes.fire(copyEventSnapshot({ ...fact, revision: ++this.#revision }))
   }
 
   #assertCurrentPage(
@@ -1097,6 +1121,7 @@ export class BrowserHost {
       session.semanticDriver?.invalidateDocument()
     this.#sessions.setProtected(session.state.sessionId, 'runtime', false)
     this.#publish(session)
+    this.#emit({ kind: 'control', sessionId: session.state.sessionId, pageId: session.state.pageId, controller: 'human', controlEpoch: session.state.controlEpoch })
     return snapshot(session.state)
   }
 
@@ -1147,7 +1172,7 @@ export class BrowserHost {
       await session.resumePage()
       return page
     }
-    this.#onGuestSetChanged()
+    this.#requestGuestAttachment()
     const attached = await waitForBrowserPage(session.pageReady.promise)
     await session.resumePage()
     return attached

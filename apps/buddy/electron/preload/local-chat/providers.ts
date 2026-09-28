@@ -1,4 +1,4 @@
-import type { LocalProviderAuthChallenge } from '../../../shared/providers/providerApi'
+import type { LocalProviderAuthChallenge, ProviderChanged } from '../../../shared/providers/providerApi'
 import type { ProviderRequestHeader } from '../../../shared/providers/providerHeaders'
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
@@ -8,6 +8,7 @@ import { subscribe } from '../subscribe'
 export function createProvidersApi(): Pick<LocalChatApi, 'providers'> {
   return {
     providers: Object.freeze({
+      onChanged: (listener: (event: ProviderChanged) => void) => subscribe(LOCAL_CHAT_IPC_CHANNELS.providersChanged, listener),
       acknowledgeModelSourceUpdate: (providerId, modelId) => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.providersAcknowledgeModelSource,
         { modelId, providerId },

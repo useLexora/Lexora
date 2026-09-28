@@ -7,10 +7,12 @@ import type {
   CreateAutomationRequest,
   UpdateAutomationRequest,
 } from '../../../shared/automation'
+import type { AutomationDefinitionCommit } from '../storage/automationDefinitionCommandRepository'
 import type { AutomationMutationOperation } from '../storage/automationMutationRequestRepository'
 import type { AutomationOccurrenceRecord } from '../storage/automationOccurrenceRecord'
 import type { AutomationCursor, AutomationPageRecord } from '../storage/automationPage'
 import type { AutomationRepositories } from '../storage/automationRepository'
+import type { AutomationCommit, AutomationFact } from './AutomationEvents'
 import type { AutomationClock } from './AutomationScheduleEvaluator'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
@@ -21,7 +23,10 @@ import {
   automationMutationRequestSchemas,
 } from '../../../shared/automation'
 import { Temporal } from '../../../shared/automation/temporal'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { AutomationRepositoryError } from '../storage/automationRepositoryError'
+import { cancelledOccurrenceFacts, definitionFact, occurrenceFact } from './AutomationEvents'
 import {
   findNextAutomationOccurrence,
   previewAutomationSchedule,
@@ -42,6 +47,7 @@ export interface AutomationServiceOptions {
   clock?: AutomationClock
   createId?: () => string
   repositories: AutomationRepositories
+  onObserverError?: (error: unknown) => void
 }
 
 export class AutomationServiceError extends Error {
@@ -60,6 +66,10 @@ export class AutomationService {
   readonly #definitions: AutomationRepositories['definitions']
   readonly #mutations: AutomationRepositories['mutations']
   readonly #occurrences: AutomationRepositories['occurrences']
+  readonly #committed: Emitter<AutomationCommit>
+  readonly onDidCommit: Emitter<AutomationCommit>['event']
+  #revision = 0
+  #disposed = false
 
   constructor(options: AutomationServiceOptions) {
     this.#clock = options.clock ?? systemAutomationClock
@@ -67,6 +77,8 @@ export class AutomationService {
     this.#definitions = options.repositories.definitions
     this.#mutations = options.repositories.mutations
     this.#occurrences = options.repositories.occurrences
+    this.#committed = new Emitter(options.onObserverError ?? (() => {}))
+    this.onDidCommit = this.#committed.event
   }
 
   claimScheduled(input: {
@@ -92,7 +104,7 @@ export class AutomationService {
       automation.timing,
       Temporal.Instant.from(advanceAfter),
     )
-    return this.#occurrences.claimScheduled({
+    const occurrence = this.#occurrences.claimScheduled({
       automationId: automation.id,
       coalescedMissedCount: input.coalescedMissedCount,
       expectedNextRunAt,
@@ -102,6 +114,9 @@ export class AutomationService {
       queuedAt: this.#now(),
       scheduledFor: normalizeInstant(input.scheduledFor),
     })
+    if (occurrence)
+      this.#publish([occurrenceFact(occurrence), { kind: 'schedule.advanced', automationId: automation.id, nextRunAt: next ? formatInstant(next) : null, status: next ? 'active' : 'completed' }])
+    return occurrence
   }
 
   block(input: {
@@ -109,29 +124,30 @@ export class AutomationService {
     expectedRevision: number
     reason: NonNullable<Automation['blockedReason']>
   }): Automation | null {
-    return this.#definitions.block({
+    const result = this.#definitions.block({
       automationId: input.automationId,
       blockedAt: this.#now(),
       expectedRevision: input.expectedRevision,
       reason: input.reason,
     })
+    return result ? this.#acceptDefinition('definition.blocked', result) : null
   }
 
   blockPinnedModel(providerId: string, modelId?: string): Automation[] {
-    return this.#definitions.blockActiveByPinnedModel({
+    return this.#acceptDefinitions('definition.blocked', this.#definitions.blockActiveByPinnedModel({
       blockedAt: this.#now(),
       modelId: modelId
         ? z.string().trim().min(1).max(256).parse(modelId)
         : undefined,
       providerId: z.string().trim().min(1).max(256).parse(providerId),
-    })
+    }))
   }
 
   blockSpace(spaceId: string): Automation[] {
-    return this.#definitions.blockActiveBySpace({
+    return this.#acceptDefinitions('definition.blocked', this.#definitions.blockActiveBySpace({
       blockedAt: this.#now(),
       spaceId: z.string().trim().min(1).max(256).parse(spaceId),
-    })
+    }))
   }
 
   create(input: CreateAutomationRequest): Automation {
@@ -151,10 +167,10 @@ export class AutomationService {
       revision: 1,
       updatedAt: now,
     })
-    return this.#mapRepositoryError(() => this.#definitions.create(
+    return this.#acceptDefinition('definition.created', this.#mapRepositoryError(() => this.#definitions.create(
       automation,
       mutation,
-    ))
+    )))
   }
 
   delete(input: AutomationMutationTargetRequest): Automation {
@@ -167,7 +183,7 @@ export class AutomationService {
     if (replay)
       return replay
     const existing = this.#requireAutomation(request.automationId)
-    return this.#mapRepositoryError(() => this.#definitions.replace({
+    return this.#acceptDefinition('definition.deleted', this.#mapRepositoryError(() => this.#definitions.replace({
       automation: {
         ...existing,
         blockedReason: null,
@@ -178,7 +194,7 @@ export class AutomationService {
       },
       cancelQueued: true,
       expectedRevision: request.expectedRevision,
-    }, mutation))
+    }, mutation)))
   }
 
   get(id: string): Automation | null {
@@ -201,6 +217,18 @@ export class AutomationService {
     )
   }
 
+  getOccurrenceForDeletion(id: string): AutomationOccurrenceRecord | null {
+    return this.#occurrences.findOccurrenceForDeletion(id)
+  }
+
+  getOccurrenceDeletionByConversation(conversationId: string): AutomationOccurrenceRecord | null {
+    return this.#occurrences.findOccurrenceDeletionByConversation(conversationId)
+  }
+
+  listPendingDeletions(): AutomationOccurrenceRecord[] {
+    return this.#occurrences.listPendingDeletions()
+  }
+
   finishQueued(input: {
     errorCode: AutomationErrorCode
     errorSummary?: string | null
@@ -208,10 +236,13 @@ export class AutomationService {
     leaseOwner?: string | null
     status: 'cancelled' | 'expired' | 'skipped'
   }): AutomationOccurrenceRecord | null {
-    return this.#occurrences.finishQueued({
+    const occurrence = this.#occurrences.finishQueued({
       ...input,
       finishedAt: this.#now(),
     })
+    if (occurrence)
+      this.#publish([occurrenceFact(occurrence)])
+    return occurrence
   }
 
   finishQueuedAndBlock(input: {
@@ -224,10 +255,18 @@ export class AutomationService {
     automation: Automation | null
     occurrence: AutomationOccurrenceRecord
   } | null {
-    return this.#occurrences.finishQueuedAndBlock({
+    const result = this.#occurrences.finishQueuedAndBlock({
       ...input,
       finishedAt: this.#now(),
     })
+    if (result) {
+      this.#publish([
+        occurrenceFact(result.occurrence),
+        ...cancelledOccurrenceFacts(input.automationId, result.cancelledOccurrenceIds),
+        ...(result.automation ? [definitionFact('definition.blocked', result.automation)] : []),
+      ])
+    }
+    return result
   }
 
   leaseQueued(input: {
@@ -236,6 +275,7 @@ export class AutomationService {
     now: string
     owner: string
   }): AutomationOccurrenceRecord[] {
+    this.#requireOpen()
     const owner = z.string().trim().min(1).max(128).parse(input.owner)
     const limit = z.number().int().min(1).max(100).parse(input.limit)
     const now = normalizeInstant(input.now)
@@ -246,7 +286,9 @@ export class AutomationService {
     ) <= 0) {
       throw new AutomationServiceError('AUTOMATION_CONFLICT')
     }
-    return this.#occurrences.leaseQueued({ leaseExpiresAt, limit, now, owner })
+    const leased = this.#occurrences.leaseQueued({ leaseExpiresAt, limit, now, owner })
+    this.#publish(leased.map(occurrence => ({ kind: 'lease.acquired', automationId: occurrence.automationId, occurrenceId: occurrence.id, leaseOwner: owner, leaseExpiresAt })))
+    return leased
   }
 
   list(input: {
@@ -286,10 +328,18 @@ export class AutomationService {
   }
 
   markOccurrenceDeleted(id: string): boolean {
-    return this.#occurrences.markOccurrenceDeleted(
+    const result = this.#occurrences.markOccurrenceDeleted(
       z.string().trim().min(1).max(256).parse(id),
       this.#now(),
     )
+    if (!result)
+      return false
+    const occurrence = result.occurrence
+    this.#publish([
+      { kind: 'occurrence.deleted', automationId: occurrence.automationId, occurrenceId: occurrence.id, conversationId: occurrence.conversationId, runId: occurrence.runId },
+      ...(result.previousStatus === 'queued' ? [occurrenceFact(occurrence)] : []),
+    ])
+    return true
   }
 
   pause(input: AutomationMutationTargetRequest): Automation {
@@ -302,7 +352,7 @@ export class AutomationService {
     if (replay)
       return replay
     const existing = this.#requireAutomation(request.automationId)
-    return this.#mapRepositoryError(() => this.#definitions.replace({
+    return this.#acceptDefinition('definition.paused', this.#mapRepositoryError(() => this.#definitions.replace({
       automation: {
         ...existing,
         blockedReason: null,
@@ -313,7 +363,7 @@ export class AutomationService {
       },
       cancelQueued: true,
       expectedRevision: request.expectedRevision,
-    }, mutation))
+    }, mutation)))
   }
 
   resume(input: AutomationMutationTargetRequest): Automation {
@@ -334,11 +384,11 @@ export class AutomationService {
       revision: existing.revision + 1,
       updatedAt: now,
     })
-    return this.#mapRepositoryError(() => this.#definitions.replace({
+    return this.#acceptDefinition('definition.resumed', this.#mapRepositoryError(() => this.#definitions.replace({
       automation: resumed,
       cancelQueued: false,
       expectedRevision: request.expectedRevision,
-    }, mutation))
+    }, mutation)))
   }
 
   runNow(input: AutomationMutationTargetRequest): AutomationRunNowResult {
@@ -350,13 +400,16 @@ export class AutomationService {
     )
     if (replay)
       return replay
-    return this.#mapRepositoryError(() => this.#occurrences.createManualOccurrence({
+    const committed = this.#mapRepositoryError(() => this.#occurrences.createManualOccurrence({
       automationId: request.automationId,
       expectedRevision: request.expectedRevision,
       id: this.#createId(),
       queuedAt: now,
       scheduledFor: now,
     }, mutation))
+    if (committed.committed)
+      this.#publish([occurrenceFact(committed.result.occurrence)])
+    return committed.result
   }
 
   settleScheduled(input: {
@@ -383,7 +436,7 @@ export class AutomationService {
       automation.timing,
       Temporal.Instant.from(normalizeInstant(input.advanceAfter)),
     )
-    return this.#occurrences.settleScheduled({
+    const occurrence = this.#occurrences.settleScheduled({
       automationId: automation.id,
       coalescedMissedCount: input.coalescedMissedCount,
       errorCode: input.errorCode,
@@ -396,6 +449,9 @@ export class AutomationService {
       scheduledFor: normalizeInstant(input.scheduledFor),
       status: input.status,
     })
+    if (occurrence)
+      this.#publish([occurrenceFact(occurrence), { kind: 'schedule.advanced', automationId: automation.id, nextRunAt: next ? formatInstant(next) : null, status: next ? 'active' : 'completed' }])
+    return occurrence
   }
 
   update(input: UpdateAutomationRequest): Automation {
@@ -416,11 +472,38 @@ export class AutomationService {
       revision: existing.revision + 1,
       updatedAt: now,
     })
-    return this.#mapRepositoryError(() => this.#definitions.replace({
+    return this.#acceptDefinition('definition.updated', this.#mapRepositoryError(() => this.#definitions.replace({
       automation: updated,
       cancelQueued: false,
       expectedRevision: request.expectedRevision,
-    }, mutation))
+    }, mutation)))
+  }
+
+  dispose(): void {
+    this.#disposed = true
+    this.#committed.dispose()
+  }
+
+  #acceptDefinition(kind: Parameters<typeof definitionFact>[0], result: AutomationDefinitionCommit): Automation {
+    return this.#acceptDefinitions(kind, [result])[0]!
+  }
+
+  #acceptDefinitions(kind: Parameters<typeof definitionFact>[0], results: readonly AutomationDefinitionCommit[]): Automation[] {
+    this.#publish(results.flatMap(result => result.committed
+      ? [definitionFact(kind, result.automation), ...cancelledOccurrenceFacts(result.automation.id, result.cancelledOccurrenceIds)]
+      : []))
+    return results.map(result => result.automation)
+  }
+
+  #publish(facts: readonly AutomationFact[]): void {
+    if (!facts.length)
+      return
+    this.#committed.fire(copyEventSnapshot({ operationId: randomUUID(), revision: ++this.#revision, facts }))
+  }
+
+  #requireOpen(): void {
+    if (this.#disposed)
+      throw new Error('Automation service is stopped')
   }
 
   #buildAutomation(input: {
@@ -467,6 +550,7 @@ export class AutomationService {
   }
 
   #now(): string {
+    this.#requireOpen()
     return formatInstant(this.#clock.now())
   }
 

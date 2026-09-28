@@ -3,7 +3,19 @@ import type { RunRecord } from '../../storage/runRecord'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddySessionIdentity } from '../sessions/BuddySessionBlueprint'
 import type { BuddyTurnHandle } from './turnTypes'
+import { randomUUID } from 'node:crypto'
+import { Emitter } from '../../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { BuddyAgentRunError } from '../../runs/runError'
+
+export interface ExecutionSettled {
+  readonly conversationId: string
+  readonly branchId: string
+  readonly runId: string
+  readonly executionId: string
+  readonly cleanup: 'completed' | 'degraded'
+  readonly stopping: boolean
+}
 
 export interface ActiveRunSession {
   steer?: (prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]) => boolean
@@ -17,6 +29,7 @@ export interface ActiveRunContext {
   getCancellationCode: () => string | null
   identity: BuddySessionIdentity
   requestCancellation: (errorCode: string) => void
+  markCleanupDegraded: () => void
   runId: string
   signal: AbortSignal
 }
@@ -42,8 +55,28 @@ interface StartActiveRunInput {
 
 export class ActiveRunRegistry {
   readonly #executions = new Map<string, ActiveRunExecution>()
+  readonly #degradedCleanup = new Set<string>()
+  readonly #settled: Emitter<ExecutionSettled>
+  readonly onDidSettle: Emitter<ExecutionSettled>['event']
 
   #disposed = false
+
+  constructor(onObserverError: (error: unknown) => void = () => {}) {
+    this.#settled = new Emitter(onObserverError)
+    this.onDidSettle = this.#settled.event
+  }
+
+  hasActiveExecution(conversationId: string): boolean {
+    return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId)
+  }
+
+  get isStopping(): boolean {
+    return this.#disposed
+  }
+
+  hasDegradedCleanup(conversationId: string): boolean {
+    return this.#degradedCleanup.has(conversationId)
+  }
 
   start(input: StartActiveRunInput): BuddyTurnHandle {
     if (this.#disposed)
@@ -51,10 +84,12 @@ export class ActiveRunRegistry {
     if (this.#executions.has(input.runId))
       throw new BuddyAgentRunError('VALIDATION_FAILED')
 
+    const executionId = randomUUID()
+    let cleanup: ExecutionSettled['cleanup'] = 'completed'
     const state: ActiveRunState = {
       cancellationCode: null,
       controller: new AbortController(),
-      identity: input.identity,
+      identity: { ...input.identity },
       runId: input.runId,
       session: null,
     }
@@ -63,15 +98,32 @@ export class ActiveRunRegistry {
       getCancellationCode: () => state.cancellationCode,
       identity: state.identity,
       requestCancellation: errorCode => this.#requestCancellation(state, errorCode),
+      markCleanupDegraded: () => { cleanup = 'degraded' },
       runId: state.runId,
       signal: state.controller.signal,
     }
     const completion = Promise.resolve()
       .then(() => input.execute(context))
+      .catch((error) => {
+        cleanup = 'degraded'
+        throw error
+      })
       .finally(() => {
         const execution = this.#executions.get(state.runId)
         if (execution?.state === state)
           this.#executions.delete(state.runId)
+        if (cleanup === 'degraded')
+          this.#degradedCleanup.add(state.identity.conversationId)
+        else
+          this.#degradedCleanup.delete(state.identity.conversationId)
+        this.#settled.fire(copyEventSnapshot({
+          conversationId: state.identity.conversationId,
+          branchId: state.identity.branchId,
+          runId: state.runId,
+          executionId,
+          cleanup,
+          stopping: this.#disposed,
+        }))
       })
     this.#executions.set(state.runId, { completion, state })
     return { completion, runId: state.runId }
@@ -119,6 +171,8 @@ export class ActiveRunRegistry {
     )
     await Promise.allSettled(executions.map(execution => execution.completion))
     this.#executions.clear()
+    this.#degradedCleanup.clear()
+    this.#settled.dispose()
   }
 
   async #cancelAndWait(

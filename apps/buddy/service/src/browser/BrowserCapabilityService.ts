@@ -25,8 +25,10 @@ import type {
   OpenBrowserLocalInput,
   OpenBrowserUrlInput,
 } from './BrowserHostClient'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { getBrowserActionRef } from '../../../shared/browser'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { classifyBrowserAction } from '../approvals/browser/classifyBrowserAction'
 
 export type BrowserCapabilityOpenTarget = {
@@ -92,7 +94,31 @@ interface BrowserPolicyObservation {
   url: BrowserObservation['url']
 }
 
+export type BrowserCapabilityChange = {
+  readonly revision: number
+  readonly kind: 'binding' | 'policy'
+  readonly sessionId: string | null
+  readonly pageId: string | null
+  readonly observationId: string | null
+  readonly documentRevision: number | null
+  readonly count: number
+} | {
+  readonly revision: number
+  readonly kind: 'action' | 'control'
+  readonly operationId: string
+  readonly phase: 'dispatched' | 'response-received' | 'response-unknown' | 'caller-settled' | 'acquired' | 'released' | 'release-unknown'
+  readonly cancelled: boolean
+  readonly accepted?: boolean
+  readonly controlEpoch?: number
+}
+
 export class BrowserCapabilityService {
+  readonly #changes = new Emitter<BrowserCapabilityChange>(() => console.error('BROWSER_CAPABILITY_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  readonly #shutdown = new AbortController()
+  readonly #pending = new Set<Promise<unknown>>()
+  #revision = 0
+  #disposing: Promise<void> | undefined
   readonly #conversationId: string
   readonly #getGrants: () => readonly DirectoryGrant[]
   readonly #host: BrowserCapabilityHost
@@ -105,8 +131,16 @@ export class BrowserCapabilityService {
     this.#host = options.host
   }
 
-  async open(target: BrowserCapabilityOpenTarget, grants = this.#getGrants()): Promise<BrowserOpenResult> {
-    this.#policyObservation = null
+  get snapshot() { return copyEventSnapshot({ revision: this.#revision, stopping: this.#shutdown.signal.aborted, pending: this.#pending.size, ...this.#binding() }) }
+
+  open(target: BrowserCapabilityOpenTarget, grants = this.#getGrants()): Promise<BrowserOpenResult> {
+    const captured = copyEventSnapshot(target)
+    const capturedGrants = grants.map(cloneGrant)
+    return this.#track(() => this.#open(captured, capturedGrants))
+  }
+
+  async #open(target: BrowserCapabilityOpenTarget, grants: readonly DirectoryGrant[]): Promise<BrowserOpenResult> {
+    this.#setPolicy(null)
     const result = target.kind === 'url'
       ? await this.#host.openUrl({
           conversationId: this.#conversationId,
@@ -124,18 +158,21 @@ export class BrowserCapabilityService {
       return result
     }
     if (result.state.conversationId !== this.#conversationId) {
-      this.#sessionId = null
+      this.#setBinding(null)
       return sessionNotFound()
     }
-    this.#sessionId = result.state.sessionId
+    this.#setBinding(result.state.sessionId)
     return result
   }
 
-  async observe(
-    input: BrowserCapabilityObserveInput = {},
-  ): Promise<BrowserObserveResult> {
-    this.#policyObservation = null
-    const state = await this.getState()
+  observe(input: BrowserCapabilityObserveInput = {}): Promise<BrowserObserveResult> {
+    const captured = { ...input }
+    return this.#track(() => this.#observe(captured))
+  }
+
+  async #observe(input: BrowserCapabilityObserveInput): Promise<BrowserObserveResult> {
+    this.#setPolicy(null)
+    const state = await this.#getState()
     if (!state.ok)
       return state
     const request: BrowserObserveParams = {
@@ -149,12 +186,12 @@ export class BrowserCapabilityService {
       return result
     }
     if (result.observation.sessionId !== state.state.sessionId) {
-      this.#sessionId = null
+      this.#setBinding(null)
       return sessionNotFound()
     }
     if (result.observation.pageId !== state.state.pageId)
       return targetStale()
-    this.#policyObservation = createPolicyObservation(result.observation)
+    this.#setPolicy(createPolicyObservation(result.observation))
     return result
   }
 
@@ -203,10 +240,13 @@ export class BrowserCapabilityService {
     return classification
   }
 
-  async validateActionApproval(
-    input: BrowserCapabilityActInput,
-    expectedReview: BrowserApprovalReviewInput,
-  ): Promise<BrowserActionApprovalValidationResult> {
+  validateActionApproval(input: BrowserCapabilityActInput, expectedReview: BrowserApprovalReviewInput): Promise<BrowserActionApprovalValidationResult> {
+    const captured = structuredClone(input)
+    const review = structuredClone(expectedReview)
+    return this.#track(() => this.#validateActionApproval(captured, review))
+  }
+
+  async #validateActionApproval(input: BrowserCapabilityActInput, expectedReview: BrowserApprovalReviewInput): Promise<BrowserActionApprovalValidationResult> {
     const classification = this.classifyAction(input)
     if (
       'blocked' in classification
@@ -216,29 +256,38 @@ export class BrowserCapabilityService {
       || classification.approvalReview.pageId !== expectedReview.pageId
       || classification.approvalReview.documentRevision !== expectedReview.documentRevision
     ) {
-      this.#policyObservation = null
+      this.#setPolicy(null)
       return staleApprovalValidation()
     }
     const sessionId = this.#sessionId
     if (!sessionId || sessionId !== expectedReview.sessionId) {
-      this.#policyObservation = null
+      this.#setPolicy(null)
       return staleApprovalValidation()
     }
     const result = await this.#host.validateAction({ ...input, sessionId })
     if (!result.ok) {
-      this.#policyObservation = null
+      this.#setPolicy(null)
       this.#clearUnavailableBinding(result.error.code)
       return { blocked: true, reason: result.error.code }
     }
     return null
   }
 
-  async act(
-    input: BrowserCapabilityActInput,
-    signal = new AbortController().signal,
-  ): Promise<BrowserActResult> {
+  act(input: BrowserCapabilityActInput, parent = new AbortController().signal): Promise<BrowserActResult> {
+    const captured = structuredClone(input)
+    const signal = AbortSignal.any([parent, this.#shutdown.signal])
+    const operationId = randomUUID()
+    return this.#track(async () => {
+      try {
+        return await this.#act(captured, signal, operationId)
+      }
+      finally { this.#publish({ kind: 'action', operationId, phase: 'caller-settled', cancelled: signal.aborted }) }
+    })
+  }
+
+  async #act(input: BrowserCapabilityActInput, signal: AbortSignal, operationId: string): Promise<BrowserActResult> {
     signal.throwIfAborted()
-    const state = await this.getState()
+    const state = await this.#getState()
     if (!state.ok)
       return state
     if (state.state.pageId !== input.pageId)
@@ -253,36 +302,45 @@ export class BrowserCapabilityService {
       return acquired
     }
     const { lease } = acquired
+    this.#publish({ kind: 'control', operationId, phase: 'acquired', controlEpoch: lease.controlEpoch, cancelled: signal.aborted })
     const releaseInput: BrowserReleaseControlParams = {
       controlEpoch: lease.controlEpoch,
       pageId: lease.pageId,
       sessionId: lease.sessionId,
     }
     if (lease.sessionId !== state.state.sessionId) {
-      await this.#releaseControl(releaseInput)
-      this.#sessionId = null
+      await this.#releaseControl(releaseInput, operationId, signal)
+      this.#setBinding(null)
       return sessionNotFound()
     }
     if (lease.pageId !== input.pageId) {
-      await this.#releaseControl(releaseInput)
+      await this.#releaseControl(releaseInput, operationId, signal)
       return targetStale()
     }
 
     let releasePromise: Promise<void> | null = null
     const release = () => {
-      releasePromise ??= this.#releaseControl(releaseInput)
+      releasePromise ??= this.#releaseControl(releaseInput, operationId, signal)
       return releasePromise
     }
     const onAbort = () => void release()
     signal.addEventListener('abort', onAbort, { once: true })
     try {
       signal.throwIfAborted()
-      this.#policyObservation = null
-      const result = await waitForAbort(this.#host.act({
-        ...input,
-        controlEpoch: lease.controlEpoch,
-        sessionId: lease.sessionId,
-      }), signal)
+      this.#setPolicy(null)
+      this.#publish({ kind: 'action', operationId, phase: 'dispatched', cancelled: signal.aborted })
+      const response = this.#track(async () => {
+        try {
+          const result = await this.#host.act({ ...input, controlEpoch: lease.controlEpoch, sessionId: lease.sessionId })
+          this.#publish({ kind: 'action', operationId, phase: 'response-received', accepted: result.ok, cancelled: signal.aborted })
+          return result
+        }
+        catch (error) {
+          this.#publish({ kind: 'action', operationId, phase: 'response-unknown', cancelled: signal.aborted })
+          throw error
+        }
+      })
+      const result = await waitForAbort(response, signal)
       if (!result.ok) {
         this.#clearUnavailableBinding(result.error.code)
         return result
@@ -292,7 +350,7 @@ export class BrowserCapabilityService {
         || result.state.sessionId !== lease.sessionId
         || result.observation.sessionId !== lease.sessionId
       ) {
-        this.#sessionId = null
+        this.#setBinding(null)
         return sessionNotFound()
       }
       if (
@@ -301,7 +359,7 @@ export class BrowserCapabilityService {
       ) {
         return targetStale()
       }
-      this.#policyObservation = createPolicyObservation(result.observation)
+      this.#setPolicy(createPolicyObservation(result.observation))
       return result
     }
     finally {
@@ -310,7 +368,9 @@ export class BrowserCapabilityService {
     }
   }
 
-  async getState(): Promise<BrowserStateResult> {
+  getState(): Promise<BrowserStateResult> { return this.#track(() => this.#getState()) }
+
+  async #getState(): Promise<BrowserStateResult> {
     const sessionId = this.#sessionId
     if (!sessionId)
       return sessionNotFound()
@@ -323,38 +383,83 @@ export class BrowserCapabilityService {
       result.state.conversationId !== this.#conversationId
       || result.state.sessionId !== sessionId
     ) {
-      this.#sessionId = null
+      this.#setBinding(null)
       return sessionNotFound()
     }
     return result
   }
 
-  async close(): Promise<BrowserCloseResult> {
+  close(): Promise<BrowserCloseResult> { return this.#track(() => this.#close()) }
+
+  async #close(): Promise<BrowserCloseResult> {
     const sessionId = this.#sessionId
     if (!sessionId)
       return sessionNotFound()
     const result = await this.#host.close(sessionId)
     if (result.ok || isUnavailable(result.error.code)) {
-      this.#sessionId = null
-      this.#policyObservation = null
+      this.#setBinding(null)
+      this.#setPolicy(null)
     }
     return result
   }
 
   #clearUnavailableBinding(code: BrowserErrorCode): void {
     if (isUnavailable(code)) {
-      this.#sessionId = null
-      this.#policyObservation = null
+      this.#setBinding(null)
+      this.#setPolicy(null)
     }
   }
 
-  async #releaseControl(input: BrowserReleaseControlParams): Promise<void> {
+  async #releaseControl(input: BrowserReleaseControlParams, operationId: string, signal: AbortSignal): Promise<void> {
     try {
       const result = await this.#host.releaseControl(input)
+      this.#publish({ kind: 'control', operationId, phase: result.ok ? 'released' : 'release-unknown', controlEpoch: input.controlEpoch, cancelled: signal.aborted })
       if (!result.ok)
         this.#clearUnavailableBinding(result.error.code)
     }
-    catch {}
+    catch { this.#publish({ kind: 'control', operationId, phase: 'release-unknown', controlEpoch: input.controlEpoch, cancelled: signal.aborted }) }
+  }
+
+  dispose(): Promise<void> {
+    this.#disposing ??= Promise.resolve().then(async () => {
+      await Promise.allSettled([...this.#pending])
+      this.#setPolicy(null)
+      this.#setBinding(null)
+      this.#changes.dispose()
+    })
+    this.#shutdown.abort()
+    return this.#disposing
+  }
+
+  #track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#shutdown.signal.aborted)
+      return Promise.reject(this.#shutdown.signal.reason)
+    const pending = Promise.resolve().then(operation)
+    this.#pending.add(pending)
+    void pending.finally(() => this.#pending.delete(pending)).catch(() => {})
+    return pending
+  }
+
+  #binding() {
+    return { sessionId: this.#sessionId, pageId: this.#policyObservation?.pageId ?? null, observationId: this.#policyObservation?.observationId ?? null, documentRevision: this.#policyObservation?.documentRevision ?? null, count: this.#policyObservation?.elements.size ?? 0 }
+  }
+
+  #setBinding(sessionId: string | null): void {
+    if (this.#sessionId === sessionId)
+      return
+    this.#sessionId = sessionId
+    this.#changes.fire(copyEventSnapshot({ kind: 'binding', revision: ++this.#revision, ...this.#binding() }))
+  }
+
+  #setPolicy(observation: BrowserPolicyObservation | null): void {
+    if (this.#policyObservation === observation)
+      return
+    this.#policyObservation = observation
+    this.#changes.fire(copyEventSnapshot({ kind: 'policy', revision: ++this.#revision, ...this.#binding() }))
+  }
+
+  #publish(change: Omit<Extract<BrowserCapabilityChange, { kind: 'action' | 'control' }>, 'revision'>): void {
+    this.#changes.fire(copyEventSnapshot({ ...change, revision: ++this.#revision }))
   }
 }
 
@@ -396,7 +501,8 @@ function staleClassification(): BrowserCapabilityActionClassificationResult {
 function createPolicyObservation(
   observation: BrowserObservation,
 ): BrowserPolicyObservation {
-  const elements = new Map(observation.elements.map(element => [
+  const captured = copyEventSnapshot(observation)
+  const elements = new Map(captured.elements.map(element => [
     element.ref,
     {
       ...element,
@@ -405,15 +511,15 @@ function createPolicyObservation(
     },
   ]))
   return {
-    documentRevision: observation.documentRevision,
+    documentRevision: captured.documentRevision,
     elements,
-    observationContainsHumanInput: observation.elements.some(
+    observationContainsHumanInput: captured.elements.some(
       element => element.inputMode === 'human',
     ),
-    observationId: observation.observationId,
-    pageId: observation.pageId,
-    sessionId: observation.sessionId,
-    url: observation.url,
+    observationId: captured.observationId,
+    pageId: captured.pageId,
+    sessionId: captured.sessionId,
+    url: captured.url,
   }
 }
 

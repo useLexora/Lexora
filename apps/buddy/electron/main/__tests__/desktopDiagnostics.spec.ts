@@ -10,6 +10,10 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { PrivateDirectoryError } from '../../../platform/windows/privateDirectories'
 import { ServiceHost } from '../../../shared/lifecycle/ServiceHost'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
+import { observeLifecycleDiagnostics } from '../../../shared/observability/lifecycleDiagnostics'
+import { closeDesktopDiagnostics } from '../app/closeDesktopDiagnostics'
+import { DesktopStartup } from '../app/DesktopStartup'
+import { observeStartupDiagnostics } from '../app/startupDiagnostics'
 import { DesktopDiagnosticLogger } from '../desktopDiagnostics'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
 import { DiagnosticFile } from '../diagnostics/diagnosticFile'
@@ -52,7 +56,8 @@ describe('desktop diagnostics', () => {
     const { directory, logger } = await createLogger()
     const events = new ApplicationEvents()
     events.subscribe(event => logger.record({ ...event, scope: 'desktop' }))
-    const host = new ServiceHost(events)
+    const host = new ServiceHost()
+    observeLifecycleDiagnostics(host.lifecycle, events)
     const failure = { kind: 'private_directories', operation: 'open_directory', directoryRole: 'session_data', systemError: { domain: 'ntstatus', code: 0xC0000022 }, exitCode: 1 } as const
     const error = new PrivateDirectoryError('PRIVATE_DIRECTORIES_FAILED', failure, { cause: new Error('token=fixture-secret') })
     await expect(host.step('desktop.environment', () => {
@@ -65,6 +70,37 @@ describe('desktop diagnostics', () => {
     const reader = new ApplicationLogReader(directory, logger.launchId, '/home/alice')
     const page = await reader.query({ level: 'error' })
     expect(page.records[0]).toMatchObject({ failure })
+  })
+
+  it('records the final cleanup result before closing the logger', async () => {
+    const { directory, logger } = await createLogger()
+    const events = new ApplicationEvents()
+    const startup = new DesktopStartup()
+    const host = new ServiceHost()
+    events.subscribe(event => logger.record({ ...event, scope: 'desktop' }))
+    startup.bindDesktop(host.lifecycle)
+    observeLifecycleDiagnostics(host.lifecycle, events)
+    observeStartupDiagnostics(startup, events)
+    await host.start('desktop', ({ defer }) => {
+      defer(() => {
+        throw new Error('fixture-private-cleanup')
+      })
+    })
+    startup.stopping()
+    try {
+      await host.stop()
+    }
+    catch (error) {
+      startup.stopped(error)
+    }
+    await closeDesktopDiagnostics(logger)
+    const records = await readRecords(directory)
+    expect(records.at(-1)?.event).toBe('app.stop_failed')
+    expect(records.filter(record => record.event === 'app.stop_failed')).toHaveLength(1)
+    expect(records.some(record => record.event === 'component.stop_failed')).toBe(true)
+    expect(JSON.stringify(records)).not.toContain('fixture-private-cleanup')
+    expect(logger.status).toMatchObject({ state: 'closed', unconfirmed: 0, dropped: 0, failed: 0 })
+    expect(startup.state.status).toBe('stopped')
   })
 
   it('retains run and turn identities while excluding arbitrary operation details', async () => {
@@ -211,6 +247,18 @@ describe('desktop diagnostics', () => {
       event: 'recorder.loss',
       recorderLoss: { dropped: 1, failed: 0 },
     })
+  })
+
+  it('reports bounded close loss once through stderr without writing back to the closed sink', async () => {
+    const { directory, logger } = await createLogger()
+    logger.record({ ...event, message: 'fixture-private'.repeat(MAX_DIAGNOSTIC_RECORD_BYTES) })
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    await closeDesktopDiagnostics(logger)
+    await closeDesktopDiagnostics(logger)
+    expect(stderr).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(stderr.mock.calls[0]![0]))).toEqual({ event: 'recorder.close_incomplete', dropped: 1, failed: 0, unconfirmed: 0, closeTimedOut: false, ioFailed: false })
+    expect((await readRecords(directory)).map(record => record.event)).toEqual(['recorder.loss'])
+    expect(logger.status).toMatchObject({ state: 'closed', accepted: 1, written: 1, dropped: 1 })
   })
 
   it('bounds file size and count while retaining the latest complete records', async () => {

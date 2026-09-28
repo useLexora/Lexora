@@ -1,5 +1,24 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
+export type ReadonlyJson = string | number | boolean | null | ReadonlyJsonArray | ReadonlyJsonObject
+export interface ReadonlyJsonArray extends ReadonlyArray<ReadonlyJson> {}
+export interface ReadonlyJsonObject { readonly [key: string]: ReadonlyJson }
 export interface Disposable { dispose: () => void | Promise<void> }
+export interface EventSubscription { dispose: () => void }
+export interface EventSubscriptionOptions { signal?: AbortSignal, once?: boolean }
+export type EventName<Events> = Extract<keyof Events, string>
+type NamespacePattern<Name extends string> = Name extends `${infer Head}:${infer Tail}` ? `${Head}:*` | `${Head}:**` | `${Head}:${NamespacePattern<Tail>}` : never
+export type EventPattern<Events> = EventName<Events> | '*' | '**' | NamespacePattern<EventName<Events>>
+type EventMatches<Name extends string, Pattern extends string> = Pattern extends '**' ? true
+  : Pattern extends `${infer Prefix}:**` ? Name extends Prefix | `${Prefix}:${string}` ? true : false
+    : Pattern extends `${infer Prefix}:*` ? Name extends `${Prefix}:${infer Tail}` ? Tail extends `${string}:${string}` ? false : true : false
+      : Pattern extends '*' ? Name extends `${string}:${string}` ? false : true : Name extends Pattern ? true : false
+export type EventMessage<Events, Pattern extends string = '**'> = Pattern extends unknown ? {
+  [Name in EventName<Events>]: EventMatches<Name, Pattern> extends true ? Readonly<{ type: Name, data: Events[Name] }> : never
+}[EventName<Events>] : never
+export interface EventSubscriber<Events> {
+  on: <const Pattern extends EventPattern<Events>>(patterns: Pattern | readonly Pattern[], listener: (event: EventMessage<Events, Pattern>) => unknown, options?: EventSubscriptionOptions) => EventSubscription
+}
+export type EventSnapshot<Value> = Value extends object ? { readonly [Key in keyof Value]: EventSnapshot<Value[Key]> } : Value
 export interface Resource { readonly id: string, readonly name: string }
 export interface ResourceApi { readText: (resource: Resource) => Promise<string> }
 export interface LocalFile extends Resource { readonly mimeType: string, readonly size: number, readonly relativePath?: string }
@@ -34,8 +53,33 @@ export interface PaneSnapshot { readonly id: string, readonly active: boolean, r
 export interface Interaction { readonly id: string, readonly signal: AbortSignal, end: () => Promise<void> }
 export interface PlacementOptions { instanceId?: string, interactionId?: string }
 export interface HitRegion { id: string, label: string, rect: Rect }
+export interface ModelSelection { providerId: string, modelId: string }
+export type SettingValue = boolean | string | number | ModelSelection | null
+export interface ConfigurationEvents {
+  'configuration:changed': { readonly configuration: EventSnapshot<Record<string, SettingValue>>, readonly changedKeys: readonly string[] }
+}
+export interface WorkbenchPaneEvents {
+  'workbench:panes:changed': { readonly panes: readonly PaneSnapshot[] }
+}
+export interface ExtensionEvents extends ConfigurationEvents, WorkbenchPaneEvents {}
+export interface AgentToolContext {
+  readonly signal: AbortSignal
+  readonly task: {
+    get: () => Promise<{ id: string, title: string | null, titleSource: 'manual' | 'fallback' | 'generated', titleRevision: number }>
+    rename: (input: { title: string, expectedRevision: number }) => Promise<{ applied: boolean }>
+  }
+  readonly models: {
+    generateText: (input: { prompt: string, system?: string, model?: ModelSelection | null, maxTokens?: number }) => Promise<{ text: string, model: ModelSelection }>
+  }
+}
 export interface ExtensionContext {
   readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 }
+  readonly events: EventSubscriber<ExtensionEvents>
+  readonly configuration: {
+    get: () => Promise<Record<string, SettingValue>>
+    onChange: (listener: (configuration: Readonly<Record<string, SettingValue>>) => void | Promise<void>) => Disposable
+  }
+  readonly agent: { registerTool: (id: string, execute: (input: Record<string, string | number | boolean>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable }
   readonly subscriptions: { add: <T extends Disposable>(disposable: T) => T }
   readonly commands: { register: (id: string, execute: (context: { resource: Resource | null, arguments: Json, invocation: CommandInvocation | null }) => Json | void | Promise<Json | void>) => Disposable }
   readonly placements: { show: (id: string, options?: string | PlacementOptions) => Promise<string>, hide: (id: string, options?: string | PlacementOptions) => Promise<string | null> }
@@ -89,6 +133,7 @@ export interface WorkbenchContextSnapshot {
   readonly pages: readonly { readonly id: string, readonly title: string }[]
 }
 export interface ViewContext {
+  readonly events: EventSubscriber<ViewEvents>
   readonly interaction: {
     readonly id: string
     setRegions: (regions: readonly HitRegion[]) => Promise<void>
@@ -109,7 +154,7 @@ export interface ViewContext {
     onChange: (listener: (snapshot: ControlSnapshot) => void) => Disposable
     propose: (value: string, revision?: string) => Promise<void>
   } | null
-  readonly environment: { language: string, colorScheme: 'light' | 'dark', colors: Record<string, string> }
+  readonly environment: ViewEnvironment
   onEnvironmentChange: (listener: (environment: ViewContext['environment']) => void) => Disposable
   readonly apiVersion: 1 | 2 | 3
   readonly resource: Resource | null
@@ -125,6 +170,35 @@ export interface ViewContext {
   setState: (state: Json) => Promise<void>
   setActive: (active: boolean) => Promise<void>
 }
+export interface ViewEnvironment {
+  readonly language: string
+  readonly colorScheme: 'light' | 'dark'
+  readonly colors: Readonly<Record<string, string>>
+}
+export interface ViewStateEvents {
+  'view:visibility:changed': { readonly visible: boolean }
+  'view:environment:changed': { readonly environment: ViewEnvironment }
+}
+export interface ViewGeometryEvents {
+  'view:mount:changed': { readonly mount: MountGeometry }
+  'view:anchor:changed': { readonly anchor: AnchorGeometry }
+}
+export interface ViewMessageEvents {
+  'view:message:received': { readonly message: ReadonlyJson }
+}
+export interface WorkbenchContextEvents {
+  'workbench:context:changed': { readonly context: WorkbenchContextSnapshot }
+}
+export interface ControlEvents {
+  'control:changed': { readonly control: ControlSnapshot }
+}
+export interface InteractionEvents {
+  'interaction:activated': { readonly regionId: string, readonly x: number, readonly y: number }
+}
+export interface ComposerEvents {
+  'composer:input:received': { readonly caret?: Rect | null }
+}
+export interface ViewEvents extends ViewStateEvents, ViewGeometryEvents, ViewMessageEvents, WorkbenchContextEvents, ControlEvents, InteractionEvents, ComposerEvents {}
 export interface ExtensionModule {
   activate: (context: ExtensionContext) => void | Promise<void>
   deactivate?: () => void | Promise<void>

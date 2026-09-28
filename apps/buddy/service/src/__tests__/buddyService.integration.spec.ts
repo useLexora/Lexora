@@ -33,6 +33,7 @@ import { ApprovalService } from '../approvals/ApprovalService'
 import { startBuddyService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
 import { PermissionEngine } from '../permissions/PermissionEngine'
+import { RunContinuityService } from '../runs/RunContinuityService'
 import { RunLifecycleService } from '../runs/RunLifecycleService'
 import { RunRecoveryService } from '../runs/RunRecoveryService'
 import {
@@ -77,10 +78,10 @@ describe('buddy runtime cross-subsystem contract', () => {
     const eventLog = createRunEventLog({
       conversationsDirectory,
       database,
-      onEvent(event) {
-        if (event.type === 'approval.requested')
-          resolveApprovalRequested()
-      },
+    })
+    eventLog.onDidCommit((event) => {
+      if (event.type === 'approval.requested')
+        resolveApprovalRequested()
     })
     createSpaceRepository(database).create({
       additionalDirectories: [],
@@ -107,7 +108,7 @@ describe('buddy runtime cross-subsystem contract', () => {
       executor: new PiTurnExecutor({
         eventLog,
         piEvents,
-        runs,
+        continuity: new RunContinuityService(runs),
         sessionFactory: async () => ({
           piSessionFile: join(root, 'pi-session.jsonl'),
           session,
@@ -416,9 +417,9 @@ describe('buddy runtime cross-subsystem contract', () => {
       })
       for (const turn of [firstTurn, secondTurn]) {
         const related = diagnostics.filter(event => event.runId === turn.runId)
-        for (const event of ['run.queued', 'run.started', 'turn.started', 'turn.completed', 'run.completed'])
+        for (const event of ['run.queued', 'run.started', 'pi.turn.started', 'pi.turn.completed', 'run.completed'])
           expect(related).toContainEqual(expect.objectContaining({ event, conversationId: turn.conversationId, branchId: turn.branchId }))
-        expect(related).toContainEqual(expect.objectContaining({ event: 'turn.completed', turnId: `${turn.runId}:1` }))
+        expect(related).toContainEqual(expect.objectContaining({ event: 'pi.turn.completed', turnId: `${turn.runId}:1` }))
       }
       for (const content of ['Remember both historical images', 'Continue after recovery', 'test-api-key', keptBytes.toString('base64')])
         expect(JSON.stringify(diagnostics)).not.toContain(content)

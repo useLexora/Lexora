@@ -35,13 +35,91 @@ afterEach(async () => {
 })
 
 describe('providerService', () => {
+  it('publishes committed configuration even when catalog application fails', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const runtime = new FakeModelRuntime()
+    const repository = createProviderRepository(database)
+    const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: repository })
+    const commits: Array<import('../ProviderState').ProviderCommit> = []
+    const stages: string[] = []
+    service.onDidCommit(event => commits.push(event))
+    service.onDidApplyCatalog(event => stages.push(event.stage))
+    runtime.registerProvider = () => {
+      throw new Error('fixture application failure')
+    }
+    try {
+      await expect(service.createCustomProvider({ api: 'openai-completions', baseUrl: 'https://fixture.invalid/v1', displayName: 'Fixture', enabled: false, id: 'fixture', models: [] })).rejects.toThrow('fixture application failure')
+      expect(repository.configs.findById('fixture')).toMatchObject({ displayName: 'Fixture' })
+      expect(commits).toHaveLength(1)
+      expect(commits[0]?.providers).toEqual([{ providerId: 'fixture', kind: 'added', executionChanged: true, enabled: false }])
+      expect(stages).toEqual(['started', 'failed'])
+      expect(JSON.stringify(commits)).not.toContain('https://fixture.invalid')
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
+  it('separates display changes, effective capabilities and semantic no-ops', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const runtime = new FakeModelRuntime()
+    const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database) })
+    try {
+      await service.createCustomProvider({ api: 'openai-completions', baseUrl: 'https://fixture.invalid/v1', displayName: 'Fixture', enabled: false, id: 'fixture', models: [{ id: 'model', name: 'Model', input: ['text'], reasoning: false, contextWindow: 32000, maxTokens: 4000 }] })
+      const commits: Array<import('../ProviderState').ProviderCommit> = []
+      service.onDidCommit(event => commits.push(event))
+      await service.renameProvider('fixture', 'Renamed')
+      expect(commits[0]?.providers[0]?.executionChanged).toBe(false)
+      expect(commits[0]?.models).toEqual([])
+      const before = service.snapshot
+      await service.renameProvider('fixture', 'Renamed')
+      expect(service.snapshot.revision).toBe(before.revision)
+      await service.setModelCapabilities('fixture', 'model', { image: true })
+      expect(commits.at(-1)?.models[0]?.facets).toContain('execution')
+      expect(service.snapshot.catalogRevision).toBeGreaterThan(before.catalogRevision)
+      expect(before.models[0]?.capabilities).not.toContain('image')
+      expect(Object.isFrozen(service.snapshot.models[0]?.capabilities)).toBe(true)
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
+  it('rejects late discovery after its provider has been removed', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const runtime = new FakeModelRuntime()
+    const discovered = Promise.withResolvers<Awaited<ReturnType<ProviderModelDiscovery['discover']>>>()
+    const started = Promise.withResolvers<void>()
+    const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database), modelDiscovery: createTestModelDiscovery(() => {
+      started.resolve()
+      return discovered.promise
+    }) })
+    try {
+      await service.createCustomProvider({ api: 'openai-completions', baseUrl: 'https://fixture.invalid/v1', displayName: 'Fixture', enabled: false, id: 'fixture', models: [] })
+      const pending = service.syncModels('fixture')
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' })
+      await started.promise
+      await service.removeProvider('fixture')
+      discovered.resolve([])
+      await rejected
+      expect(service.snapshot.providers).toEqual([])
+      expect(service.snapshot.models).toEqual([])
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('rejects custom creation collisions without overwriting provider configuration', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     try {
       const runtime = new FakeModelRuntime()
       runtime.providers = [provider('xiaomi')]
       const repository = createProviderRepository(database)
-      const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService({ notify: () => {} }), modelRuntime: runtime, providers: repository })
+      const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: repository })
       const input = { api: 'openai-completions' as const, baseUrl: 'https://proxy.example.test/v1', displayName: 'xiaomi', enabled: false, id: 'custom-xiaomi', models: [] }
       await expect(service.createCustomProvider({ ...input, id: 'xiaomi' })).rejects.toMatchObject({ code: 'PROVIDER_ID_CONFLICT' })
       expect(repository.configs.findById('xiaomi')).toBeNull()
@@ -65,7 +143,7 @@ describe('providerService', () => {
     runtime.credentials = runtime.providers.map(provider => ({ providerId: provider.id, type: provider.id === 'google' ? 'api_key' : 'oauth' } as CredentialInfo))
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     try {
-      const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService({ notify: () => {} }), modelRuntime: runtime, providers: createProviderRepository(database), modelSnapshot: new ProviderModelSnapshotService() })
+      const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database), modelSnapshot: new ProviderModelSnapshotService() })
       await service.initializeProviders()
       const codex = (await service.listModels('openai-codex')).find(model => model.id === 'gpt-5.5')!
       expect(codex.capabilities).toContain('pdf')
@@ -90,7 +168,7 @@ describe('providerService', () => {
     const runtime = new FakeModelRuntime()
     runtime.credentials = [{ providerId: 'openai-proxy', type: 'api_key' } as CredentialInfo]
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
     })
@@ -170,7 +248,7 @@ describe('providerService', () => {
     const sessionRuntime = {} as ModelRuntime
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
       sessionRuntime,
@@ -200,10 +278,10 @@ describe('providerService', () => {
     })
     runtime.credentialsError = new HostCredentialStoreError('CREDENTIAL_STORE_UNAVAILABLE')
     await expect(service.executionModels.resolveAvailable(selection)).rejects.toMatchObject({
-      code: 'AUTHENTICATION_REQUIRED',
+      code: 'CREDENTIAL_STORE_UNAVAILABLE',
     })
     await expect(service.listProviders()).resolves.toEqual([
-      expect.objectContaining({ id: 'anthropic', status: 'authentication_required' }),
+      expect.objectContaining({ id: 'anthropic', status: 'unavailable' }),
     ])
     runtime.credentialsError = null
     runtime.credentials = [{ providerId: 'anthropic', type: 'api_key' } as CredentialInfo]
@@ -231,7 +309,7 @@ describe('providerService', () => {
     runtime.models = [model('anthropic', 'claude')]
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
     })
@@ -316,7 +394,7 @@ describe('providerService', () => {
     }]
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'reasoner' }])),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
@@ -411,7 +489,7 @@ describe('providerService', () => {
       { ...model('second', 'shared'), input: ['text', 'image'], reasoning: true, contextWindow: 256_000 },
     ]
     const options = {
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'shared' }])),
       modelRuntime: runtime,
     }
@@ -480,7 +558,7 @@ describe('providerService', () => {
     runtime.providers = [provider('origin')]
     runtime.models = [model('origin', 'shared')]
     const options = {
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'shared' }])),
       modelRuntime: runtime,
     }
@@ -534,7 +612,7 @@ describe('providerService', () => {
     runtime.providers = [provider('origin')]
     runtime.models = [model('origin', 'shared')]
     const options = {
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'shared' }])),
       modelRuntime: runtime,
     }
@@ -586,7 +664,7 @@ describe('providerService', () => {
     }]
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       getActiveRuns: () => activeRuns,
       modelRuntime: runtime,
       providers: createProviderRepository(database),
@@ -638,7 +716,7 @@ describe('providerService', () => {
     let syncCalls = 0
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       getActiveRuns: () => activeRuns,
       modelRuntime: runtime,
       providers: createProviderRepository(database),
@@ -702,7 +780,7 @@ describe('providerService', () => {
     const runtime = new FakeModelRuntime()
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
       modelDiscovery: createTestModelDiscovery(async ({ providerId }) => providerId === 'openai-proxy'
@@ -766,7 +844,7 @@ describe('providerService', () => {
     let definitions = [{ id: 'current-model' }, { id: 'retired-model' }]
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
       modelDiscovery: createTestModelDiscovery(async () => definitions),

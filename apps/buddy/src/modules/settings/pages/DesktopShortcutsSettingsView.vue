@@ -6,7 +6,7 @@ import { NButton, NInput, NModal, NTag, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import DesktopSettingsPageLayout from '../layouts/DesktopSettingsPageLayout.vue'
+import DesktopSettingsModuleLayout from '../layouts/DesktopSettingsModuleLayout.vue'
 import { useSettingsContext } from '../settingsContext'
 
 const { applicationSettings, shortcuts } = useSettingsContext()
@@ -112,13 +112,7 @@ function confirmReset() {
 </script>
 
 <template>
-  <DesktopSettingsPageLayout :requires-runtime="false">
-    <template #title>
-      {{ t('desktop.settings.category.shortcuts') }}
-    </template>
-    <template #description>
-      {{ t('desktop.settings.categoryDescription.shortcuts') }}
-    </template>
+  <DesktopSettingsModuleLayout>
     <template #actions>
       <NButton type="primary" size="small" :disabled="!modified || saving" @click="confirmReset">
         {{ t('desktop.shortcuts.resetAll') }}
@@ -236,7 +230,7 @@ function confirmReset() {
         </div>
       </template>
     </NModal>
-  </DesktopSettingsPageLayout>
+  </DesktopSettingsModuleLayout>
 </template>
 
 <style scoped>

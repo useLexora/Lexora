@@ -45,3 +45,12 @@ export const artifactsResponseSchemas = {
 export const artifactsRpc = {
   readText: { method: 'artifacts.readText', input: artifactsRequestSchemas.artifactText, response: artifactsResponseSchemas.artifactText },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const artifactChangeNoticeSchema = z.object({
+  sourceId: z.uuid(),
+  revision: z.number().int().positive(),
+  conversationId: idSchema,
+}).strict()
+
+export type ArtifactChangeNotice = z.infer<typeof artifactChangeNoticeSchema>
+export const artifactsChanged = { method: 'artifacts.changed', params: artifactChangeNoticeSchema } as const

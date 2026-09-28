@@ -7,12 +7,14 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { Emitter } from '../../../../shared/events/Emitter'
 import { AutomationChangeCoordinator } from '../../automations/AutomationChangeCoordinator'
 import { AutomationService } from '../../automations/AutomationService'
 import { createAutomationRepositories } from '../../storage/automationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSpaceRepository } from '../../storage/spaceRepository'
 import { registerSpaceRpc } from '../registerSpaceRpc'
+import { SpaceDependents } from '../SpaceDependents'
 import { SpaceService } from '../SpaceService'
 
 const databases: DatabaseSync[] = []
@@ -25,7 +27,7 @@ afterEach(async () => {
 })
 
 describe('registerSpaceRpc', () => {
-  it('owns Space validation, file search, session invalidation and automation blocking', async () => {
+  it('serves committed Space changes consumed by session and automation services', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-space-rpc-')))
     directories.push(root)
     const firstRoot = join(root, 'first')
@@ -51,18 +53,22 @@ describe('registerSpaceRpc', () => {
       },
     })
     const harness = createRpcHarness()
-    registerSpaceRpc({
-      automations: automationChanges,
-      rpc: harness.rpc,
-      service,
-      sessions: {
-        async invalidateSpace(spaceId) {
-          effects.push(`session:${spaceId}`)
-          return 0
+    const consumer = new SpaceDependents({
+      source: service,
+      grants: { quiesce: async () => {}, onDidCommit: new Emitter<never>(() => {}).event },
+      sessions: { snapshot: () => [], onDidChange: new Emitter<never>(() => {}).event },
+      resources: {
+        async reconcileInvalidation(input) {
+          effects.push(`session:${input.scope}`)
+          return { matched: 0, pending: 0, degraded: 0 }
         },
+        async resync() {},
+        snapshot: () => [],
       },
-      spaces,
+      automations: automationChanges,
+      record: () => {},
     })
+    registerSpaceRpc({ rpc: harness.rpc, service })
 
     const created = await harness.invoke('spaces.create', {
       memoryScope: 'space_only',
@@ -87,6 +93,9 @@ describe('registerSpaceRpc', () => {
       draft: dailyDraft(created.id),
       requestId: 'create-automation',
     })
+    await automationChanges.whenIdle()
+    expect(effects).toEqual([`automation:${automation.id}`, 'scheduler:wake'])
+    effects.length = 0
     const updated = await harness.invoke('spaces.update', {
       memoryScope: 'personal_and_space',
       name: 'Renamed Space',
@@ -99,26 +108,31 @@ describe('registerSpaceRpc', () => {
       name: 'Renamed Space',
       primaryDirectory: { canonicalRoot: secondRoot },
     })
+    await consumer.whenIdle()
     expect(effects).toEqual([`session:${created.id}`])
 
     effects.length = 0
     await expect(harness.invoke('spaces.delete', { spaceId: created.id }))
       .resolves
       .toEqual({ ok: true })
+    await consumer.whenIdle()
     expect(spaces.findById(created.id)).toMatchObject({ revokedAt: expect.any(String) })
     expect(automations.get(automation.id)).toMatchObject({
       blockedReason: 'AUTOMATION_SPACE_UNAVAILABLE',
       status: 'blocked',
     })
-    expect(effects).toEqual([
+    expect([...effects].sort()).toEqual([
       `automation:${automation.id}`,
       'scheduler:wake',
       `session:${created.id}`,
-    ])
+    ].sort())
 
     await expect(harness.invoke('spaces.list', { unexpected: true }))
       .rejects
       .toMatchObject({ code: 'VALIDATION_FAILED' })
+    await consumer.dispose()
+    await automationChanges.dispose()
+    await service.dispose()
   })
 })
 

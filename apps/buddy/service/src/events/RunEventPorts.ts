@@ -1,3 +1,5 @@
+import type { Event } from '../../../shared/events/Emitter'
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type {
   AppendBuddyRunEventInput,
   BuddyRunEvent,
@@ -30,5 +32,10 @@ export interface RunEventMaintenance {
   replayAll: () => Promise<number>
 }
 
+export interface RunEventObservation {
+  readonly onDidCommit: Event<EventSnapshot<BuddyRunEvent>>
+  readonly state: 'open' | 'failed' | 'closed'
+}
+
 export interface RunEventLogPort
-  extends RunEventMaintenance, RunEventReader, RunEventWriter {}
+  extends RunEventMaintenance, RunEventReader, RunEventWriter, RunEventObservation {}

@@ -3,6 +3,7 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import UnoCSS from 'unocss/vite'
 import { defineConfig } from 'vitest/config'
+import { extensionRuntimePlugin } from './electron/extensionRuntimePlugin.ts'
 
 const buddyVersion = JSON.parse(
   readFileSync(new URL('./buddy.version.json', import.meta.url), 'utf8'),
@@ -14,6 +15,7 @@ export default defineConfig({
     __LEXORA_BUDDY_VERSION__: JSON.stringify(buddyVersion.version ?? ''),
   },
   plugins: [
+    extensionRuntimePlugin(),
     {
       name: 'electron-node-asset-path',
       enforce: 'pre',

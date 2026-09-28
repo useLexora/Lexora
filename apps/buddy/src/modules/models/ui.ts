@@ -1,3 +1,4 @@
+export { default as DesktopModelPicker } from './widgets/model-selector/DesktopModelPicker.vue'
 export { default as DesktopModelSelector } from './widgets/model-selector/DesktopModelSelector.vue'
 export { default as DesktopModelsSettings } from './widgets/providers/DesktopModelsSettings.vue'
 export { default as DesktopProviderAddDialog } from './widgets/providers/DesktopProviderAddDialog.vue'

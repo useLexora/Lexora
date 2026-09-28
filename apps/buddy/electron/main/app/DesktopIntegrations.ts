@@ -10,8 +10,11 @@ import process from 'node:process'
 import { app, Notification, shell } from 'electron'
 import { z } from 'zod'
 import buddyVersion from '../../../buddy.version.json'
+import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
+import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAuthoring'
 import { spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
+import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
 import { registerContextPanelIpc } from '../context-panel/registerContextPanelIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
@@ -74,23 +77,28 @@ export class DesktopIntegrations {
     const windows = this.#windows
     const service = runtime.service
     const extensions = registerExtensionIpc({
+      record: this.#environment.events.publish,
       home: paths.buddyHome,
       version: buddyVersion.version,
       developmentDirectory: !app.isPackaged && paths.profile === 'test' ? process.env.LEXORA_EXTENSION_DEVELOPMENT_PATH : undefined,
       getWindow: () => windows.window,
       get: runtime.network.get,
       notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
+      agentChanged: () => service.notify(extensionAgentRpc.changed, {}),
+      agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: 120000 })),
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
     this.#subscriptions.push(extensions.dispose)
     runtime.inspectExtension = extensions.inspect
+    runtime.extensionAgent = extensions.agent
     this.#subscriptions.push(() => {
       runtime.inspectExtension = null
+      runtime.extensionAgent = null
     })
     this.#subscriptions.push(registerWorkbenchIpc(new WorkbenchStateStore(paths.buddyHome), () => windows.window))
     this.#subscriptions.push(registerContextPanelIpc(runtime.contextPanel, () => windows.window))
-    this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window, this.#environment.events))
-    this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window))
+    this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window))
+    this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window, event => diagnostics.record(event)))
     this.#tray = createDesktopTray({
       appName: paths.appName,
       iconPath: trayIconPath,
@@ -141,6 +149,11 @@ export class DesktopIntegrations {
       openFeedbackIssue: feedback => shell.openExternal(createFeedbackIssueUrl(feedback)),
       openReleasePage: url => shell.openExternal(url),
     })
+    const configNotifications = runtime.configStore.onDidChange((change) => {
+      if (change.kind === 'committed' && windows.window && !windows.window.isDestroyed())
+        windows.window.webContents.send(DESKTOP_IPC_CHANNELS.settingsChanged, change.config)
+    })
+    this.#subscriptions.push(() => configNotifications.dispose())
     this.#subscriptions.push(registerBrowserDesktopIpc({
       data: this.#browser.data,
       screenshots: this.#browser.screenshots,

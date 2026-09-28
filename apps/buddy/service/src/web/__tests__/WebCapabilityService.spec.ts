@@ -2,9 +2,11 @@ import type { WebCapabilityOptions } from '../WebCapabilityService'
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { DEFAULT_WEB_SETTINGS, WebError } from '../../../../shared/network/webProtocol'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
+import { observeWebDiagnostics } from '../observeWebDiagnostics'
 import { WebCapabilityService } from '../WebCapabilityService'
 import { WebContentCache } from '../WebContentCache'
 
@@ -122,12 +124,37 @@ describe('web capability routing', () => {
   it('bounds concurrent cache retention without crossing conversation boundaries', async () => {
     const { options } = await fixture()
     const cache = new WebContentCache(options.paths)
-    const other = await cache.write('other-conversation', 'Other content')
+    const { path: other } = await cache.write('other-conversation', 'Other content')
     expect((await stat(other)).mode & 0o777).toBe(0o600)
     await Promise.all(Array.from({ length: 35 }, (_, index) => cache.write('conversation', `Content ${index}`)))
     expect(await readdir(join(options.paths.conversationDirectory('conversation'), 'web-cache'))).toHaveLength(32)
     expect(await readFile(other, 'utf8')).toBe('Other content')
   })
+  it('keeps publication independent of failed observers and projects only bounded diagnostic fields', async () => {
+    const { options } = await fixture()
+    const content = 'private fetched content '.repeat(2000)
+    options.host.get = async url => ({ bytes: new TextEncoder().encode(content), headers: new Headers({ 'content-type': 'text/plain' }), status: 200, url })
+    const service = new WebCapabilityService(options)
+    const diagnostics: unknown[] = []
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    service.onDidChange(() => {
+      throw new Error('observer failed')
+    })
+    observeWebDiagnostics(service, diagnostic => diagnostics.push(applicationDiagnosticSchema.parse(diagnostic)))
+    try {
+      const result = await service.fetch({ url: 'https://example.com/private-resource', conversationId: 'conversation' })
+      expect(result.ok).toBe(true)
+      if (!result.ok)
+        throw new Error('expected cache publication')
+      expect(await readFile(result.contentPath!, 'utf8')).toContain(content)
+      expect(diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ event: 'web.fetch.cache_published' }), expect.objectContaining({ event: 'web.fetch.settled_completed' })]))
+      expect(JSON.stringify(diagnostics)).not.toMatch(/private|https|contentPath/)
+      expect(service.snapshot.active).toEqual([])
+      await service.dispose()
+    }
+    finally { error.mockRestore() }
+  })
+
   it('does not retry remote extraction when local cache persistence fails', async () => {
     const { options, settings } = await fixture()
     settings.fetch.remote = true

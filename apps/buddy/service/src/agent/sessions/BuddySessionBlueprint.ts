@@ -13,6 +13,7 @@ export interface BuddySessionIdentity {
   executionProfile: BuddyExecutionProfile
   grantRevision: string
   resourceRevision: string
+  skillRevision?: string
   scratchRoot: string
   sessionMode: BuddySessionMode
   spaceId: string | null
@@ -50,6 +51,7 @@ export function toBuddySessionIdentity(
     executionProfile: blueprint.executionProfile,
     grantRevision: blueprint.grantRevision,
     resourceRevision: blueprint.resources.revision,
+    skillRevision: blueprint.resources.skillRevision,
     scratchRoot: blueprint.scratchRoot,
     sessionMode: blueprint.sessionMode,
     spaceId: blueprint.space?.id ?? null,

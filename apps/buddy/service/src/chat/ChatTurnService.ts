@@ -5,7 +5,6 @@ import type {
 } from '../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
 import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
-import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type {
@@ -40,6 +39,7 @@ import type {
   TurnRequestRepository,
 } from '../storage/turnRequestRepository'
 import type { ChatInputHistoryPoint, ChatInputValidationService } from './ChatInputValidationService'
+import type { PreparedTurnAttachments } from './persistPreparedTurn'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
@@ -57,7 +57,6 @@ import {
   getResourceAttachmentIds,
 } from '../../../shared/conversation/buddyUserContent'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
-import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
@@ -71,7 +70,7 @@ import {
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
 import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt } from './buddyReviewPrompt'
 import { createConversationTitle } from './conversationTitle'
-import { persistPreparedTurn } from './persistPreparedTurn'
+import { combinePreparedAttachments, persistPreparedTurn } from './persistPreparedTurn'
 
 const MAX_CONTEXT_FILE_BYTES = 1024 * 1024
 const MAX_MODEL_INPUT_BYTES = 4 * 1024 * 1024
@@ -94,7 +93,6 @@ export interface RegenerateChatAssistantInput {
 }
 
 export interface ChatTurnServiceOptions {
-  record?: ApplicationDiagnosticReporter
   composerResources?: Pick<ComposerResourceService, 'resolveInput'>
   attachments: Pick<
     AttachmentService,
@@ -146,12 +144,18 @@ interface PrepareTurnMaterializationInput {
 
 export class ChatTurnService {
   readonly #options: ChatTurnServiceOptions
+  readonly #stopping = new AbortController()
+  readonly #pending = new Set<Promise<unknown>>()
 
   constructor(options: ChatTurnServiceOptions) {
     this.#options = options
   }
 
-  async start(input: BuddyStartTurnInput): Promise<BuddyTurnStart> {
+  start(input: BuddyStartTurnInput): Promise<BuddyTurnStart> {
+    return this.#run(() => this.#start({ ...input }))
+  }
+
+  async #start(input: BuddyStartTurnInput): Promise<BuddyTurnStart> {
     const replay = this.#findReplay(
       input.requestId,
       createStartTurnFingerprint(input),
@@ -159,11 +163,15 @@ export class ChatTurnService {
     if (replay)
       return this.#toTurnStart(replay.request, replay.run)
     const { prepared, stagedAttachments } = await this.prepareStart(input)
-    const request = await persistPreparedTurn(stagedAttachments, () => this.#options.turnRequests.prepare(prepared))
+    const request = await persistPreparedTurn(stagedAttachments, () => {
+      this.#stopping.signal.throwIfAborted()
+      return this.#options.turnRequests.prepare(prepared)
+    })
     return this.#launchPreparedTurn(request)
   }
 
   async prepareStart(input: BuddyStartTurnInput) {
+    this.#stopping.signal.throwIfAborted()
     const draft = this.#options.drafts.findById(input.draftId)
     if (!draft || draft.revision !== input.expectedRevision)
       throw new BuddyServiceError('DRAFT_CONFLICT')
@@ -215,85 +223,93 @@ export class ChatTurnService {
       throw new BuddyServiceError('VALIDATION_FAILED')
 
     const selectedModel = await this.#resolveSelection(null, null, draft.modelSelection)
-    const resourceInputs = await requireValue(this.#options.composerResources ?? null)
+    const materialized = await requireValue(this.#options.composerResources ?? null)
       .resolveInput(input.draftId, draft.content, {
         branchId: existingConversation ? parentBranchId : null,
         conversationId: existingConversation?.id ?? null,
         spaceId: space?.id ?? null,
       }, selectedModel)
-    if (!content && resourceInputs.length === 0 && !draft.content.quotes?.length)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    const attachmentIds = getResourceAttachmentIds(resourceInputs)
+    let stagedAttachments: PreparedTurnAttachments | null = null
+    try {
+      const resourceInputs = materialized.inputs
+      if (!content && resourceInputs.length === 0 && !draft.content.quotes?.length)
+        throw new BuddyServiceError('VALIDATION_FAILED')
+      const attachmentIds = getResourceAttachmentIds(resourceInputs)
 
-    const {
-      attachmentPrompt,
-      prompt,
-      reviewRequested,
-      contextItems: resolvedContextItems,
-      selection,
-      thinkingLevel,
-    } = await this.#prepareTurnMaterialization({
-      attachmentIds,
-      composer: {
-        content: draft.content,
-        resourceIds: resourceInputs.map(resource => resource.resourceId),
-        resources: resourceInputs,
-      },
-      content: '',
-      contextItems: [],
-      conversationId,
-      draftId: input.draftId,
-      branchId: parentBranchId,
-      point: !existingConversation ? { kind: 'empty' } : followup ? { kind: 'after_run', runId: followup.sourceRunId, messageId: followup.sourceMessageId } : undefined,
-      space,
-      replay: null,
-      requestedModel: draft.modelSelection,
-      preparedSelection: selectedModel,
-    })
-    const runId = randomUUID()
-    const userMessageId = randomUUID()
-    const stagedAttachments = await this.#options.attachments.prepareMessageAttachments({
-      attachmentIds,
-      conversationId,
-      draftId: input.draftId,
-      messageId: userMessageId,
-    })
-    const persistedAttachmentIds = stagedAttachments.bindings.map(binding => binding.id)
-    const prepared: PrepareTurnRequestInput = {
-      followup,
-      approvalPolicy: draft.executionConfig.approvalPolicy,
-      attachmentBindings: stagedAttachments.bindings,
-      branchId,
-      conversationId,
-      createdAt: new Date().toISOString(),
-      draft: {
-        draftId: input.draftId,
-        expectedRevision: input.expectedRevision,
-      },
-      executionProfile: draft.executionConfig.executionProfile,
-      runExecutionProfile: reviewRequested ? 'read_only' : undefined,
-      model: selection.modelId,
-      modelParameters: toModelParameters(selection),
-      spaceId: space?.id ?? null,
-      provider: selection.providerId,
-      requestFingerprint: createStartTurnFingerprint(input),
-      requestId: input.requestId,
-      runInput: {
-        attachmentIds: persistedAttachmentIds,
-        contextItems: resolvedContextItems,
+      const {
+        attachmentPrompt,
         prompt,
-        reasoning: thinkingLevel ?? null,
-        serviceTier: selection.serviceTier,
-      },
-      runId,
-      title: createConversationTitle(draft.content, attachmentPrompt.records),
-      userMessageContent: createPersistedUserMessageContent(
-        draft.content,
-        bindResourceAttachments(resourceInputs, persistedAttachmentIds),
-      ),
-      userMessageId,
+        reviewRequested,
+        contextItems: resolvedContextItems,
+        selection,
+        thinkingLevel,
+      } = await this.#prepareTurnMaterialization({
+        attachmentIds,
+        composer: {
+          content: draft.content,
+          resourceIds: resourceInputs.map(resource => resource.resourceId),
+          resources: resourceInputs,
+        },
+        content: '',
+        contextItems: [],
+        conversationId,
+        draftId: input.draftId,
+        branchId: parentBranchId,
+        point: !existingConversation ? { kind: 'empty' } : followup ? { kind: 'after_run', runId: followup.sourceRunId, messageId: followup.sourceMessageId } : undefined,
+        space,
+        replay: null,
+        requestedModel: draft.modelSelection,
+        preparedSelection: selectedModel,
+      })
+      const runId = randomUUID()
+      const userMessageId = randomUUID()
+      stagedAttachments = combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
+        attachmentIds,
+        conversationId,
+        draftId: input.draftId,
+        messageId: userMessageId,
+      }), materialized)
+      const persistedAttachmentIds = stagedAttachments.bindings.map(binding => binding.id)
+      const prepared: PrepareTurnRequestInput = {
+        followup,
+        approvalPolicy: draft.executionConfig.approvalPolicy,
+        attachmentBindings: stagedAttachments.bindings,
+        branchId,
+        conversationId,
+        createdAt: new Date().toISOString(),
+        draft: {
+          draftId: input.draftId,
+          expectedRevision: input.expectedRevision,
+        },
+        executionProfile: draft.executionConfig.executionProfile,
+        runExecutionProfile: reviewRequested ? 'read_only' : undefined,
+        model: selection.modelId,
+        modelParameters: toModelParameters(selection),
+        spaceId: space?.id ?? null,
+        provider: selection.providerId,
+        requestFingerprint: createStartTurnFingerprint(input),
+        requestId: input.requestId,
+        runInput: {
+          attachmentIds: persistedAttachmentIds,
+          contextItems: resolvedContextItems,
+          prompt,
+          reasoning: thinkingLevel ?? null,
+          serviceTier: selection.serviceTier,
+        },
+        runId,
+        title: createConversationTitle(draft.content, attachmentPrompt.records),
+        userMessageContent: createPersistedUserMessageContent(
+          draft.content,
+          bindResourceAttachments(resourceInputs, persistedAttachmentIds),
+        ),
+        userMessageId,
+      }
+      return { prepared, stagedAttachments }
     }
-    return { prepared, stagedAttachments }
+    catch (error) {
+      await (stagedAttachments ?? materialized).rollback()
+      throw error
+    }
   }
 
   async validatePreparedInput(input: PrepareTurnRequestInput, validateSkills = true): Promise<void> {
@@ -311,7 +327,11 @@ export class ChatTurnService {
     })
   }
 
-  async editUserMessage(input: EditChatUserMessageInput) {
+  editUserMessage(input: EditChatUserMessageInput) {
+    return this.#run(() => this.#editUserMessage({ ...input }))
+  }
+
+  async #editUserMessage(input: EditChatUserMessageInput) {
     const replay = this.#findReplay(
       input.requestId,
       createEditUserMessageFingerprint(input),
@@ -347,99 +367,116 @@ export class ChatTurnService {
     const space = this.#resolveConversationSpace(conversation)
     const content = draft ? buddyUserContentToText(draft.content).trim() : ''
     const selectedModel = draft ? await this.#resolveSelection(null, null, draft.modelSelection) : undefined
-    const resourceInputs = draft
+    const materialized = draft && !replay
       ? await requireValue(this.#options.composerResources ?? null).resolveInput(
           draft.draftId,
           draft.content,
           { branchId: parentBranchId, conversationId: conversation.id, spaceId: space?.id ?? null },
           selectedModel,
         )
-      : []
-    if (!replay && !content && resourceInputs.length === 0 && !draft?.content.quotes?.length)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    const attachmentIds = getResourceAttachmentIds(resourceInputs)
-    const {
-      prompt,
-      replayInput,
-      reviewRequested,
-      contextItems: resolvedContextItems,
-      selection,
-      thinkingLevel,
-    } = await this.#prepareTurnMaterialization({
-      attachmentIds,
-      composer: draft
-        ? { content: draft.content, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs }
-        : undefined,
-      content: '',
-      contextItems: [],
-      conversationId: conversation.id,
-      draftId: input.draftId,
-      branchId: parentBranchId,
-      point: { kind: 'before_message', messageId: input.userMessageId },
-      space,
-      replay,
-      requestedModel: draft?.modelSelection ?? null,
-      preparedSelection: selectedModel,
-    })
-    const runId = randomUUID()
-    const userMessageId = randomUUID()
-    const stagedAttachments = replay
-      ? null
-      : await this.#options.attachments.prepareMessageAttachments({
-          attachmentIds,
-          conversationId: conversation.id,
-          draftId: input.draftId,
-          messageId: userMessageId,
-        })
-    const persistedAttachmentIds = replayInput?.attachmentIds
-      ?? stagedAttachments?.bindings.map(binding => binding.id)
-      ?? []
-    const persistedResourceSnapshots = replay ? [] : bindResourceAttachments(resourceInputs, persistedAttachmentIds)
-    const prepared = await persistPreparedTurn(stagedAttachments, () => (
-      replay
-        ? this.#options.turnRequests.retryInterrupted({
-            createdAt: new Date().toISOString(),
-            requestId: input.requestId,
-            runId,
-          })
-        : this.#options.turnRequests.edit({
-            approvalPolicy: conversation.approvalPolicy,
-            attachmentBindings: stagedAttachments?.bindings ?? [],
-            branchId: randomUUID(),
+      : null
+    let stagedAttachments: PreparedTurnAttachments | null = null
+    let persistenceOwnsAttachments = false
+    let prepared: TurnRequestRecord
+    try {
+      const resourceInputs = materialized?.inputs ?? []
+      if (!replay && !content && resourceInputs.length === 0 && !draft?.content.quotes?.length)
+        throw new BuddyServiceError('VALIDATION_FAILED')
+      const attachmentIds = getResourceAttachmentIds(resourceInputs)
+      const {
+        prompt,
+        replayInput,
+        reviewRequested,
+        contextItems: resolvedContextItems,
+        selection,
+        thinkingLevel,
+      } = await this.#prepareTurnMaterialization({
+        attachmentIds,
+        composer: draft
+          ? { content: draft.content, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs }
+          : undefined,
+        content: '',
+        contextItems: [],
+        conversationId: conversation.id,
+        draftId: input.draftId,
+        branchId: parentBranchId,
+        point: { kind: 'before_message', messageId: input.userMessageId },
+        space,
+        replay,
+        requestedModel: draft?.modelSelection ?? null,
+        preparedSelection: selectedModel,
+      })
+      const runId = randomUUID()
+      const userMessageId = randomUUID()
+      stagedAttachments = replay
+        ? null
+        : combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
+            attachmentIds,
             conversationId: conversation.id,
-            createdAt: new Date().toISOString(),
-            draft: { draftId: input.draftId, expectedRevision: input.expectedRevision },
-            executionProfile: conversation.executionProfile,
-            runExecutionProfile: reviewRequested ? 'read_only' : undefined,
-            forkedFromMessageId,
-            model: selection.modelId,
-            modelParameters: toModelParameters(selection),
-            parentBranchId,
-            spaceId: space?.id ?? null,
-            provider: selection.providerId,
-            requestFingerprint: createEditUserMessageFingerprint(input),
-            requestId: input.requestId,
-            runId,
-            runInput: {
-              attachmentIds: persistedAttachmentIds,
-              contextItems: resolvedContextItems,
-              prompt,
-              reasoning: thinkingLevel ?? null,
-              serviceTier: replayInput ? replayInput.serviceTier : selection.serviceTier,
-            },
-            sourceUserMessageId: input.userMessageId,
-            title: null,
-            userMessageContent: createPersistedUserMessageContent(
-              draft!.content,
-              persistedResourceSnapshots,
-            ),
-            userMessageId,
-          })
-    ))
+            draftId: input.draftId,
+            messageId: userMessageId,
+          }), requireValue(materialized))
+      const persistedAttachmentIds = replayInput?.attachmentIds
+        ?? stagedAttachments?.bindings.map(binding => binding.id)
+        ?? []
+      const persistedResourceSnapshots = replay ? [] : bindResourceAttachments(resourceInputs, persistedAttachmentIds)
+      persistenceOwnsAttachments = true
+      prepared = await persistPreparedTurn(stagedAttachments, () => {
+        this.#stopping.signal.throwIfAborted()
+        return replay
+          ? this.#options.turnRequests.retryInterrupted({
+              createdAt: new Date().toISOString(),
+              requestId: input.requestId,
+              runId,
+            })
+          : this.#options.turnRequests.edit({
+              approvalPolicy: conversation.approvalPolicy,
+              attachmentBindings: stagedAttachments?.bindings ?? [],
+              branchId: randomUUID(),
+              conversationId: conversation.id,
+              createdAt: new Date().toISOString(),
+              draft: { draftId: input.draftId, expectedRevision: input.expectedRevision },
+              executionProfile: conversation.executionProfile,
+              runExecutionProfile: reviewRequested ? 'read_only' : undefined,
+              forkedFromMessageId,
+              model: selection.modelId,
+              modelParameters: toModelParameters(selection),
+              parentBranchId,
+              spaceId: space?.id ?? null,
+              provider: selection.providerId,
+              requestFingerprint: createEditUserMessageFingerprint(input),
+              requestId: input.requestId,
+              runId,
+              runInput: {
+                attachmentIds: persistedAttachmentIds,
+                contextItems: resolvedContextItems,
+                prompt,
+                reasoning: thinkingLevel ?? null,
+                serviceTier: replayInput ? replayInput.serviceTier : selection.serviceTier,
+              },
+              sourceUserMessageId: input.userMessageId,
+              title: null,
+              userMessageContent: createPersistedUserMessageContent(
+                draft!.content,
+                persistedResourceSnapshots,
+              ),
+              userMessageId,
+            })
+      })
+    }
+    catch (error) {
+      if (!persistenceOwnsAttachments)
+        await (stagedAttachments ?? materialized)?.rollback()
+      throw error
+    }
     return this.#launchPreparedTurn(prepared)
   }
 
-  async regenerateAssistant(input: RegenerateChatAssistantInput) {
+  regenerateAssistant(input: RegenerateChatAssistantInput) {
+    return this.#run(() => this.#regenerateAssistant({ ...input }))
+  }
+
+  async #regenerateAssistant(input: RegenerateChatAssistantInput) {
     const replay = this.#findReplay(
       input.requestId,
       createRegenerationFingerprint(input),
@@ -473,6 +510,7 @@ export class ChatTurnService {
       attachments: this.#options.attachments.getInputMetadata(storedInput.attachmentIds, conversation.id),
     })
     const runId = randomUUID()
+    this.#stopping.signal.throwIfAborted()
     const prepared = replay
       ? this.#options.turnRequests.retryInterrupted({
           createdAt: new Date().toISOString(),
@@ -521,19 +559,31 @@ export class ChatTurnService {
   }
 
   async #launchPreparedTurn(prepared: TurnRequestRecord) {
-    safeDiagnosticReporter(this.#options.record)({
-      event: prepared.created ? 'run.queued' : 'run.reused',
-      level: 'info',
-      runId: prepared.runId,
-      conversationId: prepared.conversationId,
-      branchId: prepared.branchId,
-      requestId: prepared.requestId,
-    })
     if (!prepared.created)
       return this.#toTurnStart(prepared, this.#requireRun(prepared.runId))
-    const turn = await this.#options.turnLauncher.launch(prepared.runId)
-    void turn.completion
+    const turn = await this.#options.turnLauncher.launch(prepared.runId, this.#stopping.signal)
+    void turn.completion.catch(() => {})
     return this.#toTurnStart(prepared, this.#requireRun(turn.runId))
+  }
+
+  async dispose(): Promise<void> {
+    this.#stopping.abort()
+    await Promise.allSettled(this.#pending)
+  }
+
+  #run<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#stopping.signal.aborted)
+      return Promise.reject(this.#stopping.signal.reason)
+    const result = Promise.withResolvers<T>()
+    this.#pending.add(result.promise)
+    void operation().then((value) => {
+      this.#pending.delete(result.promise)
+      result.resolve(value)
+    }, (error) => {
+      this.#pending.delete(result.promise)
+      result.reject(error)
+    })
+    return result.promise
   }
 
   #publicRun(run: RunRecord) {

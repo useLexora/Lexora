@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '../../shared/extensions/extensionManifest'
+import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import { Buffer } from 'node:buffer'
@@ -10,6 +11,7 @@ import { gt, satisfies } from 'semver'
 import { z } from 'zod'
 import { extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { addedExtensionPermissions, extensionCompatible, extensionIdSchema, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
+import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
 import { EXTENSION_PACKAGE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
@@ -33,7 +35,7 @@ export class ExtensionPackageStore {
   readonly #icons = new Map<string, { revision: string, url: Promise<string | undefined> }>()
   #index: z.infer<typeof indexSchema> = { version: 1, installed: {} }
   #tail = Promise.resolve()
-  readonly #dataWrites = new Map<string, Promise<void>>()
+  readonly #dataWrites = new Map<string, Promise<unknown>>()
   #loaded = false
 
   constructor(root: string, appVersion: string) {
@@ -216,9 +218,17 @@ export class ExtensionPackageStore {
   }
 
   async removePackages(id: string): Promise<void> {
-    if (this.installed[id])
-      throw new Error('EXTENSION_STILL_INSTALLED')
+    if (this.installed[id]?.enabled)
+      throw new Error('EXTENSION_STILL_ENABLED')
     await rm(join(this.root, 'packages', extensionIdSchema.parse(id)), { recursive: true, force: true })
+  }
+
+  async removeData(id: string): Promise<void> {
+    const target = extensionIdSchema.parse(id)
+    if (this.installed[target]?.enabled)
+      throw new Error('EXTENSION_STILL_ENABLED')
+    await this.#dataWrites.get(target)?.catch(() => {})
+    await rm(join(this.root, 'data', target), { recursive: true, force: true })
   }
 
   packageRoot(pkg: ExtensionPackage): string {
@@ -244,10 +254,13 @@ export class ExtensionPackageStore {
     return url
   }
 
-  async grant(id: string, target: z.infer<typeof spaceFileTargetSchema>) {
-    const resource = { id: randomUUID(), name: target.path.split('/').at(-1) ?? target.path }
-    await writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'resources', `${resource.id}.json`), { resource, target })
-    return resource
+  grant(id: string, target: z.infer<typeof spaceFileTargetSchema>, assertCurrent: () => void = () => {}) {
+    return this.#writeData(id, async () => {
+      assertCurrent()
+      const resource = { id: randomUUID(), name: target.path.split('/').at(-1) ?? target.path }
+      await writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'resources', `${resource.id}.json`), { resource, target }, assertCurrent)
+      return resource
+    })
   }
 
   async resolveGrant(id: string, resourceId: string) {
@@ -271,17 +284,51 @@ export class ExtensionPackageStore {
     }
   }
 
+  async configuration(id: string): Promise<ExtensionConfiguration> {
+    const snapshot = await this.configurationSnapshot(id)
+    if (snapshot.invalidKeys.length)
+      throw new Error('EXTENSION_CONFIGURATION_INVALID')
+    return snapshot.values
+  }
+
+  async configurationSnapshot(id: string): Promise<ExtensionConfigurationSnapshot> {
+    const manifest = this.installed[id]?.current.manifest
+    if (!manifest)
+      throw new Error('EXTENSION_NOT_INSTALLED')
+    const stored = await this.#storedConfiguration(id)
+    return resolveExtensionConfiguration(manifest.contributes.settings.items, stored)
+  }
+
+  async saveConfiguration(id: string, value: ExtensionConfiguration): Promise<void> {
+    await this.#writeData(id, async () => writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'configuration.json'), { ...await this.#storedConfiguration(id), ...value }))
+  }
+
+  async #storedConfiguration(id: string): Promise<ExtensionConfiguration> {
+    try {
+      return extensionConfigurationSchema.parse(await readExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'configuration.json')))
+    }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw new Error('EXTENSION_CONFIGURATION_UNREADABLE')
+      return {}
+    }
+  }
+
   async saveData(id: string, value: JsonValue, version: number, assertCurrent: () => void = () => {}): Promise<void> {
     if (Buffer.byteLength(JSON.stringify(value)) > 262144)
       throw new Error('EXTENSION_DATA_LIMIT')
-    const operation = (this.#dataWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    await this.#writeData(id, async () => {
       assertCurrent()
       await writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'state.previous.json'), await this.data(id), assertCurrent)
       await writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'state.json'), { version, value }, assertCurrent)
     })
+  }
+
+  async #writeData<T>(id: string, write: () => Promise<T>): Promise<T> {
+    const operation = (this.#dataWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(write)
     this.#dataWrites.set(id, operation)
     try {
-      await operation
+      return await operation
     }
     finally {
       if (this.#dataWrites.get(id) === operation)

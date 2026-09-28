@@ -15,21 +15,31 @@ export interface ApplicationSettingsStore extends ApplicationSettings {
 
 export function useApplicationSettingsStore(api: LexoraDesktopApi['settings']): ApplicationSettingsStore {
   let disposed = false
+  let generation = 0
   const config = shallowRef<LexoraConfig | null>(null)
   const language = shallowRef<BuddyLocale>('zh-CN')
   const settingsError = shallowRef<string | null>(null)
+  const unsubscribe = api.onChanged?.((next) => {
+    generation++
+    apply(next)
+  }) ?? (() => {})
 
   async function load() {
-    if (!disposed)
-      apply(await api.get())
+    const accepted = generation
+    const next = await api.get()
+    if (!disposed && accepted === generation)
+      apply(next)
   }
 
   async function updateSettings(patch: LexoraConfigPatch) {
     if (disposed)
       return false
     settingsError.value = null
+    const accepted = generation
     try {
-      apply(await api.update(patch))
+      const next = await api.update(patch)
+      if (accepted === generation)
+        apply(next)
       return true
     }
     catch {
@@ -48,7 +58,10 @@ export function useApplicationSettingsStore(api: LexoraDesktopApi['settings']): 
   }
 
   return {
-    dispose: () => { disposed = true },
+    dispose: () => {
+      disposed = true
+      unsubscribe()
+    },
     config: readonly(config),
     language: readonly(language),
     load,

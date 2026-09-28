@@ -371,6 +371,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   }
 
   function dispose() {
+    composerResources.dispose()
     lifecycle.dispose()
     workspacePersistence.dispose()
     draftModelBinding.dispose()

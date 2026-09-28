@@ -2,6 +2,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyUserContentV1 } from '../../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../../shared/conversation/composerDraft'
 import type { InputModel } from '../../providers/modelCapabilities'
+import type { ComposerResourceChange } from '../composerResourceEvents'
+import type { PreparedComposerInput } from '../ComposerResourceService'
 import { Buffer } from 'node:buffer'
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -38,6 +40,7 @@ import { AttachmentService, normalizeAttachmentMetadata } from '../AttachmentSer
 import { AttachmentToolWorkspace } from '../AttachmentToolWorkspace'
 import { ComposerResourceService } from '../ComposerResourceService'
 
+const preparedInputs: PreparedComposerInput[] = []
 const databases: DatabaseSync[] = []
 const directories: string[] = []
 
@@ -60,6 +63,8 @@ describe('attachment validation errors', () => {
   })
 })
 afterEach(async () => {
+  for (const input of preparedInputs.splice(0))
+    await input.rollback()
   databases.splice(0).forEach(database => database.close())
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
@@ -106,6 +111,12 @@ async function setup() {
   }
 }
 
+async function resolveInputs(service: ComposerResourceService, ...args: Parameters<ComposerResourceService['resolveInput']>) {
+  const prepared = await service.resolveInput(...args)
+  preparedInputs.push(prepared)
+  return prepared.inputs
+}
+
 function imageBytes() {
   return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AP8AAP8AAP//D/kD/aYucFEAAAAASUVORK5CYII=', 'base64')
 }
@@ -124,7 +135,7 @@ describe('attachment submission validation', () => {
     await writeFile(local, bytes)
     await truncate(local, 10 * 1024 * 1024)
     await fixture.service.selectSource({ draftId: 'budget', resourceId: 'a-local', source: { localPath: local } })
-    const result = await fixture.service.resolveInput('budget', { ...createBuddyUserContent(), panelResourceIds: ['a-local', 'b-copy', 'c-copy', 'd-copy'] }, { branchId: null, conversationId: null, spaceId: null }, { api: 'openai-completions', input: ['text'], fileInputMimeTypes: ['audio/wav'] })
+    const result = await resolveInputs(fixture.service, 'budget', { ...createBuddyUserContent(), panelResourceIds: ['a-local', 'b-copy', 'c-copy', 'd-copy'] }, { branchId: null, conversationId: null, spaceId: null }, { api: 'openai-completions', input: ['text'], fileInputMimeTypes: ['audio/wav'] })
     expect(result.map(resource => resource.resourceId)).toEqual(['a-local', 'b-copy', 'c-copy', 'd-copy'])
     expect(result[0]).toMatchObject({ localReference: { path: local } })
     expect(result[0]!.attachmentId).toBeUndefined()
@@ -141,7 +152,7 @@ describe('attachment submission validation', () => {
     const started = await fixture.turns.start({ draftId: first.draftId, expectedRevision: first.revision, requestId: 'first' })
     const second = await fixture.draft('second', 'second.wav', bytes, { kind: 'conversation_branch', conversationId: started.conversationId, branchId: started.branchId })
     const repository = createChatQueueRepository(fixture.database)
-    const queue = new ChatQueueService({ runInputs: createRunInputRepository(fixture.database), queue: repository, turns: fixture.turns, runs: fixture.runs, requests: createTurnRequestRepository(fixture.database), launcher: fixture.launcher, runner: { followUp: () => false, steer: (_runId, prepare) => {
+    const queue = new ChatQueueService({ eventLog: { state: 'open' }, runInputs: createRunInputRepository(fixture.database), queue: repository, turns: fixture.turns, runs: fixture.runs, requests: createTurnRequestRepository(fixture.database), launcher: fixture.launcher, runner: { hasActiveExecution: () => active, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: (_runId, prepare) => {
       prepare()
       return true
     } } })
@@ -461,7 +472,7 @@ describe('composer resource import', () => {
     expect(filtered.files).toHaveLength(1)
     expect(filtered.files[0]).toMatchObject({ label: '[Image #2]', source: { messageId: 'images', resourceId: 'first-image' }, history: { messageNumber: 2 } })
     const selected = await fixture.service.selectSource({ draftId: 'draft', resourceId: 'selected-image', source: filtered.files[0]!.source })
-    expect(await fixture.service.resolveInput('draft', { ...createBuddyUserContent(), panelResourceIds: [selected.resourceId] }, scope)).toEqual([{ resourceId: selected.resourceId, attachmentId: 'first-image' }])
+    expect(await resolveInputs(fixture.service, 'draft', { ...createBuddyUserContent(), panelResourceIds: [selected.resourceId] }, scope)).toEqual([{ resourceId: selected.resourceId, attachmentId: 'first-image' }])
   })
 
   it('lists and references directories, AVIF and oversized videos without importing their contents', async () => {
@@ -510,10 +521,10 @@ describe('composer resource import', () => {
     const message = fixture.conversations.listBranchMessages(turn.conversationId, turn.branchId).find(message => message.role === 'user')!
     await rm(image)
     const historical = await fixture.service.selectSource({ draftId: 'edit', resourceId: 'historical', source: { conversationId: turn.conversationId, branchId: turn.branchId, messageId: message.id, resourceId: resource!.resourceId } })
-    const resolved = await fixture.service.resolveInput('edit', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] }, { conversationId: turn.conversationId, branchId: turn.branchId, spaceId: null }, { api: 'google-generative-ai', input: ['text', 'image'], fileInputMimeTypes: [] })
+    const resolved = await resolveInputs(fixture.service, 'edit', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] }, { conversationId: turn.conversationId, branchId: turn.branchId, spaceId: null }, { api: 'google-generative-ai', input: ['text', 'image'], fileInputMimeTypes: [] })
     expect(resolved).toMatchObject([{ resourceId: 'historical', attachmentId: snapshot.id, localReference: { path: image } }])
     expect(await readFile(snapshot.storedPath)).toEqual(imageBytes())
-    await expect(fixture.service.resolveInput('edit', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    await expect(resolveInputs(fixture.service, 'edit', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
   })
 
   it('keeps unsupported model inputs as local references and accepts mixed batches atomically', async () => {
@@ -524,7 +535,7 @@ describe('composer resource import', () => {
     const accepted = await fixture.service.accept(input)
     expect(accepted.map(resource => resource.resourceId)).toEqual(['one', 'two', 'copy'])
     await fixture.service.complete({ draftId: 'batch', resourceId: 'copy', bytes: Buffer.from('hi') })
-    const resolved = await fixture.service.resolveInput('batch', { ...createBuddyUserContent(), panelResourceIds: ['one', 'two', 'copy'] }, { branchId: null, conversationId: null, spaceId: null }, { api: 'openai-completions', input: ['text'], fileInputMimeTypes: [] })
+    const resolved = await resolveInputs(fixture.service, 'batch', { ...createBuddyUserContent(), panelResourceIds: ['one', 'two', 'copy'] }, { branchId: null, conversationId: null, spaceId: null }, { api: 'openai-completions', input: ['text'], fileInputMimeTypes: [] })
     expect(resolved).toMatchObject([{ localReference: { path } }, { localReference: { path } }, { attachmentId: expect.any(String) }])
     expect(resolved.slice(0, 2).every(resource => !resource.attachmentId)).toBe(true)
     await expect(fixture.service.accept({ draftId: 'invalid', resources: [input.resources[0]!, { ...input.resources[1]!, sourcePath: join(fixture.root, 'missing') }] })).rejects.toThrow()
@@ -659,11 +670,7 @@ describe('composer resource import', () => {
       resourceId: 'history-resource',
       source: history.source,
     })
-    await expect(fixture.service.resolveInput(
-      'draft-1',
-      { ...createBuddyUserContent(), panelResourceIds: [selectedHistory.resourceId] },
-      { branchId: 'branch-1', conversationId: 'conversation-1', spaceId: null },
-    )).resolves.toEqual([{
+    await expect(resolveInputs(fixture.service, 'draft-1', { ...createBuddyUserContent(), panelResourceIds: [selectedHistory.resourceId] }, { branchId: 'branch-1', conversationId: 'conversation-1', spaceId: null })).resolves.toEqual([{
       attachmentId: 'attachment-history',
       resourceId: selectedHistory.resourceId,
     }])
@@ -755,7 +762,7 @@ describe('composer resource import', () => {
     expect(catalog.files.filter(item => item.category === 'history').map(item => item.label)).toEqual(['original.txt', 'history.txt'])
     const historical = await fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'historical-local', source: catalog.files.find(item => item.label === 'original.txt')!.source })
     await rm(historicalPath)
-    expect(await fixture.service.resolveInput('draft-1', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] }, { branchId: 'branch-1', conversationId: 'conversation-1', spaceId })).toEqual([{ resourceId: 'historical-local', localReference }])
+    expect(await resolveInputs(fixture.service, 'draft-1', { ...createBuddyUserContent(), panelResourceIds: [historical.resourceId] }, { branchId: 'branch-1', conversationId: 'conversation-1', spaceId })).toEqual([{ resourceId: 'historical-local', localReference }])
     const artifactOption = catalog.files.find(item => item.category === 'artifact')
     expect(artifactOption).toMatchObject({
       label: 'artifact.txt',
@@ -766,11 +773,7 @@ describe('composer resource import', () => {
       resourceId: 'artifact-resource',
       source: artifactOption!.source,
     })
-    const input = await fixture.service.resolveInput(
-      'draft-1',
-      { ...createBuddyUserContent(), panelResourceIds: [selected.resourceId] },
-      { branchId: 'branch-1', conversationId: 'conversation-1', spaceId },
-    )
+    const input = await resolveInputs(fixture.service, 'draft-1', { ...createBuddyUserContent(), panelResourceIds: [selected.resourceId] }, { branchId: 'branch-1', conversationId: 'conversation-1', spaceId })
     expect(input).toEqual([{ resourceId: selected.resourceId, localReference: { kind: 'file', mimeType: 'text/plain', name: 'artifact.txt', path: artifactPath, sizeBytes: 8 } }])
     expect(fixture.attachmentRepository.listDraftsBefore('9999')).toEqual([])
     const foreignRoot = join(fixture.root, 'foreign-workspace')
@@ -854,13 +857,13 @@ describe('composer resource import', () => {
     const history = catalog.files.find(item => item.category === 'history')!
     const firstHistory = await fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'history-1', source: history.source })
     expect(await fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'history-2', source: history.source })).toEqual(firstHistory)
-    const historyInput = await fixture.service.resolveInput('draft-1', { ...createBuddyUserContent(), panelResourceIds: [firstHistory.resourceId] }, scope)
+    const historyInput = await resolveInputs(fixture.service, 'draft-1', { ...createBuddyUserContent(), panelResourceIds: [firstHistory.resourceId] }, scope)
     expect(historyInput).toEqual([{ attachmentId: 'attachment-history', resourceId: firstHistory.resourceId }])
 
     const artifactOption = catalog.files.find(item => item.category === 'artifact')!
     const artifactResource = await fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'artifact-1', source: artifactOption.source })
     await writeFile(artifactPath, 'at send')
-    const artifactInput = await fixture.service.resolveInput('draft-1', { ...createBuddyUserContent(), panelResourceIds: [artifactResource.resourceId] }, scope)
+    const artifactInput = await resolveInputs(fixture.service, 'draft-1', { ...createBuddyUserContent(), panelResourceIds: [artifactResource.resourceId] }, scope)
     expect(artifactInput).toEqual([{ resourceId: artifactResource.resourceId, localReference: { kind: 'file', mimeType: 'text/plain', name: 'artifact.txt', path: artifactPath, sizeBytes: 7 } }])
     await writeFile(artifactPath, 'later')
     expect(artifactInput[0]!.localReference!.sizeBytes).toBe(7)
@@ -886,10 +889,13 @@ describe('composer resource import', () => {
       primaryDirectory: { id: 'binding-1', root: directory, canonicalRoot: directory, accessGrantedAt: 'now', resourcesTrustedAt: 'now' },
     })
     const input = { draftId: 'draft-1', resourceId: 'resource-1', source: { spaceId: 'space-1', bindingId: 'binding-1', relativePath: 'note.txt' } }
+    const facts: ComposerResourceChange[] = []
+    service.onDidChange(event => facts.push(event))
     const selected = await service.selectSpaceFile(input)
     expect(selected).toMatchObject({ resourceId: 'resource-1', state: 'ready', sourcePath: join(directory, 'note.txt'), source: { origin: { ...input.source, bindingRevision: 1 } } })
     expect(await service.selectSpaceFile(input)).toEqual(selected)
     expect(await service.selectSpaceFile({ ...input, resourceId: 'resource-duplicate' })).toEqual(selected)
+    expect(facts).toMatchObject([{ reason: 'selection', resources: [{ kind: 'created', resourceId: selected.resourceId }] }])
     expect(database.prepare('SELECT count(*) AS count FROM attachments').get()).toEqual({ count: 0 })
     const content = { ...createBuddyUserContent(), panelResourceIds: ['resource-1'] }
     drafts.open({
@@ -903,13 +909,13 @@ describe('composer resource import', () => {
     await service.cleanupDrafts(new Date('2099-01-01').getTime())
     expect(service.list('draft-1')).toContainEqual(selected)
     await writeFile(join(directory, 'note.txt'), 'at send')
-    const frozen = await service.resolveInput('draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })
+    const frozen = await resolveInputs(service, 'draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })
     expect(frozen[0]).toEqual({ resourceId: 'resource-1', localReference: { kind: 'file', mimeType: 'text/plain', name: 'note.txt', path: join(directory, 'note.txt'), sizeBytes: 7 } })
     expect(attachmentRepository.listDraftsBefore('9999')).toEqual([])
     await writeFile(join(directory, 'note.txt'), 'later')
     expect(frozen[0]!.localReference!.sizeBytes).toBe(7)
-    expect((await service.resolveInput('draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' }))[0]!.localReference!.sizeBytes).toBe(5)
-    await expect(service.resolveInput('draft-1', content)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    expect((await resolveInputs(service, 'draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' }))[0]!.localReference!.sizeBytes).toBe(5)
+    await expect(resolveInputs(service, 'draft-1', content)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
     const legacy = { drafts: [{ draftId: 'draft-1', targetKey: 'space:space-1', content: '$writer @note.txt', composerContent: { type: 'doc', attrs: { panelResourceIds: [] }, content: [{ type: 'paragraph', content: [
       { type: 'chatPromptToken', attrs: { kind: 'skill', value: 'writer' } },
       { type: 'text', text: ' ' },
@@ -924,14 +930,33 @@ describe('composer resource import', () => {
       { type: 'chatResourceReference', attrs: { resourceId: 'resource-1' } },
     ] }] } }] })
     expect(legacy.drafts[0]!.composerContent.content[0]!.content[0]!.type).toBe('chatPromptToken')
+    expect(await normalizeComposerWorkspace(legacy, { resources: service, conversations: createConversationRepository(database) })).toEqual(normalized)
+    expect(facts).toHaveLength(1)
+    const partial = { drafts: [{ draftId: 'partial', targetKey: 'space:space-1', composerContent: { type: 'doc', content: ['note.txt', 'missing.txt'].map(value => ({ type: 'chatPromptToken', attrs: { kind: 'file', value } })) } }] }
+    const conversions: Promise<unknown>[] = []
+    const resources = { selectSpaceFilePath: (...args: Parameters<ComposerResourceService['selectSpaceFilePath']>) => {
+      const conversion = service.selectSpaceFilePath(...args)
+      conversions.push(conversion)
+      return conversion
+    } }
+    await expect(normalizeComposerWorkspace(partial, { resources, conversations: createConversationRepository(database) })).rejects.toBeInstanceOf(Error)
+    await Promise.allSettled(conversions)
+    const retained = service.list('partial')[0]!
+    expect(service.list('partial')).toHaveLength(1)
+    expect(facts.at(-1)).toMatchObject({ reason: 'compatibility', resources: [{ kind: 'created', resourceId: retained.resourceId }] })
+    await writeFile(join(directory, 'missing.txt'), 'recovered')
+    await normalizeComposerWorkspace(partial, { resources: service, conversations: createConversationRepository(database) })
+    expect(service.list('partial')).toHaveLength(2)
+    expect(service.list('partial')).toContainEqual(retained)
+    expect(facts.flatMap(fact => fact.resources).filter(resource => resource.resourceId === retained.resourceId)).toHaveLength(1)
     await writeFile(join(directory, '.env'), 'synthetic=value')
     await expect(service.selectSpaceFile({ ...input, resourceId: 'sensitive', source: { ...input.source, relativePath: '.env' } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
     await writeFile(join(directory, 'note.txt'), Uint8Array.of(255))
-    await expect(service.resolveInput('draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })).resolves.toMatchObject([{ localReference: { sizeBytes: 1 } }])
+    await expect(resolveInputs(service, 'draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })).resolves.toMatchObject([{ localReference: { sizeBytes: 1 } }])
     await rm(join(directory, 'note.txt'))
     await writeFile(join(root, 'outside.txt'), 'outside')
     await symlink(join(root, 'outside.txt'), join(directory, 'note.txt'))
-    await expect(service.resolveInput('draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })).rejects.toBeInstanceOf(Error)
+    await expect(resolveInputs(service, 'draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })).rejects.toBeInstanceOf(Error)
   })
 
   it('sends a panel-only resource through the real turn transaction and replays the immutable input', async () => {
@@ -1253,6 +1278,8 @@ describe('composer resource import', () => {
 
   it('accepts metadata before bytes, binds a distinct immutable file identity, and replays completion', async () => {
     const { service, paths, attachmentRepository } = await setup()
+    const facts: ComposerResourceChange[] = []
+    service.onDidChange(event => facts.push(event))
     const bytes = imageBytes()
     const input = { draftId: 'draft-1', resources: [{ resourceId: 'resource-1', mimeType: 'image/png', name: 'two-pixels.png', sizeBytes: bytes.length }] }
     expect(await service.accept(input)).toEqual([{ ...input.resources[0], nameSource: 'file', draftId: 'draft-1', kind: 'image', state: 'importing' }])
@@ -1268,6 +1295,7 @@ describe('composer resource import', () => {
     expect(await service.accept(input)).toEqual([ready])
     await expect(service.complete({ draftId: 'draft-1', resourceId: 'resource-1', bytes: Uint8Array.of(1) })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     expect(service.list('draft-1')).toEqual([ready])
+    expect(facts.map(fact => fact.resources.map(resource => [resource.kind, resource.state]))).toEqual([[['created', 'importing']], [['changed', 'ready']]])
   })
 
   it('rejects a whole invalid or conflicting metadata batch without partially accepting it', async () => {
@@ -1398,10 +1426,186 @@ describe('composer resource import', () => {
       { type: 'resource_ref' as const, resourceId: 'blue' },
       { type: 'resource_ref' as const, resourceId: 'red' },
     ] }] }
-    const bindings = await service.resolveInput('draft-1', content)
+    const bindings = await resolveInputs(service, 'draft-1', content)
     const result = await attachments.materializePrompt(bindings.flatMap(binding => binding.attachmentId ? [binding.attachmentId] : []), '', null, 'draft-1', { content, resourceIds: bindings.map(binding => binding.resourceId) })
     expect(result.prompt).toBe('[FILE#1]\n\n[FILE#2] vs [FILE#3][FILE#2]\n\n[FILE#1] "note.txt" (TEXT)\nabc\n\n[FILE#2] "red.png" (IMAGE)\n\n[FILE#3] "blue.png" (IMAGE)')
     expect(result.images).toHaveLength(2)
     expect(result.records).toHaveLength(3)
+  })
+})
+
+describe('composer input preparation ownership', () => {
+  const model = { api: 'openai-completions', input: ['text', 'image'] as Array<'text' | 'image'>, fileInputMimeTypes: [] }
+
+  async function local(fixture: Awaited<ReturnType<typeof setup>>, draftId: string, resourceId: string) {
+    const path = join(fixture.root, `${resourceId}.png`)
+    await writeFile(path, imageBytes())
+    await fixture.service.selectSource({ draftId, resourceId, source: { localPath: path } })
+    return path
+  }
+
+  it('rolls back only newly converted bytes when a later resource cannot be read', async () => {
+    const f = await setup()
+    await f.service.accept({ draftId: 'partial', resources: [{ resourceId: 'existing', name: 'existing.txt', mimeType: 'text/plain', sizeBytes: 1 }] })
+    await f.service.complete({ draftId: 'partial', resourceId: 'existing', bytes: Uint8Array.of(65) })
+    const existing = f.attachmentRepository.listAll()[0]!
+    const source = await local(f, 'partial', 'first')
+    const missing = await local(f, 'partial', 'second')
+    await rm(missing)
+    for (let retry = 0; retry < 2; retry++) {
+      await expect(f.service.resolveInput('partial', { ...createBuddyUserContent(), panelResourceIds: ['existing', 'first', 'second'] }, undefined, model)).rejects.toBeInstanceOf(Error)
+      expect(f.attachmentRepository.listAll()).toEqual([existing])
+      expect(await readdir(f.paths.draftAttachments('partial'))).toHaveLength(1)
+    }
+    expect(await readFile(source)).toEqual(imageBytes())
+    await f.attachments.dispose()
+  })
+
+  it('reclaims a late conversion when discard completes before file registration', async () => {
+    const f = await setup()
+    await local(f, 'discarded', 'local')
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const prepareUploads = f.attachments.prepareUploads.bind(f.attachments)
+    f.attachments.prepareUploads = async (...args) => {
+      entered.resolve()
+      await resume.promise
+      return prepareUploads(...args)
+    }
+    const resolving = f.service.resolveInput('discarded', { ...createBuddyUserContent(), panelResourceIds: ['local'] }, undefined, model)
+    const rejected = expect(resolving).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    await entered.promise
+    await f.service.discard('discarded')
+    resume.resolve()
+    await rejected
+    expect(f.service.list('discarded')).toEqual([])
+    expect(f.attachmentRepository.listAll()).toEqual([])
+    expect(await readdir(f.paths.draftAttachments('discarded'))).toEqual([])
+    await f.attachments.dispose()
+  })
+
+  it('leases prepared bytes until rollback and rejects a resource discarded before SQL handoff', async () => {
+    const f = await setup()
+    await local(f, 'held', 'local')
+    const prepared = await f.service.resolveInput('held', { ...createBuddyUserContent(), panelResourceIds: ['local'] }, undefined, model)
+    const owned = f.attachmentRepository.findById(prepared.inputs[0]!.attachmentId!)!
+    expect(Object.isFrozen(prepared.inputs[0])).toBe(true)
+    await f.service.discard('held')
+    expect(await readFile(owned.storedPath)).toEqual(imageBytes())
+    expect(() => prepared.validate()).toThrow(expect.objectContaining({ code: 'ATTACHMENT_NOT_FOUND' }))
+    await prepared.rollback()
+    await prepared.rollback()
+    expect(f.attachmentRepository.listAll()).toEqual([])
+    await expect(readFile(owned.storedPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await f.attachments.dispose()
+  })
+
+  it('reclaims an upload when the resource binding SQL fails and permits a clean retry', async () => {
+    const f = await setup()
+    await f.service.accept({ draftId: 'import', resources: [{ resourceId: 'item', name: 'note.txt', mimeType: 'text/plain', sizeBytes: 1 }] })
+    f.database.exec(`CREATE TRIGGER reject_resource_ready BEFORE UPDATE ON composer_resources WHEN NEW.state = 'ready' BEGIN SELECT RAISE(ABORT, 'fixture binding failure'); END`)
+    expect(await f.service.complete({ draftId: 'import', resourceId: 'item', bytes: Uint8Array.of(65) })).toMatchObject({ state: 'failed' })
+    expect(f.attachmentRepository.listAll()).toEqual([])
+    expect(await readdir(f.paths.draftAttachments('import'))).toEqual([])
+    f.database.exec('DROP TRIGGER reject_resource_ready')
+    f.service.retry({ draftId: 'import', resourceId: 'item' })
+    expect(await f.service.complete({ draftId: 'import', resourceId: 'item', bytes: Uint8Array.of(65) })).toMatchObject({ state: 'ready' })
+    expect(f.attachmentRepository.listAll()).toHaveLength(1)
+    await f.attachments.dispose()
+  })
+
+  it('preserves an upload whose resource binding committed before an error was reported', async () => {
+    const f = await setup()
+    await f.service.accept({ draftId: 'import', resources: [{ resourceId: 'item', name: 'note.txt', mimeType: 'text/plain', sizeBytes: 1 }] })
+    const finish = f.repository.finish.bind(f.repository)
+    f.repository.finish = (input) => {
+      finish(input)
+      throw new Error('fixture post-commit read failure')
+    }
+    const result = await f.service.complete({ draftId: 'import', resourceId: 'item', bytes: Uint8Array.of(65) })
+    expect(result).toMatchObject({ state: 'ready' })
+    const record = f.attachmentRepository.findById(f.repository.findById('item')!.attachmentId!)!
+    expect(await readFile(record.storedPath)).toEqual(Buffer.from('A'))
+    await f.attachments.dispose()
+  })
+
+  it('drains an accepted import through binding and lease release after dispose begins', async () => {
+    const f = await setup()
+    await f.service.accept({ draftId: 'draining', resources: [{ resourceId: 'item', name: 'note.txt', mimeType: 'text/plain', sizeBytes: 1 }] })
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const prepareUploads = f.attachments.prepareUploads.bind(f.attachments)
+    f.attachments.prepareUploads = async (...args) => {
+      const upload = await prepareUploads(...args)
+      entered.resolve()
+      await resume.promise
+      return upload
+    }
+    const bytes = Uint8Array.of(65)
+    const completing = f.service.complete({ draftId: 'draining', resourceId: 'item', bytes })
+    bytes.fill(0)
+    await entered.promise
+    let disposed = false
+    const stopping = f.service.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    resume.resolve()
+    expect(await completing).toMatchObject({ state: 'ready' })
+    await stopping
+    const record = f.attachmentRepository.listAll()[0]!
+    expect(await readFile(record.storedPath)).toEqual(Buffer.from('A'))
+    await f.attachments.dispose()
+  })
+
+  it.each(['start', 'enqueue', 'edit'] as const)('reclaims materialized bytes after failed %s SQL and transfers ownership on retry', async (mode) => {
+    const f = await checkedTurns({ api: 'openai-completions', input: ['text', 'image'] })
+    let scope: BuddyComposerDraftScope = { kind: 'global' }
+    let editing: { conversationId: string, userMessageId: string } | undefined
+    if (mode !== 'start') {
+      const first = f.drafts.open({ draftId: 'first', initialContent: createBuddyUserContent('hello'), initialExecutionConfig: { approvalPolicy: 'manual', executionProfile: 'read_only' }, initialModelSelection: null, scope, now: new Date().toISOString() })
+      const turn = await f.turns.start({ draftId: first.draftId, expectedRevision: first.revision, requestId: 'first' })
+      if (mode === 'enqueue') {
+        scope = { kind: 'conversation_branch', conversationId: turn.conversationId, branchId: turn.branchId }
+      }
+      else {
+        editing = { conversationId: turn.conversationId, userMessageId: f.runs.findById(turn.runId)!.triggeringMessageId }
+        scope = { kind: 'message_edit', conversationId: turn.conversationId, branchId: turn.branchId, userMessageId: editing.userMessageId }
+      }
+    }
+    const content = { ...createBuddyUserContent('Inspect'), panelResourceIds: ['native'] }
+    const opened = f.drafts.open({ draftId: 'send', initialContent: content, initialExecutionConfig: { approvalPolicy: 'manual', executionProfile: 'read_only' }, initialModelSelection: null, scope, now: new Date().toISOString() })
+    const draft = f.drafts.save({ ...opened, content, expectedRevision: opened.revision, now: new Date().toISOString() })
+    const source = await local(f, draft.draftId, 'native')
+    const queue = mode === 'enqueue' ? new ChatQueueService({ eventLog: { state: 'open' }, runInputs: createRunInputRepository(f.database), queue: createChatQueueRepository(f.database), turns: f.turns, runs: f.runs, requests: createTurnRequestRepository(f.database), launcher: f.launcher, runner: { hasActiveExecution: () => false, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: () => false } }) : null
+    const submit = () => {
+      const input = { draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'materialized' }
+      return queue ? queue.enqueue(input) : editing ? f.turns.editUserMessage({ ...input, ...editing }) : f.turns.start(input)
+    }
+    try {
+      f.database.exec(`CREATE TRIGGER reject_submission BEFORE INSERT ON ${mode === 'enqueue' ? 'chat_queue' : 'runs'} BEGIN SELECT RAISE(ABORT, 'fixture submission failure'); END`)
+      await expect(submit()).rejects.toThrow('fixture submission failure')
+      expect(f.attachmentRepository.listAll()).toEqual([])
+      expect(f.drafts.findById(draft.draftId)).toEqual(draft)
+      expect(await readdir(f.paths.draftAttachments(draft.draftId))).toEqual([])
+      f.database.exec('DROP TRIGGER reject_submission')
+      const outcomes = await Promise.all([submit(), submit()])
+      expect(outcomes[1]).toEqual(outcomes[0])
+      const result = outcomes[0]!
+      const owned = f.attachmentRepository.listAll()[0]!
+      expect(f.attachmentRepository.listAll()).toHaveLength(1)
+      expect(owned.draftId).toBe('id' in result ? result.id : null)
+      expect(await readFile(owned.storedPath)).toEqual(imageBytes())
+      expect(await readFile(source)).toEqual(imageBytes())
+      expect(await readdir(f.paths.draftAttachments(draft.draftId))).toEqual([])
+    }
+    finally {
+      queue?.dispose()
+      await queue?.drain()
+      await f.turns.dispose()
+      await f.service.dispose()
+      await f.attachments.dispose()
+    }
   })
 })

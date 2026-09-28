@@ -1,22 +1,21 @@
 import type { BrowserWindow } from 'electron'
-import type { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import type { DesktopStartup } from './DesktopStartup'
 import { ipcMain } from 'electron'
-import { applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
+import { rendererLifecycleReportSchema } from '../../../shared/lifecycle/serviceLifecycle'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { assertTrustedSender } from '../ipc'
 
-export function registerStartupIpc(startup: DesktopStartup, getWindow: () => BrowserWindow | null, events: ApplicationEvents): () => void {
+export function registerStartupIpc(startup: DesktopStartup, getWindow: () => BrowserWindow | null): () => void {
   ipcMain.handle(DESKTOP_IPC_CHANNELS.appStartupGetState, (event) => {
     assertTrustedSender(event, getWindow())
-    return startup.state
+    return startup.reconcile()
   })
   ipcMain.handle(DESKTOP_IPC_CHANNELS.appStartupReport, (event, input: unknown) => {
     assertTrustedSender(event, getWindow())
-    const report = applicationDiagnosticSchema.parse(input)
-    if (!report.component || !(report.component === 'renderer' || report.component.startsWith('renderer.')) || !(report.event.startsWith('component.') || report.event.startsWith('startup.step.')))
+    const report = rendererLifecycleReportSchema.parse(input)
+    if (report.change.snapshot.components.some(component => component.component !== 'renderer' && !component.component.startsWith('renderer.')))
       throw new Error('Invalid renderer startup stage')
-    events.publish(report)
+    startup.acceptRenderer(report)
   })
   const stop = startup.onStateChange((state) => {
     const contents = getWindow()?.webContents

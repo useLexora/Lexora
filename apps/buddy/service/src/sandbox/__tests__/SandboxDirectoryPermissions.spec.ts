@@ -89,6 +89,25 @@ describe('run-scoped shell directory permissions', () => {
     }
   }
 
+  it('isolates authorization snapshots, suppresses duplicate grants and releases state on disposal', async () => {
+    const harness = createHarness()
+    const events: unknown[] = []
+    harness.permissions.onDidChange(event => events.push(event))
+    const metadata = await stat(outside, { bigint: true })
+    const input = { path: outside, access: 'read' as const, device: String(metadata.dev), inode: String(metadata.ino) }
+    await harness.permissions.grant(harness.run, input)
+    input.path = sensitive
+    const snapshot = harness.permissions.get(harness.run)
+    expect(Reflect.set(snapshot[0]!, 'access', 'write')).toBe(false)
+    await harness.permissions.grant(harness.run, { ...snapshot[0]! })
+    expect(events).toHaveLength(1)
+    expect(snapshot[0]).toMatchObject({ path: outside, access: 'read' })
+    harness.permissions.dispose()
+    expect(harness.permissions.get(harness.run)).toEqual([])
+    expect(events).toMatchObject([{ kind: 'granted', count: 1 }, { kind: 'cleared', count: 1 }])
+    expect(JSON.stringify(events)).not.toContain(outside)
+  })
+
   it('grants read access only to the reviewed directory and keeps saved grants unchanged', async () => {
     const harness = createHarness()
     await expect(harness.invoke()).resolves.toBeUndefined()

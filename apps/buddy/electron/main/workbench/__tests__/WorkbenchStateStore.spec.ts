@@ -11,6 +11,19 @@ afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })))
 })
+it('checkpoints explicit cleanup into both snapshots without losing unrelated working copies', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'lexora-workbench-'))
+  directories.push(directory)
+  const store = new WorkbenchStateStore(directory)
+  const snapshot: WorkbenchState = { version: 1, layout: { plugin: { private: 'old' }, task: 'retained' }, configuration: { theme: 'dark' }, backups: [{ key: 'file:fixture', resource: {}, text: 'unsaved user content', baseText: '', etag: 'hash', savedAt: '2026-09-28' }] }
+  await store.read()
+  await store.write(snapshot)
+  const clean = { ...snapshot, layout: { task: 'retained' } }
+  await store.write(clean, true)
+  expect(JSON.parse(await readFile(join(directory, 'workbench.previous.json'), 'utf8'))).toEqual(clean)
+  await writeFile(join(directory, 'workbench.json'), '{broken')
+  expect(await new WorkbenchStateStore(directory).read()).toEqual(clean)
+})
 it('preserves saved content after a failed replacement and permits a later retry', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'lexora-workbench-'))
   directories.push(directory)

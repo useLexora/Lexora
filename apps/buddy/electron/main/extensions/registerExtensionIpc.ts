@@ -1,12 +1,16 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
+import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { join } from 'node:path'
 import { dialog, ipcMain, Notification, powerMonitor, session } from 'electron'
 import { z } from 'zod'
 import { ExtensionPackageStore } from '../../../platform/extensions/ExtensionPackageStore'
 import { ExtensionService } from '../../../platform/extensions/ExtensionService'
+import { observeExtensionDiagnostics } from '../../../platform/extensions/observeExtensionDiagnostics'
 import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../../shared/extensions/extensionApi'
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
@@ -21,7 +25,10 @@ export function registerExtensionIpc(options: {
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   developmentDirectory?: string
   notificationsEnabled?: () => boolean
-}): { dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection> } {
+  agentChanged?: () => void
+  record?: ApplicationDiagnosticReporter
+  agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
+}): { dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
@@ -44,6 +51,7 @@ export function registerExtensionIpc(options: {
     },
     createView: pkg => protocol.register(pkg, 'view'),
     readText: options.readText,
+    agentRequest: options.agentRequest,
     get: options.get,
     compile: compileExtension,
     selectResources: async (name, selection, signal) => {
@@ -86,11 +94,6 @@ export function registerExtensionIpc(options: {
       native.show()
       return true
     },
-    changed: () => {
-      const current = window()
-      if (current && !current.isDestroyed())
-        current.webContents.send(EXTENSION_IPC.changed)
-    },
     workbench: (event: ExtensionWorkbenchEvent, signal: AbortSignal) => new Promise((resolve) => {
       const current = window()
       if (!current || current.isDestroyed() || signal.aborted || replies.size >= 64) {
@@ -118,8 +121,20 @@ export function registerExtensionIpc(options: {
       current.webContents.send(EXTENSION_IPC.workbench, event)
     }),
   })
+  const subscriptions = [
+    service.onDidChange(() => {
+      const current = window()
+      if (current && !current.isDestroyed())
+        current.webContents.send(EXTENSION_IPC.changed)
+    }),
+    service.onDidChange((change) => {
+      if (change.kind === 'contributions' && !change.initial)
+        options.agentChanged?.()
+    }),
+    observeExtensionDiagnostics(service, event => options.record?.(event)),
+  ]
   const resetHosts = () => {
-    void service.resetHosts()
+    void service.resetHosts().catch(() => {})
   }
   const resetOnNavigation = (event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
     if (event.isMainFrame && !event.isSameDocument)
@@ -162,6 +177,9 @@ export function registerExtensionIpc(options: {
       await service.initialize()
       switch (input.action) {
         case 'list': return await service.list()
+        case 'configuration': return await service.configuration(input.id)
+        case 'configurationSnapshot': return await service.configurationSnapshot(input.id)
+        case 'configure': return await service.configure(input.id, input.patch)
         case 'installations': return service.installations.list()
         case 'catalog': return service.catalog.list(input.refresh)
         case 'reviewCatalog': return service.reviewCatalog(input.id, input.version)
@@ -177,7 +195,7 @@ export function registerExtensionIpc(options: {
         case 'cancelInstall': return service.cancelInstall(input.token)
         case 'enable': return await service.enable(input.id, input.enabled)
         case 'restart': return await service.restart(input.id)
-        case 'uninstall': return await service.uninstall(input.id)
+        case 'uninstall': return await service.uninstall(input.id, input.clearData)
         case 'devtools': return await service.devtools(input.id)
         case 'revokeResources': return await service.revokeResources(input.id)
         case 'execute': return await service.execute(input.id, input.command, input.resource)
@@ -219,23 +237,38 @@ export function registerExtensionIpc(options: {
   const dispose = async () => {
     powerMonitor.off('suspend', suspend)
     powerMonitor.off('resume', resume)
-    await service.dispose()
-    for (const reply of replies.values()) reply(null)
-    for (const current of bound) {
-      if (current.isDestroyed())
-        continue
-      current.webContents.off('will-frame-navigate', guardNavigation)
-      current.webContents.off('did-start-navigation', resetOnNavigation)
-      current.webContents.off('render-process-gone', resetHosts)
+    try {
+      await service.dispose()
     }
-    stopProtocol()
-    ipcMain.removeHandler(EXTENSION_IPC.request)
-    ipcMain.removeHandler(EXTENSION_IPC.hostRequest)
-    ipcMain.off(EXTENSION_IPC.hostReply, onHostReply)
-    ipcMain.off(EXTENSION_IPC.workbenchReply, onWorkbenchReply)
+    finally {
+      for (const subscription of subscriptions) subscription.dispose()
+      for (const reply of replies.values()) reply(null)
+      for (const current of bound) {
+        if (current.isDestroyed())
+          continue
+        current.webContents.off('will-frame-navigate', guardNavigation)
+        current.webContents.off('did-start-navigation', resetOnNavigation)
+        current.webContents.off('render-process-gone', resetHosts)
+      }
+      stopProtocol()
+      ipcMain.removeHandler(EXTENSION_IPC.request)
+      ipcMain.removeHandler(EXTENSION_IPC.hostRequest)
+      ipcMain.off(EXTENSION_IPC.hostReply, onHostReply)
+      ipcMain.off(EXTENSION_IPC.workbenchReply, onWorkbenchReply)
+    }
   }
   return {
     dispose,
+    agent: {
+      list: async () => {
+        await prepared
+        return service.agentContributions()
+      },
+      invoke: async (input, signal) => {
+        await prepared
+        return service.invokeAgent(input, signal)
+      },
+    },
     inspect: async (id) => {
       await prepared
       return service.inspect(id)

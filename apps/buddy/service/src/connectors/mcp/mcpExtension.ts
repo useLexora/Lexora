@@ -8,6 +8,7 @@ import { classifyMcpTool } from './mcpToolContract'
 
 export function createMcpCapability(mcp: BuddyMcpTools): BuddyCapability {
   return {
+    resourceRevisions: mcp.resourceRevisions,
     extension: createMcpExtension({ tools: mcp.tools }),
     classify: (event) => {
       const classification = classifyMcpTool(mcp.classifications, event)

@@ -21,6 +21,7 @@ peer.onRequest('sandbox.exec', async (params) => {
   const input = sandboxProcessInputSchema.parse(params)
   return runSandboxCommand(input, {
     signal: controller.signal,
+    onLifecycle: event => peer.notify('sandbox.lifecycle', { ...event, requestId: input.requestId }),
     onData(data) {
       for (let offset = 0; offset < data.length; offset += 64 * 1024)
         peer.notify('sandbox.output', { requestId: input.requestId, data: data.subarray(offset, offset + 64 * 1024).toString('base64') })

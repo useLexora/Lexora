@@ -1,10 +1,12 @@
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
+import { subscribe } from '../subscribe'
 
 export function createComposerApi(): Pick<LocalChatApi, 'composerResources' | 'composerDrafts'> {
   return {
     composerResources: Object.freeze({
+      onChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.composerResourcesChanged, listener),
       accept: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesAccept, input),
       complete: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesComplete, input),
       fail: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesFail, input),

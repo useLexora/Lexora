@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { TurnRequestCommit } from '../../chat/TurnRequestService'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { TurnRequestService } from '../../chat/TurnRequestService'
+import { createAttachmentRepository } from '../attachmentRepository'
 
 import { ComposerDraftCommitConflictError } from '../commitComposerDraft'
 import { createComposerDraftRepository } from '../composerDraftRepository'
@@ -19,6 +22,58 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it('commits message attachment ownership in the same batch and exposes no staged paths', () => {
+    const database = createDatabase()
+    const attachments = createAttachmentRepository(database)
+    attachments.create({ id: 'owned-attachment', conversationId: null, draftId: 'draft-1', messageId: null, name: 'private-name.txt', mimeType: 'text/plain', sizeBytes: 1, storedPath: '/private/source.txt', createdAt: '2026-08-14T00:00:00.000Z' })
+    const input = createInput()
+    const prepared = { ...input, runInput: { ...input.runInput, attachmentIds: ['owned-attachment'] }, attachmentBindings: [{ id: 'owned-attachment', sourceAttachmentId: 'owned-attachment', sourceDraftId: 'draft-1', messageId: input.userMessageId, storedPath: '/private/destination.txt', createdAt: input.createdAt }] }
+    const service = new TurnRequestService(createTurnRequestRepository(database))
+    const events: TurnRequestCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    expect(() => service.prepare({ ...prepared, draft: { draftId: 'draft-1', expectedRevision: 99 } })).toThrow(ComposerDraftCommitConflictError)
+    expect(events).toEqual([])
+    expect(attachments.findById('owned-attachment')).toMatchObject({ draftId: 'draft-1', messageId: null })
+    service.prepare(prepared)
+    expect(attachments.findById('owned-attachment')).toMatchObject({ draftId: null, messageId: input.userMessageId, conversationId: input.conversationId })
+    expect(events[0]!.facts.find(fact => fact.kind === 'attachments.bound')).toEqual({ kind: 'attachments.bound', messageId: input.userMessageId, attachmentIds: ['owned-attachment'] })
+    expect(JSON.stringify(events)).not.toMatch(/private-name|\/private\//)
+    service.dispose()
+  })
+
+  it('publishes one frozen transaction batch and no facts for rollback or request replay', () => {
+    const database = createDatabase()
+    const service = new TurnRequestService(createTurnRequestRepository(database))
+    const events: TurnRequestCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    const input = createInput()
+    expect(() => service.prepare({ ...input, draft: { draftId: 'draft-1', expectedRevision: 99 } })).toThrow(ComposerDraftCommitConflictError)
+    expect(events).toEqual([])
+    const result = service.prepare(input)
+    expect(events[0]).toMatchObject({ commitId: result.runId, requestId: result.requestId, conversationId: result.conversationId, branchId: result.branchId })
+    expect(events[0]!.facts.map(fact => fact.kind)).toEqual(['task.created', 'branch.created', 'task.branch_activated', 'task.model_changed', 'message.created', 'run.queued', 'draft.consumed'])
+    const consumed = events[0]!.facts.find(fact => fact.kind === 'draft.consumed')!
+    expect(Reflect.set(consumed.receipt, 'committedRevision', 9)).toBe(false)
+    expect(service.prepare(input)).toMatchObject({ created: false, draftReceipt: { committedRevision: 1 } })
+    expect(events).toHaveLength(1)
+    service.dispose()
+  })
+
+  it('publishes only a new run for interrupted request retry without consuming its previous draft again', () => {
+    const database = createDatabase()
+    const service = new TurnRequestService(createTurnRequestRepository(database))
+    const events: TurnRequestCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    service.prepare(createInput())
+    database.prepare('UPDATE runs SET status = \'failed\', error_code = \'RUNTIME_RESTARTED\', completed_at = ? WHERE id = ?').run('2026-08-14T00:00:01.000Z', 'run-1')
+    service.retryInterrupted({ requestId: 'request-1', runId: 'run-2', createdAt: '2026-08-14T00:00:02.000Z' })
+    service.retryInterrupted({ requestId: 'request-1', runId: 'unused', createdAt: '2026-08-14T00:00:03.000Z' })
+    expect(events.map(event => event.commitId)).toEqual(['run-1', 'run-2'])
+    expect(events[1]!.facts).toEqual([{ kind: 'request.retried', previousRunId: 'run-1' }, { kind: 'run.queued' }])
+    expect(database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 1 })
+    service.dispose()
+  })
+
   it('narrows only the run profile and rejects wider overrides without consuming the draft', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)

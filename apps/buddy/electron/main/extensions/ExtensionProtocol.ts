@@ -2,11 +2,11 @@ import type { Session } from 'electron'
 import type { ExtensionPackage, ExtensionPackageStore } from '../../../platform/extensions/ExtensionPackageStore'
 import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
+import hostSource from 'virtual:extension-runtime/host'
+import viewSource from 'virtual:extension-runtime/view'
 import { extensionResourceRange } from '../../../platform/extensions/extensionResourceResponse'
 import { EXTENSION_PROTOCOL } from '../../../shared/extensions/extensionManifest'
 import { extensionResourceMimeType } from '../../../shared/extensions/extensionResources'
-import hostSource from './runtime/host.js?raw'
-import viewSource from './runtime/view.js?raw'
 
 export const extensionSchemePrivileges: Electron.CustomScheme = {
   scheme: EXTENSION_PROTOCOL,

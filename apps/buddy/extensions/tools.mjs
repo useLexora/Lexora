@@ -29,7 +29,7 @@ async function run() {
   const entries = [manifest.entry, ...manifest.contributes.views.map(view => view.entry)].filter(Boolean)
   for (const entry of entries) assert((await fs.stat(path.join(source, entry))).isFile(), `Missing entry: ${entry}`)
   if (command === 'check') {
-    process.stdout.write(`${manifest.id}@${manifest.version}: compatible with Lexora ${version}, API 1` + '\n')
+    process.stdout.write(`${manifest.id}@${manifest.version}: compatible with Lexora ${version}, API ${manifest.apiVersion}` + '\n')
   }
   else if (command === 'pack') {
     assert(output, 'An output package path is required')

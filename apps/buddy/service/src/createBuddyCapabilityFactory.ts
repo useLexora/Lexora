@@ -1,4 +1,5 @@
 import type { ContextPanelSource } from '../../shared/context-panel/contextPanel'
+import type { ApplicationDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
 import type { RuntimeRpcPeerContract } from '../../shared/runtime/rpcPeer'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
@@ -9,7 +10,8 @@ import type { McpConnectorService } from './connectors/mcp/McpConnectorService'
 import type { ImageGenerationGateway } from './images/ImageGenerationGateway'
 import type { ImageGenerationServiceOptions } from './images/ImageGenerationService'
 import type { ImageTransformService } from './images/ImageTransformService'
-import type { PetActionServiceOptions } from './pet/PetActionService'
+import type { PetActionService } from './pet/PetActionService'
+import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import type { WebCapabilityService } from './web/WebCapabilityService'
 import { createOutputPresentationCapability } from './artifacts/outputPresentationExtension'
 import { createAutomationCapability } from './automations/automationExtension'
@@ -18,8 +20,8 @@ import { createMcpCapability } from './connectors/mcp/mcpExtension'
 import { createMcpResultWriter } from './connectors/mcp/McpResultStore'
 import { createImageGenerationCapability } from './images/imageGenerationExtension'
 import { ImageGenerationService } from './images/ImageGenerationService'
+import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
 import { createImageTransformCapability } from './images/imageTransformExtension'
-import { PetActionService } from './pet/PetActionService'
 import { createPetCapability } from './pet/petExtension'
 import { createPluginAuthoringCapability } from './plugins/pluginAuthoringCapability'
 import { createSystemHost } from './system/createSystemHost'
@@ -27,7 +29,10 @@ import { createSystemCapability } from './system/systemExtension'
 import { createWebCapability } from './web/webExtension'
 
 export interface BuddyCapabilityServices {
+  record?: ApplicationDiagnosticReporter
+  pluginCapabilities?: (context: BuddyCapabilityContext) => Promise<BuddyCapability[]>
   pluginAuthoring: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
+  pluginBuilder: PluginAuthoringService
   artifactService: ImageGenerationServiceOptions['artifactService'] & Pick<ArtifactService, 'presentOutputs'>
   attachmentService: ImageGenerationServiceOptions['attachmentService']
   automationService: CreateAutomationToolOptions['service']
@@ -36,23 +41,21 @@ export interface BuddyCapabilityServices {
   connectorService: Pick<McpConnectorService, 'getTools'>
   imageGenerationGateway: ImageGenerationGateway
   imageTransformService: Pick<ImageTransformService, 'removeChroma'>
-  onAutomationChanged: (automationId: string) => void
   webService: Pick<WebCapabilityService, 'search' | 'fetch'>
 }
 
 export function createBuddyCapabilityFactory(
   platform: BuddyPlatform,
   services: BuddyCapabilityServices,
-  pet: PetActionServiceOptions,
+  pet: PetActionService,
 ): BuddyCapabilityFactory {
   const platformFactories: Record<BuddyFeatureId, () => (context: BuddyCapabilityContext) => BuddyCapability> = {
     nativePet() {
-      const service = new PetActionService(pet)
-      return context => createPetCapability({ getRunId: context.getRunId, service })
+      return context => createPetCapability({ getRunId: context.getRunId, service: pet })
     },
     systemActions() {
       const host = createSystemHost(platform.id)
-      return () => createSystemCapability(host)
+      return () => createSystemCapability(host, services.record)
     },
   }
   const supported = platform.features.map(id => platformFactories[id]())
@@ -63,6 +66,7 @@ export function createBuddyCapabilityFactory(
     const capabilities = [
       createMcpCapability(mcp),
       createBrowserCapability({
+        report: services.record,
         conversationId: context.conversationId,
         getGrants: () => context.grants,
         getExecutionGrants: context.getExecutionGrants,
@@ -76,29 +80,47 @@ export function createBuddyCapabilityFactory(
           : undefined,
       }),
       createWebCapability({ service: services.webService, conversationId: context.conversationId }),
-      createImageGenerationCapability({
-        getRunId: context.getRunId,
-        getExecutionGrants: context.getExecutionGrants,
-        service: new ImageGenerationService({
-          artifactService: services.artifactService,
-          attachmentService: services.attachmentService,
-          conversationId: context.conversationId,
-          cwd: context.cwd,
-          grants: context.grants,
-          imageGenerationGateway: services.imageGenerationGateway,
-        }),
-      }),
+      createImageCapability(context, services),
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),
       ...supported.map(create => create(context)),
     ]
-    if (context.sessionMode === 'interactive') {
-      capabilities.push(createPluginAuthoringCapability(context, services.pluginAuthoring))
-      capabilities.push(createAutomationCapability({
-        onChanged: services.onAutomationChanged,
-        service: services.automationService,
-      }))
+    try {
+      if (context.sessionMode === 'interactive') {
+        capabilities.push(...await services.pluginCapabilities?.(context) ?? [])
+        capabilities.push(createPluginAuthoringCapability(context, services.pluginAuthoring, services.pluginBuilder))
+        capabilities.push(createAutomationCapability({
+          service: services.automationService,
+        }))
+      }
+      context.signal.throwIfAborted()
+      return capabilities
     }
-    return capabilities
+    catch (error) {
+      const results = await Promise.allSettled(capabilities.map(async capability => capability.dispose?.()))
+      const failures = results.filter(result => result.status === 'rejected')
+      if (failures.length)
+        throw new AggregateError([error, ...failures.map(result => result.reason)], 'CAPABILITY_INITIALIZATION_FAILED')
+      throw error
+    }
+  }
+}
+
+function createImageCapability(context: BuddyCapabilityContext, services: BuddyCapabilityServices): BuddyCapability {
+  const service = new ImageGenerationService({
+    artifactService: services.artifactService,
+    attachmentService: services.attachmentService,
+    conversationId: context.conversationId,
+    cwd: context.cwd,
+    get grants() { return context.grants },
+    imageGenerationGateway: services.imageGenerationGateway,
+  })
+  const diagnostics = services.record ? observeImageDiagnostics(service, services.record) : null
+  return {
+    ...createImageGenerationCapability({ getRunId: context.getRunId, getExecutionGrants: context.getExecutionGrants, service }),
+    async dispose() {
+      await service.dispose()
+      diagnostics?.dispose()
+    },
   }
 }

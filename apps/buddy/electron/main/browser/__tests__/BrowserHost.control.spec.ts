@@ -4,6 +4,21 @@ import { BrowserOperationGuard } from '../BrowserOperationGuard'
 import { configureSemanticObservation, configureSensitiveSemanticObservation, createFixture } from './browserHostFixture'
 
 describe('browserHost control and semantic actions', () => {
+  it('preserves confirmed dispatch when the following observation fails', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation')
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(session.sessionId, 'https://example.com/')
+    const observation = await fixture.host.observe({ sessionId: session.sessionId, pageId: session.pageId })
+    const lease = fixture.host.acquireControl({ sessionId: session.sessionId, pageId: session.pageId })
+    const changes: Array<{ kind: string, phase?: string, effect?: string }> = []
+    fixture.host.onDidChange(change => changes.push(change))
+    vi.spyOn(fixture.host, 'observe').mockRejectedValueOnce(new Error('fixture observation failed'))
+    await expect(fixture.host.act({ ...lease, action: { kind: 'click', ref: 'e1' }, frameId: 'main-frame', documentRevision: observation.documentRevision, observationId: observation.observationId })).rejects.toThrow('fixture observation failed')
+    expect(changes.filter(change => change.kind === 'action')).toMatchObject([{ phase: 'dispatched', effect: 'unknown' }, { phase: 'confirmed', effect: 'confirmed' }, { phase: 'failed', effect: 'confirmed' }])
+    fixture.host.dispose()
+    await fixture.host.whenIdle()
+  })
   it('invalidates an approved target when page zoom changes', async () => {
     const fixture = createFixture()
     const state = fixture.host.ensureSession('conversation')

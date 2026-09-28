@@ -308,6 +308,10 @@ export const providersRpc = {
   upsertCustom: { method: 'providers.upsertCustom', input: customProviderInputSchema, response: providersResponseSchemas.provider },
 } as const satisfies Record<string, RuntimeRequestContract>
 
+export const providerChangedSchema = z.object({ source: z.enum(['catalog', 'metadata', 'credentials']), revision: z.number().int().nonnegative() }).strict()
+export type ProviderChanged = z.infer<typeof providerChangedSchema>
+
 export const providerNotifications = {
+  changed: { method: 'providers.changed', params: providerChangedSchema },
   authChallenge: { method: 'providers.authChallenge', params: providerAuthChallengeSchema },
 } as const satisfies Record<string, RuntimeNotificationContract>

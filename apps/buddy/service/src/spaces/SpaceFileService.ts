@@ -1,17 +1,31 @@
 import type { LocalSpaceDirectoryPage, LocalSpaceFileEntry, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget, SpaceSaveDocument, SpaceSaveResult, SpaceTextDocument } from '../../../shared/spaces/spaceFileApi'
 import type { SpaceRepository } from '../storage/spaceRepository'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { saveBoundedTextFile } from '../../../platform/filesystem/saveBoundedTextFile'
+import { Emitter } from '../../../shared/events/Emitter'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { readFilePreview } from '../files/readFilePreview'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { requireActiveSpace } from './requireActiveSpace'
 
+export interface SpaceFileChange {
+  readonly revision: number
+  readonly operationId: string
+  readonly spaceId: string
+  readonly directoryId: string
+  readonly directoryRevision: number
+  readonly kind: 'saved' | 'conflict' | 'response-denied'
+}
+
 export class SpaceFileService {
   readonly #spaces: Pick<SpaceRepository, 'findById'>
+  readonly #changes = new Emitter<SpaceFileChange>(() => console.error('SPACE_FILE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #disposed = false
   readonly #saves = new Map<string, Promise<SpaceSaveResult>>()
 
   constructor(spaces: Pick<SpaceRepository, 'findById'>) {
@@ -72,16 +86,30 @@ export class SpaceFileService {
   }
 
   saveDocument(input: SpaceSaveDocument): Promise<SpaceSaveResult> {
+    if (this.#disposed)
+      return Promise.reject(new Error('SPACE_FILES_STOPPED'))
+    input = { ...input }
+    const operationId = randomUUID()
+    const publish = (kind: SpaceFileChange['kind']) => this.#changes.fire(Object.freeze({ revision: ++this.#revision, operationId, spaceId: input.spaceId, directoryId: input.directoryId, directoryRevision: input.revision, kind }))
     const key = JSON.stringify([input.directoryId, input.revision, input.path])
     const previous = this.#saves.get(key) ?? Promise.resolve()
     const save = previous.catch(() => {}).then(async (): Promise<SpaceSaveResult> => {
       const target = await this.resolve(input)
       const current = await this.readDocument(input)
-      if (current.etag !== input.etag)
+      if (current.etag !== input.etag) {
+        publish('conflict')
         return { status: 'conflict', document: current }
+      }
       this.requireDirectory(input)
       const status = await saveBoundedTextFile({ ...target, expected: current.text, content: input.text })
-      this.requireDirectory(input)
+      publish(status)
+      try {
+        this.requireDirectory(input)
+      }
+      catch (error) {
+        publish('response-denied')
+        throw error
+      }
       return status === 'saved'
         ? { status, document: { text: input.text, etag: createHash('sha256').update(input.text).digest('hex') } }
         : { status, document: await this.readDocument(input) }
@@ -91,6 +119,12 @@ export class SpaceFileService {
     })
     this.#saves.set(key, save)
     return save
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true
+    await Promise.allSettled([...this.#saves.values()])
+    this.#changes.dispose()
   }
 
   private requireDirectory(input: SpaceFileTarget) {

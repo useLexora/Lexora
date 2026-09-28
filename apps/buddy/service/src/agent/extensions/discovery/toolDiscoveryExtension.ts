@@ -1,18 +1,19 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 import type { BuddyCapability } from '../BuddyCapability'
+import type { ActiveToolReason } from './SessionToolCapabilities'
 import type { BuddyToolDisclosurePolicy, ToolSearchInput } from './toolDiscoveryContract'
 import { buildSessionContext, convertToLlm, defineTool } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
-import { ToolDisclosure } from './ToolDisclosure'
+import { SessionToolCapabilities } from './SessionToolCapabilities'
 import { TOOL_SEARCH_NAME, toolSearchParameters } from './toolDiscoveryContract'
 
-export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclosurePolicy[]): BuddyCapability {
+export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclosurePolicy[], ownedState?: SessionToolCapabilities): BuddyCapability {
   return {
     classify: event => event.toolName === TOOL_SEARCH_NAME ? { access: 'read', paths: [] } : null,
     extension: {
       name: 'lexora-tool-discovery',
       factory(pi) {
-        let disclosure: ToolDisclosure | undefined
+        const state = ownedState ?? new SessionToolCapabilities()
         let description = ''
         const searchTool = defineTool({
           name: TOOL_SEARCH_NAME,
@@ -26,7 +27,7 @@ export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclo
           ],
           async execute(_toolCallId, parameters, signal, _onUpdate, context) {
             signal?.throwIfAborted()
-            if (!Check(toolSearchParameters, parameters) || !disclosure)
+            if (!Check(toolSearchParameters, parameters) || state.snapshot.status === 'initializing')
               throw new Error('Invalid tool search request')
             const input = parameters as ToolSearchInput
             if ((input.query !== undefined) === (input.toolNames !== undefined)
@@ -34,38 +35,37 @@ export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclo
               || (input.toolNames && input.limit !== undefined)) {
               throw new Error('Supply query OR toolNames; limit applies only to query')
             }
-            const result = disclosure.search(input, context.model)
-            sync(context)
+            const result = state.search(input, context.model)
+            sync(context, 'discovery')
             return { content: [{ type: 'text', text: JSON.stringify(result) }], details: result }
           },
         })
-        function sync(context: ExtensionContext) {
-          if (!disclosure)
-            return
-          const next = describeToolSearch(disclosure.connectedTools(context.model))
+        function sync(context: ExtensionContext, reason: ActiveToolReason) {
+          const next = describeToolSearch(state.connectedTools(context.model))
           if (description !== next) {
             description = next
             pi.registerTool({ ...searchTool, description })
           }
-          pi.setActiveTools(disclosure.active(context.model))
+          state.apply(context.model, reason, pi)
         }
-        function restore(context: ExtensionContext) {
-          disclosure?.restore(convertToLlm(buildSessionContext(context.sessionManager.getBranch()).messages))
-          sync(context)
+        function restore(context: ExtensionContext, reason: ActiveToolReason) {
+          state.restore(convertToLlm(buildSessionContext(context.sessionManager.getBranch()).messages))
+          sync(context, reason)
         }
         pi.registerTool(searchTool)
         pi.on('session_start', (event, context) => {
-          disclosure = new ToolDisclosure(pi.getAllTools(), pi.getActiveTools(), policies)
+          state.initialize(pi.getAllTools(), pi.getActiveTools(), policies)
           if (event.reason === 'resume' || event.reason === 'fork')
-            restore(context)
+            restore(context, 'resume')
           else
-            sync(context)
+            sync(context, 'initial')
         })
-        pi.on('before_agent_start', (_event, context) => sync(context))
-        pi.on('context', (_event, context) => sync(context))
-        pi.on('model_select', (_event, context) => sync(context))
-        pi.on('session_tree', (_event, context) => restore(context))
-        pi.on('session_compact', (_event, context) => restore(context))
+        pi.on('before_agent_start', (_event, context) => sync(context, 'request'))
+        pi.on('context', (_event, context) => sync(context, 'context'))
+        pi.on('model_select', (_event, context) => sync(context, 'model'))
+        pi.on('session_tree', (_event, context) => restore(context, 'tree'))
+        pi.on('session_shutdown', () => state.dispose())
+        pi.on('session_compact', (_event, context) => restore(context, 'compact'))
       },
     },
   }

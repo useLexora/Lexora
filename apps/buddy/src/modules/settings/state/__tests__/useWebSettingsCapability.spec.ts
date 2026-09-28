@@ -10,6 +10,7 @@ function fixture() {
   const capability = useWebSettingsCapability({
     language: shallowRef('zh-CN'),
     api: {
+      onChanged: () => () => {},
       revealCredential: async () => 'fixture-only-key',
       read: async () => structuredClone(state),
       save: async (settings) => {
@@ -64,6 +65,35 @@ describe('web settings UI state', () => {
     expect(await capability.reorderSearch('bing', 'native', 'before')).toBe(true)
     expect(capability.error.value).toBeNull()
   })
+  it('refreshes a committed permission disable even when the credential write rejects', async () => {
+    let changed = () => {}
+    let state: WebSettingsSnapshot = { settings: structuredClone(DEFAULT_WEB_SETTINGS), tavilyKeyConfigured: true }
+    state.settings.fetch.remote = true
+    const capability = useWebSettingsCapability({ language: shallowRef('zh-CN'), api: {
+      onChanged: (listener) => {
+        changed = listener
+
+        return () => {
+          changed = () => {}
+        }
+      },
+      revealCredential: async () => 'fixture-only-key',
+      read: async () => structuredClone(state),
+      save: async settings => ({ settings, tavilyKeyConfigured: true }),
+      saveCredential: async () => {
+        state = { ...state, settings: { ...state.settings, fetch: { ...state.settings.fetch, remote: false } } }
+        changed()
+        throw new Error('credential write failed')
+      },
+    } })
+    await capability.load()
+    expect(capability.snapshot.value?.settings.fetch.remote).toBe(true)
+    expect(await capability.saveCredential(null)).toBe(false)
+    expect(capability.snapshot.value?.settings.fetch.remote).toBe(false)
+    expect(capability.error.value).toBeTruthy()
+    capability.dispose()
+  })
+
   it('reveals credentialed sources without enabling them or remote extraction', async () => {
     const { capability } = fixture()
     await capability.load()

@@ -4,7 +4,6 @@ import type { DesktopAppState } from './useDesktopAppState'
 import type { AutomationCapability } from '@/modules/automations'
 import type { TaskIndexController } from '@/modules/tasks'
 import { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
-import { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import { computed, nextTick, onScopeDispose, shallowRef, watch } from 'vue'
 import { useApplicationLifecycle } from '@/platform/runtime/useApplicationLifecycle'
 import { requireInitialState } from './requireInitialState'
@@ -56,14 +55,13 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
     tail = tail.then(async () => {
       if (disposed || generation !== state.value.generation || !runtimeReady.value)
         return
-      const events = new ApplicationEvents({ generation })
+      const host = new ServiceHost()
       const reports: Promise<void>[] = []
-      const stop = events.subscribe((event) => {
-        const report = api.app.startup.reportEvent(event)
+      const subscription = host.lifecycle.onDidChange((change) => {
+        const report = Promise.resolve().then(() => api.app.startup.reportLifecycle({ generation, change }))
         void report.catch(() => {})
         reports.push(report)
       })
-      const host = new ServiceHost(events)
       const assertActive = () => {
         if (disposed || generation !== state.value.generation || !runtimeReady.value)
           throw new DOMException('Startup superseded', 'AbortError')
@@ -111,7 +109,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
           failed.value = true
       }
       finally {
-        stop()
+        subscription.dispose()
         initialAttemptSettled = true
         resolveReady()
       }

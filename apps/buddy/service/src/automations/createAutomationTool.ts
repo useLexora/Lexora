@@ -158,7 +158,6 @@ export const automationToolParameters = Type.Union([
 ], { type: 'object' })
 
 export interface CreateAutomationToolOptions {
-  onChanged?: (automationId: string) => void
   service: AutomationService
 }
 
@@ -192,9 +191,6 @@ export function createAutomationTool(options: CreateAutomationToolOptions) {
         return failure(readOperation(input), 'VALIDATION_FAILED')
       try {
         const result = executeAutomationOperation(options.service, parsed.data)
-        const automationId = result.automation?.id ?? result.occurrence?.automationId
-        if (automationId && isMutation(parsed.data.operation) && result.changed !== false)
-          options.onChanged?.(automationId)
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result.value) }],
           details: result.details,
@@ -393,10 +389,6 @@ function readOperation(input: unknown): AutomationToolDetails['operation'] {
   ]).has(operation)
     ? operation as AutomationToolOperation
     : 'invalid'
-}
-
-function isMutation(operation: AutomationToolOperation): boolean {
-  return operation !== 'list' && operation !== 'get'
 }
 
 export function classifyAutomationToolCall(

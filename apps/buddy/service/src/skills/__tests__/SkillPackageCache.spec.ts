@@ -15,6 +15,33 @@ afterEach(async () => {
 })
 
 describe('skillPackageCache', () => {
+  it.each(['metadata', 'package'] as const)('does not accept a late %s read after cache invalidation', async (mode) => {
+    const f = await fixture()
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const read = boundedFile.readBoundedFile
+    let delayed = false
+    vi.spyOn(boundedFile, 'readBoundedFile').mockImplementation(async (...args) => {
+      const content = await read(...args)
+      if (!delayed && args[1] === f.path) {
+        delayed = true
+        entered.resolve()
+        await resume.promise
+      }
+      return content
+    })
+    const pending = mode === 'metadata' ? f.cache.loadMetadata(f.path, f.root) : f.cache.load(f.path, f.root)
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    await entered.promise
+    f.cache.clear()
+    resume.resolve()
+    await rejected
+    const current = mode === 'metadata' ? await f.cache.loadMetadata(f.path, f.root) : await f.cache.load(f.path, f.root)
+    expect(current.name).toBe('workflow')
+    expect(Reflect.set(current, 'description', 'mutated')).toBe(false)
+    expect((mode === 'metadata' ? await f.cache.loadMetadata(f.path, f.root) : await f.cache.load(f.path, f.root)).description).toBe('A local workflow')
+  })
+
   it('loads skill metadata without traversing bundled resources', async () => {
     const f = await fixture()
     await rm(join(f.root, 'references'), { recursive: true })

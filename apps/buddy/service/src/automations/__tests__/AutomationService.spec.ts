@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { AutomationCommit } from '../AutomationEvents'
 import type { AutomationClock } from '../AutomationScheduleEvaluator'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,6 +22,58 @@ afterEach(() => {
 })
 
 describe('automationService persistence', () => {
+  it('publishes one immutable transaction batch after durable state and never republishes a replay', () => {
+    const { service } = createFileService()
+    const commits: AutomationCommit[] = []
+    const observed: Array<{ kind: string, status: string | undefined }> = []
+    service.onDidCommit(() => {
+      throw new Error('optional observer failed')
+    })
+    service.onDidCommit((event) => {
+      commits.push(event)
+      for (const fact of event.facts) {
+        if (fact.kind === 'definition.paused')
+          observed.push({ kind: fact.kind, status: service.get(fact.automationId)?.status })
+        if (fact.kind === 'occurrence.finished')
+          observed.push({ kind: fact.kind, status: service.getOccurrence(fact.occurrenceId)?.status })
+      }
+    })
+    const create = { requestId: 'create-facts', draft: dailyDraft('Facts') }
+    const automation = service.create(create)
+    service.create(create)
+    const request = { automationId: automation.id, expectedRevision: 1, requestId: 'run-facts' }
+    const queued = service.runNow(request)
+    service.runNow(request)
+    const pause = { automationId: automation.id, expectedRevision: 1, requestId: 'pause-facts' }
+    service.pause(pause)
+    service.pause(pause)
+    expect(commits.map(event => event.facts.map(fact => fact.kind))).toEqual([
+      ['definition.created'],
+      ['occurrence.queued'],
+      ['definition.paused', 'occurrence.finished'],
+    ])
+    expect(observed).toEqual([{ kind: 'definition.paused', status: 'paused' }, { kind: 'occurrence.finished', status: 'cancelled' }])
+    expect(commits[2]!.facts[1]).toMatchObject({ occurrenceId: queued.occurrence.id, status: 'cancelled' })
+    expect(Object.isFrozen(commits[2]!.facts[1])).toBe(true)
+    expect(new Set(commits.map(event => event.operationId)).size).toBe(3)
+    expect(commits.map(event => event.revision)).toEqual([1, 2, 3])
+  })
+
+  it('emits no definition or cancellation facts when their shared transaction rolls back', () => {
+    const { service } = createFileService()
+    const database = databases.at(-1)!
+    const automation = service.create({ requestId: 'create-rollback', draft: dailyDraft('Rollback') })
+    const queued = service.runNow({ automationId: automation.id, expectedRevision: 1, requestId: 'run-rollback' })
+    const commits: AutomationCommit[] = []
+    service.onDidCommit(event => commits.push(event))
+    database.exec(`CREATE TRIGGER reject_cancel BEFORE UPDATE OF status ON automation_occurrences
+      WHEN NEW.status = 'cancelled' BEGIN SELECT RAISE(ABORT, 'cancel failed'); END`)
+    expect(() => service.pause({ automationId: automation.id, expectedRevision: 1, requestId: 'pause-rollback' })).toThrow('cancel failed')
+    expect(service.get(automation.id)).toMatchObject({ revision: 1, status: 'active' })
+    expect(service.getOccurrence(queued.occurrence.id)?.status).toBe('queued')
+    expect(commits).toEqual([])
+  })
+
   it('returns the active occurrence when manual run is requested again', () => {
     const { service } = createFileService()
     const automation = service.create({ requestId: 'create-1', draft: dailyDraft('Active') })

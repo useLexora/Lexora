@@ -248,7 +248,6 @@ export class ProviderModelCatalog {
         continue
       this.#models.upsert({ ...current, available: false, updatedAt: now })
     }
-    this.registerCustomProvider(provider)
   }
 
   reconcileSyncedModelMetadata(provider: ProviderConfigRecord): boolean {
@@ -312,7 +311,6 @@ export class ProviderModelCatalog {
         : current?.sourceRevision ?? now,
       updatedAt: now,
     })
-    this.registerCustomProvider(provider)
     return this.#toBuddyModel(next)
   }
 
@@ -342,7 +340,6 @@ export class ProviderModelCatalog {
         : current.sourceRevision,
       updatedAt: now,
     })
-    this.registerCustomProvider(provider)
     return this.#toBuddyModel(next)
   }
 
@@ -423,9 +420,12 @@ export class ProviderModelCatalog {
     if (!current || current.available)
       throw new ProviderUnavailableError()
     this.#models.remove(providerId, modelId)
-    const provider = this.#configs.findById(providerId)
-    if (provider)
-      this.registerCustomProvider(provider)
+  }
+
+  executionSnapshot(providerId: string, modelId: string) {
+    const state = this.#requireModelState(providerId, modelId)
+    const { name: _name, ...execution } = this.#effectiveModel(state, this.#sourceModel(state))
+    return execution
   }
 
   resolve(providerId: string, modelId: string): Model<Api> {

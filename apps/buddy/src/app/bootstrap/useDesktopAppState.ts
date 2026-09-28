@@ -16,7 +16,6 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
   const modelProviders = useModelProvidersStore({
     api: options.api.localChat.providers,
     language: applicationSettings.language,
-    onCatalogChanged: () => void notifications.load(),
   })
   const runtimeSupervisor = useRuntimeSupervisorStore({
     api: options.api.localChat.runtime,

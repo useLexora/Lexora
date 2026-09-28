@@ -24,6 +24,49 @@ afterEach(async () => {
 })
 
 describe('runEventLog', () => {
+  it('does not publish a committed record when its required projection cannot recover', async () => {
+    const fixture = await createFixture()
+    const delivered: number[] = []
+    fixture.log.onDidCommit(event => delivered.push(event.sequence))
+    fixture.database.exec(`CREATE TRIGGER reject_new_message BEFORE INSERT ON messages
+      BEGIN SELECT RAISE(ABORT, 'projection unavailable'); END;`)
+    await expect(fixture.log.append({
+      runId: 'run-1',
+      type: 'message.completed',
+      payload: { messageId: 'answer-1', role: 'assistant', content: { text: 'answer' }, stopReason: 'completed' },
+    })).rejects.toMatchObject({ code: 'EVENT_PROJECTION_FAILED', commitState: 'committed' })
+    expect(fixture.log.state).toBe('failed')
+    expect(delivered).toEqual([])
+    expect((await fixture.log.read('run-1')).map(event => event.type)).toEqual(['message.completed'])
+  })
+
+  it('publishes immutable committed facts after projection and retains observers after failure', async () => {
+    const fixture = await createFixture()
+    const delivered: number[] = []
+    fixture.log.onDidCommit(() => {
+      throw new Error('Observer unavailable')
+    })
+    fixture.log.onDidCommit(async () => {
+      throw new Error('Async observer unavailable')
+    })
+    fixture.log.onDidCommit((event) => {
+      expect(fixture.database.prepare('SELECT sequence FROM run_events WHERE run_id = ? AND sequence = ?').get(event.runId, event.sequence)).toBeDefined()
+      expect(Object.isFrozen(event)).toBe(true)
+      expect(Object.isFrozen(event.payload)).toBe(true)
+      delivered.push(event.sequence)
+    })
+    await fixture.log.appendBatch([
+      { runId: 'run-1', type: 'audit.first', payload: { nested: { count: 1 } } },
+      { runId: 'run-1', type: 'audit.second', payload: {} },
+    ])
+    await fixture.log.replay('run-1')
+    const accepted = fixture.log.append({ runId: 'run-1', type: 'audit.third', payload: {} })
+    await fixture.log.close()
+    await accepted
+    expect(delivered).toEqual([1, 2, 3])
+    expect(fixture.log.state).toBe('closed')
+  })
+
   it('persists desktop operations after completion and replays them without creating model messages', async () => {
     const fixture = await createFixture()
     await fixture.log.append({ runId: 'run-1', type: 'run.completed', payload: {} })

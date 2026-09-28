@@ -7,8 +7,11 @@ import { localTransports } from '../../../platform/ipc/localTransport'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ServiceHost } from '../../../shared/lifecycle/ServiceHost'
+import { ServiceLifecycleSource } from '../../../shared/lifecycle/ServiceLifecycleSource'
+import { observeLifecycleDiagnostics } from '../../../shared/observability/lifecycleDiagnostics'
 import { BrowserIntegration } from '../browser/BrowserIntegration'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
+import { closeDesktopDiagnostics } from './closeDesktopDiagnostics'
 import { confirmDesktopQuit, showBackgroundCloseNotice, showDesktopStartupFailure, showLegacyPowerShellNotice } from './desktopDialogs'
 import { DesktopIntegrations } from './DesktopIntegrations'
 import { describeProcessExit } from './desktopProcessDiagnostics'
@@ -27,15 +30,21 @@ class DesktopApplication {
   readonly #runtime: DesktopRuntimeHost
   readonly #integrations: DesktopIntegrations
   readonly #host: ServiceHost
+  readonly #lifecycleSubscriptions: (() => void)[]
   readonly #quit: ReturnType<typeof createDesktopQuitLifecycle>
   #disposePromise: Promise<void> | null = null
   #rendererRecoveryPrompt: Promise<void> | null = null
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
-    this.#host = new ServiceHost(environment.events)
+    this.#host = new ServiceHost(new ServiceLifecycleSource(() => environment.events.publish({ event: 'observer.failed', component: 'desktop.lifecycle', level: 'warn' })))
+    this.#lifecycleSubscriptions = [
+      environment.startup.bindDesktop(this.#host.lifecycle),
+      observeLifecycleDiagnostics(this.#host.lifecycle, environment.events),
+    ]
     this.#windows = new DesktopWindowHost(environment)
     this.#browser = new BrowserIntegration({
+      report: event => environment.events.publish(event),
       isTaskLinked: () => this.#runtime.config?.desktop.contextPanelMode === 'task',
       onActivityError: () => environment.events.publish({ level: 'warn', event: 'browser.activity.failed', errorCode: 'BROWSER_ACTIVITY_FAILED' }),
       endpoint: localTransports[currentPlatform.transport](environment.paths.browserAdapterSocket),
@@ -53,7 +62,7 @@ class DesktopApplication {
         try {
           await this.#dispose()
         }
-        finally { await environment.diagnostics.close() }
+        finally { await closeDesktopDiagnostics(environment.diagnostics) }
       },
       quit: (restart) => {
         if (restart)
@@ -75,8 +84,9 @@ class DesktopApplication {
     nativeTheme.on('updated', () => this.#windows.updateAppearance())
     process.once('SIGINT', () => {
       void this.#quit.request({ discardDraftsOnFailure: true }).catch(async (error) => {
-        this.#environment.events.publish({ level: 'error', event: 'app.interrupt_failed', errorCode: readDiagnosticErrorCode(error) })
-        await this.#environment.diagnostics.close()
+        if (!this.#quit.quitting)
+          this.#environment.events.publish({ level: 'error', event: 'app.interrupt_failed', errorCode: readDiagnosticErrorCode(error) })
+        await closeDesktopDiagnostics(this.#environment.diagnostics)
         app.exit(1)
       })
     })
@@ -150,7 +160,7 @@ class DesktopApplication {
       }
       finally {
         try {
-          await this.#environment.diagnostics.close()
+          await closeDesktopDiagnostics(this.#environment.diagnostics)
         }
         finally { app.exit(1) }
       }
@@ -159,7 +169,8 @@ class DesktopApplication {
 
   #requestQuit(): void {
     void this.#quit.request().catch((error) => {
-      this.#environment.events.publish({ level: 'error', event: 'app.stop_failed', errorCode: readDiagnosticErrorCode(error) })
+      if (!this.#quit.quitting)
+        this.#environment.events.publish({ level: 'error', event: 'app.stop_failed', errorCode: readDiagnosticErrorCode(error) })
       if (this.#quit.quitting)
         app.exit(1)
     })
@@ -167,7 +178,8 @@ class DesktopApplication {
 
   #requestRestart(): void {
     void this.#quit.request({ restart: true }).catch((error) => {
-      this.#environment.events.publish({ level: 'error', event: 'app.restart_failed', errorCode: readDiagnosticErrorCode(error) })
+      if (!this.#quit.quitting)
+        this.#environment.events.publish({ level: 'error', event: 'app.restart_failed', errorCode: readDiagnosticErrorCode(error) })
       if (this.#quit.quitting)
         app.exit(1)
     })
@@ -196,7 +208,6 @@ class DesktopApplication {
 
   #dispose(): Promise<void> {
     this.#disposePromise ??= (async () => {
-      this.#environment.events.publish({ level: 'info', event: 'app.stopping' })
       this.#environment.startup.stopping()
       const failures: unknown[] = []
       try {
@@ -205,10 +216,12 @@ class DesktopApplication {
       catch (error) {
         failures.push(error)
       }
-      this.#environment.events.publish({ level: failures.length ? 'error' : 'info', event: failures.length ? 'app.stop_failed' : 'app.stopped' })
-      this.#environment.startup.stopped()
-      if (failures.length)
-        throw new AggregateError(failures, 'Desktop application cleanup failed')
+      const failure = failures.length ? new AggregateError(failures, 'Desktop application cleanup failed') : undefined
+      this.#environment.startup.stopped(failure)
+      for (const stop of this.#lifecycleSubscriptions)
+        stop()
+      if (failure)
+        throw failure
     })()
     return this.#disposePromise
   }
@@ -223,7 +236,7 @@ export async function startDesktopApplication(): Promise<void> {
     if (!app.requestSingleInstanceLock()) {
       environment.diagnostics.record({ scope: 'desktop', level: 'info', event: 'startup.single_instance_lock_unavailable' })
       await checkDesktopCoreDirectories(environment)
-      await environment.diagnostics.close()
+      await closeDesktopDiagnostics(environment.diagnostics)
       app.quit()
       return
     }
@@ -245,7 +258,8 @@ export async function startDesktopApplication(): Promise<void> {
     const failedEnvironment = environment
     void showDesktopStartupFailure(error, 'zh-CN', environment, failedEnvironment ? () => prepareDesktopReady(failedEnvironment) : undefined).finally(async () => {
       try {
-        await environment?.diagnostics.close()
+        if (environment)
+          await closeDesktopDiagnostics(environment.diagnostics)
       }
       finally {
         app.exit(1)

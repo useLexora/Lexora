@@ -44,7 +44,7 @@ const drop = computed(() => dropPosition.value?.paneId === props.pane.id ? dropP
       <WorkbenchSlot v-if="!pane.view" target="workbench.pane.empty" class="workbench-pane__empty-slot">
         <div class="workbench-pane__empty">
           <p>{{ labels.empty }}</p>
-          <button type="button" @click="controller.registry.execute('task.new', controller.context)">
+          <button type="button" @click="controller.commands.execute('task.new', { source: 'menu' })">
             {{ labels.newTask }}
           </button>
         </div>

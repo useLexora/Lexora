@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionReview, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NDropdown, NEmpty, NModal, useDialog, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
@@ -15,8 +15,9 @@ import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
+import DesktopExtensionUninstallDialog from './DesktopExtensionUninstallDialog.vue'
 
-const { state, language, startCreation, authoring } = useExtensionContext()
+const { state, language, startCreation, authoring, settingsLocation } = useExtensionContext()
 const { installed } = state
 const labels = computed(() => extensionLabels(language.value))
 const section = shallowRef<'marketplace' | 'installed'>('installed')
@@ -31,7 +32,7 @@ const review = shallowRef<ExtensionReview | null>(null)
 const diagnostics = shallowRef<string | null>(null)
 const installationLog = shallowRef(false)
 const authorSettings = shallowRef(false)
-const dialog = useDialog()
+const removing = shallowRef<ExtensionStatus | null>(null)
 const message = useMessage()
 const router = useRouter()
 const selected = computed(() => installed.value.find(item => item.manifest.id === diagnostics.value))
@@ -44,17 +45,19 @@ watch(state.error, (error) => {
 }, { immediate: true })
 async function run(action: () => Promise<unknown>) {
   if (busy.value)
-    return
+    return false
   busy.value = true
   try {
     await action()
     await state.refresh()
+    return true
   }
   catch (reason) {
     if (reason instanceof Error && reason.message === 'SKILL_UNAVAILABLE')
       message.error(labels.value.creatorUnavailable)
     else
       showError(extensionErrorCode(reason))
+    return false
   }
   finally {
     busy.value = false
@@ -84,8 +87,20 @@ function install() {
     })
   }
 }
-function remove(item: ExtensionStatus) {
-  dialog.warning({ title: labels.value.removeTitle, content: `${item.manifest.name} · ${labels.value.retained}`, positiveText: labels.value.remove, negativeText: labels.value.cancel, positiveButtonProps: { type: 'error' }, onPositiveClick: () => run(() => state.api.uninstall(item.manifest.id)) })
+function openLocation(item: ExtensionStatus) {
+  if (!item.enabled || !item.compatible || item.state === 'blocked')
+    return null
+  return item.manifest.contributes.navigation ? desktopRouteLocations.extensionPage(item.manifest.id) : settingsLocation(item.manifest.id)
+}
+function open(item: ExtensionStatus) {
+  const location = openLocation(item)
+  if (location)
+    void router.push(location)
+}
+async function remove(clearData: boolean) {
+  const item = removing.value
+  if (item && await run(() => state.api.uninstall(item.manifest.id, { clearData })))
+    removing.value = null
 }
 onScopeDispose(cancel)
 </script>
@@ -139,11 +154,12 @@ onScopeDispose(cancel)
         :item="item"
         :language="language"
         :busy="busy"
+        :can-open="!!openLocation(item)"
         @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled))"
         @restart="run(() => state.api.restart(item.manifest.id))"
         @diagnostics="diagnostics = item.manifest.id"
-        @remove="remove(item)"
-        @open="router.push(desktopRouteLocations.extensionPage(item.manifest.id))"
+        @remove="removing = item"
+        @open="open(item)"
         @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
       />
     </div>
@@ -155,6 +171,7 @@ onScopeDispose(cancel)
     <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />
   </NModal>
   <DesktopExtensionInstallReview v-if="review" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionUninstallDialog v-if="removing" :name="removing.manifest.name" :language="language" :busy="busy" @cancel="removing = null" @remove="remove" />
   <NModal :show="!!selected" preset="card" :title="labels.diagnostics" class="extension-dialog" @update:show="value => { if (!value) diagnostics = null }">
     <template v-if="selected">
       <h2>{{ selected.manifest.name }}</h2>

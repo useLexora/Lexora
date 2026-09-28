@@ -1,3 +1,4 @@
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type {
   AppendBuddyRunEventInput,
   BuddyRunEvent,
@@ -7,6 +8,8 @@ import type { RunEventLogPort } from './RunEventPorts'
 import type { RunEventProjector } from './RunEventProjector'
 import type { RunEventQueries } from './RunEventQueries'
 import type { RunEventStore } from './RunEventStore'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import {
   buddyRunEventSchema,
   buddyRunIdSchema,
@@ -19,8 +22,7 @@ import {
 } from './RunEventFailure'
 
 export interface RunEventLogCallbacks {
-  onEvent?: (event: BuddyRunEvent) => void
-  onEventDeliveryError?: (error: Error, event: BuddyRunEvent) => void
+  onObserverError?: (error: unknown) => void
   onFatalFailure?: (error: RunEventLogFatalError) => void
 }
 
@@ -59,8 +61,8 @@ export class RunEventLogClosedError extends Error {
 
 export class RunEventLog implements RunEventLogPort {
   readonly #nextSequences = new Map<string, number>()
-  readonly #onEvent?: (event: BuddyRunEvent) => void
-  readonly #onEventDeliveryError?: (error: Error, event: BuddyRunEvent) => void
+  readonly #committed: Emitter<EventSnapshot<BuddyRunEvent>>
+  readonly onDidCommit: RunEventLogPort['onDidCommit']
   readonly #onFatalFailure?: (error: RunEventLogFatalError) => void
   readonly #projector: RunEventProjectorPort
   readonly #queries: RunEventQueryPort
@@ -71,12 +73,16 @@ export class RunEventLog implements RunEventLogPort {
   #fatalFailure: RunEventLogFatalError | null = null
 
   constructor(options: RunEventLogOptions) {
-    this.#onEvent = options.onEvent
-    this.#onEventDeliveryError = options.onEventDeliveryError
+    this.#committed = new Emitter(options.onObserverError ?? (() => {}))
+    this.onDidCommit = this.#committed.event
     this.#onFatalFailure = options.onFatalFailure
     this.#projector = options.projector
     this.#queries = options.queries
     this.#store = options.store
+  }
+
+  get state(): RunEventLogPort['state'] {
+    return this.#closed ? 'closed' : this.#fatalFailure ? 'failed' : 'open'
   }
 
   append(input: AppendBuddyRunEventInput): Promise<BuddyRunEvent> {
@@ -101,19 +107,20 @@ export class RunEventLog implements RunEventLogPort {
         const existing = await this.#readAndRepair(runId)
         nextSequence = nextEventSequence(existing)
       }
-      const events = inputs.map((input, index) => buddyRunEventSchema.parse({
+      const events = inputs.map((input, index) => buddyRunEventSchema.parse(JSON.parse(JSON.stringify({
         runId,
         sequence: nextSequence + index,
         type: input.type,
         payload: input.payload ?? null,
         createdAt: input.createdAt ?? new Date().toISOString(),
-      }))
+      }))))
+      const committed = events.map(event => copyEventSnapshot(event))
       this.#projector.validateNewFacts(events)
       await this.#runStoreOperation(() => this.#store.append(events))
       this.#nextSequences.set(runId, nextSequence + events.length)
       await this.#projectCommitted(events)
-      for (const event of events)
-        this.#deliver(event)
+      for (const event of committed)
+        this.#committed.fire(event)
       return events
     })
   }
@@ -174,7 +181,7 @@ export class RunEventLog implements RunEventLogPort {
     if (this.#closePromise)
       return this.#closePromise
     this.#closed = true
-    this.#closePromise = Promise.all(this.#tails.values()).then(() => undefined)
+    this.#closePromise = Promise.all(this.#tails.values()).then(() => this.#committed.dispose())
     return this.#closePromise
   }
 
@@ -211,18 +218,6 @@ export class RunEventLog implements RunEventLogPort {
     }
     this.#nextSequences.set(runId, nextEventSequence(retained))
     return removed.length
-  }
-
-  #deliver(event: BuddyRunEvent): void {
-    try {
-      this.#onEvent?.(event)
-    }
-    catch (error) {
-      try {
-        this.#onEventDeliveryError?.(toEventDeliveryError(error), event)
-      }
-      catch {}
-    }
   }
 
   async #projectCommitted(events: readonly BuddyRunEvent[]): Promise<void> {
@@ -316,10 +311,4 @@ export class RunEventLog implements RunEventLogPort {
 
 function nextEventSequence(events: readonly BuddyRunEvent[]): number {
   return (events.at(-1)?.sequence ?? 0) + 1
-}
-
-function toEventDeliveryError(error: unknown): Error {
-  return error instanceof Error
-    ? error
-    : new Error('Lexora Buddy run event notification failed')
 }

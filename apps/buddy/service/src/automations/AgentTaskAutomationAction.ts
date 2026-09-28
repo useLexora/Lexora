@@ -37,7 +37,7 @@ export interface AgentTaskAutomationActionOptions {
   cancelRun?: (runId: string, errorCode: string) => Promise<boolean>
   clock?: AutomationClock
   createId?: () => string
-  launchTurn: (runId: string) => Promise<BuddyTurnHandle>
+  launchTurn: (runId: string, signal?: AbortSignal) => Promise<BuddyTurnHandle>
   resolveModel: (target: AutomationModelTarget) => Promise<ResolvedAutomationModel | null>
   resolveSpace: (
     spaceId: string,
@@ -73,9 +73,11 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
     this.#turns = options.turns
   }
 
-  async execute(occurrence: AutomationOccurrenceRecord & { leaseOwner: string }): Promise<void> {
+  async execute(occurrence: AutomationOccurrenceRecord & { leaseOwner: string }, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
     const snapshot = occurrence.executionSnapshot
     const model = await this.#resolveModel(snapshot.model)
+    signal?.throwIfAborted()
     if (!model) {
       const errorCode = snapshot.model.mode === 'pinned'
         ? 'AUTOMATION_PINNED_MODEL_UNAVAILABLE'
@@ -103,6 +105,7 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
     const spaceResolution = snapshot.spaceId && snapshot.spaceContext
       ? await this.#resolveSpace(snapshot.spaceId, snapshot.spaceContext)
       : null
+    signal?.throwIfAborted()
     if (snapshot.spaceId && !spaceResolution) {
       this.#skipAndBlock(
         occurrence.id,
@@ -167,7 +170,7 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
       return
     }
     const bound = binding
-    const turn = await this.#launchTurn(bound.run.id)
+    const turn = await this.#launchTurn(bound.run.id, signal)
     await this.#waitForTurn(turn)
   }
 

@@ -28,7 +28,8 @@ import type { ComposerResourceRecord, ComposerResourceRepository } from '../stor
 import type { ConversationDirectoryGrantRepository } from '../storage/conversationDirectoryGrantRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
-import type { AttachmentService } from './AttachmentService'
+import type { AttachmentService, PreparedAttachmentUploads } from './AttachmentService'
+import type { ComposerResourceChange, ComposerResourceChangeReason } from './composerResourceEvents'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
@@ -36,6 +37,8 @@ import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT, BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT, getAttachmentKind } from '../../../shared/conversation/attachmentPolicy'
 import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
 import { buddyComposerResourceAcceptSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from '../../../shared/conversation/composerResource'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
@@ -50,7 +53,7 @@ import { validateResourceBytes } from './validateResourceBytes'
 
 export interface ComposerResourceServiceOptions {
   artifacts?: Pick<ArtifactService, 'listConversationArtifacts' | 'resolveConversationArtifactLocation'>
-  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'registerUploads' | 'release' | 'releaseDraft' | 'resolvePreview'>
+  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'prepareUploads' | 'release' | 'releaseDraft' | 'resolvePreview'>
   conversationGrants?: Pick<ConversationDirectoryGrantRepository, 'listActive'>
   conversations?: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
   drafts?: Pick<ComposerDraftRepository, 'findById'>
@@ -66,7 +69,20 @@ export interface ComposerSourceScope {
   spaceId: string | null
 }
 
+export interface PreparedComposerInput {
+  readonly inputs: readonly BuddyUserMessageResourceSnapshot[]
+  validate: () => void
+  commit: () => Promise<void>
+  rollback: () => Promise<void>
+}
+
 export class ComposerResourceService {
+  readonly #changes = new Emitter<ComposerResourceChange>(() => console.error('COMPOSER_RESOURCE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  readonly #pending = new Set<Promise<unknown>>()
+  #revision = 0
+  #stopping = false
+  #disposed = false
   readonly #attachments: ComposerResourceServiceOptions['attachments']
   readonly #artifacts: ComposerResourceServiceOptions['artifacts']
   readonly #conversationGrants: ComposerResourceServiceOptions['conversationGrants']
@@ -93,7 +109,11 @@ export class ComposerResourceService {
     this.#directories = new ComposerDirectorySources(options)
   }
 
-  async accept(input: BuddyComposerResourceAccept): Promise<BuddyComposerResource[]> {
+  accept(input: BuddyComposerResourceAccept): Promise<BuddyComposerResource[]> {
+    return this.#operate(() => this.#accept(input))
+  }
+
+  async #accept(input: BuddyComposerResourceAccept): Promise<BuddyComposerResource[]> {
     const parsed = buddyComposerResourceAcceptSchema.parse(input)
     const incoming = await Promise.all(parsed.resources.map(async (resource) => {
       if (resource.storage === 'reference') {
@@ -103,9 +123,9 @@ export class ComposerResourceService {
       return { resource: { ...resource, ...normalizeAttachmentMetadata(resource) }, localReference: null }
     }))
     try {
-      return this.#repository.acceptBatch(input.draftId, incoming.map(({ resource, localReference }) => localReference
+      return this.#commit(parsed.draftId, 'import', () => this.#repository.acceptBatch(parsed.draftId, incoming.map(({ resource, localReference }) => localReference
         ? { metadata: { ...localReference, sourcePath: localReference.path, resourceId: resource.resourceId }, source: { localReference } }
-        : { metadata: resource }), new Date().toISOString()).map(toPublicResource)
+        : { metadata: resource }), new Date().toISOString())).map(toPublicResource)
     }
     catch (error) {
       if (error instanceof ComposerResourceConflictError)
@@ -158,78 +178,130 @@ export class ComposerResourceService {
     return { ...directorySources, files: [...directorySources.files.slice(0, 64), ...conversationFiles.filter(file => file.category === 'history').slice(0, 32), ...conversationFiles.filter(file => file.category === 'artifact').slice(0, 32)] }
   }
 
-  async selectSource(
-    input: BuddyComposerSourceSelect,
-    referencedResourceIds: readonly string[] = [],
-  ): Promise<BuddyComposerResource> {
+  selectSource(input: BuddyComposerSourceSelect, referencedResourceIds: readonly string[] = [], reason: ComposerResourceChangeReason = 'selection'): Promise<BuddyComposerResource> {
+    const ownedIds = [...referencedResourceIds]
+    return this.#operate(() => this.#selectSource(input, ownedIds, reason))
+  }
+
+  async #selectSource(input: BuddyComposerSourceSelect, referencedResourceIds: readonly string[], reason: ComposerResourceChangeReason): Promise<BuddyComposerResource> {
     const parsed = buddyComposerSourceSelectSchema.parse(input)
     const resolved = await this.#resolveSource(parsed.source)
     this.#assertCapacity(parsed.draftId, referencedResourceIds, [{ sizeBytes: 'localReference' in resolved.source ? 0 : resolved.metadata.sizeBytes }])
-    return toPublicResource(this.#repository.selectSource(parsed.draftId, {
+    return toPublicResource(this.#commit(parsed.draftId, reason, () => this.#repository.selectSource(parsed.draftId, {
       ...resolved.metadata,
       resourceId: parsed.resourceId,
-    }, resolved.source, new Date().toISOString()))
+    }, resolved.source, new Date().toISOString())))
   }
 
-  async selectSpaceFilePath(draftId: string, spaceId: string, path: string): Promise<BuddyComposerResource> {
-    const space = requireActiveSpace(this.#spaces?.findById(spaceId) ?? null)
-    const bindings = [space.primaryDirectory, ...space.additionalDirectories].filter(binding => binding !== null)
-    const requestedPath = isAbsolute(path) ? path : space.primaryDirectory ? join(space.primaryDirectory.canonicalRoot, path) : null
-    if (!requestedPath)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const resolution = await resolveGrantedPath(bindings.map(binding => ({ canonicalRoot: binding.canonicalRoot, grantId: binding.id, kind: 'workspace', root: binding.root })), requestedPath, 'existing')
-    const binding = bindings.find(binding => binding.id === resolution.grantId)!
-    return this.selectSpaceFile({ draftId, resourceId: randomUUID(), source: { spaceId, bindingId: binding.id, relativePath: relative(binding.canonicalRoot, resolution.canonicalPath) } })
-  }
-
-  async resolveInput(draftId: string, content: BuddyUserContentV1, scope: ComposerSourceScope = { branchId: null, conversationId: null, spaceId: null }, model?: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'>): Promise<BuddyUserMessageResourceSnapshot[]> {
-    const resourceIds = getBuddyUserContentResourceIds(content)
-    if (resourceIds.length > BUDDY_ATTACHMENT_COUNT_LIMIT)
-      throw new AttachmentError('VALIDATION_FAILED')
-    const resources = resourceIds.map((resourceId) => {
-      const resource = this.#requireOwned({ draftId, resourceId })
-      if (resource.state !== 'ready')
-        throw new AttachmentError('VALIDATION_FAILED')
-      if (resource.source && 'spaceId' in resource.source && resource.source.spaceId !== scope.spaceId)
+  async selectSpaceFilePath(draftId: string, spaceId: string, path: string, reason: ComposerResourceChangeReason = 'selection'): Promise<BuddyComposerResource> {
+    return this.#operate(async () => {
+      const space = requireActiveSpace(this.#spaces?.findById(spaceId) ?? null)
+      const bindings = [space.primaryDirectory, ...space.additionalDirectories].filter(binding => binding !== null)
+      const requestedPath = isAbsolute(path) ? path : space.primaryDirectory ? join(space.primaryDirectory.canonicalRoot, path) : null
+      if (!requestedPath)
         throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-      if (resource.source && 'conversationId' in resource.source && resource.source.conversationId !== scope.conversationId)
-        throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-      return resource
+      const resolution = await resolveGrantedPath(bindings.map(binding => ({ canonicalRoot: binding.canonicalRoot, grantId: binding.id, kind: 'workspace', root: binding.root })), requestedPath, 'existing')
+      const binding = bindings.find(binding => binding.id === resolution.grantId)!
+      return this.#selectSource({ draftId, resourceId: randomUUID(), source: { spaceId, bindingId: binding.id, relativePath: relative(binding.canonicalRoot, resolution.canonicalPath) } }, [], reason)
     })
-    const result: BuddyUserMessageResourceSnapshot[] = []
-    const orderedResources = resources.toSorted((left, right) => Number(isNewLocalReference(left)) - Number(isNewLocalReference(right)))
-    let totalBytes = 0
-    for (const resource of orderedResources) {
-      if (resource.source && 'localReference' in resource.source) {
-        const snapshot = await this.#resolveLocalInput(resource, resource.source, scope, model, BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT - totalBytes)
-        result.push(snapshot.input)
-        totalBytes += snapshot.bytes
-        continue
-      }
-      if (!resource.source) {
-        totalBytes += resource.sizeBytes
-        result.push({ attachmentId: resource.attachmentId!, resourceId: resource.resourceId })
-        continue
-      }
-      const resolved = await this.#resolveSourceOrigin(resource.source, scope)
-      totalBytes += resolved.metadata.sizeBytes
-      if (totalBytes > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
+  }
+
+  async resolveInput(draftId: string, content: BuddyUserContentV1, scope: ComposerSourceScope = { branchId: null, conversationId: null, spaceId: null }, model?: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'>): Promise<PreparedComposerInput> {
+    content = copyEventSnapshot(content)
+    scope = copyEventSnapshot(scope)
+    model = model ? { ...model, input: [...model.input], fileInputMimeTypes: [...model.fileInputMimeTypes] } : undefined
+    return this.#operate(async () => {
+      const resourceIds = getBuddyUserContentResourceIds(content)
+      if (resourceIds.length > BUDDY_ATTACHMENT_COUNT_LIMIT)
         throw new AttachmentError('VALIDATION_FAILED')
-      if (resolved.attachmentId) {
-        result.push({ attachmentId: resolved.attachmentId, resourceId: resource.resourceId })
+      const resources = resourceIds.map((resourceId) => {
+        const resource = this.#requireOwned({ draftId, resourceId })
+        if (resource.state !== 'ready')
+          throw new AttachmentError('VALIDATION_FAILED')
+        if (resource.source && 'spaceId' in resource.source && resource.source.spaceId !== scope.spaceId)
+          throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
+        if (resource.source && 'conversationId' in resource.source && resource.source.conversationId !== scope.conversationId)
+          throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
+        return resource
+      })
+      const uploads: PreparedAttachmentUploads[] = []
+      let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
+      const validate = () => {
+        if (settlement)
+          throw new Error('COMPOSER_INPUT_SETTLED')
+        for (const resource of resources) {
+          const current = this.#repository.findById(resource.resourceId)
+          if (JSON.stringify(current) !== JSON.stringify(resource))
+            throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+        }
       }
-      else {
-        await validateResourceBytes(resolved.metadata, resolved.bytes)
-        const [attachment] = await this.#attachments.registerUploads(draftId, [{ ...resolved.metadata, bytes: Uint8Array.from(resolved.bytes) }])
-        if (!attachment)
-          throw new AttachmentError('ATTACHMENT_NOT_FOUND')
-        result.push({ attachmentId: attachment.id, resourceId: resource.resourceId })
+      const settle = (outcome: 'commit' | 'rollback') => {
+        if (settlement) {
+          return settlement.outcome === outcome
+            ? settlement.promise
+            : Promise.reject(new Error('COMPOSER_INPUT_SETTLED'))
+        }
+        const promise = (async () => {
+          const failures: unknown[] = []
+          for (const upload of uploads.toReversed()) {
+            try {
+              await upload[outcome]()
+            }
+            catch (error) { failures.push(error) }
+          }
+          if (failures.length)
+            throw new AggregateError(failures, 'COMPOSER_INPUT_CLEANUP_FAILED')
+        })()
+        settlement = { outcome, promise }
+        return promise
       }
-    }
-    if (totalBytes > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
-      throw new AttachmentError('VALIDATION_FAILED')
-    const snapshots = new Map(result.map(snapshot => [snapshot.resourceId, snapshot]))
-    return resourceIds.map(resourceId => snapshots.get(resourceId)!)
+      try {
+        const result: BuddyUserMessageResourceSnapshot[] = []
+        const orderedResources = resources.toSorted((left, right) => Number(isNewLocalReference(left)) - Number(isNewLocalReference(right)))
+        let totalBytes = 0
+        for (const resource of orderedResources) {
+          if (resource.source && 'localReference' in resource.source) {
+            const snapshot = await this.#resolveLocalInput(resource, resource.source, scope, model, BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT - totalBytes, uploads)
+            result.push(snapshot.input)
+            totalBytes += snapshot.bytes
+            continue
+          }
+          if (!resource.source) {
+            totalBytes += resource.sizeBytes
+            result.push({ attachmentId: resource.attachmentId!, resourceId: resource.resourceId })
+            continue
+          }
+          const resolved = await this.#resolveSourceOrigin(resource.source, scope)
+          totalBytes += resolved.metadata.sizeBytes
+          if (totalBytes > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
+            throw new AttachmentError('VALIDATION_FAILED')
+          if (resolved.attachmentId) {
+            result.push({ attachmentId: resolved.attachmentId, resourceId: resource.resourceId })
+          }
+          else {
+            await validateResourceBytes(resolved.metadata, resolved.bytes)
+            const upload = await this.#attachments.prepareUploads(draftId, [{ ...resolved.metadata, bytes: Uint8Array.from(resolved.bytes) }])
+            uploads.push(upload)
+            const [attachment] = upload.records
+            if (!attachment)
+              throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+            result.push({ attachmentId: attachment.id, resourceId: resource.resourceId })
+          }
+        }
+        if (totalBytes > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
+          throw new AttachmentError('VALIDATION_FAILED')
+        const snapshots = new Map(result.map(snapshot => [snapshot.resourceId, snapshot]))
+        validate()
+        return Object.freeze({ inputs: copyEventSnapshot(resourceIds.map(resourceId => snapshots.get(resourceId)!)), validate, commit: () => settle('commit'), rollback: () => settle('rollback') })
+      }
+      catch (error) {
+        try {
+          await settle('rollback')
+        }
+        catch (cleanup) { throw new AggregateError([error, cleanup], 'COMPOSER_INPUT_PREPARATION_FAILED') }
+        throw error
+      }
+    })
   }
 
   #resolveScope(input: BuddyComposerSourceList): ComposerSourceScope {
@@ -360,7 +432,7 @@ export class ComposerResourceService {
     return snapshot
   }
 
-  async #resolveLocalInput(resource: ComposerResourceRecord, source: BuddyLocalResourceOrigin, scope: ComposerSourceScope, model: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'> | undefined, remainingBytes: number): Promise<{ bytes: number, input: BuddyUserMessageResourceSnapshot }> {
+  async #resolveLocalInput(resource: ComposerResourceRecord, source: BuddyLocalResourceOrigin, scope: ComposerSourceScope, model: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'> | undefined, remainingBytes: number, uploads?: PreparedAttachmentUploads[]): Promise<{ bytes: number, input: BuddyUserMessageResourceSnapshot }> {
     const origin = source.origin
     if (origin && 'conversationId' in origin && (origin.conversationId !== scope.conversationId || origin.branchId !== scope.branchId))
       throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
@@ -388,7 +460,7 @@ export class ComposerResourceService {
     const nativeSupported = model && (localReference.mimeType.startsWith('image/')
       ? model.input.includes('image')
       : (model.fileInputMimeTypes as readonly string[]).includes(localReference.mimeType))
-    if (localReference.kind !== 'file' || !nativeSupported || localReference.sizeBytes > remainingBytes)
+    if (!uploads || localReference.kind !== 'file' || !nativeSupported || localReference.sizeBytes > remainingBytes)
       return { bytes: 0, input }
     try {
       normalizeAttachmentMetadata(localReference)
@@ -407,7 +479,9 @@ export class ComposerResourceService {
         return { bytes: 0, input }
       throw error
     }
-    const [attachment] = await this.#attachments.registerUploads(resource.draftId, [{ ...localReference, sourcePath: localReference.path, bytes: Uint8Array.from(bytes) }])
+    const upload = await this.#attachments.prepareUploads(resource.draftId, [{ ...localReference, sourcePath: localReference.path, bytes: Uint8Array.from(bytes) }])
+    uploads.push(upload)
+    const [attachment] = upload.records
     if (!attachment)
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
     return { bytes: localReference.sizeBytes, input: { ...input, attachmentId: attachment.id } }
@@ -524,64 +598,91 @@ export class ComposerResourceService {
   }
 
   async complete(input: BuddyComposerResourceComplete): Promise<BuddyComposerResource> {
-    const resource = this.#requireOwned(input)
-    if (resource.source)
-      throw new AttachmentError('VALIDATION_FAILED')
-    const contentHash = createHash('sha256').update(input.bytes).digest('hex')
-    if (resource.state === 'ready') {
-      if (resource.contentHash !== contentHash)
+    input = { ...input, bytes: Uint8Array.from(input.bytes) }
+    return this.#operate(async () => {
+      const resource = this.#requireOwned(input)
+      if (resource.source)
         throw new AttachmentError('VALIDATION_FAILED')
-      return toPublicResource(resource)
-    }
-    if (resource.state !== 'importing' || this.#importing.has(input.resourceId))
-      throw new AttachmentError('VALIDATION_FAILED')
-
-    this.#importing.add(input.resourceId)
-    try {
-      await validateResourceBytes(resource, input.bytes)
-      const [attachment] = await this.#attachments.registerUploads(input.draftId, [{
-        bytes: input.bytes,
-        mimeType: resource.mimeType,
-        name: resource.name,
-        nameSource: resource.nameSource,
-        sourcePath: resource.sourcePath,
-      }])
-      if (!attachment)
-        throw new AttachmentError('ATTACHMENT_NOT_FOUND')
-      if (!this.#repository.finish({
-        attachmentId: attachment.id,
-        contentHash,
-        draftId: input.draftId,
-        now: new Date().toISOString(),
-        resourceId: input.resourceId,
-      })) {
-        await this.#attachments.release([attachment.id])
-        throw new AttachmentError('VALIDATION_FAILED')
+      const contentHash = createHash('sha256').update(input.bytes).digest('hex')
+      if (resource.state === 'ready') {
+        if (resource.contentHash !== contentHash)
+          throw new AttachmentError('VALIDATION_FAILED')
+        return toPublicResource(resource)
       }
-      return toPublicResource(this.#requireOwned(input))
-    }
-    catch (error) {
-      const failed = this.fail(input)
-      if (error instanceof AttachmentError && ['ATTACHMENT_INVALID', 'ATTACHMENT_UNSUPPORTED', 'ATTACHMENT_TOO_LARGE'].includes(error.code))
-        throw error
-      return failed
-    }
-    finally {
-      this.#importing.delete(input.resourceId)
-    }
+      if (resource.state !== 'importing' || this.#importing.has(input.resourceId))
+        throw new AttachmentError('VALIDATION_FAILED')
+
+      this.#importing.add(input.resourceId)
+      let upload: PreparedAttachmentUploads | undefined
+      try {
+        await validateResourceBytes(resource, input.bytes)
+        upload = await this.#attachments.prepareUploads(input.draftId, [{
+          bytes: input.bytes,
+          mimeType: resource.mimeType,
+          name: resource.name,
+          nameSource: resource.nameSource,
+          sourcePath: resource.sourcePath,
+        }])
+        const [attachment] = upload.records
+        if (!attachment)
+          throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+        if (!this.#commit(input.draftId, 'import', () => this.#repository.finish({
+          attachmentId: attachment.id,
+          contentHash,
+          draftId: input.draftId,
+          now: new Date().toISOString(),
+          resourceId: input.resourceId,
+        }))) {
+          throw new AttachmentError('VALIDATION_FAILED')
+        }
+        const ready = toPublicResource(this.#requireOwned(input))
+        await upload.commit()
+        return ready
+      }
+      catch (error) {
+        if (upload) {
+          let current: ComposerResourceRecord | null
+          try {
+            current = this.#repository.findById(input.resourceId)
+          }
+          catch (readError) {
+            await upload.commit()
+            throw new AggregateError([error, readError], 'COMPOSER_IMPORT_OWNERSHIP_UNKNOWN')
+          }
+          if (current?.attachmentId === upload.records[0]?.id) {
+            await upload.commit()
+            return toPublicResource(current)
+          }
+          await upload.rollback()
+        }
+        const failed = this.#fail(input)
+        if (error instanceof AttachmentError && ['ATTACHMENT_INVALID', 'ATTACHMENT_UNSUPPORTED', 'ATTACHMENT_TOO_LARGE'].includes(error.code))
+          throw error
+        return failed
+      }
+      finally {
+        this.#importing.delete(input.resourceId)
+      }
+    })
   }
 
   fail(input: BuddyComposerResourceTarget): BuddyComposerResource {
+    this.#assertAccepting()
+    return this.#fail(input)
+  }
+
+  #fail(input: BuddyComposerResourceTarget): BuddyComposerResource {
     this.#requireOwned(input)
-    this.#repository.fail(input.draftId, input.resourceId, 'IMPORT_FAILED', new Date().toISOString())
+    this.#commit(input.draftId, 'import', () => this.#repository.fail(input.draftId, input.resourceId, 'IMPORT_FAILED', new Date().toISOString()))
     return toPublicResource(this.#requireOwned(input))
   }
 
   retry(input: BuddyComposerResourceTarget): BuddyComposerResource {
+    this.#assertAccepting()
     this.#requireOwned(input)
     if (this.#importing.has(input.resourceId))
       throw new AttachmentError('VALIDATION_FAILED')
-    this.#repository.retry(input.draftId, input.resourceId, new Date().toISOString())
+    this.#commit(input.draftId, 'import', () => this.#repository.retry(input.draftId, input.resourceId, new Date().toISOString()))
     return toPublicResource(this.#requireOwned(input))
   }
 
@@ -590,60 +691,124 @@ export class ComposerResourceService {
     paths: readonly string[]
     referencedResourceIds?: readonly string[]
   }): Promise<BuddyComposerResource[]> {
-    const { draftId, paths, referencedResourceIds = [] } = input
-    if (!paths.length)
-      return []
-    const capacity = this.#remainingCapacity(draftId, referencedResourceIds)
-    if (paths.length > capacity.count)
-      throw new AttachmentError('ATTACHMENT_LIMIT_EXCEEDED')
-    const locals = await Promise.all(paths.map(path => inspectLocalResource(path)))
-    return this.accept({
-      draftId,
-      resources: locals.map(resource => ({
-        mimeType: resource.mimeType,
-        name: resource.name,
-        sourcePath: resource.path,
-        storage: 'reference',
-        resourceId: randomUUID(),
-        sizeBytes: resource.sizeBytes,
-      })),
+    return this.#operate(async () => {
+      const { draftId, paths, referencedResourceIds = [] } = input
+      if (!paths.length)
+        return []
+      const capacity = this.#remainingCapacity(draftId, referencedResourceIds)
+      if (paths.length > capacity.count)
+        throw new AttachmentError('ATTACHMENT_LIMIT_EXCEEDED')
+      const locals = await Promise.all(paths.map(path => inspectLocalResource(path)))
+      return this.#accept({
+        draftId,
+        resources: locals.map(resource => ({
+          mimeType: resource.mimeType,
+          name: resource.name,
+          sourcePath: resource.path,
+          storage: 'reference',
+          resourceId: randomUUID(),
+          sizeBytes: resource.sizeBytes,
+        })),
+      })
     })
   }
 
   recoverInterruptedImports(unavailableAttachmentIds: readonly string[] = []): void {
-    this.#repository.interruptImports(new Date().toISOString())
-    this.#repository.failUnavailableAttachments(unavailableAttachmentIds, new Date().toISOString())
+    this.#assertAccepting()
+    this.#commit(null, 'recovery', () => {
+      this.#repository.interruptImports(new Date().toISOString())
+      this.#repository.failUnavailableAttachments(unavailableAttachmentIds, new Date().toISOString())
+    })
   }
 
   async cleanupDrafts(now = Date.now()): Promise<string[]> {
-    const cutoff = new Date(now - DRAFT_ATTACHMENT_RETENTION_MS).toISOString()
-    const staleResources = this.#repository.listAll().filter(resource => resource.createdAt < cutoff)
-    const retainedAttachmentIds = new Set<string>()
-    const removableByDraft = new Map<string, string[]>()
+    return this.#operate(async () => {
+      const cutoff = new Date(now - DRAFT_ATTACHMENT_RETENTION_MS).toISOString()
+      const staleResources = this.#repository.listAll().filter(resource => resource.createdAt < cutoff)
+      const retainedAttachmentIds = new Set<string>()
+      const removableByDraft = new Map<string, string[]>()
 
-    for (const resource of staleResources) {
-      const draft = this.#drafts?.findById(resource.draftId)
-      const referenced = draft
-        ? getBuddyUserContentResourceIds(draft.content).includes(resource.resourceId)
-        : false
-      if (referenced) {
-        if (resource.attachmentId)
-          retainedAttachmentIds.add(resource.attachmentId)
-        continue
+      for (const resource of staleResources) {
+        const draft = this.#drafts?.findById(resource.draftId)
+        const referenced = draft
+          ? getBuddyUserContentResourceIds(draft.content).includes(resource.resourceId)
+          : false
+        if (referenced) {
+          if (resource.attachmentId)
+            retainedAttachmentIds.add(resource.attachmentId)
+          continue
+        }
+        const ids = removableByDraft.get(resource.draftId) ?? []
+        ids.push(resource.resourceId)
+        removableByDraft.set(resource.draftId, ids)
       }
-      const ids = removableByDraft.get(resource.draftId) ?? []
-      ids.push(resource.resourceId)
-      removableByDraft.set(resource.draftId, ids)
-    }
 
-    for (const [draftId, resourceIds] of removableByDraft)
-      this.#repository.remove(draftId, resourceIds)
-    return this.#attachments.cleanupDrafts(now, retainedAttachmentIds)
+      for (const [draftId, resourceIds] of removableByDraft)
+        this.#commit(draftId, 'cleanup', () => this.#repository.remove(draftId, resourceIds))
+      return this.#attachments.cleanupDrafts(now, retainedAttachmentIds)
+    })
   }
 
   async discard(draftId: string): Promise<void> {
-    this.#repository.remove(draftId, this.#repository.listForDraft(draftId).map(resource => resource.resourceId))
-    await this.#attachments.releaseDraft(draftId)
+    return this.#operate(async () => {
+      this.#commit(draftId, 'discard', () => this.#repository.remove(draftId, this.#repository.listForDraft(draftId).map(resource => resource.resourceId)))
+      await this.#attachments.releaseDraft(draftId)
+    })
+  }
+
+  async dispose(): Promise<void> {
+    this.#stopping = true
+    while (this.#pending.size)
+      await Promise.allSettled([...this.#pending])
+    this.#disposed = true
+    this.#changes.dispose()
+  }
+
+  #commit<T>(draftId: string | null, reason: ComposerResourceChangeReason, work: () => T): T {
+    if (this.#disposed)
+      throw new AttachmentError('RUNTIME_UNAVAILABLE')
+    const read = () => draftId === null ? this.#repository.listAll() : this.#repository.listForDraft(draftId)
+    const before = new Map(read().map(resource => [resource.resourceId, resource]))
+    try {
+      return work()
+    }
+    finally {
+      const after = new Map(read().map(resource => [resource.resourceId, resource]))
+      const resources: ComposerResourceChange['resources'][number][] = []
+      for (const id of new Set([...before.keys(), ...after.keys()])) {
+        const previous = before.get(id)
+        const current = after.get(id)
+        const semantic = (record: ComposerResourceRecord | undefined) => {
+          if (!record)
+            return null
+          const { updatedAt: _updated, ...value } = record
+          return value
+        }
+        if (JSON.stringify(semantic(previous)) === JSON.stringify(semantic(current)))
+          continue
+        resources.push({ resourceId: id, draftId: (current ?? previous)!.draftId, kind: !previous ? 'created' : !current ? 'removed' : 'changed', state: current?.state ?? null })
+      }
+      if (resources.length)
+        this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, operationId: randomUUID(), reason, resources }))
+    }
+  }
+
+  #assertAccepting(): void {
+    if (this.#stopping)
+      throw new AttachmentError('RUNTIME_UNAVAILABLE')
+  }
+
+  #operate<T>(work: () => Promise<T>): Promise<T> {
+    if (this.#stopping)
+      return Promise.reject(new AttachmentError('RUNTIME_UNAVAILABLE'))
+    const pending = Promise.withResolvers<T>()
+    this.#pending.add(pending.promise)
+    try {
+      void Promise.resolve(work()).then(pending.resolve, pending.reject)
+    }
+    catch (error) { pending.reject(error) }
+    void pending.promise.then(() => this.#pending.delete(pending.promise), () => this.#pending.delete(pending.promise))
+    return pending.promise
   }
 
   #requireOwned(input: BuddyComposerResourceTarget): ComposerResourceRecord {

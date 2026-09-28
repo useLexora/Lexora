@@ -4,6 +4,7 @@ import type {
   AutomationOccurrenceRecord,
   AutomationOccurrenceRow,
 } from './automationOccurrenceRecord'
+import { toAutomationOccurrenceRecord } from './automationOccurrenceRecord'
 import { withTransaction } from './database'
 
 interface AutomationOccurrenceRecordReader {
@@ -29,7 +30,7 @@ export interface AutomationOccurrenceCommandRepository {
     now: string
     owner: string
   }) => AutomationOccurrenceRecord[]
-  markOccurrenceDeleted: (id: string, deletedAt: string) => boolean
+  markOccurrenceDeleted: (id: string, deletedAt: string) => { occurrence: AutomationOccurrenceRecord, previousStatus: AutomationOccurrenceRecord['status'] } | null
 }
 
 export interface AutomationOccurrenceCommandStore {
@@ -72,6 +73,7 @@ export function createAutomationOccurrenceCommandStore(
         lease_owner = NULL,
         lease_expires_at = NULL
     WHERE id = ? AND deleted_at IS NULL
+    RETURNING *
   `)
 
   const tryFinishQueued = (input: FinishQueuedAutomationOccurrenceInput): boolean => {
@@ -90,9 +92,11 @@ export function createAutomationOccurrenceCommandStore(
   return {
     repository: {
       finishQueued(input) {
-        if (!tryFinishQueued(input))
-          return null
-        return occurrenceRecords.requireById(input.id)
+        return withTransaction(database, () => {
+          if (!tryFinishQueued(input))
+            return null
+          return occurrenceRecords.requireById(input.id)
+        })
       },
       leaseQueued(input) {
         return withTransaction(database, () => {
@@ -116,7 +120,13 @@ export function createAutomationOccurrenceCommandStore(
         })
       },
       markOccurrenceDeleted(id, deletedAt) {
-        return Number(markOccurrenceDeleted.run(deletedAt, deletedAt, id).changes) === 1
+        return withTransaction(database, () => {
+          const previous = database.prepare('SELECT status FROM automation_occurrences WHERE id = ? AND deleted_at IS NULL').get(id) as { status: AutomationOccurrenceRecord['status'] } | undefined
+          if (!previous)
+            return null
+          const row = markOccurrenceDeleted.get(deletedAt, deletedAt, id) as unknown as AutomationOccurrenceRow
+          return { occurrence: toAutomationOccurrenceRecord(row), previousStatus: previous.status }
+        })
       },
     },
     tryFinishQueued,

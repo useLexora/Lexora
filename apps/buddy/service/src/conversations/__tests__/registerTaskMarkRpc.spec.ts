@@ -5,6 +5,7 @@ import { createConversationRepository } from '../../storage/conversationReposito
 import { openBuddyDatabase } from '../../storage/database'
 import { createTaskMarkRepository } from '../../storage/taskMarkRepository'
 import { registerTaskMarkRpc } from '../registerTaskMarkRpc'
+import { TaskMarkService } from '../TaskMarkService'
 
 describe('task mark RPC boundary', () => {
   it('clears a task through a strict versioned request without deleting its mark definition', async () => {
@@ -14,7 +15,7 @@ describe('task mark RPC boundary', () => {
     const stop = registerTaskMarkRpc({ onRequest: (method, handler) => {
       handlers.set(method, handler)
       return () => handlers.delete(method)
-    } }, repository)
+    } }, new TaskMarkService(repository), repository)
     try {
       createConversationRepository(database).create({ id: 'a', branchId: 'branch-a', title: '测试', createdAt: '2026-09-12T00:00:00.000Z', spaceId: null, approvalPolicy: 'policy', executionProfile: 'workspace_write' })
       const mark = repository.create({ name: '待检查', description: '', color: '#3979d6' })
@@ -37,10 +38,11 @@ describe('task mark RPC boundary', () => {
   it('validates exact character limits and color syntax, allows duplicate names and rejects system mutations', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const handlers = new Map<string, RuntimeRequestHandler>()
+    const repository = createTaskMarkRepository(database)
     const stop = registerTaskMarkRpc({ onRequest: (method, handler) => {
       handlers.set(method, handler)
       return () => handlers.delete(method)
-    } }, createTaskMarkRepository(database))
+    } }, new TaskMarkService(repository), repository)
     const invoke = async (method: string, input: unknown) => handlers.get(method)!(input)
     const valid = { name: '字'.repeat(20), description: '说'.repeat(200), color: '#AABBCC' }
     try {

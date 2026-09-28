@@ -49,3 +49,40 @@ it('aborts handlers when their connection closes', async () => {
   await rejected
   expect(signal?.aborted).toBe(true)
 })
+
+it('keeps notification observers independent from request outcomes and preserves delivery order under reentry', async () => {
+  const [client, server] = peers()
+  const seen: string[] = []
+  server.onNotification((method) => {
+    if (method === 'outer')
+      client.notify('inner', null)
+    seen.push(`first:${method}`)
+    throw new Error('fixture observer failure')
+  })
+  server.onNotification(method => seen.push(`second:${method}`))
+  server.onRequest('committed', () => ({ committed: true }))
+  client.notify('outer', null)
+  expect(seen).toEqual(['first:outer', 'second:outer', 'first:inner', 'second:inner'])
+  await expect(client.request('committed', null)).resolves.toEqual({ committed: true })
+  client.close(new Error('closed'))
+  server.close(new Error('closed'))
+})
+
+it('owns nested notification data before observers run without freezing the sender', async () => {
+  const [client, server] = peers()
+  const original = { nested: { value: 'committed' } }
+  const received: unknown[] = []
+  server.onNotification((_, params) => {
+    Reflect.set((params as typeof original).nested, 'value', 'corrupted')
+    throw new Error('fixture observer failure')
+  })
+  server.onNotification((_, params) => received.push(params))
+  client.notify('fact', original)
+  original.nested.value = 'sender changed'
+  expect(received).toEqual([{ nested: { value: 'committed' } }])
+  expect(Object.isFrozen(original.nested)).toBe(false)
+  server.onRequest('available', () => true)
+  await expect(client.request('available', null)).resolves.toBe(true)
+  client.close(new Error('closed'))
+  server.close(new Error('closed'))
+})

@@ -7,11 +7,11 @@ import type {
 } from '../storage/artifactRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { ConversationIndexRepository } from '../storage/conversationIndexRepository'
-import type { ConversationModelSelection } from '../storage/conversationRecord'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { ConversationTimelineRepository } from '../storage/conversationTimelineRepository'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRepository } from '../storage/runRepository'
+import type { ConversationMetadataService } from './ConversationMetadataService'
 import { conversationsRpc } from '../../../shared/conversation/conversationApi'
 
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
@@ -30,17 +30,9 @@ import {
 } from './messagePageCursor'
 import { projectRunOutputs } from './projectRunOutputs'
 
-export interface ConversationSessionInvalidator {
-  invalidateConversation: (conversationId: string) => Promise<unknown>
-}
-
 type ConversationRpcRepository = Pick<
   ConversationRepository,
-  | 'activateBranch'
   | 'findById'
-  | 'rename'
-  | 'setPermissionSettings'
-  | 'setModelSelection'
 > & Pick<
   ConversationHistoryRepository,
   'listBranches' | 'listMessagePage'
@@ -51,16 +43,13 @@ export interface RegisterConversationRpcOptions {
   attachments: Pick<AttachmentService, 'listForConversation'>
   changes: Pick<ChangeCaptureService, 'listSummariesForRuns'>
   conversations: ConversationRpcRepository
+  metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'activateBranch'>
   deleteConversation: (conversationId: string) => Promise<boolean>
   eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] }
   isDeleting: (conversationId: string) => boolean
-  resolveModelSelection: (
-    selection: ConversationModelSelection,
-  ) => Promise<ConversationModelSelection>
   rpc: RuntimeRequestRegistrar
   runInputs: Pick<RunInputRepository, 'findByRunId'>
   runs: Pick<RunRepository, 'listForTimeline'>
-  sessions: ConversationSessionInvalidator
 }
 
 export function registerConversationRpc(options: RegisterConversationRpcOptions): () => void {
@@ -73,53 +62,29 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
     return requireActiveConversation(options, input.conversationId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.rename, (input) => {
-    return options.conversations.rename({
+    return options.metadata.rename({
       id: input.conversationId,
       title: input.title,
-      updatedAt: new Date().toISOString(),
     })
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.setPermissionSettings, async (input) => {
-    const current = requireActiveConversation(options, input.conversationId)
-    if (
-      current.approvalPolicy === input.approvalPolicy
-      && current.executionProfile === input.executionProfile
-    ) {
-      return current
-    }
-    const conversation = options.conversations.setPermissionSettings({
+    return options.metadata.setPermissionSettings({
       approvalPolicy: input.approvalPolicy,
       executionProfile: input.executionProfile,
       id: input.conversationId,
-      updatedAt: new Date().toISOString(),
     })
-    if (!conversation)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    await options.sessions.invalidateConversation(input.conversationId)
-    return conversation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.setModelSelection, async (input) => {
-    requireActiveConversation(options, input.conversationId)
-    const selection = await options.resolveModelSelection(input.modelSelection)
-    return requireValue(options.conversations.setModelSelection({
+    return options.metadata.setModelSelection({
       id: input.conversationId,
-      modelSelection: {
-        modelId: selection.modelId,
-        providerId: selection.providerId,
-        reasoning: selection.reasoning,
-        serviceTier: selection.serviceTier,
-      },
-      updatedAt: new Date().toISOString(),
-    }))
+      modelSelection: input.modelSelection,
+    })
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.delete, async (input) => {
     return options.deleteConversation(input.conversationId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.activateBranch, (input) => {
-    return options.conversations.activateBranch({
-      ...input,
-      updatedAt: new Date().toISOString(),
-    })
+    return options.metadata.activateBranch(input)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listBranches, (input) => {
     requireValue(options.conversations.findById(input.conversationId))

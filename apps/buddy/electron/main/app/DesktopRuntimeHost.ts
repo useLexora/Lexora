@@ -1,6 +1,7 @@
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { BrowserIntegration } from '../browser/BrowserIntegration'
+import type { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import type { DesktopFeature } from '../platform/desktopFeatures'
 import type { CredentialVault } from '../secrets/CredentialVault'
 import type { DesktopWindowHost } from './DesktopWindowHost'
@@ -17,7 +18,7 @@ import { currentTarget } from '../../../platform/target'
 import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
-import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
+import { extensionAgentInvocationSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
 import { installAttachmentProtocol } from '../attachmentProtocol'
@@ -39,6 +40,7 @@ import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
 
 export class DesktopRuntimeHost {
   inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
+  extensionAgent: ReturnType<typeof registerExtensionIpc>['agent'] | null = null
   readonly contextPanel: ContextPanelHost
   readonly configStore: LexoraConfigStore
   readonly #environment: DesktopEnvironment
@@ -59,14 +61,13 @@ export class DesktopRuntimeHost {
     this.#windows = windows
     this.#browser = browser
     this.configStore = new LexoraConfigStore({ configPath: environment.paths.configPath })
+    const configDiagnostics = this.configStore.onDidChange(change => environment.events.publish({ event: `settings.${change.kind.replaceAll('-', '_')}`, component: 'desktop.settings', level: change.kind.endsWith('failed') ? 'warn' : 'info', revision: change.revision, operationId: change.operationId, count: change.groups.length }))
+    this.#subscriptions.push(() => configDiagnostics.dispose())
     this.contextPanel = new ContextPanelHost(async (operation) => {
-      try {
-        await this.service.request(contextPanelRpc.recordOperation, operation)
-      }
-      catch (error) {
-        environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'context_panel.record.failed', error })
-      }
+      await this.service.request(contextPanelRpc.recordOperation, operation)
     })
+    const panelDiagnostics = this.contextPanel.onDidChange(change => environment.events.publish({ event: change.kind === 'record' ? `context_panel.record.${change.status}` : `context_panel.${change.state.open ? 'opened' : 'closed'}`, component: 'desktop.context_panel', level: change.kind === 'record' && change.status === 'failed' ? 'warn' : 'info', operationId: change.operationId, revision: change.revision }))
+    this.#subscriptions.push(() => panelDiagnostics.dispose())
   }
 
   get config(): LexoraConfig | null {
@@ -141,15 +142,16 @@ export class DesktopRuntimeHost {
     const config = await this.configStore.read()
     this.#config = config
     this.#network = new DesktopNetwork()
+    const networkDiagnostics = this.#network.onDidChange(change => environment.events.publish({ event: `network.${change.kind}.${change.status}`, component: 'desktop.network', level: ['failed', 'degraded', 'unavailable'].includes(change.status) ? 'warn' : 'info', operationId: change.operationId, revision: change.revision, ...(change.failure ? { failure: change.failure, errorCode: 'NETWORK_START_FAILED' } : {}) }))
+    this.#subscriptions.push(() => networkDiagnostics.dispose())
     await this.#network.start(config.proxy)
-    if (this.#network.startupError)
-      environment.events.publish({ event: 'network.start_failed', component: 'desktop.network', level: 'warn', ...readDiagnosticError(this.#network.startupError) })
     this.#windowsPowerShell = currentPlatform.shell === 'powershell'
       ? await resolveWindowsPowerShell()
       : undefined
     const composition = createDesktopFeatures(currentPlatform, {
       ...nativePaths,
       diagnostics: environment.diagnostics,
+      report: event => environment.events.publish(event),
       onOpenDesktop: () => this.#windows.show(),
       paths: environment.paths,
     })
@@ -157,10 +159,15 @@ export class DesktopRuntimeHost {
     this.#service = new BuddyServiceSupervisor({
       onDiagnostic: (event) => {
         environment.diagnostics.record({ ...event, scope: 'local-service' })
-        environment.startup.observe(event, event)
       },
       bindPeer: (peer) => {
         const disposers = [
+          peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
+          peer.onRequest(extensionAgentRpc.invoke, (input, signal) => {
+            if (!this.extensionAgent)
+              throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+            return this.extensionAgent.invoke(extensionAgentInvocationSchema.parse(input), signal ?? new AbortController().signal)
+          }),
           peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
           registerExtensionAuthoringRpc(peer, (id) => {
             if (!this.inspectExtension)
@@ -199,6 +206,7 @@ export class DesktopRuntimeHost {
         captureStderr: output => environment.diagnostics.captureOutput('local-service', output, sourceId),
       }),
     })
+    this.#subscriptions.push(environment.startup.bindRuntime(this.#service))
     return config
   }
 
@@ -246,6 +254,8 @@ export class DesktopRuntimeHost {
   async stop(): Promise<void> {
     const failures: unknown[] = []
     for (const cleanup of [
+      () => this.contextPanel.dispose(),
+      () => this.configStore.dispose(),
       () => this.#service?.stop(),
       () => this.#network?.stop(),
       ...this.#features.map(feature => () => feature.stop()),

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopSettingsPageLayout from '@/modules/settings/layouts/DesktopSettingsPageLayout.vue'
+import DesktopSettingsModuleLayout from '@/modules/settings/layouts/DesktopSettingsModuleLayout.vue'
 import { useSettingsContext } from '@/modules/settings/settingsContext'
 import DesktopWebSettings from '@/modules/settings/widgets/web/DesktopWebSettings.vue'
 
 const { webSettings, ready } = useSettingsContext()
-const { t } = useBuddyI18n(webSettings.language)
 onMounted(() => {
   void ready.then(() => webSettings.load())
 })
@@ -14,13 +12,7 @@ const { busy, error, language, snapshot, searchSources, load, setSearchEnabled, 
 </script>
 
 <template>
-  <DesktopSettingsPageLayout requires-runtime :loading="busy && !snapshot">
-    <template #title>
-      {{ t('desktop.settings.category.web') }}
-    </template>
-    <template #description>
-      {{ t('desktop.settings.categoryDescription.web') }}
-    </template>
+  <DesktopSettingsModuleLayout :loading="busy && !snapshot">
     <DesktopWebSettings
       :busy="busy"
       :error="error"
@@ -34,5 +26,5 @@ const { busy, error, language, snapshot, searchSources, load, setSearchEnabled, 
       :save-credential="saveCredential"
       :reveal-credential="revealCredential"
     />
-  </DesktopSettingsPageLayout>
+  </DesktopSettingsModuleLayout>
 </template>

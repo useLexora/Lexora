@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopSettingsPageLayout from '../layouts/DesktopSettingsPageLayout.vue'
+import DesktopSettingsModuleLayout from '../layouts/DesktopSettingsModuleLayout.vue'
 import { useSettingsContext } from '../settingsContext'
 import DesktopAboutSettings from '../widgets/app/DesktopAboutSettings.vue'
 import DesktopApplicationToggle from '../widgets/app/DesktopApplicationToggle.vue'
@@ -11,13 +11,7 @@ const { t } = useBuddyI18n(language)
 </script>
 
 <template>
-  <DesktopSettingsPageLayout :requires-runtime="false">
-    <template #title>
-      {{ t('desktop.settings.category.about') }}
-    </template>
-    <template #description>
-      {{ t('desktop.settings.categoryDescription.about') }}
-    </template>
+  <DesktopSettingsModuleLayout>
     <DesktopAboutSettings :app-info="appInfo" :language="language" />
     <div class="desktop-about-preferences">
       <DesktopApplicationToggle
@@ -39,7 +33,7 @@ const { t } = useBuddyI18n(language)
         :update-settings="updateSettings"
       />
     </div>
-  </DesktopSettingsPageLayout>
+  </DesktopSettingsModuleLayout>
 </template>
 
 <style scoped>

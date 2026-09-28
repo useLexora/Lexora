@@ -16,6 +16,7 @@ export interface BuddySessionEventSource {
 }
 
 export interface ReusableBuddySession extends BuddySessionEventSource {
+  getModelUsage?: () => { providerId: string, modelId: string } | null
   getCacheWarmingStatus?: () => LocalCacheWarmingStatus
   getInputContext?: () => { messages: AgentSession['messages'] }
   steer?: (prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]) => boolean

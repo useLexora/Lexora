@@ -1,10 +1,13 @@
+import type { ConnectorChangeNotice } from '../../../shared/connectors/connectorApi'
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
+import { subscribe } from '../subscribe'
 
 export function createConnectorsApi(): Pick<LocalChatApi, 'connectors'> {
   return {
     connectors: Object.freeze({
+      onChanged: listener => subscribe<ConnectorChangeNotice>(LOCAL_CHAT_IPC_CHANNELS.connectorsChanged, listener),
       setEnabled: (connectorId, enabled) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.connectorsSetEnabled, { connectorId, enabled }),
       test: connectorId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.connectorsTest, { connectorId }),
       tools: connectorId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.connectorsTools, { connectorId }),

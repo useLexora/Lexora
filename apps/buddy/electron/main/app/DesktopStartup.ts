@@ -1,23 +1,48 @@
-import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ApplicationStartupState } from '../../../shared/diagnostics/applicationStartup'
-import type { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
-import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { Event, ListenerErrorHandler } from '../../../shared/events/Emitter'
+import type { LifecycleFailure } from '../../../shared/lifecycle/lifecycleFailure'
+import type { RuntimeLifecycleReader, RuntimeLifecycleSnapshot } from '../../../shared/lifecycle/runtimeLifecycle'
+import type { RendererLifecycleReport, ServiceLifecycleReader, ServiceLifecycleSnapshot } from '../../../shared/lifecycle/serviceLifecycle'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { readLifecycleFailure } from '../../../shared/lifecycle/lifecycleFailure'
+
+type StartupTransition = 'ready' | 'recovered' | 'start_failed' | 'degraded' | 'start_cancelled' | 'stopped' | 'stop_failed'
+export interface StartupChange {
+  readonly state: ApplicationStartupState
+  readonly transition?: StartupTransition
+  readonly component?: string
+  readonly operationId?: string
+  readonly durationMs?: number
+  readonly failure?: LifecycleFailure
+}
 
 const REQUIRED_HOSTS = ['desktop', 'runtime.connection', 'renderer'] as const
 const COMPONENT_STATUSES = {
-  'startup.step.started': 'running',
-  'startup.step.completed': 'completed',
-  'startup.step.failed': 'failed',
-  'component.registered': 'pending',
-  'component.starting': 'running',
-  'component.ready': 'completed',
-  'component.start_failed': 'failed',
+  registered: 'pending',
+  starting: 'running',
+  ready: 'completed',
+  start_failed: 'failed',
+  stopping: 'stopping',
+  stopped: 'stopped',
+  stop_failed: 'failed',
 } as const
 
 export class DesktopStartup {
-  readonly #events: ApplicationEvents
+  readonly #changes: Emitter<StartupChange>
+  readonly #rendererReports: Emitter<RendererLifecycleReport>
+  readonly onDidChange: Event<StartupChange>
+  readonly onDidReportRenderer: Event<RendererLifecycleReport>
+  readonly #rendererRevisions = new Map<string, number>()
   readonly #startedAt = performance.now()
-  readonly #listeners = new Set<(state: ApplicationStartupState) => void>()
+  readonly #retiredRenderers = new Set<string>()
+  #desktopSource: ServiceLifecycleReader | null = null
+  #runtimeSource: RuntimeLifecycleReader | null = null
+  #desktop: ServiceLifecycleSnapshot | null = null
+  #runtime: RuntimeLifecycleSnapshot | null = null
+  #renderer: ServiceLifecycleSnapshot | null = null
+  #terminalStatus: 'stopping' | 'stopped' | null = null
+  #failure: LifecycleFailure | null = null
   #state: ApplicationStartupState = {
     revision: 0,
     generation: null,
@@ -26,8 +51,11 @@ export class DesktopStartup {
     stages: REQUIRED_HOSTS.map(stage => ({ stage, status: 'pending' })),
   }
 
-  constructor(events: ApplicationEvents) {
-    this.#events = events
+  constructor(onListenerError: ListenerErrorHandler = () => {}) {
+    this.#changes = new Emitter(onListenerError)
+    this.#rendererReports = new Emitter(onListenerError)
+    this.onDidChange = this.#changes.event
+    this.onDidReportRenderer = this.#rendererReports.event
   }
 
   get state(): ApplicationStartupState {
@@ -35,85 +63,147 @@ export class DesktopStartup {
   }
 
   onStateChange(listener: (state: ApplicationStartupState) => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+    const subscription = this.onDidChange(change => listener(structuredClone(change.state)))
+    return () => subscription.dispose()
+  }
+
+  bindDesktop(source: ServiceLifecycleReader): () => void {
+    this.#desktopSource = source
+    const subscription = source.onDidChange(() => this.reconcile())
+    this.reconcile()
+    return () => {
+      subscription.dispose()
+      if (this.#desktopSource === source)
+        this.#desktopSource = null
+    }
+  }
+
+  bindRuntime(source: RuntimeLifecycleReader): () => void {
+    this.#runtimeSource = source
+    const subscription = source.onDidChangeLifecycle(() => this.reconcile())
+    this.reconcile()
+    return () => {
+      subscription.dispose()
+      if (this.#runtimeSource === source)
+        this.#runtimeSource = null
+    }
+  }
+
+  reconcile(): ApplicationStartupState {
+    if (this.#desktopSource)
+      this.#desktop = this.#desktopSource.snapshot
+    if (this.#runtimeSource) {
+      const runtime = this.#runtimeSource.lifecycleState
+      if (runtime.generation !== this.#runtime?.generation) {
+        this.#renderer = null
+        this.#retiredRenderers.clear()
+      }
+      this.#runtime = runtime
+    }
+    this.#update()
+    return this.state
+  }
+
+  acceptRenderer(report: RendererLifecycleReport): boolean {
+    const snapshot = report.change.snapshot
+    if (snapshot.revision <= (this.#rendererRevisions.get(snapshot.sourceId) ?? -1))
+      return false
+    this.#rendererRevisions.set(snapshot.sourceId, snapshot.revision)
+    if (this.#rendererRevisions.size > 256)
+      this.#rendererRevisions.delete(this.#rendererRevisions.keys().next().value!)
+    this.#rendererReports.fire(copyEventSnapshot(report))
+    if (report.generation !== this.#runtime?.generation || this.#terminalStatus)
+      return false
+    if (this.#retiredRenderers.has(snapshot.sourceId))
+      return false
+    if (this.#renderer?.sourceId === snapshot.sourceId && snapshot.revision <= this.#renderer.revision)
+      return false
+    if (this.#renderer && this.#renderer.sourceId !== snapshot.sourceId) {
+      const root = snapshot.components.find(component => component.component === 'renderer')
+      if (!root || !['registered', 'starting'].includes(root.status))
+        return false
+      this.#retiredRenderers.add(this.#renderer.sourceId)
+    }
+    this.#renderer = copyEventSnapshot(snapshot)
+    this.#update()
+    return true
   }
 
   stopping(): void {
-    if (['stopping', 'stopped'].includes(this.#state.status))
+    if (this.#terminalStatus)
       return
     const cancelled = this.#state.status === 'starting' && !this.#state.hasBeenReady
-    this.#state = { ...this.#state, status: 'stopping' }
-    if (cancelled)
-      this.#events.publish({ event: 'app.start_cancelled', level: 'info' })
-    this.#publishState()
+    this.#terminalStatus = 'stopping'
+    this.#publish({ ...this.#state, status: 'stopping' }, cancelled ? { transition: 'start_cancelled' } : {})
   }
 
   failed(error: unknown): void {
-    if (['failed', 'stopping', 'stopped'].includes(this.#state.status))
+    if (this.#terminalStatus || this.#state.status === 'failed')
       return
-    this.#state = { ...this.#state, status: 'failed' }
-    this.#events.publish({ event: this.#state.hasBeenReady ? 'app.degraded' : 'app.start_failed', level: 'error', ...readDiagnosticError(error) })
-    this.#publishState()
+    this.#failure = readLifecycleFailure(error)
+    this.#update()
   }
 
-  stopped(): void {
-    this.#state = { ...this.#state, status: 'stopped' }
-    this.#publishState()
+  stopped(error?: unknown): void {
+    if (this.#terminalStatus === 'stopped')
+      return
+    this.#terminalStatus = 'stopped'
+    this.#publish({ ...this.#state, status: 'stopped' }, error === undefined ? { transition: 'stopped' } : { transition: 'stop_failed', failure: readLifecycleFailure(error) })
   }
 
-  readonly observe = (event: ApplicationDiagnostic, source?: { sourceId: string }): void => {
-    if (['runtime.restarting', 'runtime.offline', 'runtime.stopping'].includes(event.event) && !['stopping', 'stopped'].includes(this.#state.status)) {
-      const failed = event.event === 'runtime.offline'
-      if (failed && this.#state.status !== 'failed')
-        this.#events.publish({ event: this.#state.hasBeenReady ? 'app.degraded' : 'app.start_failed', level: 'error', component: 'runtime.connection', parentOperationId: event.operationId, errorCode: event.errorCode, errorType: event.errorType, failure: event.failure })
-      this.#state = { ...this.#state, status: failed ? 'failed' : 'starting', stages: this.#state.stages.map(stage => stage.stage === 'runtime.connection' ? { ...stage, status: failed ? 'failed' : 'running', errorCode: event.errorCode } : stage) }
-      this.#publishState()
+  #update(): void {
+    if (this.#terminalStatus)
       return
+    const components = [
+      ...this.#desktop?.components ?? [],
+      ...this.#runtime?.services?.components ?? [],
+      ...this.#renderer?.components ?? [],
+    ]
+    const connection = this.#runtime?.connection
+    if (connection)
+      components.push(connection)
+    const stages: ApplicationStartupState['stages'][number][] = components.map(component => ({
+      stage: component.component,
+      status: COMPONENT_STATUSES[component.status],
+      operationId: component.operationId,
+      ...(component.durationMs === undefined ? {} : { durationMs: component.durationMs }),
+      ...(component.failure?.errorCode ? { errorCode: component.failure.errorCode } : {}),
+    }))
+    for (const required of REQUIRED_HOSTS) {
+      if (!stages.some(stage => stage.stage === required))
+        stages.push({ stage: required, status: 'pending' })
     }
-    const component = event.component
-    if (!component || !(event.event in COMPONENT_STATUSES) || ['stopping', 'stopped'].includes(this.#state.status))
-      return
-    const status = COMPONENT_STATUSES[event.event as keyof typeof COMPONENT_STATUSES]
-    let stages = this.#state.stages
-    if (component === 'runtime.connection' && status === 'running') {
-      const generation = event.operationId ?? source?.sourceId ?? null
-      stages = stages.filter(stage => !stage.stage.startsWith('runtime.') && !stage.stage.startsWith('renderer.'))
-        .map(stage => stage.stage === 'renderer' ? { stage: stage.stage, status: 'pending' as const } : stage)
-      this.#state = { ...this.#state, generation }
+    const runtime = this.#runtime
+    if (runtime && runtime.status !== 'ready') {
+      const stage = stages.find(stage => stage.stage === 'runtime.connection')!
+      stage.status = runtime.status === 'offline' ? 'failed' : runtime.status === 'stopped' ? 'pending' : 'running'
+      if (runtime.errorCode)
+        stage.errorCode = runtime.errorCode
     }
-    else if (component.startsWith('runtime.') && source?.sourceId !== this.#state.generation) {
-      return
+    const failedComponent = components.find(component => component.status === 'start_failed' || component.status === 'stop_failed')
+    const failed = this.#failure !== null || stages.some(stage => stage.status === 'failed')
+    const ready = !failed && REQUIRED_HOSTS.every(id => stages.some(stage => stage.stage === id && stage.status === 'completed'))
+    const status = failed ? 'failed' : ready ? 'ready' : 'starting'
+    const next: ApplicationStartupState = { ...this.#state, generation: runtime?.generation ?? null, stages, status, hasBeenReady: this.#state.hasBeenReady || ready }
+    const transition: Omit<StartupChange, 'state'> = {}
+    if (ready && this.#state.status !== 'ready') {
+      Object.assign(transition, { transition: this.#state.hasBeenReady ? 'recovered' : 'ready', durationMs: Math.round(performance.now() - this.#startedAt) })
     }
-    if ((component === 'renderer' || component.startsWith('renderer.')) && event.generation !== this.#state.generation)
-      return
-    if (component === 'renderer' && status === 'running')
-      stages = stages.filter(stage => !stage.stage.startsWith('renderer.'))
-    const previous = stages.find(stage => stage.stage === component)
-    if (status !== 'pending' && status !== 'running' && previous?.operationId !== event.operationId)
-      return
-    const next = { stage: component, status, operationId: event.operationId, durationMs: event.durationMs, errorCode: event.errorCode }
-    stages = previous ? stages.map(stage => stage === previous ? next : stage) : [...stages, next]
-    const ready = REQUIRED_HOSTS.every(id => stages.some(stage => stage.stage === id && stage.status === 'completed'))
-    const failed = stages.some(stage => stage.status === 'failed')
-    const stateStatus = failed ? 'failed' : ready ? 'ready' : 'starting'
-    const wasReady = this.#state.hasBeenReady
-    const previousStatus = this.#state.status
-    this.#state = { ...this.#state, status: stateStatus, stages, hasBeenReady: wasReady || ready }
-    if (ready && previousStatus !== 'ready')
-      this.#events.publish({ event: wasReady ? 'app.recovered' : 'app.ready', level: 'info', durationMs: Math.round(performance.now() - this.#startedAt) })
-    else if (stateStatus === 'failed' && previousStatus !== 'failed')
-      this.#events.publish({ event: wasReady ? 'app.degraded' : 'app.start_failed', level: 'error', component, parentOperationId: event.operationId, errorCode: event.errorCode, errorType: event.errorType, failure: event.failure })
-    this.#publishState()
+    else if (failed && this.#state.status !== 'failed') {
+      const component = failedComponent ?? (runtime?.status === 'offline' ? connection : null)
+      Object.assign(transition, {
+        transition: this.#state.hasBeenReady ? 'degraded' : 'start_failed',
+        ...(component ? { component: component.component, operationId: component.operationId } : {}),
+        failure: this.#failure ?? component?.failure ?? (runtime?.errorCode ? { errorCode: runtime.errorCode } : {}),
+      })
+    }
+    this.#publish(next, transition)
   }
 
-  #publishState(): void {
-    this.#state = { ...this.#state, revision: this.#state.revision + 1 }
-    for (const listener of this.#listeners) {
-      try {
-        listener(this.state)
-      }
-      catch {}
-    }
+  #publish(state: ApplicationStartupState, change: Omit<StartupChange, 'state'> = {}): void {
+    if (JSON.stringify(state) === JSON.stringify(this.#state))
+      return
+    this.#state = { ...state, revision: this.#state.revision + 1 }
+    this.#changes.fire(copyEventSnapshot({ state: this.#state, ...change }))
   }
 }

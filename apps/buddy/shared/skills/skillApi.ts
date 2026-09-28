@@ -124,7 +124,14 @@ export const skillsRpc = {
   remove: { method: 'skills.remove', input: skillsRequestSchemas.remove, response: skillsResponseSchemas.skills },
 } as const satisfies Record<string, RuntimeRequestContract>
 
-export const skillChangedSchema = scopeSchema
+export const skillChangedSchema = scopeSchema.extend({
+  sourceId: z.uuid(),
+  sequence: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+  type: z.enum(['installation', 'catalog']),
+  mode: z.enum(['discovery', 'management']).optional(),
+}).strict()
+export type SkillChangeNotice = Readonly<z.infer<typeof skillChangedSchema>>
 
 export function isSkillAvailable(skill: Pick<LocalSkill, 'status'>): boolean {
   return skill.status === 'available' || skill.status === 'manual_only'

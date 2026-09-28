@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { registerBunOAuthFlows } from '@earendil-works/pi-ai/bun-oauth'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import { providerNotifications } from '../../../shared/providers/providerApi'
 import { createProviderRepository } from '../storage/providerRepository'
 import { AuthInteractionService } from './AuthInteractionService'
 import { createProviderModelRuntime } from './createProviderModelRuntime'
@@ -49,13 +50,14 @@ export async function createProviderService(
   const providers = options.providers ?? createProviderRepository(options.database)
   const requestHeaders = new ProviderRequestHeaders(providers.states)
   const providerRuntime = createProviderModelRuntime(modelRuntime, requestHeaders, options.record)
+  const authInteractions = new AuthInteractionService({ openExternal: async (url) => {
+    await options.peer.request('host.openExternal', { url })
+  } })
+  authInteractions.onDidChallenge(challenge => options.peer.notify(providerNotifications.authChallenge.method, challenge))
+  authInteractions.onDidChange(change => options.record?.({ event: `provider.auth.${change.kind.replaceAll('-', '_')}`, level: 'info', operationId: change.loginId, count: change.kind === 'challenge-opened' ? 1 : 0 }))
   const service = new ProviderService({
-    authInteractions: new AuthInteractionService({
-      notify: (method, params) => options.peer.notify(method, params),
-      openExternal: async (url) => {
-        await options.peer.request('host.openExternal', { url })
-      },
-    }),
+    authInteractions,
+    credentials,
     credentialStatus: createProviderCredentialStatus(credentials),
     getActiveRuns: options.getActiveRuns,
     modelDiscovery: new OpenAiCompatibleModelDiscovery({ credentials, requestHeaders, record: options.record }),
@@ -65,6 +67,36 @@ export async function createProviderService(
     snapshotPath: join(options.agentDirectory, 'models.dev.json'),
     sessionRuntime: modelRuntime,
   })
-  await service.initializeProviders()
+  service.onDidCommit(event => options.peer.notify(providerNotifications.changed.method, { source: 'catalog', revision: event.revision }))
+  service.onDidChangeMetadata((event) => {
+    if (event.kind === 'refresh-completed' || event.kind === 'refresh-failed' || event.kind === 'accepted')
+      options.peer.notify(providerNotifications.changed.method, { source: 'metadata', revision: event.revision })
+  })
+  service.onDidChangeCredential((event) => {
+    if (event.kind === 'observation' || event.kind === 'store-availability')
+      options.peer.notify(providerNotifications.changed.method, { source: 'credentials', revision: event.kind === 'observation' ? event.current.revision : event.revision })
+  })
+  service.onDidOperate(event => options.record?.({ event: `provider.operation.${event.stage}`, level: event.stage === 'failed' ? 'warn' : 'info', operationId: event.operationId }))
+  service.onDidCommit(event => options.record?.({ event: 'provider.state.committed', level: 'info', operationId: event.commitId, revision: event.revision, count: event.providers.length + event.models.length }))
+  service.onDidApplyCatalog(event => options.record?.({ event: `provider.catalog.${event.stage}`, level: event.stage === 'failed' ? 'warn' : 'info', operationId: event.operationId, revision: event.revision }))
+  service.onDidChangeMetadata(event => options.record?.({ event: `provider.metadata.${event.kind.replaceAll('-', '_')}`, level: event.kind.endsWith('failed') ? 'warn' : 'info', operationId: event.operationId, revision: event.catalogRevision, count: event.modelCount }))
+  service.onDidChangeCredential((event) => {
+    if (event.kind === 'observation')
+      options.record?.({ event: `provider.credential.${event.current.presence}`, level: event.current.presence === 'unknown' ? 'warn' : 'info', revision: event.current.revision })
+    else if (event.kind === 'store-availability')
+      options.record?.({ event: `provider.credential_store.${event.status}`, level: event.status === 'unknown' ? 'warn' : 'info', revision: event.revision })
+    else
+      options.record?.({ event: `provider.credential.${event.kind.replaceAll('-', '_')}`, level: 'info', operationId: event.operationId })
+  })
+  try {
+    await service.initializeProviders()
+  }
+  catch (error) {
+    try {
+      await service.dispose()
+    }
+    catch (cleanup) { throw new AggregateError([error, cleanup], 'Provider initialization failed') }
+    throw error
+  }
   return service
 }

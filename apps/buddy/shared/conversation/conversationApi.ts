@@ -7,6 +7,8 @@ import { approvalPolicySchema, executionProfileSchema, idSchema, nullableTimesta
 import { attachmentSchema } from './attachmentApi'
 import { BUDDY_SERVICE_TIERS, BUDDY_THINKING_LEVELS } from './modelSelection'
 
+export const CONVERSATION_CHANGED = 'conversations.changed'
+
 export const modelSelectionSchema = z.object({
   modelId: idSchema,
   providerId: idSchema,

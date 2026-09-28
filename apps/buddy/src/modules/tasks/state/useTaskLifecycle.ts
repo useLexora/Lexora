@@ -99,6 +99,26 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
     ])
   }
 
+  const sourceRevisions = new Map<string, number>()
+  let contentRefresh: ReturnType<typeof setTimeout> | null = null
+  function refreshCommittedContent(event: { sourceId: string, revision: number, conversationId: string }) {
+    if (isDisposed || (sourceRevisions.get(event.sourceId) ?? 0) >= event.revision)
+      return
+    sourceRevisions.set(event.sourceId, event.revision)
+    if (sourceRevisions.size > 16)
+      sourceRevisions.delete(sourceRevisions.keys().next().value!)
+    if (event.conversationId !== options.session.activeConversationId.value)
+      return
+    if (contentRefresh !== null)
+      clearTimeout(contentRefresh)
+    contentRefresh = setTimeout(() => {
+      contentRefresh = null
+      if (!isDisposed)
+        void options.runSync.refreshActiveConversation().catch(options.onError)
+    }, 100)
+  }
+  const stopArtifacts = options.api.artifacts.onChanged(refreshCommittedContent)
+  const stopChanges = options.api.changes.onChanged(refreshCommittedContent)
   const stopRunEventListener = options.api.chat.onRunEvent(event => options.runSync.handleRunEvent(event))
 
   return {
@@ -110,6 +130,11 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
     dispose() {
       isDisposed = true
       stopRunEventListener()
+      stopArtifacts()
+      stopChanges()
+      if (contentRefresh !== null)
+        clearTimeout(contentRefresh)
+      sourceRevisions.clear()
     },
   }
 }

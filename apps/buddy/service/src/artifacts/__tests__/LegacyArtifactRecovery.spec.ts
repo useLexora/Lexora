@@ -1,13 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ArtifactEvent } from '../ArtifactService'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
 
+import { afterEach, describe, expect, it } from 'vitest'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { ArtifactService } from '../ArtifactService'
 import { reconcileLegacyArtifactOutputs } from '../LegacyArtifactRecovery'
 
 const databases: DatabaseSync[] = []
@@ -40,6 +42,16 @@ describe('legacy artifact output recovery', () => {
     await writeFile(join(directory, 'first.png'), Uint8Array.of(1, 2, 3))
     await writeFile(join(directory, 'second.html'), '<h1>Recovered</h1>')
     const repository = createArtifactRepository(database)
+    let failNext = true
+    const events: ArtifactEvent[] = []
+    const catalogue = new ArtifactService({ repository: { ...repository, save(record) {
+      if (record.id === 'artifact-file' && failNext) {
+        failNext = false
+        throw new Error('catalogue unavailable')
+      }
+      return repository.save(record)
+    } } })
+    catalogue.onDidChange(event => events.push(event))
     const eventLog = {
       listForConversation: () => [{
         createdAt: '2026-09-04T00:00:01.000Z',
@@ -64,12 +76,12 @@ describe('legacy artifact output recovery', () => {
       }],
     }
 
-    await expect(reconcileLegacyArtifactOutputs({
-      artifacts: repository,
-      conversations,
-      eventLog,
-      paths,
-    })).resolves.toBe(2)
+    await expect(reconcileLegacyArtifactOutputs({ artifacts: repository, catalogue, conversations, eventLog, paths })).rejects.toMatchObject({ receipt: { cause: 'recovery', outcome: 'partial', artifactIds: ['artifact-image'], written: 0 } })
+    expect(repository.findById('artifact-image')).not.toBeNull()
+    expect(repository.findById('artifact-file')).toBeNull()
+    await expect(reconcileLegacyArtifactOutputs({ artifacts: repository, catalogue, conversations, eventLog, paths })).resolves.toBe(1)
+    expect(events.filter(event => event.kind === 'catalogue-committed').map(event => event.artifactId)).toEqual(['artifact-image', 'artifact-file'])
+    expect(events.every(event => event.receipt.cause === 'recovery')).toBe(true)
     expect(repository.findById('artifact-image')).toMatchObject({
       currentPath: join(directory, 'first.png'),
       mimeType: 'image/png',
@@ -80,6 +92,7 @@ describe('legacy artifact output recovery', () => {
     })
     await expect(reconcileLegacyArtifactOutputs({
       artifacts: repository,
+      catalogue: new ArtifactService({ repository }),
       conversations,
       eventLog,
       paths,
@@ -109,6 +122,7 @@ describe('legacy artifact output recovery', () => {
 
     await expect(reconcileLegacyArtifactOutputs({
       artifacts: repository,
+      catalogue: new ArtifactService({ repository }),
       conversations,
       eventLog: {
         listForConversation: () => [{

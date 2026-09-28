@@ -3,6 +3,116 @@ import { describe, expect, it, vi } from 'vitest'
 import { BuddySessionRegistry } from '../BuddySessionRegistry'
 
 describe('buddySessionRegistry', () => {
+  it('acknowledges recovery only for the current immutable binding incarnation', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const sessionIdentity = identity('branch-1')
+    const recovered = await registry.getOrCreate(sessionIdentity, null, async () => ({ piSessionFile: '/sessions/one', session: new TestSession(), recoveredFromProductHistory: true, recoveryDegradation: { missingAttachmentIds: ['missing-attachment'], recoveredImageCount: 0 } }))
+    expect(registry.snapshot()[0]?.recoveryPending).toBe(true)
+    expect(registry.acknowledgeRecovery(sessionIdentity, recovered)).toBe(true)
+    expect(recovered.recoveredFromProductHistory).toBe(true)
+    expect(registry.snapshot()[0]?.recoveryPending).toBe(false)
+    const current = await registry.getOrCreate(sessionIdentity, '/sessions/one', async () => {
+      throw new Error('must reuse')
+    })
+    expect(current.recoveredFromProductHistory).toBeUndefined()
+    expect(registry.acknowledgeRecovery(sessionIdentity, recovered)).toBe(false)
+    await registry.invalidateAll()
+    const replacement = await registry.getOrCreate(sessionIdentity, null, async () => ({ piSessionFile: '/sessions/two', session: new TestSession(), recoveredFromProductHistory: true }))
+    expect(registry.acknowledgeRecovery(sessionIdentity, recovered)).toBe(false)
+    expect(registry.snapshot()[0]?.recoveryPending).toBe(true)
+    expect(registry.acknowledgeRecovery(sessionIdentity, replacement)).toBe(true)
+    await registry.dispose()
+  })
+
+  it('keeps pending factory cleanup observable through late failure and repeated invalidation', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const factory = Promise.withResolvers<{ piSessionFile: string, session: TestSession }>()
+    const creation = registry.getOrCreate(identity('branch-1'), null, () => factory.promise)
+    const rejected = expect(creation).rejects.toMatchObject({ name: 'AbortError' })
+    const changes: string[] = []
+    registry.onDidChange(event => changes.push(event.type))
+    expect(await registry.invalidateConversationWithResult('conversation-1')).toEqual({ matched: 1, pending: 1, degraded: 0 })
+    expect(registry.snapshot()[0]?.cleanup).toBe('pending')
+    const session = new FailingShutdownSession()
+    factory.resolve({ piSessionFile: '/sessions/late', session })
+    await rejected
+    await vi.waitFor(() => expect(registry.snapshot()[0]?.cleanup).toBe('failed'))
+    expect(changes).toEqual(['removed', 'cleanup-failed'])
+    expect(await registry.invalidateConversationWithResult('conversation-1')).toEqual({ matched: 1, pending: 0, degraded: 1 })
+    await expect(registry.dispose()).rejects.toThrow('Session shutdown failed')
+  })
+
+  it('captures identity and current model without exposing aliases or publishing a failed startup as ready', async () => {
+    let reported = 0
+    const registry = new BuddySessionRegistry<TestSession>({ onListenerError: () => {
+      reported++
+    } })
+    const sourceIdentity = identity('branch-1')
+    const model = { providerId: 'provider-one', modelId: 'model-one' }
+    const session = Object.assign(new TestSession(), { getModelUsage: () => model })
+    registry.onDidChange(() => {
+      throw new Error('private listener error')
+    })
+    await registry.getOrCreate(sourceIdentity, null, async () => ({ piSessionFile: '/sessions/one', session }))
+    sourceIdentity.spaceId = null
+    sourceIdentity.resourceRevision = 'mutated'
+    const first = registry.snapshot()[0]!
+    expect(first.identity.resourceRevision).toBe('resources-1')
+    expect(Reflect.set(first.identity, 'canonicalRoot', '/elsewhere')).toBe(false)
+    expect(Reflect.set(first.model!, 'modelId', 'overwritten')).toBe(false)
+    model.modelId = 'model-two'
+    expect(first.model?.modelId).toBe('model-one')
+    expect(registry.snapshot()[0]?.model?.modelId).toBe('model-two')
+    await registry.invalidateAll()
+    const changes: string[] = []
+    registry.onDidChange(event => changes.push(event.type))
+    await expect(registry.getOrCreate(identity('branch-1'), null, async () => {
+      throw new Error('factory failed')
+    })).rejects.toThrow('factory failed')
+    expect(changes).toEqual(['registered', 'startup-failed'])
+    expect(registry.snapshot()).toEqual([])
+    expect(reported).toBeGreaterThan(0)
+    await registry.dispose()
+  })
+
+  it('reports failed deferred invalidation only after release without replacing the operation result', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const runIdentity = identity('branch-1')
+    const cleanup = Promise.withResolvers<void>()
+    const session = new TestSession()
+    session.shutdown = () => cleanup.promise
+    await registry.getOrCreate(runIdentity, null, async () => ({ piSessionFile: '/sessions/one.jsonl', session }))
+    const released: string[] = []
+    const result = registry.withConversationRun(runIdentity, 'run-1', undefined, async () => {
+      await registry.invalidateConversation(runIdentity.conversationId)
+      return 'completed result'
+    }, (receipt) => {
+      expect(registry.getActiveRun(runIdentity)).toBeUndefined()
+      released.push(receipt.cleanup)
+    })
+    await vi.waitFor(() => expect(registry.getReady(runIdentity.conversationId, runIdentity.branchId)).toBeNull())
+    expect(released).toEqual([])
+    cleanup.reject(new Error('Shutdown unavailable'))
+    expect(await result).toBe('completed result')
+    expect(released).toEqual(['degraded'])
+    await registry.dispose()
+  })
+
+  it('invalidates interactive contributions without replacing automation sessions', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const interactive = new TestSession()
+    const automation = new TestSession()
+    const automationIdentity = { ...identity('branch-2'), conversationId: 'automation-task', sessionMode: 'automation_background' as const }
+    await registry.getOrCreate(identity('branch-1'), null, async () => ({ piSessionFile: '/sessions/interactive.jsonl', session: interactive }))
+    const bound = await registry.getOrCreate(automationIdentity, null, async () => ({ piSessionFile: '/sessions/automation.jsonl', session: automation }))
+    expect(await registry.invalidateMode('interactive')).toBe(1)
+    expect(interactive.shutdownReasons).toEqual(['invalidate'])
+    expect(automation.shutdownReasons).toEqual([])
+    expect(await registry.getOrCreate(automationIdentity, '/sessions/automation.jsonl', async () => {
+      throw new Error('Must retain the automation session')
+    })).toBe(bound)
+    await registry.invalidateAll()
+  })
   it('creates one Pi session binding for the same Buddy branch', async () => {
     const registry = new BuddySessionRegistry<TestSession>()
     let creates = 0

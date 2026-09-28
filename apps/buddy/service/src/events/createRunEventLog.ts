@@ -13,8 +13,7 @@ export interface CreateRunEventLogOptions extends RunEventLogCallbacks {
 export function createRunEventLog(options: CreateRunEventLogOptions): RunEventLog {
   const queries = new RunEventQueries(options.database)
   return new RunEventLog({
-    onEvent: options.onEvent,
-    onEventDeliveryError: options.onEventDeliveryError,
+    onObserverError: options.onObserverError,
     onFatalFailure: options.onFatalFailure,
     projector: new RunEventProjector(options.database),
     queries,

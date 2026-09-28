@@ -1,13 +1,17 @@
+import type { Event, ListenerErrorHandler } from '../../../shared/events/Emitter'
 import type { LocalSkill, LocalSkillCatalog, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillOrigin, SkillPreviewInput, SkillReference } from '../../../shared/skills/skillApi'
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { SkillInstallation, SkillRepository } from '../storage/skillRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
+import type { SkillEvent, SkillEventDetails } from './skillEvents'
 import type { LoadedSkill } from './skillFiles'
 import type { ResolvedSkill } from './SkillPackageCache'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
+import { Emitter, filterEvent } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { isSkillAvailable, skillsRpc } from '../../../shared/skills/skillApi'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { discoverSkillFiles, readSkill, requireSkillPath, SkillError, skillIdentity } from './skillFiles'
@@ -16,12 +20,12 @@ import { SkillInspector } from './SkillInspector'
 import { SkillPackageCache } from './SkillPackageCache'
 
 export interface BuddySkillResolution {
-  diagnostics: LocalSkillCatalog['diagnostics']
-  paths: string[]
-  readRoots: string[]
-  references: SkillReference[]
-  revision: string
-  skills: LocalSkill[]
+  readonly diagnostics: LocalSkillCatalog['diagnostics']
+  readonly paths: readonly string[]
+  readonly readRoots: readonly string[]
+  readonly references: readonly SkillReference[]
+  readonly revision: string
+  readonly skills: readonly LocalSkill[]
 }
 
 export interface BuddyMaterializedSkill {
@@ -38,7 +42,7 @@ interface SkillServiceOptions {
   spaces: SpaceRepository
   repository: SkillRepository
   paths: BuddyDataPaths
-  changed?: (spaceId: string | null) => Promise<unknown> | unknown
+  onListenerError?: ListenerErrorHandler
 }
 
 interface Candidate {
@@ -50,8 +54,8 @@ interface Candidate {
 }
 
 interface ResolvedCatalog {
-  candidates: Candidate[]
-  catalog: LocalSkillCatalog
+  readonly candidates: readonly Readonly<Candidate>[]
+  readonly catalog: LocalSkillCatalog
 }
 
 interface ImportPreview {
@@ -68,12 +72,34 @@ export class SkillService {
   readonly #packages = new SkillPackageCache()
   readonly #resolutions = new Map<string, Promise<ResolvedCatalog>>()
   readonly #resolved = new Map<string, { key: string, result: ResolvedCatalog }>()
+  readonly #accepted = new Map<string, string>()
+  readonly #resources = new Map<string | null, BuddySkillResolution>()
+  readonly #scopeGenerations = new Map<string | null, number>()
+  readonly #cleanupStates = new Map<string, Extract<SkillEvent, { type: 'cleanup' }>['status']>()
+  readonly #events: Emitter<SkillEvent>
+  readonly sourceId = randomUUID()
   #mutation: Promise<unknown> = Promise.resolve()
   #generation = 0
+  #globalGeneration = 0
+  #sequence = 0
+  #disposed = false
+  #quiescing = false
+  readonly #operations = new Set<Promise<unknown>>()
 
   constructor(options: SkillServiceOptions) {
     this.#options = options
+    this.#events = new Emitter(options.onListenerError ?? (() => console.error('SKILL_OBSERVER_FAILED')))
     this.#inspector = new SkillInspector({ ...options, refresh: spaceId => this.list(spaceId) })
+  }
+
+  readonly onDidChange: Event<SkillEvent> = (listener, options) => this.#events.event(listener, options)
+  readonly onDidCommitInstallation = filterEvent(this.onDidChange, (event): event is Extract<SkillEvent, { type: 'installation' }> => event.type === 'installation')
+  readonly onDidAcceptCatalog = filterEvent(this.onDidChange, (event): event is Extract<SkillEvent, { type: 'catalog' }> => event.type === 'catalog')
+  readonly onDidChangeResources = filterEvent(this.onDidChange, (event): event is Extract<SkillEvent, { type: 'resources' }> => event.type === 'resources')
+  readonly onDidCleanup = filterEvent(this.onDidChange, (event): event is Extract<SkillEvent, { type: 'cleanup' }> => event.type === 'cleanup')
+
+  resourceSnapshots(): readonly { readonly spaceId: string | null, readonly resolution: BuddySkillResolution }[] {
+    return Object.freeze([...this.#resources].map(([spaceId, resolution]) => Object.freeze({ spaceId, resolution })))
   }
 
   async initialize() {
@@ -92,31 +118,31 @@ export class SkillService {
     }
   }
 
-  async list(spaceId: string | null, metadataOnly = false): Promise<LocalSkillCatalog> {
-    this.#invalidateResolutions(spaceId)
-    return (await this.#resolve(spaceId, metadataOnly)).catalog
+  list(spaceId: string | null, metadataOnly = false): Promise<LocalSkillCatalog> {
+    if (this.#quiescing)
+      return Promise.reject(new SkillError('SKILL_CHANGED'))
+    return this.#list(spaceId, metadataOnly)
   }
 
-  async loadForSpace(spaceId: string | null): Promise<BuddySkillResolution> {
-    const { catalog, candidates } = await this.#resolve(spaceId, true)
-    const effective = candidates.filter(candidate => isSkillAvailable(candidate.entry))
-    const revision = createHash('sha256').update(JSON.stringify(effective.map(candidate => ({
-      id: candidate.entry.id,
-      revision: candidate.referenceRevision,
-      status: candidate.entry.status,
-      enabled: candidate.entry.enabled,
-    })))).digest('hex')
-    return {
-      diagnostics: catalog.diagnostics,
-      paths: effective.map(candidate => candidate.entry.filePath),
-      readRoots: [...new Set(effective.map(candidate => dirname(candidate.entry.filePath)))],
-      references: effective.map(candidate => reference(candidate.entry, candidate.referenceRevision)),
-      revision,
-      skills: effective.map(candidate => candidate.entry).sort((a, b) => a.name.localeCompare(b.name)),
-    }
+  #list(spaceId: string | null, metadataOnly = false): Promise<LocalSkillCatalog> {
+    return this.#track(async () => {
+      this.#invalidateResolutions(spaceId)
+      return (await this.#resolve(spaceId, metadataOnly)).catalog
+    })
   }
 
-  async materializeForSpace(spaceId: string | null, selections: readonly (string | SkillReference)[]): Promise<BuddyMaterializedSkill[]> {
+  loadForSpace(spaceId: string | null): Promise<BuddySkillResolution> {
+    return this.#track(async () => this.#sessionResolution(await this.#resolve(spaceId, true)))
+  }
+
+  materializeForSpace(spaceId: string | null, selections: readonly (string | SkillReference)[]): Promise<BuddyMaterializedSkill[]> {
+    if (this.#quiescing)
+      return Promise.reject(new SkillError('SKILL_CHANGED'))
+    const request = copyEventSnapshot(selections)
+    return this.#track(() => this.#materializeForSpace(spaceId, request))
+  }
+
+  async #materializeForSpace(spaceId: string | null, selections: readonly (string | SkillReference)[]): Promise<BuddyMaterializedSkill[]> {
     if (!selections.length)
       return []
     const { candidates } = await this.#resolve(spaceId, true)
@@ -176,6 +202,7 @@ export class SkillService {
   }
 
   setEnabled(input: { spaceId: string | null, id: string, enabled: boolean, revision: string }) {
+    input = copyEventSnapshot(input)
     return this.#mutate(async () => {
       const skill = await this.#currentSkill(input.spaceId, input.id)
       if (skill.managedBy === 'directory' || skill.spaceId !== input.spaceId)
@@ -183,13 +210,16 @@ export class SkillService {
       if (skill.revision !== input.revision)
         throw new SkillError('SKILL_CHANGED')
       const record = this.#record(input.id)
+      if (record.enabled === input.enabled)
+        return (await this.#resolve(input.spaceId)).catalog
       this.#options.repository.save({ ...record, enabled: input.enabled, updatedAt: new Date().toISOString() })
-      await this.#options.changed?.(input.spaceId)
-      return this.list(input.spaceId)
+      this.#installationCommitted(input.spaceId, 'enabled', [record.id])
+      return this.#list(input.spaceId)
     })
   }
 
   remove(input: { spaceId: string | null, id: string, revision: string }) {
+    input = copyEventSnapshot(input)
     return this.#mutate(async () => {
       const skill = await this.#currentSkill(input.spaceId, input.id)
       if (!skill.canRemove)
@@ -198,13 +228,20 @@ export class SkillService {
         throw new SkillError('SKILL_CHANGED')
       this.#assertIdle(skill.spaceId)
       this.#options.repository.remove(input.id)
-      await this.#options.changed?.(input.spaceId)
+      this.#installationCommitted(input.spaceId, 'removed', [input.id])
       await this.#cleanup()
-      return this.list(input.spaceId)
+      return this.#list(input.spaceId)
     })
   }
 
-  async preview(input: SkillPreviewInput): Promise<SkillInstallPreview> {
+  preview(input: SkillPreviewInput): Promise<SkillInstallPreview> {
+    if (this.#quiescing)
+      return Promise.reject(new SkillError('SKILL_CHANGED'))
+    const request = copyEventSnapshot(input)
+    return this.#track(() => this.#preview(request))
+  }
+
+  async #preview(input: SkillPreviewInput): Promise<SkillInstallPreview> {
     this.#requireSpace(input.spaceId)
     for (const [id, preview] of this.#previews) {
       if (Date.now() - preview.createdAt > 30 * 60 * 1000)
@@ -212,7 +249,7 @@ export class SkillService {
     }
     if (this.#previews.size >= 8)
       throw new SkillError('SKILL_BUSY')
-    const catalog = await this.list(input.spaceId)
+    const catalog = await this.#list(input.spaceId)
     const records = this.#options.repository.list()
     const updating = input.updateId ? this.#record(input.updateId) : undefined
     if (updating && (updating.managedBy !== 'user' || updating.spaceId !== input.spaceId))
@@ -262,7 +299,9 @@ export class SkillService {
         }
       }
       const checkedItems = items.map(item => ({ ...item, blocked: item.blocked || items.filter(other => other.name === item.name).length > 1 }))
-      const result = { id, spaceId: input.spaceId, updateId: updating?.id ?? null, source: prepared.source, candidates: checkedItems, diagnostics }
+      const result = copyEventSnapshot({ id, spaceId: input.spaceId, updateId: updating?.id ?? null, source: prepared.source, candidates: checkedItems, diagnostics })
+      if (this.#disposed)
+        throw new SkillError('SKILL_CHANGED')
       this.#previews.set(id, { directory, candidates, result, createdAt: Date.now() })
       return result
     }
@@ -275,13 +314,14 @@ export class SkillService {
   }
 
   install(input: { previewId: string, candidateIds: readonly string[] }) {
+    input = copyEventSnapshot(input)
     return this.#mutate(async () => {
       const preview = this.#previews.get(input.previewId)
       if (!preview || Date.now() - preview.createdAt > 30 * 60 * 1000)
         throw new SkillError('SKILL_PREVIEW_EXPIRED')
       const scope = preview.result.spaceId
       this.#requireSpace(scope)
-      const current = await this.list(scope)
+      const current = await this.#list(scope)
       const records = this.#options.repository.list()
       const selected = [...new Set(input.candidateIds)].map((id) => {
         const item = preview.result.candidates.find(candidate => candidate.id === id)
@@ -301,14 +341,15 @@ export class SkillService {
         throw new SkillError('SKILL_INVALID')
       if (selected.some(candidate => candidate.existing))
         this.#assertIdle(scope)
-      const published: string[] = []
+      const published: { path: string, spaceId: string | null, installationId: string }[] = []
       const next: SkillInstallation[] = []
       try {
         for (const candidate of selected) {
           const id = candidate.existing?.id ?? randomUUID()
           const root = join(this.#options.paths.skillsDirectory(scope), id, randomUUID(), candidate.loaded.name)
-          published.push(dirname(root))
+          published.push({ path: dirname(root), spaceId: scope, installationId: id })
           this.#options.repository.scheduleCleanup(scope, id, dirname(root))
+          this.#cleanupChanged({ path: dirname(root), spaceId: scope, installationId: id }, 'pending')
           await writeSkillFiles(root, candidate.loaded.files, candidate.loaded.modes)
           const source: SkillOrigin = preview.result.source.kind === 'github'
             ? { ...preview.result.source, subdirectory: [preview.result.source.subdirectory, candidate.sourcePath].filter(Boolean).join('/') }
@@ -335,15 +376,26 @@ export class SkillService {
         this.#options.repository.saveAll(next)
       }
       catch (error) {
-        await Promise.all(published.map(path => rm(path, { recursive: true, force: true })))
+        await Promise.all(published.map(async (item) => {
+          try {
+            await rm(item.path, { recursive: true, force: true })
+            this.#options.repository.completeCleanup(item.path)
+            this.#cleanupChanged(item, 'completed')
+          }
+          catch {
+            this.#cleanupChanged(item, 'failed')
+          }
+        }))
         if (error instanceof SkillError)
           throw error
         throw new SkillError('SKILL_INSTALL_FAILED', { cause: error })
       }
-      await this.#options.changed?.(scope)
+      this.#installationCommitted(scope, 'installed', next.map(record => record.id))
+      for (const record of next)
+        this.#cleanupChanged({ path: dirname(dirname(record.path)), spaceId: scope, installationId: record.id }, 'cancelled')
       await this.#cleanup()
       await this.discard(input.previewId).catch(() => {})
-      return this.list(scope)
+      return this.#list(scope)
     })
   }
 
@@ -354,41 +406,64 @@ export class SkillService {
       await rm(preview.directory, { recursive: true, force: true })
   }
 
+  async whenIdle(): Promise<void> {
+    let mutation: Promise<unknown>
+    do {
+      mutation = this.#mutation
+      await Promise.allSettled([mutation, ...this.#operations, ...this.#resolutions.values()])
+    } while (mutation !== this.#mutation || this.#operations.size || this.#resolutions.size)
+  }
+
+  async quiesce(): Promise<void> {
+    this.#quiescing = true
+    await this.whenIdle()
+  }
+
   async dispose() {
-    await this.#mutation.catch(() => {})
-    await Promise.allSettled([...this.#resolutions.values()])
+    await this.quiesce()
+    this.#disposed = true
+    this.#globalGeneration = ++this.#generation
     this.#resolved.clear()
     this.#packages.clear()
     await Promise.all([...this.#previews.keys()].map(id => this.discard(id)))
+    this.#events.dispose()
   }
 
   async #resolve(spaceId: string | null, lightweight = false): Promise<ResolvedCatalog> {
+    if (this.#disposed)
+      throw new SkillError('SKILL_CHANGED')
     const space = this.#requireSpace(spaceId)
     const scope = JSON.stringify(space?.primaryDirectory ?? null)
     const cacheId = this.#resolutionCacheId(spaceId, lightweight)
     const state = this.#resolutionKey(spaceId, lightweight)
-    const generation = this.#generation
+    const generation = this.#currentGeneration(spaceId)
     const key = JSON.stringify([state, generation])
     const cached = this.#resolved.get(cacheId)
     if (cached?.key === key && await this.#isCatalogCurrent(cached.result)) {
       if (this.#resolutionKey(spaceId, lightweight) !== state)
         throw new SkillError('SKILL_CHANGED')
-      if (this.#generation === generation)
+      if (!this.#disposed && this.#currentGeneration(spaceId) === generation)
         return cached.result
     }
-    if (this.#generation !== generation)
+    if (this.#currentGeneration(spaceId) !== generation)
       return this.#resolve(spaceId, lightweight)
     const pending = this.#resolutions.get(key)
     if (pending)
       return pending
     const resolving = this.#resolveCatalog(spaceId, lightweight).then((result) => {
+      if (this.#disposed)
+        throw new SkillError('SKILL_CHANGED')
       if (JSON.stringify(this.#requireSpace(spaceId)?.primaryDirectory ?? null) !== scope)
         throw new SkillError('SKILL_CHANGED')
-      if (lightweight && this.#resolutionKey(spaceId, lightweight) !== state)
+      if (this.#currentGeneration(spaceId) !== generation)
+        return this.#resolve(spaceId, lightweight)
+      if (this.#resolutionKey(spaceId, lightweight) !== state)
         throw new SkillError('SKILL_CHANGED')
-      if (lightweight && this.#generation === generation)
-        this.#resolved.set(cacheId, { key, result })
-      return result
+      const accepted = copyEventSnapshot(result)
+      if (lightweight)
+        this.#resolved.set(cacheId, { key, result: accepted })
+      this.#acceptCatalog(spaceId, lightweight, scope, accepted)
+      return accepted
     }).finally(() => {
       if (this.#resolutions.get(key) === resolving)
         this.#resolutions.delete(key)
@@ -401,10 +476,19 @@ export class SkillService {
     return JSON.stringify([spaceId, lightweight])
   }
 
-  #invalidateResolutions(spaceId: string | null) {
-    this.#generation++
+  #invalidateResolutions(spaceId: string | null, all = false) {
+    if (all) {
+      this.#globalGeneration = ++this.#generation
+      this.#resolved.clear()
+      return
+    }
+    this.#scopeGenerations.set(spaceId, ++this.#generation)
     this.#resolved.delete(this.#resolutionCacheId(spaceId, false))
     this.#resolved.delete(this.#resolutionCacheId(spaceId, true))
+  }
+
+  #currentGeneration(spaceId: string | null): number {
+    return Math.max(this.#globalGeneration, this.#scopeGenerations.get(spaceId) ?? 0)
   }
 
   async #isCatalogCurrent(result: ResolvedCatalog): Promise<boolean> {
@@ -425,7 +509,7 @@ export class SkillService {
 
   #resolutionKey(spaceId: string | null, lightweight: boolean) {
     const space = this.#requireSpace(spaceId)
-    return JSON.stringify([spaceId, JSON.stringify(space?.primaryDirectory ?? null), this.#options.repository.list(), lightweight])
+    return JSON.stringify([spaceId, JSON.stringify(space?.primaryDirectory ?? null), this.#options.repository.list().filter(record => record.spaceId === null || record.spaceId === spaceId), lightweight])
   }
 
   async #resolveCatalog(spaceId: string | null, lightweight = false) {
@@ -492,6 +576,7 @@ export class SkillService {
                   createdAt: existing?.createdAt ?? now,
                   updatedAt: now,
                 })
+                this.#installationCommitted(null, 'discovered', [id])
               }
               discovered.set(id, loaded)
               discoveredRoots.set(id, root)
@@ -610,7 +695,6 @@ export class SkillService {
     const skills = [...candidates].sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.priority - b.priority || a.entry.id.localeCompare(b.entry.id)).map(candidate => candidate.entry)
     const revision = createHash('sha256').update(JSON.stringify(skills.map(({ id, revision, status, enabled }) => ({ id, revision, status, enabled })))).digest('hex')
     const catalog = { skills, diagnostics, revision }
-    this.#inspector.remember(spaceId, JSON.stringify(space?.primaryDirectory ?? null), catalog)
     return { candidates, catalog }
   }
 
@@ -645,6 +729,7 @@ export class SkillService {
   async #cleanup() {
     const { repository, paths } = this.#options
     for (const item of repository.pendingCleanup()) {
+      this.#cleanupChanged(item, 'pending')
       const root = join(paths.skillsDirectory(item.spaceId), item.installationId)
       if (dirname(item.path) !== root || repository.list().some(record => dirname(dirname(record.path)) === item.path))
         continue
@@ -652,18 +737,92 @@ export class SkillService {
         await requireSkillPath(this.#options.paths.root, item.path)
         await rm(item.path, { recursive: true, force: true })
         repository.completeCleanup(item.path)
+        this.#cleanupChanged(item, 'completed')
       }
       catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
           repository.completeCleanup(item.path)
+          this.#cleanupChanged(item, 'completed')
+        }
+        else {
+          this.#cleanupChanged(item, 'failed')
+        }
       }
     }
   }
 
+  #track<T>(action: () => Promise<T>): Promise<T> {
+    if (this.#disposed)
+      return Promise.reject(new SkillError('SKILL_CHANGED'))
+    const pending = action().finally(() => this.#operations.delete(pending))
+    this.#operations.add(pending)
+    return pending
+  }
+
   #mutate<T>(action: () => Promise<T>): Promise<T> {
-    const pending = this.#mutation.then(action)
+    if (this.#quiescing)
+      return Promise.reject(new SkillError('SKILL_CHANGED'))
+    const pending = this.#mutation.then(() => {
+      if (this.#disposed)
+        throw new SkillError('SKILL_CHANGED')
+      return action()
+    })
     this.#mutation = pending.catch(() => {})
     return pending
+  }
+
+  #installationCommitted(spaceId: string | null, reason: Extract<SkillEvent, { type: 'installation' }>['reason'], installationIds: readonly string[]): void {
+    this.#invalidateResolutions(spaceId, spaceId === null)
+    this.#events.fire(this.#event(spaceId, { type: 'installation', reason, installationIds, operationId: randomUUID() }))
+  }
+
+  #cleanupChanged(item: { path: string, spaceId: string | null, installationId: string }, status: Extract<SkillEvent, { type: 'cleanup' }>['status']): void {
+    if (this.#cleanupStates.get(item.path) === status)
+      return
+    this.#cleanupStates.set(item.path, status)
+    this.#events.fire(this.#event(item.spaceId, { type: 'cleanup', status, installationId: item.installationId, ...(status === 'failed' ? { error: 'SKILL_CLEANUP_FAILED' as const } : {}) }))
+  }
+
+  #acceptCatalog(spaceId: string | null, lightweight: boolean, scopeKey: string, result: ResolvedCatalog): void {
+    const cacheId = this.#resolutionCacheId(spaceId, lightweight)
+    const fingerprint = JSON.stringify(result.catalog)
+    const events: SkillEvent[] = []
+    this.#inspector.remember(spaceId, scopeKey, result.catalog)
+    if (this.#accepted.get(cacheId) !== fingerprint) {
+      this.#accepted.set(cacheId, fingerprint)
+      events.push(this.#event(spaceId, { type: 'catalog', mode: lightweight ? 'discovery' : 'management', catalogRevision: result.catalog.revision, skillIds: result.catalog.skills.map(skill => skill.id) }))
+    }
+    if (lightweight) {
+      const resolution = this.#sessionResolution(result)
+      const previous = this.#resources.get(spaceId)
+      this.#resources.set(spaceId, resolution)
+      if (previous?.revision !== resolution.revision)
+        events.push(this.#event(spaceId, { type: 'resources', resourceRevision: resolution.revision, previousRevision: previous?.revision ?? null, skillIds: resolution.skills.map(skill => skill.id) }))
+    }
+    this.#events.fireBatch(events)
+  }
+
+  #sessionResolution({ catalog, candidates }: ResolvedCatalog): BuddySkillResolution {
+    const effective = candidates.filter(candidate => isSkillAvailable(candidate.entry))
+    const revision = createHash('sha256').update(JSON.stringify(effective.map(candidate => ({
+      id: candidate.entry.id,
+      revision: candidate.referenceRevision,
+      status: candidate.entry.status,
+      enabled: candidate.entry.enabled,
+      filePath: candidate.entry.filePath,
+    })))).digest('hex')
+    return copyEventSnapshot({
+      diagnostics: catalog.diagnostics,
+      paths: effective.map(candidate => candidate.entry.filePath),
+      readRoots: [...new Set(effective.map(candidate => dirname(candidate.entry.filePath)))],
+      references: effective.map(candidate => reference(candidate.entry, candidate.referenceRevision)),
+      revision,
+      skills: effective.map(candidate => candidate.entry).sort((a, b) => a.name.localeCompare(b.name)),
+    })
+  }
+
+  #event(spaceId: string | null, detail: SkillEventDetails): SkillEvent {
+    return copyEventSnapshot({ ...detail, sourceId: this.sourceId, sequence: ++this.#sequence, generation: this.#currentGeneration(spaceId), spaceId })
   }
 }
 

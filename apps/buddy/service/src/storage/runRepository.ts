@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { RunRecord, RunRow, RunStatus } from './runRecord'
+import { withTransaction } from './database'
 import { requireRunRecord, toRunRecord } from './runRecord'
 
 export interface CreateRunInput extends Omit<
@@ -20,6 +21,7 @@ export interface RunRepository {
     branchId: string,
     piSessionFile: string,
   ) => number
+  clearSessionBindingsWithReceipt: (conversationId: string, branchId: string, piSessionFile: string) => string[]
   create: (input: CreateRunInput) => RunRecord
   findById: (id: string) => RunRecord | null
   findLatestForBranch: (conversationId: string, branchId: string) => RunRecord | null
@@ -76,6 +78,7 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     UPDATE runs
     SET status = 'running', started_at = ?, completed_at = NULL, error_code = NULL
     WHERE id = ? AND status = 'queued'
+      AND EXISTS (SELECT 1 FROM conversations WHERE conversations.id = runs.conversation_id AND deleted_at IS NULL)
   `)
   const reconcileTerminal = database.prepare(`
     UPDATE runs SET status = ?, completed_at = ?, error_code = ?
@@ -88,18 +91,20 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     UPDATE runs SET pi_session_file = NULL
     WHERE conversation_id = ? AND branch_id = ? AND pi_session_file = ?
   `)
+  const clearBindings = (conversationId: string, branchId: string, piSessionFile: string): string[] => withTransaction(database, () => {
+    const affected = database.prepare('SELECT id FROM runs WHERE conversation_id = ? AND branch_id = ? AND pi_session_file = ?').all(conversationId, branchId, piSessionFile) as { id: string }[]
+    clearSessionBindings.run(conversationId, branchId, piSessionFile)
+    return affected.map(run => run.id)
+  })
 
   return {
     bindSession(id, piSessionFile) {
       return Number(bindSession.run(piSessionFile, id).changes) === 1
     },
     clearSessionBindings(conversationId, branchId, piSessionFile) {
-      return Number(clearSessionBindings.run(
-        conversationId,
-        branchId,
-        piSessionFile,
-      ).changes)
+      return clearBindings(conversationId, branchId, piSessionFile).length
     },
+    clearSessionBindingsWithReceipt: clearBindings,
     create(input) {
       insert.run(
         input.id,

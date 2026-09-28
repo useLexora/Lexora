@@ -141,6 +141,7 @@ async function createFixture() {
         syncUnavailableReason: null,
       }],
       listModels: async () => ['model-1', 'model-2'].map(model),
+      onChanged: () => () => {},
       onAuthChallenge: () => () => {},
       setDefaultModel,
     } as unknown as LocalChatApi['providers'],

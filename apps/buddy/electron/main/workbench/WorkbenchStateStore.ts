@@ -47,7 +47,7 @@ export class WorkbenchStateStore {
     }
   }
 
-  write(state: WorkbenchState): Promise<void> {
+  write(state: WorkbenchState, resetRecovery = false): Promise<void> {
     const parsed = workbenchStateSchema.parse(state)
     const data = JSON.stringify(parsed)
     if (Buffer.byteLength(data) > maximumBytes)
@@ -68,7 +68,7 @@ export class WorkbenchStateStore {
         }
         try {
           // The previous snapshot remains independently readable after a failed replace.
-          const previous = await readFile(path)
+          const previous = resetRecovery ? Buffer.from(data) : await readFile(path)
           const previousPath = join(this.#directory, `workbench-previous-${randomUUID()}.tmp`)
           const backup = await open(previousPath, 'wx', 0o600)
           try {

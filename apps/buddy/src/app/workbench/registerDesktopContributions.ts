@@ -2,6 +2,7 @@ import type { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegis
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
 import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCatalog } from '@buddy-shared/workbench/workbenchUi'
+import { computed } from 'vue'
 import { buddyColorThemes, createBuddyColorVariables } from '@/theme/buddyTheme'
 import { panes } from '@/workbench/common/workbench'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
@@ -9,7 +10,8 @@ import DesktopFileContribution from './DesktopFileContribution.vue'
 import DesktopTaskContribution from './DesktopTaskContribution.vue'
 
 export function registerDesktopContributions(controller: WorkbenchController, renderers: ViewRendererRegistry, copies: WorkingCopyService, language: () => string) {
-  const labels = () => workbenchLabels(language())
+  const presentation = computed(() => workbenchLabels(language()))
+  const labels = () => presentation.value
   controller.registry.register('lexora.tasks', (scope) => {
     scope.cleanup(renderers.register('tasks.editor', DesktopTaskContribution))
     scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false, prepareBeforeOpen: true })
@@ -18,27 +20,21 @@ export function registerDesktopContributions(controller: WorkbenchController, re
     scope.cleanup(renderers.register('files.view', DesktopFileContribution))
     scope.view({ id: 'files.preview', renderer: 'files.view', label: 'Preview', locations: ['context'], supports: resource => resource.scheme === 'file-preview', multiple: true })
     scope.view({ id: 'files.editor', renderer: 'files.view', label: 'Text editor', locations: ['context'], supports: resource => resource.scheme === 'file', multiple: true, priority: 10 })
-    scope.command({ id: 'file.save', get label() {
-      return labels().save
-    }, keybinding: 'Mod+S', shortcutScope: 'context', enabled: context => !!context.view && copies.dirty(context.view.resource), execute: context => copies.save(context.view!.resource) })
+    scope.command({ id: 'file.save', label: () => labels().save, keybinding: 'Mod+S', shortcutScope: 'context', enabled: context => !!context.view && copies.dirty(context.view.resource), execute: context => copies.save(context.view!.resource) })
   })
   controller.registry.register('lexora.workbench', (scope) => {
     for (const target of workbenchUiTargetCatalog)
       scope.configuration({ id: workbenchUiSelectionKey(target), defaultValue: '', validate: value => parseWorkbenchUiSelection(value, target.selection === 'multiple') !== null })
     for (const theme of Object.values(buddyColorThemes))
       scope.theme({ id: theme.colorScheme, colorScheme: theme.colorScheme, tokens: createBuddyColorVariables(theme) })
-    scope.command({ id: 'editor.wordWrap', label: language() === 'en-US' ? 'Toggle word wrap' : '切换自动换行', enabled: context => context.values['resource.scheme'] === 'file', execute: (context) => {
+    scope.command({ id: 'editor.wordWrap', label: () => language() === 'en-US' ? 'Toggle word wrap' : '切换自动换行', enabled: context => context.values['resource.scheme'] === 'file', execute: (context) => {
       const view = context.view!
       controller.updateView(view.id, { state: { ...view.state, wrap: !(view.state.wrap ?? controller.configuration.get('workbench.wordWrap')) } })
     } })
     scope.configuration({ id: 'workbench.tabSize', defaultValue: 2, validate: value => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 8 })
     scope.configuration({ id: 'workbench.wordWrap', defaultValue: false, validate: value => typeof value === 'boolean' })
-    scope.command({ id: 'view.close', get label() {
-      return labels().closeTask
-    }, keybinding: 'Mod+W', shortcutScope: 'main', enabled: context => context.view?.location === 'main' && Number(context.values['pane.count'] ?? 1) > 1, execute: context => controller.close(context.view!.id) })
-    scope.command({ id: 'view.focusNext', get label() {
-      return labels().focusNext
-    }, keybinding: 'Mod+J', execute: () => {
+    scope.command({ id: 'view.close', label: () => labels().closeTask, keybinding: 'Mod+W', shortcutScope: 'main', enabled: context => context.view?.location === 'main' && Number(context.values['pane.count'] ?? 1) > 1, execute: context => controller.close(context.view!.id) })
+    scope.command({ id: 'view.focusNext', label: () => labels().focusNext, keybinding: 'Mod+J', execute: () => {
       const groups = panes(controller.layout.root)
       const pane = groups[(groups.findIndex(pane => pane.id === controller.layout.activePane) + 1) % groups.length]
       if (pane) {
@@ -46,9 +42,7 @@ export function registerDesktopContributions(controller: WorkbenchController, re
         document.querySelector<HTMLElement>(`[data-pane-id="${pane.id}"]`)?.focus()
       }
     } })
-    scope.command({ id: 'view.moveNext', get label() {
-      return labels().moveNext
-    }, keybinding: 'Mod+Shift+J', shortcutScope: 'main', enabled: context => context.view?.location === 'main', execute: (context) => {
+    scope.command({ id: 'view.moveNext', label: () => labels().moveNext, keybinding: 'Mod+Shift+J', shortcutScope: 'main', enabled: context => context.view?.location === 'main', execute: (context) => {
       const groups = panes(controller.layout.root)
       const index = groups.findIndex(pane => pane.id === context.pane?.id)
       const target = groups[(index + 1) % groups.length]

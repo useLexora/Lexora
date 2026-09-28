@@ -1,4 +1,4 @@
-import type { McpRemoteTool } from './McpClientSession'
+import type { McpCatalogTool } from './mcpEvents'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -21,7 +21,7 @@ const toolSchema = z.object({
 const catalogSchema = z.array(toolSchema).max(1_024)
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024
 
-export function parseMcpCatalog(value: unknown): McpRemoteTool[] {
+export function parseMcpCatalog(value: unknown): McpCatalogTool[] {
   const parsed = catalogSchema.safeParse(value)
   if (!parsed.success)
     throw new McpClientError('MCP_TOOL_INVALID')
@@ -37,12 +37,12 @@ export function parseMcpCatalog(value: unknown): McpRemoteTool[] {
   return tools
 }
 
-export function readMcpCatalog(value: string): McpRemoteTool[] {
+export function readMcpCatalog(value: string): McpCatalogTool[] {
   if (Buffer.byteLength(value) > MAX_CATALOG_BYTES)
     throw new McpClientError('MCP_TOOL_INVALID')
   return parseMcpCatalog(JSON.parse(value))
 }
 
-export function mcpToolFingerprint(tool: McpRemoteTool): string {
+export function mcpToolFingerprint(tool: McpCatalogTool): string {
   return createHash('sha256').update(JSON.stringify({ name: tool.name, input: tool.inputSchema, output: tool.outputSchema, annotations: tool.annotations })).digest('hex')
 }

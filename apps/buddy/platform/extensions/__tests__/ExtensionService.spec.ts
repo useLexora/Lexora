@@ -2,7 +2,7 @@ import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ExtensionService } from '../ExtensionService'
@@ -40,7 +40,7 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
     createView: () => ({ token: randomUUID(), url: 'lexora-extension://fixture/__view.html', dispose: () => {} }),
     workbench: async (event) => {
       events.push(event)
-      return event.kind === 'placement' ? event.requestId : event.kind === 'interaction' ? event.interactionId : event.kind === 'state' || event.kind === 'regions' || event.kind === 'activity' ? event.viewId : randomUUID()
+      return event.kind === 'placement' || event.kind === 'clear-data' ? event.requestId : event.kind === 'interaction' ? event.interactionId : event.kind === 'state' || event.kind === 'regions' || event.kind === 'activity' ? event.viewId : randomUUID()
     },
     readText: async target => `Content of ${target.path}`,
     get: async () => new Response('network'),
@@ -51,6 +51,62 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
   return { root, store, service, hosts, events }
 }
 const target = { spaceId: 'space', directoryId: 'directory', revision: 4, path: 'README.md' }
+
+it.each([false, true])('uninstalls with clearData=%s while preserving other plugins and external files', async (clearData) => {
+  const { root, store, service, hosts } = await fixture()
+  const id = 'tests.reader'
+  const another = 'tests.reader-other'
+  await store.install((await reviewPackage(root, store, manifest({ id: another }))).token)
+  await store.saveData(another, { retained: true }, 1)
+  await store.saveData(id, { old: true }, 1)
+  await store.saveConfiguration(id, { enabled: false })
+  const external = join(root, 'user-document.txt')
+  await writeFile(external, 'user content')
+  await store.resources.grant(id, [external], () => {})
+  if (process.platform !== 'win32')
+    await symlink(external, join(store.root, 'data', id, 'external-link'))
+  await service.execute(id, `${id}.open`, null)
+  const write = hosts[0]!.broker('storage.set', { value: { current: true }, version: 1 })
+  const completed = Promise.allSettled([write])
+  await service.uninstall(id, clearData)
+  await completed
+  await expect(hosts[0]!.broker('storage.set', { value: 'late', version: 1 })).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  expect((await service.list()).map(plugin => plugin.manifest.id)).toEqual([another])
+  expect(await store.data(another)).toEqual({ version: 1, value: { retained: true } })
+  expect(await readFile(external, 'utf8')).toBe('user content')
+  if (clearData)
+    await expect(readFile(join(store.root, 'data', id, 'configuration.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  else
+    expect(JSON.parse(await readFile(join(store.root, 'data', id, 'configuration.json'), 'utf8'))).toEqual({ enabled: false })
+  expect(await store.data(id)).toEqual(clearData ? { version: 0, value: {} } : expect.objectContaining({ version: 1 }))
+  await store.install((await reviewPackage(root, store)).token)
+  expect(await store.resources.list(id)).toEqual([])
+  expect(await store.data(id)).toEqual(clearData ? { version: 0, value: {} } : expect.objectContaining({ version: 1 }))
+})
+
+it('keeps a stopped installation retryable when workbench cleanup fails', async () => {
+  let fail = true
+  const { store, service } = await fixture({ workbench: async event => fail ? null : event.requestId })
+  await store.saveData('tests.reader', { retained: true }, 1)
+  await expect(service.uninstall('tests.reader', true)).rejects.toThrow('EXTENSION_DATA_CLEANUP_FAILED')
+  expect((await service.list())[0]).toMatchObject({ enabled: false, state: 'disabled' })
+  expect(await store.data('tests.reader')).toEqual({ version: 1, value: { retained: true } })
+  fail = false
+  await service.uninstall('tests.reader', true)
+  expect(await service.list()).toEqual([])
+  expect(await store.data('tests.reader')).toEqual({ version: 0, value: {} })
+})
+
+it.each(['removeData', 'removePackages'] as const)('keeps the installation retryable after %s fails', async (operation) => {
+  const { store, service } = await fixture()
+  await store.saveData('tests.reader', { saved: true }, 1)
+  vi.spyOn(store, operation).mockRejectedValueOnce(new Error('fixture permission denied'))
+  await expect(service.uninstall('tests.reader', true)).rejects.toThrow('fixture permission denied')
+  expect((await service.list())[0]).toMatchObject({ enabled: false, state: 'disabled' })
+  await service.uninstall('tests.reader', true)
+  expect(await service.list()).toEqual([])
+  expect(await store.data('tests.reader')).toEqual({ version: 0, value: {} })
+})
 
 it('publishes static contributions without starting code and deduplicates concurrent activation', async () => {
   const { service, hosts } = await fixture()
@@ -337,6 +393,8 @@ it('keeps export permission separate from reads and expires writers with their o
   await request('resources.writeChunk', { id, offset: 0, base64: Buffer.from('new!').toString('base64') })
   f.service.closeView(owner.id, owner.generation, owner.token)
   await expect(request('resources.commitSave', { id })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await f.service.dispose()
+  expect((await readdir(f.root)).filter(name => name.startsWith('.lexora-'))).toEqual([])
   expect(await readFile(destination, 'utf8')).toBe('original')
 })
 

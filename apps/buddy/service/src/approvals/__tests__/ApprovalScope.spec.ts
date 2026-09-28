@@ -4,11 +4,76 @@ import type {
   ApprovalRepository,
   ApprovalStatus,
 } from '../../storage/approvalRepository'
+import type { ApprovalLifecycleFact } from '../ApprovalService'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApprovalService } from '../ApprovalService'
 
 describe('turn approval scope', () => {
+  it('releases an aborted queued request without installing a waiter or persisting an approval', async () => {
+    const records = new Map<string, ApprovalRecord>()
+    const repository = createRepository(records)
+    const service = new ApprovalService({ eventLog: { append: input => appendApprovalEvent(records, input) }, repository })
+    const facts: ApprovalLifecycleFact[] = []
+    service.onDidChange(event => facts.push(event))
+    const first = service.request(shellRequest('run-queue', 'tool-first', 'pnpm test', new AbortController().signal))
+    await vi.waitFor(() => expect(repository.listPending()).toHaveLength(1))
+    const controller = new AbortController()
+    const queued = service.request(shellRequest('run-queue', 'tool-queued', 'pnpm lint', controller.signal))
+    controller.abort()
+    await expect(queued).rejects.toMatchObject({ code: 'APPROVAL_CANCELLED' })
+    expect(facts.filter(event => 'toolCallId' in event && event.toolCallId === 'tool-queued')).toEqual([
+      expect.objectContaining({ kind: 'request.queued' }),
+      expect.objectContaining({ kind: 'request.released', reason: 'cancelled' }),
+    ])
+    await service.resolve({ id: repository.listPending()[0]!.id, decision: 'denied' })
+    await first
+    await service.dispose()
+    expect(records.size).toBe(1)
+    expect(facts.filter(event => event.kind === 'waiter.started')).toHaveLength(1)
+  })
+
+  it('reports released waiters separately from failed durable cancellation and drains shutdown', async () => {
+    const records = new Map<string, ApprovalRecord>()
+    const repository = createRepository(records)
+    const service = new ApprovalService({
+      eventLog: { append: input => input.type === 'approval.resolved' ? Promise.reject(new Error('Store unavailable')) : appendApprovalEvent(records, input) },
+      repository,
+    })
+    const facts: ApprovalLifecycleFact[] = []
+    service.onDidChange(event => facts.push(event))
+    const first = service.request(shellRequest('run-stop', 'tool-active', 'pnpm test', new AbortController().signal))
+    const decisions = Promise.allSettled([first, service.request(shellRequest('run-stop', 'tool-queued', 'pnpm lint', new AbortController().signal))])
+    await vi.waitFor(() => expect(repository.listPending()).toHaveLength(1))
+    await expect(service.dispose()).rejects.toBeInstanceOf(AggregateError)
+    expect((await decisions).map(result => result.status)).toEqual(['rejected', 'rejected'])
+    expect(repository.listPending()).toHaveLength(1)
+    expect(facts).toContainEqual(expect.objectContaining({ kind: 'waiter.released', reason: 'shutdown', persistence: 'failed' }))
+    expect(facts).toContainEqual(expect.objectContaining({ kind: 'request.released', toolCallId: 'tool-queued', reason: 'shutdown' }))
+    await expect(service.request(shellRequest('run-stop', 'tool-late', 'pnpm test', new AbortController().signal))).rejects.toMatchObject({ code: 'APPROVAL_CANCELLED' })
+  })
+
+  it('drains the required expiry cancellation after the waiter has been released', async () => {
+    const records = new Map<string, ApprovalRecord>()
+    const repository = createRepository(records)
+    const expired = Promise.withResolvers<void>()
+    const onExpired = vi.fn(() => expired.promise)
+    const service = new ApprovalService({ approvalTimeoutMs: 5, onExpired, eventLog: { append: input => appendApprovalEvent(records, input) }, repository })
+    const facts: ApprovalLifecycleFact[] = []
+    service.onDidChange(event => facts.push(event))
+    await expect(service.request(shellRequest('run-expiry', 'tool-expiry', 'pnpm test', new AbortController().signal))).rejects.toMatchObject({ code: 'AUTOMATION_APPROVAL_EXPIRED' })
+    expect(facts).toContainEqual(expect.objectContaining({ kind: 'waiter.released', reason: 'expired', persistence: 'committed' }))
+    let stopped = false
+    const stopping = service.dispose().then(() => {
+      stopped = true
+    })
+    await vi.waitFor(() => expect(onExpired).toHaveBeenCalledOnce())
+    expect(stopped).toBe(false)
+    expired.resolve()
+    await stopping
+    expect(stopped).toBe(true)
+  })
+
   it('reuses approval for later approvable operations in the same turn only', async () => {
     const records = new Map<string, ApprovalRecord>()
     const repository = createRepository(records)
@@ -16,6 +81,8 @@ describe('turn approval scope', () => {
       eventLog: { append: input => appendApprovalEvent(records, input) },
       repository,
     })
+    const facts: ApprovalLifecycleFact[] = []
+    service.onDidChange(event => facts.push(event))
     const controller = new AbortController()
     const initial = service.request({
       reuseScopes: ['operation', 'source', 'turn'],
@@ -72,6 +139,13 @@ describe('turn approval scope', () => {
     })
 
     service.clearRunAuthorizations('run-1')
+    service.clearRunAuthorizations('run-1')
+    expect(facts.filter(event => event.kind === 'authorization.established')).toEqual([
+      expect.objectContaining({ runId: 'run-1', scope: 'turn', approvalId: sourceApprovalId }),
+    ])
+    expect(facts.filter(event => event.kind === 'authorization.cleared')).toEqual([
+      { kind: 'authorization.cleared', runId: 'run-1', reason: 'run_settled', count: 1 },
+    ])
     const clearedTurn = service.request({
       reuseScopes: ['operation', 'source', 'turn'],
       arguments: { command: 'python process.py' },

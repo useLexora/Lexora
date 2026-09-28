@@ -1,5 +1,6 @@
 import type { WorkbenchContextSnapshot } from '@buddy-shared/workbench/workbenchContext'
 import type { Ref } from 'vue'
+import type { RouteLocationRaw } from 'vue-router'
 import type { useExtensionState } from './state/useExtensionState'
 import type { useExtensionUiContributions } from './state/useExtensionUiContributions'
 import type { useExtensionViews } from './widgets/useExtensionViews'
@@ -18,6 +19,7 @@ export interface ExtensionContext {
   focusView: (id: string) => void
   authoring: { author: Readonly<Ref<string>>, save: (author: string) => Promise<boolean> }
   startCreation: (prompt: string) => Promise<void>
+  settingsLocation: (extensionId: string) => RouteLocationRaw | null
 }
 const [useProvideExtensionContext, injectExtensionContext] = createInjectionState((context: ExtensionContext) => context)
 export { useProvideExtensionContext }

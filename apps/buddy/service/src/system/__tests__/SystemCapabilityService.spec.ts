@@ -1,4 +1,5 @@
 import type {
+  SystemActionChange,
   SystemActionRequest,
   SystemHostPort,
   SystemTarget,
@@ -170,6 +171,47 @@ describe('systemCapabilityService', () => {
       name: SystemCapabilityError.name,
     })
     expect(host.execute).not.toHaveBeenCalled()
+  })
+
+  it('keeps execution confirmation when the post-action observation fails', async () => {
+    const host = createHost()
+    const service = new SystemCapabilityService({ host })
+    const facts: SystemActionChange[] = []
+    service.onDidChange(change => facts.push(change))
+    await service.prepareAction('tool-1', terminateRequest, new AbortController().signal)
+    vi.mocked(host.readTarget).mockResolvedValueOnce(processTarget).mockRejectedValueOnce(new Error('private-postcondition'))
+    await expect(service.act('tool-1', terminateRequest, new AbortController().signal)).rejects.toThrow('private-postcondition')
+    expect(facts.map(({ phase, effect }) => ({ phase, effect }))).toEqual([
+      { phase: 'dispatched', effect: 'unknown' },
+      { phase: 'confirmed', effect: 'confirmed' },
+      { phase: 'failed', effect: 'confirmed' },
+    ])
+    expect(JSON.stringify(facts)).not.toContain('private-postcondition')
+    await service.dispose()
+  })
+
+  it('waits for admitted execution and records an unknown result after cancellation', async () => {
+    const host = createHost()
+    const execution = Promise.withResolvers<void>()
+    vi.mocked(host.execute).mockReturnValue(execution.promise)
+    const service = new SystemCapabilityService({ host })
+    const facts: SystemActionChange[] = []
+    service.onDidChange(change => facts.push(change))
+    await service.prepareAction('tool-1', terminateRequest, new AbortController().signal)
+    const acting = service.act('tool-1', terminateRequest, new AbortController().signal)
+    const rejected = expect(acting).rejects.toThrow('execution unknown')
+    await vi.waitFor(() => expect(host.execute).toHaveBeenCalledOnce())
+    let disposed = false
+    const stopping = service.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    execution.reject(new Error('execution unknown'))
+    await rejected
+    await stopping
+    expect(facts.at(-1)).toMatchObject({ phase: 'failed', effect: 'unknown', cancelled: true })
+    expect(service.snapshot.pending).toBe(0)
   })
 
   it('keeps raw systemd identity internal to the host adapter', async () => {

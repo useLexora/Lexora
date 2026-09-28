@@ -30,6 +30,25 @@ async function fixture() {
 }
 
 describe('space file browsing', () => {
+  it('reports a committed write before denying its response after authorization is revoked', async () => {
+    const f = await fixture()
+    const path = join(f.workspace, 'private-name.md')
+    await writeFile(path, 'before')
+    const target = { ...f.target, path: 'private-name.md' }
+    const original = await f.files.readDocument(target)
+    const events: unknown[] = []
+    f.files.onDidChange((event) => {
+      events.push(event)
+      if (event.kind === 'saved')
+        f.database.prepare('UPDATE space_directory_bindings SET revision = revision + 1 WHERE id = ?').run(target.directoryId)
+    })
+    await expect(f.files.saveDocument({ ...target, etag: original.etag, text: 'private changed content' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect(await readFile(path, 'utf8')).toBe('private changed content')
+    expect(events).toMatchObject([{ kind: 'saved', revision: 1 }, { kind: 'response-denied', revision: 2 }])
+    expect(JSON.stringify(events)).not.toContain('private')
+    expect(JSON.stringify(events)).not.toContain(original.etag)
+  })
+
   it('lists directories lazily with complete pagination and previews bounded file types', async () => {
     const f = await fixture()
     await mkdir(join(f.workspace, 'src'))

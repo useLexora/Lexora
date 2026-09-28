@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import type { DesktopDiagnosticEvent } from '../../desktopDiagnostics'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { deferred } from '@buddy-tests/deferred'
@@ -28,14 +29,14 @@ beforeEach(() => {
   native.save.mockReset()
 })
 
-async function fixture() {
+async function fixture(record: (event: DesktopDiagnosticEvent) => boolean = () => true) {
   const directory = await createTemporaryDirectory('lexora-diagnostic-export-')
   await writeFile(join(directory, 'application.jsonl'), `${JSON.stringify({ schemaVersion: 1, timestamp: '2026-09-24T00:00:00.000Z', elapsedMs: 1, sequence: 1, launchId: 'launch-current', appVersion: '0.8.7', platform: 'linux', collectorPid: 42, scope: 'local-service', level: 'error', event: 'run.failed', errorCode: 'MODEL_STREAM_INCOMPLETE' })}\n`)
   const frame = {}
   const sender = { mainFrame: frame }
   const window = { webContents: sender, isDestroyed: () => false } as unknown as BrowserWindow
   const event = { sender, senderFrame: frame } as unknown as IpcMainInvokeEvent
-  registerApplicationLogIpc(new ApplicationLogReader(directory, 'launch-current', '/fixture'), () => window)
+  registerApplicationLogIpc(new ApplicationLogReader(directory, 'launch-current', '/fixture'), () => window, record)
   const handler = native.handlers.get(DESKTOP_IPC_CHANNELS.appLogsExportDiagnostics)!
   return { directory, event, handler }
 }
@@ -74,5 +75,59 @@ describe('diagnostic export IPC', () => {
     await expect(handler(event, { launch: 'current' })).rejects.toThrow(/^APPLICATION_LOG_EXPORT_FAILED$/)
     native.save.mockResolvedValueOnce({ canceled: false, filePath: join(directory, 'retry.zip') })
     await expect(handler(event, { launch: 'current' })).resolves.toMatchObject({ status: 'saved' })
+  })
+})
+
+describe('renderer diagnostic IPC', () => {
+  const diagnostic = { event: 'workbench.copy.saved', level: 'info', workingCopyId: '10000000-0000-4000-8000-000000000001', contentVersion: 3, savedVersion: 2, dirty: true, sourceSequence: 1, occurredAt: '2026-09-28T00:00:00.000Z' }
+
+  it('binds safe producer identities while retaining source sequences and ignores repeated delivery', async () => {
+    const records: DesktopDiagnosticEvent[] = []
+    const { event } = await fixture((record) => {
+      records.push(record)
+
+      return true
+    })
+    const report = native.handlers.get(DESKTOP_IPC_CHANNELS.appLogsReport)!
+    const first = { sourceId: crypto.randomUUID(), diagnostic }
+    const second = { sourceId: crypto.randomUUID(), diagnostic }
+    await expect(report(event, first)).resolves.toBe(true)
+    await expect(report(event, first)).resolves.toBe(true)
+    await expect(report(event, second)).resolves.toBe(true)
+    expect(records).toHaveLength(2)
+    expect(records.map(record => record.sourceSequence)).toEqual([1, 1])
+    expect(records[0]).toMatchObject({ component: 'renderer.workbench', scope: 'desktop', workingCopyId: diagnostic.workingCopyId, contentVersion: 3, savedVersion: 2, dirty: true })
+    expect(records[0]!.producerInstanceId).not.toBe(records[1]!.producerInstanceId)
+    expect(records[0]!.producerInstanceId).not.toBe(first.sourceId)
+  })
+
+  it('rejects foreign senders, lifecycle impersonation and arbitrary payloads before recording', async () => {
+    const records: DesktopDiagnosticEvent[] = []
+    const { event } = await fixture((record) => {
+      records.push(record)
+
+      return true
+    })
+    const report = native.handlers.get(DESKTOP_IPC_CHANNELS.appLogsReport)!
+    const input = { sourceId: crypto.randomUUID(), diagnostic }
+    await expect(report({ ...event, senderFrame: {} } as IpcMainInvokeEvent, input)).rejects.toThrow('Untrusted')
+    for (const extra of [{ event: 'component.ready' }, { key: '/fixture/private' }, { workingCopyId: 'file:/fixture/private' }, { operationId: '/fixture/private' }, { body: 'private content' }, { producerInstanceId: crypto.randomUUID() }])
+      await expect(report(event, { ...input, diagnostic: { ...diagnostic, ...extra } })).rejects.toThrow()
+    expect(records).toEqual([])
+  })
+
+  it('returns a refused acknowledgement when the collector is closed or fails', async () => {
+    let throwing = false
+    const { event } = await fixture(() => {
+      if (throwing)
+        throw new Error('fixture-private-collector')
+      return false
+    })
+    const report = native.handlers.get(DESKTOP_IPC_CHANNELS.appLogsReport)!
+    const input = { sourceId: crypto.randomUUID(), diagnostic }
+    await expect(report(event, input)).resolves.toBe(false)
+    await expect(report(event, input)).resolves.toBe(false)
+    throwing = true
+    await expect(report(event, { ...input, diagnostic: { ...diagnostic, sourceSequence: 2 } })).resolves.toBe(false)
   })
 })

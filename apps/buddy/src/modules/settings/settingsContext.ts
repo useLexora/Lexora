@@ -4,11 +4,15 @@ import type { Ref } from 'vue'
 import type { ApplicationSettings, ShortcutSettings } from './contracts'
 import type { DesktopDataSettingsCapability } from './state/desktopDataSettingsCapability'
 import type { McpSettingsCapability } from './state/useMcpSettingsCapability'
+import type { PluginSettings } from './state/usePluginSettings'
+import type { SettingsRegistryState } from './state/useSettingsRegistry'
 import type { WebSettingsCapability } from './state/useWebSettingsCapability'
 import type { ModelProvidersStore } from '@/modules/models'
 import { createInjectionState } from '@vueuse/core'
 
 export interface SettingsContext {
+  registry: SettingsRegistryState
+  pluginSettings: PluginSettings
   shortcuts: ShortcutSettings
   browser: Pick<DesktopBrowserApi, 'clearData' | 'getDataSummary'>
   appInfo: Readonly<Ref<DesktopAppInfo | null>>

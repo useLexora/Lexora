@@ -7,6 +7,9 @@ export function createExtensionApi(): ExtensionApi {
   const request = (input: ExtensionManagementRequest) => ipcRenderer.invoke(EXTENSION_IPC.request, input)
   return Object.freeze({
     list: () => request({ action: 'list' }),
+    configuration: id => request({ action: 'configuration', id }),
+    configurationSnapshot: id => request({ action: 'configurationSnapshot', id }),
+    configure: (id, patch) => request({ action: 'configure', id, patch }),
     installations: () => request({ action: 'installations' }),
     catalog: (refresh = false) => request({ action: 'catalog', refresh }),
     reviewCatalog: (id, version) => request({ action: 'reviewCatalog', id, version }),
@@ -16,7 +19,7 @@ export function createExtensionApi(): ExtensionApi {
     cancelInstall: token => request({ action: 'cancelInstall', token }),
     enable: (id, enabled) => request({ action: 'enable', id, enabled }),
     restart: id => request({ action: 'restart', id }),
-    uninstall: id => request({ action: 'uninstall', id }),
+    uninstall: (id, options) => request({ action: 'uninstall', id, clearData: options?.clearData ?? false }),
     devtools: id => request({ action: 'devtools', id }),
     revokeResources: id => request({ action: 'revokeResources', id }),
     execute: (id, command, resource) => request({ action: 'execute', id, command, resource }),

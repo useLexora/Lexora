@@ -74,3 +74,6 @@ export const notificationsRpc = {
   markSeen: { method: 'notifications.markSeen', input: notificationsRequestSchemas.notificationRevision, response: notificationsResponseSchemas.notificationList },
   markAllSeen: { method: 'notifications.markAllSeen', input: validationRequestSchemas.empty, response: notificationsResponseSchemas.notificationList },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const notificationsChanged = { method: 'notifications.changed', params: z.object({ revision: z.number().int().nonnegative() }).strict() } as const
+export type NotificationsChanged = z.infer<typeof notificationsChanged.params>

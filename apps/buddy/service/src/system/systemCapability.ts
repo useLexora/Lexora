@@ -1,4 +1,8 @@
 import type { SystemActionApprovalReviewInput } from '../../../shared/permissions/approvalReviewPayload'
+import { randomUUID } from 'node:crypto'
+import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 
 export const SYSTEM_ACTION_KINDS = [
   'kill-process',
@@ -85,6 +89,7 @@ export interface PreparedSystemAction {
 }
 
 interface PreparedSystemActionEntry {
+  preparationId: string
   expiresAt: number
   request: SystemActionRequest
   target: SystemTarget
@@ -96,7 +101,21 @@ export interface SystemActionPreparationRegistryOptions {
   ttlMs?: number
 }
 
+export interface SystemPreparationChange {
+  readonly revision: number
+  readonly preparationId: string
+  readonly toolCallId: string
+  readonly phase: 'prepared' | 'removed'
+  readonly reason?: 'consumed' | 'expired' | 'evicted' | 'changed' | 'disposed'
+  readonly action: SystemActionKind
+  readonly targetKind: SystemTarget['kind']
+}
+
 export class SystemActionPreparationRegistry {
+  readonly #changes = new Emitter<SystemPreparationChange>(() => console.error('SYSTEM_PREPARATION_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #disposed = false
   readonly #entries = new Map<string, PreparedSystemActionEntry>()
   readonly #maxEntries: number
   readonly #now: () => number
@@ -108,11 +127,17 @@ export class SystemActionPreparationRegistry {
     this.#ttlMs = options.ttlMs ?? 5 * 60 * 1_000
   }
 
+  get snapshot() {
+    return copyEventSnapshot({ revision: this.#revision, prepared: [...this.#entries].map(([toolCallId, entry]) => ({ toolCallId, preparationId: entry.preparationId, expiresAt: entry.expiresAt, action: entry.request.action, targetKind: entry.target.kind })) })
+  }
+
   prepare(
     toolCallId: string,
     request: SystemActionRequest,
     target: SystemTarget,
   ): PreparedSystemAction {
+    if (this.#disposed)
+      throw new Error('SYSTEM_PREPARATION_STOPPED')
     this.#prune()
     const existing = this.#entries.get(toolCallId)
     if (existing) {
@@ -121,16 +146,18 @@ export class SystemActionPreparationRegistry {
       return createPreparedSystemAction(existing)
     }
     const entry: PreparedSystemActionEntry = {
+      preparationId: randomUUID(),
       expiresAt: this.#now() + this.#ttlMs,
       request: cloneRequest(request),
       target: cloneTarget(target),
     }
     this.#entries.set(toolCallId, entry)
+    this.#publish(toolCallId, entry, 'prepared')
     while (this.#entries.size > this.#maxEntries) {
       const oldest = this.#entries.keys().next().value
       if (typeof oldest !== 'string')
         break
-      this.#entries.delete(oldest)
+      this.#remove(oldest, 'evicted')
     }
     return createPreparedSystemAction(entry)
   }
@@ -139,19 +166,44 @@ export class SystemActionPreparationRegistry {
     const entry = this.#entries.get(toolCallId)
     if (!entry)
       throw new SystemCapabilityError('SYSTEM_ACTION_NOT_PREPARED')
-    this.#entries.delete(toolCallId)
-    if (entry.expiresAt <= this.#now())
+    if (entry.expiresAt <= this.#now()) {
+      this.#remove(toolCallId, 'expired')
       throw new SystemCapabilityError('SYSTEM_ACTION_EXPIRED')
-    if (!sameRequest(entry.request, request))
+    }
+    if (!sameRequest(entry.request, request)) {
+      this.#remove(toolCallId, 'changed')
       throw new SystemCapabilityError('SYSTEM_ACTION_CHANGED')
+    }
+    this.#remove(toolCallId, 'consumed')
     return cloneTarget(entry.target)
+  }
+
+  dispose(): void {
+    if (this.#disposed)
+      return
+    this.#disposed = true
+    for (const toolCallId of this.#entries.keys())
+      this.#remove(toolCallId, 'disposed')
+    this.#changes.dispose()
+  }
+
+  #remove(toolCallId: string, reason: SystemPreparationChange['reason']): void {
+    const entry = this.#entries.get(toolCallId)
+    if (!entry)
+      return
+    this.#entries.delete(toolCallId)
+    this.#publish(toolCallId, entry, 'removed', reason)
+  }
+
+  #publish(toolCallId: string, entry: PreparedSystemActionEntry, phase: SystemPreparationChange['phase'], reason?: SystemPreparationChange['reason']): void {
+    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, toolCallId, preparationId: entry.preparationId, phase, ...(reason ? { reason } : {}), action: entry.request.action, targetKind: entry.target.kind }))
   }
 
   #prune(): void {
     const now = this.#now()
     for (const [toolCallId, entry] of this.#entries) {
       if (entry.expiresAt <= now)
-        this.#entries.delete(toolCallId)
+        this.#remove(toolCallId, 'expired')
     }
   }
 }
@@ -161,57 +213,112 @@ export interface SystemCapabilityServiceOptions {
   host: SystemHostPort
 }
 
+export interface SystemActionChange {
+  readonly revision: number
+  readonly operationId: string
+  readonly toolCallId: string
+  readonly action: SystemActionKind
+  readonly targetKind: SystemTarget['kind']
+  readonly phase: 'dispatched' | 'confirmed' | 'verified' | 'failed'
+  readonly effect: 'not-dispatched' | 'unknown' | 'confirmed'
+  readonly verified?: boolean
+  readonly errorCode?: string
+  readonly cancelled: boolean
+}
+
 export class SystemCapabilityService {
+  readonly #changes = new Emitter<SystemActionChange>(() => console.error('SYSTEM_ACTION_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
   readonly #actions: SystemActionPreparationRegistry
+  readonly #ownsActions: boolean
   readonly #host: SystemHostPort
+  readonly #shutdown = new AbortController()
+  readonly #pending = new Set<Promise<unknown>>()
+  #revision = 0
+  #disposing: Promise<void> | undefined
 
   constructor(options: SystemCapabilityServiceOptions) {
     this.#actions = options.actions ?? new SystemActionPreparationRegistry()
+    this.#ownsActions = !options.actions
     this.#host = options.host
   }
 
-  async prepareAction(
-    toolCallId: string,
-    input: SystemActionRequest,
-    signal: AbortSignal,
-  ): Promise<PreparedSystemAction> {
-    signal.throwIfAborted()
-    validateActionRequest(input)
-    const targets = await this.#host.resolveTargets(input.target, signal)
-    if (targets.length === 0)
-      throw new SystemCapabilityError('SYSTEM_TARGET_NOT_FOUND')
-    if (targets.length > 1)
-      throw new SystemCapabilityError('SYSTEM_TARGET_AMBIGUOUS')
-    const target = targets[0]!
-    if (!target.allowedActions.includes(input.action))
-      throw new SystemCapabilityError('SYSTEM_ACTION_NOT_ALLOWED')
-    return this.#actions.prepare(toolCallId, input, target)
+  get onDidChangePreparation() { return this.#actions.onDidChange }
+  get snapshot() { return copyEventSnapshot({ revision: this.#revision, stopping: this.#shutdown.signal.aborted, pending: this.#pending.size, preparations: this.#actions.snapshot }) }
+
+  prepareAction(toolCallId: string, input: SystemActionRequest, parent: AbortSignal): Promise<PreparedSystemAction> {
+    const request = cloneRequest(input)
+    const signal = AbortSignal.any([parent, this.#shutdown.signal])
+    return this.#track(async () => {
+      signal.throwIfAborted()
+      validateActionRequest(request)
+      const targets = await this.#host.resolveTargets(request.target, signal)
+      signal.throwIfAborted()
+      if (targets.length === 0)
+        throw new SystemCapabilityError('SYSTEM_TARGET_NOT_FOUND')
+      if (targets.length > 1)
+        throw new SystemCapabilityError('SYSTEM_TARGET_AMBIGUOUS')
+      const target = targets[0]!
+      if (!target.allowedActions.includes(request.action))
+        throw new SystemCapabilityError('SYSTEM_ACTION_NOT_ALLOWED')
+      return this.#actions.prepare(toolCallId, request, target)
+    })
   }
 
-  async act(
-    toolCallId: string,
-    input: SystemActionRequest,
-    signal: AbortSignal,
-  ) {
-    signal.throwIfAborted()
-    validateActionRequest(input)
-    const approvedTarget = this.#actions.take(toolCallId, input)
-    const current = await this.#host.readTarget(approvedTarget, signal)
-    if (!current || !sameTargetIdentity(approvedTarget, current))
-      throw new SystemCapabilityError('SYSTEM_TARGET_CHANGED')
-    if (!current.allowedActions.includes(input.action))
-      throw new SystemCapabilityError('SYSTEM_ACTION_NOT_ALLOWED')
-    await this.#host.execute(current, input.action, signal)
-    const postAction = await this.#host.readTarget(current, signal)
-    const outcome = evaluatePostcondition(input.action, current, postAction)
-    return {
-      action: input.action,
-      message: outcome.message,
-      observedAt: new Date().toISOString(),
-      status: outcome.status,
-      target: targetReview(current),
-      verified: outcome.verified,
-    }
+  act(toolCallId: string, input: SystemActionRequest, parent: AbortSignal) {
+    const request = cloneRequest(input)
+    const signal = AbortSignal.any([parent, this.#shutdown.signal])
+    const operationId = randomUUID()
+    return this.#track(async () => {
+      let effect: SystemActionChange['effect'] = 'not-dispatched'
+      const publish = (phase: SystemActionChange['phase'], detail: Pick<SystemActionChange, 'verified' | 'errorCode'> = {}) => {
+        this.#changes.fire(copyEventSnapshot({ ...detail, revision: ++this.#revision, operationId, toolCallId, action: request.action, targetKind: request.target.kind, phase, effect, cancelled: signal.aborted }))
+      }
+      try {
+        signal.throwIfAborted()
+        validateActionRequest(request)
+        const approvedTarget = this.#actions.take(toolCallId, request)
+        const current = await this.#host.readTarget(approvedTarget, signal)
+        signal.throwIfAborted()
+        if (!current || !sameTargetIdentity(approvedTarget, current))
+          throw new SystemCapabilityError('SYSTEM_TARGET_CHANGED')
+        if (!current.allowedActions.includes(request.action))
+          throw new SystemCapabilityError('SYSTEM_ACTION_NOT_ALLOWED')
+        effect = 'unknown'
+        publish('dispatched')
+        await this.#host.execute(current, request.action, signal)
+        effect = 'confirmed'
+        publish('confirmed')
+        const postAction = await this.#host.readTarget(current, signal)
+        const outcome = evaluatePostcondition(request.action, current, postAction)
+        publish('verified', { verified: outcome.verified })
+        return { action: request.action, message: outcome.message, observedAt: new Date().toISOString(), status: outcome.status, target: targetReview(current), verified: outcome.verified }
+      }
+      catch (error) {
+        publish('failed', { errorCode: readDiagnosticErrorCode(error) })
+        throw error
+      }
+    })
+  }
+
+  dispose(): Promise<void> {
+    this.#disposing ??= Promise.resolve().then(async () => {
+      await Promise.allSettled([...this.#pending])
+      if (this.#ownsActions)
+        this.#actions.dispose()
+      this.#changes.dispose()
+    })
+    this.#shutdown.abort()
+    return this.#disposing
+  }
+
+  #track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#shutdown.signal.aborted)
+      return Promise.reject(this.#shutdown.signal.reason)
+    const pending = Promise.resolve().then(operation)
+    this.#pending.add(pending)
+    void pending.finally(() => this.#pending.delete(pending)).catch(() => {})
+    return pending
   }
 }
 

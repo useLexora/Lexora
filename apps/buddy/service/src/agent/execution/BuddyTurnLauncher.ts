@@ -16,10 +16,12 @@ export class BuddyTurnLauncher {
     this.#options = options
   }
 
-  async launch(runId: string): Promise<BuddyTurnHandle> {
+  async launch(runId: string, signal?: AbortSignal): Promise<BuddyTurnHandle> {
     let plan: Awaited<ReturnType<BuddyRunExecutionPlanner['resolve']>>
     try {
+      signal?.throwIfAborted()
       plan = await this.#options.planner.resolve(runId)
+      signal?.throwIfAborted()
     }
     catch (error) {
       const failed = await this.#options.lifecycle.failBeforeStart(runId, error)

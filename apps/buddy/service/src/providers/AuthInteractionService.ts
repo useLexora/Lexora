@@ -1,80 +1,92 @@
-import type {
-  AuthEvent,
-  AuthInteraction,
-  AuthPrompt,
-} from '@earendil-works/pi-ai'
+import type { AuthEvent, AuthInteraction, AuthPrompt } from '@earendil-works/pi-ai'
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { ProviderAuthChallenge } from './providerSchemas'
 import { randomUUID } from 'node:crypto'
-
-import { providerNotifications } from '../../../shared/providers/providerApi'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { providerAuthChallengeSchema } from './providerSchemas'
 
 export interface AuthInteractionServiceOptions {
-  notify: (method: string, params: unknown) => void
   openExternal?: (url: string) => Promise<void>
 }
-
 export interface LoginInteractionHandle {
   interaction: AuthInteraction
   loginId: string
 }
-
+export interface AuthInteractionChange {
+  readonly revision: number
+  readonly loginId: string
+  readonly providerId: string
+  readonly kind: 'started' | 'challenge-opened' | 'challenge-closed' | 'ended'
+  readonly challengeId?: string
+  readonly challengeType?: ProviderAuthChallenge['type']
+  readonly outcome?: 'responded' | 'cancelled' | 'completed' | 'failed'
+}
 interface LoginSession {
-  challenges: Set<string>
+  challenges: Map<string, ProviderAuthChallenge['type']>
   controller: AbortController
   providerId: string
 }
-
 interface PendingPrompt {
   loginId: string
   prompt: AuthPrompt
+  dispose: () => void
   reject: (error: Error) => void
   resolve: (value: string) => void
 }
 
 export class AuthInteractionService {
-  readonly #notify: AuthInteractionServiceOptions['notify']
+  readonly #changes = new Emitter<AuthInteractionChange>(() => console.error('AUTH_INTERACTION_OBSERVER_FAILED'))
+  readonly #challenges = new Emitter<EventSnapshot<ProviderAuthChallenge>>(() => console.error('AUTH_CHALLENGE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  readonly onDidChallenge = this.#challenges.event
   readonly #openExternal?: AuthInteractionServiceOptions['openExternal']
   readonly #sessions = new Map<string, LoginSession>()
   readonly #challengeSessions = new Map<string, string>()
   readonly #pendingPrompts = new Map<string, PendingPrompt>()
+  #revision = 0
+  #disposed = false
 
-  constructor(options: AuthInteractionServiceOptions) {
-    this.#notify = options.notify
+  constructor(options: AuthInteractionServiceOptions = {}) {
     this.#openExternal = options.openExternal
   }
 
-  beginLogin(providerId: string): LoginInteractionHandle {
-    const loginId = randomUUID()
-    const session: LoginSession = {
-      challenges: new Set(),
-      controller: new AbortController(),
-      providerId,
-    }
-    this.#sessions.set(loginId, session)
-    return {
-      loginId,
-      interaction: {
-        signal: session.controller.signal,
-        notify: event => this.#handleEvent(loginId, event),
-        prompt: prompt => this.#handlePrompt(loginId, prompt),
-      },
-    }
+  get snapshot() {
+    return copyEventSnapshot({ revision: this.#revision, logins: [...this.#sessions].map(([loginId, session]) => ({ loginId, providerId: session.providerId, challenges: [...session.challenges].map(([challengeId, type]) => ({ challengeId, type })) })) })
   }
 
-  completeLogin(loginId: string): void {
+  beginLogin(providerId: string): LoginInteractionHandle {
+    if (this.#disposed)
+      throw new ProviderLoginCancelledError()
+    const loginId = randomUUID()
+    const session: LoginSession = { challenges: new Map(), controller: new AbortController(), providerId }
+    this.#sessions.set(loginId, session)
+    this.#publish({ loginId, providerId, kind: 'started' })
+    return { loginId, interaction: {
+      signal: session.controller.signal,
+      notify: event => this.#handleEvent(loginId, event),
+      prompt: prompt => this.#handlePrompt(loginId, prompt),
+    } }
+  }
+
+  completeLogin(loginId: string, outcome: 'cancelled' | 'completed' | 'failed' = 'completed'): void {
     const session = this.#sessions.get(loginId)
     if (!session)
       return
     this.#sessions.delete(loginId)
-    for (const challengeId of session.challenges) {
+    const changes: AuthInteractionChange[] = []
+    for (const [challengeId, challengeType] of session.challenges) {
       this.#challengeSessions.delete(challengeId)
       const pending = this.#pendingPrompts.get(challengeId)
-      if (pending) {
-        pending.reject(new ProviderLoginCancelledError())
-        this.#pendingPrompts.delete(challengeId)
-      }
+      this.#pendingPrompts.delete(challengeId)
+      pending?.dispose()
+      pending?.reject(new ProviderLoginCancelledError())
+      changes.push({ revision: ++this.#revision, loginId, providerId: session.providerId, kind: 'challenge-closed', challengeId, challengeType, outcome })
     }
+    session.challenges.clear()
+    session.controller.abort(new ProviderLoginCancelledError())
+    changes.push({ revision: ++this.#revision, loginId, providerId: session.providerId, kind: 'ended', outcome })
+    this.#changes.fireBatch(changes.map(change => Object.freeze(change)))
   }
 
   respondToPrompt(challengeId: string, value: string): void {
@@ -83,24 +95,28 @@ export class AuthInteractionService {
       throw new UnknownAuthChallengeError()
     if (pending.prompt.type === 'select' && !pending.prompt.options.some(option => option.id === value))
       throw new InvalidAuthChallengeResponseError()
-
-    this.#pendingPrompts.delete(challengeId)
-    this.#removeChallenge(challengeId, pending.loginId)
-    pending.resolve(value)
+    this.#finishPrompt(challengeId, 'responded', value)
   }
 
   cancelLogin(challengeId: string): void {
     const loginId = this.#challengeSessions.get(challengeId)
-    const session = loginId ? this.#sessions.get(loginId) : undefined
-    if (!loginId || !session)
+    if (!loginId || !this.#sessions.has(loginId))
       throw new UnknownAuthChallengeError()
-    session.controller.abort(new ProviderLoginCancelledError())
-    this.completeLogin(loginId)
+    this.completeLogin(loginId, 'cancelled')
+  }
+
+  dispose(): void {
+    this.#disposed = true
+    for (const loginId of this.#sessions.keys()) this.completeLogin(loginId, 'cancelled')
+    this.#changes.dispose()
+    this.#challenges.dispose()
   }
 
   #handlePrompt(loginId: string, prompt: AuthPrompt): Promise<string> {
     const session = this.#requireSession(loginId)
-    const challengeId = this.#registerChallenge(loginId, session)
+    if (prompt.signal?.aborted)
+      return Promise.reject(new ProviderLoginCancelledError())
+    const challengeId = randomUUID()
     const challenge = providerAuthChallengeSchema.parse({
       challengeId,
       providerId: session.providerId,
@@ -110,48 +126,51 @@ export class AuthInteractionService {
       ...(prompt.type === 'select' ? { options: prompt.options } : {}),
     })
     const response = new Promise<string>((resolve, reject) => {
-      this.#pendingPrompts.set(challengeId, { loginId, prompt, reject, resolve })
-      const abort = () => {
-        if (!this.#pendingPrompts.delete(challengeId))
-          return
-        this.#removeChallenge(challengeId, loginId)
-        reject(new ProviderLoginCancelledError())
+      const abort = () => this.#finishPrompt(challengeId, 'cancelled')
+      const dispose = () => {
+        session.controller.signal.removeEventListener('abort', abort)
+        prompt.signal?.removeEventListener('abort', abort)
       }
+      const owned = prompt.type === 'select' ? { ...prompt, options: prompt.options.map(option => ({ ...option })) } : prompt
+      this.#pendingPrompts.set(challengeId, { loginId, prompt: owned, reject, resolve, dispose })
       session.controller.signal.addEventListener('abort', abort, { once: true })
       prompt.signal?.addEventListener('abort', abort, { once: true })
     })
-    this.#emitChallenge(challenge)
+    this.#registerChallenge(loginId, session, challenge)
     return response
   }
 
   #handleEvent(loginId: string, event: AuthEvent): void {
     const session = this.#requireSession(loginId)
-    const challengeId = this.#registerChallenge(loginId, session)
-    const challenge = toChallenge(challengeId, session.providerId, event)
-    this.#emitChallenge(challenge)
-    const externalUrl = event.type === 'auth_url'
-      ? event.url
-      : event.type === 'device_code'
-        ? event.verificationUri
-        : null
-    if (externalUrl && this.#openExternal)
-      void this.#openExternal(externalUrl).catch(() => {})
+    const challenge = toChallenge(randomUUID(), session.providerId, event)
+    this.#registerChallenge(loginId, session, challenge)
+    const url = event.type === 'auth_url' ? event.url : event.type === 'device_code' ? event.verificationUri : null
+    if (url && this.#openExternal && this.#sessions.get(loginId) === session)
+      void this.#openExternal(url).catch(() => {})
   }
 
-  #emitChallenge(challenge: ProviderAuthChallenge): void {
-    this.#notify(providerNotifications.authChallenge.method, challenge)
+  #registerChallenge(loginId: string, session: LoginSession, challenge: ProviderAuthChallenge): void {
+    session.challenges.set(challenge.challengeId, challenge.type)
+    this.#challengeSessions.set(challenge.challengeId, loginId)
+    this.#publish({ loginId, providerId: session.providerId, kind: 'challenge-opened', challengeId: challenge.challengeId, challengeType: challenge.type })
+    if (this.#challengeSessions.has(challenge.challengeId))
+      this.#challenges.fire(copyEventSnapshot(challenge))
   }
 
-  #registerChallenge(loginId: string, session: LoginSession): string {
-    const challengeId = randomUUID()
-    session.challenges.add(challengeId)
-    this.#challengeSessions.set(challengeId, loginId)
-    return challengeId
-  }
-
-  #removeChallenge(challengeId: string, loginId: string): void {
+  #finishPrompt(challengeId: string, outcome: 'responded' | 'cancelled', value?: string): void {
+    const pending = this.#pendingPrompts.get(challengeId)
+    if (!pending)
+      return
+    this.#pendingPrompts.delete(challengeId)
     this.#challengeSessions.delete(challengeId)
-    this.#sessions.get(loginId)?.challenges.delete(challengeId)
+    const session = this.#sessions.get(pending.loginId)
+    session?.challenges.delete(challengeId)
+    pending.dispose()
+    if (outcome === 'responded')
+      pending.resolve(value!)
+    else pending.reject(new ProviderLoginCancelledError())
+    if (session)
+      this.#publish({ loginId: pending.loginId, providerId: session.providerId, kind: 'challenge-closed', challengeId, challengeType: pending.prompt.type, outcome })
   }
 
   #requireSession(loginId: string): LoginSession {
@@ -159,6 +178,10 @@ export class AuthInteractionService {
     if (!session)
       throw new ProviderLoginCancelledError()
     return session
+  }
+
+  #publish(change: Omit<AuthInteractionChange, 'revision'>): void {
+    this.#changes.fire(Object.freeze({ ...change, revision: ++this.#revision }))
   }
 }
 

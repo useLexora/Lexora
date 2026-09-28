@@ -6,8 +6,17 @@ import type { RunRow } from './runRecord'
 import { toRunRecord } from './runRecord'
 
 export function createConversationTreeRepository(database: DatabaseSync) {
-  const binding = database.prepare('SELECT session_file AS sessionFile, root_entry_id AS rootEntryId FROM conversation_pi_trees WHERE conversation_id = ?')
   const bind = database.prepare('INSERT INTO conversation_pi_trees (conversation_id, session_file, root_entry_id) VALUES (?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET session_file = excluded.session_file, root_entry_id = excluded.root_entry_id')
+  return {
+    ...createConversationTreeReader(database),
+    bind: (conversationId: string, sessionFile: string, rootEntryId: string) => {
+      bind.run(conversationId, sessionFile, rootEntryId)
+    },
+  }
+}
+
+export function createConversationTreeReader(database: DatabaseSync) {
+  const binding = database.prepare('SELECT session_file AS sessionFile, root_entry_id AS rootEntryId FROM conversation_pi_trees WHERE conversation_id = ?')
   const source = database.prepare('SELECT source_run_id AS sourceRunId, position FROM run_tree_sources WHERE run_id = ?')
   const runs = database.prepare('SELECT * FROM runs WHERE conversation_id = ? ORDER BY started_at, id')
   const messages = database.prepare(`SELECT id, conversation_id AS conversationId,
@@ -48,9 +57,6 @@ export function createConversationTreeRepository(database: DatabaseSync) {
       .map(({ content_json, ...message }) => ({ ...message, content: JSON.parse(content_json) })),
     listToolCounts: (conversationId: string) => new Map((tools.all(conversationId) as { runId: string, count: number }[]).map(row => [row.runId, row.count])),
     findBinding: (conversationId: string) => binding.get(conversationId) as { sessionFile: string, rootEntryId: string } | undefined,
-    bind: (conversationId: string, sessionFile: string, rootEntryId: string) => {
-      bind.run(conversationId, sessionFile, rootEntryId)
-    },
     findSource: (runId: string) => source.get(runId) as { sourceRunId: string, position: 'before' | 'after' } | undefined,
     listRuns: (conversationId: string) => (runs.all(conversationId) as unknown as RunRow[]).map(toRunRecord),
   }

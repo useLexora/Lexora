@@ -1,3 +1,4 @@
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyFeatureId, BuddyPlatform } from '../../../shared/platform'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { LexoraConfig } from '../../shared/desktopApi'
@@ -20,6 +21,7 @@ export interface DesktopFeature {
 interface DesktopFeatureContext {
   appPath: string
   diagnostics: DesktopDiagnosticLogger
+  report?: ApplicationDiagnosticReporter
   isPackaged: boolean
   onOpenDesktop: () => void
   paths: BuddyRuntimePaths
@@ -66,6 +68,10 @@ function createNativePetFeature(context: DesktopFeatureContext): DesktopFeature 
       resourcesPath: context.resourcesPath,
     }),
   })
+  const diagnostics = supervisor.onDidChange((change) => {
+    const status = change.kind === 'state' ? change.state.status : change.status
+    context.report?.({ event: `pet.${change.kind}.${status.replaceAll('-', '_')}`, component: 'desktop.pet', level: ['failed', 'unknown', 'spawn-failed', 'stop-unknown', 'offline'].includes(status) ? 'warn' : 'info', revision: change.revision, ...(change.generation ? { generation: change.generation } : {}), ...('operationId' in change ? { operationId: change.operationId } : {}), ...('completedSteps' in change && change.status !== 'unknown' ? { count: change.completedSteps } : {}) })
+  })
   async function reloadExistingPet(): Promise<boolean> {
     try {
       return await reloadNativePetConfig(environment)
@@ -86,6 +92,13 @@ function createNativePetFeature(context: DesktopFeatureContext): DesktopFeature 
       if (!supervisor.reloadConfig() && !(await reloadExistingPet()))
         supervisor.start()
     },
-    stop: () => supervisor.stop(),
+    async stop() {
+      try {
+        await supervisor.dispose()
+      }
+      finally {
+        diagnostics.dispose()
+      }
+    },
   }
 }

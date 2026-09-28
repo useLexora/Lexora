@@ -2,7 +2,7 @@
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
 import type { TextModelPool } from '@/workbench/browser/TextModelPool'
-import type { WorkbenchView } from '@/workbench/common/workbench'
+import type { ResourceRef, WorkbenchView } from '@/workbench/common/workbench'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, useTemplateRef, watch } from 'vue'
@@ -14,51 +14,80 @@ import { observeDesktopMonacoTheme } from '@/shared/ui/monaco/desktopMonaco'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 
 const props = withDefaults(defineProps<{ view: WorkbenchView, models: TextModelPool, language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
-const { copies, controller, revision, labels } = useWorkbench()
+const { copies, controller, labels } = useWorkbench()
 const container = useTemplateRef<HTMLElement>('container')
 const failed = shallowRef(false)
-const copy = computed(() => {
-  void revision.value
-  const value = copies.get(props.view.resource)
-  return value ? { ...value } : undefined
-})
+const copy = shallowRef(copies.get(props.view.resource))
 const modes = computed(() => fileDocumentModes({ preview: isMarkdownFile(props.view.title), source: !!copy.value?.etag, edit: !!copy.value?.etag }))
 const mode = computed({
   get: () => resolveFileDocumentMode(props.view.state.mode ?? (props.view.state.preview === false ? 'edit' : undefined), modes.value),
   set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }),
 })
-let editor: Monaco.editor.IStandaloneCodeEditor | undefined
-let capture: ReturnType<typeof setTimeout> | undefined
-const attempt = shallowRef(0)
-watch(() => props.view.resource, resource => void copies.open(resource), { immediate: true })
-function state() {
-  const viewState = editor?.saveViewState()
-  if (viewState)
-    controller.updateView(props.view.id, { state: { ...props.view.state, editor: JSON.parse(JSON.stringify(viewState)) as JsonValue } })
+function resourceIdentity(resource: ResourceRef): string {
+  const { scheme, id, data } = resource
+  return JSON.stringify([scheme, id, data.spaceId, data.directoryId, data.revision, data.path])
 }
-onScopeDispose(() => clearTimeout(capture))
-watch([container, attempt], async ([element], _, onCleanup) => {
+const identity = computed(() => resourceIdentity(props.view.resource))
+const viewId = computed(() => props.view.id)
+let editor: Monaco.editor.IStandaloneCodeEditor | undefined
+const attempt = shallowRef(0)
+watch(identity, (_, __, onCleanup) => {
+  const resource = props.view.resource
+  let active = true
+  failed.value = false
+  copy.value = copies.get(resource)
+  onCleanup(copies.onDidChangeResource(resource)(() => copy.value = copies.get(resource)).dispose)
+  onCleanup(() => active = false)
+  void copies.open(resource).catch(() => {
+    if (active)
+      failed.value = true
+  })
+}, { immediate: true })
+watch([container, attempt, viewId, identity], async ([element, , viewId, key], _, onCleanup) => {
+  const resource = props.view.resource
   let disposed = false
+  let ownedEditor: Monaco.editor.IStandaloneCodeEditor | undefined
+  let capture: ReturnType<typeof setTimeout> | undefined
   let release: (() => void) | undefined
   let stopTheme: (() => void) | undefined
-  onCleanup(() => {
+  function state() {
+    const view = controller.layout.views[viewId] ?? controller.navigation.find(viewId)?.view
+    if (!view || resourceIdentity(view.resource) !== key)
+      return
+    const viewState = ownedEditor?.saveViewState()
+    if (viewState)
+      controller.updateView(viewId, { state: { ...view.state, editor: JSON.parse(JSON.stringify(viewState)) as JsonValue } })
+  }
+  function dispose(save = true) {
+    if (disposed)
+      return
     disposed = true
-    state()
-    editor?.dispose()
-    editor = undefined
-    stopTheme?.()
-    release?.()
-  })
+    clearTimeout(capture)
+    try {
+      if (save)
+        state()
+    }
+    finally {
+      if (editor === ownedEditor)
+        editor = undefined
+      stopTheme?.()
+      try {
+        ownedEditor?.dispose()
+      }
+      finally { release?.() }
+    }
+  }
+  onCleanup(dispose)
   if (!element)
     return
   try {
-    const lease = await props.models.acquire(props.view.resource)
+    const lease = await props.models.acquire(resource)
     if (disposed) {
       lease.release()
       return
     }
     release = lease.release
-    editor = lease.monaco.editor.create(element, {
+    ownedEditor = lease.monaco.editor.create(element, {
       model: lease.model,
       readOnly: mode.value !== 'edit',
       domReadOnly: mode.value !== 'edit',
@@ -71,38 +100,52 @@ watch([container, attempt], async ([element], _, onCleanup) => {
       scrollBeyondLastLine: false,
       padding: { top: 12, bottom: 12 },
     })
+    editor = ownedEditor
     stopTheme = observeDesktopMonacoTheme(lease.monaco)
     if (props.view.state.editor)
-      editor.restoreViewState(props.view.state.editor as unknown as Monaco.editor.ICodeEditorViewState)
+      ownedEditor.restoreViewState(JSON.parse(JSON.stringify(props.view.state.editor)) as Monaco.editor.ICodeEditorViewState)
     const schedule = () => {
+      if (disposed)
+        return
       clearTimeout(capture)
       capture = setTimeout(state, 250)
     }
-    editor.onDidChangeCursorPosition(schedule)
-    editor.onDidScrollChange(schedule)
+    ownedEditor.onDidChangeCursorPosition(schedule)
+    ownedEditor.onDidScrollChange(schedule)
   }
   catch {
-    if (!disposed)
+    const active = !disposed
+    dispose(false)
+    if (active)
       failed.value = true
   }
 }, { immediate: true })
 watch(mode, value => editor?.updateOptions({ readOnly: value !== 'edit', domReadOnly: value !== 'edit' }))
 watch(() => props.view.state.wrap, value => editor?.updateOptions({ wordWrap: (value ?? controller.configuration.get('workbench.wordWrap')) ? 'on' : 'off' }))
 async function retry() {
+  const key = identity.value
+  const resource = props.view.resource
   failed.value = false
-  await copies.open(props.view.resource)
-  attempt.value++
+  try {
+    await copies.open(resource)
+    if (identity.value === key)
+      attempt.value++
+  }
+  catch {
+    if (identity.value === key)
+      failed.value = true
+  }
 }
 onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ wordWrap: (props.view.state.wrap ?? controller.configuration.get('workbench.wordWrap')) ? 'on' : 'off', tabSize: Number(controller.configuration.get('workbench.tabSize') ?? 2) })))
 </script>
 
 <template>
-  <div class="file-editor" :data-dirty="copies.dirty(view.resource)">
+  <div class="file-editor" :data-dirty="copy?.dirty">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
           <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
-          <NButton v-if="mode === 'edit' || copies.dirty(view.resource)" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copies.dirty(view.resource)" @click="copies.save(view.resource)">
+          <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
             {{ labels.save }}
           </NButton>
         </template>
@@ -128,8 +171,8 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
         <div ref="container" class="file-editor__monaco" data-testid="workbench-text-editor" />
       </template>
     </DesktopDocumentContent>
-    <footer v-if="mode === 'edit' || copies.dirty(view.resource)" class="file-editor__status">
-      {{ copy?.loading ? labels.loading : copies.dirty(view.resource) ? labels.dirty : labels.saved }} · UTF-8
+    <footer v-if="mode === 'edit' || copy?.dirty" class="file-editor__status">
+      {{ copy?.loading ? labels.loading : copy?.dirty ? labels.dirty : labels.saved }} · UTF-8
     </footer>
   </div>
 </template>

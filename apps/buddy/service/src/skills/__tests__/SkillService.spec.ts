@@ -1,14 +1,18 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { SkillEvent } from '../skillEvents'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as boundedFile from '../../../../platform/filesystem/boundedFile'
+import { SessionResourceReconciler } from '../../agent/resources/SessionResourceReconciler'
+import { BuddySessionRegistry } from '../../agent/sessions/BuddySessionRegistry'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSkillRepository } from '../../storage/skillRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
+import { observeSkillDiagnostics } from '../observeSkillEvents'
 import { formatBuddySkillPrompt, SkillService } from '../SkillService'
 
 const databases: DatabaseSync[] = []
@@ -23,6 +27,138 @@ afterEach(async () => {
 })
 
 describe('skillService', () => {
+  it('delivers an accepted installation commit to its session consumer before shutdown', async () => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.global, 'late-commit', 'fixture metadata')
+    const sessions = new BuddySessionRegistry<{ shutdown: () => Promise<void> }>()
+    const reconciler = new SessionResourceReconciler({ sessions, skills: fixture.service })
+    const catalog = await fixture.service.list(null)
+    const resolution = await fixture.service.loadForSpace(null)
+    let closed = 0
+    await sessions.getOrCreate({ approvalPolicy: 'policy', branchId: 'branch', canonicalRoot: '/workspace', conversationId: 'conversation', executionProfile: 'workspace_write', grantRevision: 'grant', resourceRevision: 'resource', skillRevision: resolution.revision, scratchRoot: '/scratch', sessionMode: 'interactive', spaceId: null }, null, async () => ({ piSessionFile: '/session', session: { shutdown: async () => {
+      closed++
+    } } }))
+    await reconciler.whenIdle()
+    const skill = catalog.skills[0]!
+    const committed: SkillEvent[] = []
+    fixture.service.onDidCommitInstallation(event => committed.push(event))
+    const accepted = fixture.service.setEnabled({ spaceId: null, id: skill.id, revision: skill.revision, enabled: false })
+    const stopping = reconciler.dispose()
+    await accepted
+    await stopping
+    expect(committed).toHaveLength(1)
+    expect(fixture.repository.list().find(record => record.id === skill.id)?.enabled).toBe(false)
+    expect(closed).toBe(1)
+    expect(sessions.getReady('conversation', 'branch')).toBeNull()
+    await expect(fixture.service.setEnabled({ spaceId: null, id: skill.id, revision: skill.revision, enabled: true })).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    await fixture.service.dispose()
+    await sessions.dispose()
+  })
+
+  it('accepts only the current scope generation when discovery resolves late', async () => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.global, 'delayed', 'entry metadata')
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const read = boundedFile.readBoundedFile
+    let delayed = false
+    vi.spyOn(boundedFile, 'readBoundedFile').mockImplementation(async (...args) => {
+      const contents = await read(...args)
+      if (!delayed && args[1].endsWith('SKILL.md')) {
+        delayed = true
+        entered.resolve()
+        await resume.promise
+      }
+      return contents
+    })
+    const accepted: SkillEvent[] = []
+    fixture.service.onDidAcceptCatalog(event => accepted.push(event))
+    const old = fixture.service.list(null, true)
+    await entered.promise
+    const current = await fixture.service.list(null, true)
+    resume.resolve()
+    expect(await old).toEqual(current)
+    expect(accepted).toHaveLength(1)
+    expect(accepted[0]?.generation).toBe(2)
+  })
+
+  it('isolates returned catalogs, inspector details and effective resources from owner state', async () => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.global, 'immutable', 'original metadata')
+    const catalog = await fixture.service.list(null)
+    const skill = catalog.skills[0]!
+    expect(Reflect.set(skill, 'name', 'overwritten')).toBe(false)
+    expect(Reflect.set(skill.origin!, 'location', '/untrusted')).toBe(false)
+    expect(() => (catalog.skills as unknown as unknown[]).pop()).toThrow()
+    const detail = await fixture.service.get(null, skill.id)
+    expect(Reflect.set(detail.skill.origin!, 'location', '/untrusted')).toBe(false)
+    const resolution = await fixture.service.loadForSpace(null)
+    expect(Reflect.set(resolution.references[0]!, 'revision', 'overwritten')).toBe(false)
+    expect((await fixture.service.get(null, skill.id)).skill.name).toBe('immutable')
+    expect((await fixture.service.loadForSpace(null)).references[0]?.revision).toBe(resolution.references[0]?.revision)
+  })
+
+  it('keeps committed installations when observers fail and emits no same-value enable change', async () => {
+    const failures: unknown[] = []
+    const fixture = await createFixture(error => failures.push(error))
+    const source = join(fixture.root, 'import-source')
+    await writeSkill(source, 'installed', 'private skill description')
+    const events: SkillEvent[] = []
+    const diagnostics: unknown[] = []
+    fixture.service.onDidCommitInstallation(() => {
+      throw new Error('private observer contents')
+    })
+    fixture.service.onDidChange(event => events.push(event))
+    observeSkillDiagnostics(fixture.service, event => diagnostics.push(event))
+    const preview = await fixture.service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
+    const catalog = await fixture.service.install({ previewId: preview.id, candidateIds: preview.candidates.map(candidate => candidate.id) })
+    const installed = catalog.skills.find(skill => skill.name === 'installed')!
+    expect(installed.managedBy).toBe('user')
+    expect(fixture.repository.list().find(record => record.id === installed.id)?.enabled).toBe(true)
+    expect(events.filter(event => event.type === 'installation' && event.reason === 'installed')).toHaveLength(1)
+    expect(events.some(event => event.type === 'cleanup' && event.status === 'cancelled')).toBe(true)
+    expect(failures).toHaveLength(1)
+    events.length = 0
+    await fixture.service.setEnabled({ spaceId: null, id: installed.id, revision: installed.revision, enabled: true })
+    expect(events).toEqual([])
+    expect(JSON.stringify(diagnostics)).not.toContain(fixture.root)
+    expect(JSON.stringify(diagnostics)).not.toContain('private')
+  })
+
+  it('reconciles actual effective scope changes while retaining sessions for management-only package updates', async () => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.global, 'stable-entry', 'entry document')
+    const guide = join(fixture.global, 'stable-entry', 'guide.md')
+    await writeFile(guide, 'version one')
+    const sessions = new BuddySessionRegistry<{ shutdown: () => Promise<void> }>()
+    const reconciler = new SessionResourceReconciler({ sessions, skills: fixture.service })
+    const events: SkillEvent[] = []
+    fixture.service.onDidChange(event => events.push(event))
+    const catalog = await fixture.service.list(null)
+    await reconciler.whenIdle()
+    const resources = await fixture.service.loadForSpace(null)
+    let closes = 0
+    await sessions.getOrCreate({ approvalPolicy: 'policy', branchId: 'branch', canonicalRoot: '/workspace', conversationId: 'conversation', executionProfile: 'workspace_write', grantRevision: 'grant-1', resourceRevision: 'resource-1', skillRevision: resources.revision, scratchRoot: '/scratch', sessionMode: 'interactive', spaceId: null }, null, async () => ({ piSessionFile: '/session', session: { shutdown: async () => {
+      closes++
+    } } }))
+    await reconciler.whenIdle()
+    events.length = 0
+    await writeFile(guide, 'version two')
+    const changed = await fixture.service.list(null)
+    await reconciler.whenIdle()
+    expect(changed.revision).not.toBe(catalog.revision)
+    expect(events.some(event => event.type === 'catalog' && event.mode === 'management')).toBe(true)
+    expect(events.some(event => event.type === 'resources')).toBe(false)
+    expect(closes).toBe(0)
+    const skill = changed.skills[0]!
+    await fixture.service.setEnabled({ spaceId: null, id: skill.id, revision: skill.revision, enabled: false })
+    await reconciler.whenIdle()
+    expect(closes).toBe(1)
+    expect(reconciler.snapshot()[0]?.status).toBe('current')
+    await reconciler.dispose()
+    await sessions.dispose()
+  })
+
   it('loads built-in, authorized-directory and global skills with stable precedence', async () => {
     const fixture = await createFixture()
     await Promise.all([
@@ -279,7 +415,7 @@ function spaceInput(id: string, root: string) {
   }
 }
 
-async function createFixture() {
+async function createFixture(onListenerError?: (error: unknown) => void) {
   const root = await mkdtemp(join(tmpdir(), 'lexora-buddy-skills-'))
   directories.push(root)
   const builtin = join(root, 'app', 'skills')
@@ -294,7 +430,9 @@ async function createFixture() {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const spaces = createSpaceRepository(database)
+  const repository = createSkillRepository(database)
   return {
+    repository,
     agentDirectory,
     builtin,
     global,
@@ -304,7 +442,8 @@ async function createFixture() {
       agentDirectory,
       builtinSkillsDirectories: [builtin],
       spaces,
-      repository: createSkillRepository(database),
+      repository,
+      onListenerError,
       paths: new BuddyDataPaths(join(root, 'buddy')),
     }),
     trustedSpace,

@@ -1,34 +1,18 @@
+import { ExtensionViewState } from './ExtensionViewState'
+
 const token = location.hostname
 const pending = new Map()
-let environment = { language: 'zh-CN', colorScheme: 'light', colors: {} }
-let workbench = Object.freeze({ values: Object.freeze({}), pages: Object.freeze([]) })
-let visible = false
-const workbenchListeners = new Set()
-const visibilityListeners = new Set()
-function applyWorkbench(next) {
-  workbench = Object.freeze({ values: Object.freeze(next.values), pages: Object.freeze(next.pages.map(page => Object.freeze(page))) })
-  for (const listener of workbenchListeners) listener(workbench)
-}
-let mount = null
-let anchor = null
-let control = null
+const state = new ExtensionViewState(() => request('events.snapshot'))
+const events = state.events
 let overlay = false
 let interactionId = null
-const activationListeners = new Set()
-const messageListeners = new Set()
-const environmentListeners = new Set()
-const mountListeners = new Set()
-const anchorListeners = new Set()
-const controlListeners = new Set()
-const activityListeners = new Set()
 function applyEnvironment(next) {
-  environment = Object.freeze(next)
   document.documentElement.lang = next.language
   document.documentElement.style.colorScheme = next.colorScheme
   for (const [name, value] of Object.entries(next.colors))
     document.documentElement.style.setProperty(`--lexora-${name}`, value)
-  for (const listener of environmentListeners) listener(environment)
 }
+events.on('view:environment:changed', event => applyEnvironment(event.data.environment))
 function request(method, params = null) {
   return new Promise((resolve, reject) => {
     if (pending.size >= 64)
@@ -50,46 +34,8 @@ addEventListener('message', (event) => {
     parent.postMessage({ channel: 'lexora-extension', token, pong: data.ping }, '*')
     return
   }
-  if (data.activation) {
-    for (const listener of activationListeners) listener(Object.freeze(data.activation))
-    return
-  }
-  if (Object.hasOwn(data, 'message')) {
-    for (const listener of messageListeners) listener(data.message)
-    return
-  }
-  if (data.workbench) {
-    applyWorkbench(data.workbench)
-    return
-  }
-  if (typeof data.visible === 'boolean') {
-    if (visible !== data.visible) {
-      visible = data.visible
-      for (const listener of visibilityListeners) listener(visible)
-    }
-    return
-  }
-  if (data.environment) {
-    applyEnvironment(data.environment)
-    return
-  }
-  if (data.mount) {
-    mount = Object.freeze(data.mount)
-    for (const listener of mountListeners) listener(mount)
-    return
-  }
-  if (data.anchor) {
-    anchor = Object.freeze(data.anchor)
-    for (const listener of anchorListeners) listener(anchor)
-    return
-  }
-  if (data.control) {
-    control = Object.freeze(data.control)
-    for (const listener of controlListeners) listener(control)
-    return
-  }
-  if (overlay && data.activity?.type === 'composer-input') {
-    for (const listener of activityListeners) listener(Object.freeze(data.activity))
+  if (data.event) {
+    state.acceptUpdate(data)
     return
   }
   const item = pending.get(data.id)
@@ -106,7 +52,7 @@ addEventListener('keydown', (event) => {
     event.preventDefault()
     parent.postMessage({ channel: 'lexora-extension', token, endInteraction: true }, '*')
   }
-  if (control && event.isTrusted && event.key === 'Escape')
+  if (state.snapshot.control && event.isTrusted && event.key === 'Escape')
     parent.postMessage({ channel: 'lexora-extension', token, dismiss: true }, '*')
 })
 addEventListener('pagehide', () => {
@@ -115,15 +61,14 @@ addEventListener('pagehide', () => {
     item.reject(new Error('EXTENSION_VIEW_CLOSED'))
   }
   pending.clear()
+  state.dispose()
 })
 async function initialize() {
   try {
     const initial = await request('bootstrap')
     interactionId = initial.interactionId
     overlay = initial.presentation === 'decoration'
-    anchor = initial.anchor ?? anchor
-    mount = initial.mount ?? mount
-    control = initial.control
+    state.initialize({ workbench: initial.workbench, visible: initial.visible, environment: initial.environment, anchor: initial.anchor ?? null, mount: initial.mount ?? null, control: initial.control }, overlay, initial.eventCursor, !!interactionId)
     if (overlay || initial.presentation === 'control' || initial.presentation === 'slot' || initial.location === 'mount') {
       const style = document.createElement('style')
       style.textContent = 'html,body{height:100%;background:transparent}body>main{height:100%;box-sizing:border-box;padding:0}'
@@ -133,42 +78,35 @@ async function initialize() {
       document.documentElement.style.overflow = 'hidden'
       document.body.style.overflow = 'hidden'
     }
-    applyWorkbench(initial.workbench)
-    visible = initial.visible
-    applyEnvironment(initial.environment)
+    applyEnvironment(state.snapshot.environment)
     const entry = await import(`/__package/${initial.entry}`)
     const controller = new AbortController()
     addEventListener('pagehide', () => controller.abort(), { once: true })
-    const subscribe = (listeners, listener) => {
-      listeners.add(listener)
-      const dispose = () => listeners.delete(listener)
-      controller.signal.addEventListener('abort', dispose, { once: true })
-      return { dispose }
-    }
     const api = Object.freeze({
       apiVersion: initial.apiVersion,
+      events,
       instanceId: initial.instanceId,
-      interaction: interactionId ? Object.freeze({ id: interactionId, setRegions: regions => request('interaction.setRegions', regions), onActivate: listener => subscribe(activationListeners, listener) }) : null,
-      onMessage: listener => subscribe(messageListeners, listener),
-      get workbench() { return workbench },
-      onWorkbenchChange: listener => subscribe(workbenchListeners, listener),
-      get visible() { return visible },
-      onVisibilityChange: listener => subscribe(visibilityListeners, listener),
-      get environment() { return environment },
-      onEnvironmentChange: listener => subscribe(environmentListeners, listener),
-      get mount() { return mount },
-      onMountChange: listener => subscribe(mountListeners, listener),
-      get anchor() { return anchor },
+      interaction: interactionId ? Object.freeze({ id: interactionId, setRegions: regions => request('interaction.setRegions', regions), onActivate: listener => events.on('interaction:activated', ({ data }) => listener({ id: data.regionId, x: data.x, y: data.y })) }) : null,
+      onMessage: listener => events.on('view:message:received', event => listener(event.data.message)),
+      get workbench() { return state.snapshot.workbench },
+      onWorkbenchChange: listener => events.on('workbench:context:changed', event => listener(event.data.context)),
+      get visible() { return state.snapshot.visible },
+      onVisibilityChange: listener => events.on('view:visibility:changed', event => listener(event.data.visible)),
+      get environment() { return state.snapshot.environment },
+      onEnvironmentChange: listener => events.on('view:environment:changed', event => listener(event.data.environment)),
+      get mount() { return state.snapshot.mount },
+      onMountChange: listener => events.on('view:mount:changed', event => listener(event.data.mount)),
+      get anchor() { return state.snapshot.anchor },
       onAnchorChange: (listener) => {
         if (!overlay)
           throw new Error('EXTENSION_METHOD_DENIED')
-        return subscribe(anchorListeners, listener)
+        return events.on('view:anchor:changed', event => listener(event.data.anchor))
       },
       control: initial.presentation === 'control'
         ? Object.freeze({
-            get snapshot() { return control },
-            onChange: listener => subscribe(controlListeners, listener),
-            propose: (value, revision = control?.revision) => request('control.propose', { value, revision }),
+            get snapshot() { return state.snapshot.control },
+            onChange: listener => events.on('control:changed', event => listener(event.data.control)),
+            propose: (value, revision = state.snapshot.control?.revision) => request('control.propose', { value, revision }),
           })
         : null,
       resource: initial.resource,
@@ -179,7 +117,7 @@ async function initialize() {
       onActivity: (listener) => {
         if (!overlay)
           throw new Error('EXTENSION_METHOD_DENIED')
-        return subscribe(activityListeners, listener)
+        return events.on('composer:input:received', event => listener({ type: 'composer-input', ...event.data }))
       },
       setState: state => request('view.setState', state),
       setActive: active => request('view.setActive', { active }),

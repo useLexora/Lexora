@@ -1,37 +1,56 @@
 import type { WorkbenchPaneSnapshot } from '@buddy-shared/workbench/workbenchInteraction'
+import { Emitter } from '@buddy-shared/events/Emitter'
+import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
+
+export interface WorkbenchPaneChange {
+  readonly revision: number
+  readonly kind: 'registered' | 'removed' | 'measured'
+  readonly snapshot: readonly WorkbenchPaneSnapshot[]
+}
 
 export class WorkbenchPaneRegistry {
   readonly #elements = new Map<string, HTMLElement>()
-  readonly #listeners = new Set<() => void>()
+  readonly #changes = new Emitter<WorkbenchPaneChange>(() => console.error('WORKBENCH_PANE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #disposed = false
   #root: HTMLElement | null = null
-  #snapshot: WorkbenchPaneSnapshot[] = []
+  #snapshot: readonly WorkbenchPaneSnapshot[] = Object.freeze([])
   #resize: ResizeObserver | null = null
   #mutation: MutationObserver | null = null
   #frame = 0
   constructor(readonly active: () => string) {}
 
-  get snapshot(): WorkbenchPaneSnapshot[] { return this.#snapshot }
+  get snapshot(): readonly WorkbenchPaneSnapshot[] { return this.#snapshot }
+  get revision(): number { return this.#revision }
   subscribe(listener: () => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+    return this.onDidChange(listener).dispose
   }
 
   register(id: string | null, element: HTMLElement): () => void {
+    if (this.#disposed)
+      throw new Error('WORKBENCH_PANES_DISPOSED')
     if (id === null)
       this.#root = element
     else
       this.#elements.set(id, element)
     this.#observe()
+    this.#measure('registered')
     return () => {
       if (id === null && this.#root === element)
         this.#root = null
       else if (id && this.#elements.get(id) === element)
         this.#elements.delete(id)
+      else
+        return
       this.#observe()
+      this.#measure('removed')
     }
   }
 
   start(): void {
+    if (this.#disposed || this.#resize)
+      return
     this.#resize = new ResizeObserver(this.invalidate)
     this.#mutation = new MutationObserver(this.invalidate)
     window.addEventListener('resize', this.invalidate)
@@ -56,7 +75,7 @@ export class WorkbenchPaneRegistry {
     }
   }
 
-  #measure(): void {
+  #measure(kind: WorkbenchPaneChange['kind'] = 'measured'): void {
     const origin = this.#root?.getBoundingClientRect()
     const next = [...this.#elements].map(([id, element]) => {
       const rect = element.getBoundingClientRect()
@@ -65,8 +84,8 @@ export class WorkbenchPaneRegistry {
     })
     if (JSON.stringify(next) === JSON.stringify(this.#snapshot))
       return
-    this.#snapshot = next
-    for (const listener of this.#listeners) listener()
+    this.#snapshot = copyEventSnapshot(next)
+    this.#changes.fire(Object.freeze({ revision: ++this.#revision, kind, snapshot: this.#snapshot }))
   }
 
   #observe(): void {
@@ -84,6 +103,9 @@ export class WorkbenchPaneRegistry {
   }
 
   dispose(): void {
+    if (this.#disposed)
+      return
+    this.#disposed = true
     cancelAnimationFrame(this.#frame)
     this.#resize?.disconnect()
     this.#mutation?.disconnect()
@@ -91,6 +113,9 @@ export class WorkbenchPaneRegistry {
     window.removeEventListener('resize', this.invalidate)
     document.removeEventListener('visibilitychange', this.invalidate)
     document.removeEventListener('scroll', this.invalidate, true)
-    this.#listeners.clear()
+    this.#elements.clear()
+    this.#root = null
+    this.#measure('removed')
+    this.#changes.dispose()
   }
 }

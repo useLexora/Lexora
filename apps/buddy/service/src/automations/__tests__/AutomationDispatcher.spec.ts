@@ -1,7 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { AutomationModelTarget } from '../../../../shared/automation'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AutomationCommit } from '../AutomationEvents'
 
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAutomationRepositories } from '../../storage/automationRepository'
 import { createAutomationTurnRepository } from '../../storage/automationTurnRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -12,6 +13,7 @@ import { createSpaceRepository } from '../../storage/spaceRepository'
 import { AgentTaskAutomationAction } from '../AgentTaskAutomationAction'
 import { AutomationDispatcher } from '../AutomationDispatcher'
 import { AutomationService } from '../AutomationService'
+import { AutomationTurnService } from '../AutomationTurnService'
 
 const databases: DatabaseSync[] = []
 
@@ -21,6 +23,58 @@ afterEach(() => {
 })
 
 describe('automationDispatcher', () => {
+  it('keeps unbound work queued when shutdown races model preparation and drains only after preparation returns', async () => {
+    const fixture = createFixture()
+    const occurrence = fixture.queue({ model: { mode: 'default' } })
+    const entered = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
+    const dispatcher = fixture.dispatcher({
+      resolveModel: async () => {
+        entered.resolve()
+        await ready.promise
+        return { contextWindow: 200_000, maxTokens: 32_000, modelId: 'model-1', providerId: 'provider-1', reasoning: null }
+      },
+      launchTurn: async () => { throw new Error('Stopped preparation must not launch') },
+    })
+    const states: string[] = []
+    dispatcher.onDidChange(event => states.push(event.kind))
+    const operation = dispatcher.dispatch(occurrence)
+    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    await entered.promise
+    const stopping = dispatcher.dispose()
+    expect(states).toEqual(['started', 'stopping'])
+    ready.resolve()
+    await rejected
+    await stopping
+    expect(states).toEqual(['started', 'stopping', 'failed', 'drained'])
+    expect(fixture.runs.listRecent()).toEqual([])
+    expect(fixture.service.getOccurrence(occurrence.id)).toMatchObject({ status: 'queued', runId: null })
+  })
+
+  it('publishes the entire bound transaction before launch and preserves it when launch rejects', async () => {
+    const fixture = createFixture()
+    const occurrence = fixture.queue({ model: { mode: 'default' } })
+    const commits: AutomationCommit[] = []
+    fixture.turns.onDidCommit(event => commits.push(event))
+    const dispatcher = fixture.dispatcher({ launchTurn: async (runId) => {
+      expect(commits).toHaveLength(1)
+      expect(fixture.runs.findById(runId)?.status).toBe('queued')
+      throw new Error('unresolved launcher failure')
+    } })
+    await expect(dispatcher.dispatch(occurrence)).rejects.toThrow('unresolved launcher failure')
+    expect(commits[0]!.facts.map(fact => fact.kind)).toEqual([
+      'occurrence.bound',
+      'task.created',
+      'branch.created',
+      'message.created',
+      'run.queued',
+      'definition.last_run_changed',
+    ])
+    expect(fixture.runs.listRecent()[0]?.status).toBe('queued')
+    expect(fixture.service.getOccurrence(occurrence.id)?.status).toBe('bound')
+    await dispatcher.dispose()
+  })
+
   it('binds and runs the frozen snapshot through a background Buddy turn', async () => {
     const fixture = createFixture()
     const occurrence = fixture.queue({
@@ -232,6 +286,7 @@ function createFixture() {
   const spaces = createSpaceRepository(database)
   const runInputs = createRunInputRepository(database)
   const runs = createRunRepository(database)
+  const turns = new AutomationTurnService(createAutomationTurnRepository(database))
   const queue = (input: {
     executionProfile?: 'full_access' | 'workspace_write'
     model: AutomationModelTarget
@@ -270,9 +325,10 @@ function createFixture() {
   }
   return {
     conversations,
+    turns,
     dispatcher: (overrides: {
       cancelRun?: (runId: string, errorCode: string) => Promise<boolean>
-      launchTurn: (runId: string) => Promise<{
+      launchTurn: (runId: string, signal?: AbortSignal) => Promise<{
         completion: Promise<ReturnType<typeof runs.findById> & {}>
         runId: string
       }>
@@ -305,7 +361,7 @@ function createFixture() {
           : null
       }),
       runTimeoutMs: overrides.runTimeoutMs,
-      turns: createAutomationTurnRepository(database),
+      turns,
     })),
     queue,
     runInputs,

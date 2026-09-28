@@ -1,17 +1,18 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { Router } from 'vue-router'
 import type { DesktopStores } from '../bootstrap/useDesktopAppState'
 import type { TaskIndexController } from '@/modules/tasks'
-import type { TaskCapability, TaskResourcePanel } from '@/modules/tasks/contracts'
+import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
 import { NButton, useDialog } from 'naive-ui'
-import { h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
+import { computed, h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
 import { userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
 import { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
@@ -21,17 +22,21 @@ import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
 import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
+import { ActiveTaskProjection } from './ActiveTaskProjection'
+import { ContextTabProjection } from './ContextTabProjection'
 import { registerDesktopContributions } from './registerDesktopContributions'
 import { restoreTaskInputViews } from './restoreTaskInputViews'
 import { TaskWorkspacePool } from './TaskWorkspacePool'
 import { useTaskInputLifecycle } from './useTaskInputLifecycle'
+import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
+import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
 
-export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
+export function useDesktopWorkbench(options: { api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
   const dialog = useDialog()
   const language = stores.applicationSettings.language
-  const labels = () => workbenchLabels(language.value)
-  const activeTask = shallowRef<TaskCapability | null>(null)
+  const presentation = computed(() => workbenchLabels(language.value))
+  const labels = () => presentation.value
   const readingPositions: ChatReadingPositions = new Map()
   const backupError = shallowRef(false)
   const fileToolbarTargets = shallowReactive(new Map<string, HTMLElement>())
@@ -41,6 +46,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     save: (resource, document) => api.localChat.spaces.saveDocument({ ...resource.data as unknown as SpaceFileTarget, ...document }),
   })
   const controller = new WorkbenchController(new ContributionRegistry(), beforeClose)
+  const diagnostics = new WorkbenchDiagnostics({ controller, copies, events: options.events })
   const models = new TextModelPool(copies)
   const renderers = new ViewRendererRegistry()
   registerDesktopContributions(controller, renderers, copies, () => language.value)
@@ -59,11 +65,19 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     pool,
     resources: options.resources,
     onError: options.onError,
-    prepareFileClose: beforeFileClose,
   })
   const confirmedDraftCloses = new Set<string>()
   const deletedTasks = new Set<string>()
   const initialized = shallowRef(false)
+  const activity = new ActiveTaskProjection(controller, pool)
+  const activeTask = activity.current
+  const contextTabs = new ContextTabProjection(controller, options.resources, () => initialized.value)
+  const resourceLifetime = new WorkbenchResourceLifetime(controller, pool, copies, () => initialized.value)
+  const projections = { reconcile: () => {
+    resourceLifetime.reconcile()
+    activity.reconcile()
+    contextTabs.reconcile()
+  } }
   let navigationVersion = 0
   let routeVersion = 0
   onScopeDispose(router.beforeEach((to) => {
@@ -252,8 +266,6 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     try {
       const task = await pool.open(resource)
       if (!destination.signal?.aborted && controller.layout.views[id] && version === routeVersion) {
-        if (controller.owner(id)?.id === controller.layout.activePane)
-          activeTask.value = task
         if (destination.initialContent) {
           task.workspace.composer.updateComposerContent(buddyUserContentToText(destination.initialContent), userContentToChatComposerDocument(destination.initialContent))
           await task.flushDrafts()
@@ -280,7 +292,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     return Object.values(controller.layout.views).filter(view => ids.has(view.id) || (typeof view.state.contextTabId === 'string' && ids.has(view.state.contextTabId))).map(view => view.id)
   }
   async function closeContextFiles(tabId: string) {
-    return controller.closeMany(contextViews([tabId]))
+    return (await controller.closeMany(contextViews([tabId]))).status === 'closed'
   }
   function openFile(target: SpaceFileTarget, tabId?: string) {
     const key = JSON.stringify([tabId, target.directoryId, target.revision, target.path])
@@ -298,51 +310,45 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
         controller.focus(previous.id)
       return previous.id
     }
-    const resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target } }
-    const copy = await copies.open(resource)
-    if (!copy.etag && copy.error) {
-      copies.release(resource)
-      resource.scheme = 'file-preview'
+    let resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target } }
+    const release = resourceLifetime.acquire(resource)
+    try {
+      const copy = await copies.open(resource)
+      if (!copy.etag && copy.error) {
+        copies.release(resource)
+        resource = { ...resource, scheme: 'file-preview' }
+      }
+      if (tabId && !options.resources().hasTab(tabId)) {
+        copies.release(resource)
+        return null
+      }
+      if (tabId)
+        return await controller.open(resource, target.path.split('/').at(-1) ?? target.path, { duplicate: true, focus: false, state: { contextTabId: tabId } })
+      const existing = options.resources().tabs.value.find(tab => tab.kind === 'view' && resourceKey(controller.layout.views[tab.viewId]?.resource ?? { scheme: '', id: '', data: {} }) === resourceKey(resource))
+      if (existing?.kind === 'view')
+        controller.focus(existing.viewId)
+      else
+        return await controller.open(resource, target.path.split('/').at(-1) ?? target.path, { duplicate: true })
     }
-    if (tabId && !options.resources().hasTab(tabId)) {
-      copies.release(resource)
-      return null
-    }
-    if (tabId)
-      return controller.open(resource, target.path.split('/').at(-1) ?? target.path, { duplicate: true, focus: false, state: { contextTabId: tabId } })
-    const existing = options.resources().tabs.value.find(tab => tab.kind === 'view' && resourceKey(controller.layout.views[tab.viewId]?.resource ?? { scheme: '', id: '', data: {} }) === resourceKey(resource))
-    if (existing?.kind === 'view')
-      controller.focus(existing.viewId)
-    else
-      return controller.open(resource, target.path.split('/').at(-1) ?? target.path, { duplicate: true })
+    finally { release() }
   }
 
   controller.registry.register('lexora.navigation', (scope) => {
-    scope.command({ id: 'task.new', get label() {
-      return labels().newTask
-    }, keybinding: 'Mod+N', execute: () => newTask() })
+    scope.command({ id: 'task.new', label: () => labels().newTask, keybinding: 'Mod+N', execute: () => newTask() })
     for (const direction of ['left', 'right', 'up', 'down'] as const) {
-      scope.command({ id: `view.split.${direction}`, get label() {
-        return labels()[direction === 'right' ? 'split' : direction === 'down' ? 'splitDown' : direction === 'left' ? 'splitLeft' : 'splitUp']
-      }, keybinding: direction === 'right' ? 'Mod+\\' : direction === 'down' ? 'Mod+Shift+\\' : undefined, execute: () => newTask(activeTask.value?.session.spaceId.value, center(), direction) })
+      scope.command({ id: `view.split.${direction}`, label: () => labels()[direction === 'right' ? 'split' : direction === 'down' ? 'splitDown' : direction === 'left' ? 'splitLeft' : 'splitUp'], keybinding: direction === 'right' ? 'Mod+\\' : direction === 'down' ? 'Mod+Shift+\\' : undefined, execute: context => newTask(context.view ? pool.peek(context.view.resource)?.session.spaceId.value : null, context.pane?.id ?? center(), direction) })
     }
-    scope.command({ id: 'context.close', get label() {
-      return labels().closeContext
-    }, keybinding: 'Mod+W', shortcutScope: 'context', enabled: context => context.values['focus.area'] === 'context' && !!options.resources().activeTab.value, execute: () => {
+    scope.command({ id: 'context.close', label: () => labels().closeContext, keybinding: 'Mod+W', shortcutScope: 'context', enabled: context => context.values['focus.area'] === 'context' && !!options.resources().activeTab.value, execute: () => {
       const tab = options.resources().activeTab.value
       if (tab)
         return options.resources().closeTab(tab.id)
     } })
-    scope.command({ id: 'resource.browser', get label() {
-      return labels().browser
-    }, execute: () => options.resources().addBrowser() })
-    scope.command({ id: 'resource.changes', get label() {
-      return labels().output
-    }, execute: () => options.resources().openChanges() })
-    scope.command({ id: 'resource.files', get label() {
-      return labels().files
-    }, execute: () => {
-      const spaceId = activeTask.value?.session.spaceId.value
+    scope.command({ id: 'resource.browser', label: () => labels().browser, execute: () => options.resources().addBrowser() })
+    scope.command({ id: 'resource.changes', label: () => labels().output, execute: () => options.resources().openChanges() })
+    scope.command({ id: 'resource.files', label: () => labels().files, execute: (context) => {
+      const pane = context.pane ?? controller.pane(controller.layout.activePane)
+      const view = pane?.view ? controller.layout.views[pane.view] : undefined
+      const spaceId = view ? pool.peek(view.resource)?.session.spaceId.value : undefined
       if (spaceId)
         options.resources().openFiles(spaceId)
     } })
@@ -367,7 +373,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     const legacy = controller.layout.auxiliary.legacyResources
     if (Array.isArray(legacy))
       legacy.forEach(resources.restoreTab)
-    delete controller.layout.auxiliary.legacyResources
+    controller.removeAuxiliary('legacyResources')
     if (!restored && !panes(controller.layout.root).some(pane => pane.view)) {
       const previous = await api.localChat.workspaceState.read()
       const id = previous?.value.activeConversationId
@@ -377,12 +383,12 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
         await newTask(previous?.value.spaceId)
     }
     initialized.value = true
-    controller.changed()
+    projections.reconcile()
     await inputs.restore(restored)
   }
 
   async function prepareTaskDeletion(id: string): Promise<boolean> {
-    return controller.closeMany(contextViews(options.resources().allTabs.value.filter(tab => tab.scope === `task:${id}`).map(tab => tab.id)))
+    return (await controller.closeMany(contextViews(options.resources().allTabs.value.filter(tab => tab.scope === `task:${id}`).map(tab => tab.id)))).status === 'closed'
   }
 
   function discardTask(id: string) {
@@ -423,8 +429,11 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
       return true
     if (Object.values(controller.layout.views).some(other => other.id !== view.id && !closing.has(other.id) && resourceKey(other.resource) === resourceKey(view.resource)))
       return true
-    if (!copies.dirty(view.resource))
+    const current = copies.get(view.resource)
+    if (!current)
       return true
+    if (!current.dirty)
+      return { validate: () => copies.isCurrent(current) && !copies.dirty(view.resource) }
     return new Promise<ViewCloseDecision>((resolve) => {
       let settled = false
       const finish = (value: ViewCloseDecision) => {
@@ -451,7 +460,18 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
             size: 'small',
             type: 'error',
             onClick: () => {
-              finish({ commit: () => copies.discard(view.resource), complete: () => persistence.flush().catch(options.onError) })
+              const accepted = copies.get(view.resource)
+              finish(accepted
+                ? {
+                    validate: () => copies.isCurrent(accepted),
+                    complete: async ({ revision }) => {
+                      if (!copies.isCurrent(accepted))
+                        throw new Error('WORKING_COPY_CHANGED_DURING_CLOSE')
+                      copies.discard(view.resource)
+                      await persistence.flushThrough({ layoutRevision: revision, backupRevision: persistence.backups.revision })
+                    },
+                  }
+                : true)
               modal.destroy()
             },
           }, () => labels().discard),
@@ -459,10 +479,12 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
             size: 'small',
             type: 'primary',
             onClick: async () => {
-              if (await copies.save(view.resource)) {
+              const result = await copies.save(view.resource)
+              if ((result.status === 'saved' || result.status === 'unchanged') && !result.dirtyAfter) {
+                const accepted = copies.get(view.resource)!
                 try {
-                  await persistence.flush()
-                  finish(true)
+                  await persistence.flushThrough(persistence.capture())
+                  finish({ validate: () => copies.isCurrent(accepted) && !copies.dirty(view.resource) })
                   modal.destroy()
                 }
                 catch {
@@ -477,57 +499,51 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, stores: De
     })
   }
 
-  onScopeDispose(controller.subscribe(() => {
-    if (!initialized.value)
-      return
-    const resources = options.resources()
-    pool.retain(controller.renderedViews.map(view => view.resource))
-    const referencedFiles = new Set(Object.values(controller.layout.views).map(view => resourceKey(view.resource)))
-    for (const copy of copies.copies.values()) {
-      if (!referencedFiles.has(resourceKey(copy.resource)))
-        copies.release(copy.resource)
-    }
-    const pane = controller.pane(controller.layout.activePane)
-    const view = pane?.view ? controller.layout.views[pane.view] : null
-    const task = view ? pool.peek(view.resource) : null
-    if (task || !view)
-      activeTask.value = task ?? null
-    for (const tab of resources.allTabs.value) {
-      if (tab.kind === 'view' && !controller.layout.views[tab.viewId])
-        resources.removeView(tab.id)
-    }
-    for (const view of Object.values(controller.layout.views)) {
-      if (view.location !== 'context')
-        continue
-      if (typeof view.state.contextTabId === 'string')
-        continue
-      if (!resources.hasTab(view.id)) {
-        resources.openView(view.id, view.title)
+  onScopeDispose(controller.onDidSettleClose((result) => {
+    if (result.committed && result.status === 'cleanup-pending')
+      options.onError(new AggregateError(result.failures, 'Workbench cleanup pending'))
+  }).dispose)
+  let disposal: Promise<void> | undefined
+  function dispose(): Promise<void> {
+    controller.stop()
+    disposal ??= (async () => {
+      const failures: unknown[] = []
+      const release = async (operation: () => unknown) => {
+        try {
+          await operation()
+        }
+        catch (error) { failures.push(error) }
       }
-      else {
-        const tab = resources.allTabs.value.find(tab => tab.id === view.id)
-        if (tab?.kind === 'view' && tab.label !== view.title)
-          resources.updateView(view.id, view.title)
-      }
-    }
-    const focused = controller.context.view
-    if (focused?.location === 'context')
-      resources.selectTab(typeof focused.state.contextTabId === 'string' ? focused.state.contextTabId : focused.id)
-  }))
+      await release(() => controller.dispose())
+      activity.dispose()
+      contextTabs.dispose()
+      resourceLifetime.dispose()
+      await release(() => pool.flush())
+      await release(() => pool.dispose())
+      await release(() => models.dispose())
+      await release(() => copies.stop())
+      if (persistence.ready)
+        await release(() => persistence.flush())
+      await release(() => persistence.dispose())
+      await release(() => copies.dispose())
+      await release(() => controller.registry.dispose())
+      diagnostics.dispose()
+      if (failures.length)
+        throw new AggregateError(failures, 'WORKBENCH_DISPOSAL_FAILED')
+    })()
+    return disposal
+  }
   onScopeDispose(() => {
-    controller.dispose()
-    pool.dispose()
-    models.dispose()
-    persistence.dispose()
-    controller.registry.dispose()
+    void dispose().catch(options.onError)
   })
   async function flush() {
     const saved = await pool.flush()
+    await controller.settle()
     await persistence.flush()
     await inputs.flush().catch(options.onError)
     return saved
   }
-  return { api, renderers, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, backupError, controller, copies, models, pool, persistence, initialize, flush, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  return { api, renderers, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
     return navigationVersion

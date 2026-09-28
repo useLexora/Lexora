@@ -19,7 +19,8 @@ export function registerRuntimeRequest<Contract extends RuntimeRequestContract, 
 }
 
 export type BuddyServiceErrorCode
-  = | 'DRAFT_CONFLICT'
+  = | 'RUNTIME_UNAVAILABLE'
+    | 'DRAFT_CONFLICT'
     | 'DIRECTORY_NOT_AUTHORIZED'
     | 'MODEL_INPUT_UNSUPPORTED'
     | 'MODEL_INPUT_TOO_LARGE'

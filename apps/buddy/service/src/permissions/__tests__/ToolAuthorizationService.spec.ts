@@ -81,6 +81,36 @@ describe('harness tool authorization', () => {
     return { approvals, approve, authorization, call, controller, directories, events, executionPermissions, grants, options, records, repository, run }
   }
 
+  it('revokes temporary tool grants when the required persistent application fails', async () => {
+    const f = fixture()
+    const authorization = new ToolAuthorizationService({ ...f.options, applyGrant: () => {
+      throw new Error('owner revoked')
+    } })
+    const path = join(outside, 'preview.html')
+    await writeFile(path, '<!doctype html><title>Preview</title>')
+    const event = f.call('lexora_browser_open', { entryPath: path })
+    const pending = authorization.authorize(event, f.run, { access: 'render', paths: [{ path, mode: 'existing' }] })
+    await f.approve('approved')
+    expect(await pending).toBe('DIRECTORY_GRANT_FAILED')
+    expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+  })
+
+  it('isolates temporary tool grants and clears them at the run boundary', async () => {
+    const f = fixture()
+    const events: unknown[] = []
+    f.executionPermissions.onDidChange(event => events.push(event))
+    await f.executionPermissions.authorize(f.run, 'tool', { cwd: workspace, grants: f.grants, paths: [{ path: outside, mode: 'existing' }] })
+    const snapshot = f.executionPermissions.get(f.run, 'tool')
+    expect(snapshot).toHaveLength(1)
+    expect(Reflect.set(snapshot[0]!, 'canonicalRoot', root)).toBe(false)
+    expect(Reflect.set(snapshot, '0', { canonicalRoot: root })).toBe(false)
+    expect(f.executionPermissions.get(f.run, 'other-tool')).toEqual([])
+    f.controller.abort()
+    expect(f.executionPermissions.get(f.run, 'tool')).toEqual([])
+    expect(events).toMatchObject([{ kind: 'granted', count: 1 }, { kind: 'cleared', count: 1 }])
+    expect(JSON.stringify(events)).not.toContain(outside)
+  })
+
   it('queues concurrent network requests, reuses the destination across commands, and clears at run end', async () => {
     const f = fixture()
     const command = new AbortController()

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ExtensionApi, ExtensionStatus, ExtensionWorkbenchEvent } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionViews } from '@/modules/extensions'
+import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { extensionManifestSchema } from '@buddy-shared/extensions/extensionManifest'
 import { deferred } from '@buddy-tests/deferred'
@@ -18,7 +19,8 @@ function setup() {
   const status: ExtensionStatus = { manifest: extensionManifestSchema.parse({ schemaVersion: 1, id: 'tests.music', name: 'Music', version: '1.0.0', apiVersion: 2, engines: { lexora: '*' }, contributes: { views: [{ id: 'tests.music.player', title: 'Player', entry: 'player.js', resource: 'none' }], placements: [{ id: 'tests.music.dock', kind: 'view', view: 'tests.music.player', location: 'workbench.top' }] } }), revision: 'first', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }
   const installed = shallowRef([status])
   const ready = shallowRef(false)
-  const controller = new WorkbenchController(new ContributionRegistry())
+  let beforeClose: () => Promise<ViewCloseDecision> = async () => true
+  const controller = new WorkbenchController(new ContributionRegistry(), () => beforeClose())
   controller.registry.register('configuration', scope => scope.configuration({ id: 'workbench.controls.model.reasoning', defaultValue: '', validate: value => typeof value === 'string' }))
   const replies = new Map<string, string | null>()
   let receive: (event: ExtensionWorkbenchEvent) => void = () => {}
@@ -27,17 +29,43 @@ function setup() {
     return () => {}
   }, replyWorkbench: (id, view) => replies.set(id, view) }
   const views = { surfaces: new Map(), proposeControl: () => false, retryControl: () => {} } as unknown as ExtensionViews
-  const persistence = { flush: async () => {} } as unknown as WorkbenchPersistence
+  const checkpoints: { views: typeof controller.layout.views, configuration: ReturnType<typeof controller.configuration.snapshot> }[] = []
+  const persistence = { flush: async () => {}, checkpoint: async () => {
+    checkpoints.push(structuredClone({ views: controller.layout.views, configuration: controller.configuration.snapshot() }))
+  } } as unknown as WorkbenchPersistence
   const scope = effectScope()
   scopes.push(scope)
   const contributions = scope.run(() => useExtensionUiContributions(installed, controller.configuration))!
   scope.run(() => useExtensionContributions({ controller, renderers: new ViewRendererRegistry(), persistence, installed, api: api as ExtensionApi, views, ui: contributions, ready: () => ready.value }))!
   const show = (): Extract<ExtensionWorkbenchEvent, { kind: 'placement' }> => ({ kind: 'placement', requestId: crypto.randomUUID(), extensionId: status.manifest.id, generation: status.generation!, placementId: 'tests.music.dock', visible: true })
-  return { installed, ready, controller, status, contributions, views, replies, show, receive: (event: ExtensionWorkbenchEvent) => receive(event) }
+  return { setBeforeClose: (value: () => Promise<ViewCloseDecision>) => {
+    beforeClose = value
+  }, installed, ready, controller, status, contributions, views, replies, show, checkpoints, receive: (event: ExtensionWorkbenchEvent) => receive(event) }
 }
 async function settle() {
   for (let index = 0; index < 8; index++) await nextTick()
 }
+
+it('clears only the requested plugin views and legacy selections before acknowledging persisted cleanup', async () => {
+  const f = setup()
+  f.ready.value = true
+  f.controller.registry.register('tasks', scope => scope.view({ id: 'task', renderer: 'task', label: 'Task', locations: ['main'], supports: () => true, multiple: false }))
+  const task = await f.controller.open({ scheme: 'task', id: 'retained', data: {} }, 'Task', { viewType: 'task' })
+  const show = f.show()
+  f.receive(show)
+  await settle()
+  const id = f.replies.get(show.requestId)!
+  const original = f.controller.layout.views[id]!
+  const other = { ...original, id: crypto.randomUUID(), resource: { ...original.resource, data: { ...original.resource.data, extensionId: 'tests.other' } } }
+  f.controller.restoreLayout({ ...f.controller.layout, views: { ...f.controller.layout.views, [other.id]: other } })
+  f.controller.configuration.restore({ 'workbench.controls.model.reasoning': 'tests.music.retired', 'workbench.slots.composer.accessory': JSON.stringify(['tests.music.dock', 'tests.music.retired', 'tests.music-other.dock', 'tests.other.dock']), 'host-setting': true })
+  f.installed.value = []
+  const event = { kind: 'clear-data' as const, requestId: crypto.randomUUID(), extensionId: 'tests.music' }
+  f.receive(event)
+  await vi.waitFor(() => expect(f.replies.get(event.requestId)).toBe(event.requestId))
+  expect(Object.keys(f.controller.layout.views).sort()).toEqual([task!, other.id].sort())
+  expect(f.checkpoints).toEqual([{ views: f.controller.layout.views, configuration: { 'workbench.slots.composer.accessory': JSON.stringify(['tests.music-other.dock', 'tests.other.dock']), 'host-setting': true } }])
+})
 
 it('waits for core restore and the matching host snapshot before accepting startup placements', async () => {
   const fixture = setup()
@@ -65,10 +93,10 @@ it('cancels startup and controller-queued requests when their host or deadline e
   const entered = deferred<void>()
   fixture.controller.registry.register('tasks', scope => scope.view({ id: 'task', renderer: 'task', label: 'Task', locations: ['main'], supports: () => true, multiple: false }))
   await fixture.controller.open({ scheme: 'task', id: 'one', data: {} }, 'One', { viewType: 'task' })
-  Object.defineProperty(fixture.controller, 'beforeClose', { value: () => {
+  fixture.setBeforeClose(() => {
     entered.resolve()
     return guard.promise
-  } })
+  })
   const replacing = fixture.controller.open({ scheme: 'task', id: 'two', data: {} }, 'Two', { viewType: 'task' })
   await entered.promise
   const event = fixture.show()
@@ -116,7 +144,7 @@ it.each(['running', 'restoring'])('migrates a global placement into the active p
   f.controller.updateView(id, { state })
   if (mode === 'restoring') {
     f.ready.value = false
-    f.controller.layout = restoreWorkbenchLayout(JSON.parse(JSON.stringify(f.controller.layout)))
+    f.controller.restoreLayout(restoreWorkbenchLayout(JSON.parse(JSON.stringify(f.controller.layout))))
   }
   const manifest = extensionManifestSchema.parse({ ...f.status.manifest, apiVersion: 3, version: '2.0.0', contributes: { ...f.status.manifest.contributes, views: f.status.manifest.contributes.views.map(view => ({ ...view, stateVersion: 2 })), placements: [{ id: 'tests.music.dock', kind: 'view', view: 'tests.music.player', target: 'workbench.pane' }] } })
   f.installed.value = [{ ...f.status, manifest, revision: 'pane-package' }]

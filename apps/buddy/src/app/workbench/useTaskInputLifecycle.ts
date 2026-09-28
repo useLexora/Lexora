@@ -2,8 +2,9 @@ import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { TaskWorkspacePool } from './TaskWorkspacePool'
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { WorkbenchView } from '@/workbench/common/workbench'
-import type { ViewCloseDecision, ViewClosePlan, WorkbenchController } from '@/workbench/services/WorkbenchController'
+import type { ViewCloseDecision, WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
+import { buddyComposerDraftDiscardSchema } from '@buddy-shared/conversation/composerDraft'
 import { TaskInputCleanup } from './TaskInputCleanup'
 
 export function useTaskInputLifecycle(options: {
@@ -12,81 +13,69 @@ export function useTaskInputLifecycle(options: {
   persistence: WorkbenchPersistence
   pool: TaskWorkspacePool
   resources: () => TaskResourcePanel
-  prepareFileClose: (view: WorkbenchView, closing?: ReadonlySet<string>) => Promise<ViewCloseDecision>
   onError: (error: unknown) => void
 }) {
   const { controller, persistence, api } = options
   const cleanup = new TaskInputCleanup(controller, persistence, api.localChat.composerDrafts, id => options.resources().allTabs.value.some(tab => tab.scope === `draft:${id}`))
-  async function prepareOwnedContext(draftId: string): Promise<ViewClosePlan | false> {
-    const resources = options.resources()
-    const tabIds = new Set(resources.allTabs.value.filter(tab => tab.scope === `draft:${draftId}`).map(tab => tab.id))
-    const views = resources.mode.value === 'independent'
-      ? []
-      : Object.values(controller.layout.views)
-          .filter(view => tabIds.has(view.id) || (typeof view.state.contextTabId === 'string' && tabIds.has(view.state.contextTabId)))
-          .map(view => view.id)
-    const closing = new Set(views)
-    const decisions: ViewClosePlan[] = []
-    for (const id of views) {
-      const view = controller.layout.views[id]
-      if (!view)
-        continue
-      const decision = await options.prepareFileClose(view, closing)
-      if (!decision) {
-        decisions.forEach(plan => plan.cancel?.())
-        return false
-      }
-      if (typeof decision === 'object')
-        decisions.push(decision)
-    }
-    let release = async () => {}
-    return {
-      views,
-      cancel: () => decisions.forEach(plan => plan.cancel?.()),
-      commit: () => {
-        decisions.forEach(plan => plan.commit?.())
-        release = resources.discardDraft(draftId)
-        controller.layout.auxiliary.context = JSON.parse(JSON.stringify(resources.snapshot()))
-      },
-      complete: () => release(),
-    }
-  }
 
   async function prepareClose(view: WorkbenchView): Promise<ViewCloseDecision> {
     const task = await options.pool.open(view.resource)
+    const releaseWorkspace = options.pool.acquire(view.resource)
+    const cancel = () => {
+      try {
+        task.cancelClose()
+      }
+      finally { releaseWorkspace() }
+    }
     let prepared = false
     try {
       if (!await task.prepareClose())
         return false
       if (task.workspace.session.activeConversationId.value) {
         prepared = true
-        return { cancel: task.cancelClose }
+        return { cancel, complete: releaseWorkspace }
       }
       const draft = await api.localChat.composerDrafts.get(task.workspace.composer.draftId.value)
       if (draft.scope.kind !== 'task')
         return false
-      const context = await prepareOwnedContext(draft.draftId)
-      if (!context)
-        return false
+      const resources = options.resources()
+      const tabIds = new Set(resources.allTabs.value.filter(tab => tab.scope === `draft:${draft.draftId}`).map(tab => tab.id))
+      const views = resources.mode.value === 'independent'
+        ? []
+        : Object.values(controller.layout.views)
+            .filter(view => tabIds.has(view.id) || (typeof view.state.contextTabId === 'string' && tabIds.has(view.state.contextTabId)))
+            .map(view => view.id)
       prepared = true
       return {
-        views: context.views,
-        cancel: () => {
-          context.cancel?.()
-          task.cancelClose()
+        views,
+        cancel,
+        prepareAuxiliary: (current) => {
+          const pending = Array.isArray(current.pendingInputDiscards)
+            ? current.pendingInputDiscards.flatMap((value) => {
+                const parsed = buddyComposerDraftDiscardSchema.safeParse(value)
+                return parsed.success && parsed.data.draftId !== draft.draftId ? [parsed.data] : []
+              })
+            : []
+          return { ...current, pendingInputDiscards: [...pending, { draftId: draft.draftId, expectedRevision: draft.revision }] }
         },
-        commit: () => {
-          context.commit?.()
-          cleanup.add({ draftId: draft.draftId, expectedRevision: draft.revision })
-        },
-        complete: async () => {
-          await Promise.all([cleanup.flush(), context.complete?.()]).catch(options.onError)
+        complete: async ({ revision }) => {
+          try {
+            await persistence.flushThrough({ layoutRevision: revision })
+            const release = resources.discardDraft(draft.draftId)
+            controller.setAuxiliary('context', JSON.parse(JSON.stringify(resources.snapshot())))
+            await persistence.flush()
+            const results = await Promise.allSettled([cleanup.flush(), release()])
+            const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+            if (failures.length)
+              throw new AggregateError(failures, 'Task input cleanup failed')
+          }
+          finally { releaseWorkspace() }
         },
       }
     }
     finally {
       if (!prepared)
-        task.cancelClose()
+        cancel()
     }
   }
 

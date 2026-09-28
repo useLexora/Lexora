@@ -26,9 +26,13 @@ export function createFixture(options: { operations?: BrowserOperationGuard, get
     ...options,
     createId: () => ids.shift()!,
     createPage: createPage as never,
-    onSessionClosed,
-    onStateChanged,
     window: window as never,
+  })
+  host.onDidChange((change) => {
+    if (change.kind === 'state')
+      onStateChanged(change.state)
+    if (change.kind === 'session' && change.status === 'closed')
+      onSessionClosed(change.state, change.reason)
   })
 
   return {

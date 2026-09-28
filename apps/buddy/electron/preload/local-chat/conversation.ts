@@ -15,6 +15,7 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
       write: value => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.workspaceStateWrite, { value }),
     }),
     conversations: Object.freeze({
+      onChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.conversationsChanged, listener),
       getNodeDetail: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetNodeDetail, input),
       getTree: conversationId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetTree, { conversationId }),
       list: limit => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsList, { limit }),

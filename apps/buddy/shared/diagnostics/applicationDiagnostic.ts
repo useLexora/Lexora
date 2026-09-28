@@ -1,8 +1,10 @@
+import type { LifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { z } from 'zod'
-import { readLocalChatErrorCode } from '../runtime/localChatError'
+import { extensionIdSchema } from '../extensions/extensionManifest'
+import { readLifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { desktopBootstrapFailureSchema, processExitSchema, rendererLoadFailureSchema } from './desktopStartupDiagnostic'
 import { networkStartupFailureSchema } from './networkStartupFailure'
-import { privateDirectoryErrorCodeSchema, privateDirectoryFailureSchema } from './privateDirectoryFailure'
+import { privateDirectoryFailureSchema } from './privateDirectoryFailure'
 import { providerRequestDiagnosticSchema } from './providerRequestDiagnostic'
 
 export const APPLICATION_DIAGNOSTIC_METHOD = 'application.diagnostic'
@@ -15,6 +17,14 @@ export const applicationDiagnosticSchema = z.object({
   level: z.enum(['debug', 'info', 'warn', 'error']),
   operationId: diagnosticIdentitySchema.optional(),
   parentOperationId: diagnosticIdentitySchema.optional(),
+  producerInstanceId: z.uuid().optional(),
+  extensionId: extensionIdSchema.optional(),
+  workingCopyId: z.uuid().optional(),
+  markId: z.uuid().optional(),
+  revision: z.number().int().nonnegative().optional(),
+  contentVersion: z.number().int().nonnegative().optional(),
+  savedVersion: z.number().int().nonnegative().optional(),
+  dirty: z.boolean().optional(),
   generation: diagnosticIdentitySchema.optional(),
   sessionId: diagnosticIdentitySchema.optional(),
   providerId: diagnosticIdentitySchema.optional(),
@@ -23,6 +33,8 @@ export const applicationDiagnosticSchema = z.object({
   occurrenceId: diagnosticIdentitySchema.optional(),
   toolCallId: diagnosticIdentitySchema.optional(),
   conversationId: diagnosticIdentitySchema.optional(),
+  spaceId: diagnosticIdentitySchema.optional(),
+  directoryId: diagnosticIdentitySchema.optional(),
   branchId: diagnosticIdentitySchema.optional(),
   runId: diagnosticIdentitySchema.optional(),
   turnId: diagnosticIdentitySchema.optional(),
@@ -46,7 +58,7 @@ export const applicationDiagnosticSchema = z.object({
 
 export type ApplicationDiagnostic = z.infer<typeof applicationDiagnosticSchema>
 export type ApplicationDiagnosticReporter = (event: ApplicationDiagnostic) => void
-export type DiagnosticError = Pick<ApplicationDiagnostic, 'errorCode' | 'errorType' | 'failure'>
+export type DiagnosticError = LifecycleFailure
 
 export function safeDiagnosticReporter(report?: ApplicationDiagnosticReporter): ApplicationDiagnosticReporter {
   return (event) => {
@@ -57,35 +69,8 @@ export function safeDiagnosticReporter(report?: ApplicationDiagnosticReporter): 
   }
 }
 
+export const readDiagnosticError = readLifecycleFailure
+
 export function readDiagnosticErrorCode(error: unknown): string {
   return readDiagnosticError(error).errorCode ?? 'OPERATION_FAILED'
-}
-
-export function readDiagnosticError(error: unknown): DiagnosticError {
-  let errorCode: string | null = readLocalChatErrorCode(error)
-  let failure: ApplicationDiagnostic['failure']
-  const visited = new Set<object>()
-  for (let current = error; current && typeof current === 'object' && visited.size < 8 && !visited.has(current); current = 'cause' in current ? current.cause : undefined) {
-    visited.add(current)
-    const code = 'code' in current ? current.code : undefined
-    const privateDirectoryCode = privateDirectoryErrorCodeSchema.safeParse(code)
-    if (!errorCode) {
-      if (privateDirectoryCode.success)
-        errorCode = privateDirectoryCode.data
-      else if (typeof code === 'string' && ['DESKTOP_BOOTSTRAP_FAILED', 'NETWORK_START_FAILED', 'INITIAL_STATE_UNAVAILABLE', 'POWERSHELL_UNAVAILABLE', 'EACCES', 'EPERM', 'ENOENT', 'ENOSPC', 'EIO', 'EMFILE', 'ERR_SQLITE_ERROR'].includes(code))
-        errorCode = code
-    }
-    if (!failure && (privateDirectoryCode.success || code === 'DESKTOP_BOOTSTRAP_FAILED' || code === 'NETWORK_START_FAILED')) {
-      const schema = privateDirectoryCode.success ? privateDirectoryFailureSchema : code === 'NETWORK_START_FAILED' ? networkStartupFailureSchema : desktopBootstrapFailureSchema
-      const parsed = schema.safeParse('failure' in current ? current.failure : undefined)
-      if (parsed.success)
-        failure = parsed.data
-    }
-  }
-  const errorType = applicationDiagnosticSchema.shape.errorType.safeParse(error instanceof Error ? error.name : 'UnknownError')
-  return {
-    errorCode: errorCode ?? 'OPERATION_FAILED',
-    errorType: errorType.success ? errorType.data : 'UnknownError',
-    ...(failure ? { failure } : {}),
-  }
 }

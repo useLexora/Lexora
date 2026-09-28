@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { createAutomationRepositories } from '../../storage/automationRepository'
 import { openBuddyDatabase } from '../../storage/database'
@@ -46,8 +46,9 @@ describe('createAutomationTool', () => {
 
   it('uses the product service for idempotent upsert and queues run_now immediately', async () => {
     const service = createService()
-    const onChanged = vi.fn()
-    const tool = createAutomationTool({ onChanged, service })
+    const facts: string[] = []
+    service.onDidCommit(event => facts.push(...event.facts.map(fact => fact.kind)))
+    const tool = createAutomationTool({ service })
 
     const created = await execute(tool, {
       draft: dailyDraft('Daily review'),
@@ -86,10 +87,10 @@ describe('createAutomationTool', () => {
       operation: 'run_now',
       runNowOutcome: 'started',
     })
-    expect(onChanged).toHaveBeenCalledWith(automation.id)
+    expect(facts).toEqual(['definition.created', 'occurrence.queued'])
 
     const occurrenceId = service.listHistory({ automationId: automation.id }).items[0]!.id
-    const changeCount = onChanged.mock.calls.length
+    const changeCount = facts.length
     const repeated = await execute(tool, {
       automationId: automation.id,
       expectedRevision: automation.revision,
@@ -100,7 +101,7 @@ describe('createAutomationTool', () => {
       occurrence: { id: occurrenceId },
       runNowOutcome: 'already_running',
     })
-    expect(onChanged).toHaveBeenCalledTimes(changeCount)
+    expect(facts).toHaveLength(changeCount)
   })
 })
 

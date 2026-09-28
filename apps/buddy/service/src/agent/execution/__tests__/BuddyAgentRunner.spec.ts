@@ -1,7 +1,6 @@
 import type { AssistantMessage, ToolResultMessage, Usage } from '@earendil-works/pi-ai'
 import type { AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
 import type { DatabaseSync } from 'node:sqlite'
-import type { RunEventLogCallbacks } from '../../../events/RunEventLog'
 import type { BuddySessionBlueprint } from '../../sessions/BuddySessionBlueprint'
 import type { BuddySessionTurnContext, ReusableBuddySession } from '../../sessions/ReusableBuddySession'
 import type { PiTurnExecutorOptions } from '../PiTurnExecutor'
@@ -12,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunEventStorageError } from '../../../events/RunEventFailure'
+import { RunContinuityService } from '../../../runs/RunContinuityService'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
 import {
   prepareTestCommandRequest,
@@ -113,6 +113,69 @@ describe('buddyAgentRunner', () => {
     })])
   })
 
+  it('retains refused recovery records for retry and acknowledges them only after one durable batch', async () => {
+    const fixture = await createFixture()
+    const sessions = new BuddySessionRegistry<ReusableBuddySession>()
+    const session = new IdleSession()
+    const runner = fixture.createRunnerFromFactory(async () => ({
+      piSessionFile: join(fixture.root, 'recovered-session.jsonl'),
+      recoveredFromProductHistory: true,
+      recoveryDegradation: { missingAttachmentIds: ['attachment-missing'], recoveredImageCount: 1 },
+      session,
+    }), sessions)
+    const appendBatch = fixture.eventLog.appendBatch.bind(fixture.eventLog)
+    let refuseRecovery = true
+    vi.spyOn(fixture.eventLog, 'appendBatch').mockImplementation((events) => {
+      if (refuseRecovery && events.some(event => event.type === 'session.recovered')) {
+        refuseRecovery = false
+        return Promise.reject(new Error('Recovery batch refused before commit'))
+      }
+      return appendBatch(events)
+    })
+    const base = {
+      branchId: 'branch-1',
+      canonicalRoot: fixture.root,
+      conversationId: 'conversation-1',
+      cwd: fixture.root,
+      model: 'claude-sonnet-4-5',
+      spaceId: null,
+      prompt: 'Continue recovered context',
+      provider: 'anthropic',
+      resources: emptyResources(),
+    }
+    const first = { ...base, runId: 'run-recovery-refused' }
+    const second = { ...base, runId: 'run-recovery-retried' }
+    const third = { ...base, runId: 'run-after-recovery-acknowledged' }
+    const recoveryTypes = ['session.recovered', 'session.recovery.degraded']
+
+    try {
+      fixture.prepareTurn(first, 'message-recovery-refused')
+      await expect(runner.startTurn(withSession(first)).completion).resolves.toMatchObject({ status: 'failed' })
+      expect(sessions.snapshot()).toMatchObject([{ recoveryPending: true, status: 'ready' }])
+      expect(sessions.getReady(base.conversationId, base.branchId)).toBe(session)
+      expect((await fixture.eventLog.read(first.runId)).filter(event => recoveryTypes.includes(event.type))).toEqual([])
+
+      fixture.prepareTurn(second, 'message-recovery-retried')
+      await expect(runner.startTurn(withSession(second)).completion).resolves.toMatchObject({ status: 'completed' })
+      expect(sessions.snapshot()).toMatchObject([{ recoveryPending: false, status: 'ready' }])
+      const recovered = (await fixture.eventLog.read(second.runId)).filter(event => recoveryTypes.includes(event.type))
+      expect(recovered.map(event => event.type)).toEqual(recoveryTypes)
+      expect(recovered[1]?.payload).toEqual({ missingAttachmentCount: 1, missingAttachmentIds: ['attachment-missing'], recoveredImageCount: 1, source: 'sqlite' })
+      expect((await fixture.eventLog.list(second.runId)).filter(event => recoveryTypes.includes(event.type))).toEqual(recovered)
+
+      fixture.prepareTurn(third, 'message-after-recovery-acknowledged')
+      await expect(runner.startTurn(withSession(third)).completion).resolves.toMatchObject({ status: 'completed' })
+      expect(sessions.getReady(base.conversationId, base.branchId)).toBe(session)
+      expect((await fixture.eventLog.read(third.runId)).filter(event => recoveryTypes.includes(event.type))).toEqual([])
+      expect(fixture.eventLog.listForRuns([first.runId, second.runId, third.runId])
+        .filter(event => recoveryTypes.includes(event.type)).map(event => event.type)).toEqual(recoveryTypes)
+    }
+    finally {
+      await runner.dispose()
+      await fixture.eventLog.close()
+    }
+  })
+
   it('leaves a turn recoverable when durable usage projection fails', async () => {
     const fixture = await createFixture()
     const target = join(fixture.root, 'article-without-usage.md')
@@ -208,7 +271,7 @@ describe('buddyAgentRunner', () => {
 
   it('keeps a completed run terminal when post-commit notification fails', async () => {
     const fixture = await createFixture({
-      onEvent: () => {
+      onCommit: () => {
         throw new Error('runtime peer closed')
       },
     })
@@ -1490,7 +1553,7 @@ function emptyResources() {
   }
 }
 
-async function createFixture(options: Pick<RunEventLogCallbacks, 'onEvent'> = {}) {
+async function createFixture(options: { onCommit?: () => void } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-runner-')))
   directories.push(root)
   await mkdir(root, { recursive: true })
@@ -1498,7 +1561,9 @@ async function createFixture(options: Pick<RunEventLogCallbacks, 'onEvent'> = {}
   databases.push(database)
   const conversationsDirectory = join(root, 'conversations')
   const eventsDirectory = join(conversationsDirectory, 'conversation-1', 'events')
-  const eventLog = createRunEventLog({ conversationsDirectory, database, ...options })
+  const eventLog = createRunEventLog({ conversationsDirectory, database })
+  if (options.onCommit)
+    eventLog.onDidCommit(options.onCommit)
   const conversations = createConversationRepository(database)
   const runs = createRunRepository(database)
   const usageRepository = createUsageRepository(database)
@@ -1524,7 +1589,7 @@ async function createFixture(options: Pick<RunEventLogCallbacks, 'onEvent'> = {}
           ...executorOptions,
           eventLog,
           piEvents,
-          runs,
+          continuity: new RunContinuityService(runs),
           sessionFactory,
           sessions,
         }),

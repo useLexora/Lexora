@@ -33,12 +33,11 @@ describe('built-in provider instances', () => {
         return provider
       }
       runtime.registerNativeProvider(source())
-      const authInteractions = new AuthInteractionService({
-        notify: (_method, input) => {
-          const challenge = providerAuthChallengeSchema.parse(input)
-          if (challenge.type === 'secret')
-            authInteractions.respondToPrompt(challenge.challengeId, 'fixture-not-a-real-key')
-        },
+      const authInteractions = new AuthInteractionService()
+      authInteractions.onDidChallenge((input) => {
+        const challenge = providerAuthChallengeSchema.parse(input)
+        if (challenge.type === 'secret')
+          authInteractions.respondToPrompt(challenge.challengeId, 'fixture-not-a-real-key')
       })
       const service = new ProviderService({
         authInteractions,
@@ -124,7 +123,7 @@ describe('built-in provider instances', () => {
     const credentials = new InMemoryCredentialStore()
     const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
     const service = new ProviderService({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       credentialStatus: createProviderCredentialStatus(credentials),
       modelDiscovery: { supports: () => false, discover: async () => [] },
       modelRuntime: runtime,
@@ -166,7 +165,7 @@ describe('built-in provider instances', () => {
     } } })
     let fast = true
     const service = new ProviderService({
-      authInteractions: new AuthInteractionService({ notify: () => {} }),
+      authInteractions: new AuthInteractionService(),
       credentialStatus: createProviderCredentialStatus(credentials),
       modelDiscovery: { supports: () => false, discover: async () => [] },
       modelRuntime: runtime,
@@ -207,7 +206,7 @@ describe('built-in provider instances', () => {
       const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
       runtime.registerNativeProvider(sources.provider)
       const service = new ProviderService({
-        authInteractions: new AuthInteractionService({ notify: () => {} }),
+        authInteractions: new AuthInteractionService(),
         createBuiltinSource: () => sources.provider,
         credentialStatus: createProviderCredentialStatus(credentials),
         modelDiscovery: { supports: () => false, discover: async () => [] },

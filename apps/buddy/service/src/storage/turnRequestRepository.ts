@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { ComposerDraftCommitReceipt } from './commitComposerDraft'
 import type { RunInputContextItem } from './runInputRepository'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { createComposerDraftCommitter } from './commitComposerDraft'
@@ -70,7 +71,20 @@ export interface TurnRequestRecord {
   requestFingerprint: string
   requestId: string
   runId: string
+  committedFacts?: readonly TurnCommitFact[]
 }
+
+export type TurnCommitFact
+  = { kind: 'task.created' }
+    | { kind: 'branch.created', parentBranchId: string | null }
+    | { kind: 'task.branch_activated' }
+    | { kind: 'task.model_changed' }
+    | { kind: 'message.created', messageId: string }
+    | { kind: 'attachments.bound', messageId: string, attachmentIds: readonly string[] }
+    | { kind: 'run.queued' }
+    | { kind: 'request.retried', previousRunId: string }
+    | { kind: 'draft.consumed', receipt: ComposerDraftCommitReceipt }
+    | { kind: 'queue.dispatched', queueId: string }
 
 export interface RetryInterruptedTurnRequestInput {
   createdAt: string
@@ -118,6 +132,7 @@ interface ConversationBindingRow {
   execution_profile: BuddyExecutionProfile
   space_id: string | null
   origin: 'automation' | 'interactive'
+  model_selection_json: string | null
 }
 
 interface RetryRunRow {
@@ -165,14 +180,14 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
   `)
   const findRequest = database.prepare('SELECT * FROM turn_requests WHERE request_id = ?')
   const findConversation = database.prepare(`
-    SELECT space_id, active_branch_id, approval_policy, execution_profile, origin, deleted_at
+    SELECT space_id, active_branch_id, approval_policy, execution_profile, origin, deleted_at, model_selection_json
     FROM conversations WHERE id = ?
   `)
   const insertConversation = database.prepare(`
     INSERT INTO conversations (
       id, space_id, title, active_branch_id, created_at, updated_at,
-      approval_policy, execution_profile, model_selection_json
-    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL)
+      approval_policy, execution_profile, model_selection_json, title_source
+    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, 'fallback')
   `)
   const insertBranch = database.prepare(`
     INSERT INTO conversation_branches (
@@ -397,6 +412,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
+          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.forkedFromMessageId ? input.parentBranchId : null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt, modelChanged: !sameModelSelection(conversation.model_selection_json, stringifyModelSelection(input)) }),
         }
       })
     },
@@ -536,6 +552,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
+          committedFacts: createTurnFacts({ taskCreated: !conversation, branchCreated: !conversation || !!input.followup, parentBranchId: input.followup?.parentBranchId ?? null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt: input.queuedMessageId ? null : draftReceipt, queueId: input.queuedMessageId, modelChanged: !sameModelSelection(conversation?.model_selection_json ?? null, stringifyModelSelection(input)) }),
         }
       })
     },
@@ -615,6 +632,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
+          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.parentBranchId, modelChanged: !sameModelSelection(conversation.model_selection_json, modelSelection.model_selection_json) }),
         }
       })
     },
@@ -660,6 +678,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         return {
           ...toRecord(request, true),
           runId: input.runId,
+          committedFacts: [{ kind: 'request.retried', previousRunId: request.run_id }, { kind: 'run.queued' }],
         }
       })
     },
@@ -711,6 +730,27 @@ function stringifyModelSelection(input: Omit<PrepareTurnRequestInput, 'draft'>):
     reasoning: input.runInput.reasoning,
     serviceTier: input.runInput.serviceTier,
   })
+}
+
+function sameModelSelection(left: string | null, right: string): boolean {
+  if (!left)
+    return false
+  const previous = JSON.parse(left)
+  const next = JSON.parse(right)
+  return ['providerId', 'modelId', 'reasoning', 'serviceTier'].every(key => previous[key] === next[key])
+}
+
+function createTurnFacts(input: { taskCreated?: boolean, branchCreated?: boolean, parentBranchId?: string | null, messageId?: string, attachmentIds?: readonly string[], draftReceipt?: ComposerDraftCommitReceipt | null, queueId?: string, modelChanged?: boolean }): TurnCommitFact[] {
+  return [
+    ...(input.taskCreated ? [{ kind: 'task.created' as const }] : []),
+    ...(input.branchCreated ? [{ kind: 'branch.created' as const, parentBranchId: input.parentBranchId ?? null }, { kind: 'task.branch_activated' as const }] : []),
+    ...(input.modelChanged ? [{ kind: 'task.model_changed' as const }] : []),
+    ...(input.messageId ? [{ kind: 'message.created' as const, messageId: input.messageId }] : []),
+    ...(input.messageId && input.attachmentIds?.length ? [{ kind: 'attachments.bound' as const, messageId: input.messageId, attachmentIds: input.attachmentIds }] : []),
+    { kind: 'run.queued' },
+    ...(input.draftReceipt ? [{ kind: 'draft.consumed' as const, receipt: input.draftReceipt }] : []),
+    ...(input.queueId ? [{ kind: 'queue.dispatched' as const, queueId: input.queueId }] : []),
+  ]
 }
 
 function bindAttachments(

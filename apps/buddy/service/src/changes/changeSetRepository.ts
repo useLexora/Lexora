@@ -46,17 +46,17 @@ export interface ChangeSetRepository {
     after: CapturedFileStateRecord,
     toolReportedError: boolean,
     completedAt: string,
-  ) => void
+  ) => boolean
   createCapture: (record: FileChangeCaptureRecord) => void
-  ensureSet: (record: ChangeSetRecord) => ChangeSetRecord
+  ensureSet: (record: ChangeSetRecord) => { created: boolean, record: ChangeSetRecord }
   findCaptureByToolCallId: (toolCallId: string) => FileChangeCaptureRecord | null
   findSetById: (id: string) => ChangeSetRecord | null
   findVisibleSetById: (id: string) => ChangeSetRecord | null
-  finalizeSet: (id: string, fileCount: number, updatedAt: string) => void
+  finalizeSet: (id: string, fileCount: number, updatedAt: string) => boolean
   listCaptures: (changeSetId: string) => FileChangeCaptureRecord[]
   listSetsForRuns: (runIds: readonly string[]) => ChangeSetRecord[]
-  markPartial: (id: string, updatedAt: string) => void
-  updateFileCount: (id: string, fileCount: number, updatedAt: string) => void
+  markPartial: (id: string, updatedAt: string) => boolean
+  updateFileCount: (id: string, fileCount: number, updatedAt: string) => boolean
 }
 
 interface ChangeSetRow {
@@ -150,20 +150,20 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
   const markPartial = database.prepare(`
     UPDATE run_change_sets
     SET coverage = 'partial', updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND coverage <> 'partial'
   `)
   const updateFileCount = database.prepare(`
-    UPDATE run_change_sets SET file_count = ?, updated_at = ? WHERE id = ?
+    UPDATE run_change_sets SET file_count = ?, updated_at = ? WHERE id = ? AND file_count <> ?
   `)
   const finalizeSet = database.prepare(`
     UPDATE run_change_sets
     SET status = 'completed', file_count = ?, updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND (status <> 'completed' OR file_count <> ?)
   `)
 
   return {
     completeCapture(id, after, toolReportedError, completedAt) {
-      completeCapture.run(
+      return Number(completeCapture.run(
         after.kind,
         after.sizeBytes,
         after.hash,
@@ -172,7 +172,7 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
         toolReportedError ? 1 : 0,
         completedAt,
         id,
-      )
+      ).changes) === 1
     },
     createCapture(record) {
       insertCapture.run(
@@ -207,7 +207,7 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
       } | undefined
       if (run?.conversation_id !== record.conversationId || run.deleted_at !== null)
         throw new Error('Lexora Buddy change-set ownership is invalid')
-      ensureSet.run(
+      const result = ensureSet.run(
         record.id,
         record.runId,
         record.conversationId,
@@ -217,7 +217,7 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
         record.createdAt,
         record.updatedAt,
       )
-      return requireChangeSet(findSet.get(record.id), record.id)
+      return { created: Number(result.changes) === 1, record: requireChangeSet(findSet.get(record.id), record.id) }
     },
     findCaptureByToolCallId(toolCallId) {
       const row = findCapture.get(toolCallId) as FileCaptureRow | undefined
@@ -232,7 +232,7 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
       return row ? toChangeSet(row) : null
     },
     finalizeSet(id, fileCount, updatedAt) {
-      finalizeSet.run(fileCount, updatedAt, id)
+      return Number(finalizeSet.run(fileCount, updatedAt, id, fileCount).changes) === 1
     },
     listCaptures(changeSetId) {
       return (listCaptures.all(changeSetId) as unknown as FileCaptureRow[]).map(toFileCapture)
@@ -252,10 +252,10 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
       return rows.map(toChangeSet)
     },
     markPartial(id, updatedAt) {
-      markPartial.run(updatedAt, id)
+      return Number(markPartial.run(updatedAt, id).changes) === 1
     },
     updateFileCount(id, fileCount, updatedAt) {
-      updateFileCount.run(fileCount, updatedAt, id)
+      return Number(updateFileCount.run(fileCount, updatedAt, id, fileCount).changes) === 1
     },
   }
 }

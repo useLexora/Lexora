@@ -14,13 +14,15 @@ export function registerContextPanelIpc(host: ContextPanelHost, getWindow: () =>
     assertTrustedSender(event, getWindow())
     return host.execute(contextPanelCommandSchema.parse(command))
   })
-  const stop = host.subscribe((state) => {
+  const subscription = host.onDidChange((change) => {
+    if (change.kind !== 'state')
+      return
     const window = getWindow()
     if (window && !window.isDestroyed())
-      window.webContents.send(DESKTOP_IPC_CHANNELS.contextPanelStateChanged, state)
+      window.webContents.send(DESKTOP_IPC_CHANNELS.contextPanelStateChanged, change.state)
   })
   return () => {
-    stop()
+    subscription.dispose()
     ipcMain.removeHandler(DESKTOP_IPC_CHANNELS.contextPanelGetState)
     ipcMain.removeHandler(DESKTOP_IPC_CHANNELS.contextPanelExecute)
   }

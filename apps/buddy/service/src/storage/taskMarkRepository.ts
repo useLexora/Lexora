@@ -89,9 +89,21 @@ export function createTaskMarkRepository(database: DatabaseSync) {
     return toState(row)
   }
 
+  function deleteWithReceipt(id: string) {
+    return withTransaction(database, () => {
+      requireMark(id)
+      const affected = database.prepare('SELECT conversation_id FROM task_attention WHERE mark_id = ?').all(id) as { conversation_id: string }[]
+      const deleted = Number(remove.run(id).changes) === 1
+      return { deleted, conversationIds: affected.map(row => row.conversation_id) }
+    })
+  }
+
   return {
     list,
     getState,
+    allStates(): LocalTaskMarkState[] {
+      return (database.prepare(STATE_QUERY).all() as unknown as StateRow[]).map(toState)
+    },
     states(conversationIds: readonly string[]): LocalTaskMarkState[] {
       if (conversationIds.length === 0)
         return []
@@ -110,9 +122,9 @@ export function createTaskMarkRepository(database: DatabaseSync) {
       return requireMark(id)
     },
     delete(id: string): boolean {
-      requireMark(id)
-      return Number(remove.run(id).changes) === 1
+      return deleteWithReceipt(id).deleted
     },
+    deleteWithReceipt,
     assign(conversationId: string, markId: string | null): LocalTaskMarkState {
       return withTransaction(database, () => {
         getState(conversationId)

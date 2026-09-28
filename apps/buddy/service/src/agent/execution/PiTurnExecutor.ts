@@ -1,6 +1,6 @@
 import type { RunEventWriter } from '../../events/RunEventPorts'
+import type { RunContinuityService } from '../../runs/RunContinuityService'
 import type { RunRecord } from '../../storage/runRecord'
-import type { RunRepository } from '../../storage/runRepository'
 import type {
   PiEventBridge,
   PiEventBridgeSettlement,
@@ -25,14 +25,14 @@ export const AUTOMATION_SESSION_STARTUP_TIMEOUT_MS = 60_000
 
 type PiTurnSessions = Pick<
   BuddySessionRegistry<ReusableBuddySession>,
-  'getOrCreate' | 'invalidateSession'
+  'getOrCreate' | 'invalidateSession' | 'acknowledgeRecovery'
 >
 
 export interface PiTurnExecutorOptions {
   automationSessionStartupTimeoutMs?: number
   eventLog: RunEventWriter
   piEvents: Pick<PiEventBridge, 'createCompaction' | 'createTurn'>
-  runs: Pick<RunRepository, 'bindSession' | 'clearSessionBindings' | 'findById'>
+  continuity: Pick<RunContinuityService, 'bindSession' | 'clearForRun'>
   sessionFactory: (
     input: BuddySessionFactoryInput,
   ) => Promise<BuddySessionBinding<ReusableBuddySession>>
@@ -68,7 +68,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
   readonly #automationSessionStartupTimeoutMs: number
   readonly #eventLog: PiTurnExecutorOptions['eventLog']
   readonly #piEvents: PiTurnExecutorOptions['piEvents']
-  readonly #runs: PiTurnExecutorOptions['runs']
+  readonly #continuity: PiTurnExecutorOptions['continuity']
   readonly #sessionFactory: PiTurnExecutorOptions['sessionFactory']
   readonly #sessions: PiTurnSessions
 
@@ -77,7 +77,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
       ?? AUTOMATION_SESSION_STARTUP_TIMEOUT_MS
     this.#eventLog = options.eventLog
     this.#piEvents = options.piEvents
-    this.#runs = options.runs
+    this.#continuity = options.continuity
     this.#sessionFactory = options.sessionFactory
     this.#sessions = options.sessions
   }
@@ -102,9 +102,9 @@ export class PiTurnExecutor implements RunExecutionBackend {
         )
       : await bindingPromise
     signal.throwIfAborted()
-    if (!this.#runs.bindSession(run.id, binding.piSessionFile))
+    if (!this.#continuity.bindSession(run.id, binding.piSessionFile))
       throw new BuddyAgentRunError('RUN_NOT_FOUND')
-    await this.#recordSessionRecovery(run.id, binding)
+    await this.#recordSessionRecovery(run.id, identity, binding)
     signal.throwIfAborted()
 
     execution.onSessionActivated(binding.session)
@@ -204,9 +204,9 @@ export class PiTurnExecutor implements RunExecutionBackend {
       }),
     )
     signal.throwIfAborted()
-    if (!this.#runs.bindSession(run.id, binding.piSessionFile))
+    if (!this.#continuity.bindSession(run.id, binding.piSessionFile))
       throw new BuddyAgentRunError('RUN_NOT_FOUND')
-    await this.#recordSessionRecovery(run.id, binding)
+    await this.#recordSessionRecovery(run.id, identity, binding)
     signal.throwIfAborted()
 
     if (!binding.session.canCompact())
@@ -276,6 +276,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
 
   async #recordSessionRecovery(
     runId: string,
+    identity: BuddySessionIdentity,
     binding: BuddySessionBinding<ReusableBuddySession>,
   ): Promise<void> {
     if (!binding.recoveredFromProductHistory)
@@ -300,8 +301,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
           }]
         : []),
     ])
-    binding.recoveredFromProductHistory = false
-    binding.recoveryDegradation = undefined
+    this.#sessions.acknowledgeRecovery(identity, binding)
   }
 
   async #withAutomationSessionStartupTimeout<T>(
@@ -329,14 +329,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
     identity: BuddySessionIdentity,
     runId: string,
   ): Promise<void> {
-    const run = this.#runs.findById(runId)
-    if (run?.piSessionFile) {
-      this.#runs.clearSessionBindings(
-        run.conversationId,
-        run.branchId,
-        run.piSessionFile,
-      )
-    }
+    this.#continuity.clearForRun(runId)
     await this.#sessions.invalidateSession(identity)
   }
 }

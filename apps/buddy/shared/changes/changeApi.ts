@@ -63,3 +63,13 @@ export const changesRpc = {
   overview: { method: 'changes.overview', input: changeOverviewRequestSchema, response: changeOverviewSchema },
   get: { method: 'changes.get', input: changesRequestSchemas.changeSet, response: changesResponseSchemas.changeSet },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const changeSetChangeNoticeSchema = z.object({
+  sourceId: z.uuid(),
+  revision: z.number().int().positive(),
+  conversationId: idSchema,
+  runId: idSchema,
+}).strict()
+
+export type ChangeSetChangeNotice = z.infer<typeof changeSetChangeNoticeSchema>
+export const changesChanged = { method: 'changes.changed', params: changeSetChangeNoticeSchema } as const

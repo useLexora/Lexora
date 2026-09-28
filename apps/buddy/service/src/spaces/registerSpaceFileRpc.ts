@@ -1,11 +1,9 @@
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
-import type { SpaceRepository } from '../storage/spaceRepository'
+import type { SpaceFileService } from './SpaceFileService'
 import { spaceFilesRpc } from '../../../shared/spaces/spaceFileApi'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
-import { SpaceFileService } from './SpaceFileService'
 
-export function registerSpaceFileRpc(rpc: RuntimeRequestRegistrar, spaces: Pick<SpaceRepository, 'findById'>): () => void {
-  const files = new SpaceFileService(spaces)
+export function registerSpaceFileRpc(rpc: RuntimeRequestRegistrar, files: SpaceFileService): () => void {
   const disposers = [
     registerRuntimeRequest(rpc, spaceFilesRpc.readDocument, input => files.readDocument(input)),
     registerRuntimeRequest(rpc, spaceFilesRpc.saveDocument, input => files.saveDocument(input)),

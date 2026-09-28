@@ -1,7 +1,7 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
-import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
+import type { LocalSpace, SpaceChangeNotice } from '@buddy-shared/spaces/spaceApi'
 import type { ApplicationSettings } from '@/modules/settings'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +26,7 @@ function fixture() {
   const creation = deferred<LocalSpace>()
   let savedSpaces: LocalSpace[] = []
   let savedTasks: LocalConversationSummary[] = [{ id: 'task', title: 'Task', activity: 'idle', activeBranchId: 'branch', spaceId: null, deletedAt: null, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z', approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, automationOccurrence: null }]
+  const spaceListeners = new Set<(event: SpaceChangeNotice) => void>()
   const listeners = new Set<(event: LocalRunEvent) => void>()
   const beforeDelete = vi.fn(async () => true)
   const deleted: string[] = []
@@ -33,7 +34,10 @@ function fixture() {
   const persistWorkspaceState = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
   const errors: unknown[] = []
   const api = {
-    spaces: { list: listSpaces, create: async () => {
+    spaces: { onChanged: (listener: (event: SpaceChangeNotice) => void) => {
+      spaceListeners.add(listener)
+      return () => spaceListeners.delete(listener)
+    }, list: listSpaces, create: async () => {
       const value = await creation.promise
       savedSpaces = [value]
       return value
@@ -41,7 +45,7 @@ function fixture() {
       savedSpaces = [space()]
       return savedSpaces[0]
     }, delete: async () => ({ ok: true }), selectDirectory: async () => null, revealFile: async () => {} },
-    conversations: { list: async () => savedTasks, delete: async (id: string) => {
+    conversations: { onChanged: () => () => {}, list: async () => savedTasks, delete: async (id: string) => {
       savedTasks = savedTasks.filter(task => task.id !== id)
       return true
     } },
@@ -65,7 +69,10 @@ function fixture() {
     selectDefaultModel() {},
     spaceId,
   }))!
-  return { index, creation, draftId, errors, owner, persistWorkspaceState, listSpaces, scope, paneScope, spaceId, beforeDelete, deleted, activity(value: LocalConversationSummary['activity']) {
+  return { index, changeSpace(value: LocalSpace, revision: number) {
+    savedSpaces = [value]
+    for (const listener of spaceListeners) listener({ sourceId: 'source', spaceId: value.id, kind: 'updated', revision })
+  }, creation, draftId, errors, owner, persistWorkspaceState, listSpaces, scope, paneScope, spaceId, beforeDelete, deleted, activity(value: LocalConversationSummary['activity']) {
     savedTasks = savedTasks.map(task => ({ ...task, activity: value }))
     for (const listener of listeners) listener({ type: 'approval.requested', runId: 'run', sequence: 1, payload: {}, createdAt: '2026-09-18T00:00:00Z' })
   } }
@@ -73,6 +80,22 @@ function fixture() {
 const input = { icon: 'folder' as const, iconColor: 'default' as const, name: 'Created', memoryScope: 'space_only' as const, primaryDirectory: null }
 
 describe('shared task index ownership', () => {
+  it('refreshes internal Space commits, drops replayed notices and detaches at scope disposal', async () => {
+    vi.useFakeTimers()
+    const f = fixture()
+    await f.index.initialize()
+    f.changeSpace({ ...space(), name: 'Updated by a tool' }, 2)
+    await vi.advanceTimersByTimeAsync(60)
+    expect(f.index.index.spaces.value[0]?.name).toBe('Updated by a tool')
+    f.changeSpace({ ...space(), name: 'Stale replay' }, 1)
+    await vi.advanceTimersByTimeAsync(60)
+    expect(f.index.index.spaces.value[0]?.name).toBe('Updated by a tool')
+    f.scope.stop()
+    f.changeSpace({ ...space(), name: 'After disposal' }, 3)
+    await vi.advanceTimersByTimeAsync(60)
+    expect(f.index.index.spaces.value[0]?.name).toBe('Updated by a tool')
+  })
+
   it('updates background task activity without an open task view', async () => {
     vi.useFakeTimers()
     const f = fixture()

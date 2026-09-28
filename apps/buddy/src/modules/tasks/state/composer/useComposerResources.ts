@@ -25,10 +25,70 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
   const rejectedIds = shallowReactive(new Set<string>())
   const resources = computed(() => [...entries.values()].filter(entry => entry.resource.draftId === options.draftId.value))
 
-  function update(resource: BuddyComposerResource, accepted = true) {
+  let disposed = false
+  const dirtyDrafts = new Set<string>()
+  const revisions = new Map<string, number>()
+  let refreshing = false
+  const stopChanges = options.api.onChanged(({ draftIds }) => {
+    for (const id of draftIds) {
+      if (id === options.draftId.value || [...entries.values()].some(entry => entry.resource.draftId === id))
+        refresh(id)
+    }
+  })
+
+  function refresh(draftId: string) {
+    if (disposed)
+      return
+    revisions.set(draftId, (revisions.get(draftId) ?? 0) + 1)
+    dirtyDrafts.add(draftId)
+    if (!refreshing) {
+      refreshing = true
+      queueMicrotask(() => {
+        void reconcile()
+      })
+    }
+  }
+
+  async function reconcile() {
+    const failures = new Map<string, number>()
+    try {
+      while (dirtyDrafts.size) {
+        if (disposed)
+          break
+        const draftId = dirtyDrafts.values().next().value!
+        dirtyDrafts.delete(draftId)
+        const revision = revisions.get(draftId)
+        try {
+          const current = await options.api.list(draftId)
+          if (disposed || revisions.get(draftId) !== revision)
+            continue
+          const ids = new Set(current.map(resource => resource.resourceId))
+          for (const [id, entry] of entries) {
+            if (entry.accepted && entry.resource.draftId === draftId && !ids.has(id))
+              entries.delete(id)
+          }
+          for (const resource of current) update(resource, true, true)
+        }
+        catch (error) {
+          const attempt = (failures.get(draftId) ?? 0) + 1
+          failures.set(draftId, attempt)
+          if (attempt < 3)
+            dirtyDrafts.add(draftId)
+          else options.onError(error)
+        }
+      }
+    }
+    finally { refreshing = false }
+  }
+
+  function update(resource: BuddyComposerResource, accepted = true, authoritative = false) {
+    if (disposed)
+      return
     if (resource.state === 'ready')
       sources.delete(resource.resourceId)
     entries.set(resource.resourceId, { accepted, canRetry: sources.has(resource.resourceId), resource })
+    if (accepted && !authoritative && revisions.has(resource.draftId))
+      refresh(resource.draftId)
   }
 
   async function complete(resource: BuddyComposerResource) {
@@ -158,6 +218,11 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
   }
 
   return {
+    dispose() {
+      disposed = true
+      stopChanges()
+      dirtyDrafts.clear()
+    },
     async selectSource(source: BuddyComposerSource, draftId = options.draftId.value) {
       try {
         const resource = await options.api.selectSource(

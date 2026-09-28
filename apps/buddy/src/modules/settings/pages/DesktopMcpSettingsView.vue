@@ -3,9 +3,9 @@ import type { LocalConnector } from '@buddy-shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '@buddy-shared/connectors/connectorState'
 import type { DesktopConnectorSavePlan } from '../model/desktopConnectorForm'
 import { NAlert, NButton, NEmpty, NModal } from 'naive-ui'
-import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
+import { computed, onMounted, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopSettingsPageLayout from '../layouts/DesktopSettingsPageLayout.vue'
+import DesktopSettingsModuleLayout from '../layouts/DesktopSettingsModuleLayout.vue'
 import { useSettingsContext } from '../settingsContext'
 import DesktopMcpConnectionCard from '../widgets/mcp/DesktopMcpConnectionCard.vue'
 import DesktopMcpConnectionEditor from '../widgets/mcp/DesktopMcpConnectionEditor.vue'
@@ -21,22 +21,9 @@ const toolList = shallowRef<{ id: string, tools: readonly ConnectorToolSummary[]
 const toolConnector = computed(() => connectors.value.find(connector => connector.id === toolList.value?.id))
 const executionConfirmation = shallowRef<{ connector: LocalConnector, next: 'test' | 'enable' } | null>(null)
 const testResult = shallowRef<{ name: string, enabled: boolean, state: ConnectorRuntimeState } | null>(null)
-let mounted = true
-let timer: ReturnType<typeof setTimeout> | undefined
 onMounted(async () => {
   await ready
-  const poll = async () => {
-    if (!mounted)
-      return
-    await mcp.load()
-    if (mounted)
-      timer = setTimeout(poll, 1500)
-  }
-  await poll()
-})
-onUnmounted(() => {
-  mounted = false
-  clearTimeout(timer)
+  await mcp.load()
 })
 async function save(plan: DesktopConnectorSavePlan) {
   if (await mcp.save(plan)) {
@@ -91,13 +78,7 @@ function formatStdioTarget(connector: LocalConnector): string {
 </script>
 
 <template>
-  <DesktopSettingsPageLayout requires-runtime :loading="!loaded">
-    <template #title>
-      {{ t('desktop.settings.category.mcp') }}
-    </template>
-    <template #description>
-      {{ t('desktop.settings.categoryDescription.mcp') }}
-    </template>
+  <DesktopSettingsModuleLayout :loading="!loaded">
     <template #actions>
       <div class="mcp-settings__actions">
         <NButton size="small" :disabled="!!busyId" @click="importing = true">
@@ -151,7 +132,7 @@ function formatStdioTarget(connector: LocalConnector): string {
       </template>
     </NModal>
     <DesktopMcpToolsDialog v-if="toolList && toolConnector" :connector="toolConnector" :tools="toolList.tools" :language="language" @close="toolList = null" />
-  </DesktopSettingsPageLayout>
+  </DesktopSettingsModuleLayout>
 </template>
 
 <style scoped>

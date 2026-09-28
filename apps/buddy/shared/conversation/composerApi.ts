@@ -66,3 +66,6 @@ export const composerDraftsRpc = {
   get: { method: 'composerDrafts.get', input: composerRequestSchemas.composerDraftTarget, response: composerResponseSchemas.composerDraft },
   save: { method: 'composerDrafts.save', input: composerRequestSchemas.composerDraftSave, response: composerResponseSchemas.composerDraft },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const composerResourcesChanged = { method: 'composerResources.changed', params: z.object({ revision: z.number().int().nonnegative(), draftIds: z.array(sessionIdentitySchema) }).strict() } as const
+export type ComposerResourcesChanged = z.infer<typeof composerResourcesChanged.params>

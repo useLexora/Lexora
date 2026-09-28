@@ -69,6 +69,8 @@ export function createConversationDirectoryGrantRepository(
   return {
     grant(input) {
       return withTransaction(database, () => {
+        if (!database.prepare('SELECT id FROM conversations WHERE id = ? AND deleted_at IS NULL AND space_id IS NULL').get(input.conversationId))
+          throw new ConversationDirectoryGrantOwnerError()
         const current = listActive(input.conversationId)
         const covering = [...current]
           .sort((left, right) => right.canonicalRoot.length - left.canonicalRoot.length)
@@ -130,4 +132,13 @@ function containsDirectory(root: string, candidate: string): boolean {
 
 function impassableDirectoryGrant(): never {
   throw new Error('Lexora Buddy conversation directory grant could not be persisted')
+}
+
+class ConversationDirectoryGrantOwnerError extends Error {
+  readonly code = 'DIRECTORY_GRANT_OWNER_INVALID'
+
+  constructor() {
+    super('Lexora Buddy directory grant owner is unavailable')
+    this.name = 'ConversationDirectoryGrantOwnerError'
+  }
 }

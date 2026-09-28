@@ -18,26 +18,32 @@ export interface BlockAutomationInput {
 }
 
 export interface AutomationDefinitionCommandRepository {
-  block: (input: BlockAutomationInput) => Automation | null
+  block: (input: BlockAutomationInput) => AutomationDefinitionCommit | null
   blockActiveByPinnedModel: (input: {
     blockedAt: string
     modelId?: string
     providerId: string
-  }) => Automation[]
+  }) => AutomationDefinitionCommit[]
   blockActiveBySpace: (input: {
     blockedAt: string
     spaceId: string
-  }) => Automation[]
-  create: (automation: Automation, mutation: AutomationMutationIdentity) => Automation
+  }) => AutomationDefinitionCommit[]
+  create: (automation: Automation, mutation: AutomationMutationIdentity) => AutomationDefinitionCommit
   replace: (input: {
     automation: Automation
     cancelQueued: boolean
     expectedRevision: number
-  }, mutation: AutomationMutationIdentity) => Automation
+  }, mutation: AutomationMutationIdentity) => AutomationDefinitionCommit
+}
+
+export interface AutomationDefinitionCommit {
+  automation: Automation
+  committed: boolean
+  cancelledOccurrenceIds: readonly string[]
 }
 
 export interface AutomationDefinitionCommandStore {
-  cancelQueuedOccurrences: (automationId: string, cancelledAt: string) => void
+  cancelQueuedOccurrences: (automationId: string, cancelledAt: string) => string[]
   repository: AutomationDefinitionCommandRepository
   tryBlock: (input: BlockAutomationInput) => boolean
 }
@@ -68,6 +74,7 @@ export function createAutomationDefinitionCommandStore(
     SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
         finished_at = ?, error_code = NULL, error_summary = NULL
     WHERE automation_id = ? AND status = 'queued' AND run_id IS NULL
+    RETURNING id
   `)
   const blockAutomation = database.prepare(`
     UPDATE automations
@@ -93,8 +100,8 @@ export function createAutomationDefinitionCommandStore(
     ORDER BY id
   `)
 
-  const cancelQueuedOccurrences = (automationId: string, cancelledAt: string): void => {
-    cancelQueued.run(cancelledAt, automationId)
+  const cancelQueuedOccurrences = (automationId: string, cancelledAt: string): string[] => {
+    return (cancelQueued.all(cancelledAt, automationId) as { id: string }[]).map(row => row.id)
   }
   const tryBlock = (input: BlockAutomationInput): boolean => {
     return Number(blockAutomation.run(
@@ -108,9 +115,9 @@ export function createAutomationDefinitionCommandStore(
     rows: AutomationRow[],
     reason: Automation['blockedReason'] & string,
     blockedAt: string,
-  ): Automation[] => {
+  ): AutomationDefinitionCommit[] => {
     return withTransaction(database, () => {
-      const blocked: Automation[] = []
+      const blocked: AutomationDefinitionCommit[] = []
       for (const row of rows) {
         if (!tryBlock({
           automationId: row.id,
@@ -120,8 +127,8 @@ export function createAutomationDefinitionCommandStore(
         })) {
           continue
         }
-        cancelQueuedOccurrences(row.id, blockedAt)
-        blocked.push(records.requireById(row.id))
+        const cancelledOccurrenceIds = cancelQueuedOccurrences(row.id, blockedAt)
+        blocked.push({ automation: records.requireById(row.id), committed: true, cancelledOccurrenceIds })
       }
       return blocked
     })
@@ -134,8 +141,8 @@ export function createAutomationDefinitionCommandStore(
         return withTransaction(database, () => {
           if (!tryBlock(input))
             return null
-          cancelQueuedOccurrences(input.automationId, input.blockedAt)
-          return records.requireById(input.automationId)
+          const cancelledOccurrenceIds = cancelQueuedOccurrences(input.automationId, input.blockedAt)
+          return { automation: records.requireById(input.automationId), committed: true, cancelledOccurrenceIds }
         })
       },
       blockActiveByPinnedModel(input) {
@@ -160,18 +167,18 @@ export function createAutomationDefinitionCommandStore(
         return withTransaction(database, () => {
           const replay = mutations.repository.replayAutomationMutation(mutation)
           if (replay)
-            return replay
+            return { automation: replay, committed: false, cancelledOccurrenceIds: [] }
           persistAutomation(insertAutomation, automation)
           const stored = records.requireById(automation.id)
           mutations.save(automation.id, mutation, stored)
-          return stored
+          return { automation: stored, committed: true, cancelledOccurrenceIds: [] }
         })
       },
       replace(input, mutation) {
         return withTransaction(database, () => {
           const replay = mutations.repository.replayAutomationMutation(mutation)
           if (replay)
-            return replay
+            return { automation: replay, committed: false, cancelledOccurrenceIds: [] }
           const existing = records.findAnyRow(input.automation.id)
           if (!existing || existing.deleted_at)
             throw new AutomationRepositoryError('not_found')
@@ -202,15 +209,15 @@ export function createAutomationDefinitionCommandStore(
           ).changes) !== 1) {
             throw new AutomationRepositoryError('conflict')
           }
-          if (input.cancelQueued) {
-            cancelQueuedOccurrences(
-              input.automation.id,
-              input.automation.updatedAt,
-            )
-          }
+          const cancelledOccurrenceIds = input.cancelQueued
+            ? cancelQueuedOccurrences(
+                input.automation.id,
+                input.automation.updatedAt,
+              )
+            : []
           const stored = records.requireById(input.automation.id)
           mutations.save(stored.id, mutation, stored)
-          return stored
+          return { automation: stored, committed: true, cancelledOccurrenceIds }
         })
       },
     },

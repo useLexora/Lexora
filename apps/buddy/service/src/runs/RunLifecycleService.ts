@@ -4,10 +4,21 @@ import type { RunEventMaintenance, RunEventWriter } from '../events/RunEventPort
 import type { RunPurpose, RunRecord, RunStatus } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { RunEventLogFatalError } from '../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from './runError'
 
 type TerminalRunStatus = Extract<RunStatus, 'cancelled' | 'completed' | 'failed'>
+
+export type RunSqlReconciliation = Readonly<{
+  runId: string
+  conversationId: string
+  branchId: string
+  status: TerminalRunStatus
+  errorCode: string | null
+  completedAt: string
+}>
 
 export interface StartRunInput {
   expectedPurposes: readonly RunPurpose[]
@@ -36,12 +47,16 @@ export interface RunLifecycleServiceOptions {
 }
 
 export class RunLifecycleService {
-  readonly #record: ApplicationDiagnosticReporter
+  readonly #reconciled: Emitter<RunSqlReconciliation>
+  readonly onDidReconcile: Emitter<RunSqlReconciliation>['event']
   readonly #eventLog: RunLifecycleServiceOptions['eventLog']
   readonly #repository: RunLifecycleServiceOptions['repository']
+  readonly #pending = new Set<Promise<unknown>>()
+  #stopping = false
 
   constructor(options: RunLifecycleServiceOptions) {
-    this.#record = safeDiagnosticReporter(options.record)
+    this.#reconciled = new Emitter(() => safeDiagnosticReporter(options.record)({ event: 'observer.failed', component: 'runtime.run_lifecycle', level: 'warn' }))
+    this.onDidReconcile = this.#reconciled.event
     this.#eventLog = options.eventLog
     this.#repository = options.repository
   }
@@ -50,7 +65,11 @@ export class RunLifecycleService {
     return this.#repository.findById(runId)
   }
 
-  async start(input: StartRunInput): Promise<RunRecord> {
+  start(input: StartRunInput): Promise<RunRecord> {
+    return this.#run(() => this.#start(structuredClone(input)))
+  }
+
+  async #start(input: StartRunInput): Promise<RunRecord> {
     const run = this.#requireRun(input.runId)
     if (
       run.status !== 'queued'
@@ -65,7 +84,6 @@ export class RunLifecycleService {
       runId: run.id,
       type: 'run.started',
     })
-    this.#record({ event: 'run.started', level: 'info', runId: run.id, conversationId: run.conversationId, branchId: run.branchId })
     return this.#requireRun(run.id)
   }
 
@@ -75,13 +93,17 @@ export class RunLifecycleService {
       return null
     return this.finalize({
       completedAt: new Date().toISOString(),
-      errorCode: readStableRunErrorCode(error),
+      errorCode: error instanceof Error && error.name === 'AbortError' ? 'RUN_CANCELLED' : readStableRunErrorCode(error),
       runId,
-      status: 'failed',
+      status: error instanceof Error && error.name === 'AbortError' ? 'cancelled' : 'failed',
     })
   }
 
-  async finalize(input: FinalizeRunInput): Promise<RunRecord> {
+  finalize(input: FinalizeRunInput): Promise<RunRecord> {
+    return this.#run(() => this.#finalize(structuredClone(input)))
+  }
+
+  async #finalize(input: FinalizeRunInput): Promise<RunRecord> {
     const existing = this.#requireRun(input.runId)
     if (isTerminal(existing.status)) {
       if (existing.status === input.status)
@@ -127,15 +149,16 @@ export class RunLifecycleService {
       throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
     }
     const run = this.#requireRun(input.runId)
-    this.#record({
-      event: `run.${run.status}`,
-      level: run.status === 'failed' ? 'error' : 'info',
-      runId: run.id,
-      conversationId: run.conversationId,
-      branchId: run.branchId,
-      durationMs: Math.max(0, Date.parse(input.completedAt) - Date.parse(run.startedAt)),
-      ...(run.errorCode ? { errorCode: run.errorCode } : {}),
-    })
+    if (!terminalEventPersisted) {
+      this.#reconciled.fire(copyEventSnapshot({
+        runId: run.id,
+        conversationId: run.conversationId,
+        branchId: run.branchId,
+        errorCode: run.errorCode,
+        status,
+        completedAt: input.completedAt,
+      }))
+    }
     if (terminalEventPersisted) {
       try {
         await this.#eventLog.compactTerminalRun(input.runId)
@@ -146,6 +169,27 @@ export class RunLifecycleService {
       }
     }
     return run
+  }
+
+  async dispose(): Promise<void> {
+    this.#stopping = true
+    await Promise.allSettled([...this.#pending])
+    this.#reconciled.dispose()
+  }
+
+  #run<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#stopping)
+      return Promise.reject(new Error('Run lifecycle service is stopped'))
+    const accepted = Promise.withResolvers<T>()
+    this.#pending.add(accepted.promise)
+    void accepted.promise.finally(() => this.#pending.delete(accepted.promise)).catch(() => {})
+    try {
+      void operation().then(accepted.resolve, accepted.reject)
+    }
+    catch (error) {
+      accepted.reject(error)
+    }
+    return accepted.promise
   }
 
   #requireRun(runId: string): RunRecord {

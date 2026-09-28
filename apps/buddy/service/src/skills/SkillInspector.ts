@@ -5,6 +5,7 @@ import type { SkillRepository } from '../storage/skillRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { readFilePreview } from '../files/readFilePreview'
 import { isWithin, readSkillDocument, requireSkillPath, SkillError } from './skillFiles'
 
@@ -34,20 +35,20 @@ export class SkillInspector {
   }
 
   remember(spaceId: string | null, scopeKey: string, catalog: LocalSkillCatalog) {
-    this.#catalogs.set(spaceId, { scopeKey, catalog })
+    this.#catalogs.set(spaceId, { scopeKey, catalog: copyEventSnapshot(catalog) })
   }
 
   async get(spaceId: string | null, id: string): Promise<SkillDetail> {
     const target = await this.#target(spaceId, id)
     const document = await readSkillDocument(target.filePath, target.root)
     this.#assertCurrent(target)
-    return {
+    return copyEventSnapshot({
       skill: { ...target.skill, name: document.name, description: document.description },
       content: document.content,
       body: document.body,
       metadata: document.metadata,
       compatibility: document.compatibility,
-    }
+    })
   }
 
   async listFiles(input: SkillDirectoryRequest): Promise<DirectoryPage> {

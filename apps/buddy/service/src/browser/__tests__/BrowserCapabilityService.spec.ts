@@ -418,6 +418,11 @@ describe('browserCapabilityService', () => {
     host.act.mockReturnValue(action.promise)
     host.releaseControl.mockResolvedValue({ ok: true })
     const service = createService(host)
+    const phases: string[] = []
+    service.onDidChange((change) => {
+      if ('phase' in change)
+        phases.push(change.phase)
+    })
     await service.open({ kind: 'url', url: READY_STATE.url })
     const controller = new AbortController()
     const acting = service.act(ACTION_INPUT, controller.signal)
@@ -431,7 +436,18 @@ describe('browserCapabilityService', () => {
       pageId: PAGE_ID,
       sessionId: SESSION_ID,
     })
+    let disposed = false
+    const stopping = service.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    expect(phases).toContain('caller-settled')
+    expect(phases).not.toContain('response-unknown')
     action.reject(new Error('cancelled action finished later'))
+    await stopping
+    expect(phases.at(-1)).toBe('response-unknown')
+    expect(service.snapshot.pending).toBe(0)
   })
 
   it('fails closed and releases a binding when Host state crosses conversation or session', async () => {

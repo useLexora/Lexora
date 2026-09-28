@@ -8,6 +8,7 @@ import { buildExtensionPackage } from '../../../../platform/extensions/buildExte
 import { compileExtensionSource } from '../../../../platform/extensions/compileExtensionSource'
 import { unpackExtension } from '../../../../platform/extensions/extensionFiles'
 import { createPluginAuthoringCapability } from '../pluginAuthoringCapability'
+import { PluginAuthoringService } from '../PluginAuthoringService'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -24,12 +25,19 @@ async function fixture() {
   const notifications: unknown[] = []
   let tool: ToolDefinition | undefined
   let identityTool: ToolDefinition | undefined
-  const capability = createPluginAuthoringCapability({ conversationId: 'task', cwd: root, executionProfile: 'workspace_write', getRunId: () => 'run', grants: [{ kind: 'workspace', canonicalRoot: root, root, grantId: 'workspace' }], sessionMode: 'interactive', signal: new AbortController().signal }, {
-    request: async (_method, input, _timeout, signal) => buildExtensionPackage(input, async (files, manifest, _signal, report) => compileExtensionSource(files, manifest, report), signal!),
-    notify: (_method, input) => {
+  let rejectReview = false
+  const peer = {
+    request: async (_method: string, input: unknown, _timeout?: number, signal?: AbortSignal) => buildExtensionPackage(input, async (files, manifest, _signal, report) => compileExtensionSource(files, manifest, report), signal!),
+    notify: (_method: string, input: unknown) => {
+      if (rejectReview)
+        throw new Error('fixture-private-review-failure')
       notifications.push(input)
     },
-  })
+  }
+  const builder = new PluginAuthoringService(peer)
+  const facts: unknown[] = []
+  builder.onDidChange(event => facts.push(event))
+  const capability = createPluginAuthoringCapability({ conversationId: 'task', cwd: root, executionProfile: 'workspace_write', getRunId: () => 'run', grants: [{ kind: 'workspace', canonicalRoot: root, root, grantId: 'workspace' }], sessionMode: 'interactive', signal: new AbortController().signal }, peer, builder)
   await capability.extension.factory({ registerTool(value: ToolDefinition) {
     tool = value
     if (value.name === 'lexora_plugin_identity')
@@ -40,6 +48,8 @@ async function fixture() {
     source,
     notifications,
     capability,
+    facts,
+    rejectReview: () => { rejectReview = true },
     identity: async (input: unknown) => await identityTool!.execute('identity', input as never, undefined, undefined, {} as never),
     execute: async (input: unknown) => await tool!.execute('call', input as never, undefined, undefined, {} as never) as { details: { ok: boolean, code?: string, packagePath?: string, installed?: boolean, runtimeTested?: boolean } },
   }
@@ -52,6 +62,16 @@ it('writes an authorized installable output and requests review without installi
   expect(result.details).toMatchObject({ ok: true, id: 'local.example', name: 'Example', author: '', version: '1.0.0', packagePath: output, installation: 'review_requested', runtimeTested: false })
   expect(unpackExtension(await readFile(output)).has('view.js')).toBe(true)
   expect(f.notifications).toEqual([{ path: output }])
+})
+
+it('keeps the committed package and reports review failure separately when notification fails', async () => {
+  const f = await fixture()
+  f.rejectReview()
+  const result = await f.execute({ source: 'source', output: 'example.lexora-extension', review: true })
+  expect(result.details).toMatchObject({ ok: true, installation: 'review_failed', reviewRequested: false, reviewError: 'EXTENSION_REVIEW_REQUEST_FAILED' })
+  expect(unpackExtension(await readFile(join(f.root, 'example.lexora-extension'))).has('view.js')).toBe(true)
+  expect(f.facts).toMatchObject([{ kind: 'package-written', extensionId: 'local.example' }, { kind: 'review-failed', extensionId: 'local.example', errorCode: 'EXTENSION_REVIEW_REQUEST_FAILED' }])
+  expect(JSON.stringify(f.facts)).not.toMatch(/fixture-private|packagePath|example\.lexora-extension/)
 })
 
 it('preserves existing files and rejects output outside grants or inside source', async () => {

@@ -14,7 +14,7 @@ describe('useDesktopAppState', () => {
         automations: emptyAutomationApi(),
         chat: emptyChatApi(),
         notifications: emptyNotificationApi(),
-        providers: { list: async () => [], listModels: async () => [], getDefaultModel: async () => null, onAuthChallenge: () => () => {} },
+        providers: { list: async () => [], listModels: async () => [], getDefaultModel: async () => null, onChanged: () => () => {}, onAuthChallenge: () => () => {} },
         runtime: { getStatus: () => status.promise, onStateChanged: () => () => {} },
       },
       settings: { get: async () => { throw new Error('unavailable') } },
@@ -38,7 +38,9 @@ describe('useDesktopAppState', () => {
       localChat: {
         automations: emptyAutomationApi(),
         chat: emptyChatApi(),
+        notifications: emptyNotificationApi(),
         providers: {
+          onChanged: () => () => {},
           onAuthChallenge: () => () => {},
         },
         runtime: {
@@ -90,6 +92,7 @@ describe('useDesktopAppState', () => {
         providers: {
           list: async () => [],
           listModels: async () => [],
+          onChanged: () => () => {},
           onAuthChallenge: () => () => {},
         },
         runtime: {
@@ -132,6 +135,7 @@ describe('useDesktopAppState', () => {
 
 function emptyNotificationApi() {
   return {
+    onChanged: () => () => {},
     list: async () => ({ items: [], unseenCount: 0 }),
   }
 }

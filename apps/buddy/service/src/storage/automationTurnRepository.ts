@@ -36,6 +36,7 @@ export interface BindAutomationTurnInput {
 export interface BoundAutomationTurn {
   conversation: ConversationRecord
   kind: 'bound'
+  lastRunChanged: boolean
   occurrence: AutomationOccurrenceRecord
   run: RunRecord
 }
@@ -122,7 +123,7 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
       AND lease_owner = ? AND lease_expires_at >= ?
   `)
   const updateLastRun = database.prepare(`
-    UPDATE automations SET last_run_at = ?, updated_at = ? WHERE id = ?
+    UPDATE automations SET last_run_at = ?, updated_at = ? WHERE id = ? AND last_run_at IS NOT ?
   `)
   const findNonTerminalRun = database.prepare(`
     SELECT 1
@@ -237,13 +238,14 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
         ).changes) !== 1) {
           throw new AutomationTurnBindingError()
         }
-        updateLastRun.run(input.boundAt, input.boundAt, occurrence.automationId)
+        const lastRunChanged = Number(updateLastRun.run(input.boundAt, input.boundAt, occurrence.automationId, input.boundAt).changes) === 1
         return {
           conversation: requireConversationRecord(
             findConversation.get(input.conversationId),
             input.conversationId,
           ),
           kind: 'bound',
+          lastRunChanged,
           occurrence: requireOccurrenceRecord(occurrence.id),
           run: requireRunRecord(findRun.get(input.runId), input.runId),
         }

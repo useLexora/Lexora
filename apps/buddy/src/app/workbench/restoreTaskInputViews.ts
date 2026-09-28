@@ -1,8 +1,8 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
+import type { WorkbenchLayout } from '@/workbench/common/workbench'
 import { createPane, panes, removePane } from '@/workbench/common/workbench'
 
-export async function restoreTaskInputViews(layout: WorkbenchController['layout'], api: Pick<LocalChatApi['composerDrafts'], 'find'>): Promise<void> {
+export async function restoreTaskInputViews(layout: WorkbenchLayout, api: Pick<LocalChatApi['composerDrafts'], 'find'>): Promise<void> {
   for (const view of Object.values(layout.views)) {
     if (view.resource.scheme !== 'draft' || view.resource.id === 'global' || view.resource.id === view.resource.data.spaceId)
       continue

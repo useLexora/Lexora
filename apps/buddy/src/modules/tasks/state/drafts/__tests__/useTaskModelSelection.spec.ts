@@ -15,6 +15,7 @@ describe('useTaskModelSelection', () => {
       list: async () => [provider('anthropic', true, 'available')],
       listBuiltinPresets: async () => [],
       listModels: async () => [model('anthropic'), { ...model('anthropic'), modelId: 'model-2' }],
+      onChanged: () => () => {},
       onAuthChallenge: () => () => {},
       setDefaultModel: async (value: unknown) => value,
     } as unknown as LexoraDesktopApi['localChat']['providers']
@@ -56,6 +57,7 @@ describe('useTaskModelSelection', () => {
       list: async () => [provider('anthropic', true, 'available')],
       listBuiltinPresets: async () => [],
       listModels: async () => [model('anthropic'), { ...model('anthropic'), modelId: 'model-2' }],
+      onChanged: () => () => {},
       onAuthChallenge: () => () => {},
       setDefaultModel: async (value: unknown) => value,
     } as unknown as LexoraDesktopApi['localChat']['providers']
@@ -110,6 +112,7 @@ describe('useTaskModelSelection', () => {
           list: async () => [provider('anthropic', true, 'available')],
           listBuiltinPresets: async () => [],
           listModels: async () => models,
+          onChanged: () => () => {},
           onAuthChallenge: () => () => {},
           setDefaultModel,
         },
@@ -231,6 +234,7 @@ function model(providerId: string): LocalRuntimeModelOption {
 
 function emptyNotificationApi() {
   return {
+    onChanged: () => () => {},
     list: async () => ({ items: [], unseenCount: 0 }),
   }
 }

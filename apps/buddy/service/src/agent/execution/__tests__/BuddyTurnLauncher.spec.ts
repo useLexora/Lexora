@@ -183,6 +183,27 @@ describe('buddyTurnLauncher', () => {
     expect((await fixture.eventLog.read('run-1')).map(event => event.type))
       .toEqual(['run.failed'])
   })
+
+  it('cancels an accepted queued run when its launch scope stops during planning', async () => {
+    const fixture = await createFixture()
+    fixture.prepareTurn({ spaceId: null })
+    const gate = Promise.withResolvers<void>()
+    const controller = new AbortController()
+    fixture.resolveInputReferences.mockImplementationOnce(async () => {
+      await gate.promise
+      return { images: [], documents: [] }
+    })
+    const launcher = fixture.createLauncher({ startTurn: () => {
+      throw new Error('Stopped scope must not launch')
+    } })
+    const launch = launcher.launch('run-1', controller.signal)
+    await vi.waitFor(() => expect(fixture.resolveInputReferences).toHaveBeenCalled())
+    controller.abort()
+    gate.resolve()
+    const handle = await launch
+    await expect(handle.completion).resolves.toMatchObject({ status: 'cancelled', errorCode: 'RUN_CANCELLED' })
+    expect((await fixture.eventLog.read('run-1')).map(event => event.type)).toEqual(['run.cancelled'])
+  })
 })
 
 async function createFixture(options: { modelInput?: readonly ('text' | 'image')[], selectedSkill?: SkillReference } = {}) {

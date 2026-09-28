@@ -1,9 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { AutomationDefinitionDraft } from '../../../../shared/automation'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { RunSqlReconciliation } from '../../runs/RunLifecycleService'
 
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Emitter } from '../../../../shared/events/Emitter'
 import { createAutomationRepositories } from '../../storage/automationRepository'
+import { createAutomationTurnRepository } from '../../storage/automationTurnRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { createRunRepository } from '../../storage/runRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
 import { AutomationChangeCoordinator } from '../AutomationChangeCoordinator'
 import { AutomationService } from '../AutomationService'
@@ -16,6 +20,34 @@ afterEach(() => {
 })
 
 describe('automationChangeCoordinator', () => {
+  it('retains failed run refreshes for bounded reconciliation without converting them into scheduler wakes', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const service = new AutomationService({ clock: { now: () => Temporal.Instant.from('2026-08-24T00:00:00.000Z') }, repositories: createAutomationRepositories(database) })
+    const automation = service.create({ requestId: 'create-refresh', draft: dailyDraft() })
+    service.runNow({ automationId: automation.id, expectedRevision: 1, requestId: 'run-refresh' })
+    const occurrence = service.leaseQueued({ now: '2026-08-24T00:00:00.000Z', leaseExpiresAt: '2026-08-24T00:01:00.000Z', limit: 1, owner: 'scheduler-refresh' })[0]!
+    createAutomationTurnRepository(database).bind({ boundAt: '2026-08-24T00:00:10.000Z', branchId: 'branch-refresh', conversationId: 'conversation-refresh', contextWindow: 100_000, maxTokens: 8_000, executionContext: null, leaseOwner: 'scheduler-refresh', messageId: 'message-refresh', model: 'model', occurrenceId: occurrence.id, provider: 'provider', reasoning: null, runId: 'run-refresh', spaceId: null })
+    const reconciled = new Emitter<RunSqlReconciliation>(() => {})
+    const runs = createRunRepository(database)
+    const notifications: string[] = []
+    const wakeScheduler = vi.fn()
+    const coordinator = new AutomationChangeCoordinator({ service, notify: id => notifications.push(id), wakeScheduler, runChanges: { runs, eventLog: { onDidCommit: () => ({ dispose: () => {} }) }, lifecycle: { onDidReconcile: reconciled.event } } })
+    const broken = vi.spyOn(runs, 'findById').mockImplementation(() => {
+      throw new Error('temporary read failure')
+    })
+    reconciled.fire({ runId: 'run-refresh', conversationId: 'conversation-refresh', branchId: 'branch-refresh', status: 'failed', completedAt: '2026-08-24T00:00:20.000Z', errorCode: 'RUNTIME_RESTARTED' })
+    expect(coordinator.state).toBe('degraded')
+    expect(broken).toHaveBeenCalledTimes(3)
+    expect(notifications).toEqual([])
+    broken.mockRestore()
+    coordinator.reconcile()
+    expect(coordinator.state).toBe('ready')
+    expect(notifications).toEqual([automation.id])
+    expect(wakeScheduler).not.toHaveBeenCalled()
+    await coordinator.dispose()
+  })
+
   it('reconciles unavailable dependencies and publishes one scheduler wake', () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)

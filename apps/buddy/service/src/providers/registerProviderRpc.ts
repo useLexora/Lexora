@@ -1,4 +1,3 @@
-import type { AutomationChangeCoordinator } from '../automations/AutomationChangeCoordinator'
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { ProviderExecutionModelResolver } from './ProviderExecutionModelResolver'
 import type { BuddyModel } from './providerSchemas'
@@ -6,15 +5,9 @@ import type { ProviderService } from './ProviderService'
 import { providersRpc } from '../../../shared/providers/providerApi'
 import { ok, registerRuntimeRequest } from '../rpc/runtimeRequest'
 
-export interface ProviderSessionInvalidator {
-  invalidateAll: () => Promise<unknown>
-}
-
 export interface RegisterProviderRpcOptions {
-  automations: Pick<AutomationChangeCoordinator, 'blockPinnedModel'>
   rpc: RuntimeRequestRegistrar
   service: ProviderService
-  sessions: ProviderSessionInvalidator
 }
 
 export function registerProviderRpc(options: RegisterProviderRpcOptions): () => void {
@@ -26,8 +19,6 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listBuiltinPresets, () => options.service.listBuiltinPresets()))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.rename, async (input) => {
     const provider = await options.service.renameProvider(input.providerId, input.displayName, input.requestHeaders)
-    if (input.requestHeaders !== undefined)
-      await options.sessions.invalidateAll()
     return provider
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.add, async (input) => {
@@ -57,27 +48,18 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.logout, async (input) => {
     await options.service.logout(input.providerId)
-    options.automations.blockPinnedModel(input.providerId)
-    await options.sessions.invalidateAll()
     return ok()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.clearCredential, async (input) => {
     await options.service.clearCredential(input.providerId)
-    options.automations.blockPinnedModel(input.providerId)
-    await options.sessions.invalidateAll()
     return ok()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.remove, async (input) => {
     await options.service.removeProvider(input.providerId)
-    options.automations.blockPinnedModel(input.providerId)
-    await options.sessions.invalidateAll()
     return ok()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setEnabled, async (input) => {
     const provider = await options.service.setProviderEnabled(input.providerId, input.enabled)
-    if (!input.enabled)
-      options.automations.blockPinnedModel(input.providerId)
-    await options.sessions.invalidateAll()
     return provider
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelEnabled, async (input) => {
@@ -86,25 +68,18 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
       input.modelId,
       input.enabled,
     )
-    if (!input.enabled)
-      options.automations.blockPinnedModel(input.providerId, input.modelId)
-    await options.sessions.invalidateAll()
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.removeModel, async (input) => {
     await options.service.removeModel(input.providerId, input.modelId)
-    options.automations.blockPinnedModel(input.providerId, input.modelId)
-    await options.sessions.invalidateAll()
     return ok()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelCatalogSource, async (input) => {
     const model = await options.service.setModelCatalogSource(input.providerId, input.modelId, input.source)
-    await options.sessions.invalidateAll()
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelCapabilities, async (input) => {
     const model = await options.service.setModelCapabilities(input.providerId, input.modelId, input.capabilities)
-    await options.sessions.invalidateAll()
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelParameters, async (input) => {
@@ -134,25 +109,14 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.syncModels, async (input) => {
     const models = await options.service.syncModels(input.providerId)
-    for (const model of models) {
-      if (!model.enabled || !model.available)
-        options.automations.blockPinnedModel(model.providerId, model.id)
-    }
     return models.map(model => toRuntimeModelOption(options.service.executionModels, model))
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.refreshModelSnapshot, async () => {
     const snapshot = await options.service.refreshModelSnapshot()
-    const models = await options.service.listModels()
-    for (const model of models) {
-      if (!model.enabled || !model.available)
-        options.automations.blockPinnedModel(model.providerId, model.id)
-    }
-    await options.sessions.invalidateAll()
     return snapshot
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.upsertManualModel, async (input) => {
     const model = await options.service.upsertManualModel(input.providerId, input.model)
-    await options.sessions.invalidateAll()
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.createCustom, async params => options.service.createCustomProvider(params)))
@@ -160,7 +124,6 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     const provider = await options.service.upsertCustomProvider(
       params,
     )
-    await options.sessions.invalidateAll()
     return provider
   }))
 

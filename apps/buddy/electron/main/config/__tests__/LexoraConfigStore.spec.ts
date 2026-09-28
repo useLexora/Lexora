@@ -123,6 +123,8 @@ describe('lexoraConfigStore', () => {
   it('restores the applied configuration when applying a setting fails without changing the saved profile', async () => {
     const { store } = await createConfigStore()
     const previous = await store.read()
+    const changes: string[] = []
+    store.onDidChange(change => changes.push(change.kind))
     let active = previous.proxy
     await expect(store.update({ proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' } }, async (next) => {
       active = next.proxy
@@ -131,6 +133,8 @@ describe('lexoraConfigStore', () => {
     })).rejects.toThrow('Proxy configuration unavailable')
     expect(active).toEqual(previous.proxy)
     expect(await store.read()).toEqual(previous)
+    expect(changes).toEqual(['apply-failed', 'rolled-back'])
+    expect(store.snapshot.applied).toEqual(previous)
   })
   it('updates only requested settings and writes a private TOML file atomically', async () => {
     const { configPath, store } = await createConfigStore()

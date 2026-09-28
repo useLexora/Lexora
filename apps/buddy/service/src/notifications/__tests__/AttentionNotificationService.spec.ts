@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { NotificationCommit } from '../AttentionNotificationService'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { createNotificationAttentionRepository } from '../../storage/notificationAttentionRepository'
@@ -13,6 +14,71 @@ afterEach(() => {
 })
 
 describe('attentionNotificationService', () => {
+  it('emits effective content and lifecycle changes even at the same source revision, suppressing query and seen no-ops', () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    let models = [modelState()]
+    const service = new AttentionNotificationService({ attention: createNotificationAttentionRepository(database), listAutomationRuns: () => [], listModels: () => models, now: () => '2026-08-20T01:00:00.000Z' })
+    const events: NotificationCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    const first = service.list().items[0]!
+    service.list()
+    expect(events).toHaveLength(1)
+    models = [...models, { ...modelState(), modelId: 'another-model' }]
+    expect(service.list().items[0]).toMatchObject({ revision: first.revision, payload: { modelCount: 2 } })
+    expect(events.at(-1)?.changes).toEqual([{ id: first.id, kind: 'changed' }])
+    service.markSeen(first.id, 'older-revision')
+    expect(events).toHaveLength(2)
+    service.markSeen(first.id, first.revision)
+    service.markSeen(first.id, first.revision)
+    expect(events).toHaveLength(3)
+    models = []
+    expect(service.list().items[0]).toMatchObject({ lifecycle: 'resolved', attention: 'seen', revision: first.revision })
+    expect(events).toHaveLength(4)
+    expect(Object.isFrozen(events[0]?.changes)).toBe(true)
+    service.dispose()
+  })
+
+  it('keeps partial reconciliation facts when another source fails', () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const attention = createNotificationAttentionRepository(database)
+    const service = new AttentionNotificationService({ attention, listAutomationRuns: () => {
+      throw new Error('history unavailable')
+    }, listModels: () => [modelState()], now: () => '2026-08-20T01:00:00.000Z' })
+    const events: NotificationCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    expect(() => service.list()).toThrow('history unavailable')
+    expect(attention.list()).toHaveLength(1)
+    expect(events[0]?.changes[0]?.kind).toBe('added')
+    expect(() => service.list()).toThrow('history unavailable')
+    expect(events).toHaveLength(1)
+    service.dispose()
+  })
+
+  it('prunes expired history without resurrecting it on repeated reads or after source deletion', () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    let now = '2026-08-20T01:00:00.000Z'
+    let runs = [{ automationId: 'automation-1', automationName: 'Fixture', completedAt: '2026-08-20T00:00:00.000Z', conversationId: 'conversation-1', errorCode: null, runId: 'run-1', status: 'completed' as const }]
+    const service = new AttentionNotificationService({ attention: createNotificationAttentionRepository(database), listAutomationRuns: () => runs, listModels: () => [], now: () => now })
+    const events: NotificationCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    service.list()
+    now = '2026-08-29T00:00:00.000Z'
+    expect(service.list().items).toEqual([])
+    service.list()
+    expect(events.flatMap(event => event.changes.map(change => change.kind))).toEqual(['added', 'removed'])
+    runs = [{ ...runs[0]!, completedAt: now, runId: 'run-2' }]
+    service.list()
+    runs = []
+    expect(service.removeAutomationRun('run-2')).toBe(true)
+    expect(service.list().items).toEqual([])
+    expect(service.removeAutomationRun('run-2')).toBe(false)
+    expect(events).toHaveLength(4)
+    service.dispose()
+  })
+
   it('counts only unseen revisions and never resolves work when marking notifications seen', () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)

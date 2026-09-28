@@ -69,6 +69,7 @@ describe('buddySessionBlueprintService', () => {
       executionProfile: 'workspace_write',
       grantRevision: blueprint.grantRevision,
       resourceRevision: blueprint.resources.revision,
+      skillRevision: blueprint.resources.skillRevision,
       scratchRoot,
       sessionMode: 'interactive',
       spaceId: 'space-1',

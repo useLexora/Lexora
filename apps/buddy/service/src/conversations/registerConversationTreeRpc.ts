@@ -7,16 +7,16 @@ import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { withMessageAttachments } from '../attachments/publicAttachment'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { toPublicRun } from '../runs/publicRun'
-import { createConversationTreeRepository } from '../storage/conversationTreeRepository'
+import { createConversationTreeReader } from '../storage/conversationTreeRepository'
 import { projectConversationTree } from './projectConversationTree'
 import { projectRunOutputs } from './projectRunOutputs'
 
 export function registerConversationTreeRpc(options: Pick<RegisterConversationRpcOptions, 'artifacts' | 'attachments' | 'changes' | 'eventLog' | 'rpc' | 'runInputs'> & {
   database: DatabaseSync
-  conversations: ConversationRepository
+  conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'findMessageById'>
   runs: Pick<RunRepository, 'findById'>
 }) {
-  const repository = createConversationTreeRepository(options.database)
+  const repository = createConversationTreeReader(options.database)
   function requireConversation(conversationId: string) {
     const conversation = options.conversations.findById(conversationId)
     if (!conversation || conversation.deletedAt)

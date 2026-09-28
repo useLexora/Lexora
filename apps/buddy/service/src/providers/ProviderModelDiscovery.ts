@@ -17,6 +17,7 @@ export interface ProviderModelDefinition {
 }
 
 export interface ProviderModelDiscoveryInput {
+  readonly signal?: AbortSignal
   readonly api: string
   readonly baseUrl: string
   readonly providerId: string
@@ -81,7 +82,7 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
       const response = await this.#request(new URL('models', baseUrl), {
         headers,
         redirect: 'error',
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.any([AbortSignal.timeout(15_000), ...(input.signal ? [input.signal] : [])]),
       })
       evidence.responseObserved = true
       evidence.responseMs = Math.round(performance.now() - startedAt)

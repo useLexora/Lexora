@@ -4,9 +4,13 @@ import type { AutomationClock } from '../AutomationScheduleEvaluator'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAutomationRepositories } from '../../storage/automationRepository'
+import { createAutomationTurnRepository } from '../../storage/automationTurnRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { createRunRepository } from '../../storage/runRepository'
+import { AutomationChangeCoordinator } from '../AutomationChangeCoordinator'
 import { AutomationScheduler } from '../AutomationScheduler'
 import { AutomationService } from '../AutomationService'
+import { AutomationTurnService } from '../AutomationTurnService'
 
 const databases: DatabaseSync[] = []
 
@@ -16,6 +20,68 @@ afterEach(() => {
 })
 
 describe('automationScheduler', () => {
+  it('does not become ready after the first scan fails and permits a later successful start', async () => {
+    const fixture = createFixture('2026-08-24T00:00:00.000Z')
+    const listDue = vi.spyOn(fixture.service, 'listDue').mockImplementationOnce(() => {
+      throw new Error('SQLite unavailable')
+    })
+    const scheduler = fixture.scheduler(async () => {})
+    const states: string[] = []
+    scheduler.onDidChange(event => states.push(event.state))
+    await expect(scheduler.start()).rejects.toThrow('SQLite unavailable')
+    expect(states).toEqual(['starting', 'degraded'])
+    await scheduler.start()
+    expect(scheduler.state).toBe('ready')
+    expect(listDue).toHaveBeenCalledTimes(2)
+    await scheduler.dispose()
+    await scheduler.settle()
+    expect(scheduler.state).toBe('drained')
+  })
+
+  it('consumes owner notifications without waking itself for claim, lease, schedule progress or completion', async () => {
+    const fixture = createFixture('2026-08-24T00:00:00.000Z')
+    fixture.service.create({ draft: onceDraft('2026-08-24T00:00:10.000Z'), requestId: 'no-loop' })
+    fixture.clock.set('2026-08-24T00:00:20.000Z')
+    const scheduler = fixture.scheduler(async (occurrence) => {
+      fixture.service.finishQueued({ id: occurrence.id, leaseOwner: occurrence.leaseOwner, status: 'skipped', errorCode: 'AUTOMATION_DEFAULT_MODEL_UNAVAILABLE' })
+    })
+    const wake = vi.spyOn(scheduler, 'wake')
+    const listDue = vi.spyOn(fixture.service, 'listDue')
+    const changes = new AutomationChangeCoordinator({ service: fixture.service, wakeScheduler: () => scheduler.wake(), notify: () => {} })
+    await scheduler.start()
+    await scheduler.settle()
+    expect(wake).not.toHaveBeenCalled()
+    expect(listDue).toHaveBeenCalledTimes(1)
+    expect(fixture.service.listHistory({}).items[0]?.status).toBe('skipped')
+    await scheduler.dispose()
+    await scheduler.settle()
+    await changes.dispose()
+  })
+
+  it('keeps an unresolved bound run recoverable and reports degraded until its real terminal state is reconciled', async () => {
+    const fixture = createFixture('2026-08-24T00:00:00.000Z')
+    fixture.service.create({ draft: onceDraft('2026-08-24T00:00:10.000Z'), requestId: 'bound-failure' })
+    fixture.clock.set('2026-08-24T00:00:20.000Z')
+    const turns = new AutomationTurnService(createAutomationTurnRepository(fixture.database))
+    const runs = createRunRepository(fixture.database)
+    const facts: string[] = []
+    fixture.service.onDidCommit(event => facts.push(...event.facts.map(fact => fact.kind)))
+    const scheduler = fixture.scheduler(async (occurrence) => {
+      turns.bind({ boundAt: '2026-08-24T00:00:20.000Z', branchId: 'branch-bound', conversationId: 'conversation-bound', contextWindow: 100_000, maxTokens: 8_000, executionContext: null, leaseOwner: occurrence.leaseOwner!, messageId: 'message-bound', model: 'model', occurrenceId: occurrence.id, provider: 'provider', reasoning: null, runId: 'run-bound', spaceId: null })
+      throw new Error('terminal storage unavailable')
+    })
+    await scheduler.start()
+    await vi.waitFor(() => expect(scheduler.state).toBe('degraded'))
+    await scheduler.dispose()
+    await expect(scheduler.settle()).rejects.toThrow('Automation dispatch cleanup failed')
+    expect(fixture.service.listHistory({}).items[0]?.status).toBe('bound')
+    expect(runs.findById('run-bound')?.status).toBe('queued')
+    expect(facts).not.toContain('occurrence.finished')
+    runs.reconcileTerminal('run-bound', 'failed', '2026-08-24T00:00:30.000Z', 'RUNTIME_RESTARTED')
+    await scheduler.settle()
+    expect(scheduler.state).toBe('drained')
+  })
+
   it('polls every 30 seconds and stops claiming after disposal', async () => {
     vi.useFakeTimers()
     try {
@@ -142,6 +208,7 @@ function createFixture(initialTime: string) {
   })
   return {
     clock,
+    database,
     service,
     scheduler: (dispatch: (occurrence: AutomationOccurrenceRecord) => Promise<void>) => (
       new AutomationScheduler({

@@ -1,9 +1,8 @@
-import type { ApplicationDiagnostic } from '@buddy-shared/diagnostics/applicationDiagnostic'
-import { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
+import type { RendererLifecycleReport } from '@buddy-shared/lifecycle/serviceLifecycle'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, shallowRef } from 'vue'
-import { DesktopStartup } from '../../../../electron/main/app/DesktopStartup'
+import { createStartupFixture } from '../../../../electron/main/app/__tests__/startupFixture'
 import { useDesktopLifecycle } from '../useDesktopLifecycle'
 
 const cleanups: (() => void)[] = []
@@ -58,17 +57,14 @@ describe('workspace hydration', () => {
 })
 
 function createFixture(options: { restore?: () => Promise<void>, failFirst?: boolean } = {}) {
-  const publisher = new ApplicationEvents()
-  const startup = new DesktopStartup(publisher)
+  const { startup, connect, complete } = createStartupFixture()
   const reads = shallowRef(0)
   let beforeQuit = async () => false
-  const send = (event: ApplicationDiagnostic) => startup.observe(event, { sourceId: event.generation ?? 'desktop' })
-  send({ component: 'desktop', event: 'component.starting', level: 'info', operationId: 'desktop' })
-  send({ component: 'desktop', event: 'component.ready', level: 'info', operationId: 'desktop' })
+  complete('desktop')
   const scope = effectScope()
   const lifecycle = scope.run(() => useDesktopLifecycle({
     api: { app: {
-      startup: { getState: async () => startup.state, onStateChanged: startup.onStateChange.bind(startup), reportEvent: async (event: ApplicationDiagnostic) => send(event) },
+      startup: { getState: async () => startup.state, onStateChanged: startup.onStateChange.bind(startup), reportLifecycle: async (report: RendererLifecycleReport) => { startup.acceptRenderer(report) } },
       onBeforeQuit: (listener: () => Promise<boolean>) => {
         beforeQuit = listener
         return () => {}
@@ -94,9 +90,5 @@ function createFixture(options: { restore?: () => Promise<void>, failFirst?: boo
     },
   } as unknown as Parameters<typeof useDesktopLifecycle>[0]))!
   cleanups.push(() => scope.stop())
-  const connect = (generation: string) => {
-    send({ component: 'runtime.connection', event: 'component.starting', level: 'info', operationId: generation, generation })
-    send({ component: 'runtime.connection', event: 'component.ready', level: 'info', operationId: generation, generation })
-  }
   return { lifecycle, reads, connect, beforeQuit: () => beforeQuit() }
 }

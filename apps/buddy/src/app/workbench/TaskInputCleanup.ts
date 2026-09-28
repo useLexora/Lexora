@@ -25,7 +25,7 @@ export class TaskInputCleanup {
   }
 
   add(input: BuddyComposerDraftDiscard): void {
-    this.controller.layout.auxiliary.pendingInputDiscards = [...this.pending().filter(item => item.draftId !== input.draftId), { ...input }]
+    this.controller.setAuxiliary('pendingInputDiscards', [...this.pending().filter(item => item.draftId !== input.draftId), { ...input }])
   }
 
   restore(hasLayout: boolean): Promise<void> {
@@ -37,8 +37,6 @@ export class TaskInputCleanup {
         if (draft.scope.kind === 'task' && !this.#isOpen(draft.draftId) && !this.hasContext(draft.draftId))
           this.add({ draftId: draft.draftId, expectedRevision: draft.revision })
       }
-      if (this.pending().length)
-        this.controller.changed()
       await this.#flush()
     })
   }
@@ -63,8 +61,7 @@ export class TaskInputCleanup {
         if (this.#isOpen(input.draftId) || this.hasContext(input.draftId))
           continue
         await this.api.discard(input)
-        this.controller.layout.auxiliary.pendingInputDiscards = this.pending().filter(item => item.draftId !== input.draftId)
-        this.controller.changed()
+        this.controller.setAuxiliary('pendingInputDiscards', this.pending().filter(item => item.draftId !== input.draftId))
       }
     }
     finally {

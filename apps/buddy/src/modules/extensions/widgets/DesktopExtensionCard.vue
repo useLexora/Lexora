@@ -8,7 +8,7 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
 
-const props = defineProps<{ item: ExtensionStatus, language: string, busy: boolean }>()
+const props = defineProps<{ item: ExtensionStatus, language: string, busy: boolean, canOpen: boolean }>()
 const emit = defineEmits<{
   toggle: []
   restart: []
@@ -19,7 +19,6 @@ const emit = defineEmits<{
 }>()
 const labels = computed(() => extensionLabels(props.language))
 const status = computed(() => labels.value[props.item.state === 'failed' ? 'failedState' : props.item.state])
-const canRun = computed(() => props.item.enabled && props.item.compatible)
 const actions = computed<DropdownOption[]>(() => {
   const pluginActions: DropdownOption[] = []
   if (props.item.manifest.permissions.localResources)
@@ -72,7 +71,7 @@ function handleAction(key: string | number) {
     </p>
     <code v-if="item.error" class="extension-card__error">{{ item.error }}</code>
     <footer class="extension-card__actions">
-      <NButton v-if="canRun && item.manifest.contributes.navigation" size="small" secondary :disabled="busy" @click="emit('open')">
+      <NButton v-if="canOpen" size="small" secondary :disabled="busy" @click="emit('open')">
         {{ language === 'en-US' ? 'Open' : '打开' }}
       </NButton>
       <NButton secondary size="small" :disabled="busy" :data-testid="item.enabled ? 'extension-disable' : 'extension-enable'" @click="emit('toggle')">

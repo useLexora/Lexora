@@ -3,6 +3,7 @@ import type { RunEventReader } from '../events/RunEventPorts'
 import type { ArtifactRepository } from '../storage/artifactRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { ConversationRepository } from '../storage/conversationRepository'
+import type { ArtifactService } from './ArtifactService'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
@@ -14,7 +15,8 @@ const legacyOutputTools = new Set([
 ])
 
 export async function reconcileLegacyArtifactOutputs(options: {
-  artifacts: Pick<ArtifactRepository, 'findByCurrentPath' | 'findById' | 'save'>
+  artifacts: Pick<ArtifactRepository, 'findByCurrentPath' | 'findById'>
+  catalogue: Pick<ArtifactService, 'recoverLegacyRecords'>
   conversations: Pick<ConversationRepository, 'findById'>
   eventLog: Pick<RunEventReader, 'listForConversation'>
   paths: Pick<BuddyDataPaths, 'conversationArtifactsDirectory' | 'conversationsDirectory'>
@@ -30,6 +32,7 @@ export async function reconcileLegacyArtifactOutputs(options: {
       continue
     recovered += await recoverConversationArtifacts({
       artifacts: options.artifacts,
+      catalogue: options.catalogue,
       conversationId: conversation.id,
       eventLog: options.eventLog,
       paths: options.paths,
@@ -48,7 +51,8 @@ async function listDirectories(directory: string) {
 }
 
 async function recoverConversationArtifacts(options: {
-  artifacts: Pick<ArtifactRepository, 'findByCurrentPath' | 'findById' | 'save'>
+  artifacts: Pick<ArtifactRepository, 'findByCurrentPath' | 'findById'>
+  catalogue: Pick<ArtifactService, 'recoverLegacyRecords'>
   conversationId: string
   eventLog: Pick<RunEventReader, 'listForConversation'>
   paths: Pick<BuddyDataPaths, 'conversationArtifactsDirectory'>
@@ -63,23 +67,23 @@ async function recoverConversationArtifacts(options: {
   if (
     outputs.length === 0
     || new Set(outputs.map(output => output.artifactId)).size !== outputs.length
-    || outputs.some(output => options.artifacts.findById(output.artifactId) !== null)
   ) {
     return 0
   }
 
-  if (
-    files.items.length !== outputs.length
-    || files.items.some(file => (
-      options.artifacts.findByCurrentPath(options.conversationId, file.path) !== null
-    ))
-  ) {
+  if (files.items.length !== outputs.length)
     return 0
-  }
-
   for (const [index, output] of outputs.entries()) {
     const file = files.items[index]!
-    options.artifacts.save({
+    const existing = options.artifacts.findById(output.artifactId)
+    const path = options.artifacts.findByCurrentPath(options.conversationId, file.path)
+    if ((existing && (existing.conversationId !== options.conversationId || existing.currentPath !== file.path)) || (path && path.id !== output.artifactId))
+      return 0
+  }
+
+  return options.catalogue.recoverLegacyRecords(outputs.map((output, index) => {
+    const file = files.items[index]!
+    return {
       conversationId: options.conversationId,
       createdAt: output.createdAt,
       currentPath: file.path,
@@ -93,9 +97,8 @@ async function recoverConversationArtifacts(options: {
       sizeBytes: file.sizeBytes,
       sourceArtifactId: null,
       updatedAt: output.createdAt,
-    })
-  }
-  return outputs.length
+    }
+  }))
 }
 
 function listLegacyOutputs(events: readonly BuddyRunEvent[]): Array<{

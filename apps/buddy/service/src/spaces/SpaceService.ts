@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { parseDirectorySearch, searchDirectoryEntries } from '../directories/searchDirectoryEntries'
 import { requireActiveSpace } from './requireActiveSpace'
 
@@ -56,14 +58,41 @@ interface DirectoryConfigurationEntry {
   root: string
 }
 
+export interface SpaceCommit {
+  readonly sourceId: string
+  readonly revision: number
+  readonly spaceId: string
+  readonly kind: 'created' | 'updated' | 'directory-granted' | 'deleted'
+  readonly facets: readonly ('presentation' | 'directories' | 'memory' | 'availability')[]
+  readonly directories: readonly { readonly id: string, readonly revision: number, readonly role: 'primary' | 'additional', readonly resourcesTrusted: boolean }[]
+  readonly revokedDirectoryIds: readonly string[]
+}
+
 export class SpaceService {
   readonly #spaces: SpaceRepository
+  readonly #sourceId = randomUUID()
+  readonly #changes: Emitter<SpaceCommit>
+  readonly #mutations = new Map<string, Promise<unknown>>()
+  readonly onDidCommit
+  #revision = 0
+  #disposed = false
+  #quiescing = false
 
-  constructor(spaces: SpaceRepository) {
+  constructor(spaces: SpaceRepository, onListenerError: (error: unknown) => void = () => console.error('SPACE_OBSERVER_FAILED')) {
     this.#spaces = spaces
+    this.#changes = new Emitter(onListenerError)
+    this.onDidCommit = this.#changes.event
   }
 
-  async create(input: CreateSpaceInput): Promise<SpaceRecord> {
+  get revision(): number { return this.#revision }
+
+  create(input: CreateSpaceInput): Promise<SpaceRecord> {
+    const request = copyEventSnapshot(input)
+    return this.#serialize(randomUUID(), () => this.#create(request))
+  }
+
+  async #create(input: CreateSpaceInput): Promise<SpaceRecord> {
+    this.#requireOpen()
     const name = requireSpaceName(input.name)
     if (input.primaryDirectory && !input.primaryDirectorySelectionVerified)
       throw new SpaceDirectoryError()
@@ -72,7 +101,8 @@ export class SpaceService {
       additionalDirectories: [],
       primaryDirectory: input.primaryDirectory,
     }, null, createdAt)
-    return this.#spaces.create({
+    this.#requireOpen()
+    const created = this.#spaces.create({
       additionalDirectories: directories.additionalDirectories,
       createdAt,
       id: randomUUID(),
@@ -82,9 +112,16 @@ export class SpaceService {
       name,
       primaryDirectory: directories.primaryDirectory,
     })
+    this.#publish('created', null, created)
+    return created
   }
 
-  async update(input: UpdateSpaceInput): Promise<SpaceRecord> {
+  update(input: UpdateSpaceInput): Promise<SpaceRecord> {
+    const request = copyEventSnapshot(input)
+    return this.#serialize(request.spaceId, () => this.#update(request))
+  }
+
+  async #update(input: UpdateSpaceInput): Promise<SpaceRecord> {
     const space = requireActiveSpace(this.#spaces.findById(input.spaceId))
     const name = requireSpaceName(input.name)
     if (
@@ -107,7 +144,13 @@ export class SpaceService {
     ) {
       throw new SpaceHasActiveRunsError()
     }
-    return this.#spaces.update({
+    this.#requireOpen()
+    if (!directoryConfigurationChanged(space, directories)
+      && name === space.name && input.memoryScope === space.memoryScope
+      && (input.icon ?? space.icon) === space.icon && (input.iconColor ?? space.iconColor) === space.iconColor) {
+      return space
+    }
+    const updated = this.#spaces.update({
       additionalDirectories: directories.additionalDirectories,
       event: {
         createdAt: updatedAt,
@@ -132,14 +175,22 @@ export class SpaceService {
       primaryDirectory: directories.primaryDirectory,
       updatedAt,
     })
+    this.#publish('updated', space, updated)
+    return updated
   }
 
-  async grantAdditionalDirectory(input: {
+  grantAdditionalDirectory(input: {
     root: string
     spaceId: string
   }): Promise<DirectoryGrantMutation> {
+    const request = copyEventSnapshot(input)
+    return this.#serialize(request.spaceId, () => this.#grantAdditionalDirectory(request))
+  }
+
+  async #grantAdditionalDirectory(input: { root: string, spaceId: string }): Promise<DirectoryGrantMutation> {
     requireActiveSpace(this.#spaces.findById(input.spaceId))
     const resolved = await resolveSpaceDirectory(input.root, { create: true })
+    this.#requireOpen()
     const space = requireActiveSpace(this.#spaces.findById(input.spaceId))
 
     const existing = [...getSpaceDirectories(space)]
@@ -208,6 +259,7 @@ export class SpaceService {
       primaryDirectory: directories.primaryDirectory,
       updatedAt,
     })
+    this.#publish('directory-granted', space, updated)
     const directory = updated.additionalDirectories.find(
       candidate => candidate.id === grantedDirectory.id,
     )
@@ -224,12 +276,16 @@ export class SpaceService {
     }
   }
 
-  async delete(spaceId: string): Promise<SpaceRecord> {
+  delete(spaceId: string): Promise<SpaceRecord> {
+    return this.#serialize(spaceId, () => this.#delete(spaceId))
+  }
+
+  #delete(spaceId: string): SpaceRecord {
     const space = requireActiveSpace(this.#spaces.findById(spaceId))
     if (this.#spaces.hasActiveRuns(spaceId))
       throw new SpaceHasActiveRunsError()
     const deletedAt = new Date().toISOString()
-    return this.#spaces.delete(spaceId, deletedAt, {
+    const deleted = this.#spaces.delete(spaceId, deletedAt, {
       createdAt: deletedAt,
       eventType: 'space.deleted',
       id: randomUUID(),
@@ -240,10 +296,77 @@ export class SpaceService {
       },
       spaceId,
     })
+    this.#publish('deleted', space, deleted)
+    return deleted
+  }
+
+  async quiesce(): Promise<void> {
+    this.#quiescing = true
+    while (this.#mutations.size)
+      await Promise.allSettled([...this.#mutations.values()])
+  }
+
+  async dispose(): Promise<void> {
+    await this.quiesce()
+    this.#disposed = true
+    this.#changes.dispose()
+  }
+
+  #requireOpen(): void {
+    if (this.#disposed)
+      throw new Error('SPACE_SERVICE_STOPPED')
+  }
+
+  #serialize<T>(spaceId: string, operation: () => T | Promise<T>): Promise<T> {
+    if (this.#quiescing)
+      return Promise.reject(new Error('SPACE_SERVICE_STOPPED'))
+    this.#requireOpen()
+    const previous = this.#mutations.get(spaceId) ?? Promise.resolve()
+    const pending = previous.catch(() => {}).then(() => {
+      this.#requireOpen()
+      return operation()
+    }).finally(() => {
+      if (this.#mutations.get(spaceId) === pending)
+        this.#mutations.delete(spaceId)
+    })
+    this.#mutations.set(spaceId, pending)
+    return pending
+  }
+
+  #publish(kind: SpaceCommit['kind'], before: SpaceRecord | null, current: SpaceRecord): void {
+    const facets: Array<SpaceCommit['facets'][number]> = []
+    if (!before || before.name !== current.name || before.icon !== current.icon || before.iconColor !== current.iconColor)
+      facets.push('presentation')
+    if (!before || before.memoryScope !== current.memoryScope)
+      facets.push('memory')
+    const directories = getSpaceDirectories(current).map(directory => ({
+      id: directory.id,
+      revision: directory.revision,
+      role: directory.id === current.primaryDirectory?.id ? 'primary' as const : 'additional' as const,
+      resourcesTrusted: directory.id === current.primaryDirectory?.id && Boolean(current.primaryDirectory.resourcesTrustedAt),
+    }))
+    if (!before || JSON.stringify(getSpaceDirectories(before)) !== JSON.stringify(getSpaceDirectories(current)))
+      facets.push('directories')
+    if (!before || before.revokedAt !== current.revokedAt)
+      facets.push('availability')
+    this.#changes.fire(copyEventSnapshot({
+      sourceId: this.#sourceId,
+      revision: ++this.#revision,
+      spaceId: current.id,
+      kind,
+      facets,
+      directories,
+      revokedDirectoryIds: before ? getSpaceDirectories(before).filter(directory => !directories.some(current => current.id === directory.id)).map(directory => directory.id) : [],
+    }))
   }
 
   list(): readonly SpaceRecord[] {
     return this.#spaces.list()
+  }
+
+  isGrantCurrent(spaceId: string, grantId: string): boolean {
+    const space = this.#spaces.findById(spaceId)
+    return Boolean(space && !space.revokedAt && getSpaceDirectories(space).some(directory => directory.id === grantId && !directory.revokedAt))
   }
 
   async searchFiles(spaceId: string, query: string, deepSearch = false): Promise<SpaceFileSearchResult[]> {
@@ -258,6 +381,9 @@ export class SpaceService {
     if (!directory)
       return []
     const result = await searchDirectoryEntries({ canonicalRoot: directory.canonicalRoot, grantId: directory.id, kind: 'workspace', root: directory.root }, parsed.path, parsed.term, deepSearch)
+    const current = requireActiveSpace(this.#spaces.findById(spaceId))
+    if (!getSpaceDirectories(current).some(candidate => candidate.id === directory.id && candidate.revision === directory.revision && !candidate.revokedAt))
+      throw new SpaceDirectoryError()
     return result.entries.map(entry => ({ ...entry, directoryId: directory.id, relativePath: relative(directory.canonicalRoot, entry.path), root: directory.root }))
   }
 

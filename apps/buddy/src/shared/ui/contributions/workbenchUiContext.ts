@@ -7,10 +7,10 @@ import { createInjectionState } from '@vueuse/core'
 import { watch } from 'vue'
 
 export interface SemanticAnchor {
-  id: string
-  kind: WorkbenchAnchor
-  element: HTMLElement
-  caret?: () => DOMRect | null
+  readonly id: string
+  readonly kind: WorkbenchAnchor
+  readonly element: HTMLElement
+  readonly caret?: () => DOMRect | null
 }
 export interface WorkbenchAnchors {
   readonly entries: ReadonlyMap<string, SemanticAnchor>

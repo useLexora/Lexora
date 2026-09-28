@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
+import { DesktopDiagnosticLogger } from '../../desktopDiagnostics'
 import { createApplicationDiagnosticBundle } from '../applicationDiagnosticBundle'
 import { ApplicationLogReader } from '../ApplicationLogReader'
 
@@ -25,6 +26,52 @@ function unpack(bytes: Uint8Array) {
 }
 
 describe('application diagnostic bundles', () => {
+  it('preserves space and directory identities through encoding, reading and export without admitting file details', async () => {
+    const directory = await createTemporaryDirectory('lexora-space-diagnostic-bundle-')
+    const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.9.2', userHome: '/fixture' })
+    const identity = { spaceId: crypto.randomUUID(), directoryId: crypto.randomUUID(), operationId: crypto.randomUUID(), revision: 3 }
+    const fact = { ...identity, scope: 'local-service', level: 'error', event: 'space.file.response_denied', sourceId: 'fixture-private-source', message: 'fixture-private-local-detail', payload: { text: 'fixture-private-body', path: '/fixture/private-file' } } as const
+    expect(logger.record(fact)).toBe(true)
+    expect(logger.record({ ...fact, spaceId: '/fixture/private-space' })).toBe(false)
+    expect(logger.record({ ...fact, directoryId: '/fixture/private-directory' })).toBe(false)
+    await logger.close()
+    const reader = new ApplicationLogReader(directory, logger.launchId, '/fixture')
+    const page = await reader.query({})
+    expect(page.skippedRecords).toBe(0)
+    const queried = page.records.find(record => record.event === fact.event)
+    expect(queried).toMatchObject(identity)
+    expect(queried).not.toHaveProperty('payload')
+    const bundle = unpack((await createApplicationDiagnosticBundle(reader, 'current'))!.bytes)
+    expect(bundle.errors.find(record => record.event === fact.event)).toMatchObject(identity)
+    expect(bundle.context.find(record => record.event === fact.event)).toMatchObject(identity)
+    expect(JSON.stringify({ errors: bundle.errors, context: bundle.context })).not.toContain('fixture-private')
+  })
+
+  it('preserves safe renderer identities and version facts through encoding, reading and export alongside older rows', async () => {
+    const directory = await createTemporaryDirectory('lexora-renderer-diagnostic-bundle-')
+    const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.9.2', userHome: '/fixture' })
+    const workingCopyId = crypto.randomUUID()
+    const firstProducer = crypto.randomUUID()
+    const secondProducer = crypto.randomUUID()
+    const fact = { scope: 'desktop', level: 'error', event: 'workbench.copy.save_failed', workingCopyId, contentVersion: 3, savedVersion: 1, dirty: true, revision: 5, sourceSequence: 1, occurredAt: '2026-09-28T00:00:00.000Z' } as const
+    expect(logger.record({ ...fact, producerInstanceId: firstProducer, sourceId: 'fixture-private-renderer' })).toBe(true)
+    expect(logger.record({ ...fact, producerInstanceId: secondProducer })).toBe(true)
+    expect(logger.record({ scope: 'desktop', level: 'info', event: 'app.ready' })).toBe(true)
+    await logger.close()
+    const reader = new ApplicationLogReader(directory, logger.launchId, '/fixture')
+    const page = await reader.query({})
+    expect(page.skippedRecords).toBe(0)
+    expect(page.records).toHaveLength(3)
+    const bundle = unpack((await createApplicationDiagnosticBundle(reader, 'current'))!.bytes)
+    expect(bundle.context.filter(record => record.workingCopyId === workingCopyId)).toMatchObject([
+      { producerInstanceId: firstProducer, sourceSequence: 1, contentVersion: 3, savedVersion: 1, dirty: true, revision: 5 },
+      { producerInstanceId: secondProducer, sourceSequence: 1, contentVersion: 3, savedVersion: 1, dirty: true, revision: 5 },
+    ])
+    expect(bundle.context.at(-1)).toMatchObject({ event: 'app.ready' })
+    expect(JSON.stringify(bundle.context)).not.toContain('fixture-private')
+    expect(bundle.context.some(record => 'sourceId' in record)).toBe(false)
+  })
+
   it('keeps successful startup steps and the launch network failure when exporting a later incident', async () => {
     const { reader } = await fixture([
       record(1, { event: 'network.start_failed', runId: undefined, level: 'warn', errorCode: 'NETWORK_START_FAILED', failure: { kind: 'network_startup', operation: 'listen', systemCode: 'UNKNOWN', errno: -4094 } }),

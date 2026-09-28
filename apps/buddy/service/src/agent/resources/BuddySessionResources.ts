@@ -12,6 +12,7 @@ export interface BuddySessionResources {
   context: BoundedContextFilesResult
   directoryContext: string
   revision: string
+  skillRevision?: string
 }
 
 export interface ResolveBuddySessionResourcesOptions {
@@ -61,6 +62,7 @@ export async function resolveBuddySessionResources(
     context,
     directoryContext,
     revision: hash.digest('hex'),
+    skillRevision: skills.revision,
   }
 }
 

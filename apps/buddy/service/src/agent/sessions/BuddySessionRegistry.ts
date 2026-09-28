@@ -1,21 +1,30 @@
+import type { Event, ListenerErrorHandler } from '../../../../shared/events/Emitter'
+import type { BuddyCapabilityResourceRevision } from '../extensions/BuddyCapability'
 import type { BuddySessionIdentity } from './BuddySessionBlueprint'
 import type { BuddySessionShutdownReason } from './ReusableBuddySession'
+import { randomUUID } from 'node:crypto'
+import { Emitter } from '../../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 
 export interface BuddySessionBinding<TSession> {
-  piSessionFile: string
-  recoveredFromProductHistory?: boolean
-  recoveryDegradation?: {
-    missingAttachmentIds: readonly string[]
-    recoveredImageCount: number
+  readonly resourceRevisions?: readonly BuddyCapabilityResourceRevision[]
+  readonly piSessionFile: string
+  readonly recoveredFromProductHistory?: boolean
+  readonly recoveryDegradation?: {
+    readonly missingAttachmentIds: readonly string[]
+    readonly recoveredImageCount: number
   }
-  session: TSession
+  readonly session: TSession
 }
 
 export interface DisposableBuddySession {
+  getModelUsage?: () => { readonly providerId: string, readonly modelId: string } | null
   shutdown: (reason: BuddySessionShutdownReason) => Promise<void>
 }
 
 interface BuddySessionEntry<TSession> {
+  id: string
+  identity: Readonly<BuddySessionIdentity>
   binding: BuddySessionBinding<TSession> | null
   promise: Promise<BuddySessionBinding<TSession>>
   requestedPiSessionFile: string | null
@@ -32,6 +41,32 @@ interface ActiveRun {
 
 export interface BuddySessionRegistryOptions {
   maxSessions?: number
+  onListenerError?: ListenerErrorHandler
+}
+
+export interface BuddySessionSnapshot {
+  readonly id: string
+  readonly identity: Readonly<BuddySessionIdentity>
+  readonly model: { readonly providerId: string, readonly modelId: string } | null
+  readonly status: 'pending' | 'ready' | 'disposed' | 'failed'
+  readonly invalidationPending: boolean
+  readonly cleanup: 'none' | 'pending' | 'failed'
+  readonly recoveryPending: boolean
+  readonly resourceRevisions: readonly BuddyCapabilityResourceRevision[]
+}
+export interface BuddySessionChange {
+  readonly revision: number
+  readonly type: 'registered' | 'ready' | 'startup-failed' | 'recovery-acknowledged' | 'invalidation-pending' | 'removed' | 'disposed' | 'cleanup-failed'
+  readonly session: BuddySessionSnapshot
+}
+export interface BuddySessionInvalidationResult {
+  readonly matched: number
+  readonly pending: number
+  readonly degraded: number
+}
+
+export interface BuddyRunRelease {
+  readonly cleanup: 'completed' | 'degraded'
 }
 
 export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
@@ -45,11 +80,26 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   readonly #maxSessions: number
   readonly #pendingFactories = new Set<Promise<void>>()
   readonly #cleanupFailures: unknown[] = []
+  readonly #runCleanup = new Map<string, BuddyRunRelease['cleanup']>()
+  readonly #cleanupStates = new Map<string, BuddySessionSnapshot>()
+  readonly #changes: Emitter<BuddySessionChange>
   #disposal: Promise<void> | null = null
   #accessSequence = 0
+  #revision = 0
 
   constructor(options: BuddySessionRegistryOptions = {}) {
     this.#maxSessions = Math.max(1, Math.floor(options.maxSessions ?? 8))
+    this.#changes = new Emitter(options.onListenerError ?? (() => console.error('SESSION_OBSERVER_FAILED')))
+  }
+
+  readonly onDidChange: Event<BuddySessionChange> = (listener, options) => this.#changes.event(listener, options)
+
+  get revision(): number {
+    return this.#revision
+  }
+
+  snapshot(): readonly BuddySessionSnapshot[] {
+    return Object.freeze([...this.#sessions].map(([key, entry]) => this.#snapshotEntry(entry, this.#pendingInvalidations.has(key))).concat([...this.#cleanupStates.values()]))
   }
 
   async getOrCreate(
@@ -59,6 +109,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   ): Promise<BuddySessionBinding<TSession>> {
     if (this.#disposal)
       throw new BuddySessionLifecycleAbortError()
+    identity = copyEventSnapshot(identity)
     const conversationKey = createConversationKey(identity)
     const boundRoot = this.#conversationRoots.get(conversationKey)
     if (boundRoot !== undefined && boundRoot !== identity.canonicalRoot)
@@ -73,7 +124,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         throw new BuddySessionBindingError()
       }
       this.#touch(sessionKey)
-      return existing.promise
+      return existing.binding ?? existing.promise
     }
 
     for (const [candidateKey, candidateIdentity] of [...this.#identities]) {
@@ -85,15 +136,19 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
       throw new BuddySessionLifecycleAbortError()
     this.#conversationRoots.set(conversationKey, identity.canonicalRoot)
 
-    const entry = this.#createEntry(piSessionFile, factory)
+    const entry = this.#createEntry(identity, piSessionFile, factory)
     this.#sessions.set(sessionKey, entry)
     this.#identities.set(sessionKey, identity)
+    this.#publish('registered', this.#snapshotEntry(entry))
     try {
       const binding = await entry.promise
       if (this.#sessions.get(sessionKey) !== entry)
         throw new BuddySessionLifecycleAbortError()
+      this.#publish('ready', this.#snapshotEntry(entry, this.#pendingInvalidations.has(sessionKey)))
       this.#touch(sessionKey)
       await this.#evictIdleSessions(sessionKey)
+      if (this.#sessions.get(sessionKey) !== entry)
+        throw new BuddySessionLifecycleAbortError()
       return binding
     }
     catch (error) {
@@ -103,13 +158,26 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         this.#lastUsed.delete(sessionKey)
         if (![...this.#identities.values()].some(candidate => createConversationKey(candidate) === conversationKey))
           this.#conversationRoots.delete(conversationKey)
+        this.#publish('startup-failed', this.#snapshotEntry(entry))
       }
       throw error
     }
   }
 
+  acknowledgeRecovery(identity: BuddySessionIdentity, expected: BuddySessionBinding<TSession>): boolean {
+    const key = createSessionKey(identity)
+    const entry = this.#sessions.get(key)
+    if (!entry || entry.binding !== expected || !expected.recoveredFromProductHistory)
+      return false
+    const { recoveredFromProductHistory: _recovered, recoveryDegradation: _degradation, ...binding } = expected
+    entry.binding = Object.freeze(binding)
+    this.#publish('recovery-acknowledged', this.#snapshotEntry(entry, this.#pendingInvalidations.has(key)))
+    return true
+  }
+
   getActiveRun(identity: BuddySessionIdentity): ActiveRun | undefined {
-    return this.#activeRuns.get(createConversationKey(identity))
+    const run = this.#activeRuns.get(createConversationKey(identity))
+    return run ? Object.freeze({ ...run }) : undefined
   }
 
   getReady(conversationId: string, branchId: string): TSession | null {
@@ -127,6 +195,10 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     return this.#invalidate(() => true)
   }
 
+  invalidateMode(mode: BuddySessionIdentity['sessionMode']): Promise<number> {
+    return this.#invalidate(identity => identity.sessionMode === mode)
+  }
+
   invalidateRoot(canonicalRoot: string): Promise<number> {
     return this.#invalidate(identity => identity.canonicalRoot === canonicalRoot)
   }
@@ -139,6 +211,10 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     return this.#invalidate(identity => identity.conversationId === conversationId)
   }
 
+  invalidateConversationWithResult(conversationId: string): Promise<BuddySessionInvalidationResult> {
+    return this.invalidateMatching(identity => identity.conversationId === conversationId)
+  }
+
   invalidateSession(identity: BuddySessionIdentity): Promise<number> {
     const sessionKey = createSessionKey(identity)
     return this.#invalidate(candidate => createSessionKey(candidate) === sessionKey)
@@ -149,6 +225,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     runId: string,
     signal: AbortSignal | undefined,
     operation: () => Promise<TResult>,
+    onReleased?: (result: BuddyRunRelease) => void,
   ): Promise<TResult> {
     const conversationKey = createConversationKey(identity)
     const previous = this.#runTails.get(conversationKey) ?? Promise.resolve()
@@ -165,6 +242,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         throw new BuddySessionLifecycleAbortError()
       signal?.throwIfAborted()
       this.#activeRuns.set(conversationKey, { runId, signal })
+      this.#runCleanup.set(conversationKey, 'completed')
       return await operation()
     }
     finally {
@@ -177,6 +255,9 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         release()
         if (this.#runTails.get(conversationKey) === tail)
           this.#runTails.delete(conversationKey)
+        const cleanup = this.#runCleanup.get(conversationKey) ?? 'completed'
+        this.#runCleanup.delete(conversationKey)
+        onReleased?.({ cleanup })
       }
     }
   }
@@ -196,13 +277,20 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     this.#pendingInvalidations.clear()
     this.#runTails.clear()
     this.#sessions.clear()
+    this.#cleanupStates.clear()
+    this.#changes.dispose()
     const failures = [...this.#cleanupFailures.splice(0), ...results.filter(result => result.status === 'rejected').map(result => result.reason)]
     if (failures.length)
       throw new AggregateError(failures, 'Session shutdown failed')
   }
 
   async #invalidate(predicate: (identity: BuddySessionIdentity) => boolean): Promise<number> {
-    let count = 0
+    return (await this.invalidateMatching(predicate)).matched
+  }
+
+  async invalidateMatching(predicate: (identity: Readonly<BuddySessionIdentity>) => boolean, options?: { sessionIds: readonly string[] }): Promise<BuddySessionInvalidationResult> {
+    const selected = options ? new Set(options.sessionIds) : null
+    const affected = new Set([...this.#cleanupStates.values()].filter(entry => (!selected || selected.has(entry.id)) && predicate(entry.identity)).map(entry => entry.id))
     const candidates = [...this.#identities]
       .map(([sessionKey, identity]) => ({
         entry: this.#sessions.get(sessionKey),
@@ -210,18 +298,22 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         sessionKey,
       }))
     for (const { entry, identity, sessionKey } of candidates) {
-      if (!predicate(identity))
+      if (!entry || (selected && !selected.has(entry.id)) || !predicate(identity))
         continue
-      count += 1
+      affected.add(entry.id)
       const conversationKey = createConversationKey(identity)
       if (this.#activeRuns.has(conversationKey)) {
-        this.#pendingInvalidations.add(sessionKey)
+        if (!this.#pendingInvalidations.has(sessionKey)) {
+          this.#pendingInvalidations.add(sessionKey)
+          this.#publish('invalidation-pending', this.#snapshotEntry(entry, true))
+        }
         continue
       }
       if (entry)
         await this.#settleSessionDisposal(sessionKey, 'invalidate', entry)
     }
-    return count
+    const remaining = this.snapshot().filter(entry => affected.has(entry.id))
+    return Object.freeze({ matched: affected.size, pending: remaining.filter(entry => entry.invalidationPending || entry.cleanup === 'pending').length, degraded: remaining.filter(entry => entry.cleanup === 'failed').length })
   }
 
   async #flushInvalidations(conversationKey: string): Promise<void> {
@@ -249,8 +341,18 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     this.#identities.delete(sessionKey)
     this.#lastUsed.delete(sessionKey)
     this.#pendingInvalidations.delete(sessionKey)
+    const removing = copyEventSnapshot({ ...this.#snapshotEntry(entry), status: 'disposed' as const, invalidationPending: false, cleanup: 'pending' as const })
+    this.#cleanupStates.set(entry.id, removing)
+    this.#publish('removed', removing)
+    const pendingFactory = entry.status === 'pending'
     try {
       await this.#disposeEntry(entry, reason)
+      if (!pendingFactory)
+        this.#finishCleanup(entry)
+    }
+    catch (error) {
+      this.#finishCleanup(entry, true)
+      throw error
     }
     finally {
       if (identity) {
@@ -283,10 +385,19 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     reason: BuddySessionShutdownReason,
     entry: BuddySessionEntry<TSession>,
   ): Promise<void> {
-    await this.#disposeSession(sessionKey, reason, entry).catch(() => {})
+    const identity = this.#identities.get(sessionKey)
+    const conversationKey = identity ? createConversationKey(identity) : undefined
+    const degrade = () => {
+      if (conversationKey && this.#runCleanup.has(conversationKey))
+        this.#runCleanup.set(conversationKey, 'degraded')
+    }
+    if (entry.status === 'pending')
+      degrade()
+    await this.#disposeSession(sessionKey, reason, entry).catch(degrade)
   }
 
   #createEntry(
+    identity: BuddySessionIdentity,
     requestedPiSessionFile: string | null,
     factory: () => Promise<BuddySessionBinding<TSession>>,
   ): BuddySessionEntry<TSession> {
@@ -297,6 +408,8 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
       resolve = resolvePromise
     })
     const entry: BuddySessionEntry<TSession> = {
+      id: randomUUID(),
+      identity,
       binding: null,
       promise,
       requestedPiSessionFile,
@@ -317,13 +430,18 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         if (entry.status === 'disposed') {
           const reason = entry.shutdownReason ?? 'invalidate'
           await binding.session.shutdown(reason)
+          this.#finishCleanup(entry)
           return
         }
-        entry.binding = binding
+        entry.binding = Object.freeze({ ...binding, resourceRevisions: copyEventSnapshot(binding.resourceRevisions ?? []), ...(binding.recoveryDegradation ? { recoveryDegradation: copyEventSnapshot(binding.recoveryDegradation) } : {}) })
         entry.status = 'ready'
-        entry.resolve(binding)
+        entry.resolve(entry.binding)
       },
       (error) => {
+        if (entry.status === 'disposed') {
+          this.#finishCleanup(entry)
+          return
+        }
         if (entry.status !== 'pending')
           return
         entry.status = 'failed'
@@ -334,6 +452,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     void completion.then(() => this.#pendingFactories.delete(completion), (error) => {
       this.#pendingFactories.delete(completion)
       this.#cleanupFailures.push(error)
+      this.#finishCleanup(entry, true)
     })
     return entry
   }
@@ -360,6 +479,23 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   #touch(sessionKey: string): void {
     this.#accessSequence += 1
     this.#lastUsed.set(sessionKey, this.#accessSequence)
+  }
+
+  #snapshotEntry(entry: BuddySessionEntry<TSession>, invalidationPending = false): BuddySessionSnapshot {
+    return copyEventSnapshot({ id: entry.id, identity: entry.identity, model: entry.binding?.session.getModelUsage?.() ?? null, status: entry.status, invalidationPending, cleanup: 'none', recoveryPending: entry.binding?.recoveredFromProductHistory === true, resourceRevisions: entry.binding?.resourceRevisions ?? [] })
+  }
+
+  #publish(type: BuddySessionChange['type'], session: BuddySessionSnapshot): void {
+    this.#changes.fire(Object.freeze({ type, session, revision: ++this.#revision }))
+  }
+
+  #finishCleanup(entry: BuddySessionEntry<TSession>, failed = false): void {
+    const snapshot = copyEventSnapshot({ ...this.#snapshotEntry(entry), cleanup: failed ? 'failed' as const : 'none' as const })
+    if (failed)
+      this.#cleanupStates.set(entry.id, snapshot)
+    else
+      this.#cleanupStates.delete(entry.id)
+    this.#publish(failed ? 'cleanup-failed' : 'disposed', snapshot)
   }
 }
 

@@ -1,168 +1,251 @@
+import type { Event, ListenerErrorHandler } from '@buddy-shared/events/Emitter'
+import type { EventSnapshot } from '@buddy-shared/events/eventTypes'
 import type { WorkbenchState } from '@buddy-shared/workbench/workbenchState'
 import type { ResourceRef } from '../common/workbench'
+import { Emitter, filterEvent } from '@buddy-shared/events/Emitter'
+import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
+import { ReadonlyMapView } from '@buddy-shared/events/ReadonlyMapView'
 import { resourceKey } from '../common/workbench'
 
 export interface TextDocument { text: string, etag: string }
-export interface WorkingCopy {
+
+interface WorkingCopyState {
+  key: string
   resource: ResourceRef
+  incarnation: string
+  revision: number
+  contentVersion: number
+  savedVersion: number
   text: string
   baseText: string
   etag: string
+  dirty: boolean
   loading: boolean
   saving: boolean
   error: string | null
   conflict: TextDocument | null
 }
+
+export type WorkingCopy = EventSnapshot<WorkingCopyState>
+export type WorkingCopyIdentity = Pick<WorkingCopy, 'key' | 'incarnation' | 'contentVersion'>
+export type WorkingCopyChangeKind = 'registered' | 'restored' | 'released' | 'load-started' | 'loaded' | 'load-failed' | 'edited' | 'save-started' | 'saved' | 'save-conflict' | 'save-failed' | 'conflict-resolved' | 'discarded'
+export interface WorkingCopyChange {
+  readonly kind: WorkingCopyChangeKind
+  readonly revision: number
+  readonly copy: WorkingCopy
+  readonly previous: WorkingCopy | null
+  readonly operationId?: string
+  readonly savedVersion?: number
+}
+
+interface SaveState {
+  readonly key: string
+  readonly incarnation: string
+  readonly currentVersion: number
+  readonly dirtyAfter: boolean
+}
+export type WorkingCopySaveResult
+  = | (SaveState & { readonly status: 'saved', readonly operationId: string, readonly savedVersion: number, readonly etag: string })
+    | (SaveState & { readonly status: 'unchanged' })
+    | (SaveState & { readonly status: 'conflict', readonly operationId?: string })
+    | (SaveState & { readonly status: 'failed', readonly operationId: string, readonly error: 'FILE_SAVE_FAILED' })
+    | { readonly status: 'unavailable', readonly key: string, readonly reason: 'missing' | 'loading' | 'no-etag' | 'disposed' }
+
 export interface WorkingCopyProvider {
   read: (resource: ResourceRef) => Promise<TextDocument>
   save: (resource: ResourceRef, document: TextDocument) => Promise<{ status: 'saved' | 'conflict', document: TextDocument }>
 }
 
 export class WorkingCopyService {
-  readonly copies = new Map<string, WorkingCopy>()
+  readonly #copies = new Map<string, WorkingCopy>()
+  readonly copies = new ReadonlyMapView(this.#copies)
   readonly #provider: WorkingCopyProvider
-  readonly #listeners = new Set<() => void>()
+  readonly #changes: Emitter<WorkingCopyChange>
   readonly #loading = new Map<string, Promise<WorkingCopy>>()
-  readonly #saving = new Map<string, Promise<boolean>>()
+  readonly #saving = new Map<string, Promise<WorkingCopySaveResult>>()
+  #revision = 0
+  #stopped = false
+  #disposing: Promise<void> | undefined
 
-  constructor(provider: WorkingCopyProvider) {
+  constructor(provider: WorkingCopyProvider, onListenerError: ListenerErrorHandler = () => console.error('WORKING_COPY_OBSERVER_FAILED')) {
     this.#provider = provider
+    this.#changes = new Emitter(onListenerError)
   }
 
-  subscribe(listener: () => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+  readonly onDidChange: Event<WorkingCopyChange> = (listener, options) => this.#changes.event(listener, options)
+  readonly onDidRegister = filterEvent(this.onDidChange, event => event.previous === null)
+  readonly onDidRelease = filterEvent(this.onDidChange, event => event.kind === 'released')
+  readonly onDidRestore = filterEvent(this.onDidChange, event => event.kind === 'restored')
+  readonly onDidChangeContent = filterEvent(this.onDidChange, event => event.kind === 'restored' || (event.kind !== 'released' && event.previous !== null && event.copy.contentVersion !== event.previous.contentVersion))
+  readonly onDidChangeDirty = filterEvent(this.onDidChange, event => event.kind !== 'released' && event.copy.dirty !== (event.previous?.dirty ?? false))
+  readonly onDidChangeConflict = filterEvent(this.onDidChange, event => event.kind !== 'released' && (event.copy.conflict?.etag !== event.previous?.conflict?.etag || event.copy.conflict?.text !== event.previous?.conflict?.text))
+  readonly onDidStartLoading = filterEvent(this.onDidChange, event => event.kind === 'load-started')
+  readonly onDidLoad = filterEvent(this.onDidChange, event => event.kind === 'loaded' || event.kind === 'load-failed')
+  readonly onDidStartSaving = filterEvent(this.onDidChange, event => event.kind === 'save-started')
+  readonly onDidSave = filterEvent(this.onDidChange, event => event.kind === 'saved')
+  readonly onDidFailSave = filterEvent(this.onDidChange, event => event.kind === 'save-conflict' || event.kind === 'save-failed')
+
+  get revision(): number { return this.#revision }
+
+  onDidChangeResource(resource: ResourceRef): Event<WorkingCopyChange> {
+    const key = resourceKey(resource)
+    return filterEvent(this.onDidChange, event => event.copy.key === key)
   }
 
   get(resource: ResourceRef): WorkingCopy | undefined {
-    return this.copies.get(resourceKey(resource))
+    return this.#copies.get(resourceKey(resource))
+  }
+
+  isCurrent(identity: WorkingCopyIdentity): boolean {
+    const copy = this.#copies.get(identity.key)
+    return copy?.incarnation === identity.incarnation && copy.contentVersion === identity.contentVersion
   }
 
   dirty(resource: ResourceRef): boolean {
-    const copy = this.get(resource)
-    return !!copy && copy.text !== copy.baseText
+    return this.get(resource)?.dirty ?? false
   }
 
   open(resource: ResourceRef): Promise<WorkingCopy> {
+    if (this.#stopped)
+      return Promise.reject(new Error('WORKING_COPY_DISPOSED'))
     const key = resourceKey(resource)
     const pending = this.#loading.get(key)
     if (pending)
       return pending
-    const existing = this.copies.get(key)
-    if (existing && !existing.loading && !existing.error)
-      return Promise.resolve(existing)
-    const copy: WorkingCopy = existing ?? { resource, text: '', baseText: '', etag: '', loading: true, saving: false, error: null, conflict: null }
-    copy.loading = true
-    copy.error = null
-    this.copies.set(key, copy)
-    const open = this.#provider.read(resource).then((document) => {
-      if (copy.etag && copy.text !== copy.baseText) {
-        copy.conflict = document.etag !== copy.etag ? document : null
-      }
-      else {
-        copy.text = document.text
-        copy.baseText = document.text
-        copy.etag = document.etag
-      }
-      return copy
-    }).catch((error: unknown) => {
-      copy.error = error instanceof Error ? error.message : 'FILE_READ_FAILED'
-      return copy
-    }).finally(() => {
-      copy.loading = false
-      this.#loading.delete(key)
-      this.#changed()
-    })
-    this.#loading.set(key, open)
-    this.#changed()
-    return open
+    let copy = this.#copies.get(key)
+    if (copy && !copy.loading && !copy.error)
+      return Promise.resolve(copy)
+    const operationId = crypto.randomUUID()
+    let finish!: (copy: WorkingCopy) => void
+    const promise = new Promise<WorkingCopy>(resolve => finish = resolve)
+    this.#loading.set(key, promise)
+    if (!copy) {
+      copy = this.#commit('registered', {
+        key,
+        resource,
+        incarnation: crypto.randomUUID(),
+        revision: 0,
+        contentVersion: 0,
+        savedVersion: 0,
+        text: '',
+        baseText: '',
+        etag: '',
+        dirty: false,
+        loading: true,
+        saving: false,
+        error: null,
+        conflict: null,
+      })
+    }
+    const current = this.#copies.get(key)
+    if (this.#stopped || current?.incarnation !== copy.incarnation) {
+      finish(copyEventSnapshot({ ...copy, loading: false, error: 'WORKING_COPY_RELEASED' }))
+      if (this.#loading.get(key) === promise)
+        this.#loading.delete(key)
+      return promise
+    }
+    copy = this.#commit('load-started', { ...current, loading: true, error: null }, { operationId })
+    void this.#load(copy, operationId, promise).then(finish)
+    return promise
   }
 
   edit(resource: ResourceRef, text: string): void {
     const copy = this.get(resource)
-    if (!copy || copy.text === text)
+    if (this.#stopped || !copy || copy.text === text)
       return
-    copy.text = text
-    this.#changed()
+    this.#commit('edited', { ...copy, text, contentVersion: copy.contentVersion + 1 })
   }
 
-  save(resource: ResourceRef): Promise<boolean> {
+  save(resource: ResourceRef): Promise<WorkingCopySaveResult> {
     const key = resourceKey(resource)
+    if (this.#stopped)
+      return Promise.resolve({ status: 'unavailable', key, reason: 'disposed' })
     const pending = this.#saving.get(key)
     if (pending)
       return pending
     const copy = this.get(resource)
-    if (!copy || copy.loading || !copy.etag || copy.conflict)
-      return Promise.resolve(false)
-    if (!this.dirty(resource))
-      return Promise.resolve(true)
-    const snapshot = { text: copy.text, etag: copy.etag }
-    copy.saving = true
-    copy.error = null
-    const save = this.#provider.save(resource, snapshot).then((result) => {
-      if (result.status === 'conflict') {
-        copy.conflict = result.document
-        return false
-      }
-      copy.baseText = snapshot.text
-      copy.etag = result.document.etag
-      return !this.dirty(resource)
-    }).catch((error: unknown) => {
-      copy.error = error instanceof Error ? error.message : 'FILE_SAVE_FAILED'
-      return false
-    }).finally(() => {
-      copy.saving = false
-      this.#saving.delete(key)
-      this.#changed()
-    })
-    this.#saving.set(key, save)
-    this.#changed()
-    return save
+    if (!copy || copy.loading || !copy.etag)
+      return Promise.resolve({ status: 'unavailable', key, reason: !copy ? 'missing' : copy.loading ? 'loading' : 'no-etag' })
+    if (copy.conflict)
+      return Promise.resolve(copyEventSnapshot({ status: 'conflict', ...this.#saveState(copy) }))
+    if (!copy.dirty)
+      return Promise.resolve(copyEventSnapshot({ status: 'unchanged', ...this.#saveState(copy) }))
+    const operationId = crypto.randomUUID()
+    let finish!: (result: WorkingCopySaveResult) => void
+    const promise = new Promise<WorkingCopySaveResult>(resolve => finish = resolve)
+    this.#saving.set(key, promise)
+    this.#commit('save-started', { ...copy, saving: true, error: null }, { operationId })
+    void this.#save(copy, operationId, promise).then(finish)
+    return promise
   }
 
   resolveConflict(resource: ResourceRef, choice: 'disk' | 'local'): void {
     const copy = this.get(resource)
-    if (!copy?.conflict || copy.saving)
+    if (this.#stopped || !copy?.conflict || copy.saving)
       return
-    if (choice === 'disk')
-      copy.text = copy.conflict.text
-    copy.baseText = copy.conflict.text
-    copy.etag = copy.conflict.etag
-    copy.conflict = null
-    copy.error = null
-    this.#changed()
+    const text = choice === 'disk' ? copy.conflict.text : copy.text
+    this.#commit('conflict-resolved', {
+      ...copy,
+      text,
+      baseText: copy.conflict.text,
+      etag: copy.conflict.etag,
+      contentVersion: copy.contentVersion + Number(text !== copy.text),
+      conflict: null,
+      error: null,
+    })
   }
 
   discard(resource: ResourceRef): void {
     const copy = this.get(resource)
-    if (!copy || copy.saving)
+    if (this.#stopped || !copy || copy.saving || (!copy.dirty && !copy.conflict && !copy.error))
       return
-    copy.text = copy.baseText
-    copy.conflict = null
-    copy.error = null
-    this.#changed()
+    this.#commit('discarded', { ...copy, text: copy.baseText, contentVersion: copy.contentVersion + Number(copy.text !== copy.baseText), conflict: null, error: null })
   }
 
-  release(resource: ResourceRef): void {
+  release(resource: ResourceRef): boolean {
     const key = resourceKey(resource)
-    if (!this.dirty(resource) && !this.#loading.has(key) && !this.#saving.has(key))
-      this.copies.delete(key)
+    const copy = this.#copies.get(key)
+    if (!copy)
+      return true
+    if (copy.dirty || copy.saving)
+      return false
+    this.#copies.delete(key)
+    this.#loading.delete(key)
+    const revision = ++this.#revision
+    this.#changes.fire(copyEventSnapshot({ kind: 'released', revision, copy: { ...copy, revision }, previous: copy }))
+    return true
   }
 
   restore(backups: WorkbenchState['backups']): void {
+    if (this.#stopped)
+      return
     for (const backup of backups) {
       const resource = backup.resource as ResourceRef | null
-      if (!resource || typeof resource.scheme !== 'string' || typeof resource.id !== 'string' || !resource.data || resourceKey(resource) !== backup.key)
+      if (!resource || typeof resource.scheme !== 'string' || typeof resource.id !== 'string' || !resource.data || resourceKey(resource) !== backup.key || this.#copies.has(backup.key))
         continue
-      this.copies.set(backup.key, { resource, text: backup.text, baseText: backup.baseText, etag: backup.etag, loading: true, saving: false, error: null, conflict: null })
+      this.#commit('restored', {
+        key: backup.key,
+        resource,
+        incarnation: crypto.randomUUID(),
+        revision: 0,
+        contentVersion: 1,
+        savedVersion: 0,
+        text: backup.text,
+        baseText: backup.baseText,
+        etag: backup.etag,
+        dirty: backup.text !== backup.baseText,
+        loading: true,
+        saving: false,
+        error: null,
+        conflict: null,
+      })
     }
-    this.#changed()
   }
 
   backups(): WorkbenchState['backups'] {
-    return [...this.copies.entries()].filter(([, copy]) => copy.text !== copy.baseText).map(([key, copy]) => ({
-      key,
-      resource: { ...copy.resource },
+    return [...this.#copies.values()].filter(copy => copy.dirty).map(copy => ({
+      key: copy.key,
+      resource: JSON.parse(JSON.stringify(copy.resource)),
       text: copy.text,
       baseText: copy.baseText,
       etag: copy.etag,
@@ -170,8 +253,81 @@ export class WorkingCopyService {
     }))
   }
 
-  #changed(): void {
-    for (const listener of this.#listeners)
-      listener()
+  async whenIdle(): Promise<void> {
+    while (this.#saving.size)
+      await Promise.all(this.#saving.values())
+  }
+
+  stop(): Promise<void> {
+    this.#stopped = true
+    return this.whenIdle()
+  }
+
+  dispose(): Promise<void> {
+    this.#disposing ??= this.stop().then(() => this.#changes.dispose())
+    return this.#disposing
+  }
+
+  async #load(started: WorkingCopy, operationId: string, promise: Promise<WorkingCopy>): Promise<WorkingCopy> {
+    try {
+      const document = await this.#provider.read(started.resource)
+      const current = this.#copies.get(started.key)
+      if (this.#stopped || current?.incarnation !== started.incarnation)
+        return copyEventSnapshot({ ...started, loading: false, error: 'WORKING_COPY_RELEASED' })
+      this.#loading.delete(started.key)
+      if (current.dirty && current.etag)
+        return this.#commit('loaded', { ...current, loading: false, conflict: document.etag !== current.etag ? document : null }, { operationId })
+      const text = current.dirty ? current.text : document.text
+      const contentVersion = current.contentVersion + Number(text !== current.text)
+      return this.#commit('loaded', { ...current, text, contentVersion, savedVersion: text === document.text ? contentVersion : current.savedVersion, baseText: document.text, etag: document.etag, loading: false, conflict: null }, { operationId })
+    }
+    catch {
+      const current = this.#copies.get(started.key)
+      if (this.#stopped || current?.incarnation !== started.incarnation)
+        return copyEventSnapshot({ ...started, loading: false, error: 'WORKING_COPY_RELEASED' })
+      this.#loading.delete(started.key)
+      return this.#commit('load-failed', { ...current, loading: false, error: 'FILE_READ_FAILED' }, { operationId })
+    }
+    finally {
+      if (this.#loading.get(started.key) === promise)
+        this.#loading.delete(started.key)
+    }
+  }
+
+  async #save(started: WorkingCopy, operationId: string, promise: Promise<WorkingCopySaveResult>): Promise<WorkingCopySaveResult> {
+    try {
+      const result = await this.#provider.save(started.resource, { text: started.text, etag: started.etag })
+      const current = this.#copies.get(started.key)!
+      this.#saving.delete(started.key)
+      if (result.status === 'conflict') {
+        const copy = this.#commit('save-conflict', { ...current, saving: false, conflict: result.document }, { operationId })
+        return copyEventSnapshot({ status: 'conflict', operationId, ...this.#saveState(copy) })
+      }
+      const copy = this.#commit('saved', { ...current, saving: false, baseText: started.text, etag: result.document.etag, savedVersion: started.contentVersion }, { operationId, savedVersion: started.contentVersion })
+      return copyEventSnapshot({ status: 'saved', operationId, savedVersion: started.contentVersion, etag: copy.etag, ...this.#saveState(copy) })
+    }
+    catch {
+      const current = this.#copies.get(started.key)!
+      this.#saving.delete(started.key)
+      const copy = this.#commit('save-failed', { ...current, saving: false, error: 'FILE_SAVE_FAILED' }, { operationId })
+      return copyEventSnapshot({ status: 'failed', operationId, error: 'FILE_SAVE_FAILED', ...this.#saveState(copy) })
+    }
+    finally {
+      if (this.#saving.get(started.key) === promise)
+        this.#saving.delete(started.key)
+    }
+  }
+
+  #saveState(copy: WorkingCopy): SaveState {
+    return { key: copy.key, incarnation: copy.incarnation, currentVersion: copy.contentVersion, dirtyAfter: copy.dirty }
+  }
+
+  #commit(kind: WorkingCopyChangeKind, state: WorkingCopyState | WorkingCopy, detail: { operationId?: string, savedVersion?: number } = {}): WorkingCopy {
+    const previous = this.#copies.get(state.key) ?? null
+    const revision = ++this.#revision
+    const copy = copyEventSnapshot({ ...state, revision, dirty: state.text !== state.baseText })
+    this.#copies.set(copy.key, copy)
+    this.#changes.fire(copyEventSnapshot({ kind, revision, copy, previous, ...detail }))
+    return copy
   }
 }

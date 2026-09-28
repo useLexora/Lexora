@@ -161,8 +161,19 @@ export function useSkillsManager(context: SkillsManagerOptions, scope: Readonly<
     closePreview()
     void load()
   }, { immediate: true, flush: 'sync' })
-  const stop = context.api.onChanged((spaceId) => {
-    if (spaceId === null || spaceId === scope.value)
+  let eventSource: string | undefined
+  let lastSequence = 0
+  const stop = context.api.onChanged((event) => {
+    if (eventSource !== event.sourceId) {
+      eventSource = event.sourceId
+      lastSequence = 0
+    }
+    if (event.sequence <= lastSequence)
+      return
+    lastSequence = event.sequence
+    if (event.type === 'catalog' && event.mode === 'discovery')
+      return
+    if (event.spaceId === null || event.spaceId === scope.value)
       void load()
   })
   if (typeof window !== 'undefined') {

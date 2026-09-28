@@ -41,8 +41,6 @@ async function load() {
     if (disposed)
       return
     task.value = loaded
-    if (props.visible && workbench.controller.owner(props.view.id)?.id === workbench.controller.layout.activePane)
-      workbench.activeTask.value = loaded
   }
   catch {
     if (!disposed) {
@@ -55,10 +53,6 @@ watch(() => props.view.resource.id, load, { immediate: true })
 watch(() => task.value?.session.currentTitle.value, (title) => {
   if (title)
     workbench.controller.updateView(props.view.id, { title })
-})
-watch(() => props.visible, (visible) => {
-  if (visible && task.value && workbench.controller.context.view?.id === props.view.id)
-    workbench.activeTask.value = task.value
 })
 </script>
 

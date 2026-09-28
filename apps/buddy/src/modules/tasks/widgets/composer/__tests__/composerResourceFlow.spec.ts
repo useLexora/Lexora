@@ -3,6 +3,7 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyComposerResource } from '@buddy-shared/conversation/composerResource'
 import type { JSONContent } from '@tiptap/core'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '@buddy-shared/conversation/attachmentPolicy'
+import { Emitter } from '@buddy-shared/events/Emitter'
 import { deferred } from '@buddy-tests/deferred'
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { EditorContent } from '@tiptap/vue-3'
@@ -22,7 +23,12 @@ async function mountFlow() {
   const uploading = deferred<void>()
   const records = new Map<string, BuddyComposerResource>()
   const storedFiles = new Set<string>()
+  const changes = new Emitter<{ revision: number, draftIds: string[] }>(() => {})
   const api: LocalChatApi['composerResources'] = {
+    onChanged: (listener) => {
+      const subscription = changes.event(listener)
+      return () => subscription.dispose()
+    },
     async accept(input) {
       await accepting.promise
       return input.resources.map((metadata) => {
@@ -139,6 +145,8 @@ async function mountFlow() {
   await nextTick()
   await nextTick()
   cleanups.push(() => {
+    resources.dispose()
+    changes.dispose()
     app.unmount()
     root.remove()
   })
@@ -153,10 +161,31 @@ async function mountFlow() {
     Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } })
     editor.view.dom.dispatchEvent(event)
   }
-  return { accepting, uploading, records, storedFiles, content, draftId, resources, root, composer, editor, pasteImages, errors }
+  return { api, changes, accepting, uploading, records, storedFiles, content, draftId, resources, root, composer, editor, pasteImages, errors }
 }
 
 describe('composer resource flow', () => {
+  it('reconciles owner notifications while fencing older reads and post-disposal delivery', async () => {
+    const flow = await mountFlow()
+    const stale = deferred<readonly BuddyComposerResource[]>()
+    vi.spyOn(flow.api, 'list').mockImplementationOnce(() => stale.promise)
+    flow.changes.fire({ revision: 1, draftIds: ['draft-1'] })
+    await Promise.resolve()
+    const resource: BuddyComposerResource = { resourceId: 'imported', draftId: 'draft-1', name: 'notes.txt', mimeType: 'text/plain', kind: 'text', sizeBytes: 1, state: 'failed', errorCode: 'IMPORT_FAILED' }
+    flow.records.set(resource.resourceId, resource)
+    flow.changes.fire({ revision: 2, draftIds: ['draft-1'] })
+    stale.resolve([])
+    await vi.waitFor(() => expect(flow.resources.resources.value.map(entry => entry.resource.resourceId)).toEqual(['imported']))
+    flow.records.clear()
+    flow.changes.fire({ revision: 3, draftIds: ['draft-1'] })
+    await vi.waitFor(() => expect(flow.resources.resources.value).toEqual([]))
+    flow.resources.dispose()
+    flow.records.set(resource.resourceId, resource)
+    flow.changes.fire({ revision: 4, draftIds: ['draft-1'] })
+    await Promise.resolve()
+    expect(flow.resources.resources.value).toEqual([])
+  })
+
   it('keeps identical excerpts from distinct positions while deduplicating the same selection', async () => {
     const flow = await mountFlow()
     const quote = { id: 'first', text: 'Repeat', textOffset: 0, source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }

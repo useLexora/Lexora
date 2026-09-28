@@ -1,10 +1,12 @@
 import type { BuddyComposerDraftSend } from '../../../shared/conversation/composerDraft'
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type { ConversationLifecycleService } from '../conversations/ConversationLifecycleService'
 import type {
   CommandRequestRecord,
   CommandRequestRepository,
 } from '../storage/commandRequestRepository'
+import type { ComposerDraftCommitReceipt } from '../storage/commitComposerDraft'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { RunRecord } from '../storage/runRecord'
@@ -13,11 +15,25 @@ import type { SpaceRepository } from '../storage/spaceRepository'
 import { randomUUID } from 'node:crypto'
 import { parseBuddyChatCommand } from '../../../shared/conversation/buddyChatCommands'
 import { buddyUserContentToText, getBuddyUserContentResourceIds } from '../../../shared/conversation/buddyUserContent'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { toPublicRun } from '../runs/publicRun'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
 
 export type ExecuteChatCommandInput = BuddyComposerDraftSend
+
+export type ChatCommandCommit = EventSnapshot<{
+  commitId: string
+  requestId: string
+  conversationId: string
+  branchId: string
+  facts: [
+    { kind: 'command.accepted', command: 'compact' },
+    { kind: 'run.queued', runId: string, purpose: 'conversation.compaction' },
+    { kind: 'draft.consumed' } & ComposerDraftCommitReceipt,
+  ]
+}>
 
 export interface ChatCommandServiceOptions {
   commands: CommandRequestRepository
@@ -27,16 +43,37 @@ export interface ChatCommandServiceOptions {
   spaces: Pick<SpaceRepository, 'findById'>
   runs: Pick<RunRepository, 'findById'>
   turnLauncher: Pick<BuddyTurnLauncher, 'launch'>
+  onObserverError?: (error: unknown) => void
 }
 
 export class ChatCommandService {
   readonly #options: ChatCommandServiceOptions
+  readonly #committed: Emitter<ChatCommandCommit>
+  readonly #stopping = new AbortController()
+  readonly #pending = new Set<Promise<unknown>>()
+  readonly onDidCommit: Emitter<ChatCommandCommit>['event']
 
   constructor(options: ChatCommandServiceOptions) {
     this.#options = options
+    this.#committed = new Emitter(options.onObserverError ?? (() => {}))
+    this.onDidCommit = this.#committed.event
   }
 
-  async execute(input: ExecuteChatCommandInput) {
+  execute(input: ExecuteChatCommandInput): Promise<ReturnType<typeof toTurnStart>> {
+    const pending = Promise.withResolvers<ReturnType<typeof toTurnStart>>()
+    this.#pending.add(pending.promise)
+    void this.#execute({ ...input }).then((value) => {
+      this.#pending.delete(pending.promise)
+      pending.resolve(value)
+    }, (error) => {
+      this.#pending.delete(pending.promise)
+      pending.reject(error)
+    })
+    return pending.promise
+  }
+
+  async #execute(input: ExecuteChatCommandInput) {
+    this.#stopping.signal.throwIfAborted()
     const requestFingerprint = createCommandFingerprint(input)
     const replay = this.#options.commands.findByRequestId(input.requestId)
     const replayRun = replay ? this.#requireRun(replay.runId) : null
@@ -98,9 +135,26 @@ export class ChatCommandService {
     if (!prepared.created)
       return toTurnStart(prepared, this.#requireRun(prepared.runId))
 
-    const operation = await this.#options.turnLauncher.launch(prepared.runId)
-    void operation.completion
+    this.#committed.fire(copyEventSnapshot({
+      commitId: prepared.runId,
+      requestId: prepared.requestId,
+      conversationId: prepared.conversationId,
+      branchId: prepared.branchId,
+      facts: [
+        { kind: 'command.accepted', command: prepared.command },
+        { kind: 'run.queued', runId: prepared.runId, purpose: 'conversation.compaction' },
+        { kind: 'draft.consumed', ...prepared.draftReceipt },
+      ],
+    }))
+    const operation = await this.#options.turnLauncher.launch(prepared.runId, this.#stopping.signal)
+    void operation.completion.catch(() => {})
     return toTurnStart(prepared, this.#requireRun(operation.runId))
+  }
+
+  async dispose(): Promise<void> {
+    this.#stopping.abort()
+    await Promise.allSettled(this.#pending)
+    this.#committed.dispose()
   }
 
   #requireRun(runId: string): RunRecord {

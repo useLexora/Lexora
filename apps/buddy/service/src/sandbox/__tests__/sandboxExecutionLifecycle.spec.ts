@@ -2,6 +2,34 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SandboxExecutionLifecycle } from '../sandboxExecutionLifecycle'
 
 describe('sandbox execution deadline', () => {
+  it('does not infer cancellation or process start from the cleanup abort signal', () => {
+    const controller = new AbortController()
+    const lifecycle = new SandboxExecutionLifecycle(controller.signal)
+    const events: unknown[] = []
+    lifecycle.onDidChange(event => events.push(event))
+    lifecycle.begin()
+    lifecycle.finish({ ok: false, code: 'SANDBOX_UNAVAILABLE' })
+    controller.abort()
+    expect(lifecycle.signal.aborted).toBe(true)
+    expect(lifecycle.started).toBe(false)
+    expect(lifecycle.snapshot).toMatchObject({ phase: 'finished', started: false, cancellation: 'none' })
+    expect(events).toMatchObject([{ kind: 'preparing' }, { kind: 'settled' }])
+  })
+
+  it('keeps cancellation requests distinct from the actual backend result', () => {
+    const controller = new AbortController()
+    const lifecycle = new SandboxExecutionLifecycle(controller.signal)
+    const events: unknown[] = []
+    lifecycle.onDidChange(event => events.push(event))
+    lifecycle.begin()
+    lifecycle.start()
+    controller.abort()
+    expect(lifecycle.snapshot).toMatchObject({ phase: 'running', started: true, cancellation: 'requested' })
+    lifecycle.finish({ ok: false, code: 'SANDBOX_CANCELLED' })
+    expect(events).toMatchObject([{ kind: 'preparing' }, { kind: 'started' }, { kind: 'cancel-requested' }, { kind: 'settled' }])
+    expect(Object.isFrozen(lifecycle.snapshot.result)).toBe(true)
+  })
+
   afterEach(() => vi.useRealTimers())
 
   it('bounds preparation separately from the command timeout', async () => {

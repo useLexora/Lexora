@@ -21,12 +21,14 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { supportsSettingsCategory } from '@/platform/desktop/desktopCapabilities'
-import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import RuntimeIcon from '@/shared/ui/icon/RuntimeIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
 import DesktopWorkspaceSidebarIdentity from '@/shared/ui/workspace-sidebar/DesktopWorkspaceSidebarIdentity.vue'
+import { settingsModuleLocation, settingsNavigationSections } from '../../model/settingsNavigation'
+import { settingsText } from '../../model/settingsRegistry'
+import { useSettingsContext } from '../../settingsContext'
 
 const props = defineProps<{
   appSidebarCollapsed: boolean
@@ -34,45 +36,14 @@ const props = defineProps<{
   capabilities: BuddyCapabilities | null
 }>()
 const route = useRoute()
+const { registry } = useSettingsContext()
 const { t } = useBuddyI18n(() => props.language)
-const groups = [
-  {
-    key: 'personal',
-    categories: [
-      { icon: Settings20Regular, key: 'general' },
-      { icon: PaintBrush20Regular, key: 'appearance' },
-      { icon: Alert20Regular, key: 'notifications' },
-      { icon: AnimalCat20Regular, key: 'pet' },
-      { icon: Keyboard20Regular, key: 'shortcuts' },
-    ],
-  },
-  {
-    key: 'ai',
-    categories: [
-      { icon: ModelIcon, key: 'models' },
-      { icon: RuntimeIcon, key: 'runtime' },
-      { icon: PlugConnected20Regular, key: 'mcp' },
-      { icon: SkillIcon, key: 'skills' },
-      { icon: DataUsage20Regular, key: 'usage' },
-    ],
-  },
-  {
-    key: 'integrations',
-    categories: [{ icon: Globe20Regular, key: 'web' }, { icon: Window20Regular, key: 'browser' }],
-  },
-  {
-    key: 'system',
-    categories: [
-      { icon: Server20Regular, key: 'proxy' },
-      { icon: DocumentTextClock20Regular, key: 'logs' },
-      { icon: Info20Regular, key: 'about' },
-    ],
-  },
-] as const
-const visibleGroups = computed(() => groups.map(group => ({
-  ...group,
-  categories: group.categories.filter(category => supportsSettingsCategory(props.capabilities, category.key)),
-})).filter(group => group.categories.length > 0))
+const icons = { general: Settings20Regular, appearance: PaintBrush20Regular, notifications: Alert20Regular, pet: AnimalCat20Regular, shortcuts: Keyboard20Regular, models: ModelIcon, runtime: RuntimeIcon, mcp: PlugConnected20Regular, skills: SkillIcon, usage: DataUsage20Regular, web: Globe20Regular, browser: Window20Regular, proxy: Server20Regular, logs: DocumentTextClock20Regular, about: Info20Regular }
+const activeModuleId = computed(() => route.meta.settingsModule ?? route.params.moduleId)
+const visibleGroups = computed(() => settingsNavigationSections.map(section => ({
+  ...section,
+  modules: registry.modules.value.filter(module => module.section === section.id && (!module.category || supportsSettingsCategory(props.capabilities, module.category))),
+})).filter(section => section.modules.length))
 </script>
 
 <template>
@@ -85,20 +56,20 @@ const visibleGroups = computed(() => groups.map(group => ({
     </header>
 
     <div class="desktop-settings-sidebar__content">
-      <section v-for="group in visibleGroups" :key="group.key" class="desktop-settings-sidebar__group">
+      <section v-for="group in visibleGroups" :key="group.id" class="desktop-settings-sidebar__group">
         <h2 class="desktop-settings-sidebar__group-title">
-          {{ t(`desktop.settings.group.${group.key}`) }}
+          {{ settingsText(group.title, language) }}
         </h2>
         <RouterLink
-          v-for="category in group.categories"
-          :key="category.key"
+          v-for="module in group.modules"
+          :key="module.id"
           class="desktop-settings-sidebar__item"
-          :class="{ 'is-active': route.meta.settingsCategory === category.key }"
-          :aria-current="route.meta.settingsCategory === category.key ? 'page' : undefined"
-          :to="desktopRouteLocations.settings(category.key)"
+          :class="{ 'is-active': activeModuleId === module.id }"
+          :aria-current="activeModuleId === module.id ? 'page' : undefined"
+          :to="settingsModuleLocation(module)"
         >
-          <DesktopIcon :component="category.icon" />
-          <span>{{ t(`desktop.settings.category.${category.key}`) }}</span>
+          <DesktopIcon :component="module.category ? icons[module.category] : PlugConnected20Regular" />
+          <span>{{ settingsText(module.title, language) }}</span>
         </RouterLink>
       </section>
     </div>

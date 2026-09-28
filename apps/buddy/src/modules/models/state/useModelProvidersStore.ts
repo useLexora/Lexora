@@ -16,7 +16,6 @@ import { modelKey, resolveConcreteEffort } from '../model/modelSelection'
 interface UseModelProvidersStoreOptions {
   api: LexoraDesktopApi['localChat']['providers']
   language: Readonly<ShallowRef<BuddyLocale>>
-  onCatalogChanged?: () => void
 }
 
 export function useModelProvidersStore(options: UseModelProvidersStoreOptions): ModelProvidersStore {
@@ -39,6 +38,8 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     : null)
   const defaultEffort = computed(() => defaultModelSelection.value?.reasoning ?? null)
   let catalogRequest: Promise<boolean> | null = null
+  let catalogDirty = false
+  let catalogScheduled = false
   let disposed = false
   let defaultModelPersistenceRevision = 0
   let persistDefaultModelQueue = Promise.resolve(true)
@@ -47,13 +48,31 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       authChallenge.value = challenge
   })
 
+  const stopCatalog = options.api.onChanged(() => {
+    catalogDirty = true
+    scheduleCatalog()
+  })
+  function scheduleCatalog() {
+    if (disposed || catalogScheduled || catalogRequest)
+      return
+    catalogScheduled = true
+    queueMicrotask(() => {
+      catalogScheduled = false
+      if (!disposed && catalogDirty)
+        void loadModelCatalog(true)
+    })
+  }
+
   function loadModelCatalog(force = false): Promise<boolean> {
     if (disposed)
       return Promise.resolve(false)
     if (catalogRequest)
       return catalogRequest
+    catalogDirty = false
     catalogRequest = fetchModelCatalog(force).finally(() => {
       catalogRequest = null
+      if (catalogDirty)
+        scheduleCatalog()
     })
     return catalogRequest
   }
@@ -90,9 +109,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
           reasoning,
         })
       }
-      if (!disposed)
-        options.onCatalogChanged?.()
-      return true
+      return !disposed
     }
     catch (error) {
       if (!disposed)
@@ -423,6 +440,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       disposed = true
       defaultModelPersistenceRevision += 1
       stopAuthChallenge()
+      stopCatalog()
     },
     isAuthenticating: readonly(isAuthenticating),
     isLoadingModelCatalog: readonly(isLoadingModelCatalog),

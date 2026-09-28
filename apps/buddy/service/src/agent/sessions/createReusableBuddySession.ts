@@ -208,6 +208,7 @@ export function createReusableBuddySession(
       preferences = next
       applyCacheWarming(options.runContext.current && !options.runContext.current.signal.aborted ? preferences.cacheWarming : 'off')
     },
+    getModelUsage: () => session.model ? { providerId: session.model.provider, modelId: session.model.id } : null,
     getInputContext: () => {
       const messages = [...session.messages]
       for (const message of messages) {

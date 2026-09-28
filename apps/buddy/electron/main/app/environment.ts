@@ -21,6 +21,7 @@ import { bootstrapStep } from './desktopBootstrap'
 import { desktopIcons } from './desktopIcons'
 import { DesktopStartup } from './DesktopStartup'
 import { checkDesktopDirectories, criticalDesktopDirectories, prepareDesktopPrivateStorage } from './desktopStorage'
+import { observeStartupDiagnostics } from './startupDiagnostics'
 
 export function prepareDesktopEnvironment(): DesktopEnvironment {
   const desktopHost = desktopHosts[currentPlatform.id]
@@ -52,9 +53,9 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
     userHome: homedir(),
   })
   const events = new ApplicationEvents()
-  const startup = new DesktopStartup(events)
+  const startup = new DesktopStartup(() => events.publish({ event: 'observer.failed', component: 'startup', level: 'warn' }))
   events.subscribe(event => diagnostics.record({ ...event, scope: 'desktop' }))
-  events.subscribe(startup.observe)
+  observeStartupDiagnostics(startup, events)
   return {
     diagnostics,
     events,

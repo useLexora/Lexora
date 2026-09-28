@@ -73,7 +73,7 @@ interface BrowserPageSessionOptions {
   createId: () => string
   descriptor: DesktopBrowserGuestDescriptor
   getDefaultZoomFactor: () => number
-  onGuestSetChanged: () => void
+  onGuestChanged: (status: 'attached' | 'detached' | 'crashed') => void
   onHumanInput: () => void
   onStateChanged: (state: DesktopBrowserState) => void
   isCurrent: () => boolean
@@ -199,6 +199,7 @@ export class BrowserPageSession {
     this.pageReady.resolve(page)
     this.refreshPageState()
     this.publish()
+    this.#options.onGuestChanged('attached')
   }
 
   #onHumanInput(): void {
@@ -375,6 +376,7 @@ export class BrowserPageSession {
       }
       this.state.status = 'error'
       this.publish()
+      this.#options.onGuestChanged('crashed')
     })
     this.#listen(page, 'unresponsive', () => {
       this.state.error = {
@@ -409,7 +411,7 @@ export class BrowserPageSession {
       this.state.title = ''
       this.state.url = 'about:blank'
       this.publish()
-      this.#options.onGuestSetChanged()
+      this.#options.onGuestChanged('detached')
     })
   }
 

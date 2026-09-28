@@ -1,8 +1,9 @@
+import type { BuiltinSettingsCategory } from '@buddy-shared/settings/settingsCatalog'
 import type { RouteLocationNormalizedLoaded, RouteLocationRaw } from 'vue-router'
 import type { DesktopPageDefinition } from './desktopPages'
 
 export type DesktopAutomationSection = 'history' | 'plans'
-export type DesktopSettingsCategory = 'runtime' | 'shortcuts' | 'general' | 'appearance' | 'notifications' | 'pet' | 'models' | 'mcp' | 'skills' | 'extensions' | 'usage' | 'web' | 'browser' | 'proxy' | 'logs' | 'about'
+export type DesktopSettingsCategory = BuiltinSettingsCategory | 'extensions'
 
 export const DESKTOP_ROUTE_NAMES = {
   extensions: 'desktop.extensions',
@@ -30,31 +31,13 @@ export const DESKTOP_ROUTE_NAMES = {
   settingsModels: 'desktop.settings.models',
   settingsPet: 'desktop.settings.pet',
   settingsProvider: 'desktop.settings.models.provider',
+  settingsPlugin: 'desktop.settings.plugin',
   tasks: 'desktop.tasks',
 } as const
 
 const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
   history: DESKTOP_ROUTE_NAMES.automationsHistory,
   plans: DESKTOP_ROUTE_NAMES.automationsPlans,
-}
-
-const SETTINGS_ROUTE_NAMES: Record<DesktopSettingsCategory, string> = {
-  runtime: DESKTOP_ROUTE_NAMES.settingsRuntime,
-  shortcuts: DESKTOP_ROUTE_NAMES.settingsShortcuts,
-  extensions: DESKTOP_ROUTE_NAMES.settingsExtensions,
-  general: DESKTOP_ROUTE_NAMES.settingsGeneral,
-  mcp: DESKTOP_ROUTE_NAMES.settingsMcp,
-  appearance: DESKTOP_ROUTE_NAMES.settingsAppearance,
-  notifications: DESKTOP_ROUTE_NAMES.settingsNotifications,
-  proxy: DESKTOP_ROUTE_NAMES.settingsProxy,
-  about: DESKTOP_ROUTE_NAMES.settingsAbout,
-  skills: DESKTOP_ROUTE_NAMES.settingsSkills,
-  logs: DESKTOP_ROUTE_NAMES.settingsLogs,
-  usage: DESKTOP_ROUTE_NAMES.settingsUsage,
-  web: DESKTOP_ROUTE_NAMES.settingsWeb,
-  browser: DESKTOP_ROUTE_NAMES.settingsBrowser,
-  models: DESKTOP_ROUTE_NAMES.settingsModels,
-  pet: DESKTOP_ROUTE_NAMES.settingsPet,
 }
 
 export const desktopRouteLocations = {
@@ -74,8 +57,8 @@ export const desktopRouteLocations = {
     name: DESKTOP_ROUTE_NAMES.settingsProvider,
     params: { providerId },
   }),
-  settings: (category: DesktopSettingsCategory = 'general'): RouteLocationRaw => ({
-    name: SETTINGS_ROUTE_NAMES[category],
+  settings: (category: DesktopSettingsCategory = 'general') => ({
+    name: `desktop.settings.${category}`,
   }),
   skills: (spaceId: string | null = null): RouteLocationRaw => ({
     name: DESKTOP_ROUTE_NAMES.settingsSkills,
@@ -90,5 +73,6 @@ declare module 'vue-router' {
     desktopPageDefinition?: DesktopPageDefinition
     desktopPage?: string | ((route: RouteLocationNormalizedLoaded) => string)
     settingsCategory?: DesktopSettingsCategory
+    settingsModule?: string
   }
 }

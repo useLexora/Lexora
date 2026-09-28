@@ -96,3 +96,15 @@ export const connectorsRpc = {
   saveCredential: { method: 'connectors.saveCredential', input: connectorsRequestSchemas.connectorCredential, response: validationResponseSchemas.mutation },
   clearCredential: { method: 'connectors.clearCredential', input: connectorsRequestSchemas.connectorId, response: validationResponseSchemas.mutation },
 } as const satisfies Record<string, RuntimeRequestContract>
+
+export const connectorChangeNoticeSchema = z.object({
+  sourceId: z.uuid(),
+  revision: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+  connectorId: connectorBaseSchema.shape.id,
+  type: z.enum(['configuration', 'credential', 'login', 'runtime', 'catalog']),
+}).strict()
+export type ConnectorChangeNotice = Readonly<z.infer<typeof connectorChangeNoticeSchema>>
+export const connectorNotifications = {
+  changed: { method: 'connectors.changed', params: connectorChangeNoticeSchema },
+} as const

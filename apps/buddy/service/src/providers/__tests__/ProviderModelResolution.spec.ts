@@ -32,7 +32,7 @@ describe('provider model resolution', () => {
       const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
       const providers = createProviderRepository(database)
       const service = new ProviderService({
-        authInteractions: new AuthInteractionService({ notify: () => {} }),
+        authInteractions: new AuthInteractionService(),
         credentialStatus: createProviderCredentialStatus(credentials),
         modelDiscovery: { supports: () => false, discover: async () => [] },
         modelRuntime: createProviderModelRuntime(runtime, new ProviderRequestHeaders(providers.states)),
@@ -75,7 +75,7 @@ describe('provider model resolution', () => {
     const setup = async () => {
       const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
       const service = new ProviderService({
-        authInteractions: new AuthInteractionService({ notify: () => {} }),
+        authInteractions: new AuthInteractionService(),
         credentialStatus: createProviderCredentialStatus(credentials),
         modelDiscovery: { supports: () => false, discover: async () => [] },
         modelRuntime: runtime,

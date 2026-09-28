@@ -84,6 +84,21 @@ export function createChatQueueRepository(database: DatabaseSync) {
         }) }
       })
     },
+    continuationScopes(): LocalChatQueueScope[] {
+      return database.prepare(`SELECT DISTINCT q.conversation_id AS conversationId, q.branch_id AS branchId
+        FROM chat_queue q JOIN conversations c ON c.id = q.conversation_id
+        WHERE q.state IN ('waiting', 'paused') AND c.deleted_at IS NULL AND c.active_branch_id = q.branch_id`).all() as unknown as LocalChatQueueScope[]
+    },
+    continuationScope(conversationId: string): LocalChatQueueScope | null {
+      return database.prepare(`SELECT id AS conversationId, active_branch_id AS branchId FROM conversations c
+        WHERE id = ? AND deleted_at IS NULL AND EXISTS (
+          SELECT 1 FROM chat_queue q WHERE q.conversation_id = c.id AND q.branch_id = c.active_branch_id AND q.state IN ('waiting', 'paused')
+        )`).get(conversationId) as LocalChatQueueScope | undefined ?? null
+    },
+    latestRun(scope: LocalChatQueueScope) {
+      return database.prepare('SELECT id, status FROM runs WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1')
+        .get(scope.conversationId) as { id: string, status: string } | undefined
+    },
     pending(target: LocalChatQueueTarget) {
       assertScope(target)
       const row = find(target.id)
@@ -100,9 +115,8 @@ export function createChatQueueRepository(database: DatabaseSync) {
     },
     pause(conversationId?: string) {
       if (conversationId)
-        database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE conversation_id = ? AND state = \'waiting\'').run(conversationId)
-      else
-        database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE state = \'waiting\'').run()
+        return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE conversation_id = ? AND state = \'waiting\'').run(conversationId).changes)
+      return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE state = \'waiting\'').run().changes)
     },
     commitInRun(input: PrepareTurnRequestInput, runId: string) {
       return withTransaction(database, () => {

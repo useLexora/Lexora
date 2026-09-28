@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+export type ReadonlyJsonValue = string | number | boolean | null | ReadonlyJsonArray | ReadonlyJsonObject
+export interface ReadonlyJsonArray extends ReadonlyArray<ReadonlyJsonValue> {}
+export interface ReadonlyJsonObject { readonly [key: string]: ReadonlyJsonValue }
+
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 export const workbenchStateSchema = z.object({
@@ -18,7 +22,10 @@ export const workbenchStateSchema = z.object({
 
 export type WorkbenchState = z.infer<typeof workbenchStateSchema>
 
+export const workbenchWriteOptionsSchema = z.object({ resetRecovery: z.boolean().default(false) }).strict()
+export type WorkbenchWriteOptions = z.input<typeof workbenchWriteOptionsSchema>
+
 export interface WorkbenchStateApi {
   read: () => Promise<WorkbenchState | null>
-  write: (state: WorkbenchState) => Promise<void>
+  write: (state: WorkbenchState, options?: WorkbenchWriteOptions) => Promise<void>
 }

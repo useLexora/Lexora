@@ -1,11 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
+import type { ArtifactEvent } from '../ArtifactService'
 import { Buffer } from 'node:buffer'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
 
+import { afterEach, describe, expect, it } from 'vitest'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -22,6 +23,59 @@ afterEach(async () => {
 })
 
 describe('artifactService', () => {
+  it('retains written files and committed catalogue rows when a later row fails', async () => {
+    const fixture = await createFixture()
+    let saves = 0
+    let listenerFailures = 0
+    const service = new ArtifactService({ repository: { ...fixture.repository, save(record) {
+      if (++saves === 2)
+        throw new Error('private storage detail')
+      return fixture.repository.save(record)
+    } }, onListenerError: () => listenerFailures++ })
+    const events: ArtifactEvent[] = []
+    service.onDidChange(() => {
+      throw new Error('observer detail')
+    })
+    service.onDidChange(event => events.push(event))
+    await expect(service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] })).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 2, unconfirmedWrites: 0, stage: 'catalogue', artifactIds: [expect.any(String)] } })
+    expect(events.map(event => event.kind)).toEqual(['file-written', 'file-written', 'catalogue-committed', 'batch-settled'])
+    expect(events.map(event => event.revision)).toEqual([1, 2, 3, 4])
+    expect(listenerFailures).toBe(4)
+    const receipt = events.at(-1)!.receipt
+    expect(Object.isFrozen(receipt.artifactIds)).toBe(true)
+    expect(fixture.repository.listForConversation('conversation-1').map(record => record.id)).toEqual(receipt.artifactIds)
+    expect(await readFile(join(fixture.workspace, 'result.png'))).toEqual(Buffer.from([1]))
+    expect(await readFile(join(fixture.workspace, 'result-2.png'))).toEqual(Buffer.from([2]))
+    expect(JSON.stringify(events)).not.toContain(fixture.workspace)
+    expect(JSON.stringify(events)).not.toContain('private storage detail')
+    await service.dispose()
+  })
+
+  it('reports an unsuccessful file write separately from confirmed writes', async () => {
+    const fixture = await createFixture()
+    await mkdir(join(fixture.workspace, 'result-2.png'))
+    await expect(fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] })).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 1, unconfirmedWrites: 1, artifactIds: [], stage: 'file' } })
+    expect(await readFile(join(fixture.workspace, 'result.png'))).toEqual(Buffer.from([1]))
+    expect(fixture.repository.listForConversation('conversation-1')).toEqual([])
+  })
+
+  it('isolates accepted bytes and grants and drains their publication before disposal', async () => {
+    const fixture = await createFixture()
+    const bytes = Uint8Array.of(1, 2, 3)
+    const events: ArtifactEvent[] = []
+    fixture.service.onDidChange(event => events.push(event))
+    const pending = fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes, mimeType: 'image/png' }] })
+    bytes.fill(9)
+    fixture.grants[0]!.canonicalRoot = fixture.root
+    fixture.grants.length = 0
+    const stopping = fixture.service.dispose()
+    const [artifact] = await pending
+    await stopping
+    expect(await readFile(artifact!.currentPath)).toEqual(Buffer.from([1, 2, 3]))
+    expect(events.at(-1)).toMatchObject({ kind: 'batch-settled', receipt: { outcome: 'completed', written: 1, artifactIds: [artifact!.id] } })
+    await expect(fixture.service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: [], paths: [artifact!.currentPath] })).rejects.toMatchObject({ code: 'ARTIFACT_SERVICE_STOPPED' })
+  })
+
   it('presents explicitly selected files and directories without inferring their contents', async () => {
     const fixture = await createFixture()
     const directoryPath = join(fixture.workspace, 'site')

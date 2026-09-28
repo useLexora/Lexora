@@ -1,9 +1,9 @@
 import type { ShortcutScope } from '@buddy-shared/shortcuts/keybinding'
 import type { WorkbenchCondition } from '@buddy-shared/workbench/workbenchContext'
-import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
+import type { ReadonlyJsonObject, ReadonlyJsonValue } from '@buddy-shared/workbench/workbenchState'
 import type { WorkbenchMountTarget, WorkbenchPresentation } from '@buddy-shared/workbench/workbenchUi'
 
-export interface ResourceRef { scheme: string, id: string, data: Record<string, JsonValue> }
+export interface ResourceRef { readonly scheme: string, readonly id: string, readonly data: ReadonlyJsonObject }
 export type ViewLocation = 'main' | 'context' | 'mount'
 export type SplitDirection = 'left' | 'right' | 'up' | 'down'
 export type DropPosition = SplitDirection | 'center'
@@ -17,7 +17,7 @@ export interface WorkbenchView {
   presentation?: WorkbenchPresentation
   resource: ResourceRef
   title: string
-  state: Record<string, JsonValue>
+  state: ReadonlyJsonObject
 }
 export interface WorkbenchPane { readonly kind: 'pane', readonly id: string, readonly view: string | null }
 export interface WorkbenchSplit {
@@ -34,7 +34,7 @@ export interface WorkbenchLayout {
   root: WorkbenchNode
   views: Record<string, WorkbenchView>
   activePane: string
-  auxiliary: Record<string, JsonValue>
+  auxiliary: Record<string, ReadonlyJsonValue>
 }
 export interface ViewDescriptor {
   when?: WorkbenchCondition
@@ -58,7 +58,7 @@ export interface ViewPlacement {
   presentation: WorkbenchPresentation
 }
 export interface CommandContext {
-  source?: 'palette' | 'slash'
+  source?: 'palette' | 'slash' | 'shortcut' | 'menu'
   arguments?: string
   view: WorkbenchView | null
   pane: WorkbenchPane | null
@@ -66,13 +66,13 @@ export interface CommandContext {
 }
 export interface WorkbenchCommand {
   id: string
-  label: string
+  label: string | (() => string)
   slash?: { name: string, description?: string, origin?: import('@buddy-shared/workbench/workbenchCommand').WorkbenchCommandOrigin }
-  keybinding?: string
+  keybinding?: string | (() => string | undefined)
   alternateKeybindings?: readonly string[]
   shortcutScope?: ShortcutScope
   enabled?: (context: CommandContext) => boolean
-  execute: (context: CommandContext) => void | Promise<unknown>
+  execute: (context: CommandContext) => unknown
 }
 export function resourceKey(resource: ResourceRef): string {
   return JSON.stringify([resource.scheme, resource.id])
@@ -106,4 +106,12 @@ export function removePane(node: WorkbenchNode, id: string): WorkbenchNode | nul
   if (!first || !second)
     return first ?? second
   return first === node.first && second === node.second ? node : { ...node, first, second }
+}
+
+export function commandLabel(command: Pick<WorkbenchCommand, 'label'>): string {
+  return typeof command.label === 'function' ? command.label() : command.label
+}
+
+export function commandKeybinding(command: Pick<WorkbenchCommand, 'keybinding'> | undefined): string | undefined {
+  return typeof command?.keybinding === 'function' ? command.keybinding() : command?.keybinding
 }

@@ -35,6 +35,8 @@
 | `views` | 数组，每项必填 `id`、`title`、`entry`；`resource` 为 `selected-file`（默认）或 `none`；`location` 默认 `context`；`stateVersion` 为正整数，默认 1 |
 | `placements` | 数组，每项必填 `id`、`view`、`kind`，并按 kind 添加后文规定的 `anchor`、`target` 或 `presentation`；不要把它们写入视图定义 |
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
+| `agent` | API 3；指令、工具和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
+| `settings` | API 3；声明 modules/groups/items，由宿主渲染并保存，见 [Agent 与设置](agent-settings.md) |
 
 插件 ID 使用小写字母开头的两段名称，中间以 `.` 分隔，每段可含小写字母、数字与 `-`；贡献 ID 在插件 ID 后追加由小写字母、数字、`.`、`-` 组成的后缀。声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
 
@@ -58,6 +60,9 @@
 
 | permissions 字段 | 能力 |
 | --- | --- |
+| `agent: true` | 追加 Agent 指令和可调用工具 |
+| `models: true` | 工具调用期间请求已配置模型，凭据留在宿主 |
+| `tasks: "read" / "title"` | 读取当前任务标题元数据；title 额外允许安全改名 |
 | `windowEffects: true` | 锚点装饰、窗口效果与无内容的对话输入活动 |
 | `controls: ["model.reasoning"]` | 提供可由用户选用的思考等级控件 |
 | `notifications: true` | 宿主 `context.notifications.show({title,body})` |
@@ -156,6 +161,8 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 验收实际读取、解析、保存结果和取消路径。涉及音视频时验证 metadata、实际进度与 seek；关闭时停止工作、清除 URL 和定时器。交互期间保存进度，销毁后不得再异步回写状态。
 
 ## 页面、宿主与设置
+
+事件可通过作用域内的 `context.events.on` 统一订阅，支持命名空间和通配符，旧 `onMessage/onWorkbenchChange` 等入口继续可用；事件名与生命周期见 [作用域事件](events.md)。
 
 完整类型见同目录 `api.d.ts`。每个视图是独立沙箱。`render` 可异步，前台加载须在 10 秒内完成；耗时内容先绘制加载状态，再异步填充。加载失败会结束该视图并提供重启入口，其他视图与宿主继续运行。没有 `mount`、全局 `lexora` 或 Vue 运行时。
 

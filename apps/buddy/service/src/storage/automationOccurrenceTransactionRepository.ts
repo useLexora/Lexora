@@ -42,7 +42,7 @@ export interface AutomationOccurrenceTransactionRepository {
     id: string
     queuedAt: string
     scheduledFor: string
-  }, mutation: AutomationMutationIdentity) => AutomationRunNowResult
+  }, mutation: AutomationMutationIdentity) => { result: AutomationRunNowResult, committed: boolean }
   finishQueuedAndBlock: (input: {
     automationId: string
     expectedRevision: number
@@ -53,6 +53,7 @@ export interface AutomationOccurrenceTransactionRepository {
   }) => {
     automation: Automation | null
     occurrence: AutomationOccurrenceRecord
+    cancelledOccurrenceIds: readonly string[]
   } | null
   settleScheduled: (input: {
     automationId: string
@@ -230,7 +231,7 @@ export function createAutomationOccurrenceTransactionRepository(
       return withTransaction(options.database, () => {
         const replay = options.mutations.repository.replayRunNowMutation(mutation)
         if (replay)
-          return replay
+          return { result: replay, committed: false }
         const row = options.definitions.findAnyRow(input.automationId)
         if (!row || row.deleted_at)
           throw new AutomationRepositoryError('not_found')
@@ -241,7 +242,7 @@ export function createAutomationOccurrenceTransactionRepository(
             outcome: 'already_running',
           })
           options.mutations.save(row.id, mutation, result)
-          return result
+          return { result, committed: false }
         }
         if (row.revision !== input.expectedRevision)
           throw new AutomationRepositoryError('conflict')
@@ -267,7 +268,7 @@ export function createAutomationOccurrenceTransactionRepository(
           outcome: 'started',
         })
         options.mutations.save(row.id, mutation, result)
-        return result
+        return { result, committed: true }
       })
     },
     finishQueuedAndBlock(input) {
@@ -288,17 +289,18 @@ export function createAutomationOccurrenceTransactionRepository(
           expectedRevision: input.expectedRevision,
           reason: input.reason,
         })
-        if (blocked) {
-          options.definitionCommands.cancelQueuedOccurrences(
-            input.automationId,
-            input.finishedAt,
-          )
-        }
+        const cancelledOccurrenceIds = blocked
+          ? options.definitionCommands.cancelQueuedOccurrences(
+              input.automationId,
+              input.finishedAt,
+            )
+          : []
         return {
           automation: blocked
             ? options.definitions.requireById(input.automationId)
             : null,
           occurrence: options.occurrences.requireById(input.id),
+          cancelledOccurrenceIds,
         }
       })
     },

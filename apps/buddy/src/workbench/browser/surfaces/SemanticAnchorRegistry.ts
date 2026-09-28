@@ -1,15 +1,26 @@
 import type { ComposerActivity, WorkbenchAnchor } from '@buddy-shared/workbench/workbenchUi'
 import type { SemanticAnchor, WorkbenchAnchors } from '@/shared/ui/contributions/workbenchUiContext'
+import { Emitter } from '@buddy-shared/events/Emitter'
+import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
+import { ReadonlyMapView } from '@buddy-shared/events/ReadonlyMapView'
 import { shallowReactive } from 'vue'
 
 export class SemanticAnchorRegistry implements WorkbenchAnchors {
-  readonly entries = shallowReactive(new Map<string, SemanticAnchor>())
-  readonly #listeners = new Set<(anchor: SemanticAnchor, activity: ComposerActivity) => void>()
+  readonly #entries = shallowReactive(new Map<string, SemanticAnchor>())
+  readonly entries = new ReadonlyMapView(this.#entries)
+  readonly #changes = new Emitter<{ readonly revision: number, readonly kind: 'registered' | 'removed', readonly anchor: SemanticAnchor }>(() => console.error('ANCHOR_OBSERVER_FAILED'))
+  readonly #activities = new Emitter<{ readonly anchor: SemanticAnchor, readonly activity: ComposerActivity }>(() => console.error('ANCHOR_ACTIVITY_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  readonly onDidActivity = this.#activities.event
+  #revision = 0
+  #disposed = false
   readonly #cleanup = new Set<() => void>()
 
   register(kind: WorkbenchAnchor, element: HTMLElement, caret?: () => DOMRect | null): () => void {
-    const anchor: SemanticAnchor = { id: crypto.randomUUID(), kind, element, caret }
-    this.entries.set(anchor.id, anchor)
+    if (this.#disposed)
+      throw new Error('WORKBENCH_ANCHORS_DISPOSED')
+    const anchor: SemanticAnchor = Object.freeze({ id: crypto.randomUUID(), kind, element, caret })
+    this.#entries.set(anchor.id, anchor)
     let frame = 0
     let lastActivity = 0
     const input = (event: Event) => {
@@ -31,12 +42,16 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
     }
     element.addEventListener('input', input)
     const dispose = () => {
+      if (this.#entries.get(anchor.id) !== anchor)
+        return
       cancelAnimationFrame(frame)
       element.removeEventListener('input', input)
-      this.entries.delete(anchor.id)
+      this.#entries.delete(anchor.id)
       this.#cleanup.delete(dispose)
+      this.#changes.fire(Object.freeze({ revision: ++this.#revision, kind: 'removed', anchor }))
     }
     this.#cleanup.add(dispose)
+    this.#changes.fire(Object.freeze({ revision: ++this.#revision, kind: 'registered', anchor }))
     return dispose
   }
 
@@ -47,16 +62,19 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
     const cursor = position
       ? { x: Math.max(0, Math.min(bounds.width, position.left - bounds.left)), y: Math.max(0, Math.min(bounds.height, position.top - bounds.top)), width: Math.max(1, Math.min(bounds.width, position.width)), height: Math.min(bounds.height, Math.max(0, position.height)) }
       : null
-    for (const listener of this.#listeners) listener(anchor, { type: 'composer-input', caret: cursor })
+    this.#activities.fire(Object.freeze({ anchor, activity: copyEventSnapshot<ComposerActivity>({ type: 'composer-input', caret: cursor }) }))
   }
 
   onActivity(listener: (anchor: SemanticAnchor, activity: ComposerActivity) => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+    return this.onDidActivity(event => listener(event.anchor, event.activity)).dispose
   }
 
   dispose(): void {
+    if (this.#disposed)
+      return
+    this.#disposed = true
     for (const dispose of this.#cleanup) dispose()
-    this.#listeners.clear()
+    this.#changes.dispose()
+    this.#activities.dispose()
   }
 }

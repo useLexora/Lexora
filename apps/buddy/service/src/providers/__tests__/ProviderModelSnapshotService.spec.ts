@@ -11,6 +11,31 @@ afterEach(async () => {
 })
 
 describe('providerModelSnapshotService', () => {
+  it('preserves a single refresh under observer reentry and versions complete capability changes', async () => {
+    let next = data('before')
+    const service = new ProviderModelSnapshotService({ builtin, fetch: async () => Response.json(next) })
+    const events: import('../ProviderModelSnapshotService').ModelMetadataChange[] = []
+    let reentrant: Promise<unknown> | undefined
+    service.onDidChange((event) => {
+      events.push(event)
+      if (event.kind === 'refresh-started')
+        reentrant = service.refresh()
+    })
+    const first = service.refresh()
+    expect(reentrant).toBe(first)
+    await first
+    expect(events.find(event => event.kind === 'accepted')?.catalogRevision).toBe(0)
+    next = data('before')
+    next.openai.models.model.modalities.input = ['text']
+    await service.refresh()
+    expect(events.filter(event => event.kind === 'accepted').at(-1)?.catalogRevision).toBe(1)
+    const accepted = events.filter(event => event.kind === 'accepted').length
+    await service.refresh()
+    expect(events.filter(event => event.kind === 'accepted')).toHaveLength(accepted)
+    expect(Object.isFrozen(service.getModels()[0])).toBe(true)
+    await service.dispose()
+  })
+
   it('coalesces one public download, persists it and restores it offline', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buddy-model-snapshot-'))
     directories.push(directory)

@@ -1,7 +1,9 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageGenerationGateway } from './ImageGenerationGateway'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { ImageOperationLifecycle } from './ImageOperationLifecycle'
 
 export interface GenerateConversationImageInput {
   outputPath: string
@@ -36,42 +38,61 @@ export interface ImageGenerationServiceOptions {
 
 export class ImageGenerationService {
   readonly #options: ImageGenerationServiceOptions
+  readonly #operations = new ImageOperationLifecycle()
+  readonly onDidChange = this.#operations.onDidChange
 
   constructor(options: ImageGenerationServiceOptions) {
-    this.#options = options
+    this.#options = {
+      artifactService: options.artifactService,
+      attachmentService: options.attachmentService,
+      conversationId: options.conversationId,
+      cwd: options.cwd,
+      get grants() { return options.grants },
+      imageGenerationGateway: options.imageGenerationGateway,
+    }
   }
 
   supports(model: Model<Api>): boolean {
     return this.#options.imageGenerationGateway.supports(model)
   }
 
-  async generate(input: GenerateConversationImageInput, model: Model<Api>, signal: AbortSignal, grants = this.#options.grants) {
-    signal.throwIfAborted()
-    if (!this.supports(model))
-      throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
-    const references = input.reference
-      ? await this.#materializeReferences(input.reference)
-      : { artifactIds: [], images: [] }
-    signal.throwIfAborted()
-    const generated = await this.#options.imageGenerationGateway.generate({
-      inputImages: references.images,
-      model,
-      prompt: input.prompt.trim(),
-      signal,
+  generate(input: GenerateConversationImageInput, model: Model<Api>, signal: AbortSignal, grants = this.#options.grants) {
+    const request = copyEventSnapshot(input)
+    const directories = copyEventSnapshot(grants)
+    return this.#operations.run({ conversationId: this.#options.conversationId, kind: 'generation', signal }, async (progress) => {
+      signal.throwIfAborted()
+      if (!this.supports(model))
+        throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
+      const references = request.reference
+        ? await this.#materializeReferences(request.reference)
+        : { artifactIds: [], images: [] }
+      signal.throwIfAborted()
+      progress('processing')
+      const generated = await this.#options.imageGenerationGateway.generate({
+        inputImages: references.images,
+        model,
+        prompt: request.prompt.trim(),
+        signal,
+      })
+      progress('result-received')
+      signal.throwIfAborted()
+      progress('publishing')
+      signal?.throwIfAborted()
+      const artifacts = await this.#options.artifactService.registerGeneratedImages({
+        conversationId: this.#options.conversationId,
+        cwd: this.#options.cwd,
+        grants: directories,
+        images: generated.images,
+        outputPath: request.outputPath.trim(),
+        sourceArtifactId: references.artifactIds.at(-1) ?? null,
+      })
+      const artifactIds = artifacts.map(artifact => artifact.id)
+      return { value: { artifactIds, responseId: generated.responseId }, artifactIds }
     })
-    signal.throwIfAborted()
-    const artifacts = await this.#options.artifactService.registerGeneratedImages({
-      conversationId: this.#options.conversationId,
-      cwd: this.#options.cwd,
-      grants,
-      images: generated.images,
-      outputPath: input.outputPath.trim(),
-      sourceArtifactId: references.artifactIds.at(-1) ?? null,
-    })
-    return {
-      artifactIds: artifacts.map(artifact => artifact.id),
-      responseId: generated.responseId,
-    }
+  }
+
+  dispose(): Promise<void> {
+    return this.#operations.dispose()
   }
 
   async #materializeReferences(

@@ -9,12 +9,13 @@ import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
 import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
-import { useProvideSettingsContext } from '@/modules/settings'
+import { usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
 import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.vue'
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
+import { createRendererDiagnostics } from '@/platform/runtime/RendererDiagnostics'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
@@ -22,6 +23,7 @@ import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
 import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
 import WorkbenchSurfaceHost from '@/workbench/browser/surfaces/WorkbenchSurfaceHost.vue'
+import { commandLabel } from '@/workbench/common/workbench'
 import { useDesktopPages } from '../router/useDesktopPages'
 import { useDesktopShellState } from '../shell/useDesktopShellState'
 import { desktopWorkbenchKey } from '../workbench/desktopWorkbenchContext'
@@ -53,17 +55,22 @@ const taskIndex = useTaskIndex({
   beforeTaskDelete,
   onSpaceCreated,
 })
-const workbench = useDesktopWorkbench({ api, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
+const diagnostics = createRendererDiagnostics(api.app.logs)
+const workbench = useDesktopWorkbench({ api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
+onScopeDispose(() => {
+  void workbench.dispose().finally(() => diagnostics.dispose()).catch(() => {})
+})
 provide(desktopWorkbenchKey, workbench)
 const extensions = useExtensionState(api.extensions)
+const settingsRegistry = useSettingsRegistry(extensions.installed)
 const pages = useDesktopPages(router, extensions.installed, stores.applicationSettings.language)
 const paneRegistry = new WorkbenchPaneRegistry(() => workbench.controller.layout.activePane)
 onMounted(() => paneRegistry.start())
 onScopeDispose(() => paneRegistry.dispose())
-onScopeDispose(workbench.controller.subscribe(paneRegistry.invalidate))
-onScopeDispose(paneRegistry.subscribe(() => {
-  void api.extensions.updatePanes(paneRegistry.snapshot).catch(() => {})
-}))
+onScopeDispose(workbench.controller.onDidChangeLayout(paneRegistry.invalidate).dispose)
+onScopeDispose(paneRegistry.onDidChange((change) => {
+  void api.extensions.updatePanes([...change.snapshot]).catch(() => {})
+}).dispose)
 const commandRevision = ref(0)
 onScopeDispose(workbench.controller.registry.subscribe(() => commandRevision.value++))
 onScopeDispose(workbench.controller.subscribe(() => commandRevision.value++))
@@ -71,30 +78,25 @@ useProvideWorkbenchCommands({
   reportFailure: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.inputFailed')),
   entries: computed(() => {
     void commandRevision.value
-    return [...workbench.controller.registry.commands.values()].flatMap(command => command.slash && (!command.enabled || command.enabled(workbench.controller.context)) ? [{ id: command.id, name: command.slash.name, title: command.label, description: command.slash.description, origin: command.slash.origin }] : [])
+    return [...workbench.controller.registry.commands.values()].flatMap(command => command.slash && (!command.enabled || command.enabled(workbench.controller.context)) ? [{ id: command.id, name: command.slash.name, title: commandLabel(command), description: command.slash.description, origin: command.slash.origin }] : [])
   }),
   execute: async (id, argumentsText, instanceId) => {
-    const controller = workbench.controller
-    const command = controller.registry.commands.get(id)
-    const pane = instanceId ? controller.pane(instanceId) : controller.context.pane
-    const context = { ...controller.context, pane, source: 'slash' as const, arguments: argumentsText }
-    if (!command?.slash || (instanceId && !pane) || (command.enabled && !command.enabled(context)))
+    const execution = await workbench.controller.commands.execute(id, { source: 'slash', arguments: argumentsText, paneId: instanceId })
+    if (execution.status === 'unavailable')
       throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-    return (await command.execute(context) ?? null) as import('@buddy-shared/workbench/workbenchState').JsonValue
+    return (execution.result ?? null) as import('@buddy-shared/workbench/workbenchState').JsonValue
   },
 })
 const extensionViews = useExtensionViews(api.extensions, extensions.installed, computed(() => pages.context.value.values))
-watch(() => pages.context.value.values, (values, _, cleanup) => {
-  const leases = Object.entries(values).map(([key, value]) => workbench.controller.contextKeys.set(key, value))
-  cleanup(() => leases.forEach(dispose => dispose()))
-  workbench.controller.changed()
-}, { immediate: true, flush: 'sync' })
+const pageContext = workbench.controller.contextKeys.bind()
+onScopeDispose(pageContext.dispose)
+watch(() => pages.context.value.values, values => pageContext.update(values), { immediate: true, flush: 'sync' })
 const anchors = new SemanticAnchorRegistry()
 onScopeDispose(() => anchors.dispose())
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
 useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized })
-useProvideExtensionContext({ authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
+useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocation, authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)
 } })
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))
@@ -112,7 +114,7 @@ const resources = useTaskResourcePanel({
   taskVisible: computed(() => pages.current.value === 'lexora.tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
   control: api.contextPanel,
   browser: api.browser,
-  closeView: id => workbench.controller.close(id),
+  closeView: async id => (await workbench.controller.close(id)).status === 'closed',
   closeFiles: workbench.closeContextFiles,
   changeSets: computed(() => selectedTask.value?.workspace.transcript.changeSets.value ?? []),
   runOutputs: computed(() => selectedTask.value?.workspace.transcript.runOutputs.value ?? []),
@@ -243,6 +245,8 @@ useProvideTaskEnvironment({
   notificationTarget,
 })
 useProvideSettingsContext({
+  registry: settingsRegistry,
+  pluginSettings: usePluginSettings(extensions.installed, extensions.api),
   shortcuts,
   browser: api.browser,
   applicationSettings: stores.applicationSettings,

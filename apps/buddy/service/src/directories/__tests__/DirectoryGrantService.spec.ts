@@ -21,6 +21,33 @@ afterEach(async () => {
 })
 
 describe('directoryGrantService', () => {
+  it('keeps persistence distinct from active-session application after a revocation', async () => {
+    const fixture = await createFixture()
+    const events: unknown[] = []
+    fixture.service.onDidCommit((event) => {
+      events.push(event)
+      fixture.repository.revokeAll(event.conversationId, timestamp)
+    })
+    const owner = { id: 'conversation-1', kind: 'conversation' as const }
+    const result = await fixture.service.grant({ owner, root: fixture.child })
+    expect(result.changed).toBe(true)
+    expect(events).toMatchObject([{ conversationId: owner.id, grantId: result.grant.id, revision: 1 }])
+    expect(() => fixture.service.assertCurrent(owner, result.grant.id)).toThrow()
+    expect(fixture.repository.listActive(owner.id)).toEqual([])
+    expect(JSON.stringify(events)).not.toContain(fixture.child)
+  })
+
+  it('checks the owner in the transaction after asynchronous directory validation', async () => {
+    const fixture = await createFixture()
+    const events: unknown[] = []
+    fixture.service.onDidCommit(event => events.push(event))
+    const pending = fixture.service.grant({ owner: { kind: 'conversation', id: 'conversation-1' }, root: fixture.child })
+    fixture.database.prepare('UPDATE conversations SET deleted_at = ? WHERE id = ?').run(timestamp, 'conversation-1')
+    await expect(pending).rejects.toThrow()
+    expect(fixture.repository.listActive('conversation-1')).toEqual([])
+    expect(events).toEqual([])
+  })
+
   it('persists a conversation grant and reuses a covering grant', async () => {
     const fixture = await createFixture()
     const granted = await fixture.service.grant({
@@ -118,10 +145,11 @@ async function createFixture(options: { spaceId?: string } = {}) {
     conversationGrants: repository,
     conversations,
     spaces: {
+      isGrantCurrent: () => false,
       grantAdditionalDirectory: async () => {
         throw new Error('Space grant was not expected')
       },
     },
   })
-  return { child, repository, root, service }
+  return { child, database, repository, root, service }
 }

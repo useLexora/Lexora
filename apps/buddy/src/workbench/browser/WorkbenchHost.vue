@@ -11,6 +11,7 @@ import { DragDropProvider, DragOverlay, KeyboardSensor, PointerSensor } from '@d
 import { NInput, NModal } from 'naive-ui'
 import { computed, onMounted, onScopeDispose, provide, shallowRef, triggerRef } from 'vue'
 import { useOptionalWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
+import { commandLabel } from '../common/workbench'
 import { workbenchLabels } from '../common/workbenchLabels'
 import WorkbenchMountPortals from './mounts/WorkbenchMountPortals.vue'
 import { useWorkbenchResize } from './useWorkbenchResize'
@@ -64,10 +65,10 @@ function refresh() {
   revision.value++
 }
 onScopeDispose(props.controller.subscribe(refresh))
-onScopeDispose(props.copies.subscribe(refresh))
+onScopeDispose(props.copies.onDidChangeDirty(refresh).dispose)
 const commands = computed(() => {
   void revision.value
-  return [...props.controller.registry.commands.values()].filter(command => command.label.toLowerCase().includes(query.value.toLowerCase()) && (!command.enabled || command.enabled(props.controller.context)))
+  return [...props.controller.registry.commands.values()].map(command => ({ ...command, label: commandLabel(command) })).filter(command => command.label.toLowerCase().includes(query.value.toLowerCase()) && (!command.enabled || command.enabled(props.controller.context)))
 })
 const dropPosition = shallowRef<{ paneId: string, position: DropPosition } | null>(null)
 function viewVisible(id: string): boolean {
@@ -77,11 +78,11 @@ function viewVisible(id: string): boolean {
 function viewTarget(id: string): HTMLElement | null {
   return mounts.value.get(id) ?? null
 }
-async function execute(id: string) {
+async function execute(id: string, source: 'palette' | 'shortcut' = 'palette') {
   palette.value = false
   commandFailed.value = false
   try {
-    await props.controller.registry.execute(id, props.controller.context)
+    await props.controller.commands.execute(id, { source })
   }
   catch {
     commandFailed.value = true
@@ -98,9 +99,7 @@ function dragEnd(event: DragEndEvent) {
     emit('dropResource', source.data.resource as ResourceRef, destination.paneId, destination.position)
 }
 onScopeDispose(props.controller.registry.register('lexora.commandPalette', (scope) => {
-  scope.command({ id: 'command.palette', get label() {
-    return labels.value.commands
-  }, keybinding: 'Mod+Shift+P', shortcutScope: 'application', execute: () => {
+  scope.command({ id: 'command.palette', label: () => labels.value.commands, keybinding: 'Mod+Shift+P', shortcutScope: 'application', execute: () => {
     palette.value = !palette.value
     query.value = ''
   } })
@@ -132,7 +131,7 @@ function keyboard(event: KeyboardEvent) {
   })
   if (command) {
     event.preventDefault()
-    void execute(command.id)
+    void execute(command.id, 'shortcut')
   }
 }
 onMounted(() => {

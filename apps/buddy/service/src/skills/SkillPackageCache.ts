@@ -1,11 +1,13 @@
 import type { BigIntStats } from 'node:fs'
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { LoadedSkill } from './skillFiles'
 import { createHash } from 'node:crypto'
 import { lstat, readdir } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { MAX_SKILL_BYTES, MAX_SKILL_FILES, MAX_SKILL_PACKAGE_BYTES, readSkill, readSkillDocument, requireSkillPath, SkillError } from './skillFiles'
 
-export type ResolvedSkill = Omit<LoadedSkill, 'files' | 'modes'>
+export type ResolvedSkill = EventSnapshot<Omit<LoadedSkill, 'files' | 'modes'>>
 
 interface CachedPackage {
   signature: string
@@ -18,13 +20,16 @@ export class SkillPackageCache {
   readonly #packages = new Map<string, CachedPackage>()
   readonly #documents = new Map<string, CachedPackage>()
   readonly #pending = new Map<string, Promise<ResolvedSkill>>()
+  #generation = 0
 
   async load(filePath: string, allowedRoot: string): Promise<ResolvedSkill> {
+    const generation = this.#generation
     const path = await requireSkillPath(allowedRoot, filePath)
+    this.#assertGeneration(generation)
     const pending = this.#pending.get(path)
     if (pending)
       return pending
-    const loading = this.#load(path, allowedRoot).finally(() => {
+    const loading = this.#load(path, allowedRoot, generation).finally(() => {
       if (this.#pending.get(path) === loading)
         this.#pending.delete(path)
     })
@@ -33,8 +38,10 @@ export class SkillPackageCache {
   }
 
   async loadMetadata(filePath: string, allowedRoot: string): Promise<ResolvedSkill> {
+    const generation = this.#generation
     const path = await requireSkillPath(allowedRoot, filePath)
     const signature = fileSignature(path, await lstat(path, { bigint: true }))
+    this.#assertGeneration(generation)
     const cached = this.#documents.get(path)
     if (cached?.signature === signature) {
       this.#documents.delete(path)
@@ -47,7 +54,8 @@ export class SkillPackageCache {
       throw new SkillError('SKILL_INVALID')
     if (fileSignature(path, await lstat(path, { bigint: true })) !== signature)
       throw new SkillError('SKILL_CHANGED')
-    const skill = { ...document, revision: document.referenceRevision }
+    this.#assertGeneration(generation)
+    const skill = copyEventSnapshot({ ...document, revision: document.referenceRevision })
     this.#documents.set(path, { signature, skill })
     while (this.#documents.size > MAX_CACHED_PACKAGES)
       this.#documents.delete(this.#documents.keys().next().value!)
@@ -55,12 +63,15 @@ export class SkillPackageCache {
   }
 
   clear() {
+    this.#generation++
     this.#packages.clear()
     this.#documents.clear()
+    this.#pending.clear()
   }
 
-  async #load(path: string, allowedRoot: string): Promise<ResolvedSkill> {
+  async #load(path: string, allowedRoot: string, generation: number): Promise<ResolvedSkill> {
     const signature = await inspectPackage(path)
+    this.#assertGeneration(generation)
     const cached = this.#packages.get(path)
     if (cached?.signature === signature) {
       this.#packages.delete(path)
@@ -68,13 +79,20 @@ export class SkillPackageCache {
       return cached.skill
     }
     this.#packages.delete(path)
-    const { files: _files, modes: _modes, ...skill } = await readSkill(path, allowedRoot)
+    const { files: _files, modes: _modes, ...loaded } = await readSkill(path, allowedRoot)
     if (await inspectPackage(path) !== signature)
       throw new SkillError('SKILL_CHANGED')
+    this.#assertGeneration(generation)
+    const skill = copyEventSnapshot(loaded)
     this.#packages.set(path, { signature, skill })
     while (this.#packages.size > MAX_CACHED_PACKAGES)
       this.#packages.delete(this.#packages.keys().next().value!)
     return skill
+  }
+
+  #assertGeneration(generation: number): void {
+    if (generation !== this.#generation)
+      throw new SkillError('SKILL_CHANGED')
   }
 }
 

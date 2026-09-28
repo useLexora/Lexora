@@ -1,4 +1,5 @@
 import type { ZodError } from 'zod'
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { LexoraConfig, LexoraConfigPatch } from '../../shared/desktopApi'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
@@ -7,6 +8,8 @@ import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
@@ -123,7 +126,19 @@ export class LexoraConfigError extends Error {
   }
 }
 
+export type LexoraConfigChange = {
+  readonly revision: number
+  readonly operationId: string
+  readonly groups: readonly (keyof LexoraConfig)[]
+} & ({ readonly kind: 'committed', readonly config: EventSnapshot<LexoraConfig> } | { readonly kind: 'applied' | 'apply-failed' | 'commit-failed' | 'rolled-back' | 'rollback-failed' | 'cleanup-failed' })
+
 export class LexoraConfigStore {
+  readonly #changes = new Emitter<LexoraConfigChange>(() => console.error('CONFIG_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #persisted: LexoraConfig | null = null
+  #applied: LexoraConfig | null = null
+  #disposing: Promise<void> | undefined
   readonly #configPath: string
   #writeQueue: Promise<void> = Promise.resolve()
 
@@ -132,20 +147,60 @@ export class LexoraConfigStore {
   }
 
   async read(): Promise<LexoraConfig> {
-    return decodeConfig(await this.#readFile())
+    await this.#writeQueue
+    const config = decodeConfig(await this.#readFile())
+    this.#persisted = structuredClone(config)
+    return config
   }
 
+  get snapshot() { return copyEventSnapshot({ revision: this.#revision, persisted: this.#persisted, applied: this.#applied }) }
+
   update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void): Promise<LexoraConfig> {
+    if (this.#disposing)
+      return Promise.reject(new Error('CONFIG_STORE_STOPPED'))
+    const input = structuredClone(patch)
     const operation = this.#writeQueue.then(async () => {
       const file = await this.#readFile()
       const current = decodeConfig(file)
-      const next = mergeConfig(current, patch)
+      const next = mergeConfig(current, input)
+      const groups = (Object.keys(next) as (keyof LexoraConfig)[]).filter(group => JSON.stringify(current[group]) !== JSON.stringify(next[group]))
+      const operationId = randomUUID()
+      const publish = (kind: Exclude<LexoraConfigChange['kind'], 'committed'>) => this.#changes.fire(copyEventSnapshot({ kind, revision: ++this.#revision, operationId, groups }))
+      this.#persisted = structuredClone(current)
+      let committed = false
+      let applying = true
       try {
-        await apply?.(next)
-        await this.#write(mergeConfigFile(file, next))
+        if (apply) {
+          await apply(structuredClone(next))
+          this.#applied = structuredClone(next)
+          publish('applied')
+        }
+        applying = false
+        await this.#write(mergeConfigFile(file, next), () => {
+          committed = true
+          this.#persisted = structuredClone(next)
+          this.#changes.fire(copyEventSnapshot({ kind: 'committed', revision: ++this.#revision, operationId, groups, config: next }))
+        })
       }
       catch (error) {
-        await apply?.(current)
+        if (committed) {
+          publish('cleanup-failed')
+          throw error
+        }
+        this.#applied = applying ? null : this.#applied
+        publish(applying ? 'apply-failed' : 'commit-failed')
+        if (apply) {
+          try {
+            await apply(structuredClone(current))
+            this.#applied = structuredClone(current)
+            publish('rolled-back')
+          }
+          catch (rollbackError) {
+            this.#applied = null
+            publish('rollback-failed')
+            throw new AggregateError([error, rollbackError], 'CONFIG_ROLLBACK_FAILED')
+          }
+        }
         throw error
       }
       return next
@@ -153,6 +208,11 @@ export class LexoraConfigStore {
 
     this.#writeQueue = operation.then(() => undefined, () => undefined)
     return operation
+  }
+
+  dispose(): Promise<void> {
+    this.#disposing ??= this.#writeQueue.then(() => this.#changes.dispose())
+    return this.#disposing
   }
 
   async #readFile(): Promise<unknown> {
@@ -176,7 +236,7 @@ export class LexoraConfigStore {
     }
   }
 
-  async #write(config: Record<string, unknown>): Promise<void> {
+  async #write(config: Record<string, unknown>, committed: () => void): Promise<void> {
     const parent = dirname(this.#configPath)
     const temporaryPath = `${this.#configPath}.${process.pid}.${randomUUID()}.tmp`
     const content = stringify(config)
@@ -193,8 +253,9 @@ export class LexoraConfigStore {
         await handle.close()
       }
 
+      await chmod(temporaryPath, 0o600)
       await rename(temporaryPath, this.#configPath)
-      await chmod(this.#configPath, 0o600)
+      committed()
     }
     finally {
       await rm(temporaryPath, { force: true })

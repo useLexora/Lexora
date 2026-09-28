@@ -32,7 +32,12 @@ export interface CreateConversationInput {
 export interface RenameConversationInput {
   id: string
   title: string
-  updatedAt: string
+}
+
+export interface ConversationTitleState {
+  title: string | null
+  source: 'manual' | 'fallback' | 'generated'
+  revision: number
 }
 
 export interface SetConversationPermissionSettingsInput {
@@ -56,6 +61,8 @@ export interface ConversationRepository
   isDeleted: (id: string) => boolean
   markDeleted: (id: string, deletedAt: string) => boolean
   rename: (input: RenameConversationInput) => ConversationRecord
+  getTitleState: (id: string) => ConversationTitleState | null
+  renameGenerated: (input: RenameConversationInput & { expectedRevision: number }) => ConversationRecord | null
   setPermissionSettings: (
     input: SetConversationPermissionSettingsInput,
   ) => ConversationRecord | null
@@ -74,8 +81,13 @@ export function createConversationRepository(database: DatabaseSync): Conversati
   `)
   const renameConversation = database.prepare(`
     UPDATE conversations
-    SET title = ?, updated_at = ?
+    SET title = ?, title_source = 'manual', title_revision = title_revision + 1
     WHERE id = ? AND deleted_at IS NULL
+  `)
+  const findTitle = database.prepare('SELECT title, title_source AS source, title_revision AS revision FROM conversations WHERE id = ? AND deleted_at IS NULL')
+  const renameGenerated = database.prepare(`
+    UPDATE conversations SET title = ?, title_source = 'generated', title_revision = title_revision + 1
+    WHERE id = ? AND title_revision = ? AND title_source != 'manual' AND deleted_at IS NULL
   `)
   const setPermissionSettings = database.prepare(`
     UPDATE conversations
@@ -155,12 +167,20 @@ export function createConversationRepository(database: DatabaseSync): Conversati
       return Number(markDeleted.run(deletedAt, deletedAt, id).changes) === 1
     },
     rename(input) {
-      if (Number(renameConversation.run(input.title, input.updatedAt, input.id).changes) !== 1)
+      if (Number(renameConversation.run(input.title, input.id).changes) !== 1)
         throw new ConversationRepositoryError('cannot be renamed')
       return requireConversationRecord(
         findConversation.get(input.id),
         input.id,
       )
+    },
+    getTitleState(id) {
+      return findTitle.get(id) as unknown as ConversationTitleState | undefined ?? null
+    },
+    renameGenerated(input) {
+      if (Number(renameGenerated.run(input.title, input.id, input.expectedRevision).changes) !== 1)
+        return null
+      return requireConversationRecord(findConversation.get(input.id), input.id)
     },
     setPermissionSettings(input) {
       return withTransaction(database, () => {

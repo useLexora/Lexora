@@ -9,6 +9,7 @@ function list(seen = false): LocalNotificationList {
 }
 function fixture() {
   let listeners = 0
+  let changed: (event: { revision: number }) => void = () => {}
   const subscribe = () => {
     listeners += 1
     return () => {
@@ -16,19 +17,58 @@ function fixture() {
     }
   }
   const api = {
-    notifications: { list: vi.fn(async () => list()), markSeen: vi.fn(async () => list(true)), markAllSeen: vi.fn(async () => list(true)) },
+    notifications: { onChanged: (listener: (event: { revision: number }) => void) => {
+      changed = listener
+      const stop = subscribe()
+      return () => {
+        stop()
+        changed = () => {}
+      }
+    }, list: vi.fn(async () => list()), markSeen: vi.fn(async () => list(true)), markAllSeen: vi.fn(async () => list(true)) },
     chat: { onRunEvent: subscribe },
     automations: { onChanged: subscribe },
   }
   const store = useNotificationCenterStore(api)
-  return { api, store, listeners: () => listeners }
+  return { api, store, changed: () => changed({ revision: 1 }), listeners: () => listeners }
 }
 
 describe('notification state ownership', () => {
+  it('refreshes from notification facts and rejects a list taken before a newer fact', async () => {
+    const f = fixture()
+    const stale = deferred<LocalNotificationList>()
+    f.api.notifications.list.mockReturnValueOnce(stale.promise).mockResolvedValue(list(true))
+    const reading = f.store.load()
+    f.changed()
+    stale.resolve(list())
+    await reading
+    await vi.waitFor(() => expect(f.store.items.value[0]?.attention).toBe('seen'))
+    expect(f.store.unseenCount.value).toBe(0)
+    f.store.dispose()
+    f.changed()
+    expect(f.listeners()).toBe(0)
+  })
+
+  it('refreshes authoritative state when a failed mutation overtakes an in-flight list', async () => {
+    const f = fixture()
+    const reading = deferred<LocalNotificationList>()
+    const writing = deferred<LocalNotificationList>()
+    f.api.notifications.list.mockReturnValueOnce(reading.promise).mockResolvedValue(list())
+    f.api.notifications.markAllSeen.mockReturnValueOnce(writing.promise)
+    const loading = f.store.load()
+    const marking = f.store.markAllSeen()
+    reading.resolve(list(true))
+    await loading
+    writing.reject(new Error('commit result unavailable'))
+    expect(await marking).toBe(false)
+    await vi.waitFor(() => expect(f.store.items.value).toEqual(list().items))
+    expect(f.store.unseenCount.value).toBe(1)
+    f.store.dispose()
+  })
+
   it('keeps a seen mutation when a pre-mutation list response arrives late', async () => {
     const f = fixture()
     const loading = deferred<LocalNotificationList>()
-    f.api.notifications.list.mockReturnValueOnce(loading.promise)
+    f.api.notifications.list.mockReturnValueOnce(loading.promise).mockResolvedValue(list(true))
     const load = f.store.load()
     await f.store.markSeen(list().items[0]!)
     loading.resolve(list())

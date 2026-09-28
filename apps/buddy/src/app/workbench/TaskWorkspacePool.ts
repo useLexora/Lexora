@@ -1,13 +1,24 @@
 import type { EffectScope } from 'vue'
 import type { TaskCapability, UseTaskCapabilityOptions } from '@/modules/tasks'
 import type { ResourceRef } from '@/workbench/common/workbench'
+import { Emitter } from '@buddy-shared/events/Emitter'
+import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
 import { effectScope } from 'vue'
 import { useTaskCapability } from '@/modules/tasks'
 import { resourceKey } from '@/workbench/common/workbench'
 
+export interface TaskWorkspaceChange {
+  readonly kind: 'ready' | 'released' | 'adopted'
+  readonly resource: ResourceRef
+  readonly previous?: ResourceRef
+}
+
 export class TaskWorkspacePool {
+  readonly #changes = new Emitter<TaskWorkspaceChange>(() => console.error('TASK_WORKSPACE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
   readonly #options: Omit<UseTaskCapabilityOptions, 'initialTarget'>
   readonly #entries = new Map<string, { task: TaskCapability, scope: EffectScope }>()
+  readonly #leases = new Map<TaskCapability, number>()
   readonly #loading = new Map<string, Promise<TaskCapability>>()
   readonly #adopt: (previous: ResourceRef, task: TaskCapability, id: string) => void
   #disposed = false
@@ -23,6 +34,7 @@ export class TaskWorkspacePool {
   }
 
   open(resource: ResourceRef): Promise<TaskCapability> {
+    resource = copyEventSnapshot(resource)
     const key = resourceKey(resource)
     const pending = this.#loading.get(key)
     if (pending)
@@ -68,6 +80,7 @@ export class TaskWorkspacePool {
         this.#entries.set(resourceKey(currentResource), { task, scope })
         this.#options.onDraftCommitted?.(draftId, id)
         this.#adopt(previous, task, id)
+        this.#changes.fire(Object.freeze({ kind: 'adopted', resource: currentResource, previous }))
       },
     }))!
     this.#entries.set(resourceKey(resource), { task, scope })
@@ -75,6 +88,7 @@ export class TaskWorkspacePool {
       await task.initialize()
       if (this.#disposed || this.#entries.get(resourceKey(currentResource))?.task !== task || task.workspace.restoration.state.value !== 'ready')
         throw new Error('TASK_RESTORATION_FAILED')
+      this.#changes.fire(Object.freeze({ kind: 'ready', resource: currentResource }))
       return task
     }
     catch (error) {
@@ -96,6 +110,24 @@ export class TaskWorkspacePool {
     await Promise.all([...this.#entries.values()].map(entry => entry.task.refreshRuntimeDependentState()))
   }
 
+  acquire(resource: ResourceRef): () => void {
+    const task = this.peek(resource)
+    if (!task || this.#disposed)
+      throw new Error('TASK_UNAVAILABLE')
+    this.#leases.set(task, (this.#leases.get(task) ?? 0) + 1)
+    let active = true
+    return () => {
+      if (!active)
+        return
+      active = false
+      const remaining = (this.#leases.get(task) ?? 1) - 1
+      if (remaining)
+        this.#leases.set(task, remaining)
+      else this.#leases.delete(task)
+      this.#releaseUnused()
+    }
+  }
+
   retain(resources: ResourceRef[]): void {
     const keys = new Set(resources.map(resourceKey))
     this.#retained = keys
@@ -103,17 +135,36 @@ export class TaskWorkspacePool {
       if (!keys.has(key))
         this.#loading.delete(key)
     }
+    this.#releaseUnused()
+  }
+
+  #releaseUnused(): void {
+    if (!this.#retained)
+      return
+    const failures: unknown[] = []
     for (const [key, entry] of this.#entries) {
-      if (keys.has(key))
+      if (this.#retained.has(key) || (!this.#disposed && this.#leases.has(entry.task)))
         continue
-      entry.task.dispose()
-      entry.scope.stop()
       this.#entries.delete(key)
+      for (const release of [() => entry.task.dispose(), () => entry.scope.stop()]) {
+        try {
+          release()
+        }
+        catch (error) { failures.push(error) }
+      }
+      const [scheme, id] = JSON.parse(key) as [string, string]
+      this.#changes.fire(Object.freeze({ kind: 'released', resource: copyEventSnapshot({ scheme, id, data: {} }) }))
     }
+    if (failures.length)
+      throw new AggregateError(failures, 'TASK_WORKSPACE_RELEASE_FAILED')
   }
 
   dispose(): void {
     this.#disposed = true
-    this.retain([])
+    this.#leases.clear()
+    try {
+      this.retain([])
+    }
+    finally { this.#changes.dispose() }
   }
 }

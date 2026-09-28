@@ -5,6 +5,69 @@ import { describe, expect, it } from 'vitest'
 import { HostCredentialStore } from '../HostCredentialStore'
 
 describe('hostCredentialStore', () => {
+  it('drains an accepted read before closing observations and rejects fresh requests during stop', async () => {
+    const peer = new CredentialHostPeer({})
+    const pending = Promise.withResolvers<unknown>()
+    peer.request = () => pending.promise
+    const store = new HostCredentialStore(peer)
+    const observed: string[] = []
+    store.onDidChange(event => observed.push(event.kind))
+    const read = store.read('fixture')
+    const stopping = store.dispose()
+    await expect(store.list()).rejects.toMatchObject({ code: 'CREDENTIAL_STORE_UNAVAILABLE' })
+    pending.resolve({ ok: true, value: null })
+    await read
+    await stopping
+    expect(store.snapshot.providers).toMatchObject([{ providerId: 'fixture', presence: 'absent' }])
+    expect(observed).toEqual(['observation'])
+  })
+
+  it('distinguishes unknown host state from absence and suppresses token-only changes', async () => {
+    const peer = new CredentialHostPeer({ fixture: { type: 'oauth', access: 'fixture-a', refresh: 'fixture-r', expires: 0 } })
+    const store = new HostCredentialStore(peer)
+    const changes: import('../HostCredentialStore').CredentialChange[] = []
+    store.onDidChange(event => changes.push(event))
+    await store.list()
+    const before = changes.filter(event => event.kind === 'observation').length
+    await store.modify('fixture', async current => ({ ...current!, type: 'oauth', access: 'fixture-b', refresh: 'fixture-r', expires: 1 }))
+    expect(changes.filter(event => event.kind === 'observation')).toHaveLength(before)
+    expect(changes.at(-1)?.kind).toBe('write-confirmed')
+    const request = peer.request.bind(peer)
+    peer.request = async () => {
+      throw new Error('fixture unavailable')
+    }
+    await expect(store.list()).rejects.toThrow('fixture unavailable')
+    expect(store.snapshot.availability).toBe('unknown')
+    expect(store.snapshot.providers).toMatchObject([{ presence: 'present' }])
+    peer.request = request
+    await store.delete('fixture')
+    expect(store.snapshot.providers).toMatchObject([{ presence: 'absent', type: null }])
+    expect(JSON.stringify(changes)).not.toContain('fixture-b')
+    await store.dispose()
+  })
+
+  it('does not let an older read restore a deleted credential or an older list failure replace current health', async () => {
+    const peer = new CredentialHostPeer({ fixture: { type: 'api_key', key: 'fixture-key' } })
+    const store = new HostCredentialStore(peer)
+    const request = peer.request.bind(peer)
+    const oldRead = Promise.withResolvers<unknown>()
+    peer.request = (method, params) => method === 'host.credentials.read' ? oldRead.promise : request(method, params)
+    const reading = store.read('fixture')
+    await store.delete('fixture')
+    oldRead.resolve({ ok: true, value: { type: 'api_key', key: 'fixture-key' } })
+    await reading
+    expect(store.snapshot.providers).toMatchObject([{ presence: 'absent' }])
+    const oldList = Promise.withResolvers<unknown>()
+    peer.request = () => oldList.promise
+    const listing = expect(store.list()).rejects.toThrow('fixture old list')
+    peer.request = request
+    await store.list()
+    oldList.reject(new Error('fixture old list'))
+    await listing
+    expect(store.snapshot.availability).toBe('known')
+    await store.dispose()
+  })
+
   it('serializes concurrent OAuth refreshes for the same provider', async () => {
     const peer = new CredentialHostPeer({
       anthropic: {

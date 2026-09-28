@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalSpaceFilePreview, SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
+import type { LocalSpaceFilePreview } from '@buddy-shared/spaces/spaceFileApi'
 import type { WorkbenchView } from '@/workbench/common/workbench'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { computed, shallowRef, watch } from 'vue'
@@ -16,18 +16,29 @@ const preview = shallowRef<LocalSpaceFilePreview | null>(null)
 const failed = shallowRef(false)
 const modes = computed(() => fileDocumentModes({ preview: preview.value?.kind === 'image' || (preview.value?.kind === 'text' && isMarkdownFile(props.view.title)), source: preview.value?.kind === 'text', edit: false }))
 const mode = computed({ get: () => resolveFileDocumentMode(props.view.state.mode, modes.value), set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }) })
-async function loadPreview() {
+const identity = computed(() => {
+  const { scheme, id, data } = props.view.resource
+  return JSON.stringify([scheme, id, data.spaceId, data.directoryId, data.revision, data.path])
+})
+const attempt = shallowRef(0)
+watch([identity, attempt], async (_, __, onCleanup) => {
+  let active = true
+  onCleanup(() => active = false)
   preview.value = null
   failed.value = false
   try {
-    preview.value = await props.files.readFile(props.view.resource.data as unknown as SpaceFileTarget)
+    const value = await props.files.readFile(spaceFileTargetSchema.parse(props.view.resource.data))
+    if (active)
+      preview.value = value
   }
   catch {
-    failed.value = true
+    if (active)
+      failed.value = true
   }
+}, { immediate: true })
+function loadPreview() {
+  attempt.value++
 }
-
-watch(() => props.view.resource, () => void loadPreview(), { immediate: true })
 </script>
 
 <template>

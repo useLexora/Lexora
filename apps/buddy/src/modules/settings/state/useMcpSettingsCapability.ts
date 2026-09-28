@@ -2,7 +2,7 @@ import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { LocalConnector, LocalConnectorConfig, LocalConnectorCredentialMutation } from '@buddy-shared/connectors/connectorApi'
 import type { Ref } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { readonly, shallowRef } from 'vue'
+import { onScopeDispose, readonly, shallowRef } from 'vue'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 
 export function useMcpSettingsCapability(options: {
@@ -14,16 +14,48 @@ export function useMcpSettingsCapability(options: {
   const error = shallowRef<string | null>(null)
   const loaded = shallowRef(false)
   let reading: Promise<void> | undefined
+  let refreshRequested = false
+  let disposed = false
+  const revisions = new Map<string, number>()
+  const stop = options.api.onChanged((event) => {
+    if (event.revision <= (revisions.get(event.sourceId) ?? 0))
+      return
+    revisions.set(event.sourceId, event.revision)
+    if (revisions.size > 32)
+      revisions.delete(revisions.keys().next().value!)
+    if (loaded.value || reading)
+      void load()
+  })
+  onScopeDispose(() => {
+    disposed = true
+    stop()
+  })
 
   async function load() {
-    if (reading)
+    if (disposed)
+      return
+    if (reading) {
+      refreshRequested = true
       return reading
-    const operation = options.api.list().then((value) => {
-      connectors.value = value
-      loaded.value = true
-    }).catch((cause: unknown) => {
-      error.value = resolveLocalChatErrorMessage(cause, options.language.value)
-    }).finally(() => { reading = undefined })
+    }
+    const operation = (async () => {
+      do {
+        if (disposed)
+          break
+        refreshRequested = false
+        try {
+          const value = await options.api.list()
+          if (!disposed) {
+            connectors.value = value
+            loaded.value = true
+          }
+        }
+        catch (cause) {
+          if (!disposed)
+            error.value = resolveLocalChatErrorMessage(cause, options.language.value)
+        }
+      } while (refreshRequested)
+    })().finally(() => { reading = undefined })
     reading = operation
     return operation
   }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
+import { ConversationMetadataService } from '../ConversationMetadataService'
 import { registerConversationRpc } from '../registerConversationRpc'
 
 const databases: DatabaseSync[] = []
@@ -45,17 +46,17 @@ describe('registerConversationRpc', () => {
         effects.push(`delete:${conversationId}`)
         return conversations.markDeleted(conversationId, '2026-08-27T00:05:00.000Z')
       },
-      resolveModelSelection: async selection => ({
-        ...selection,
-        contextWindow: 128_000,
-        maxTokens: 16_384,
-      }),
       rpc: harness.rpc,
-      sessions: {
-        async invalidateConversation(conversationId) {
-          effects.push(`session:${conversationId}`)
+      metadata: new ConversationMetadataService({
+        repository: conversations,
+        resolveModelSelection: async selection => ({ ...selection, contextWindow: 128_000, maxTokens: 16_384 }),
+        sessions: {
+          async invalidateConversation(conversationId) {
+            effects.push(`session:${conversationId}`)
+            return { pending: 0, degraded: 0 }
+          },
         },
-      },
+      }),
     })
 
     await expect(harness.invoke('conversations.list', {}))
@@ -301,10 +302,9 @@ function emptyConversationDependencies(
     deleteConversation: () => Promise.resolve(false),
     eventLog: { listForRuns: () => [] },
     isDeleting: () => false,
-    resolveModelSelection: selection => Promise.resolve(selection),
+    metadata: new ConversationMetadataService({ repository: conversations, resolveModelSelection: selection => Promise.resolve(selection), sessions: { invalidateConversation: () => Promise.resolve({ pending: 0, degraded: 0 }) } }),
     runInputs: { findByRunId: () => null },
     runs: { listForTimeline: () => [] },
-    sessions: { invalidateConversation: () => Promise.resolve() },
   }
 }
 

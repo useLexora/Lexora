@@ -3,7 +3,9 @@ import { z } from 'zod'
 import { workbenchSlashSchema } from '../workbench/workbenchCommand'
 import { workbenchConditionSchema } from '../workbench/workbenchContext'
 import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi'
+import { extensionAgentSchema } from './extensionAgent'
 import { extensionAuthorSchema } from './extensionIdentity'
+import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings'
 
 export const EXTENSION_API_VERSION = 3
 export const EXTENSION_PROTOCOL = 'lexora-extension'
@@ -53,6 +55,9 @@ export const extensionPlacementSchema = z.discriminatedUnion('kind', [
 })
 export type ExtensionPlacement = z.infer<typeof extensionPlacementSchema>
 export const extensionPermissionsSchema = z.object({
+  agent: z.boolean().default(false),
+  models: z.boolean().default(false),
+  tasks: z.enum(['none', 'read', 'title']).default('none'),
   windowEffects: z.boolean().default(false),
   controls: z.array(workbenchControlSchema).max(workbenchControlSchema.options.length).default([]),
   notifications: z.boolean().default(false),
@@ -84,6 +89,8 @@ export const extensionManifestSchema = z.object({
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
   permissions: extensionPermissionsSchema.prefault({}),
   contributes: z.object({
+    agent: extensionAgentSchema.optional(),
+    settings: extensionSettingsSchema.prefault({}),
     commands: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), hidden: z.boolean().default(false), slash: workbenchSlashSchema.optional(), when: workbenchConditionSchema.optional() }).strict()).max(64).default([]),
     menus: z.array(z.object({ id: contributionId, command: contributionId, target: workbenchMenuSchema, order: z.number().int().min(-1000).max(1000).default(0), when: workbenchConditionSchema.optional() }).strict()).max(32).default([]),
     views: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), entry: extensionPathSchema, stateVersion: z.number().int().min(1).max(10000).default(1), resource: z.enum(['selected-file', 'none']).default('selected-file'), location: z.enum(['context', 'page', 'window-overlay']).default('context'), when: workbenchConditionSchema.optional() }).strict()).max(16).default([]),
@@ -92,10 +99,33 @@ export const extensionManifestSchema = z.object({
   }).strict(),
 }).strict().superRefine((manifest, context) => {
   const ids = new Set<string>()
-  for (const contribution of [...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus]) {
+  const settings = manifest.contributes.settings
+  const agent = manifest.contributes.agent
+  for (const contribution of [...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
+  }
+  const issue = (message: string) => context.addIssue({ code: 'custom', message })
+  if (manifest.apiVersion < 3 && (agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.tasks !== 'none'))
+    issue('Agent capabilities and settings require API 3')
+  if (agent && (!manifest.entry || !manifest.permissions.agent))
+    issue('Agent contributions require an entry and agent permission')
+  if (agent?.enabledWhen && !settings.items.some(item => item.key === agent.enabledWhen && item.type === 'boolean'))
+    issue('Agent enabledWhen must reference a boolean setting')
+  const keys = new Set<string>()
+  for (const group of settings.groups) {
+    if (!settings.modules.some(module => module.id === group.module) && !extensionSettingsModules.includes(group.module))
+      issue('Setting groups must reference an owned or built-in module')
+  }
+  for (const item of settings.items) {
+    if (keys.has(item.key) || (!settings.groups.some(group => group.id === item.group) && !Object.hasOwn(extensionSettingsGroups, item.group)))
+      issue('Setting keys must be unique and groups must be owned or built-in')
+    keys.add(item.key)
+    try {
+      validateExtensionSetting(item, item.default)
+    }
+    catch { issue('Invalid setting default') }
   }
   if (manifest.contributes.commands.length && !manifest.entry)
     context.addIssue({ code: 'custom', message: 'Commands require an extension entry' })
@@ -152,6 +182,9 @@ export function extensionCompatible(manifest: ExtensionManifest, version: string
 
 export function addedExtensionPermissions(previous: ExtensionPermissions | undefined, next: ExtensionPermissions): string[] {
   return [
+    ...(next.agent && !previous?.agent ? ['agent'] : []),
+    ...(next.models && !previous?.models ? ['models'] : []),
+    ...(next.tasks !== 'none' && next.tasks !== previous?.tasks && previous?.tasks !== 'title' ? [`tasks:${next.tasks}`] : []),
     ...(next.windowEffects && !previous?.windowEffects ? ['windowEffects'] : []),
     ...next.controls.filter(target => !previous?.controls?.includes(target)).map(target => `controls:${target}`),
     ...(next.notifications && !previous?.notifications ? ['notifications'] : []),

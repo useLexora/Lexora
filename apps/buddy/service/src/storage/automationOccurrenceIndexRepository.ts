@@ -15,6 +15,9 @@ export interface AutomationOccurrenceIndexRepository {
     conversationId: string,
   ) => AutomationOccurrenceRecord | null
   findOccurrenceById: (id: string) => AutomationOccurrenceRecord | null
+  findOccurrenceForDeletion: (id: string) => AutomationOccurrenceRecord | null
+  findOccurrenceDeletionByConversation: (conversationId: string) => AutomationOccurrenceRecord | null
+  listPendingDeletions: () => AutomationOccurrenceRecord[]
   listHistory: (input: {
     automationId?: string | null
     before?: AutomationCursor | null
@@ -68,6 +71,19 @@ export function createAutomationOccurrenceIndexStore(
       },
       findOccurrenceById(id) {
         return toOptionalOccurrence(findOccurrence.get(id))
+      },
+      findOccurrenceForDeletion(id) {
+        return toOptionalOccurrence(database.prepare('SELECT * FROM automation_occurrences WHERE id = ?').get(id))
+      },
+      findOccurrenceDeletionByConversation(conversationId) {
+        return toOptionalOccurrence(database.prepare('SELECT * FROM automation_occurrences WHERE conversation_id = ?').get(conversationId))
+      },
+      listPendingDeletions() {
+        return (database.prepare(`SELECT o.* FROM automation_occurrences o
+          INNER JOIN conversations c ON c.id = o.conversation_id
+          LEFT JOIN runs r ON r.id = o.run_id
+          WHERE o.deleted_at IS NOT NULL AND (c.deleted_at IS NULL OR r.status IN ('queued', 'running'))
+          ORDER BY o.deleted_at, o.id`).all() as unknown as AutomationOccurrenceRow[]).map(toAutomationOccurrenceRecord)
       },
       listHistory(input) {
         const clauses: string[] = [

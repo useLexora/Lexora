@@ -1,5 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
 import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
+import { freezeEventSnapshot } from '../../../shared/events/eventSnapshot'
 
 export interface CatalogModel {
   id: string
@@ -80,10 +81,13 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
     }
     if (!this.#models.length)
       throw new Error('Empty models.dev catalog')
+    freezeEventSnapshot(this.#providers)
+    freezeEventSnapshot(this.#models)
+    for (const models of this.#byProvider.values()) freezeEventSnapshot(models)
   }
 
   getProviders() {
-    return this.#providers
+    return this.#providers as ReadonlyArray<{ id: string, name: string }>
   }
 
   getModels(providerId?: string): readonly CatalogModel[] {

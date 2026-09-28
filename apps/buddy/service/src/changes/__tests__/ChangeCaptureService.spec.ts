@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ChangeCaptureEvent } from '../ChangeCaptureService'
 import { mkdir, mkdtemp, open, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,6 +20,83 @@ afterEach(async () => {
 })
 
 describe('changeCaptureService', () => {
+  it('reports a committed capture even when count and partial coverage cannot be persisted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buddy-change-receipts-'))
+    directories.push(root)
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace)
+    const path = join(workspace, 'private.txt')
+    await writeFile(path, 'private before')
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    seedRun(database)
+    const repository = createChangeSetRepository(database)
+    let failing = true
+    const service = new ChangeCaptureService({ paths: new BuddyDataPaths(root), onListenerError: () => {}, repository: { ...repository, updateFileCount(...args) {
+      if (failing)
+        throw new Error('count failed')
+
+      return repository.updateFileCount(...args)
+    }, markPartial(...args) {
+      if (failing)
+        throw new Error('coverage failed')
+
+      return repository.markPartial(...args)
+    } } })
+    const events: ChangeCaptureEvent[] = []
+    service.onDidChange(() => {
+      throw new Error('observer failed')
+    })
+    service.onDidChange(event => events.push(event))
+    const input = { conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'tool-1', toolName: 'edit' as const, cwd: workspace, grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'grant-1', kind: 'workspace' as const }] }
+    await service.beginFileTool({ ...input, arguments: { path } })
+    await writeFile(path, 'private after')
+    await expect(service.finishFileTool({ ...input, isError: false })).rejects.toThrow('count failed')
+    expect(repository.listCaptures(input.runId)[0]?.status).toBe('completed')
+    await expect(service.markPartial(input)).rejects.toMatchObject({ code: 'CHANGE_COVERAGE_UNCONFIRMED' })
+    expect(repository.findSetById(input.runId)?.coverage).toBe('complete')
+    expect(events.map(event => event.kind)).toEqual(['set-created', 'capture-committed', 'capture-committed', 'operation-failed', 'coverage-unconfirmed'])
+    failing = false
+    await service.finishFileTool({ ...input, isError: false })
+    await service.markPartial(input)
+    await service.markPartial(input)
+    await service.finalizeRun(input.runId)
+    await service.finalizeRun(input.runId)
+    expect(events.filter(event => event.phase === 'after')).toHaveLength(1)
+    expect(events.filter(event => event.kind === 'coverage-changed')).toHaveLength(1)
+    expect(events.filter(event => event.kind === 'finalized')).toHaveLength(1)
+    expect(await service.getVisibleDetail(input.runId)).toMatchObject({ coverage: 'partial', fileCount: 1, status: 'completed', files: [{ beforeText: 'private before', afterText: 'private after' }] })
+    expect(JSON.stringify(events)).not.toContain(workspace)
+    expect(JSON.stringify(events)).not.toContain('private')
+    await service.dispose()
+  })
+
+  it('serializes an accepted workspace snapshot before finalization and drains both at shutdown', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buddy-change-drain-'))
+    directories.push(root)
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace)
+    await writeFile(join(workspace, 'private.txt'), 'private')
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    seedRun(database)
+    const repository = createChangeSetRepository(database)
+    const service = new ChangeCaptureService({ paths: new BuddyDataPaths(root), repository })
+    const events: ChangeCaptureEvent[] = []
+    service.onDidChange(event => events.push(event))
+    const input = { conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'shell-1', cwd: workspace, grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'grant-1', kind: 'workspace' as const }] }
+    const before = service.beginWorkspaceTool(input)
+    input.grants.length = 0
+    const finalized = service.finalizeRun(input.runId)
+    const disposed = service.dispose()
+    await Promise.all([before, finalized, disposed])
+    expect(repository.findSetById(input.runId)).toMatchObject({ coverage: 'partial', status: 'completed' })
+    expect(events.map(event => event.kind)).toEqual(['set-created', 'coverage-changed', 'finalized'])
+    expect(events.map(event => event.revision)).toEqual([1, 2, 3])
+    expect(events.every(event => Object.isFrozen(event))).toBe(true)
+    await expect(service.beginWorkspaceTool(input)).rejects.toThrow('CHANGE_CAPTURE_STOPPED')
+  })
+
   it('finishes the original capture scope after temporary permissions are revoked', async () => {
     const root = await mkdtemp(join(tmpdir(), 'buddy-expired-change-'))
     directories.push(root)

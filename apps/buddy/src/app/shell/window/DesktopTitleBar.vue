@@ -77,8 +77,8 @@ onScopeDispose(controller.registry.register('lexora.desktopCommands', (scope) =>
   for (const command of DESKTOP_COMMAND_REGISTRY) {
     scope.command({
       id: command.id,
-      get label() { return t(`desktop.command.${command.id}`) },
-      get keybinding() { return platform.value === 'darwin' ? command.macosKeybinding ?? command.keybinding : command.keybinding },
+      label: () => t(`desktop.command.${command.id}`),
+      keybinding: () => platform.value === 'darwin' ? command.macosKeybinding ?? command.keybinding : command.keybinding,
       alternateKeybindings: command.alternateKeybindings,
       shortcutScope: 'application',
       execute: () => executeDesktopCommand(command.id),

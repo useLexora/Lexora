@@ -76,11 +76,13 @@ export class ProviderExecutionModelResolver {
     )) {
       throw new ProviderUnavailableError()
     }
-    const model = this.resolve(input)
-    const credentials = await this.#credentialStatus.listOrEmpty()
+    input = { ...input }
+    const credentials = await this.#credentialStatus.list()
     if (!credentials.some(credential => credential.providerId === input.providerId))
       throw new ProviderAuthenticationRequiredError()
-    return model
+    if (!this.#states.findByProviderId(input.providerId)?.enabled || !this.#modelCatalog.isEnabledAvailable(input.providerId, input.modelId))
+      throw new ProviderUnavailableError()
+    return this.resolve(input)
   }
 
   async resolveSession(input: ProviderExecutionModelInput): Promise<ResolvedProviderSessionModel> {

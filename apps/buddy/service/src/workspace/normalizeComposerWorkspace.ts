@@ -30,7 +30,7 @@ export async function normalizeComposerWorkspace(value: unknown, options: {
         if (attrs.kind === 'file') {
           if (!spaceId)
             throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-          const resource = await options.resources.selectSpaceFilePath(draftId, spaceId, value)
+          const resource = await options.resources.selectSpaceFilePath(draftId, spaceId, value, 'compatibility')
           return { type: 'chatResourceReference', attrs: { resourceId: resource.resourceId } }
         }
         if (attrs.kind === 'skill')

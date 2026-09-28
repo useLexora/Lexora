@@ -65,7 +65,17 @@ describe('mCP global lifecycle', () => {
     const { service } = fixture()
     await service.upsert(config)
     await service.confirmExecution(config.id)
-    expect(await service.test(config.id)).toMatchObject({ status: 'ready', toolCount: 4 })
+    const states: string[] = []
+    service.onDidChangeConnection((event) => {
+      if (event.type === 'state')
+        states.push(event.snapshot.status)
+    })
+    const result = await service.test(config.id)
+    expect(result).toMatchObject({ status: 'ready', toolCount: 4 })
+    expect(Reflect.set(result, 'status', 'error')).toBe(false)
+    expect(service.state(config.id)).toMatchObject({ status: 'disabled', errorCode: null, toolCount: 4 })
+    expect(states.at(-1)).toBe('disabled')
+    expect(states).not.toContain('ready')
     expect(service.list()[0]?.enabled).toBe(false)
     expect(service.getTools().tools).toHaveLength(0)
   })

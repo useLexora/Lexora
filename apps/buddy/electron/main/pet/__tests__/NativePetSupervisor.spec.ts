@@ -14,12 +14,13 @@ class FakePetProcess extends EventEmitter implements NativePetChildProcess {
   readonly stdin = new PassThrough()
   readonly stdout = new PassThrough()
   readonly stderr = new PassThrough()
-  readonly pid: number
+  readonly pid: number | undefined
   readonly killSignals: Array<NodeJS.Signals | number | undefined> = []
   readonly messages: Array<Record<string, unknown>> = []
+  autoExit = true
   #inputBuffer = ''
 
-  constructor(pid: number) {
+  constructor(pid?: number) {
     super()
     this.pid = pid
     this.stdin.setEncoding('utf8')
@@ -37,6 +38,8 @@ class FakePetProcess extends EventEmitter implements NativePetChildProcess {
 
   kill(signal?: NodeJS.Signals | number): boolean {
     this.killSignals.push(signal)
+    if (this.autoExit)
+      this.exit(0)
     return true
   }
 
@@ -75,6 +78,76 @@ function createSupervisor(options: {
 }
 
 describe('nativePetSupervisor', () => {
+  it.each([false, true])('releases an asynchronously failed spawn without requiring exit (stopping: %s)', async (stopping) => {
+    const failed = new FakePetProcess()
+    failed.autoExit = false
+    const replacement = new FakePetProcess(101)
+    const processes = [failed, replacement]
+    const supervisor = new NativePetSupervisor({ diagnosticOutput: new PassThrough(), spawnPet: () => processes.shift()!, restartDelaysMs: [], stopTimeoutMs: 50 })
+    const changes: Array<{ kind: string, status?: string }> = []
+    supervisor.onDidChange(change => changes.push(change))
+    try {
+      supervisor.start()
+      const stopped = stopping ? supervisor.stop() : undefined
+      if (stopped) {
+        await Promise.resolve()
+        expect(supervisor.snapshot.retiring).toHaveLength(1)
+      }
+      failed.emit('error', Object.assign(new Error('spawn failed'), { code: 'EACCES' }))
+      await expect(stopped ?? supervisor.stop()).resolves.toBeUndefined()
+      expect(supervisor.snapshot).toMatchObject({ state: { status: 'stopped' }, generation: null, retiring: [] })
+      expect(changes.filter(change => change.kind === 'process').map(change => change.status)).toContain('spawn-failed')
+      expect(changes.some(change => change.status === 'exited' || change.status === 'stop-unknown')).toBe(false)
+      supervisor.start()
+      replacement.ready()
+      await vi.waitFor(() => expect(supervisor.state).toMatchObject({ status: 'ready', pid: 101 }))
+    }
+    finally { await supervisor.dispose() }
+  })
+
+  it('does not confirm a spawned process has stopped after a process-control error', async () => {
+    vi.useFakeTimers()
+    const { supervisor, processes } = createSupervisor()
+    const changes: Array<{ kind: string, status?: string, generation: string | null }> = []
+    supervisor.onDidChange(change => changes.push(change))
+    try {
+      supervisor.start()
+      processes[0]!.ready()
+      await vi.runAllTicks()
+      processes[0]!.autoExit = false
+      processes[0]!.emit('error', new Error('process control failed'))
+      const stopped = expect(supervisor.stop()).rejects.toThrow('PET_STOP_UNCONFIRMED')
+      await vi.advanceTimersByTimeAsync(2000)
+      await stopped
+      expect(supervisor.state.status).toBe('stop-unknown')
+      expect(supervisor.snapshot.retiring).toHaveLength(1)
+      expect(() => supervisor.start()).toThrow('PET_STOP_UNCONFIRMED')
+      processes[0]!.exit(0)
+      expect(supervisor.state.status).toBe('stopped')
+      expect(supervisor.snapshot.retiring).toEqual([])
+      expect(changes.filter(change => change.kind === 'process').map(change => change.status)).toEqual(['stop-requested', 'stop-unknown', 'exited'])
+    }
+    finally { vi.useRealTimers() }
+  })
+
+  it('keeps a timed-out dispatched step unknown without sending a compensating action', async () => {
+    vi.useFakeTimers()
+    const { supervisor, processes } = createSupervisor()
+    const changes: Array<{ kind: string, status?: string }> = []
+    supervisor.onDidChange(change => changes.push(change))
+    try {
+      supervisor.start()
+      processes[0]!.ready()
+      await vi.runAllTicks()
+      const execution = supervisor.executeSequence(sequence('fixture', 1))
+      await vi.advanceTimersByTimeAsync(2000)
+      await expect(execution).resolves.toMatchObject({ status: 'failed', code: 'PET_UNAVAILABLE' })
+      expect(executeMessages(processes[0]!)).toHaveLength(1)
+      expect(changes.filter(change => change.kind === 'step').map(change => change.status)).toEqual(['dispatched', 'unknown'])
+      await supervisor.stop()
+    }
+    finally { vi.useRealTimers() }
+  })
   it('reports a native pet process startup failure', () => {
     const diagnosticOutput = new PassThrough()
     const diagnostics: string[] = []

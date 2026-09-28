@@ -78,7 +78,7 @@ export function createShellCapability(options: {
                       readOnly: options.execution.readOnly,
                       roots: [...new Set(options.getGrants().map(grant => grant.canonicalRoot))],
                       workspaceRoots: options.getGrants().filter(grant => grant.kind === 'workspace').map(grant => grant.canonicalRoot),
-                      additionalDirectories: options.directoryPermissions.get(run),
+                      additionalDirectories: [...options.directoryPermissions.get(run)],
                       resourceReadRoots: [...(options.resourceReadRoots ?? [])],
                       timeout: execOptions.timeout,
                     }, { ...execOptions, signal: executionSignal }, async (target) => {

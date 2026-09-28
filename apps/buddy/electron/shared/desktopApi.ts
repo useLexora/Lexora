@@ -1,7 +1,8 @@
 import type { DesktopBrowserApi } from '../../shared/browser/browserDesktopApi'
-import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
 import type { ApplicationLogApi } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
+import type { RendererDiagnosticApi } from '../../shared/diagnostics/rendererDiagnostic'
+import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
 import type { BuddyCapabilities } from '../../shared/platform'
 import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
@@ -15,6 +16,7 @@ export const DESKTOP_IPC_CHANNELS = {
   contextPanelExecute: 'lexora:context-panel:execute',
   contextPanelStateChanged: 'lexora:context-panel:state-changed',
   appLogsQuery: 'lexora:app:logs:query',
+  appLogsReport: 'lexora:app:logs:report',
   appLogsExportDiagnostics: 'lexora:app:logs:export-diagnostics',
   appStartupGetState: 'lexora:app:startup:get-state',
   appStartupReport: 'lexora:app:startup:report',
@@ -54,6 +56,7 @@ export const DESKTOP_IPC_CHANNELS = {
   commandExecute: 'lexora:command:execute',
   settingsGet: 'lexora:settings:get',
   settingsUpdate: 'lexora:settings:update',
+  settingsChanged: 'lexora:settings:changed',
   windowGetState: 'lexora:window:get-state',
   windowMinimize: 'lexora:window:minimize',
   windowStateChanged: 'lexora:window:state-changed',
@@ -199,11 +202,11 @@ export interface LexoraDesktopApi {
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi
   contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi
   app: {
-    logs: ApplicationLogApi
+    logs: ApplicationLogApi & RendererDiagnosticApi
     startup: {
       getState: () => Promise<ApplicationStartupState>
       onStateChanged: (listener: (state: ApplicationStartupState) => void) => () => void
-      reportEvent: (event: ApplicationDiagnostic) => Promise<void>
+      reportLifecycle: (report: RendererLifecycleReport) => Promise<void>
     }
     checkForUpdates: () => Promise<DesktopUpdateCheckResult>
     getInfo: () => Promise<DesktopAppInfo>
@@ -224,6 +227,7 @@ export interface LexoraDesktopApi {
     execute: (commandId: DesktopCommandId) => Promise<void>
   }
   settings: {
+    onChanged: (listener: (config: LexoraConfig) => void) => () => void
     get: () => Promise<LexoraConfig>
     update: (patch: LexoraConfigPatch) => Promise<LexoraConfig>
   }

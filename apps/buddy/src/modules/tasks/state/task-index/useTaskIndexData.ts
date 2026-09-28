@@ -19,11 +19,12 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   let disposed = false
   let initialized = false
   let initialization: Promise<void> | null = null
-  onScopeDispose(() => {
+  function dispose() {
     disposed = true
     conversationListGeneration += 1
     spaceListGeneration += 1
-  })
+  }
+  onScopeDispose(dispose)
 
   async function refreshIndex() {
     if (disposed)
@@ -100,12 +101,14 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   }
 
   return {
+    dispose,
     initialize,
     applyConversation,
     applySpace,
     conversations: readonly(conversations),
     spaces: readonly(spaces),
     refreshIndex,
+    refreshSpaces,
     refreshConversations,
     replaceSpaces,
     updateConversationBranch,

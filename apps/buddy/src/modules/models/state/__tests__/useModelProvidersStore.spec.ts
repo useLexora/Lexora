@@ -26,6 +26,37 @@ describe('filterAvailableModels', () => {
 })
 
 describe('useModelProvidersStore', () => {
+  it('reconciles a domain notification that arrives during an in-flight catalog read', async () => {
+    const initial = deferred<LocalProvider[]>()
+    let changed: () => void = () => {}
+    const api = {
+      list: vi.fn().mockReturnValueOnce(initial.promise).mockResolvedValue([provider('ready', false, 'available')]),
+      listBuiltinPresets: async () => [],
+      listModels: async () => [model('ready')],
+      getDefaultModel: async () => null,
+      onAuthChallenge: () => () => {},
+      onChanged: (listener: () => void) => {
+        changed = listener
+        return () => {
+          changed = () => {}
+        }
+      },
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    const reading = store.loadModelCatalog()
+    changed()
+    changed()
+    initial.resolve([provider('ready', true, 'available')])
+    await reading
+    await vi.waitFor(() => expect(store.providers.value[0]?.enabled).toBe(false))
+    expect(store.models.value).toEqual([])
+    expect(vi.mocked(api.list).mock.calls).toHaveLength(2)
+    store.dispose()
+    changed()
+    await Promise.resolve()
+    expect(vi.mocked(api.list).mock.calls).toHaveLength(2)
+  })
+
   it('shares initial catalog loading and refreshes a mutation that completes during that load', async () => {
     const initial = deferred<LocalProvider[]>()
     const changed = provider('ready', false, 'available')
@@ -37,6 +68,7 @@ describe('useModelProvidersStore', () => {
       setDefaultModel: async () => {},
       setEnabled: async () => {},
       onAuthChallenge: () => () => {},
+      onChanged: () => () => {},
     } as unknown as LexoraDesktopApi['localChat']['providers']
     const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
     const loading = store.loadModelCatalog()
@@ -67,6 +99,7 @@ describe('useModelProvidersStore', () => {
             new Error('LEXORA_LOCAL_CHAT_ERROR:PROVIDER_LOGIN_CANCELLED:0'),
           ),
           onAuthChallenge: () => () => {},
+          onChanged: () => () => {},
         },
         runtime: {
           onStateChanged: () => () => {},
@@ -100,6 +133,7 @@ describe('useModelProvidersStore', () => {
             return new Promise<void>(resolve => resolveFirstLogin = resolve)
           },
           onAuthChallenge: () => () => {},
+          onChanged: () => () => {},
         },
         runtime: {
           onStateChanged: () => () => {},
@@ -180,6 +214,7 @@ function model(providerId: string): LocalRuntimeModelOption {
 
 function emptyNotificationApi() {
   return {
+    onChanged: () => () => {},
     list: async () => ({ items: [], unseenCount: 0 }),
   }
 }

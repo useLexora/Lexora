@@ -15,8 +15,6 @@ export function filterNotifications(
 
 export function useNotificationCenterStore(api: {
   notifications: LocalChatApi['notifications']
-  chat: Pick<LocalChatApi['chat'], 'onRunEvent'>
-  automations: Pick<LocalChatApi['automations'], 'onChanged'>
 }) {
   const items = shallowRef<ReadonlyArray<LocalNotification>>([])
   const unseenCount = shallowRef(0)
@@ -28,11 +26,12 @@ export function useNotificationCenterStore(api: {
   let generation = 0
   let pendingMutations = 0
   let mutationQueue = Promise.resolve(true)
-  const stopRunEvent = api.chat.onRunEvent((event) => {
-    if (event.type === 'run.completed' || event.type === 'run.failed')
+  const stopChanges = api.notifications.onChanged(() => {
+    generation += 1
+    refreshRequested = true
+    if (!pendingMutations)
       void load()
   })
-  const stopAutomationChanged = api.automations.onChanged(() => void load())
 
   const hasNotifications = computed(() => items.value.length > 0)
 
@@ -44,17 +43,26 @@ export function useNotificationCenterStore(api: {
   function load(): Promise<boolean> {
     if (stopped)
       return Promise.resolve(false)
+    if (pendingMutations) {
+      refreshRequested = true
+      return Promise.resolve(false)
+    }
     if (loadPromise) {
       refreshRequested = true
       return loadPromise
     }
+    refreshRequested = false
     isLoading.value = true
     error.value = null
     const current = generation
     loadPromise = api.notifications.list()
       .then((value) => {
-        if (stopped || current !== generation || pendingMutations > 0)
+        if (stopped)
           return false
+        if (current !== generation || pendingMutations > 0) {
+          refreshRequested = true
+          return false
+        }
         apply(value)
         return true
       })
@@ -84,14 +92,19 @@ export function useNotificationCenterStore(api: {
       if (stopped)
         return false
       error.value = null
+      const current = generation
       try {
         const value = await operation()
         if (stopped)
           return false
-        apply(value)
+        if (current === generation)
+          apply(value)
+        else
+          refreshRequested = true
         return true
       }
       catch (markError) {
+        refreshRequested = true
         if (!stopped)
           error.value = markError
         return false
@@ -99,6 +112,8 @@ export function useNotificationCenterStore(api: {
       finally {
         generation += 1
         pendingMutations -= 1
+        if (!pendingMutations && refreshRequested)
+          void load()
       }
     })
     mutationQueue = mutation
@@ -119,8 +134,7 @@ export function useNotificationCenterStore(api: {
     stopped = true
     generation += 1
     refreshRequested = false
-    stopAutomationChanged()
-    stopRunEvent()
+    stopChanges()
   }
 
   return {

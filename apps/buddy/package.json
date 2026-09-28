@@ -56,6 +56,7 @@
     "@mozilla/readability": "^0.6.0",
     "@silvia-odwyer/photon-node": "0.3.4",
     "diff": "^8.0.4",
+    "eventemitter2": "6.4.9",
     "fflate": "0.8.3",
     "linkedom": "^0.18.13",
     "minisearch": "7.2.0",

@@ -9,6 +9,7 @@ import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCom
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { qualifyWorkbenchCommand } from '@buddy-shared/workbench/workbenchCommand'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
+import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCatalog } from '@buddy-shared/workbench/workbenchUi'
 import { nextTick, onScopeDispose, watch } from 'vue'
 import { DesktopExtensionView } from '@/modules/extensions/ui'
 
@@ -49,7 +50,6 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       owners.set(id, { revision: item.revision, dispose })
     }
     reconcilePlacements()
-    controller.changed()
   }, { immediate: true, flush: 'sync' })
   function reconcilePlacements() {
     if (!options.ready())
@@ -112,7 +112,26 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
     try {
       if (signal.aborted)
         return
-      if (event.kind === 'interaction') {
+      if (event.kind === 'clear-data') {
+        const ids = Object.values(controller.layout.views).filter(view => view.resource.scheme === 'extension' && view.resource.data.extensionId === event.extensionId).map(view => view.id)
+        if (!(await controller.closeMany(ids, signal)).committed || signal.aborted)
+          return
+        const configuration = { ...controller.configuration.snapshot() }
+        for (const target of workbenchUiTargetCatalog) {
+          const key = workbenchUiSelectionKey(target)
+          const previous = parseWorkbenchUiSelection(configuration[key], target.selection === 'multiple')
+          if (!previous?.some(id => id.startsWith(`${event.extensionId}.`)))
+            continue
+          const remaining = previous.filter(id => !id.startsWith(`${event.extensionId}.`))
+          if (remaining.length)
+            configuration[key] = target.selection === 'multiple' ? JSON.stringify(remaining) : remaining[0]!
+          else delete configuration[key]
+        }
+        controller.configuration.restore(configuration)
+        await persistence.checkpoint()
+        viewId = event.requestId
+      }
+      else if (event.kind === 'interaction') {
         if (event.title === null) {
           controller.removeInteraction(event.interactionId)
         }
@@ -164,7 +183,7 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         if (event.visible) {
           viewId = await controller.open({ scheme: 'extension', id: placement.id, data: { extensionId: event.extensionId, viewType: placement.view, resource: null, placementId: placement.id } }, descriptor.title, { signal, placement: placement.id, mountInstanceId: instanceId, interactionId: event.interactionId, viewType: placement.view, location: 'mount', focus: false, state: { version: descriptor.stateVersion, value: {} } })
         }
-        else if (existing && await controller.close(existing.id, signal)) {
+        else if (existing && (await controller.close(existing.id, signal)).committed) {
           viewId = existing.id
         }
         await persistence.flush()

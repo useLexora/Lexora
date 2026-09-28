@@ -16,6 +16,9 @@ import type {
 } from '../storage/approvalRepository'
 import type { ApprovalAuthorizationKeys, ApprovalAuthorizationOverride } from './approvalAuthorization'
 import { randomUUID } from 'node:crypto'
+import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { createApprovalReviewPayload } from '../../../shared/permissions/approvalReviewPayload'
 import { approvalReuseScopes, createApprovalAuthorizationKeys } from './approvalAuthorization'
 
@@ -58,9 +61,23 @@ export interface ApprovalServiceOptions {
   eventLog: { append: (input: AppendBuddyRunEventInput) => Promise<unknown> }
   onExpired?: (runId: string) => Promise<void> | void
   repository: ApprovalRepository
+  onObserverError?: (error: unknown) => void
 }
 
+type ApprovalCancellationReason = 'cancelled' | 'expired' | 'recovery' | 'shutdown'
+
+export type ApprovalLifecycleFact = Readonly<
+  | { kind: 'request.queued', requestId: string, runId: string, toolCallId: string }
+  | { kind: 'request.released', requestId: string, runId: string, toolCallId: string, reason: 'started' | 'cancelled' | 'shutdown' }
+  | { kind: 'waiter.started', approvalId: string, runId: string, toolCallId: string }
+  | { kind: 'waiter.released', approvalId: string, runId: string, toolCallId: string, reason: ApprovalCancellationReason | 'approved' | 'denied' | 'request_failed', persistence: 'committed' | 'failed', durationMs: number }
+  | { kind: 'authorization.established', approvalId: string, runId: string, scope: ApprovalReuseScope }
+  | { kind: 'authorization.cleared', runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown', count: number }
+  | { kind: 'cancellation.failed', approvalId: string, runId: string, toolCallId: string, reason: ApprovalCancellationReason, errorCode: string }
+>
+
 interface ApprovalWaiter {
+  startedAt: number
   authorizationSignal: AbortSignal
   authorizationKeys: ApprovalAuthorizationKeys
   reuseScopes: ReadonlySet<ApprovalReuseScope>
@@ -85,23 +102,48 @@ export class ApprovalService {
   readonly #waiters = new Map<string, ApprovalWaiter>()
   readonly #queues = new Map<string, Promise<void>>()
   readonly #runLifetimes = new Map<string, () => void>()
+  readonly #cancellations = new Set<Promise<void>>()
+  readonly #lifecycle: Emitter<ApprovalLifecycleFact>
+  readonly onDidChange: Emitter<ApprovalLifecycleFact>['event']
+  #stopping = false
+  #disposePromise: Promise<void> | null = null
 
   constructor(options: ApprovalServiceOptions) {
     this.#approvalTimeoutMs = options.approvalTimeoutMs ?? APPROVAL_WAIT_TIMEOUT_MS
     this.#eventLog = options.eventLog
     this.#onExpired = options.onExpired ?? (() => {})
     this.#repository = options.repository
+    this.#lifecycle = new Emitter(options.onObserverError ?? (() => {}))
+    this.onDidChange = this.#lifecycle.event
   }
 
   async request(input: ApprovalRequest): Promise<ApprovalRequestResult> {
+    if (this.#stopping || input.signal.aborted)
+      throw new ApprovalCancelledError()
+    input = { ...input }
+    const requestId = randomUUID()
     const previous = this.#queues.get(input.runId) ?? Promise.resolve()
     let started = false
+    let released = false
+    const release = (reason: 'started' | 'cancelled' | 'shutdown') => {
+      if (released)
+        return
+      released = true
+      input.signal.removeEventListener('abort', abort)
+      this.#lifecycle.fire(copyEventSnapshot({ kind: 'request.released', requestId, runId: input.runId, toolCallId: input.toolCallId, reason }))
+    }
+    function abort() {
+      release('cancelled')
+    }
     const pending = previous.then(() => {
       started = true
+      release(input.signal.aborted ? 'cancelled' : this.#stopping ? 'shutdown' : 'started')
       return this.#request(input)
     })
     const settled = pending.then(() => {}, () => {})
     this.#queues.set(input.runId, settled)
+    input.signal.addEventListener('abort', abort, { once: true })
+    this.#lifecycle.fire(copyEventSnapshot({ kind: 'request.queued', requestId, runId: input.runId, toolCallId: input.toolCallId }))
     void settled.then(() => {
       if (this.#queues.get(input.runId) === settled)
         this.#queues.delete(input.runId)
@@ -110,7 +152,7 @@ export class ApprovalService {
   }
 
   async #request(input: ApprovalRequest): Promise<ApprovalRequestResult> {
-    if (input.signal.aborted)
+    if (this.#stopping || input.signal.aborted)
       throw new ApprovalCancelledError()
     const authorizationKeys = createApprovalAuthorizationKeys(input, input.reuse)
     const reuseScopes = approvalReuseScopes(authorizationKeys, input.reuseScopes)
@@ -156,11 +198,12 @@ export class ApprovalService {
       summary: input.summary,
       toolCallId: input.toolCallId,
     }
-    const abort = () => void this.#cancel(approval).catch(() => {})
-    const expire = () => void this.#cancel(approval, true).catch(() => {})
+    const abort = () => this.#scheduleCancellation(approval, 'cancelled')
+    const expire = () => this.#scheduleCancellation(approval, 'expired')
     let timer: ReturnType<typeof setTimeout> | null = null
     const decision = new Promise<ApprovalRequestResult>((resolve, reject) => {
       this.#waiters.set(approval.id, {
+        startedAt: Date.now(),
         authorizationSignal: input.runSignal ?? input.signal,
         authorizationKeys,
         cleanup: () => {
@@ -176,10 +219,11 @@ export class ApprovalService {
     })
     void decision.catch(() => {})
     input.signal.addEventListener('abort', abort, { once: true })
+    this.#lifecycle.fire(copyEventSnapshot({ kind: 'waiter.started', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId }))
     try {
       await this.#appendRequested(approval)
       this.#requireApproval(approval.id)
-      if (!input.signal.aborted) {
+      if (!this.#stopping && !input.signal.aborted && this.#waiters.has(approval.id)) {
         timer = setTimeout(expire, this.#approvalTimeoutMs)
         timer.unref?.()
       }
@@ -187,28 +231,32 @@ export class ApprovalService {
     catch (error) {
       const waiter = this.#waiters.get(approval.id)
       waiter?.reject(asError(error))
-      waiter?.cleanup()
-      this.#waiters.delete(approval.id)
+      this.#releaseWaiter(approval, 'request_failed', 'failed')
       throw error
     }
-    if (input.signal.aborted) {
-      await this.#cancel(approval)
+    if (this.#stopping || input.signal.aborted) {
+      await this.#cancel(approval, this.#stopping ? 'shutdown' : 'cancelled')
       return decision
     }
     return decision
   }
 
   async resolve(input: ApprovalResolution): Promise<ApprovalRecord> {
-    if (this.#resolving.has(input.id))
+    if (this.#stopping || this.#resolving.has(input.id))
       throw new ApprovalResolutionError()
     return this.#trackResolution(input.id, this.#resolvePending(input))
   }
 
-  clearRunAuthorizations(runId: string): void {
+  clearRunAuthorizations(runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown' = 'run_settled'): void {
     this.#runLifetimes.get(runId)?.()
     this.#runLifetimes.delete(runId)
-    for (const authorizations of this.#authorizations.values())
+    let count = 0
+    for (const authorizations of this.#authorizations.values()) {
+      count += authorizations.get(runId)?.size ?? 0
       authorizations.delete(runId)
+    }
+    if (count)
+      this.#lifecycle.fire(copyEventSnapshot({ kind: 'authorization.cleared', runId, reason, count }))
   }
 
   async #resolvePending(input: ApprovalResolution): Promise<ApprovalRecord> {
@@ -230,7 +278,7 @@ export class ApprovalService {
     const approval = this.#requireApproval(input.id)
     if (approval.status !== decision)
       throw new ApprovalResolutionError()
-    if (approvedScope && waiter && !waiter.signal.aborted && !waiter.authorizationSignal.aborted) {
+    if (approvedScope && waiter && !this.#stopping && !waiter.signal.aborted && !waiter.authorizationSignal.aborted) {
       this.#storeAuthorization(
         approvedScope,
         pending.runId,
@@ -238,10 +286,11 @@ export class ApprovalService {
         pending.id,
       )
       if (!this.#runLifetimes.has(pending.runId)) {
-        const clear = () => this.clearRunAuthorizations(pending.runId)
+        const clear = () => this.clearRunAuthorizations(pending.runId, 'run_cancelled')
         waiter.authorizationSignal.addEventListener('abort', clear, { once: true })
         this.#runLifetimes.set(pending.runId, () => waiter.authorizationSignal.removeEventListener('abort', clear))
       }
+      this.#lifecycle.fire(copyEventSnapshot({ kind: 'authorization.established', approvalId: pending.id, runId: pending.runId, scope: approvedScope }))
     }
     waiter?.resolve({
       approvalId: pending.id,
@@ -251,37 +300,46 @@ export class ApprovalService {
           ? 'approved_once'
           : 'denied',
     })
-    waiter?.cleanup()
-    this.#waiters.delete(input.id)
+    this.#releaseWaiter(pending, decision, 'committed')
     return approval
   }
 
-  async cancelPendingApprovals(): Promise<number> {
+  async cancelPendingApprovals(reason: 'recovery' | 'shutdown' = 'recovery'): Promise<number> {
     let cancelled = 0
     for (const approval of this.#repository.listPending()) {
-      await this.#cancel(approval)
+      await this.#cancel(approval, reason)
       cancelled += 1
     }
     return cancelled
   }
 
-  async #cancel(approval: ApprovalRecord, expired = false): Promise<void> {
+  async #cancel(approval: ApprovalRecord, reason: ApprovalCancellationReason): Promise<void> {
     const resolving = this.#resolving.get(approval.id)
     if (resolving) {
       await resolving.catch(() => {})
-      return this.#cancel(approval, expired)
+      return this.#cancel(approval, reason)
     }
     const pending = this.#repository.findById(approval.id)
     if (!pending || pending.status !== 'pending')
       return
-    await this.#trackResolution(approval.id, this.#cancelPending(pending, expired))
-    if (expired)
+    await this.#trackResolution(approval.id, this.#cancelPending(pending, reason))
+    if (reason === 'expired')
       await this.#onExpired(approval.runId)
   }
 
-  async #cancelPending(approval: ApprovalRecord, expired: boolean): Promise<void> {
+  #scheduleCancellation(approval: ApprovalRecord, reason: ApprovalCancellationReason): void {
+    const operation = this.#cancel(approval, reason)
+    this.#cancellations.add(operation)
+    void operation.then(() => this.#cancellations.delete(operation), (error) => {
+      this.#cancellations.delete(operation)
+      this.#lifecycle.fire(copyEventSnapshot({ kind: 'cancellation.failed', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId, reason, errorCode: readDiagnosticErrorCode(error) }))
+    })
+  }
+
+  async #cancelPending(approval: ApprovalRecord, reason: ApprovalCancellationReason): Promise<void> {
     const resolvedAt = new Date().toISOString()
     const waiter = this.#waiters.get(approval.id)
+    let persistence: 'committed' | 'failed' = 'failed'
     try {
       await this.#appendResolved({
         ...approval,
@@ -289,16 +347,53 @@ export class ApprovalService {
         status: 'cancelled',
         resolution: 'cancelled',
       })
-      waiter?.reject(expired ? new ApprovalExpiredError() : new ApprovalCancelledError())
+      persistence = 'committed'
+      waiter?.reject(reason === 'expired' ? new ApprovalExpiredError() : new ApprovalCancelledError())
     }
     catch (error) {
       waiter?.reject(asError(error))
       throw error
     }
     finally {
-      waiter?.cleanup()
-      this.#waiters.delete(approval.id)
+      this.#releaseWaiter(approval, reason, persistence)
     }
+  }
+
+  dispose(): Promise<void> {
+    if (this.#disposePromise)
+      return this.#disposePromise
+    this.#stopping = true
+    this.#disposePromise = this.#dispose()
+    return this.#disposePromise
+  }
+
+  async #dispose(): Promise<void> {
+    const failures: unknown[] = []
+    try {
+      const cancelled = await Promise.allSettled(this.#repository.listPending().map(approval => this.#cancel(approval, 'shutdown')))
+      failures.push(...cancelled.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+      await Promise.allSettled(this.#queues.values())
+      await Promise.allSettled(this.#resolving.values())
+      const cancellations = await Promise.allSettled(this.#cancellations)
+      failures.push(...cancellations.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    }
+    finally {
+      const runIds = new Set([...this.#authorizations.values()].flatMap(authorizations => [...authorizations.keys()]))
+      for (const runId of runIds)
+        this.clearRunAuthorizations(runId, 'shutdown')
+      this.#lifecycle.dispose()
+    }
+    if (failures.length)
+      throw new AggregateError(failures, 'Lexora Buddy approval shutdown could not persist every cancellation')
+  }
+
+  #releaseWaiter(approval: ApprovalRecord, reason: Extract<ApprovalLifecycleFact, { kind: 'waiter.released' }>['reason'], persistence: 'committed' | 'failed'): void {
+    const waiter = this.#waiters.get(approval.id)
+    if (!waiter)
+      return
+    waiter.cleanup()
+    this.#waiters.delete(approval.id)
+    this.#lifecycle.fire(copyEventSnapshot({ kind: 'waiter.released', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId, reason, persistence, durationMs: Math.max(0, Date.now() - waiter.startedAt) }))
   }
 
   #trackResolution<T>(id: string, operation: Promise<T>): Promise<T> {

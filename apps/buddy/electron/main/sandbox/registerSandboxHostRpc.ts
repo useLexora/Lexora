@@ -8,6 +8,7 @@ import { createSandboxDirectory } from '../../../platform/process/sandboxDirecto
 import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
+import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
 import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema } from '../../../shared/permissions/shellSandbox'
 import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
@@ -82,6 +83,12 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         }))
         child.once('error', () => processPeer.close(new Error('Sandbox supervisor failed')))
         processPeer.onNotification((method, params) => {
+          if (method === 'sandbox.lifecycle' && !disposed) {
+            const event = sandboxLifecycleNotificationSchema.safeParse(params)
+            if (event.success && event.data.requestId === input.requestId)
+              peer.notify('host.sandbox.lifecycle', event.data)
+            return
+          }
           if (method !== 'sandbox.output' || disposed || controller.signal.aborted)
             return
           const output = sandboxOutputSchema.parse(params)

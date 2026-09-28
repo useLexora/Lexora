@@ -3,7 +3,6 @@ import { NScrollbar } from 'naive-ui'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 
 defineProps<{ loading?: boolean, requiresRuntime?: boolean, fill?: boolean }>()
-
 defineSlots<{
   actions?: () => unknown
   default: () => unknown

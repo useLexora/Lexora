@@ -1,5 +1,6 @@
 import type { BuddyServiceMessageProcess } from './BuddyServicePeer'
 import nodeProcess from 'node:process'
+import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { utilityProcess } from 'electron'
 
@@ -60,10 +61,30 @@ export function forkBuddyServiceProcess(
     },
   )
   if (process.stderr) {
-    if (options.captureStderr)
-      options.captureStderr(process.stderr)
-    else
+    if (options.captureStderr) {
+      const source = process.stderr
+      const output = new PassThrough()
+      function finish() {
+        source.unpipe(output)
+        source.removeListener('close', finish)
+        source.removeListener('error', fail)
+        output.end()
+      }
+      function fail(error: Error) {
+        finish()
+        output.destroy(error)
+      }
+      options.captureStderr(output)
+      source.once('close', finish)
+      source.once('error', fail)
+      source.pipe(output)
+      process.once('exit', finish)
+      if (!source.readable)
+        finish()
+    }
+    else {
       process.stderr.pipe(nodeProcess.stderr, { end: false })
+    }
   }
   const peer = new BuddyServicePeer({
     onFatalError: options.onFatalError,

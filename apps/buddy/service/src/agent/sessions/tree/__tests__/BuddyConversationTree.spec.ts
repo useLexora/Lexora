@@ -1,12 +1,13 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { RunRecord } from '../../../../storage/runRecord'
 import type { BuddySessionRecoveryService } from '../../recovery/BuddySessionRecoveryService'
+import type { BuddyTreeCommit, BuddyTreeFailure } from '../BuddyTreeEvents'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createConversationRepository } from '../../../../storage/conversationRepository'
 import { createConversationTreeRepository } from '../../../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../../../storage/database'
@@ -22,6 +23,54 @@ afterEach(async () => {
 })
 
 describe('native conversation tree', () => {
+  it('retains a durable file commit when binding fails and reconciles without recreating the file', async () => {
+    const fixture = await createFixture()
+    const commits: BuddyTreeCommit[] = []
+    const failures: BuddyTreeFailure[] = []
+    fixture.tree.onDidCommit(event => commits.push(event))
+    fixture.tree.onDidFail(event => failures.push(event))
+    vi.spyOn(fixture.repository, 'bind').mockImplementationOnce(() => {
+      throw new Error('Fixture SQL binding failure')
+    })
+    const run = fixture.run('first', 'b0', 'q1')
+    await expect(fixture.open(run)).rejects.toThrow('Fixture SQL binding failure')
+    expect(commits.map(event => event.kind)).toEqual(['file.created'])
+    expect(failures[0]).toMatchObject({ operationId: commits[0]!.operationId, stage: 'binding' })
+    expect(fixture.repository.findBinding('conversation')).toBeUndefined()
+    const file = join(fixture.root, 'conversations/conversation/session/tree.jsonl')
+    const initial = await readFile(file, 'utf8')
+    const opened = await fixture.open(run)
+    expect(commits.map(event => event.kind)).toEqual(['file.created', 'binding.committed'])
+    expect(commits[1]).toMatchObject({ reason: 'reconciled', treeId: commits[0]!.treeId })
+    expect((await readFile(file, 'utf8')).startsWith(initial)).toBe(true)
+    expect(Reflect.set(commits[0]!, 'treeId', 'changed')).toBe(false)
+    await opened.session.shutdown('quit')
+  })
+
+  it('gives snapshots independent memory managers without new persistent commits', async () => {
+    const fixture = await createFixture()
+    const commits: BuddyTreeCommit[] = []
+    fixture.tree.onDidCommit(event => commits.push(event))
+    const first = fixture.run('first', 'b0', 'q1')
+    const opened = await fixture.open(first)
+    await opened.cursor.begin(opened.session.session, first.id)
+    opened.cursor.manager.appendMessage(user('q1', 'original question'))
+    opened.cursor.manager.appendMessage(assistant([{ type: 'text', text: 'original answer' }]))
+    opened.cursor.finish()
+    opened.cursor.finish()
+    const file = opened.session.piSessionFile
+    const saved = await readFile(file, 'utf8')
+    const count = commits.length
+    expect(commits.filter(event => event.kind === 'checkpoint.committed').map(event => event.position)).toEqual(['before', 'after'])
+    const snapshot = await fixture.tree.snapshot('conversation', 'b0', fixture.root)
+    expect(snapshot?.getSessionFile()).toBeUndefined()
+    snapshot!.appendMessage(user('private-preview', 'only in preview'))
+    expect(await readFile(file, 'utf8')).toBe(saved)
+    expect(JSON.stringify((await fixture.tree.snapshot('conversation', 'b0', fixture.root))!.getEntries())).not.toContain('only in preview')
+    expect(commits).toHaveLength(count)
+    await opened.session.shutdown('quit')
+  })
+
   it('durably preserves the journal through checkpoints and reopening', async () => {
     const fixture = await createFixture()
     const first = fixture.run('first', 'b0', 'q1')
@@ -144,6 +193,8 @@ describe('native conversation tree', () => {
 
   it('imports native context edits and tool results without rewriting the source journal', async () => {
     const fixture = await createFixture()
+    const commits: BuddyTreeCommit[] = []
+    fixture.tree.onDidCommit(event => commits.push(event))
     const old = fixture.run('old', 'b0', 'q1')
     const legacy = await createIsolatedBuddySession(fixture.sessionOptions('b0'))
     const manager = legacy.session.sessionManager
@@ -177,7 +228,13 @@ describe('native conversation tree', () => {
     expect(importedBytes).toContain('OMITTED_ATTEMPT')
     const reloaded = SessionManager.open(importedFile)
     expect(reloaded.buildSessionContext().messages).toEqual(opened.session.session.messages)
+    expect(commits.filter(event => event.kind === 'entries.imported')).toHaveLength(1)
+    expect(commits.find(event => event.kind === 'checkpoint.committed' && event.runId === old.id))
+      .toMatchObject({ recovery: { source: 'legacy' } })
     await opened.session.shutdown('quit')
+    const reopened = await fixture.open(next)
+    expect(commits.filter(event => event.kind === 'entries.imported')).toHaveLength(1)
+    await reopened.session.shutdown('quit')
   })
   it('reports an unavailable journal directory before starting a session', async () => {
     const fixture = await createFixture()
@@ -211,6 +268,8 @@ describe('native conversation tree', () => {
       return { messages: [{ role: 'user', content: 'Recovered question', timestamp: Date.now() }, assistant([{ type: 'text', text: 'Recovered answer' }])], missingAttachmentIds: ['unavailable-image'], recoveredImageCount: 0 }
     })
     const first = fixture.run('first', 'b0', 'q1')
+    const commits: BuddyTreeCommit[] = []
+    fixture.tree.onDidCommit(event => commits.push(event))
     const opened = await fixture.open(first)
     const originalFile = opened.session.piSessionFile
     fixture.runs.bindSession(first.id, originalFile)
@@ -226,6 +285,10 @@ describe('native conversation tree', () => {
       expect(JSON.stringify(recovered.session.session.messages)).toContain('Recovered answer')
       expect(recovered.cursor.recoveredFromProductHistory).toBe(true)
       expect(recovered.cursor.recoveryDegradation?.missingAttachmentIds).toEqual(['unavailable-image'])
+      expect(commits.filter(event => event.kind === 'binding.committed').map(event => event.reason)).toEqual(['created', 'replaced'])
+      expect(commits.find(event => event.kind === 'checkpoint.committed' && event.runId === first.id))
+        .toMatchObject({ recovery: { source: 'product_history', missingAttachmentCount: 1, recoveredImageCount: 0 } })
+      expect(Reflect.set(recovered.cursor.recoveryDegradation!, 'recoveredImageCount', 9)).toBe(false)
     }
     finally {
       await recovered.session.shutdown('quit')
@@ -240,10 +303,17 @@ describe('native conversation tree', () => {
       return { messages: [assistant([{ type: 'text', text: 'Recovered answer' }])], missingAttachmentIds: [], recoveredImageCount: 0 }
     })
     const first = fixture.run('first', 'b0', 'q1')
+    const commits: BuddyTreeCommit[] = []
+    const failures: BuddyTreeFailure[] = []
+    fixture.tree.onDidCommit(event => commits.push(event))
+    fixture.tree.onDidFail(event => failures.push(event))
     fixture.complete(first, 'answer-1')
     await expect(fixture.open(fixture.run('next', 'b0', 'q2')))
       .rejects
       .toMatchObject({ code: 'SESSION_STORAGE_UNAVAILABLE' })
+    expect(commits.map(event => event.kind)).toEqual(['file.created', 'binding.committed'])
+    expect(failures).toHaveLength(1)
+    expect(failures[0]).toMatchObject({ stage: 'checkpoint' })
   })
 })
 
@@ -261,21 +331,24 @@ async function createFixture(recovery?: BuddySessionRecoveryService['create']) {
   let time = 0
   const now = () => new Date(Date.UTC(2026, 8, 9, 0, 0, ++time)).toISOString()
   conversations.create({ id: 'conversation', branchId: 'b0', spaceId: null, title: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt: now() })
+  const repository = createConversationTreeRepository(database)
   const tree = new BuddyConversationTree({
     conversations,
     runs,
     conversationsDirectory: join(root, 'conversations'),
-    repository: createConversationTreeRepository(database),
+    repository,
     recovery: {
       create: recovery ?? (async () => {
         throw new Error('Healthy native context must not be reconstructed')
       }),
     },
   })
+  cleanups.push(() => tree.dispose())
   const sessionOptions = (branchId: string) => ({ agentDir: join(root, 'agent'), branchId, canonicalRoot: root, conversationId: 'conversation', conversationsDirectory: join(root, 'conversations'), cwd: root, approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const, inProcessExtensions: [], model, modelRuntime, resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'test' } })
   return {
     root,
     tree,
+    repository,
     runs,
     sessionOptions,
     branch(id: string, messageId: string) {

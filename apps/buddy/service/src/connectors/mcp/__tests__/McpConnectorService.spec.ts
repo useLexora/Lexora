@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { DatabaseSync } from 'node:sqlite'
 import type { ConnectorCredential } from '../../../../../shared/connectors/connectorCredentials'
-import type { BuddyConnectorEvent } from '../McpConnectorService'
+import type { McpConnectionEvent, McpConnectorEvent } from '../mcpEvents'
 
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -16,6 +16,7 @@ import { openBuddyDatabase } from '../../../storage/database'
 import { createMcpToolName } from '../createMcpTools'
 import { McpConnectorService } from '../McpConnectorService'
 import { classifyMcpTool } from '../mcpToolContract'
+import { observeMcpDiagnostics } from '../observeMcpEvents'
 
 const services: McpConnectorService[] = []
 const databases: DatabaseSync[] = []
@@ -30,6 +31,69 @@ afterEach(async () => {
 })
 
 describe('mcpConnectorService', () => {
+  it('drains an accepted credential and configuration commit while retaining the source for observers', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const repository = createConnectorRepository(database)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const secrets = new Map<string, ConnectorCredential>()
+    const service = new McpConnectorService({ connectors: repository, secrets: { read: async id => secrets.get(id) ?? null, delete: async (id) => {
+      secrets.delete(id)
+    }, write: async (id, value) => {
+      entered.resolve()
+
+      await release.promise
+
+      secrets.set(id, value)
+    } } })
+    services.push(service)
+    const events: McpConnectorEvent[] = []
+    service.onDidChange(event => events.push(event))
+    const accepted = service.save({ config: httpConfig('https://example.test/mcp'), credential: { mode: 'replace', value: { type: 'http', bearerToken: 'fixture-token' } } })
+    await entered.promise
+    let stopped = false
+    const stopping = service.quiesce().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    release.resolve()
+    const record = await accepted
+    await stopping
+    expect(repository.findById(record.id)?.credentialRef).toBe(record.id)
+    expect(secrets.has(record.id)).toBe(true)
+    expect(events.map(event => event.type)).toEqual(['credential', 'configuration'])
+    expect(JSON.stringify(events)).not.toContain('fixture-token')
+    await expect(service.setEnabled(record.id, true)).rejects.toMatchObject({ code: 'MCP_SERVER_UNAVAILABLE' })
+  })
+
+  it('publishes no configuration or generation changes for unchanged disabled settings', async () => {
+    const fixture = await createFixture()
+    const configuration = httpConfig('https://example.test/mcp')
+    const first = await fixture.service.upsert(configuration)
+    const facts: McpConnectorEvent[] = []
+    fixture.service.onDidChange(event => facts.push(event))
+    fixture.events.length = 0
+    expect(await fixture.service.upsert(configuration)).toEqual(first)
+    expect(await fixture.service.setEnabled('remote', false)).toEqual(first)
+    await fixture.service.clearCredential('remote')
+    expect(facts).toEqual([])
+    expect(fixture.events).toEqual([])
+  })
+
+  it('records credential compensation without publishing a failed SQL change or secret contents', async () => {
+    const fixture = createAtomicSaveFailureFixture()
+    const facts: McpConnectorEvent[] = []
+    const diagnostics: unknown[] = []
+    fixture.service.onDidChange(event => facts.push(event))
+    observeMcpDiagnostics(fixture.service, event => diagnostics.push(event))
+    await expect(fixture.service.save({ config: httpConfig('https://second.example.com/mcp'), credential: { mode: 'replace', value: { type: 'http', bearerToken: 'private-token' } } })).rejects.toThrow('database unavailable')
+    expect(facts.map(event => [event.type, event.type === 'credential' ? event.status : event.type])).toEqual([['credential', 'written'], ['credential', 'restored']])
+    expect(JSON.stringify(diagnostics)).not.toContain('private-token')
+    expect(JSON.stringify(diagnostics)).not.toContain('example.com')
+  })
+
   it('lists and executes a real stdio server while classifying side effects for Buddy approval', async () => {
     const fixture = await createFixture()
     await fixture.service.upsert(stdioConfig(false))
@@ -107,7 +171,7 @@ describe('mcpConnectorService', () => {
     expect(JSON.stringify(fixture.service.list())).not.toContain('secret-value')
 
     await vi.waitUntil(() => fixture.events.some(event => (
-      event.type === 'connector.unavailable' && event.code === 'MCP_SERVER_DISCONNECTED'
+      event.type === 'state' && event.snapshot.errorCode === 'MCP_SERVER_DISCONNECTED'
     )))
     const result = await executeTool(tools.tools[0]!, { text: 'hello' })
     expect(result).toMatchObject({
@@ -248,7 +312,9 @@ describe('mcpConnectorService', () => {
       bearerToken: 'old-secret',
       type: 'http',
     })
-    fixture.invalidateSessions.mockRejectedValueOnce(new Error('session disposal failed'))
+    fixture.service.onDidChange(() => {
+      throw new Error('session disposal failed')
+    })
 
     await expect(fixture.service.save({
       config: httpConfig('https://second.example.com/mcp'),
@@ -256,7 +322,7 @@ describe('mcpConnectorService', () => {
         mode: 'replace',
         value: { bearerToken: 'new-secret', type: 'http' },
       },
-    })).rejects.toThrow('session disposal failed')
+    })).resolves.toMatchObject({ url: 'https://second.example.com/mcp' })
 
     expect(fixture.service.list()[0]?.url).toBe('https://second.example.com/mcp')
     expect(fixture.secrets.values.get('remote')).toEqual({
@@ -298,17 +364,16 @@ async function createFixture(maxReconnectAttempts?: number) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const values = new Map<string, ConnectorCredential>()
-  const events: BuddyConnectorEvent[] = []
-  const invalidateSessions = vi.fn()
+  const events: McpConnectionEvent[] = []
+  const observerFailures: unknown[] = []
   const read = vi.fn(async (id: string) => {
     await new Promise(resolve => setImmediate(resolve))
     return values.get(id) ?? null
   })
   const service = new McpConnectorService({
     connectors: createConnectorRepository(database),
-    invalidateSessions,
+    onListenerError: error => observerFailures.push(error),
     maxReconnectAttempts,
-    notify: event => events.push(event),
     secrets: {
       async delete(id) {
         values.delete(id)
@@ -319,10 +384,11 @@ async function createFixture(maxReconnectAttempts?: number) {
       },
     },
   })
+  service.onDidChangeConnection(event => events.push(event))
   services.push(service)
   return {
     events,
-    invalidateSessions,
+    observerFailures,
     secrets: { read, values },
     service,
   }

@@ -17,6 +17,7 @@ export interface OpenBuddyDatabaseOptions {
 }
 
 const BUDDY_CURRENT_SCHEMA_COLUMNS = {
+  conversations: ['title_source', 'title_revision'],
   connector_tool_catalogs: ['connector_id', 'tools_json', 'updated_at'],
   provider_states: ['provider_id', 'request_headers_json'],
   builtin_provider_configs: ['id', 'builtin_provider_id', 'display_name'],

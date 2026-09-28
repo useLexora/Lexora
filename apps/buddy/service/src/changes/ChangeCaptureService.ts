@@ -10,6 +10,8 @@ import type { WorkspaceSnapshot, WorkspaceSnapshotState } from './workspaceSnaps
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { captureChangeFile } from './captureChangeFile'
 import { displayGrantedPath } from './changeFileContent'
@@ -58,17 +60,124 @@ interface PendingWorkspaceCapture {
   snapshot: WorkspaceSnapshot
 }
 
+export interface ChangeCaptureEvent {
+  readonly sourceId: string
+  readonly revision: number
+  readonly operationId: string
+  readonly conversationId?: string
+  readonly runId: string
+  readonly kind: 'set-created' | 'capture-committed' | 'coverage-changed' | 'count-changed' | 'finalized' | 'operation-failed' | 'coverage-unconfirmed'
+  readonly captureId?: string
+  readonly toolCallId?: string
+  readonly phase?: 'before' | 'after' | 'workspace'
+  readonly coverage?: 'complete' | 'partial'
+  readonly count?: number
+  readonly errorCode?: 'CHANGE_CAPTURE_FAILED' | 'CHANGE_COVERAGE_UNCONFIRMED'
+}
+
+interface WorkspaceToolInput {
+  conversationId: string
+  cwd: string
+  grants: readonly DirectoryGrant[]
+  runId: string
+  toolCallId: string
+}
+
 export class ChangeCaptureService {
   readonly #paths: BuddyDataPaths
   readonly #repository: ChangeSetRepository
+  readonly #changes: Emitter<ChangeCaptureEvent>
+  readonly onDidChange
+  readonly #mutations = new Map<string, Promise<unknown>>()
+  readonly #contexts = new Map<string, { operationId: string, conversationId?: string }>()
+  readonly #sourceId = randomUUID()
+  #revision = 0
+  #disposed = false
   readonly #workspaceCaptures = new Map<string, PendingWorkspaceCapture>()
 
-  constructor(options: { paths: BuddyDataPaths, repository: ChangeSetRepository }) {
+  constructor(options: { paths: BuddyDataPaths, repository: ChangeSetRepository, onListenerError?: (error: unknown) => void }) {
     this.#paths = options.paths
     this.#repository = options.repository
+    this.#changes = new Emitter(options.onListenerError ?? (() => console.error('CHANGE_CAPTURE_OBSERVER_FAILED')))
+    this.onDidChange = this.#changes.event
   }
 
-  async beginFileTool(input: FileToolInput & { arguments: unknown }): Promise<void> {
+  beginFileTool(input: FileToolInput & { arguments: unknown }): Promise<void> {
+    const request = copyEventSnapshot(input)
+    return this.#operate(request.runId, 'before', () => this.#beginFileTool(request), request.conversationId)
+  }
+
+  finishFileTool(input: FileToolInput & { isError: boolean }): Promise<void> {
+    const request = copyEventSnapshot(input)
+    return this.#operate(request.runId, 'after', () => this.#finishFileTool(request), request.conversationId)
+  }
+
+  beginWorkspaceTool(input: WorkspaceToolInput): Promise<void> {
+    const request = copyEventSnapshot(input)
+    return this.#operate(request.runId, 'before', () => this.#beginWorkspaceTool(request), request.conversationId)
+  }
+
+  finishWorkspaceTool(input: WorkspaceToolInput & { isError: boolean, toolName: string }): Promise<{ complete: boolean }> {
+    const request = copyEventSnapshot(input)
+    return this.#operate(request.runId, 'after', () => this.#finishWorkspaceTool(request), request.conversationId)
+  }
+
+  markPartial(input: { conversationId: string, runId: string }): Promise<void> {
+    const request = copyEventSnapshot(input)
+    return this.#operate(request.runId, 'coverage', () => this.#markPartial(request), request.conversationId)
+  }
+
+  markInterrupted(runId: string): Promise<void> {
+    return this.#operate(runId, 'finalize', () => this.#markInterrupted(runId))
+  }
+
+  finalizeRun(runId: string): Promise<void> {
+    return this.#operate(runId, 'finalize', () => this.#finalizeRun(runId))
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true
+    await Promise.allSettled([...this.#mutations.values()])
+    this.#workspaceCaptures.clear()
+    this.#changes.dispose()
+  }
+
+  #operate<T>(runId: string, phase: 'before' | 'after' | 'coverage' | 'finalize', operation: () => Promise<T>, conversationId?: string): Promise<T> {
+    if (this.#disposed)
+      return Promise.reject(new Error('CHANGE_CAPTURE_STOPPED'))
+    const previous = this.#mutations.get(runId) ?? Promise.resolve()
+    const pending = previous.catch(() => {}).then(async () => {
+      this.#contexts.set(runId, { operationId: randomUUID(), conversationId })
+      try {
+        const current = this.#repository.findSetById(runId)
+        if (current)
+          this.#contexts.get(runId)!.conversationId = current.conversationId
+        if ((phase === 'before' || phase === 'after') && current?.status === 'completed')
+          throw new ChangeCaptureError('CHANGE_SET_FINALIZED')
+        return await operation()
+      }
+      catch (error) {
+        const unconfirmed = phase === 'coverage' || (error instanceof ChangeCaptureError && error.code === 'CHANGE_COVERAGE_UNCONFIRMED')
+        this.#publish(runId, { kind: unconfirmed ? 'coverage-unconfirmed' : 'operation-failed', errorCode: unconfirmed ? 'CHANGE_COVERAGE_UNCONFIRMED' : 'CHANGE_CAPTURE_FAILED' })
+        throw error
+      }
+      finally {
+        this.#contexts.delete(runId)
+      }
+    }).finally(() => {
+      if (this.#mutations.get(runId) === pending)
+        this.#mutations.delete(runId)
+    })
+    this.#mutations.set(runId, pending)
+    return pending
+  }
+
+  #publish(runId: string, details: Omit<ChangeCaptureEvent, 'sourceId' | 'revision' | 'operationId' | 'conversationId' | 'runId'>): void {
+    const context = this.#contexts.get(runId)!
+    this.#changes.fire(copyEventSnapshot({ ...details, ...context, runId, sourceId: this.#sourceId, revision: ++this.#revision }))
+  }
+
+  async #beginFileTool(input: FileToolInput & { arguments: unknown }): Promise<void> {
     const requestedPath = readToolPath(input.arguments)
     const absolutePath = isAbsolute(requestedPath)
       ? requestedPath
@@ -106,9 +215,10 @@ export class ChangeCaptureService {
       toolName: input.toolName,
       toolReportedError: null,
     })
+    this.#publish(input.runId, { kind: 'capture-committed', phase: 'before', captureId, toolCallId: input.toolCallId })
   }
 
-  async finishFileTool(
+  async #finishFileTool(
     input: FileToolInput & { isError: boolean },
   ): Promise<void> {
     const capture = this.#repository.findCaptureByToolCallId(input.toolCallId)
@@ -128,11 +238,12 @@ export class ChangeCaptureService {
       side: 'after',
     })
     const now = new Date().toISOString()
-    this.#repository.completeCapture(capture.id, after, input.isError, now)
+    if (this.#repository.completeCapture(capture.id, after, input.isError, now))
+      this.#publish(input.runId, { kind: 'capture-committed', phase: 'after', captureId: capture.id, toolCallId: input.toolCallId })
     this.#refreshFileCount(input.runId, now)
   }
 
-  async beginWorkspaceTool(input: {
+  async #beginWorkspaceTool(input: {
     conversationId: string
     cwd: string
     grants: readonly DirectoryGrant[]
@@ -140,15 +251,17 @@ export class ChangeCaptureService {
     toolCallId: string
   }): Promise<void> {
     const grants = input.grants.map(grant => ({ ...grant }))
+    const snapshot = await captureWorkspaceSnapshot(grants, input.cwd)
+    this.#ensureSet(input.runId, input.conversationId, new Date().toISOString())
     this.#workspaceCaptures.set(input.toolCallId, {
       conversationId: input.conversationId,
       grants,
       runId: input.runId,
-      snapshot: await captureWorkspaceSnapshot(grants, input.cwd),
+      snapshot,
     })
   }
 
-  async finishWorkspaceTool(input: {
+  async #finishWorkspaceTool(input: {
     conversationId: string
     cwd: string
     grants: readonly DirectoryGrant[]
@@ -181,33 +294,40 @@ export class ChangeCaptureService {
     return { complete: before.snapshot.complete && after.complete }
   }
 
-  async markPartial(input: { conversationId: string, runId: string }): Promise<void> {
+  async #markPartial(input: { conversationId: string, runId: string }): Promise<void> {
     const now = new Date().toISOString()
     this.#ensureSet(input.runId, input.conversationId, now)
-    this.#repository.markPartial(input.runId, now)
+    if (this.#setPartial(input.runId, now))
+      this.#publish(input.runId, { kind: 'coverage-changed', coverage: 'partial' })
   }
 
-  async markInterrupted(runId: string): Promise<void> {
+  async #markInterrupted(runId: string): Promise<void> {
     this.#discardWorkspaceCaptures(runId)
     const changeSet = this.#repository.findSetById(runId)
     if (!changeSet)
       return
     const now = new Date().toISOString()
-    this.#repository.markPartial(runId, now)
+    if (this.#setPartial(runId, now))
+      this.#publish(runId, { kind: 'coverage-changed', coverage: 'partial' })
     const captures = this.#repository.listCaptures(runId)
-    this.#repository.finalizeSet(runId, aggregateCaptures(captures).length, now)
+    const count = aggregateCaptures(captures).length
+    if (this.#repository.finalizeSet(runId, count, now))
+      this.#publish(runId, { kind: 'finalized', count })
   }
 
-  async finalizeRun(runId: string): Promise<void> {
+  async #finalizeRun(runId: string): Promise<void> {
+    const pendingWorkspace = [...this.#workspaceCaptures.values()].some(capture => capture.runId === runId)
     this.#discardWorkspaceCaptures(runId)
     const changeSet = this.#repository.findSetById(runId)
     if (!changeSet)
       return
     const captures = this.#repository.listCaptures(runId)
-    if (captures.some(capture => capture.status === 'pending'))
-      this.#repository.markPartial(runId, new Date().toISOString())
+    if ((pendingWorkspace || captures.some(capture => capture.status === 'pending')) && this.#setPartial(runId, new Date().toISOString()))
+      this.#publish(runId, { kind: 'coverage-changed', coverage: 'partial' })
     const now = new Date().toISOString()
-    this.#repository.finalizeSet(runId, aggregateCaptures(captures).length, now)
+    const count = aggregateCaptures(captures).length
+    if (this.#repository.finalizeSet(runId, count, now))
+      this.#publish(runId, { kind: 'finalized', count })
   }
 
   listSummariesForRuns(runIds: readonly string[]): LocalChangeSetSummary[] {
@@ -243,7 +363,7 @@ export class ChangeCaptureService {
   }
 
   #ensureSet(runId: string, conversationId: string, now: string): ChangeSetRecord {
-    return this.#repository.ensureSet({
+    const result = this.#repository.ensureSet({
       conversationId,
       coverage: 'complete',
       createdAt: now,
@@ -253,11 +373,24 @@ export class ChangeCaptureService {
       status: 'capturing',
       updatedAt: now,
     })
+    if (result.created)
+      this.#publish(runId, { kind: 'set-created', coverage: result.record.coverage, count: result.record.fileCount })
+    return result.record
+  }
+
+  #setPartial(runId: string, now: string): boolean {
+    try {
+      return this.#repository.markPartial(runId, now)
+    }
+    catch {
+      throw new ChangeCaptureError('CHANGE_COVERAGE_UNCONFIRMED')
+    }
   }
 
   #refreshFileCount(changeSetId: string, now: string): void {
     const count = aggregateCaptures(this.#repository.listCaptures(changeSetId)).length
-    this.#repository.updateFileCount(changeSetId, count, now)
+    if (this.#repository.updateFileCount(changeSetId, count, now))
+      this.#publish(changeSetId, { kind: 'count-changed', count })
   }
 
   async #persistWorkspaceChanges(input: {
@@ -313,6 +446,7 @@ export class ChangeCaptureService {
         toolName: input.toolName,
         toolReportedError: input.isError,
       })
+      this.#publish(input.runId, { kind: 'capture-committed', phase: 'workspace', captureId, toolCallId: input.toolCallId })
     }
     this.#refreshFileCount(input.runId, now)
   }

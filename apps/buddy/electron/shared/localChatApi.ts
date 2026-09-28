@@ -1,12 +1,12 @@
 import type { LocalConversationStatus } from '@buddy-shared/runs/conversationStatusApi'
-import type { LocalArtifactText } from '../../shared/artifacts/artifactApi'
+import type { ArtifactChangeNotice, LocalArtifactText } from '../../shared/artifacts/artifactApi'
 import type { LocalAutomation, LocalAutomationCreateRequest, LocalAutomationListRequest, LocalAutomationMutationRequest, LocalAutomationOccurrenceListRequest, LocalAutomationOccurrencePage, LocalAutomationPage, LocalAutomationPreviewRequest, LocalAutomationPreviewResult, LocalAutomationRunNowResult, LocalAutomationUpdateRequest } from '../../shared/automation/automationApi'
-import type { ChangeOverviewRequest, LocalChangeOverview, LocalChangeSetDetail } from '../../shared/changes/changeApi'
-import type { LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
+import type { ChangeOverviewRequest, ChangeSetChangeNotice, LocalChangeOverview, LocalChangeSetDetail } from '../../shared/changes/changeApi'
+import type { ConnectorChangeNotice, LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
 import type { LocalChatCommandRequest, LocalStartTurnRequest, LocalTurnStart } from '../../shared/conversation/chatApi'
 import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
-import type { LocalComposerDraft, LocalComposerDraftDiscard, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
+import type { ComposerResourcesChanged, LocalComposerDraft, LocalComposerDraftDiscard, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
 import type {
   BuddyComposerResource,
   BuddyComposerResourceAccept,
@@ -24,19 +24,19 @@ import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInp
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
-import type { LocalNotificationList } from '../../shared/notifications/notificationApi'
+import type { LocalNotificationList, NotificationsChanged } from '../../shared/notifications/notificationApi'
 import type { LocalApproval } from '../../shared/permissions/approvalApi'
 import type { ApprovalGrantScope } from '../../shared/permissions/approvalReviewPayload'
 import type { BuddyPermissionSettings } from '../../shared/permissions/permissionMode'
-import type { LocalBuiltinProviderPreset, LocalCustomProvider, LocalCustomProviderModel, LocalDefaultModel, LocalModelSnapshot, LocalProvider, LocalProviderAuthChallenge, LocalRuntimeModelOption } from '../../shared/providers/providerApi'
+import type { LocalBuiltinProviderPreset, LocalCustomProvider, LocalCustomProviderModel, LocalDefaultModel, LocalModelSnapshot, LocalProvider, LocalProviderAuthChallenge, LocalRuntimeModelOption, ProviderChanged } from '../../shared/providers/providerApi'
 import type { ModelCapabilityOverrides } from '../../shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '../../shared/providers/providerCatalog'
 import type { ProviderRequestHeader } from '../../shared/providers/providerHeaders'
 import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
 import type { LocalBuddyServiceSupervisorState } from '../../shared/runtime/serviceState'
-import type { LocalSkillCatalog, SkillDetail, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillPreviewInput } from '../../shared/skills/skillApi'
+import type { LocalSkillCatalog, SkillChangeNotice, SkillDetail, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillPreviewInput } from '../../shared/skills/skillApi'
 
-import type { LocalSpace, LocalSpaceCreateInput, LocalSpaceFile, LocalSpaceUpdateInput } from '../../shared/spaces/spaceApi'
+import type { LocalSpace, LocalSpaceCreateInput, LocalSpaceFile, LocalSpaceUpdateInput, SpaceChangeNotice } from '../../shared/spaces/spaceApi'
 import type { LocalSpaceDirectoryPage, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 
 import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePeriod, UsageTopTasksRequest, UsageTrendRequest } from '../../shared/usage/usageAnalyticsApi'
@@ -56,12 +56,15 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   spaceFilesRead: 'lexora:buddy:space-files:read',
   spaceFilesReveal: 'lexora:buddy:space-files:reveal',
   webSettingsRead: 'lexora:buddy:web:settings',
+  webSettingsChanged: 'lexora:buddy:web:settings-changed',
   webSettingsSave: 'lexora:buddy:web:save-settings',
   webCredentialSave: 'lexora:buddy:web:save-credential',
   webCredentialReveal: 'lexora:buddy:web:reveal-credential',
   approvalsApprove: 'lexora:buddy:approvals:approve',
   approvalsDeny: 'lexora:buddy:approvals:deny',
   approvalsList: 'lexora:buddy:approvals:list',
+  artifactsChanged: 'lexora:buddy:artifacts:changed',
+  changesChanged: 'lexora:buddy:changes:changed',
   artifactsReadText: 'lexora:buddy:artifacts:read-text',
   automationChanged: 'lexora:buddy:automations:changed',
   automationsCreate: 'lexora:buddy:automations:create',
@@ -75,6 +78,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   automationsResume: 'lexora:buddy:automations:resume',
   automationsRunNow: 'lexora:buddy:automations:run-now',
   automationsUpdate: 'lexora:buddy:automations:update',
+  composerResourcesChanged: 'lexora:buddy:composer-resources:changed',
   composerResourcesAccept: 'lexora:buddy:composer-resources:accept',
   composerResourcesComplete: 'lexora:buddy:composer-resources:complete',
   composerResourcesFail: 'lexora:buddy:composer-resources:fail',
@@ -101,6 +105,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   chatStartTurn: 'lexora:buddy:chat:start-turn',
   changesGet: 'lexora:buddy:changes:get',
   contextUsageSnapshot: 'lexora:buddy:context:usage-snapshot',
+  connectorsChanged: 'lexora:buddy:connectors:changed',
   connectorsClearCredential: 'lexora:buddy:connectors:clear-credential',
   connectorsSetEnabled: 'lexora:buddy:connectors:set-enabled',
   connectorsTest: 'lexora:buddy:connectors:test',
@@ -121,12 +126,15 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsListBranches: 'lexora:buddy:conversations:list-branches',
   conversationsListMessages: 'lexora:buddy:conversations:list-messages',
   conversationsRename: 'lexora:buddy:conversations:rename',
+  conversationsChanged: 'lexora:buddy:conversations:changed',
   conversationsSetPermissionSettings: 'lexora:buddy:conversations:set-permission-settings',
   conversationsSetModelSelection: 'lexora:buddy:conversations:set-model-selection',
   conversationsListTimeline: 'lexora:buddy:conversations:list-timeline',
+  notificationsChanged: 'lexora:buddy:notifications:changed',
   notificationsList: 'lexora:buddy:notifications:list',
   notificationsMarkAllSeen: 'lexora:buddy:notifications:mark-all-seen',
   notificationsMarkSeen: 'lexora:buddy:notifications:mark-seen',
+  spacesChanged: 'lexora:buddy:spaces:changed',
   spacesCreate: 'lexora:buddy:spaces:create',
   spaceDocumentRead: 'lexora:buddy:spaces:document:read',
   spaceDocumentSave: 'lexora:buddy:spaces:document:save',
@@ -136,6 +144,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   spacesSelectDirectory: 'lexora:buddy:spaces:select-directory',
   spacesUpdate: 'lexora:buddy:spaces:update',
   providerAuthChallenge: 'lexora:buddy:providers:auth-challenge',
+  providersChanged: 'lexora:buddy:providers:changed',
   providersCancelAuth: 'lexora:buddy:providers:cancel-auth',
   providersAdd: 'lexora:buddy:providers:add',
   providersClearCredential: 'lexora:buddy:providers:clear-credential',
@@ -217,6 +226,7 @@ export interface LocalChatApi {
     save: (input: LocalComposerDraftSave) => Promise<LocalComposerDraft>
   }
   artifacts: {
+    onChanged: (listener: (event: ArtifactChangeNotice) => void) => () => void
     readText: (artifactId: string) => Promise<LocalArtifactText>
   }
   automations: {
@@ -241,6 +251,7 @@ export interface LocalChatApi {
     onStateChanged: (listener: (state: LocalBuddyServiceSupervisorState) => void) => () => void
   }
   providers: {
+    onChanged: (listener: (event: ProviderChanged) => void) => () => void
     acknowledgeModelSourceUpdate: (
       providerId: string,
       modelId: string,
@@ -299,11 +310,13 @@ export interface LocalChatApi {
     onAuthChallenge: (listener: (challenge: LocalProviderAuthChallenge) => void) => () => void
   }
   notifications: {
+    onChanged: (listener: (event: NotificationsChanged) => void) => () => void
     list: () => Promise<LocalNotificationList>
     markAllSeen: () => Promise<LocalNotificationList>
     markSeen: (notificationId: string, revision: string) => Promise<LocalNotificationList>
   }
   spaces: {
+    onChanged: (listener: (event: SpaceChangeNotice) => void) => () => void
     readDocument: (input: SpaceFileTarget) => Promise<import('../../shared/spaces/spaceFileApi').SpaceTextDocument>
     saveDocument: (input: import('../../shared/spaces/spaceFileApi').SpaceSaveDocument) => Promise<import('../../shared/spaces/spaceFileApi').SpaceSaveResult>
     listDirectory: (input: SpaceDirectoryRequest) => Promise<LocalSpaceDirectoryPage>
@@ -329,9 +342,10 @@ export interface LocalChatApi {
     setEnabled: (input: { spaceId: string | null, id: string, enabled: boolean, revision: string }) => Promise<LocalSkillCatalog>
     remove: (input: { spaceId: string | null, id: string, revision: string }) => Promise<LocalSkillCatalog>
     reveal: (input: { spaceId: string | null, id: string }) => Promise<void>
-    onChanged: (listener: (spaceId: string | null) => void) => () => void
+    onChanged: (listener: (event: SkillChangeNotice) => void) => () => void
   }
   connectors: {
+    onChanged: (listener: (event: ConnectorChangeNotice) => void) => () => void
     setEnabled: (connectorId: string, enabled: boolean) => Promise<LocalMutationResult>
     test: (connectorId: string) => Promise<ConnectorRuntimeState>
     tools: (connectorId: string) => Promise<ReadonlyArray<ConnectorToolSummary>>
@@ -356,6 +370,7 @@ export interface LocalChatApi {
     ) => Promise<LocalContextUsageSnapshot>
   }
   web: {
+    onChanged: (listener: () => void) => () => void
     read: () => Promise<WebSettingsSnapshot>
     save: (settings: WebSettings) => Promise<WebSettingsSnapshot>
     saveCredential: (key: string | null) => Promise<WebSettingsSnapshot>
@@ -366,6 +381,7 @@ export interface LocalChatApi {
     write: (value: LocalWorkspaceStateValue) => Promise<LocalWorkspaceSetting>
   }
   conversations: {
+    onChanged: (listener: (conversation: LocalConversation) => void) => () => void
     getNodeDetail: (input: ConversationNodeDetailRequest) => Promise<LocalConversationTimelinePage>
     getTree: (conversationId: string) => Promise<LocalConversationTree>
     list: (limit?: number) => Promise<ReadonlyArray<LocalConversationSummary>>
@@ -399,6 +415,7 @@ export interface LocalChatApi {
     }) => Promise<LocalConversationTimelinePage>
   }
   changes: {
+    onChanged: (listener: (event: ChangeSetChangeNotice) => void) => () => void
     overview: (input: ChangeOverviewRequest) => Promise<LocalChangeOverview>
     get: (changeSetId: string) => Promise<LocalChangeSetDetail>
   }
@@ -428,6 +445,7 @@ export interface LocalChatApi {
     deny: (approvalId: string) => Promise<LocalApproval>
   }
   composerResources: {
+    onChanged: (listener: (change: ComposerResourcesChanged) => void) => () => void
     accept: (input: BuddyComposerResourceAccept) => Promise<readonly BuddyComposerResource[]>
     complete: (input: BuddyComposerResourceComplete) => Promise<BuddyComposerResource>
     fail: (input: BuddyComposerResourceTarget) => Promise<BuddyComposerResource>

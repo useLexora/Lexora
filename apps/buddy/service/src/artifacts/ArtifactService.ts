@@ -16,6 +16,8 @@ import {
   sep,
 } from 'node:path'
 import { relativeCanonicalPath } from '../../../platform/filesystem/filePaths'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 
 export const BUDDY_ARTIFACT_COUNT_LIMIT = 512
@@ -35,20 +37,139 @@ export interface ConversationArtifactLocation {
   resource: ArtifactResource
 }
 
+export interface ArtifactBatchReceipt {
+  readonly operationId: string
+  readonly conversationId: string
+  readonly cause: 'presentation' | 'generated' | 'recovery'
+  readonly requested: number
+  readonly written: number
+  readonly unconfirmedWrites: number
+  readonly artifactIds: readonly string[]
+  readonly stage: 'validation' | 'file' | 'catalogue'
+  readonly outcome: 'pending' | 'completed' | 'partial' | 'failed'
+}
+
+export interface ArtifactEvent {
+  readonly sourceId: string
+  readonly revision: number
+  readonly kind: 'file-written' | 'catalogue-committed' | 'batch-settled'
+  readonly receipt: ArtifactBatchReceipt
+  readonly artifactId?: string
+  readonly created?: boolean
+  readonly errorCode?: 'ARTIFACT_PUBLICATION_FAILED'
+}
+
+interface ArtifactBatch {
+  operationId: string
+  conversationId: string
+  cause: ArtifactBatchReceipt['cause']
+  requested: number
+  written: number
+  unconfirmedWrites: number
+  artifactIds: string[]
+  stage: ArtifactBatchReceipt['stage']
+}
+
+interface PresentOutputsInput {
+  conversationId: string
+  cwd: string
+  grants: readonly DirectoryGrant[]
+  paths: readonly string[]
+  sourceArtifactId?: string | null
+}
+
+interface GeneratedImagesInput {
+  conversationId: string
+  cwd: string
+  grants: readonly DirectoryGrant[]
+  images: readonly GeneratedArtifactImage[]
+  outputPath: string
+  sourceArtifactId: string | null
+}
+
 export class ArtifactService {
   readonly #repository: ArtifactRepository
+  readonly #sourceId = randomUUID()
+  readonly #changes: Emitter<ArtifactEvent>
+  readonly onDidChange
+  readonly #pending = new Set<Promise<unknown>>()
+  #revision = 0
+  #disposed = false
 
-  constructor(options: { repository: ArtifactRepository }) {
+  constructor(options: { repository: ArtifactRepository, onListenerError?: (error: unknown) => void }) {
     this.#repository = options.repository
+    this.#changes = new Emitter(options.onListenerError ?? (() => console.error('ARTIFACT_OBSERVER_FAILED')))
+    this.onDidChange = this.#changes.event
   }
 
-  async presentOutputs(input: {
-    conversationId: string
-    cwd: string
-    grants: readonly DirectoryGrant[]
-    paths: readonly string[]
-    sourceArtifactId?: string | null
-  }): Promise<ArtifactRecord[]> {
+  presentOutputs(input: PresentOutputsInput): Promise<ArtifactRecord[]> {
+    const request = copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, paths: input.paths, sourceArtifactId: input.sourceArtifactId })
+    return this.#batch(request.conversationId, 'presentation', request.paths.length, batch => this.#presentOutputs(request, batch))
+  }
+
+  registerGeneratedImages(input: GeneratedImagesInput): Promise<ArtifactRecord[]> {
+    const request = { ...copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, outputPath: input.outputPath, sourceArtifactId: input.sourceArtifactId }), images: input.images.map(image => ({ bytes: Uint8Array.from(image.bytes), mimeType: image.mimeType })) }
+    return this.#batch(request.conversationId, 'generated', request.images.length, batch => this.#registerGeneratedImages(request, batch))
+  }
+
+  recoverLegacyRecords(records: readonly ArtifactRecord[]): Promise<number> {
+    const request = copyEventSnapshot(records)
+    if (!request.length)
+      return Promise.resolve(0)
+    return this.#batch(request[0]!.conversationId, 'recovery', request.length, async (batch) => {
+      for (const record of request) {
+        if (record.conversationId !== batch.conversationId)
+          throw new ArtifactError('VALIDATION_FAILED')
+        const existing = this.#repository.findById(record.id)
+        const path = this.#repository.findByCurrentPath(record.conversationId, record.currentPath)
+        if (existing || path) {
+          if (existing?.conversationId !== record.conversationId || existing.currentPath !== record.currentPath || path?.id !== record.id)
+            throw new ArtifactError('VALIDATION_FAILED')
+          continue
+        }
+        batch.stage = 'catalogue'
+        this.#repository.save(record)
+        batch.artifactIds.push(record.id)
+        this.#publish(batch, 'catalogue-committed', { artifactId: record.id, created: true })
+      }
+      return batch.artifactIds.length
+    })
+  }
+
+  async whenIdle(): Promise<void> {
+    while (this.#pending.size)
+      await Promise.allSettled([...this.#pending])
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true
+    await this.whenIdle()
+    this.#changes.dispose()
+  }
+
+  #batch<T>(conversationId: string, cause: ArtifactBatchReceipt['cause'], requested: number, operation: (batch: ArtifactBatch) => Promise<T>): Promise<T> {
+    if (this.#disposed)
+      return Promise.reject(new ArtifactError('ARTIFACT_SERVICE_STOPPED'))
+    const batch: ArtifactBatch = { conversationId, cause, requested, operationId: randomUUID(), written: 0, unconfirmedWrites: 0, artifactIds: [], stage: 'validation' }
+    const pending = Promise.resolve().then(() => operation(batch)).then((result) => {
+      this.#publish(batch, 'batch-settled', {}, 'completed')
+      return result
+    }, (error: unknown) => {
+      const outcome = batch.written || batch.unconfirmedWrites || batch.artifactIds.length ? 'partial' : 'failed'
+      const receipt = this.#publish(batch, 'batch-settled', { errorCode: 'ARTIFACT_PUBLICATION_FAILED' }, outcome)
+      throw new ArtifactPublicationError(error, receipt)
+    }).finally(() => this.#pending.delete(pending))
+    this.#pending.add(pending)
+    return pending
+  }
+
+  #publish(batch: ArtifactBatch, kind: ArtifactEvent['kind'], details: Pick<ArtifactEvent, 'artifactId' | 'created' | 'errorCode'> = {}, outcome: ArtifactBatchReceipt['outcome'] = 'pending'): ArtifactBatchReceipt {
+    const receipt = copyEventSnapshot({ ...batch, outcome })
+    this.#changes.fire(copyEventSnapshot({ sourceId: this.#sourceId, revision: ++this.#revision, kind, receipt, ...details }))
+    return receipt
+  }
+
+  async #presentOutputs(input: PresentOutputsInput, batch: ArtifactBatch): Promise<ArtifactRecord[]> {
     if (
       input.paths.length === 0
       || input.paths.length > BUDDY_ARTIFACT_COUNT_LIMIT
@@ -92,7 +213,8 @@ export class ArtifactService {
         ? existing.sourceArtifactId
         : sourceArtifactId || existing?.sourceArtifactId || null
       const now = new Date().toISOString()
-      return this.#repository.save({
+      batch.stage = 'catalogue'
+      const record = this.#repository.save({
         conversationId: input.conversationId,
         createdAt: existing?.createdAt ?? now,
         currentPath: candidate.location.canonicalPath,
@@ -107,17 +229,13 @@ export class ArtifactService {
         sourceArtifactId: normalizedSourceArtifactId,
         updatedAt: now,
       })
+      batch.artifactIds.push(record.id)
+      this.#publish(batch, 'catalogue-committed', { artifactId: record.id, created: !existing })
+      return record
     })
   }
 
-  async registerGeneratedImages(input: {
-    conversationId: string
-    cwd: string
-    grants: readonly DirectoryGrant[]
-    images: readonly GeneratedArtifactImage[]
-    outputPath: string
-    sourceArtifactId: string | null
-  }): Promise<ArtifactRecord[]> {
+  async #registerGeneratedImages(input: GeneratedImagesInput, batch: ArtifactBatch): Promise<ArtifactRecord[]> {
     if (
       input.images.length === 0
       || input.images.length > BUDDY_ARTIFACT_COUNT_LIMIT
@@ -153,16 +271,22 @@ export class ArtifactService {
       const location = await resolveArtifactLocation(input.grants, outputPath, 'create')
       if (isSensitivePath(location.relativePath))
         throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
+      batch.stage = 'file'
       await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
+      batch.unconfirmedWrites += 1
       await writeFile(location.canonicalPath, image.bytes, { mode: 0o600 })
+      batch.unconfirmedWrites -= 1
+      batch.written += 1
+      this.#publish(batch, 'file-written')
     }
-    return this.presentOutputs({
+    batch.stage = 'catalogue'
+    return this.#presentOutputs({
       conversationId: input.conversationId,
       cwd: input.cwd,
       grants: input.grants,
       paths: outputPaths,
       sourceArtifactId: input.sourceArtifactId,
-    })
+    }, batch)
   }
 
   listConversationArtifacts(
@@ -310,6 +434,19 @@ export class ArtifactError extends Error {
     super('Lexora Buddy artifact operation failed')
     this.name = 'ArtifactError'
     this.code = code
+  }
+}
+
+export class ArtifactPublicationError extends ArtifactError {
+  readonly receipt: ArtifactBatchReceipt
+
+  constructor(error: unknown, receipt: ArtifactBatchReceipt) {
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(error.code)
+      ? error.code
+      : 'ARTIFACT_PUBLICATION_FAILED'
+    super(code)
+    this.name = 'ArtifactPublicationError'
+    this.receipt = copyEventSnapshot(receipt)
   }
 }
 

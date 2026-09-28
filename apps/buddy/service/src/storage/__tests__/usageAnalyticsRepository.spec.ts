@@ -139,6 +139,8 @@ describe('usage analytics', () => {
         ALTER TABLE attachments DROP COLUMN source_path;
         ALTER TABLE composer_resources DROP COLUMN source_path;
         PRAGMA user_version = 13;
+        ALTER TABLE conversations DROP COLUMN title_source;
+        ALTER TABLE conversations DROP COLUMN title_revision;
       `)
       f.database.close()
       databases.splice(databases.indexOf(f.database), 1)

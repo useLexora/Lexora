@@ -10,6 +10,6 @@ export interface WorkbenchContextSnapshot {
   readonly pages: readonly { readonly id: string, readonly title: string }[]
 }
 
-export function matchesWorkbenchContext(condition: WorkbenchCondition | undefined, values: WorkbenchContextValues): boolean {
+export function matchesWorkbenchContext(condition: Readonly<Record<string, string | number | boolean | readonly (string | number | boolean)[]>> | undefined, values: WorkbenchContextValues): boolean {
   return !condition || Object.entries(condition).every(([key, expected]) => Object.hasOwn(values, key) && (Array.isArray(expected) ? expected.includes(values[key]!) : values[key] === expected))
 }

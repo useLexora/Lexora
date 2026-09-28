@@ -3,6 +3,9 @@ import type {
   NotificationAttentionRepository,
 } from '../storage/notificationAttentionRepository'
 import type { ProviderModelStateRecord } from '../storage/providerModelStateRepository'
+import { randomUUID } from 'node:crypto'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 
 const MODEL_UPDATE_NOTIFICATION_ID = 'local:model-source-parameters-updated'
 const RETENTION_MILLISECONDS = 7 * 24 * 60 * 60 * 1000
@@ -69,7 +72,19 @@ export interface AttentionNotificationServiceOptions {
   now?: () => string
 }
 
+export interface NotificationCommit {
+  readonly revision: number
+  readonly operationId: string
+  readonly reason: 'reconcile' | 'seen' | 'removed'
+  readonly changes: readonly { readonly id: string, readonly kind: 'added' | 'changed' | 'removed' }[]
+  readonly unseenCount: number
+}
+
 export class AttentionNotificationService {
+  readonly #commits = new Emitter<NotificationCommit>(() => console.error('NOTIFICATION_OBSERVER_FAILED'))
+  readonly onDidCommit = this.#commits.event
+  #revision = 0
+  #disposed = false
   readonly #attention: NotificationAttentionRepository
   readonly #listAutomationRuns: () => AutomationRunNotificationSource[]
   readonly #listModels: () => ProviderModelStateRecord[]
@@ -83,33 +98,66 @@ export class AttentionNotificationService {
   }
 
   list(): AttentionNotificationList {
-    this.#reconcile()
-    const items = this.#attention.list()
-      .filter(isApplicationNotification)
-      .map(toNotification)
-      .sort(compareNotifications)
-    return {
-      items,
-      unseenCount: items.filter(item => item.attention === 'unseen').length,
-    }
+    this.reconcile()
+    return this.#read()
+  }
+
+  get snapshot() { return copyEventSnapshot({ revision: this.#revision, ...this.#read() }) }
+
+  reconcile(): void {
+    this.#commit('reconcile', () => this.#reconcile())
   }
 
   markAllSeen(): AttentionNotificationList {
-    const now = this.#now()
-    this.#reconcile(now)
-    this.#attention.markAllSeen(now)
-    return this.list()
+    this.#commit('seen', () => {
+      const now = this.#now()
+      this.#reconcile(now)
+      this.#attention.markAllSeen(now)
+    })
+    return this.#read()
   }
 
   markSeen(notificationId: string, revision: string): AttentionNotificationList {
-    const now = this.#now()
-    this.#reconcile(now)
-    this.#attention.markSeen(notificationId, revision, now)
-    return this.list()
+    this.#commit('seen', () => {
+      const now = this.#now()
+      this.#reconcile(now)
+      this.#attention.markSeen(notificationId, revision, now)
+    })
+    return this.#read()
   }
 
   removeAutomationRun(runId: string): boolean {
-    return this.#attention.remove(`local:automation-run:${runId}`)
+    return this.#commit('removed', () => this.#attention.remove(`local:automation-run:${runId}`))
+  }
+
+  dispose(): void {
+    this.#disposed = true
+    this.#commits.dispose()
+  }
+
+  #read(): AttentionNotificationList {
+    const items = this.#attention.list().filter(isApplicationNotification).map(toNotification).sort(compareNotifications)
+    return { items, unseenCount: items.filter(item => item.attention === 'unseen').length }
+  }
+
+  #commit<T>(reason: NotificationCommit['reason'], work: () => T): T {
+    if (this.#disposed)
+      throw new Error('NOTIFICATIONS_DISPOSED')
+    const before = new Map(this.#read().items.map(item => [item.id, item]))
+    try {
+      return work()
+    }
+    finally {
+      const result = this.#read()
+      const after = new Map(result.items.map(item => [item.id, item]))
+      const changes: NotificationCommit['changes'][number][] = []
+      for (const id of new Set([...before.keys(), ...after.keys()])) {
+        if (JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id)))
+          changes.push({ id, kind: before.has(id) ? after.has(id) ? 'changed' : 'removed' : 'added' })
+      }
+      if (changes.length)
+        this.#commits.fire(copyEventSnapshot({ revision: ++this.#revision, operationId: randomUUID(), reason, changes, unseenCount: result.unseenCount }))
+    }
   }
 
   #reconcile(now = this.#now()): void {
@@ -121,7 +169,10 @@ export class AttentionNotificationService {
   }
 
   #reconcileAutomationRuns(now: string): void {
+    const cutoff = Date.parse(now) - RETENTION_MILLISECONDS
     for (const run of this.#listAutomationRuns()) {
+      if (Date.parse(run.completedAt) < cutoff)
+        continue
       this.#attention.observe({
         kind: `automation.run.${run.status}`,
         notificationId: `local:automation-run:${run.runId}`,

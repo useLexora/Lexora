@@ -13,7 +13,7 @@ describe('pi application metadata', () => {
       observer.denied(toolCallId, errorCode)
       observer.handle({ type: 'tool_execution_end', toolCallId, toolName: 'read', result: {}, isError: true })
     }
-    expect(records.map(record => record.event)).toEqual(['tool.requested', 'tool.failed', 'tool.requested', 'tool.denied'])
+    expect(records.map(record => record.event)).toEqual(['pi.tool.requested', 'pi.tool.failed', 'pi.tool.requested', 'pi.tool.denied'])
     expect(records[1]?.errorCode).toBe('PATH_NOT_FOUND')
   })
 
@@ -25,8 +25,8 @@ describe('pi application metadata', () => {
     observer.handle({ type: 'tool_execution_start', toolCallId, toolName: 'read', args: { path: 'private-path' } })
     observer.authorized(toolCallId)
     observer.handle({ type: 'tool_execution_end', toolCallId, toolName: 'read', result: 'private-result', isError: false })
-    const toolEvents = records.filter(record => record.event.startsWith('tool.'))
-    expect(toolEvents.map(record => record.event)).toEqual(['tool.requested', 'tool.authorized', 'tool.completed'])
+    const toolEvents = records.filter(record => record.event.startsWith('pi.tool.'))
+    expect(toolEvents.map(record => record.event)).toEqual(['pi.tool.requested', 'pi.tool.authorized', 'pi.tool.completed'])
     expect(new Set(toolEvents.map(record => record.toolCallId)).size).toBe(1)
     expect(toolEvents[0]?.toolCallId).toMatch(/^pi:[\da-f]{64}$/)
     expect(toolEvents.every(record => record.turnId === 'run-1:1')).toBe(true)

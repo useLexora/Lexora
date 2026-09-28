@@ -18,22 +18,26 @@ import { ActiveRunRegistry } from './ActiveRunRegistry'
 export interface BuddyAgentRunnerOptions {
   executor: RunExecutionBackend
   lifecycle: Pick<RunLifecycleService, 'finalize' | 'find' | 'start'>
-  onRunSettled?: (runId: string) => void
+  releaseRunResources?: (runId: string) => void
+  onObserverError?: (error: unknown) => void
   sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
 }
 
 export class BuddyAgentRunner {
-  readonly #activeRuns = new ActiveRunRegistry()
+  readonly #activeRuns: ActiveRunRegistry
+  readonly onDidSettle: ActiveRunRegistry['onDidSettle']
   readonly #executor: BuddyAgentRunnerOptions['executor']
   readonly #lifecycle: BuddyAgentRunnerOptions['lifecycle']
-  readonly #onRunSettled: NonNullable<BuddyAgentRunnerOptions['onRunSettled']>
+  readonly #releaseRunResources: NonNullable<BuddyAgentRunnerOptions['releaseRunResources']>
   readonly #sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
   #lastTimestamp = 0
 
   constructor(options: BuddyAgentRunnerOptions) {
     this.#executor = options.executor
+    this.#activeRuns = new ActiveRunRegistry(options.onObserverError)
+    this.onDidSettle = this.#activeRuns.onDidSettle
     this.#lifecycle = options.lifecycle
-    this.#onRunSettled = options.onRunSettled ?? (() => {})
+    this.#releaseRunResources = options.releaseRunResources ?? (() => {})
     this.#sessions = options.sessions
   }
 
@@ -61,12 +65,7 @@ export class BuddyAgentRunner {
 
     const identity = toBuddySessionIdentity(session)
     return this.#activeRuns.start({
-      execute: execution => this.#sessions.withConversationRun(
-        execution.identity,
-        execution.runId,
-        execution.signal,
-        () => this.#executeTurn(input, execution),
-      ).catch(error => this.#closeExecutionFromError(execution, error)).finally(() => this.#onRunSettled(execution.runId)),
+      execute: execution => this.#withConversationRun(execution, () => this.#executeTurn(input, execution)),
       identity,
       runId,
     })
@@ -91,12 +90,7 @@ export class BuddyAgentRunner {
 
     const identity = toBuddySessionIdentity(session)
     return this.#activeRuns.start({
-      execute: execution => this.#sessions.withConversationRun(
-        execution.identity,
-        execution.runId,
-        execution.signal,
-        () => this.#executeCompaction(input, run, execution),
-      ).catch(error => this.#closeExecutionFromError(execution, error)).finally(() => this.#onRunSettled(execution.runId)),
+      execute: execution => this.#withConversationRun(execution, () => this.#executeCompaction(input, run, execution)),
       identity,
       runId: run.id,
     })
@@ -104,6 +98,18 @@ export class BuddyAgentRunner {
 
   steer(runId: string, prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]): boolean {
     return this.#activeRuns.steer(runId, prepare, skills)
+  }
+
+  hasActiveExecution(conversationId: string): boolean {
+    return this.#activeRuns.hasActiveExecution(conversationId)
+  }
+
+  get isStopping(): boolean {
+    return this.#activeRuns.isStopping
+  }
+
+  hasDegradedCleanup(conversationId: string): boolean {
+    return this.#activeRuns.hasDegradedCleanup(conversationId)
   }
 
   followUp(runId: string, prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]): boolean {
@@ -134,6 +140,38 @@ export class BuddyAgentRunner {
     }
     if (failures.length)
       throw new AggregateError(failures, 'Execution backend cleanup failed')
+  }
+
+  async #withConversationRun(execution: ActiveRunContext, operation: () => Promise<RunRecord>): Promise<RunRecord> {
+    let entered = false
+    try {
+      return await this.#sessions.withConversationRun(
+        execution.identity,
+        execution.runId,
+        execution.signal,
+        () => {
+          entered = true
+          return operation().catch(error => this.#closeExecutionFromError(execution, error))
+        },
+        (result) => {
+          if (result.cleanup === 'degraded')
+            execution.markCleanupDegraded()
+        },
+      )
+    }
+    catch (error) {
+      if (entered)
+        throw error
+      return await this.#closeExecutionFromError(execution, error)
+    }
+    finally {
+      try {
+        this.#releaseRunResources(execution.runId)
+      }
+      catch {
+        execution.markCleanupDegraded()
+      }
+    }
   }
 
   async #executeTurn(

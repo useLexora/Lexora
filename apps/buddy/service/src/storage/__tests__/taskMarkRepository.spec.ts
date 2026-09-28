@@ -184,8 +184,14 @@ describe('task marks and reading state', () => {
       legacy.exec(migration.sql)
       legacy.exec(`PRAGMA user_version = ${migration.version}`)
     }
-    seed(legacy).run('historical')
-    const history = legacy.prepare('SELECT * FROM conversations').all()
+    for (const id of ['a', 'b']) {
+      legacy.prepare('INSERT INTO conversations (id, title, created_at, updated_at, approval_policy, execution_profile) VALUES (?, ?, ?, ?, ?, ?)').run(id, id, now, now, 'policy', 'workspace_write')
+      legacy.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(`branch-${id}`, id, now)
+      legacy.prepare('UPDATE conversations SET active_branch_id = ? WHERE id = ?').run(`branch-${id}`, id)
+      legacy.prepare('INSERT INTO messages (id, branch_id, conversation_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(`question-${id}`, `branch-${id}`, id, 'user', '{}', now)
+    }
+    createRunRepository(legacy).create({ id: 'historical', branchId: 'branch-a', conversationId: 'a', triggeringMessageId: 'question-a', provider: 'fixture', model: 'fixture', piSessionFile: null, purpose: 'chat', status: 'completed', startedAt: now, completedAt: now, approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    const history = legacy.prepare('SELECT * FROM conversations').all().map(conversation => ({ ...conversation, title_source: 'manual', title_revision: 0 }))
     legacy.close()
     const migrated = openBuddyDatabase({ databasePath })
     const marks = createTaskMarkRepository(migrated)

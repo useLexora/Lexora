@@ -2,10 +2,11 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { CallToolResult, Progress } from '@modelcontextprotocol/client'
 import type { TSchema } from 'typebox'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
-import type { McpRemoteTool } from './McpClientSession'
+import type { McpCatalogTool } from './mcpEvents'
 import type { McpResultWriter } from './mcpToolResults'
 import { createHash } from 'node:crypto'
 import { defineTool } from '@earendil-works/pi-coding-agent'
+import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { mcpErrorCode } from './mcpErrors'
 import { normalizeMcpResult } from './mcpToolResults'
 
@@ -13,8 +14,8 @@ export interface CreateMcpToolsOptions {
   serverId: string
   serverName: string
   generation: number
-  callTool: (tool: McpRemoteTool, arguments_: unknown, signal?: AbortSignal, onProgress?: (progress: Progress) => void) => Promise<CallToolResult>
-  tools: readonly McpRemoteTool[]
+  callTool: (tool: McpCatalogTool, arguments_: unknown, signal?: AbortSignal, onProgress?: (progress: Progress) => void) => Promise<CallToolResult>
+  tools: readonly McpCatalogTool[]
   writeResult?: McpResultWriter
 }
 
@@ -39,7 +40,8 @@ export function createMcpTools(options: CreateMcpToolsOptions): McpToolsResult {
   const diagnostics: McpToolsResult['diagnostics'] = []
   const tools: ToolDefinition[] = []
   const names = new Set<string>()
-  for (const remoteTool of options.tools) {
+  for (const sourceTool of options.tools) {
+    const remoteTool = copyEventSnapshot(sourceTool)
     const name = createMcpToolName(options.serverId, remoteTool.name)
     if (names.has(name)) {
       diagnostics.push({ code: 'MCP_TOOL_INVALID', message: 'MCP tool names conflict' })
@@ -50,7 +52,7 @@ export function createMcpTools(options: CreateMcpToolsOptions): McpToolsResult {
       name,
       label: `${options.serverName} · ${remoteTool.title ?? remoteTool.name}`,
       description: `${options.serverName}: ${remoteTool.description ?? remoteTool.name}`.slice(0, 2048),
-      parameters: remoteTool.inputSchema as TSchema,
+      parameters: structuredClone(remoteTool.inputSchema) as TSchema,
       execute: async (_toolCallId, parameters, signal, onUpdate, context) => {
         const details: McpToolDetails = { connector: options.serverName, connectorTool: remoteTool.name, artifactIds: [] }
         let lastProgress = 0
@@ -85,7 +87,7 @@ export function createMcpToolName(serverId: string, toolName: string): string {
   return `mcp__${hash(serverId)}__${readable}_${hash(toolName)}`
 }
 
-function classifyTool(options: Pick<CreateMcpToolsOptions, 'generation' | 'serverId' | 'serverName'>, tool: McpRemoteTool): BuddyToolClassification {
+function classifyTool(options: Pick<CreateMcpToolsOptions, 'generation' | 'serverId' | 'serverName'>, tool: McpCatalogTool): BuddyToolClassification {
   return {
     access: 'network',
     approval: {

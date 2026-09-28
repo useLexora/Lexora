@@ -1,6 +1,8 @@
 import type { RuntimeMessageTransport, RuntimeRequestHandler, RuntimeRpcPeerContract, RuntimeRpcPeerOptions } from '../../shared/runtime/rpcPeer'
 import type { RuntimeWireMessage } from '../../shared/runtime/runtimeProtocol'
 import { randomUUID } from 'node:crypto'
+import { Emitter } from '../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../shared/events/eventSnapshot'
 
 import { readLocalChatErrorCode } from '../../shared/runtime/localChatError'
 import { runtimeWireMessageSchema } from '../../shared/runtime/runtimeProtocol'
@@ -49,7 +51,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
   readonly #defaultTimeoutMs: number
   readonly #onFatalError?: (error: Error) => void
   readonly #handlers = new Map<string, RuntimeRequestHandler>()
-  readonly #notifications = new Set<(method: string, params: unknown) => void>()
+  readonly #notifications = new Emitter<{ method: string, params: unknown }>(() => console.error('RUNTIME_NOTIFICATION_OBSERVER_FAILED'))
   readonly #pending = new Map<string, PendingRequest>()
   readonly #running = new Map<string, AbortController>()
   readonly #unsubscribe: () => void
@@ -68,8 +70,8 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
   }
 
   onNotification(listener: (method: string, params: unknown) => void): () => void {
-    this.#notifications.add(listener)
-    return () => this.#notifications.delete(listener)
+    const subscription = this.#notifications.event(({ method, params }) => listener(method, params))
+    return subscription.dispose
   }
 
   onRequest(method: string, handler: RuntimeRequestHandler): () => void {
@@ -132,7 +134,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     this.#closed = true
     this.#unsubscribe()
     this.#handlers.clear()
-    this.#notifications.clear()
+    this.#notifications.dispose()
     for (const pending of this.#pending.values()) {
       pending.dispose()
       pending.reject(reason)
@@ -223,8 +225,15 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
   }
 
   #emitNotification(method: string, params: unknown): void {
-    for (const listener of this.#notifications)
-      listener(method, params)
+    let notification: { readonly method: string, readonly params: unknown }
+    try {
+      notification = copyEventSnapshot({ method, params })
+    }
+    catch {
+      this.#fail(new RuntimeProtocolError('Runtime emitted invalid notification data'))
+      return
+    }
+    this.#notifications.fire(notification)
   }
 
   #handleResponse(message: Exclude<RuntimeWireMessage, { method: string }>): void {

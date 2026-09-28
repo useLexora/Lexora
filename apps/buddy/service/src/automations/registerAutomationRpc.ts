@@ -64,43 +64,36 @@ export function registerAutomationRpc(options: RegisterAutomationRpcOptions): ()
     const automation = options.service.create(
       params,
     )
-    options.changes.publish(automation.id)
     return automation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.update, (params) => {
     const automation = options.service.update(
       params,
     )
-    options.changes.publish(automation.id)
     return automation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.pause, (params) => {
     const automation = options.service.pause(
       params,
     )
-    options.changes.publish(automation.id)
     return automation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.resume, (params) => {
     const automation = options.service.resume(
       params,
     )
-    options.changes.publish(automation.id)
     return automation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.delete, (params) => {
     const automation = options.service.delete(
       params,
     )
-    options.changes.publish(automation.id)
     return automation
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.runNow, (params) => {
     const result = options.service.runNow(
       params,
     )
-    if (result.outcome === 'started')
-      options.changes.publish(result.occurrence.automationId)
     return toAutomationRunNowResult(result)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.listOccurrences, (params) => {

@@ -1,10 +1,17 @@
 import type { Writable } from 'node:stream'
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot } from '../../../shared/lifecycle/runtimeLifecycle'
+import type { LifecycleComponent, ServiceLifecycleSnapshot } from '../../../shared/lifecycle/serviceLifecycle'
 import type { BuddyServiceSupervisorFailureCode } from '../../../shared/runtime/runtimeProtocol'
 import type { BuddyServicePeer } from './BuddyServicePeer'
 import type { BuddyServiceProcessHandle, BuddyServiceProcessInstance } from './buddyServiceProcess'
+import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { APPLICATION_DIAGNOSTIC_METHOD, applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { SERVICE_LIFECYCLE_METHOD, serviceLifecycleChangeSchema } from '../../../shared/lifecycle/serviceLifecycle'
+import { lifecycleDiagnostic } from '../../../shared/observability/lifecycleDiagnostics'
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
   buddyServiceFailureNotificationSchema,
@@ -51,6 +58,7 @@ export interface BuddyServiceSupervisorOptions {
 interface ServiceGeneration extends BuddyServiceProcessHandle {
   disposeBinding: () => void
   id: number
+  producerInstanceId: string
   ready: boolean
   terminationRequested: boolean
 }
@@ -79,6 +87,7 @@ export class BuddyServiceSupervisor {
   readonly #onDiagnostic: BuddyServiceSupervisorOptions['onDiagnostic']
   #generationStartedAt = 0
   #sourceId = 'runtime'
+  #producerInstanceId = randomUUID()
   readonly #forceKillTimeoutMs: number
   readonly #notificationListeners = new Set<(notification: BuddyServiceNotification) => void>()
   readonly #readinessTimeoutMs: number
@@ -86,7 +95,12 @@ export class BuddyServiceSupervisor {
   readonly #shutdownTimeoutMs: number
   readonly #spawnService: BuddyServiceSupervisorOptions['spawnService']
   readonly #stableResetMs: number
-  readonly #stateListeners = new Set<(state: BuddyServiceSupervisorState) => void>()
+  readonly #stateChanges = new Emitter<BuddyServiceSupervisorState>(() => this.#record({ event: 'observer.failed', component: 'runtime.supervisor', level: 'warn' }))
+  readonly #lifecycleChanges = new Emitter<RuntimeLifecycleChange>(() => this.#record({ event: 'observer.failed', component: 'runtime.lifecycle', level: 'warn' }))
+  readonly onDidChangeLifecycle = this.#lifecycleChanges.event
+  #connection: LifecycleComponent | null = null
+  #services: ServiceLifecycleSnapshot | null = null
+  #lifecycleRevision = 0
   readonly #exitedProcesses = new WeakSet<BuddyServiceProcessInstance>()
   readonly #exitCodes = new WeakMap<BuddyServiceProcessInstance, number>()
   #lastShutdownClean = true
@@ -98,12 +112,12 @@ export class BuddyServiceSupervisor {
   #readinessTimer: ReturnType<typeof setTimeout> | null = null
   #restartTimer: ReturnType<typeof setTimeout> | null = null
   #stableTimer: ReturnType<typeof setTimeout> | null = null
-  #state: BuddyServiceSupervisorState = {
+  #state: BuddyServiceSupervisorState = Object.freeze({
     lastError: null,
     pid: null,
     restartAttempt: 0,
     status: 'stopped',
-  }
+  })
 
   constructor(options: BuddyServiceSupervisorOptions) {
     this.#bindPeer = options.bindPeer
@@ -115,10 +129,32 @@ export class BuddyServiceSupervisor {
     this.#shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
     this.#spawnService = options.spawnService
     this.#stableResetMs = options.stableResetMs ?? DEFAULT_STABLE_RESET_MS
+    let previousStatus = this.#state.status
+    let previousError = this.#state.lastError
+    this.onDidChangeLifecycle(({ snapshot, connection }) => {
+      if (connection)
+        this.#record(lifecycleDiagnostic(connection))
+      if (snapshot.status !== previousStatus || snapshot.errorCode !== previousError) {
+        previousStatus = snapshot.status
+        previousError = this.#state.lastError
+        this.#record({ event: `runtime.${snapshot.status}`, level: snapshot.errorCode ? 'warn' : 'info', attempt: this.#state.restartAttempt, ...(snapshot.errorCode ? { errorCode: snapshot.errorCode } : {}) })
+      }
+    })
   }
 
   get state(): BuddyServiceSupervisorState {
     return this.#state
+  }
+
+  get lifecycleState(): RuntimeLifecycleSnapshot {
+    return copyEventSnapshot({
+      revision: this.#lifecycleRevision,
+      generation: this.#connection?.operationId ?? null,
+      status: this.#state.status,
+      errorCode: this.#state.lastError,
+      connection: this.#connection,
+      services: this.#services,
+    })
   }
 
   start(): void {
@@ -147,8 +183,8 @@ export class BuddyServiceSupervisor {
   }
 
   onStateChange(listener: (state: BuddyServiceSupervisorState) => void): () => void {
-    this.#stateListeners.add(listener)
-    return () => this.#stateListeners.delete(listener)
+    const subscription = this.#stateChanges.event(listener)
+    return () => subscription.dispose()
   }
 
   onNotification(listener: (notification: BuddyServiceNotification) => void): () => void {
@@ -239,8 +275,11 @@ export class BuddyServiceSupervisor {
       return
     const id = ++this.#generationId
     this.#sourceId = `runtime-${id}`
+    this.#producerInstanceId = randomUUID()
     this.#generationStartedAt = performance.now()
-    this.#record({ event: 'component.starting', level: 'info', component: 'runtime.connection', operationId: this.#sourceId })
+    this.#services = null
+    this.#connection = copyEventSnapshot({ component: 'runtime.connection', kind: 'service', status: 'starting', operationId: this.#sourceId })
+    this.#publishLifecycle(this.#connection)
     let handle: BuddyServiceProcessHandle | null = null
     const pendingFatalError: { value: Error | null } = { value: null }
     const onFatalError = (error: Error) => {
@@ -262,6 +301,7 @@ export class BuddyServiceSupervisor {
       ...handle,
       disposeBinding: this.#bindPeer?.(handle.peer) ?? (() => {}),
       id,
+      producerInstanceId: this.#producerInstanceId,
       ready: false,
       terminationRequested: false,
     }
@@ -282,6 +322,19 @@ export class BuddyServiceSupervisor {
       }
       if (this.#generation?.id !== id)
         return
+      if (method === SERVICE_LIFECYCLE_METHOD) {
+        const parsed = serviceLifecycleChangeSchema.safeParse(params)
+        if (!parsed.success || parsed.data.snapshot.components.some(component => !component.component.startsWith('runtime.') || component.component === 'runtime.connection')) {
+          this.#record({ event: 'runtime.lifecycle_invalid', level: 'warn' }, generation)
+          return
+        }
+        const snapshot = parsed.data.snapshot
+        if (this.#services && (snapshot.sourceId !== this.#services.sourceId || snapshot.revision <= this.#services.revision))
+          return
+        this.#services = copyEventSnapshot(snapshot)
+        this.#publishLifecycle()
+        return
+      }
       if (method === 'runtime.failed') {
         const failure = buddyServiceFailureNotificationSchema.safeParse(params)
         if (!failure.success) {
@@ -506,28 +559,26 @@ export class BuddyServiceSupervisor {
   }
 
   #setState(state: BuddyServiceSupervisorState): void {
-    if (state.status !== this.#state.status || state.lastError !== this.#state.lastError) {
-      this.#record({
-        event: `runtime.${state.status}`,
-        level: state.lastError ? 'warn' : 'info',
-        attempt: state.restartAttempt,
-        ...(state.lastError ? { errorCode: state.lastError } : {}),
-      })
-    }
     this.#state = Object.freeze({ ...state })
-    for (const listener of this.#stateListeners)
-      listener(this.#state)
+    this.#publishLifecycle()
+    this.#stateChanges.fire(this.#state)
+  }
+
+  #publishLifecycle(connection?: LifecycleComponent): void {
+    this.#lifecycleRevision += 1
+    this.#lifecycleChanges.fire(copyEventSnapshot({ snapshot: this.lifecycleState, ...(connection ? { connection } : {}) }))
   }
 
   #record(event: ApplicationDiagnostic, generation = this.#generation): void {
     try {
-      this.#onDiagnostic?.({ ...event, sourceId: generation ? `runtime-${generation.id}` : this.#sourceId, sourcePid: generation?.process.pid })
+      this.#onDiagnostic?.({ ...event, producerInstanceId: generation?.producerInstanceId ?? this.#producerInstanceId, sourceId: generation ? `runtime-${generation.id}` : this.#sourceId, sourcePid: generation?.process.pid })
     }
     catch {}
   }
 
   #connectionSettled(status: 'completed' | 'failed', errorCode?: string): void {
-    this.#record({ event: status === 'completed' ? 'component.ready' : 'component.start_failed', level: status === 'failed' ? 'error' : 'info', component: 'runtime.connection', operationId: this.#sourceId, durationMs: Math.round(performance.now() - this.#generationStartedAt), ...(errorCode ? { errorCode } : {}) })
+    this.#connection = copyEventSnapshot({ component: 'runtime.connection', kind: 'service', status: status === 'completed' ? 'ready' : 'start_failed', operationId: this.#sourceId, durationMs: Math.round(performance.now() - this.#generationStartedAt), ...(errorCode ? { failure: { errorCode } } : {}) })
+    this.#publishLifecycle(this.#connection)
   }
 
   #isReplacementBlocked(): boolean {

@@ -44,7 +44,6 @@ describe('registerAutomationRpc', () => {
       automations: service,
       conversationLifecycle: { delete: async () => false },
       notifications: { removeAutomationRun: () => false },
-      onChanged: automationId => changes.publish(automationId),
     })
     const harness = createRpcHarness()
     const unregister = registerAutomationRpc({
@@ -140,10 +139,10 @@ describe('registerAutomationRpc', () => {
       created.id,
       created.id,
     ])
-    expect(wakeCount).toBe(7)
+    expect(wakeCount).toBe(6)
     harness.notify('scheduler.wake', { reason: 'resume' })
     harness.notify('scheduler.wake', { reason: 'invalid' })
-    expect(wakeCount).toBe(8)
+    expect(wakeCount).toBe(7)
 
     unregister()
     expect(harness.notificationListenerCount()).toBe(0)

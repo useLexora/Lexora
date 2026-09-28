@@ -1,3 +1,4 @@
+import type { ComposerDraftCleanup, ComposerDraftCommit } from '../ComposerDraftService'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +23,40 @@ const input = {
 }
 
 describe('composerDraftService lifecycle', () => {
+  it('publishes canonical creation once and keeps discard commit separate from retryable cleanup', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const drafts = createComposerDraftRepository(database)
+    let failed = false
+    const service = new ComposerDraftService(drafts, async () => {
+      if (!failed) {
+        failed = true
+        throw new Error('Fixture cleanup failure')
+      }
+    })
+    const commits: ComposerDraftCommit[] = []
+    const cleanup: ComposerDraftCleanup[] = []
+    service.onDidCommit(event => commits.push(event))
+    service.onDidCleanup(event => cleanup.push(event))
+    try {
+      const opened = await service.open({ ...input, scope: { kind: 'global' } })
+      const reused = await service.open({ ...input, draftId: 'proposed-alias', scope: { kind: 'global' } })
+      expect(reused.draftId).toBe(opened.draftId)
+      expect(commits.map(event => event.draftId)).toEqual([input.draftId])
+      await service.open({ ...input, draftId: 'discard-me', scope: { kind: 'task', draftId: 'discard-me', spaceId: null } })
+      await expect(service.discard({ draftId: 'discard-me', expectedRevision: 0 })).rejects.toThrow('Fixture cleanup failure')
+      expect(drafts.findById('discard-me')).toBeNull()
+      expect(commits.map(event => event.kind)).toEqual(['opened', 'opened', 'discarded'])
+      await service.discard({ draftId: 'discard-me', expectedRevision: 0 })
+      expect(commits).toHaveLength(3)
+      expect(cleanup.map(event => event.status)).toEqual(['started', 'failed', 'started', 'completed'])
+      expect(Reflect.set(commits[0]!.scope, 'kind', 'task')).toBe(false)
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('waits for imports, removes only owned copies, and rejects late writes after discard', async () => {
     const root = await mkdtemp(join(tmpdir(), 'lexora-input-discard-'))
     const database = openBuddyDatabase({ databasePath: ':memory:' })

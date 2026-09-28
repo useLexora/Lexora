@@ -8,18 +8,17 @@ import { WorkbenchPersistence } from '../WorkbenchPersistence'
 import { WorkingCopyService } from '../WorkingCopyService'
 
 const resource = { scheme: 'file', id: 'example', data: { path: 'example.md' } }
-function registry() {
+function registry(prepareBeforeOpen = false) {
   const registry = new ContributionRegistry()
-  registry.register('files', scope => scope.view({ locations: ['main'], id: 'text', renderer: 'text', label: 'Text', supports: input => input.scheme === 'file', multiple: true }))
+  registry.register('files', scope => scope.view({ locations: ['main'], id: 'text', renderer: 'text', label: 'Text', supports: input => input.scheme === 'file', multiple: true, prepareBeforeOpen }))
   return registry
 }
 describe('workbench resource ownership', () => {
   it('uses only explicitly published context keys for declarative view conditions', async () => {
-    const contributions = registry()
+    const contributions = new ContributionRegistry()
+    contributions.register('files', scope => scope.view({ locations: ['main'], id: 'text', renderer: 'text', label: 'Text', supports: input => input.scheme === 'file', multiple: true, when: { 'resource.scheme': 'file' } }))
     const controller = new WorkbenchController(contributions)
     const id = (await controller.open(resource, 'Document'))!
-    const definition = contributions.views.get('text')!
-    definition.when = { 'resource.scheme': 'file' }
     expect(controller.context.values['resource.scheme']).toBe('file')
     expect(controller.matchesViewContext(controller.layout.views[id]!)).toBe(false)
     const dispose = controller.contextKeys.set('resource.scheme', 'file')
@@ -71,7 +70,9 @@ describe('workbench resource ownership', () => {
     const replace = controller.open({ ...resource, id: 'next' }, 'Next', { signal: signal.signal })
     await entered.promise
     signal.abort()
-    gate.resolve({ commit: () => retained = false, cancel: () => editable = true })
+    gate.resolve({ complete: () => {
+      retained = false
+    }, cancel: () => editable = true })
     await replace
     expect(controller.layout.views[original]?.resource).toEqual(resource)
     expect(retained).toBe(true)
@@ -84,11 +85,15 @@ describe('workbench resource ownership', () => {
 
   it('keeps all dependent views and input when any close guard is cancelled', async () => {
     let discarded = false
-    const controller = new WorkbenchController(registry(), async view => view.resource.id === 'blocked' ? false : { commit: () => discarded = true })
+    const controller = new WorkbenchController(registry(), async view => view.resource.id === 'blocked'
+      ? false
+      : { complete: () => {
+          discarded = true
+        } })
     const first = (await controller.open(resource, 'First'))!
     const second = (await controller.open({ ...resource, id: 'blocked' }, 'Blocked', { direction: 'right' }))!
     const before = JSON.stringify(controller.layout)
-    expect(await controller.closeMany([first, second])).toBe(false)
+    expect(await controller.closeMany([first, second])).toMatchObject({ committed: false })
     expect(JSON.stringify(controller.layout)).toBe(before)
     expect(discarded).toBe(false)
   })
@@ -143,7 +148,7 @@ describe('workbench resource ownership', () => {
     })
     const first = (await controller.open(resource, 'First'))!
     const second = (await controller.open({ ...resource, id: 'two' }, 'Second', { direction: 'left' }))!
-    expect(await Promise.all([controller.close(first), controller.close(first)])).toEqual([true, true])
+    expect(await Promise.all([controller.close(first), controller.close(first)])).toEqual([expect.objectContaining({ committed: true }), expect.objectContaining({ committed: true })])
     expect(confirmed).toBe(1)
     expect(panes(controller.layout.root).map(pane => pane.view)).toEqual([second])
   })
@@ -197,11 +202,11 @@ describe('working copies', () => {
     const saving = copies.save(resource)
     copies.edit(resource, 'second')
     finish({ status: 'saved', document: { text: 'first', etag: 'b' } })
-    expect(await saving).toBe(false)
+    expect(await saving).toMatchObject({ status: 'saved', dirtyAfter: true })
     expect(copies.get(resource)).toMatchObject({ text: 'second', baseText: 'first', etag: 'b' })
     const conflict = copies.save(resource)
     finish({ status: 'conflict', document: { text: 'external', etag: 'c' } })
-    expect(await conflict).toBe(false)
+    expect(await conflict).toMatchObject({ status: 'conflict' })
     expect(copies.get(resource)?.text).toBe('second')
     copies.resolveConflict(resource, 'local')
     expect(copies.get(resource)).toMatchObject({ text: 'second', baseText: 'external', etag: 'c' })
@@ -320,8 +325,10 @@ it('retains protected views when a close request is cancelled during its guard',
   const closing = controller.close(id, abort.signal)
   await entered.promise
   abort.abort()
-  gate.resolve({ commit: () => committed = true, cancel: () => cancelled = true })
-  expect(await closing).toBe(false)
+  gate.resolve({ complete: () => {
+    committed = true
+  }, cancel: () => cancelled = true })
+  expect(await closing).toMatchObject({ committed: false })
   expect(controller.layout.views[id]).toBeDefined()
   expect(committed).toBe(false)
   expect(cancelled).toBe(true)
@@ -329,10 +336,9 @@ it('retains protected views when a close request is cancelled during its guard',
 
 describe('prepared view navigation', () => {
   async function fixture() {
-    const contributions = registry()
+    const contributions = registry(true)
     const controller = new WorkbenchController(contributions)
     const original = (await controller.open(resource, 'Original'))!
-    contributions.views.get('text')!.prepareBeforeOpen = true
     return { controller, original, paneId: controller.layout.activePane }
   }
 
@@ -421,7 +427,7 @@ describe('prepared view navigation', () => {
   })
 
   it('releases a prepared close guard when cancelled before the commit', async () => {
-    const contributions = registry()
+    const contributions = registry(true)
     const gate = deferred<import('../WorkbenchController').ViewCloseDecision>()
     const entered = deferred<void>()
     const controller = new WorkbenchController(contributions, () => {
@@ -429,14 +435,13 @@ describe('prepared view navigation', () => {
       return gate.promise
     })
     const original = (await controller.open(resource, 'Original'))!
-    contributions.views.get('text')!.prepareBeforeOpen = true
     const opening = controller.open({ ...resource, id: 'next' }, 'Next')
     const candidate = controller.navigation.entries.get(controller.layout.activePane)!
     controller.navigation.ready(candidate.view.id)
     await entered.promise
     controller.navigation.cancel(candidate.paneId)
     let editable = false
-    gate.resolve({ cancel: () => editable = true, commit: () => {
+    gate.resolve({ cancel: () => editable = true, complete: () => {
       throw new Error('Must preserve the original')
     } })
     expect(await opening).toBeNull()

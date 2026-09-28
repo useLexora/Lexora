@@ -27,6 +27,7 @@ const activityEvents = new Set(['approval.requested', 'approval.resolved', 'run.
 export function useTaskIndex(options: TaskIndexOptions) {
   const { api, applicationSettings } = options
   const data = useTaskIndexData({ api })
+  const stopConversationChanges = api.conversations.onChanged(conversation => data.applyConversation(conversation))
   const pins = useTaskPinnedItems(applicationSettings)
   const sidebar = useTaskSidebarPreferences(applicationSettings)
   const marks = useTaskMarks({ api: api.taskMarks, conversations: data.conversations, language: applicationSettings.language, ready: options.ready })
@@ -141,6 +142,16 @@ export function useTaskIndex(options: TaskIndexOptions) {
     },
   }
   const refreshActivity = useDebounceFn(() => disposed ? undefined : data.refreshIndex().catch(setError), 100)
+  const spaceRevisions = new Map<string, number>()
+  const refreshSpaces = useDebounceFn(() => disposed ? undefined : data.refreshSpaces().catch(setError), 50)
+  const stopSpaceChanges = api.spaces.onChanged((event) => {
+    if (disposed || (spaceRevisions.get(event.sourceId) ?? 0) >= event.revision)
+      return
+    spaceRevisions.set(event.sourceId, event.revision)
+    if (spaceRevisions.size > 16)
+      spaceRevisions.delete(spaceRevisions.keys().next().value!)
+    void refreshSpaces()
+  })
   const stopEvents = api.chat.onRunEvent((event) => {
     if (activityEvents.has(event.type))
       void refreshActivity()
@@ -148,7 +159,10 @@ export function useTaskIndex(options: TaskIndexOptions) {
   function dispose() {
     disposed = true
     stopEvents()
+    stopConversationChanges()
+    stopSpaceChanges()
     marks.dispose()
+    data.dispose()
   }
   onScopeDispose(dispose, true)
   async function initialize() {

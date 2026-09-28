@@ -1,6 +1,7 @@
 import type { ApprovalRequestResult } from '../../../approvals/ApprovalService'
 import type { BrowserCapabilityHost } from '../../../browser/BrowserCapabilityService'
 import type { BuddyCapabilityServices } from '../../../createBuddyCapabilityFactory'
+import type { BuddyCapabilityContext } from '../BuddyCapability'
 import type { BuddySessionExtensionServices } from '../createBuddySessionExtensions'
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +9,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveBuddyPlatform } from '../../../../../shared/platform'
 import { createBuddyCapabilityFactory } from '../../../createBuddyCapabilityFactory'
+import { PetActionService } from '../../../pet/PetActionService'
 import { createBuddySessionExtensions } from '../createBuddySessionExtensions'
 
 const directories: string[] = []
@@ -20,6 +22,65 @@ afterEach(async () => {
 })
 
 describe('browser session extensions', () => {
+  it('keeps capabilities available after the creating run is cancelled and stops them before session cleanup finishes', async () => {
+    const root = await createTemporaryDirectory()
+    const firstRun = new AbortController()
+    const release = Promise.withResolvers<void>()
+    const services = createCompositionServices(createUnavailableBrowserHost())
+    let capabilityContext!: BuddyCapabilityContext
+    let cleaned = false
+    services.createCapabilities = async (context) => {
+      capabilityContext = context
+      return [{
+        extension: { name: 'lexora-lifetime-fixture', factory() {} },
+        classify: () => null,
+        dispose: async () => {
+          await release.promise
+          cleaned = true
+        },
+      }]
+    }
+    const extensions = await createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'conversation-1', approvalPolicy: 'policy', executionProfile: 'workspace_write', grants: [], services, sessionMode: 'interactive', signal: firstRun.signal, spaceId: null })
+    firstRun.abort()
+    extensions.runContext.current = { runId: 'run-next', signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
+    expect(capabilityContext.signal.aborted).toBe(false)
+    expect(capabilityContext.getRunId()).toBe('run-next')
+    const stopping = extensions.dispose()
+    expect(capabilityContext.signal.aborted).toBe(true)
+    expect(cleaned).toBe(false)
+    release.resolve()
+    await stopping
+    expect(cleaned).toBe(true)
+  })
+
+  it('cancels capability construction and disposes a late accepted capability before rejecting startup', async () => {
+    const root = await createTemporaryDirectory()
+    const run = new AbortController()
+    const entered = Promise.withResolvers<AbortSignal>()
+    const ready = Promise.withResolvers<void>()
+    const services = createCompositionServices(createUnavailableBrowserHost())
+    let disposed = false
+    services.createCapabilities = async (context) => {
+      entered.resolve(context.signal)
+      await ready.promise
+      return [{
+        extension: { name: 'lexora-late-fixture', factory() {} },
+        classify: () => null,
+        dispose: () => {
+          disposed = true
+        },
+      }]
+    }
+    const preparing = createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'conversation-1', approvalPolicy: 'policy', executionProfile: 'workspace_write', grants: [], services, sessionMode: 'interactive', signal: run.signal, spaceId: null })
+    const rejected = expect(preparing).rejects.toMatchObject({ name: 'AbortError' })
+    const scope = await entered.promise
+    run.abort()
+    expect(scope.aborted).toBe(true)
+    ready.resolve()
+    await rejected
+    expect(disposed).toBe(true)
+  })
+
   it.each(['interactive', 'automation_background'] as const)('keeps automation availability tied to session mode: %s', async (sessionMode) => {
     const root = await createTemporaryDirectory()
     const extensions = await createBuddySessionExtensions({
@@ -36,6 +97,34 @@ describe('browser session extensions', () => {
     const names = extensions.inProcessExtensions.map(extension => extension.name)
     expect(names.includes('lexora-automation')).toBe(sessionMode === 'interactive')
     expect(names).toEqual(expect.arrayContaining(['lexora-tool-policy', 'lexora-change-capture', 'lexora-image-generation', 'lexora-image-transform']))
+  })
+
+  it('closes admission immediately and drains every capability even if one cleanup fails', async () => {
+    const root = await createTemporaryDirectory()
+    const release = Promise.withResolvers<void>()
+    let finalFact = false
+    const services = createCompositionServices(createUnavailableBrowserHost())
+    services.createCapabilities = async () => [
+      { extension: { name: 'lexora-failed-cleanup', factory() {} }, classify: () => null, dispose() { throw new Error('fixture-cleanup-failed') } },
+      { extension: { name: 'lexora-draining', factory() {} }, classify: () => null, async dispose() {
+        await release.promise
+
+        finalFact = true
+      } },
+    ]
+    const extensions = await createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'conversation-1', approvalPolicy: 'policy', executionProfile: 'workspace_write', grants: [], services, sessionMode: 'interactive', signal: new AbortController().signal, spaceId: null })
+    let settled = false
+    const stopping = extensions.dispose()
+    const rejected = expect(stopping).rejects.toThrow('SESSION_CAPABILITY_CLEANUP_FAILED').then(() => {
+      settled = true
+    })
+    expect(extensions.toolCapabilities.snapshot.status).toBe('disposed')
+    expect(extensions.dispose()).toBe(stopping)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    release.resolve()
+    await rejected
+    expect(finalFact).toBe(true)
   })
 
   it('validates local HTML against the session grant before authorization', async () => {
@@ -151,10 +240,11 @@ function createCompositionServices(
           return { classifications: new Map(), diagnostics: [], tools: [], available: () => false }
         },
       },
-    } as unknown as BuddyCapabilityServices, {
+    } as unknown as BuddyCapabilityServices, new PetActionService({
       peer: { request: async () => { throw new Error('No host action is expected during extensions') } },
-    }),
+    })),
     directoryGrants: {
+      assertCurrent: () => {},
       grant: async (input: { owner: { id: string, kind: string }, root: string }) => ({
         changed: true,
         coveredGrantIds: [],

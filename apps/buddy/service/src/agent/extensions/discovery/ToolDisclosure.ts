@@ -3,21 +3,38 @@ import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolDisclosurePolicy, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import MiniSearch from 'minisearch'
+import { Emitter } from '../../../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../../../shared/events/eventSnapshot'
 import { isToolSearchResult, TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
 
+export interface ToolDisclosureChange {
+  readonly revision: number
+  readonly reason: 'discovery' | 'restore'
+  readonly added: readonly string[]
+  readonly removed: readonly string[]
+  readonly discovered: readonly string[]
+}
+
 export class ToolDisclosure {
+  readonly #changes = new Emitter<ToolDisclosureChange>(() => console.error('TOOL_DISCLOSURE_OBSERVER_FAILED'))
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #disposed = false
   readonly #policies: ReadonlyMap<string, BuddyToolDisclosurePolicy>
-  readonly #tools: ReadonlyMap<string, ToolInfo>
+  readonly #tools: ReadonlyMap<string, Readonly<Pick<ToolInfo, 'name' | 'description'>>>
   readonly #index: MiniSearch
   readonly #resident: readonly string[]
   #discovered = new Set<string>()
 
   constructor(tools: readonly ToolInfo[], resident: readonly string[], policies: readonly BuddyToolDisclosurePolicy[]) {
-    this.#tools = new Map(tools.map(tool => [tool.name, tool]))
-    this.#policies = new Map(policies.flatMap(policy => policy.toolNames.map(name => [name, policy] as const)))
-    this.#resident = resident.filter(name => !this.#policies.has(name))
+    this.#tools = new Map(tools.map(tool => [tool.name, Object.freeze({ name: tool.name, description: tool.description })]))
+    this.#policies = new Map(policies.flatMap((policy) => {
+      const owned = copyEventSnapshot(policy)
+      return owned.toolNames.map(name => [name, owned] as const)
+    }))
+    this.#resident = Object.freeze([...new Set(resident.filter(name => !this.#policies.has(name)))])
     this.#index = new MiniSearch({
       idField: 'name',
       fields: ['name', 'description', 'keywords', 'fields'],
@@ -30,6 +47,13 @@ export class ToolDisclosure {
       keywords: this.#policies.get(tool.name)?.keywords ?? '',
       fields: parameterFields(tool.parameters).join(' '),
     })))
+  }
+
+  get snapshot() { return Object.freeze({ revision: this.#revision, discovered: Object.freeze([...this.#discovered]) }) }
+
+  dispose(): void {
+    this.#disposed = true
+    this.#changes.dispose()
   }
 
   active(model: Model<Api> | undefined): string[] {
@@ -54,12 +78,13 @@ export class ToolDisclosure {
         : this.#index.search(query, { filter: match => available(String(match.id)) }).map(match => String(match.id))
     const matches = ranked.slice(0, requested.length > 0 ? 5 : input.limit ?? 3)
     const previous = new Set(this.active(model))
+    const discovered = new Set(this.#discovered)
     const tools = matches.flatMap((name) => {
       const tool = this.#tools.get(name)
       if (!tool)
         return []
       if (!this.#resident.includes(name))
-        this.#discovered.add(name)
+        discovered.add(name)
       return [{
         name,
         description: tool.description.slice(0, 240),
@@ -67,6 +92,7 @@ export class ToolDisclosure {
         alreadyDisclosed: previous.has(name),
       }]
     })
+    this.#replace(discovered, 'discovery')
     return {
       version: 1,
       tools,
@@ -78,7 +104,7 @@ export class ToolDisclosure {
   restore(messages: readonly Message[]): void {
     const current = getCurrentSystemMessage(messages)
     if (current) {
-      this.#discovered = new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#policies.has(name)))
+      this.#replace(new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#policies.has(name))), 'restore')
       return
     }
     const discovered = new Set<string>()
@@ -110,7 +136,18 @@ export class ToolDisclosure {
         discovered.add(message.toolName)
       }
     }
-    this.#discovered = new Set([...discovered].filter(name => this.#policies.has(name)))
+    this.#replace(new Set([...discovered].filter(name => this.#policies.has(name))), 'restore')
+  }
+
+  #replace(next: Set<string>, reason: ToolDisclosureChange['reason']): void {
+    if (this.#disposed)
+      throw new Error('TOOL_DISCLOSURE_DISPOSED')
+    const added = [...next].filter(name => !this.#discovered.has(name))
+    const removed = [...this.#discovered].filter(name => !next.has(name))
+    if (!added.length && !removed.length)
+      return
+    this.#discovered = next
+    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, reason, added, removed, discovered: [...next] }))
   }
 
   #available(name: string, model: Model<Api> | undefined): boolean {
