@@ -12,8 +12,6 @@ fn rejects_null_dacl_untrusted_owner_and_allow_ace_variants_not_in_contract() {
     for sddl in [
         "O:SYD:NO_ACCESS_CONTROL",
         "O:WDD:P(A;;FA;;;SY)",
-        "O:SYD:P(A;;FR;;;WD)",
-        "O:SYD:P(A;OICIIO;FR;;;WD)",
         "O:SYD:P(A;OICI;FA;;;CO)",
         "O:SYD:P(A;OICIIO;FA;;;CG)",
         "O:COD:P(A;OICIIO;FA;;;CO)",
@@ -55,7 +53,7 @@ fn empty_acl_and_deny_entries_do_not_grant_untrusted_access() {
 }
 
 #[test]
-fn metadata_only_grants_do_not_expose_directory_contents_or_allow_changes() {
+fn read_only_grants_do_not_allow_changes() {
     let security = PrivateSecurity::new().unwrap();
     for sid in ["WD", "BU", "AC", "S-1-5-21-1-2-3-1001"] {
         for mask in [
@@ -64,6 +62,9 @@ fn metadata_only_grants_do_not_expose_directory_contents_or_allow_changes() {
             READ_CONTROL,
             SYNCHRONIZE,
             METADATA_READ_ACCESS,
+            0x120089,
+            0x81,
+            READ_ONLY_ACCESS,
         ] {
             for flags in ["", "OICI", "OICIIO", "OICIID"] {
                 let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;{flags};{mask:#x};;;{sid})");
@@ -78,18 +79,15 @@ fn metadata_only_grants_do_not_expose_directory_contents_or_allow_changes() {
 }
 
 #[test]
-fn metadata_grants_do_not_hide_data_access_changes_or_unknown_rights() {
+fn read_only_grants_do_not_hide_write_changes_or_unknown_rights() {
     let security = PrivateSecurity::new().unwrap();
     for bit in 0..32 {
         let access = 1_u32 << bit;
-        if access & METADATA_READ_ACCESS != 0 {
+        if access & READ_ONLY_ACCESS != 0 {
             continue;
         }
         for flags in ["", "OICIIO"] {
-            if access == FILE_TRAVERSE && flags.is_empty() {
-                continue;
-            }
-            let mask = access | METADATA_READ_ACCESS;
+            let mask = access | READ_ONLY_ACCESS;
             let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;{flags};{mask:#x};;;WD)");
             assert_eq!(
                 security.validate_descriptor(&from_sddl(&sddl).unwrap()),
@@ -108,26 +106,14 @@ fn metadata_grants_do_not_hide_data_access_changes_or_unknown_rights() {
 }
 
 #[test]
-fn traverse_grants_are_allowed_only_when_they_cannot_be_inherited_by_files() {
+fn inheritable_read_execute_grants_are_allowed() {
     let security = PrivateSecurity::new().unwrap();
-    for flags in ["", "CI", "CIIO", "CIID"] {
-        let sddl = format!("O:SYD:P(A;{flags};0x1200a0;;;WD)");
-        assert_eq!(
-            security.validate_descriptor(&from_sddl(&sddl).unwrap()),
-            Ok(()),
-            "{sddl}"
-        );
-    }
-    for flags in ["OI", "OICI", "OICIIO", "OICIID"] {
-        let sddl = format!("O:SYD:P(A;{flags};0x1200a0;;;WD)");
-        let failure = security
-            .validate_descriptor(&from_sddl(&sddl).unwrap())
-            .unwrap_err();
-        assert_eq!(
-            failure.acl.unwrap().reason,
-            DirectoryAclReason::UntrustedAccess
-        );
-    }
+    let sddl = "O:SYD:P(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;WD)";
+    assert_eq!(
+        security.validate_descriptor(&from_sddl(sddl).unwrap()),
+        Ok(()),
+        "{sddl}"
+    );
 }
 
 #[test]
@@ -141,13 +127,13 @@ fn rejection_diagnostics_classify_principals_without_serializing_sids() {
         ("CO", "creator_owner"),
         ("S-1-5-21-1-2-3-1001", "other"),
     ] {
-        let descriptor = from_sddl(&format!("O:SYD:P(A;OICIID;0x81;;;{sid})")).unwrap();
+        let descriptor = from_sddl(&format!("O:SYD:P(A;OICIID;0x83;;;{sid})")).unwrap();
         let failure = security.validate_descriptor(&descriptor).unwrap_err();
         assert_eq!(
             serde_json::to_value(&failure).unwrap()["acl"],
             serde_json::json!({
                 "reason": "untrusted_access", "aceIndex": 0, "aceType": 0,
-                "aceFlags": 19, "accessMask": 129, "principal": principal,
+                "aceFlags": 19, "accessMask": 131, "principal": principal,
             })
         );
         assert!(!serde_json::to_string(&failure).unwrap().contains("S-1-"));

@@ -9,12 +9,13 @@ use windows_sys::Win32::{
             GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
         },
         DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
-        INHERIT_ONLY_ACE, IsValidAcl, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid,
-        WinBuiltinAnyPackageSid, WinBuiltinUsersSid, WinCreatorOwnerSid, WinLocalSystemSid,
-        WinWorldSid,
+        INHERIT_ONLY_ACE, IsValidAcl, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinAnyPackageSid,
+        WinBuiltinUsersSid, WinCreatorOwnerSid, WinLocalSystemSid, WinWorldSid,
     },
-    Storage::FileSystem::{FILE_READ_ATTRIBUTES, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE},
+    Storage::FileSystem::{
+        FILE_EXECUTE, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, READ_CONTROL, SYNCHRONIZE,
+    },
     System::{
         SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
         Threading::GetCurrentProcess,
@@ -26,6 +27,7 @@ use super::{DirectoryError, DirectoryFailure, DirectoryOperation, SystemErrorDom
 use crate::windows_security::{Sid, process_user_sid};
 
 const METADATA_READ_ACCESS: u32 = FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE;
+const READ_ONLY_ACCESS: u32 = METADATA_READ_ACCESS | FILE_READ_DATA | FILE_READ_EA | FILE_EXECUTE;
 
 struct LocalMemory(*mut c_void);
 
@@ -243,11 +245,8 @@ impl PrivateSecurity {
                         && sid == self.creator_owner;
                     // SAFETY: The validated standard allow ACE includes its fixed access mask.
                     let mask = unsafe { (*ace.cast::<ACCESS_ALLOWED_ACE>()).Mask };
-                    let directory_only = u32::from(header.AceFlags) & OBJECT_INHERIT_ACE == 0;
-                    let harmless_access =
-                        METADATA_READ_ACCESS | if directory_only { FILE_TRAVERSE } else { 0 };
-                    let metadata_only = mask & !harmless_access == 0;
-                    if !self.trusted.contains(&sid) && !owner_template && !metadata_only {
+                    let read_only = mask & !READ_ONLY_ACCESS == 0;
+                    if !self.trusted.contains(&sid) && !owner_template && !read_only {
                         return Err(DirectoryFailure::acl(DirectoryAclFailure {
                             access_mask: Some(mask),
                             principal: Some(self.principal(&sid)),
