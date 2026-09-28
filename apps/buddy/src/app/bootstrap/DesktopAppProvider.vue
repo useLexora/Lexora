@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DesktopAgentProfileConfig, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
@@ -10,6 +11,7 @@ import { useProvideAutomationContext } from '@/modules/automations'
 import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
 import { usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
+import { resolveUserProfile } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
 import { useProvideDesktopUpdates } from '@/modules/updates'
@@ -207,6 +209,32 @@ const browserGuestHost = useTemplateRef<DesktopBrowserGuestSurfaceHost>('browser
 const browserGuests = useBrowserGuestHost(browserGuestHost)
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(() => browserGuests.layout?.())))
 const toggleAppSidebar = () => void shell.setAppSidebarCollapsed(!shell.appSidebarCollapsed.value)
+const profileConfig = computed(() => stores.applicationSettings.config.value?.desktop.profile ?? { avatar: '', deviceName: '', userName: '' })
+const agentProfileConfig = computed(() => stores.applicationSettings.config.value?.desktop.agentProfile ?? { avatar: '', name: '', syncWithUserProfile: false })
+const agentIdentity = computed(() => {
+  const profile = agentProfileConfig.value
+  if (!profile.syncWithUserProfile)
+    return { avatar: profile.avatar, avatarColor: null, initials: null, name: profile.name }
+  const resolved = resolveUserProfile(stores.applicationSettings.config.value?.desktop.profile, shell.appInfo.value)
+  return {
+    avatar: resolved.avatarUrl ?? '',
+    avatarColor: resolved.avatarUrl ? null : resolved.avatarColor,
+    initials: resolved.avatarUrl ? null : resolved.initials,
+    name: resolved.userName,
+  }
+})
+async function updateProfile(patch: Partial<DesktopUserProfileConfig>) {
+  const saved = await stores.applicationSettings.updateSettings({ desktop: { profile: patch } })
+  if (saved)
+    message.success(translateBuddy(stores.applicationSettings.language.value, 'desktop.account.saveSuccess'))
+  return saved
+}
+async function updateAgentProfile(patch: Partial<DesktopAgentProfileConfig>) {
+  const saved = await stores.applicationSettings.updateSettings({ desktop: { agentProfile: patch } })
+  if (saved)
+    message.success(translateBuddy(stores.applicationSettings.language.value, 'desktop.agent.saveSuccess'))
+  return saved
+}
 
 const shellBindings: DesktopShellBindings = {
   pages,
@@ -240,6 +268,7 @@ useProvideDesktopUi({
   chat: computed(() => stores.applicationSettings.config.value?.desktop.chat ?? DEFAULT_DESKTOP_CHAT_PREFERENCES),
   language: stores.applicationSettings.language,
   appSidebarCollapsed: shell.appSidebarCollapsed,
+  agentIdentity,
 })
 useProvideTaskEnvironment({
   resources,
@@ -257,6 +286,8 @@ useProvideSettingsContext({
   appInfo: shell.appInfo,
   dataSettings: capabilities.dataSettings,
   platformCapabilities: shell.platformCapabilities,
+  profile: { config: profileConfig, update: updateProfile },
+  agentProfile: { config: agentProfileConfig, update: updateAgentProfile },
   providerSettings: stores.modelProviders,
   ready,
   webSettings: capabilities.webSettings,

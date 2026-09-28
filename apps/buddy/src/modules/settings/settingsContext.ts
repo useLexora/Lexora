@@ -1,4 +1,4 @@
-import type { DesktopAppInfo, DesktopBrowserApi } from '@buddy-electron/shared/desktopApi'
+import type { DesktopAgentProfileConfig, DesktopAppInfo, DesktopBrowserApi, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
 import type { BuddyCapabilities } from '@buddy-shared/platform'
 import type { Ref } from 'vue'
 import type { ApplicationSettings, ShortcutSettings } from './contracts'
@@ -19,6 +19,14 @@ export interface SettingsContext {
   applicationSettings: ApplicationSettings
   dataSettings: DesktopDataSettingsCapability
   platformCapabilities: Readonly<Ref<BuddyCapabilities | null>>
+  profile: {
+    config: Readonly<Ref<DesktopUserProfileConfig>>
+    update: (patch: Partial<DesktopUserProfileConfig>) => Promise<boolean>
+  }
+  agentProfile: {
+    config: Readonly<Ref<DesktopAgentProfileConfig>>
+    update: (patch: Partial<DesktopAgentProfileConfig>) => Promise<boolean>
+  }
   providerSettings: ModelProvidersStore
   ready: Promise<void>
   openTask: (conversationId: string) => Promise<void>

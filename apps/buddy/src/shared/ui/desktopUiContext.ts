@@ -8,6 +8,7 @@ interface DesktopUiContext {
   isDark: Readonly<Ref<boolean>>
   chat: Readonly<Ref<Readonly<DesktopChatPreferences>>>
   appSidebarCollapsed: Readonly<Ref<boolean>>
+  agentIdentity: Readonly<Ref<{ avatar: string, avatarColor: string | null, initials: string | null, name: string }>>
 }
 
 const [useProvideDesktopUi, injectDesktopUi] = createInjectionState(

@@ -46,6 +46,12 @@ const desktopUserProfilePatchSchema = z.object({
   avatar: z.string().max(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH).optional(),
 }).strict()
 
+const desktopAgentProfilePatchSchema = z.object({
+  name: z.string().max(30).optional(),
+  avatar: z.string().max(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH).optional(),
+  syncWithUserProfile: z.boolean().optional(),
+}).strict()
+
 export const feedbackIssueInputSchema = z.object({
   feedback: z.string().max(4_000),
 }).strict()
@@ -75,6 +81,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),
     taskSidebar: taskSidebarPreferencesSchema.optional(),
     profile: desktopUserProfilePatchSchema.optional(),
+    agentProfile: desktopAgentProfilePatchSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
     pluginAuthor: extensionAuthorSchema.optional(),
     language: z.enum(['zh-CN', 'en-US']).optional(),

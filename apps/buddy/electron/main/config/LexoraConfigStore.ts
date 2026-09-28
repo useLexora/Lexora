@@ -64,6 +64,15 @@ const desktopConfigSchema = z.object({
     device_name: '',
     avatar: '',
   }),
+  agent_profile: z.object({
+    name: z.string().max(30).default(''),
+    avatar: z.string().max(DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH).default(''),
+    sync_with_user_profile: z.boolean().default(false),
+  }).passthrough().default({
+    name: '',
+    avatar: '',
+    sync_with_user_profile: false,
+  }),
   developer_tools_enabled: z.boolean().default(false),
   language: z.enum(['zh-CN', 'en-US']).default('zh-CN'),
   launch_at_login: z.boolean().default(false),
@@ -86,6 +95,7 @@ const desktopConfigSchema = z.object({
   task_sidebar_pinned_items: [],
   task_sidebar: { collapsed: false, collapsed_sections: [], collapsed_spaces: [] },
   profile: { user_name: '', device_name: '', avatar: '' },
+  agent_profile: { name: '', avatar: '', sync_with_user_profile: false },
   developer_tools_enabled: false,
   language: 'zh-CN',
   launch_at_login: false,
@@ -312,6 +322,11 @@ function decodeConfig(value: unknown): LexoraConfig {
         deviceName: config.desktop.profile.device_name,
         avatar: config.desktop.profile.avatar,
       },
+      agentProfile: {
+        name: config.desktop.agent_profile.name,
+        avatar: config.desktop.agent_profile.avatar,
+        syncWithUserProfile: config.desktop.agent_profile.sync_with_user_profile,
+      },
       developerToolsEnabled: config.desktop.developer_tools_enabled,
       language: config.desktop.language,
       launchAtLogin: config.desktop.launch_at_login,
@@ -363,6 +378,11 @@ function encodeConfig(config: LexoraConfig) {
         device_name: config.desktop.profile.deviceName,
         avatar: config.desktop.profile.avatar,
       },
+      agent_profile: {
+        name: config.desktop.agentProfile.name,
+        avatar: config.desktop.agentProfile.avatar,
+        sync_with_user_profile: config.desktop.agentProfile.syncWithUserProfile,
+      },
       developer_tools_enabled: config.desktop.developerToolsEnabled,
       language: config.desktop.language,
       launch_at_login: config.desktop.launchAtLogin,
@@ -405,6 +425,10 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
         ...current.desktop.profile,
         ...patch.desktop?.profile,
       },
+      agentProfile: {
+        ...current.desktop.agentProfile,
+        ...patch.desktop?.agentProfile,
+      },
     },
     pet: {
       ...current.pet,
@@ -432,6 +456,10 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
     profile: {
       ...asRecord(desktop.profile),
       ...asRecord(encoded.desktop.profile),
+    },
+    agent_profile: {
+      ...asRecord(desktop.agent_profile),
+      ...asRecord(encoded.desktop.agent_profile),
     },
   }
   delete nextDesktop.chat_sidebar_section_order

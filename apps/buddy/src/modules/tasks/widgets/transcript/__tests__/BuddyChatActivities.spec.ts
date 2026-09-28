@@ -512,6 +512,7 @@ function mountTurn(nodes: ChatAgentTurnNode[], status: ChatAgentTurn['status'] =
         isDark: shallowRef(false),
         appSidebarCollapsed: shallowRef(false),
         chat: shallowRef({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' }),
+        agentIdentity: shallowRef({ avatar: '', avatarColor: null, initials: null, name: '' }),
       })
       useProvideChatContent({ canPreviewFile: () => false, previewFile: () => {}, writeClipboardText: async () => {} })
       return () => h(NMessageProvider, null, { default: () => [
