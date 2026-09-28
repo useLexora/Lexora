@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(import.meta.dirname, '../..')
 const ciInputs = new Set([
+  '.github/actions/install-workspace-dependencies/action.yml',
   '.github/workflows/ci.yml',
   '.github/scripts/resolve-ci-scope.mjs',
 ])

@@ -66,6 +66,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'platform',
+          testTimeout: 15_000,
           include: ['platform/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
         },
       },

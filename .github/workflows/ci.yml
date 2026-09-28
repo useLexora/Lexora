@@ -7,6 +7,7 @@ on:
     branches: [master]
     paths:
       - .github/workflows/ci.yml
+      - .github/actions/install-workspace-dependencies/action.yml
       - .github/scripts/resolve-ci-scope.mjs
       - .github/scripts/buddy-test-runtime.mjs
       - .cargo/**
@@ -87,11 +88,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies
-        run: pnpm --filter @uselexora/lexora --filter @uselexora/lexora-website install --frozen-lockfile
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-website'
 
       - name: Lint workspace
         run: pnpm --filter @uselexora/lexora-website lint
@@ -118,11 +119,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies
-        run: pnpm --filter @uselexora/lexora install --frozen-lockfile
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora'
 
       - name: Lint repository
         run: >-
@@ -148,11 +149,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies
-        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
 
       - name: Lint workspace
         run: pnpm exec eslint .playwright/scripts apps/buddy packaging/buddy
@@ -328,11 +329,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies
-        run: pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' install --frozen-lockfile
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
 
   ci-gate:
     name: CI Gate

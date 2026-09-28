@@ -1,0 +1,46 @@
+name: Install workspace dependencies
+description: Restore the pnpm store, install selected workspace packages, and save the store before further checks.
+
+inputs:
+  packages:
+    description: Space-separated workspace package selectors.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve pnpm store
+      id: store
+      shell: bash
+      run: |
+        store_path="$(pnpm store path --silent)"
+        node_arch="$(node -p 'process.arch')"
+        printf 'path=%s\narch=%s\n' "$store_path" "$node_arch" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-
+
+    - name: Install workspace dependencies
+      shell: bash
+      env:
+        WORKSPACE_PACKAGES: ${{ inputs.packages }}
+      run: |
+        read -r -a packages <<< "$WORKSPACE_PACKAGES"
+        filters=()
+        for package in "${packages[@]}"; do
+          filters+=(--filter "$package")
+        done
+        pnpm "${filters[@]}" install --frozen-lockfile
+
+    - name: Save pnpm store
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

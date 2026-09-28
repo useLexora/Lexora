@@ -19,10 +19,10 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
-async function fixture(overrides: Partial<ExtensionServicePorts> = {}) {
+async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialManifest = manifest()) {
   const { root, store } = await createStore()
   cleanup.push(() => rm(root, { recursive: true, force: true }))
-  await store.install((await reviewPackage(root, store)).token)
+  await store.install((await reviewPackage(root, store, initialManifest)).token)
   const hosts: Array<{ broker: (method: string, params: unknown) => Promise<JsonValue>, failed: () => void, disposed: boolean, commands: JsonValue[] }> = []
   const events: unknown[] = []
   const service = new ExtensionService(store, {
@@ -298,9 +298,8 @@ it('rejects unauthorized media and late picker selections without retaining gran
 })
 
 it('binds presentation changes to a current declared placement and reports real installation state', async () => {
-  const f = await fixture({ workbench: async event => event.kind === 'presentation' ? event.viewId : null })
   const value = manifest({ apiVersion: 2, id: 'tests.panel', contributes: { views: [{ id: 'tests.panel.ui', title: 'Panel', entry: 'view.js', resource: 'none' }], placements: [{ id: 'tests.panel.float', kind: 'view', location: 'workbench.floating', view: 'tests.panel.ui' }] } })
-  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
+  const f = await fixture({ workbench: async event => event.kind === 'presentation' ? event.viewId : null }, value)
   const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.panel.ui', resource: null, state: { secret: 'private-state' }, stateVersion: 1 }
   const view = await f.service.openView({ ...input, placementId: 'tests.panel.float' })
   const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
@@ -319,11 +318,10 @@ it('binds presentation changes to a current declared placement and reports real 
 
 it('keeps export permission separate from reads and expires writers with their owning view', async () => {
   let destination = ''
-  const f = await fixture({ selectSavePath: async () => destination })
+  const value = manifest({ apiVersion: 2, id: 'tests.export', permissions: { localResources: true }, contributes: { views: [{ id: 'tests.export.page', title: 'Export', entry: 'view.js', resource: 'none' }] } })
+  const f = await fixture({ selectSavePath: async () => destination }, value)
   destination = join(f.root, 'export.binary')
   await writeFile(destination, 'original')
-  const value = manifest({ apiVersion: 2, id: 'tests.export', permissions: { localResources: true }, contributes: { views: [{ id: 'tests.export.page', title: 'Export', entry: 'view.js', resource: 'none' }] } })
-  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
   const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.export.page', resource: null, state: null, stateVersion: 1 }
   const readOnly = await f.service.openView(input)
   const payload = { name: 'file.unknown', size: 4 }
