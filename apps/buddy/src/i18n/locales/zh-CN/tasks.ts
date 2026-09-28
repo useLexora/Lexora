@@ -32,6 +32,7 @@ export default {
   'desktop.tasks.deleteTask': '删除',
   'desktop.tasks.deleteTaskConfirmMessage': '“{title}”将从任务列表中移除。',
   'desktop.tasks.deleteTaskConfirmTitle': '删除任务？',
+  'desktop.tasks.expandRemaining': '展开其余 {count} 个',
   'desktop.imagePreview.close': '关闭大图',
   'desktop.imagePreview.download': '下载图片',
   'desktop.imagePreview.next': '下一张图片',

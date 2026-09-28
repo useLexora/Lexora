@@ -18,22 +18,39 @@ export type TaskIndexRow
     pinnedTopLevel?: boolean
     spaceTask?: boolean
   }
+  | {
+    groupKey: string
+    key: string
+    kind: 'expand'
+    remaining: number
+  }
 
 export interface TaskIndexProjection {
   pinnedItems: DesktopTaskPinnedItem[]
   pinnedRows: TaskIndexRow[]
   spaceRows: TaskIndexRow[]
-  globalTasks: LocalConversationSummary[]
+  taskRows: TaskIndexRow[]
 }
 
 export type DesktopTaskPinnedDropPosition = 'after' | 'before'
 
+export const DESKTOP_TASK_SIDEBAR_CONVERSATION_LIMIT = 5
+export const DESKTOP_TASK_SIDEBAR_TASKS_GROUP_KEY = 'tasks'
+
+export function spaceConversationGroupKey(spaceId: string): string {
+  return `space:${spaceId}`
+}
+
 export function resolveTaskIndexProjection(input: {
+  conversationLimit?: number
+  expandedConversationGroups?: ReadonlySet<string>
   expandedSpaceIds: ReadonlySet<string>
   pinnedItems: ReadonlyArray<DesktopTaskPinnedItem>
   spaces: ReadonlyArray<LocalSpace>
   tasks: ReadonlyArray<LocalConversationSummary>
 }): TaskIndexProjection {
+  const conversationLimit = input.conversationLimit ?? DESKTOP_TASK_SIDEBAR_CONVERSATION_LIMIT
+  const expandedGroups = input.expandedConversationGroups ?? new Set<string>()
   const activeSpaces = input.spaces.filter(space => space.revokedAt === null)
   const spacesById = new Map(activeSpaces.map(space => [space.id, space]))
   const globalTasks = input.tasks.filter(task => task.spaceId === null)
@@ -84,14 +101,19 @@ export function resolveTaskIndexProjection(input: {
       }]
       if (!input.expandedSpaceIds.has(space.id))
         return rows
-      const spaceTasks = tasksBySpace.get(space.id) ?? []
-      return rows.concat(spaceTasks.map(task => ({
+      const spaceTasks = (tasksBySpace.get(space.id) ?? [])
+        .filter(task => !pinnedConversationIds.has(task.id))
+      return rows.concat(capConversationRows(spaceTasks.map(task => ({
         task,
         key: `pinned:${pinKey}:conversation:${task.id}`,
         kind: 'task' as const,
         pinKey,
         spaceTask: true,
-      })))
+      })), {
+        expanded: expandedGroups.has(spaceConversationGroupKey(space.id)),
+        groupKey: spaceConversationGroupKey(space.id),
+        limit: conversationLimit,
+      }))
     }),
     spaceRows: activeSpaces
       .filter(space => !pinnedSpaceIds.has(space.id))
@@ -99,9 +121,43 @@ export function resolveTaskIndexProjection(input: {
         space,
         tasksBySpace.get(space.id) ?? [],
         input.expandedSpaceIds.has(space.id),
+        {
+          expanded: expandedGroups.has(spaceConversationGroupKey(space.id)),
+          limit: conversationLimit,
+        },
       )),
-    globalTasks: globalTasks.filter(task => !pinnedConversationIds.has(task.id)),
+    taskRows: capConversationRows(
+      globalTasks
+        .filter(task => !pinnedConversationIds.has(task.id))
+        .map(task => ({
+          task,
+          key: task.id,
+          kind: 'task' as const,
+        })),
+      {
+        expanded: expandedGroups.has(DESKTOP_TASK_SIDEBAR_TASKS_GROUP_KEY),
+        groupKey: DESKTOP_TASK_SIDEBAR_TASKS_GROUP_KEY,
+        limit: conversationLimit,
+      },
+    ),
   }
+}
+
+function capConversationRows(
+  rows: TaskIndexRow[],
+  input: { expanded: boolean, groupKey: string, limit: number },
+): TaskIndexRow[] {
+  if (input.expanded || rows.length <= input.limit)
+    return rows
+  return [
+    ...rows.slice(0, input.limit),
+    {
+      groupKey: input.groupKey,
+      key: `${input.groupKey}:expand`,
+      kind: 'expand',
+      remaining: rows.length - input.limit,
+    },
+  ]
 }
 
 export function prependDesktopTaskPinnedItem(
@@ -149,6 +205,7 @@ function createSpaceRows(
   space: LocalSpace,
   tasks: ReadonlyArray<LocalConversationSummary>,
   expanded: boolean,
+  conversationCap: { expanded: boolean, limit: number },
 ): TaskIndexRow[] {
   const rows: TaskIndexRow[] = [{
     key: `space:${space.id}`,
@@ -157,12 +214,16 @@ function createSpaceRows(
   }]
   if (!expanded)
     return rows
-  return rows.concat(tasks.map(task => ({
+  return rows.concat(capConversationRows(tasks.map(task => ({
     task,
     key: `space:${space.id}:conversation:${task.id}`,
     kind: 'task' as const,
     spaceTask: true,
-  })))
+  })), {
+    expanded: conversationCap.expanded,
+    groupKey: spaceConversationGroupKey(space.id),
+    limit: conversationCap.limit,
+  }))
 }
 
 function resolveVisiblePinnedItems(input: {

@@ -9,10 +9,12 @@ import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task
 import { useIntervalFn } from '@vueuse/core'
 import { computed, shallowRef, watch } from 'vue'
 import {
+  DESKTOP_TASK_SIDEBAR_TASKS_GROUP_KEY,
   prependDesktopTaskPinnedItem,
   removeDesktopTaskPinnedItem,
   reorderDesktopTaskPinnedItems,
   resolveTaskIndexProjection,
+  spaceConversationGroupKey,
 } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import { useTaskIndexManagement } from './useTaskIndexManagement'
 
@@ -37,7 +39,9 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   const activeSpaces = computed(() => options.spaces.value.filter(
     space => space.revokedAt === null,
   ))
+  const expandedConversationGroups = shallowRef<ReadonlySet<string>>(new Set())
   const projection = computed(() => resolveTaskIndexProjection({
+    expandedConversationGroups: expandedConversationGroups.value,
     expandedSpaceIds: new Set(activeSpaces.value
       .filter(space => isSpaceExpanded(space.id))
       .map(space => space.id)),
@@ -48,7 +52,7 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   const pinnedItems = computed(() => projection.value.pinnedItems)
   const pinnedRows = computed(() => projection.value.pinnedRows)
   const spaceRows = computed(() => projection.value.spaceRows)
-  const globalTasks = computed(() => projection.value.globalTasks)
+  const taskRows = computed(() => projection.value.taskRows)
 
   useIntervalFn(() => {
     relativeTimeNow.value = Date.now()
@@ -67,7 +71,10 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   }
 
   function toggleSpace(spaceId: string) {
-    void options.sidebar().setSpaceExpanded(spaceId, !isSpaceExpanded(spaceId))
+    const expanded = !isSpaceExpanded(spaceId)
+    if (!expanded)
+      resetConversationGroups(groupKey => groupKey === spaceConversationGroupKey(spaceId))
+    void options.sidebar().setSpaceExpanded(spaceId, expanded)
   }
 
   function isSectionExpanded(section: DesktopTaskSidebarSection) {
@@ -75,7 +82,22 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   }
 
   function setSectionExpanded(section: DesktopTaskSidebarSection, expanded: boolean) {
+    if (!expanded) {
+      resetConversationGroups(groupKey => section === 'tasks'
+        ? groupKey === DESKTOP_TASK_SIDEBAR_TASKS_GROUP_KEY
+        : groupKey.startsWith('space:'))
+    }
     void options.sidebar().setSectionExpanded(section, expanded)
+  }
+
+  function expandConversationGroup(groupKey: string) {
+    expandedConversationGroups.value = new Set([groupKey])
+  }
+
+  function resetConversationGroups(predicate: (groupKey: string) => boolean) {
+    const next = [...expandedConversationGroups.value].filter(groupKey => !predicate(groupKey))
+    if (next.length !== expandedConversationGroups.value.size)
+      expandedConversationGroups.value = new Set(next)
   }
 
   function recordScrollAnchor(section: DesktopTaskSidebarSection, index: number) {
@@ -142,8 +164,8 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     dropPinnedItem,
     endPinnedDrag,
     enterPinnedDropTarget,
+    expandConversationGroup,
     getPinnedDropPosition,
-    globalTasks,
     isSectionExpanded,
     isSpaceExpanded,
     pinTask,
@@ -154,6 +176,7 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     scrollAnchors,
     setSectionExpanded,
     spaceRows,
+    taskRows,
     relativeTimeNow,
     toggleSpace,
     unpinItem,

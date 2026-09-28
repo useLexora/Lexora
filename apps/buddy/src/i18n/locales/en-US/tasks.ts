@@ -34,6 +34,7 @@ export default {
   'desktop.tasks.deleteTask': 'Delete',
   'desktop.tasks.deleteTaskConfirmMessage': '“{title}” will be removed from the task list.',
   'desktop.tasks.deleteTaskConfirmTitle': 'Delete task?',
+  'desktop.tasks.expandRemaining': 'Show {count} more',
   'desktop.imagePreview.close': 'Close image preview',
   'desktop.imagePreview.download': 'Download image',
   'desktop.imagePreview.next': 'Next image',
