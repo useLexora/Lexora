@@ -13,6 +13,7 @@ import { buddyServiceFailureCodeSchema } from '../../shared/runtime/runtimeProto
 import { startBuddyService } from './BuddyService'
 import { createRunEventLog } from './events/createRunEventLog'
 import { RunEventLogFatalError } from './events/RunEventFailure'
+import { startRuntimeNetwork } from './network/runtimeNetwork'
 import {
   createBuddyService,
   notifyBuddyServiceFailure,
@@ -103,6 +104,9 @@ async function runBuddyService(): Promise<void> {
       if (process.platform === OPERATING_SYSTEM.Windows)
         await establishWindowsRuntimeGuard()
       return z.array(z.string().min(1)).parse(JSON.parse(process.env.LEXORA_BUDDY_SKILLS_DIRS ?? '[]'))
+    })
+    await host.start('runtime.network', ({ defer }) => {
+      defer(startRuntimeNetwork())
     })
     const openedDatabase = await host.start('runtime.database', ({ defer }) => {
       database = openBuddyDatabase({ databasePath: resolveBuddyDatabasePath(buddyHome) })
