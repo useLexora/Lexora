@@ -7,6 +7,7 @@ import type { ModelProvidersStore } from '@/modules/models'
 import type { ApplicationSettings } from '@/modules/settings'
 import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
+import { BUDDY_DEFAULT_PERMISSION_MODE } from '@buddy-shared/permissions/permissionMode'
 import { until } from '@vueuse/core'
 import { computed, readonly, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -127,7 +128,11 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     spaceId: spaceId.value,
   }))
   let persistDraftChanges = () => {}
+  const defaultPermissionMode = computed(() => (
+    applicationSettings.config.value?.desktop.chat.permissionMode ?? BUDDY_DEFAULT_PERMISSION_MODE
+  ))
   const drafts = useChatDrafts({
+    defaultPermissionMode,
     onChange: () => persistDraftChanges(),
     targetKey: draftScopeKey,
   })

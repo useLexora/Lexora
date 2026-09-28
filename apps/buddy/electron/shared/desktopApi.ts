@@ -8,6 +8,7 @@ import type { BuddyCapabilities } from '../../shared/platform'
 import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
 import type { LocalChatApi } from './localChatApi'
+import { BUDDY_DEFAULT_PERMISSION_MODE } from '../../shared/permissions/permissionMode'
 
 export const DESKTOP_IPC_CHANNELS = {
   workbenchRead: 'lexora:workbench:read',
@@ -148,11 +149,13 @@ export type DesktopChatOutlinePosition = typeof DESKTOP_CHAT_OUTLINE_POSITIONS[n
 
 export interface DesktopChatPreferences {
   outlinePosition: DesktopChatOutlinePosition
+  permissionMode: import('../../shared/permissions/permissionMode').BuddyPermissionMode
   welcome: DesktopChatWelcomePreference
 }
 
 export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
   outlinePosition: 'top-right',
+  permissionMode: BUDDY_DEFAULT_PERMISSION_MODE,
   welcome: 'random',
 }
 

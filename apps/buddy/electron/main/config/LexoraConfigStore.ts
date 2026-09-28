@@ -12,6 +12,7 @@ import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
+import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
@@ -43,6 +44,7 @@ const desktopConfigSchema = z.object({
   background_close_notice_shown: z.boolean().default(false),
   chat: z.object({
     outline_position: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition),
+    permission_mode: z.enum(BUDDY_PERMISSION_MODES).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode),
     welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome),
   }).passthrough().prefault({}),
   context_panel_mode: z.enum(['task', 'independent']).default('task'),
@@ -74,6 +76,7 @@ const desktopConfigSchema = z.object({
   plugin_author: '',
   chat: {
     outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
+    permission_mode: DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode,
     welcome: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome,
   },
   context_panel_mode: 'task',
@@ -288,6 +291,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       pluginAuthor: config.desktop.plugin_author,
       chat: {
         outlinePosition: config.desktop.chat.outline_position,
+        permissionMode: config.desktop.chat.permission_mode,
         welcome: config.desktop.chat.welcome,
       },
       contextPanelMode: config.desktop.context_panel_mode,
@@ -337,6 +341,7 @@ function encodeConfig(config: LexoraConfig) {
       plugin_author: config.desktop.pluginAuthor,
       chat: {
         outline_position: config.desktop.chat.outlinePosition,
+        permission_mode: config.desktop.chat.permissionMode,
         welcome: config.desktop.chat.welcome,
       },
       context_panel_mode: config.desktop.contextPanelMode,
@@ -382,6 +387,9 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       chat: {
         ...current.desktop.chat,
         ...patch.desktop?.chat,
+        permissionMode: z.enum(BUDDY_PERMISSION_MODES).parse(
+          patch.desktop?.chat?.permissionMode ?? current.desktop.chat.permissionMode,
+        ),
       },
       keybindings: keybindingsSchema.parse(patch.desktop?.keybindings ?? current.desktop.keybindings),
       taskSidebar: {

@@ -1,13 +1,12 @@
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
 
-import type { BuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
+import type { BuddyPermissionMode, BuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import type { JSONContent } from '@tiptap/core'
 import type { ComputedRef } from 'vue'
 import type { ChatDrafts, ChatDraftSnapshot, ChatDraftState, ComposerDraftReceipt } from './typing'
 import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
-import { BUDDY_DEFAULT_APPROVAL_POLICY } from '@buddy-shared/permissions/approvalPolicy'
-import { BUDDY_DEFAULT_EXECUTION_PROFILE } from '@buddy-shared/permissions/executionProfile'
+import { BUDDY_DEFAULT_PERMISSION_MODE, resolveBuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import { computed, shallowReactive, shallowRef, watch } from 'vue'
 import {
   chatComposerDocumentToUserContent,
@@ -19,6 +18,7 @@ import {
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
 
 interface UseChatDraftsOptions {
+  defaultPermissionMode?: ComputedRef<BuddyPermissionMode>
   onChange: () => void
   targetKey: ComputedRef<string>
 }
@@ -36,7 +36,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     () => [activeTargetKey.value, draftsByScope.has(activeTargetKey.value)] as const,
     ([key, exists]) => {
       if (!exists)
-        draftsByScope.set(key, emptyDraft(key))
+        draftsByScope.set(key, emptyDraft(key, options.defaultPermissionMode?.value))
     },
     { flush: 'sync', immediate: true },
   )
@@ -71,7 +71,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     const existing = draftsByScope.get(key)
     if (existing)
       return existing
-    const value = emptyDraft(key)
+    const value = emptyDraft(key, options.defaultPermissionMode?.value)
     draftsByScope.set(key, value)
     return value
   }
@@ -180,7 +180,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     resumeIsolated(targetKey: string) {
       if (!draftsByScope.has(targetKey)) {
         const current = currentDraft.value
-        draftsByScope.set(targetKey, { ...emptyDraft(), approvalPolicy: current.approvalPolicy, executionProfile: current.executionProfile, modelSelection: current.modelSelection })
+        draftsByScope.set(targetKey, { ...emptyDraft('', options.defaultPermissionMode?.value), approvalPolicy: current.approvalPolicy, executionProfile: current.executionProfile, modelSelection: current.modelSelection })
       }
       isolatedDraft.value = { sourceKey: options.targetKey.value, targetKey }
       options.onChange()
@@ -322,15 +322,16 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
   }
 }
 
-function emptyDraft(targetKey = ''): ChatDraftState {
+function emptyDraft(targetKey = '', mode: BuddyPermissionMode = BUDDY_DEFAULT_PERMISSION_MODE): ChatDraftState {
+  const defaultSettings = resolveBuddyPermissionSettings(mode)
   return {
-    approvalPolicy: BUDDY_DEFAULT_APPROVAL_POLICY,
+    approvalPolicy: defaultSettings.approvalPolicy,
     confirmedSnapshot: null,
     content: createBuddyUserContent(),
     draftId: targetKey.startsWith('draft:') ? targetKey.slice(6) : crypto.randomUUID(),
     editorSessionId: crypto.randomUUID(),
     editVersion: 0,
-    executionProfile: BUDDY_DEFAULT_EXECUTION_PROFILE,
+    executionProfile: defaultSettings.executionProfile,
     modelSelection: null,
     revision: null,
   }

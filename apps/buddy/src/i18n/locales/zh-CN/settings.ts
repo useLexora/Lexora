@@ -85,6 +85,8 @@ export default {
   'desktop.browser.screenshotSaved': '截图已保存',
   'desktop.browser.screenshotCopied': '截图已复制到剪贴板',
   'desktop.browser.screenshotFailed': '截图失败，请重试或在浏览器设置中切换保存方式。',
+  'desktop.settings.defaultPermissionMode': '新任务默认权限',
+  'desktop.settings.defaultPermissionModeDescription': '只影响新建任务，已有会话保持原模式。',
   'desktop.settings.contextPanel': '资源面板',
   'desktop.settings.contextPanelMode': '浏览模式',
   'desktop.settings.contextPanelModeDescription': '任务联动在聚焦任务时选择其资源，独立浏览保留当前选择。',

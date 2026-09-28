@@ -87,6 +87,8 @@ export default {
   'desktop.browser.screenshotSaved': 'Screenshot saved',
   'desktop.browser.screenshotCopied': 'Screenshot copied to clipboard',
   'desktop.browser.screenshotFailed': 'Could not capture the screenshot. Retry or change the destination in browser settings.',
+  'desktop.settings.defaultPermissionMode': 'Default permission for new tasks',
+  'desktop.settings.defaultPermissionModeDescription': 'Applies only to new tasks. Existing conversations keep their current mode.',
   'desktop.settings.contextPanel': 'Resource panel',
   'desktop.settings.contextPanelMode': 'Browsing mode',
   'desktop.settings.contextPanelModeDescription': 'Task-linked selects resources when focusing a task. Independent keeps the current selection.',

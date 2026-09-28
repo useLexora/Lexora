@@ -39,17 +39,35 @@ describe('lexoraConfigStore', () => {
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(configPath, '[desktop]\ntheme = "dark"\nwelcome_variant = "writing"\n[custom]\nkeep = true\n')
     const original = await store.read()
-    expect(original.desktop.chat).toEqual({ outlinePosition: 'top-right', welcome: 'random' })
+    expect(original.desktop.chat).toEqual({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' })
     await store.update({ desktop: { chat: { welcome: 'none' } } })
     for (const outlinePosition of DESKTOP_CHAT_OUTLINE_POSITIONS) {
       await store.update({ desktop: { chat: { outlinePosition } } })
       const restored = await new LexoraConfigStore({ configPath }).read()
       expect(restored).toEqual({
         ...original,
-        desktop: { ...original.desktop, chat: { outlinePosition, welcome: 'none' } },
+        desktop: { ...original.desktop, chat: { outlinePosition, permissionMode: 'policy_approval', welcome: 'none' } },
       })
       expect(await readFile(configPath, 'utf8')).toContain('keep = true')
     }
+  })
+
+  it('persists permission mode, defaults legacy profiles, and rejects invalid values without a partial write', async () => {
+    const { configPath, store } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop.chat]\nwelcome = "random"\n')
+    expect((await store.read()).desktop.chat.permissionMode).toBe('policy_approval')
+
+    await store.update({ desktop: { chat: { permissionMode: 'full_access' } } })
+    expect(await readFile(configPath, 'utf8')).toContain('permission_mode = "full_access"')
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat.permissionMode).toBe('full_access')
+
+    const saved = await readFile(configPath, 'utf8')
+    await expect(store.update({ desktop: { chat: { permissionMode: 'invalid' as never } } })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+
+    await writeFile(configPath, '[desktop.chat]\npermission_mode = "invalid"\n')
+    await expect(store.read()).rejects.toThrow()
   })
 
   it('migrates browser preferences with defaults and preserves unrelated settings across updates', async () => {
@@ -139,7 +157,7 @@ describe('lexoraConfigStore', () => {
   it('updates only requested settings and writes a private TOML file atomically', async () => {
     const { configPath, store } = await createConfigStore()
     await expect(store.read()).resolves.toMatchObject({
-      desktop: { theme: 'system', chat: { outlinePosition: 'top-right', welcome: 'random' } },
+      desktop: { theme: 'system', chat: { outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' } },
       pet: { alwaysOnTop: true, enabled: true, rememberPosition: true },
     })
 
@@ -157,7 +175,7 @@ describe('lexoraConfigStore', () => {
       keybindings: {},
       backgroundCloseNoticeShown: false,
       pluginAuthor: '',
-      chat: { outlinePosition: 'top-right', welcome: 'writing' },
+      chat: { outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'writing' },
       taskSidebarPinnedItems: [],
       taskSidebar: {
         collapsed: false,
@@ -300,7 +318,7 @@ describe('lexoraConfigStore', () => {
     await writeFile(configPath, '[desktop.chat]\nwelcome = "none"\nfuture = true\n')
 
     await expect(store.read()).resolves.toMatchObject({
-      desktop: { chat: { outlinePosition: 'top-right', welcome: 'none' } },
+      desktop: { chat: { outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'none' } },
     })
 
     await store.update({ desktop: { theme: 'dark' } })

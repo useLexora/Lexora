@@ -10,6 +10,8 @@ export const BUDDY_PERMISSION_MODES = [
 
 export type BuddyPermissionMode = typeof BUDDY_PERMISSION_MODES[number]
 
+export const BUDDY_DEFAULT_PERMISSION_MODE: BuddyPermissionMode = 'policy_approval'
+
 export interface BuddyPermissionSettings {
   approvalPolicy: BuddyApprovalPolicy
   executionProfile: BuddyExecutionProfile

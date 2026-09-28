@@ -5,8 +5,9 @@ import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSche
 describe('desktop Preload API contract', () => {
   it('rejects unknown outline positions before updating the application configuration', () => {
     expect(() => lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'center' } } })).toThrow()
-    expect(lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'bottom-left', welcome: 'none' } } }))
-      .toEqual({ desktop: { chat: { outlinePosition: 'bottom-left', welcome: 'none' } } })
+    expect(lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'bottom-left', permissionMode: 'full_access', welcome: 'none' } } }))
+      .toEqual({ desktop: { chat: { outlinePosition: 'bottom-left', permissionMode: 'full_access', welcome: 'none' } } })
+    expect(() => lexoraConfigPatchSchema.parse({ desktop: { chat: { permissionMode: 'invalid' } } })).toThrow()
   })
 
   it('accepts release pages from the canonical repository', () => {

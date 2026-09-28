@@ -1,4 +1,5 @@
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
+import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 
 import { describe, expect, it, vi } from 'vitest'
 import { computed, ref } from 'vue'
@@ -7,6 +8,23 @@ import { createBuddyUserContent } from '../../../../../../shared/conversation/bu
 import { useChatDrafts } from '../useChatDrafts'
 
 describe('useChatDrafts', () => {
+  it('uses the configured permission mode for newly created scopes but leaves existing drafts unchanged', () => {
+    const targetKey = ref('global')
+    const defaultPermissionMode = ref<BuddyPermissionMode>('policy_approval')
+    const drafts = useChatDrafts({
+      defaultPermissionMode: computed(() => defaultPermissionMode.value),
+      onChange: vi.fn(),
+      targetKey: computed(() => targetKey.value),
+    })
+    expect(drafts.executionProfile.value).toBe('workspace_write')
+
+    defaultPermissionMode.value = 'full_access'
+    expect(drafts.executionProfile.value).toBe('workspace_write')
+    targetKey.value = 'space:space-1'
+    expect(drafts.executionProfile.value).toBe('full_access')
+    expect(drafts.approvalPolicy.value).toBe('policy')
+  })
+
   it('owns a complete editor value per strict Draft scope', () => {
     const { drafts, targetKey } = createFixture()
     const globalId = drafts.draftId.value
