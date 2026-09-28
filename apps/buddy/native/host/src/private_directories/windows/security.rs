@@ -27,6 +27,7 @@ use super::{DirectoryError, DirectoryFailure, DirectoryOperation, SystemErrorDom
 use crate::windows_security::{Sid, process_user_sid};
 
 const METADATA_READ_ACCESS: u32 = FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE;
+// Existing read grants are preserved, not a guarantee of exclusive access to stored data.
 const READ_ONLY_ACCESS: u32 = METADATA_READ_ACCESS | FILE_READ_DATA | FILE_READ_EA | FILE_EXECUTE;
 
 struct LocalMemory(*mut c_void);

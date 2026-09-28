@@ -53,9 +53,9 @@ fn empty_acl_and_deny_entries_do_not_grant_untrusted_access() {
 }
 
 #[test]
-fn read_only_grants_do_not_allow_changes() {
+fn existing_read_only_grants_are_accepted_for_any_principal() {
     let security = PrivateSecurity::new().unwrap();
-    for sid in ["WD", "BU", "AC", "S-1-5-21-1-2-3-1001"] {
+    for sid in ["WD", "BU", "AU", "AC", "S-1-5-21-1-2-3-1001"] {
         for mask in [
             0,
             FILE_READ_ATTRIBUTES,
@@ -83,10 +83,10 @@ fn read_only_grants_do_not_hide_write_changes_or_unknown_rights() {
     let security = PrivateSecurity::new().unwrap();
     for bit in 0..32 {
         let access = 1_u32 << bit;
-        if access & READ_ONLY_ACCESS != 0 {
+        if access & 0x1200a9 != 0 {
             continue;
         }
-        for flags in ["", "OICIIO"] {
+        for (flags, ace_flags) in [("", 0), ("OICI", 3), ("OICIIO", 11), ("OICIID", 19)] {
             let mask = access | READ_ONLY_ACCESS;
             let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;{flags};{mask:#x};;;WD)");
             assert_eq!(
@@ -95,7 +95,7 @@ fn read_only_grants_do_not_hide_write_changes_or_unknown_rights() {
                     reason: DirectoryAclReason::UntrustedAccess,
                     ace_index: Some(1),
                     ace_type: Some(0),
-                    ace_flags: Some(if flags.is_empty() { 0 } else { 11 }),
+                    ace_flags: Some(ace_flags),
                     access_mask: Some(mask),
                     principal: Some(DirectoryPrincipal::Everyone),
                 })),

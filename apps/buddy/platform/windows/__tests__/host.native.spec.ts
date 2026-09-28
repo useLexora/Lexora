@@ -1,20 +1,12 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WindowsSystemHost } from '../../../service/src/system/adapters/windows/WindowsSystemHost'
-import { createBuddyNativeEnvironment, resolveBuddyPrivateDirectories } from '../../native/nativeHost'
-import { ensureWindowsPrivateDirectories } from '../privateDirectories'
+import { createBuddyNativeEnvironment } from '../../native/nativeHost'
 
-const roots: string[] = []
 const nativePaths = { appPath: fileURLToPath(new URL('../../../', import.meta.url)), resourcesPath: '', isPackaged: false }
-afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
-})
 
 describe.skipIf(process.platform !== 'win32')('windows native host', () => {
   beforeEach(() => {
@@ -44,13 +36,4 @@ describe.skipIf(process.platform !== 'win32')('windows native host', () => {
       await exited
     }
   }, 60_000)
-
-  it('fails closed on an existing broadly accessible storage directory', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'buddy-windows-private-'))
-    roots.push(root)
-    const helper = resolveBuddyPrivateDirectories(nativePaths)
-    await expect(ensureWindowsPrivateDirectories([join(root, 'private')], helper)).resolves.toBeUndefined()
-    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [join(root, 'private'), '/grant', '*S-1-1-0:(RX)'])
-    await expect(ensureWindowsPrivateDirectories([join(root, 'private')], helper)).rejects.toThrow('private storage')
-  }, 30_000)
 })

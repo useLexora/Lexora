@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
+import { inspectWindowsPrivateDirectory as inspect } from '../../../apps/buddy/platform/filesystem/__tests__/windowsPrivateDirectoryFixture.ts'
 import { expect, test } from '../fixtures/electron.mjs'
 
 test('three concurrent instances isolate their data and survive another instance crashing', async ({ buddy }) => {
@@ -52,6 +53,39 @@ test('graceful restart preserves the same instance configuration and browser sta
   const restarted = await instance.launch()
   expect((await restarted.page.evaluate(() => window.lexoraDesktop.settings.get())).desktop.profile.userName).toBe('Restart Test')
   expect(await restarted.page.evaluate(() => localStorage.getItem('restart-marker'))).toBe('persisted')
+})
+
+test.describe('Windows storage permissions', () => {
+  test.skip(process.platform !== 'win32', 'Windows ACL integration')
+  const privateAcl = 'D:P(A;OICI;FA;;;CURRENT)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+
+  test('read-only grants allow application startup without changing the ACL', async ({ buddy }) => {
+    const instance = await buddy.createInstance('read-only-storage')
+    const before = inspect(instance.home, `${privateAcl}(A;OICI;0x1200a9;;;BU)`)
+    const { app, page, diagnostics } = await instance.launch()
+    expect(await (await app.browserWindow(page)).evaluate(window => window.isVisible())).toBe(true)
+    await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
+    expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+    await instance.stop()
+    expect(inspect(instance.home).sddl).toBe(before.sddl)
+  })
+
+  test('write grants stop startup before loading product data', async ({ buddy }) => {
+    const instance = await buddy.createInstance('writable-storage')
+    const before = inspect(instance.home, `${privateAcl}(A;OICI;0x1200ab;;;BU)`)
+    const configPath = path.join(instance.home, 'config.toml')
+    const config = await fs.readFile(configPath, 'utf8')
+    await expect(instance.launch()).rejects.toThrow('Application failed to start')
+    expect(inspect(instance.home).sddl).toBe(before.sddl)
+    expect(await fs.readFile(configPath, 'utf8')).toBe(config)
+    await expect(fs.access(path.join(instance.home, 'buddy/buddy.sqlite3'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const records = (await fs.readFile(path.join(instance.home, '.runtime/state/logs/application.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+    expect(records.some(record => record.errorCode === 'PRIVATE_DIRECTORIES_UNSAFE' && record.failure?.directoryRole === 'lexora_home')).toBe(true)
+    expect(records.some(record => record.event === 'app.ready')).toBe(false)
+  })
 })
 
 test('renderer crashes recover once and then stop without a reload loop', async ({ buddy }) => {
