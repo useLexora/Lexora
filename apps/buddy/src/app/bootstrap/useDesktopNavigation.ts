@@ -1,16 +1,16 @@
-import type { DesktopOpenTarget } from '@buddy-electron/shared/desktopApi'
+import type { DesktopOpenTarget, DesktopOpenTargetResult } from '@buddy-electron/shared/desktopApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { RouteLocationRaw, Router } from 'vue-router'
 import type { NotificationCenterStore } from '@/modules/notifications'
 import type { DesktopNotification } from '@/modules/notifications/contracts'
 import type { TaskSession } from '@/modules/tasks/contracts'
-import { useTimeoutFn } from '@vueuse/core'
 import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 
 interface DesktopNavigationOptions {
   router: Router
   ready: Promise<void>
+  isReady?: () => boolean
   session: Pick<TaskSession, 'activeTaskId' | 'spaceId' | 'navigationVersion' | 'openTask' | 'startTask'>
   notifications: Pick<NotificationCenterStore, 'markSeen'>
   openUpdate: () => Promise<void>
@@ -24,14 +24,15 @@ type RunTarget = Pick<LocalRun, 'conversationId' | 'branchId' | 'triggeringMessa
 export function useDesktopNavigation(options: DesktopNavigationOptions) {
   const { router, session } = options
   const notificationTarget = shallowRef<{ conversationId: string, messageId: string } | null>(null)
-  const highlightTimer = useTimeoutFn(() => notificationTarget.value = null, 3_000, { immediate: false })
   let pending: { controller: AbortController, taskId: string | null, spaceId?: string, version: number } | null = null
   let disposed = false
+  let finishReveal: ((result: DesktopOpenTargetResult) => void) | null = null
 
   function cancel() {
+    finishReveal?.('cancelled')
+    finishReveal = null
     pending?.controller.abort()
     pending = null
-    highlightTimer.stop()
     notificationTarget.value = null
   }
 
@@ -40,6 +41,8 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
       cancel()
   })
   watch([session.activeTaskId, session.spaceId], ([taskId, spaceId]) => {
+    if (options.isReady?.() === false)
+      return
     if (pending && session.navigationVersion() !== pending.version && (taskId !== pending.taskId || (pending.spaceId !== undefined && spaceId !== pending.spaceId)))
       cancel()
   })
@@ -62,41 +65,69 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
     }
   }
 
-  async function openTask(conversationId: string, runId?: string) {
-    await openWorkspace({ taskId: conversationId }, async (signal) => {
+  function completeNotificationReveal(conversationId: string, messageId: string, result: 'opened' | 'cancelled' = 'opened') {
+    if (notificationTarget.value?.conversationId !== conversationId || notificationTarget.value.messageId !== messageId)
+      return
+    finishReveal?.(result)
+    finishReveal = null
+    notificationTarget.value = null
+  }
+
+  async function openTaskTarget(conversationId: string, runId?: string, waitForReveal = false) {
+    return openWorkspace({ taskId: conversationId }, async (signal) => {
       await session.openTask(conversationId, signal)
-      if (signal.aborted || session.activeTaskId.value !== conversationId || !runId)
-        return
+      if (signal.aborted || session.activeTaskId.value !== conversationId)
+        return 'cancelled'
+      if (!runId)
+        return 'opened'
       const run = await options.getRun(runId)
-      if (signal.aborted || session.activeTaskId.value !== conversationId || run?.conversationId !== conversationId)
-        return
-      if (!await options.activateRunBranch(run) || signal.aborted || session.activeTaskId.value !== conversationId)
-        return
+      if (signal.aborted || session.activeTaskId.value !== conversationId)
+        return 'cancelled'
+      if (run?.conversationId !== conversationId)
+        throw new Error('DESKTOP_NOTIFICATION_TARGET_UNAVAILABLE')
+      const activated = await options.activateRunBranch(run)
+      if (signal.aborted || session.activeTaskId.value !== conversationId)
+        return 'cancelled'
+      if (!activated)
+        throw new Error('DESKTOP_NOTIFICATION_BRANCH_UNAVAILABLE')
+      const reveal = Promise.withResolvers<DesktopOpenTargetResult>()
+      finishReveal = reveal.resolve
       notificationTarget.value = { conversationId, messageId: run.triggeringMessageId }
-      highlightTimer.start()
+      return waitForReveal ? reveal.promise : 'opened'
     })
   }
 
-  async function openSpace(spaceId: string) {
-    await openWorkspace({ taskId: null, spaceId }, () => session.startTask(spaceId))
+  async function openTask(conversationId: string, runId?: string) {
+    await openTaskTarget(conversationId, runId)
   }
 
-  async function openWorkspace(target: { taskId: string | null, spaceId?: string }, activate: (signal: AbortSignal) => Promise<void>) {
+  async function openSpace(spaceId: string) {
+    await openWorkspace({ taskId: null, spaceId }, async () => {
+      await session.startTask(spaceId)
+      return 'opened'
+    })
+  }
+
+  async function openWorkspace(target: { taskId: string | null, spaceId?: string }, activate: (signal: AbortSignal) => Promise<DesktopOpenTargetResult>): Promise<DesktopOpenTargetResult> {
     cancel()
     if (disposed)
-      return
+      return 'cancelled'
     const controller = new AbortController()
     pending = { ...target, controller, version: session.navigationVersion() }
     try {
       await router.push(desktopRouteLocations.tasks())
       await options.ready
-      if (!controller.signal.aborted) {
-        await activate(controller.signal)
-      }
+      if (controller.signal.aborted)
+        return 'cancelled'
+      if (options.isReady?.() === false)
+        throw new Error('DESKTOP_NOTIFICATION_NOT_READY')
+      return await activate(controller.signal)
     }
     catch (error) {
-      if (!controller.signal.aborted)
-        options.onError(error)
+      if (controller.signal.aborted)
+        return 'cancelled'
+      options.onError(error)
+      return 'failed'
     }
   }
 
@@ -117,10 +148,10 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
   }
 
   function openTarget(target: DesktopOpenTarget) {
-    return openTask(target.conversationId, target.runId)
+    return openTaskTarget(target.conversationId, target.runId, true)
   }
 
-  return { navigate, notificationTarget: readonly(notificationTarget), openNotification, openSpace, openTarget, openTask }
+  return { navigate, notificationTarget: readonly(notificationTarget), completeNotificationReveal, openNotification, openSpace, openTarget, openTask }
 }
 
 export type DesktopNavigation = ReturnType<typeof useDesktopNavigation>

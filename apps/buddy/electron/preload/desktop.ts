@@ -4,7 +4,7 @@ import type { ApplicationStartupState } from '../../shared/diagnostics/applicati
 import type { CpuProfileRequest } from '../../shared/diagnostics/performanceDiagnostic'
 import type { RendererDiagnosticReport } from '../../shared/diagnostics/rendererDiagnostic'
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
-import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
+import type { DesktopAppInfo, DesktopOpenTarget, DesktopOpenTargetRequest, DesktopOpenTargetResult, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopUpdates'
 import { ipcRenderer, webUtils } from 'electron'
@@ -69,9 +69,25 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
         ipcRenderer.on(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
         return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
       },
-      onOpenTarget: (listener: (target: DesktopOpenTarget) => void) => (
-        subscribe(DESKTOP_IPC_CHANNELS.appOpenTarget, listener)
-      ),
+      onOpenTarget: (listener: (target: DesktopOpenTarget) => Promise<DesktopOpenTargetResult>) => {
+        let disposed = false
+        let latestRequestId = 0
+        async function dispatch(request: DesktopOpenTargetRequest | null) {
+          if (!request || disposed || request.requestId <= latestRequestId)
+            return
+          latestRequestId = request.requestId
+          const result = await listener({ conversationId: request.conversationId, runId: request.runId })
+          if (!disposed)
+            await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appCompleteOpenTarget, { requestId: request.requestId, result })
+        }
+        const reportError = (error: unknown) => console.error('Desktop notification navigation failed', error)
+        const stop = subscribe<DesktopOpenTargetRequest>(DESKTOP_IPC_CHANNELS.appOpenTarget, request => void dispatch(request).catch(reportError))
+        void ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appGetPendingOpenTarget).then(dispatch).catch(reportError)
+        return () => {
+          disposed = true
+          stop()
+        }
+      },
       onHidden: (listener: () => void) => subscribe(DESKTOP_IPC_CHANNELS.appHidden, listener),
       openFeedbackIssue: (feedback: string) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.appOpenFeedbackIssue,

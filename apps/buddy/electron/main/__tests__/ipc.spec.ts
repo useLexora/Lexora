@@ -36,6 +36,8 @@ describe('registerDesktopIpc', () => {
       getSandboxStatus: async () => 'available',
       setupSandbox: async () => 'cancelled',
       getWindow: () => window,
+      getPendingOpenTarget: () => null,
+      completeOpenTarget: vi.fn(),
       onConfigUpdated: vi.fn(),
       openFeedbackIssue: vi.fn(),
       openReleasePage: vi.fn(),

@@ -8,6 +8,11 @@ import { useChatViewport } from './useChatViewport'
 export function useChatWorkspace(
   props: Readonly<ChatWorkspaceProps>,
   messageList: Readonly<Ref<BuddyChatMessageListHandle | null>>,
+  revealCallbacks: {
+    onRevealError?: () => void
+    onRevealed?: (messageId: string) => void
+    onRevealCancelled?: (messageId: string) => void
+  } = {},
 ) {
   const workspace = computed(() => props.workspace)
   const execution = computed(() => workspace.value.execution)
@@ -18,6 +23,7 @@ export function useChatWorkspace(
   const isEmpty = computed(() => session.value.activeConversationId.value === null)
   const welcomeVariant = shallowRef(selectDesktopChatWelcomeVariant(workspace.value.welcomePreference.value))
   const viewport = useChatViewport({
+    ...revealCallbacks,
     readingPositions: props.readingPositions,
     activeBranchId: computed(() => session.value.activeBranchId.value),
     activeConversationId: computed(() => session.value.activeConversationId.value),

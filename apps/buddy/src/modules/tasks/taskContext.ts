@@ -9,6 +9,7 @@ export interface TaskEnvironment {
   browserGuests: DesktopBrowserGuestSurfaceHost
   clipboard: LexoraDesktopApi['clipboard']
   notificationTarget: Readonly<Ref<{ conversationId: string, messageId: string } | null>>
+  completeNotificationReveal?: (conversationId: string, messageId: string, result?: 'opened' | 'cancelled') => void
   resources: TaskResourcePanel
 }
 

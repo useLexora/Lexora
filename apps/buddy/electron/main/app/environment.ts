@@ -1,9 +1,9 @@
 import type { DesktopEnvironment } from './typing'
 import { mkdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { app, crashReporter, Menu, protocol } from 'electron'
+import { app, crashReporter, Menu, protocol, shell } from 'electron'
 import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
@@ -133,5 +133,28 @@ export async function prepareDesktopReady(environment: DesktopEnvironment): Prom
     environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'window_state.unavailable', ...readDiagnosticError(error) })
   }
   app.setAppUserModelId(paths.desktopName)
+  if (process.platform === 'win32' && !app.isPackaged && paths.profile === 'development') {
+    try {
+      // The installer supplies this registration for packaged builds. Keep the
+      // development activator stable so its shortcut matches across restarts.
+      app.setToastActivatorCLSID('{74C2AE92-485D-4BF5-9E30-68A2C2C3B79E}')
+      const programs = join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+      mkdirSync(programs, { recursive: true })
+      const registered = shell.writeShortcutLink(join(programs, `${paths.appName}.lnk`), 'create', {
+        target: process.execPath,
+        args: `"${app.getAppPath()}"`,
+        cwd: app.getAppPath(),
+        appUserModelId: paths.desktopName,
+        toastActivatorClsid: app.toastActivatorCLSID,
+        description: paths.appName,
+      })
+      if (!registered)
+        throw new Error('Could not register the development notification shortcut')
+      environment.diagnostics.record({ scope: 'desktop', level: 'info', event: 'notification.development_registered' })
+    }
+    catch (error) {
+      environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.registration_failed', error })
+    }
+  }
   Menu.setApplicationMenu(null)
 }

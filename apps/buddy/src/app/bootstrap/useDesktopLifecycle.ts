@@ -36,6 +36,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
   const runtimeReady = computed(() => state.value.stages.some(stage => stage.stage === 'runtime.connection' && stage.status === 'completed'))
   const loading = computed(() => !dataReady.value && !failed.value && state.value.status !== 'failed')
   const hasFailed = computed(() => failed.value || state.value.status === 'failed')
+  watch(hasFailed, value => value && resolveReady(), { immediate: true, flush: 'sync' })
 
   const preparation = Promise.all([appState.initialize(), shell.initialize()])
   void preparation.catch(() => {

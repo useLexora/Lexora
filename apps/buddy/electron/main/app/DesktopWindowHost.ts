@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import type { LexoraConfig } from '../../shared/desktopApi'
+import type { DesktopOpenTarget, DesktopOpenTargetRequest, DesktopOpenTargetResult, LexoraConfig } from '../../shared/desktopApi'
 import type { DesktopEnvironment } from './typing'
 import process from 'node:process'
 import { app, nativeTheme, screen } from 'electron'
@@ -23,6 +23,9 @@ export class DesktopWindowHost {
   readonly #environment: DesktopEnvironment
   #manager: DesktopWindowManager | null = null
   #onRecoveryExhausted: (() => void) | null = null
+  #pendingTarget: DesktopOpenTargetRequest | null = null
+  #targetVersion = 0
+  #rendererReady = false
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
@@ -52,6 +55,7 @@ export class DesktopWindowHost {
         bindings.onRecoveryExhausted()
       },
       createWindow: () => {
+        this.#rendererReady = false
         const handle = createDesktopWindow({
           appName: environment.paths.appName,
           iconPath: environment.desktopIconPath,
@@ -76,6 +80,10 @@ export class DesktopWindowHost {
         handle.window.webContents.on('did-finish-load', () => {
           environment.events.publish({ level: 'info', event: 'window.loaded' })
         })
+        handle.window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+          if (mainFrame && !inPlace)
+            this.#rendererReady = false
+        })
         handle.window.once('closed', () => {
           environment.events.publish({ level: 'info', event: 'window.closed' })
         })
@@ -89,7 +97,7 @@ export class DesktopWindowHost {
     })
     this.#manager = manager
     this.#onRecoveryExhausted = bindings.onRecoveryExhausted
-    if (!environment.isSmokeTest && environment.initialLaunchIntent === 'foreground')
+    if (this.#pendingTarget || (!environment.isSmokeTest && environment.initialLaunchIntent === 'foreground'))
       await manager.open()
     return manager.window ?? manager.load()
   }
@@ -104,15 +112,48 @@ export class DesktopWindowHost {
     })
   }
 
-  async openTarget(target: { conversationId: string, runId: string }): Promise<void> {
+  getPendingOpenTarget(): DesktopOpenTargetRequest | null {
+    this.#rendererReady = true
+    return this.#pendingTarget ? { ...this.#pendingTarget } : null
+  }
+
+  completeOpenTarget(requestId: number, result: DesktopOpenTargetResult): void {
+    if (this.#pendingTarget?.requestId !== requestId)
+      return
+    this.#environment.events.publish({ level: result === 'failed' ? 'warn' : 'info', event: `notification.target.${result}` })
+    this.#pendingTarget = null
+  }
+
+  async openTarget(target: DesktopOpenTarget): Promise<void> {
+    const request = { ...target, requestId: ++this.#targetVersion }
+    this.#pendingTarget = request
+    this.#environment.events.publish({ level: 'info', event: 'notification.clicked' })
     if (!this.#manager)
       return
     if (this.#manager.recoveryExhausted) {
       this.#onRecoveryExhausted?.()
       return
     }
-    await this.#manager.open()
-    this.window?.webContents.send(DESKTOP_IPC_CHANNELS.appOpenTarget, target)
+    try {
+      await this.#manager.open()
+    }
+    catch (error) {
+      this.#environment.diagnostics.record({ scope: 'desktop', level: 'error', event: 'notification.target.open_failed', error })
+      try {
+        await this.#manager.open()
+      }
+      catch (fallbackError) {
+        this.#environment.diagnostics.record({ scope: 'desktop', level: 'error', event: 'notification.target.retry_failed', error: fallbackError })
+        return
+      }
+    }
+    try {
+      if (this.#rendererReady && this.#pendingTarget === request)
+        this.window?.webContents.send(DESKTOP_IPC_CHANNELS.appOpenTarget, request)
+    }
+    catch (error) {
+      this.#environment.diagnostics.record({ scope: 'desktop', level: 'error', event: 'notification.target.delivery_failed', error })
+    }
   }
 
   updateAppearance(): void {
@@ -132,5 +173,6 @@ export class DesktopWindowHost {
     this.#manager?.dispose()
     this.#manager = null
     this.#onRecoveryExhausted = null
+    this.#rendererReady = false
   }
 }

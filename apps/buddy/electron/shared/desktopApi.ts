@@ -39,6 +39,8 @@ export const DESKTOP_IPC_CHANNELS = {
   appOpenFeedbackIssue: 'lexora:app:open-feedback-issue',
   appOpenReleasePage: 'lexora:app:open-release-page',
   appOpenTarget: 'lexora:app:open-target',
+  appGetPendingOpenTarget: 'lexora:app:get-pending-open-target',
+  appCompleteOpenTarget: 'lexora:app:complete-open-target',
   appHidden: 'lexora:app:hidden',
   appPrepareQuit: 'lexora:app:prepare-quit',
   appPrepareQuitAck: 'lexora:app:prepare-quit-ack',
@@ -78,6 +80,12 @@ export interface DesktopOpenTarget {
   conversationId: string
   runId: string
 }
+
+export interface DesktopOpenTargetRequest extends DesktopOpenTarget {
+  requestId: number
+}
+
+export type DesktopOpenTargetResult = 'opened' | 'cancelled' | 'failed'
 
 export interface DesktopWindowState {
   isMaximized: boolean
@@ -232,7 +240,7 @@ export interface LexoraDesktopApi {
     setupSandbox: () => Promise<SandboxSetupResult>
     onBeforeQuit: (listener: () => Promise<boolean>) => () => void
     onHidden: (listener: () => void) => () => void
-    onOpenTarget: (listener: (target: DesktopOpenTarget) => void) => () => void
+    onOpenTarget: (listener: (target: DesktopOpenTarget) => Promise<DesktopOpenTargetResult>) => () => void
     openFeedbackIssue: (feedback: string) => Promise<void>
     openReleasePage: (url: string) => Promise<void>
   }

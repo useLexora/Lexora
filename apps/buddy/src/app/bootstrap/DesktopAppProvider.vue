@@ -183,9 +183,10 @@ provide(runtimeAvailabilityKey, { loading: lifecycle.loading, failed: lifecycle.
 const navigation = useDesktopNavigation({
   router,
   ready,
+  isReady: () => lifecycle.dataReady.value,
   session: {
-    activeTaskId: computed(() => selectedTask.value?.session.activeTaskId.value ?? null),
-    spaceId: computed(() => selectedTask.value?.session.spaceId.value ?? null),
+    activeTaskId: computed(() => workbench.activeResource.value?.scheme === 'task' ? workbench.activeResource.value.id : null),
+    spaceId: computed(() => selectedTask.value?.session.spaceId.value ?? (workbench.activeResource.value?.data.spaceId as string | null | undefined) ?? null),
     navigationVersion: () => workbench.navigationVersion,
     openTask: (id, signal) => workbench.openTask(id, signal),
     startTask: spaceId => workbench.newTask(spaceId),
@@ -200,10 +201,22 @@ const navigation = useDesktopNavigation({
     return task.workspace.session.activeBranchId.value === run.branchId
       || await task.workspace.transcript.activateBranch(run.branchId)
   },
-  onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')),
+  onError: (error) => {
+    const key = error instanceof Error && error.message === 'DESKTOP_NOTIFICATION_BRANCH_UNAVAILABLE'
+      ? 'desktop.notification.branchUnavailable'
+      : error instanceof Error && error.message === 'DESKTOP_NOTIFICATION_NOT_READY'
+        ? 'desktop.notification.notReady'
+        : 'desktop.command.failed'
+    message.error(translateBuddy(stores.applicationSettings.language.value, key))
+  },
 })
 const { notificationTarget } = navigation
-onScopeDispose(api.app.onOpenTarget(navigation.openTarget))
+let stopOpenTarget: (() => void) | undefined
+watch(lifecycle.dataReady, (ready) => {
+  stopOpenTarget?.()
+  stopOpenTarget = ready ? api.app.onOpenTarget(navigation.openTarget) : undefined
+}, { immediate: true })
+onScopeDispose(() => stopOpenTarget?.())
 const browserGuestHost = useTemplateRef<DesktopBrowserGuestSurfaceHost>('browserGuestHost')
 const browserGuests = useBrowserGuestHost(browserGuestHost)
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(() => browserGuests.layout?.())))
@@ -264,6 +277,7 @@ useProvideDesktopUi({
   sidebarCollapsed: taskIndex.index.sidebar.collapsed,
 })
 useProvideTaskEnvironment({
+  completeNotificationReveal: navigation.completeNotificationReveal,
   resources,
   browser: api.browser,
   browserGuests,

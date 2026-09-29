@@ -1,6 +1,6 @@
 import type { BuddyChatMessageListHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics, ChatReadingPositions } from '../../transcript/chatMessageViewport'
 import { deferred } from '@buddy-tests/deferred'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
 import { useChatViewport } from '../useChatViewport'
 
@@ -43,6 +43,9 @@ function createViewport(loadOlderMessages: () => Promise<boolean>, initial: {
 } = {}) {
   const original = createList()
   const options = {
+    onRevealError: vi.fn(),
+    onRevealed: vi.fn(),
+    onRevealCancelled: vi.fn(),
     readingPositions: initial.readingPositions,
     activeBranchId: shallowRef<string | null>('branch-1'),
     activeConversationId: shallowRef<string | null>('conversation-1'),
@@ -221,6 +224,23 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(300)
   })
 
+  it('keeps a failed notification reveal and retries when its timeline becomes available', async () => {
+    const fixture = createViewport(async () => false, { isLoading: true, revealMessageId: 'new-target' })
+    fixture.options.hasOlderMessages.value = false
+    const scroll = vi.spyOn(fixture.original.handle, 'scrollToMessage').mockReturnValueOnce(null)
+    fixture.options.isLoading.value = false
+    await vi.waitFor(() => expect(fixture.options.onRevealError).toHaveBeenCalledOnce())
+    expect(fixture.viewport.isPositioning.value).toBe(false)
+    fixture.options.timelineItems.value = [{ id: 'new-target', kind: 'message' }]
+    await vi.waitFor(() => expect(scroll).toHaveBeenCalledTimes(2))
+    await nextTick()
+    fixture.options.timelineItems.value = [{ id: 'new-target', kind: 'message' }, { id: 'later', kind: 'message' }]
+    await nextTick()
+    expect(scroll).toHaveBeenCalledTimes(2)
+    expect(fixture.original.metrics.scrollTop).toBe(300)
+    expect(fixture.options.onRevealed).toHaveBeenCalledExactlyOnceWith('new-target')
+  })
+
   it.each(['before', 'after'] as const)('reveals a target received before the list mounts %s initial loading finishes', async (mountOrder) => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false
@@ -303,6 +323,10 @@ describe('chat viewport operations', () => {
     expect(pages).toBe(0)
     expect(mounted.revealed).toEqual([])
     expect(mounted.highlights).toEqual([])
+    if (reason === 'clear-target' || reason === 'dispose')
+      expect(fixture.options.onRevealCancelled).not.toHaveBeenCalled()
+    else
+      expect(fixture.options.onRevealCancelled).toHaveBeenCalledExactlyOnceWith('old-target')
     fixture.options.revealMessageId.value = null
   })
 

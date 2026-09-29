@@ -10,7 +10,7 @@ import { useDesktopNavigation } from '../useDesktopNavigation'
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => scopes.splice(0).forEach(scope => scope.stop()))
 
-async function fixture(ready = Promise.resolve()) {
+async function fixture(ready = Promise.resolve(), isReady?: () => boolean) {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { name: DESKTOP_ROUTE_NAMES.tasks, path: '/tasks', component: {} },
     { name: DESKTOP_ROUTE_NAMES.settingsApp, path: '/settings/app', component: {} },
@@ -42,6 +42,7 @@ async function fixture(ready = Promise.resolve()) {
   const navigation = scope.run(() => useDesktopNavigation({
     router,
     ready,
+    isReady,
     getRun,
     activateRunBranch,
     notifications: { markSeen },
@@ -89,6 +90,8 @@ describe('desktop navigation intent', () => {
     await nextTick()
     expect(f.openTask).not.toHaveBeenCalled()
     ready.resolve()
+    await vi.waitFor(() => expect(f.navigation.notificationTarget.value?.conversationId).toBe('b'))
+    f.navigation.completeNotificationReveal('b', 'message-b')
     await Promise.all([a, b])
     expect(f.openTask).toHaveBeenCalledTimes(1)
     expect(f.openTask).toHaveBeenCalledWith('b', expect.any(AbortSignal))
@@ -97,7 +100,7 @@ describe('desktop navigation intent', () => {
     expect(f.getRun).toHaveBeenCalledWith('b')
     expect(f.activateRunBranch).toHaveBeenCalledTimes(1)
     expect(f.activateRunBranch).toHaveBeenCalledWith(expect.objectContaining({ branchId: 'branch-b' }))
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', messageId: 'message-b' })
+    expect(f.navigation.notificationTarget.value).toBeNull()
   })
 
   it('waits for the target conversation to become active before looking up and activating its run', async () => {
@@ -107,11 +110,13 @@ describe('desktop navigation intent', () => {
     await nextTick()
     expect(f.getRun).not.toHaveBeenCalled()
     ready.resolve()
+    await vi.waitFor(() => expect(f.navigation.notificationTarget.value?.conversationId).toBe('run'))
+    f.navigation.completeNotificationReveal('run', 'message-run')
     await opening
     expect(f.activeTaskId.value).toBe('run')
     expect(f.getRun).toHaveBeenCalledWith('run')
     expect(f.activateRunBranch).toHaveBeenCalledWith(expect.objectContaining({ branchId: 'branch-run' }))
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'run', messageId: 'message-run' })
+    expect(f.navigation.notificationTarget.value).toBeNull()
   })
 
   it.each(['route', 'task', 'dispose'])('cancels a queued target after a newer %s operation', async (operation) => {
@@ -135,14 +140,36 @@ describe('desktop navigation intent', () => {
 
   it('keeps the queued notification across automatic startup restoration', async () => {
     const ready = deferred<void>()
-    const f = await fixture(ready.promise)
+    let initialized = false
+    const f = await fixture(ready.promise, () => initialized)
     const opening = f.navigation.openTarget({ conversationId: 'a', runId: 'a' })
-    f.activeTaskId.value = 'restored'
+    f.select('restored')
     await nextTick()
+    initialized = true
     ready.resolve()
+    await vi.waitFor(() => expect(f.navigation.notificationTarget.value?.conversationId).toBe('a'))
+    f.navigation.completeNotificationReveal('a', 'message-a')
     await opening
     expect(f.activeTaskId.value).toBe('a')
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
+    expect(f.navigation.notificationTarget.value).toBeNull()
+  })
+
+  it('keeps a notification target after three seconds while its message is still loading', async () => {
+    vi.useFakeTimers()
+    try {
+      const f = await fixture()
+      const opening = f.navigation.openTarget({ conversationId: 'a', runId: 'a' })
+      await vi.waitFor(() => expect(f.navigation.notificationTarget.value?.conversationId).toBe('a'))
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
+      f.select('manual')
+      await nextTick()
+      await expect(opening).resolves.toBe('cancelled')
+      expect(f.navigation.notificationTarget.value).toBeNull()
+    }
+    finally {
+      vi.useRealTimers()
+    }
   })
 
   it('discards an old run lookup after A to B to A selection', async () => {

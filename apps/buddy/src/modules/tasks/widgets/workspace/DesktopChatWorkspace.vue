@@ -3,8 +3,10 @@ import type { LocalConversationTreeNode } from '@buddy-shared/conversation/conve
 import type { BuddyChatMessageListHandle } from '../transcript/chatMessageViewport'
 import type { ChatWorkspaceEmits, ChatWorkspaceProps } from './typing'
 import { readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUserContent'
+import { useMessage } from 'naive-ui'
 import { computed, defineAsyncComponent, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useTaskEnvironment } from '@/modules/tasks/taskContext'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
@@ -62,7 +64,17 @@ watch(() => props.viewMode, (value) => {
   else nodeDetail.close()
 }, { immediate: true })
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
-const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
+const message = useMessage()
+const environment = useTaskEnvironment()
+const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(
+  props,
+  messageList,
+  {
+    onRevealError: () => message.error(t('desktop.notification.messageUnavailable')),
+    onRevealed: messageId => environment.completeNotificationReveal?.(props.workspace.session.activeConversationId.value ?? '', messageId),
+    onRevealCancelled: messageId => environment.completeNotificationReveal?.(props.workspace.session.activeConversationId.value ?? '', messageId, 'cancelled'),
+  },
+)
 watch([pageRef, isLoading], ([element, loading], _, cleanup) => {
   if (!element || loading)
     return
@@ -104,7 +116,9 @@ const quoteNavigation = useChatQuoteNavigation({
   language: () => props.workspace.language.value,
   conversationId: () => props.workspace.session.activeConversationId.value,
   viewMode: () => props.viewMode,
-  revealMessage: id => viewport.revealMessage(id),
+  revealMessage: async (id) => {
+    await viewport.revealMessage(id)
+  },
   loadQuote: async (messageId, quoteId) => {
     const conversationId = props.workspace.session.activeConversationId.value
     if (!conversationId)

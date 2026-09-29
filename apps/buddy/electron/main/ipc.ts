@@ -1,6 +1,6 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
-import type { LexoraConfig } from '../shared/desktopApi'
+import type { DesktopOpenTargetRequest, DesktopOpenTargetResult, LexoraConfig } from '../shared/desktopApi'
 import type { LexoraConfigStore } from './config/LexoraConfigStore'
 import type { ExecuteDesktopCommand } from './desktopCommands'
 import process from 'node:process'
@@ -29,6 +29,8 @@ export interface RegisterDesktopIpcOptions {
   runtimeProfile: BuddyRuntimeProfile
   configStore: LexoraConfigStore
   getWindow: () => BrowserWindow | null
+  getPendingOpenTarget: () => DesktopOpenTargetRequest | null
+  completeOpenTarget: (requestId: number, result: DesktopOpenTargetResult) => void
   onConfigUpdated: (config: LexoraConfig) => Promise<void> | void
   openFeedbackIssue: (feedback: string) => Promise<unknown>
   openReleasePage: (url: string) => Promise<unknown>
@@ -36,6 +38,21 @@ export interface RegisterDesktopIpcOptions {
 }
 
 export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.appGetPendingOpenTarget, (event) => {
+    assertTrustedSender(event, options.getWindow())
+    return options.getPendingOpenTarget()
+  })
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.appCompleteOpenTarget, (event, input: unknown) => {
+    assertTrustedSender(event, options.getWindow())
+    if (!input || typeof input !== 'object')
+      throw new Error('Invalid Desktop notification result')
+    const { requestId, result } = input as Record<string, unknown>
+    if (typeof requestId !== 'number' || !Number.isSafeInteger(requestId) || requestId <= 0
+      || (result !== 'opened' && result !== 'cancelled' && result !== 'failed')) {
+      throw new Error('Invalid Desktop notification result')
+    }
+    options.completeOpenTarget(requestId, result)
+  })
   ipcMain.handle(DESKTOP_IPC_CHANNELS.appSetupSandbox, async (event) => {
     assertTrustedSender(event, options.getWindow())
     return sandboxSetupResultSchema.parse(await options.setupSandbox())

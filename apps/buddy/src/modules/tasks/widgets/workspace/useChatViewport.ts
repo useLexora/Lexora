@@ -31,6 +31,9 @@ interface UseChatViewportOptions {
   list: ValueRef<BuddyChatMessageListHandle | null>
   loadOlderMessages: () => Promise<boolean>
   timelineItems: ValueRef<ReadonlyArray<ChatViewportTimelineItem>>
+  onRevealError?: () => void
+  onRevealed?: (messageId: string) => void
+  onRevealCancelled?: (messageId: string) => void
 }
 
 interface RevealMessageOptions {
@@ -56,6 +59,8 @@ export function useChatViewport(options: UseChatViewportOptions) {
   let pendingHistory: ScrollOperation | null = null
   let pendingPage: Promise<boolean> | null = null
   let pendingRevealMessageId: string | null = null
+  let revealOperation: ScrollOperation | null = null
+  let reportedRevealMessageId: string | null = null
   let disposed = false
 
   watch(
@@ -72,7 +77,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
       pendingHistory = null
       pendingPage = null
       if (contextChanged)
-        pendingRevealMessageId = null
+        cancelPendingReveal()
       readingAnchor = null
       if (contextChanged)
         pendingPosition = readingPositions.get(scopeKey()) ?? null
@@ -88,6 +93,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
   watch(() => options.revealMessageId.value, (messageId) => {
     operationGeneration += 1
     pendingRevealMessageId = messageId
+    reportedRevealMessageId = null
     if (!resumePendingReveal() && isPositioning.value)
       void scrollToTailAfterRender()
   }, { flush: 'sync', immediate: true })
@@ -95,7 +101,13 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (!resumePendingReveal() && (isPositioning.value || scrollState.value.ownership === 'following'))
       void scrollToTailAfterRender()
   })
+  watch(() => options.isLoadingOlderMessages.value, (loading) => {
+    if (!loading)
+      resumePendingReveal()
+  })
   watch(() => options.timelineItems.value, (items, previous) => {
+    if (pendingRevealMessageId && resumePendingReveal())
+      return
     if (isPositioning.value || options.isLoading.value || scrollState.value.ownership !== 'detached')
       return
     const first = previous[0]
@@ -145,13 +157,33 @@ export function useChatViewport(options: UseChatViewportOptions) {
     scrollState.value = detachChatScroll(scrollState.value)
     if (!options.list.value || options.isLoading.value)
       return true
+    if (options.isLoadingOlderMessages.value || (revealOperation && isCurrent(revealOperation)))
+      return true
     const revealing = revealMessage(messageId, () => pendingRevealMessageId === messageId)
-    const generation = operationGeneration
-    void revealing.then(() => {
-      if (generation === operationGeneration)
+    const operation = { generation: operationGeneration, list: options.list.value }
+    revealOperation = operation
+    void revealing.then((revealed) => {
+      if (revealOperation === operation)
+        revealOperation = null
+      if (!isCurrent(operation) || pendingRevealMessageId !== messageId)
+        return
+      if (revealed) {
         pendingRevealMessageId = null
+        options.onRevealed?.(messageId)
+      }
+      else if (reportedRevealMessageId !== messageId) {
+        reportedRevealMessageId = messageId
+        options.onRevealError?.()
+      }
     })
     return true
+  }
+
+  function cancelPendingReveal() {
+    const messageId = pendingRevealMessageId
+    pendingRevealMessageId = null
+    if (messageId)
+      options.onRevealCancelled?.(messageId)
   }
 
   function beginOperation(): ScrollOperation {
@@ -174,7 +206,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     scrollState.value = observation.state
     if (observation.movedByReader) {
       operationGeneration += 1
-      pendingRevealMessageId = null
+      cancelPendingReveal()
     }
     readingAnchor = scrollState.value.ownership === 'detached'
       ? options.list.value?.captureScrollAnchor() ?? null
@@ -213,7 +245,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (metrics && metrics.scrollHeight <= metrics.clientHeight)
       return
     operationGeneration += 1
-    pendingRevealMessageId = null
+    cancelPendingReveal()
     readingAnchor = null
     pendingPosition = null
     scrollState.value = detachChatScroll(scrollState.value)
@@ -223,7 +255,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (disposed)
       return
     operationGeneration += 1
-    pendingRevealMessageId = null
+    cancelPendingReveal()
     readingAnchor = null
     pendingPosition = null
     pendingHistory = null
@@ -243,7 +275,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
   async function returnToLatest() {
     if (disposed)
       return
-    pendingRevealMessageId = null
+    cancelPendingReveal()
     readingAnchor = null
     pendingPosition = null
     const operation = beginOperation()
@@ -331,7 +363,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     revealOptions: RevealMessageOptions = {},
   ) {
     if (disposed)
-      return
+      return false
     const operation = beginOperation()
     scrollState.value = detachChatScroll(scrollState.value)
     const isActive = () => isCurrent(operation) && isRequested()
@@ -346,24 +378,25 @@ export function useChatViewport(options: UseChatViewportOptions) {
     }
     catch {}
     if (!isActive())
-      return
+      return false
     await nextTick()
     if (!isActive())
-      return
-    if (revealOptions.highlight)
-      operation.list?.highlightMessage(messageId)
+      return false
     const metrics = operation.list?.scrollToMessage(messageId, loadedHistory ? 'auto' : revealOptions.behavior)
     if (metrics) {
+      if (revealOptions.highlight)
+        operation.list?.highlightMessage(messageId)
       scrollState.value = recordProgrammaticChatScroll(scrollState.value, metrics)
       readingAnchor = operation.list?.captureScrollAnchor() ?? null
     }
     pendingPosition = null
     positionedScopeKey = scopeKey()
     isPositioning.value = false
+    return Boolean(metrics)
   }
 
   function revealOutlineMessage(messageId: string) {
-    pendingRevealMessageId = null
+    cancelPendingReveal()
     return revealMessage(messageId, () => true, {
       behavior: 'smooth',
       highlight: true,

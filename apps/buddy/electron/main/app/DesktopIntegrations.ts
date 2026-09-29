@@ -121,7 +121,15 @@ export class DesktopIntegrations {
     const notifications = new DesktopNotificationService({
       createNotification(input) {
         const notification = new Notification(input)
-        return { onClick: listener => notification.on('click', listener), show: () => notification.show() }
+        notification.on('show', () => diagnostics.record({ scope: 'desktop', level: 'info', event: 'notification.shown' }))
+        notification.on('failed', (_event, error) => diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.delivery_failed', error: new Error(error) }))
+        return {
+          close: () => notification.close(),
+          onClick: listener => notification.once('click', listener),
+          onClose: listener => notification.on('close', details => listener(process.platform === 'win32' ? details.reason : 'userCanceled')),
+          onFailed: listener => notification.once('failed', listener),
+          show: () => notification.show(),
+        }
       },
       getLanguage: () => runtime.language,
       getSettings: () => ({
@@ -129,6 +137,7 @@ export class DesktopIntegrations {
         notifyWhenFocused: runtime.config?.desktop.notifyWhenFocused ?? false,
       }),
       isWindowFocused: () => windows.window?.isFocused() ?? false,
+      onError: error => diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.target.failed', error }),
       openTarget: target => windows.openTarget(target),
       request: service.request.bind(service),
     })
@@ -159,6 +168,7 @@ export class DesktopIntegrations {
         diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.failed', error })
       })
     }))
+    this.#subscriptions.push(() => notifications.dispose())
     const updates = registerDesktopUpdates(this.#environment, runtime, windows)
     this.#subscriptions.push(updates.dispose)
     registerDesktopIpc({
@@ -171,6 +181,8 @@ export class DesktopIntegrations {
       executeCommand: this.executeCommand,
       getWindow: () => windows.window,
       onConfigUpdated: config => this.applyConfig(config),
+      getPendingOpenTarget: () => windows.getPendingOpenTarget(),
+      completeOpenTarget: (requestId, result) => windows.completeOpenTarget(requestId, result),
       openFeedbackIssue: feedback => shell.openExternal(createFeedbackIssueUrl(feedback)),
       openReleasePage: url => shell.openExternal(url),
     })
