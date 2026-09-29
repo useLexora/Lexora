@@ -46,7 +46,7 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
               <h2 class="desktop-update-dialog__version-title">
                 Lexora Buddy {{ result.latestVersion }}
               </h2>
-              <span class="desktop-update-dialog__badge">{{ t('desktop.update.latestTag') }}</span>
+              <span class="desktop-update-dialog__badge">{{ t('desktop.update.newTag') }}</span>
             </div>
             <p class="desktop-update-dialog__meta">
               {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
