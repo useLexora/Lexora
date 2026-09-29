@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
+import type { DesktopNotification } from '../contracts'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { Bot20Regular, CheckmarkCircle20Regular, Warning20Regular } from '@vicons/fluent'
+import { ArrowDownload20Regular, Bot20Regular, CheckmarkCircle20Regular, Warning20Regular } from '@vicons/fluent'
 import { computed } from 'vue'
 
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -10,10 +10,10 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
   language: BuddyLocale
-  notification: LocalNotification
+  notification: DesktopNotification
 }>()
 const emit = defineEmits<{
-  open: [notification: LocalNotification]
+  open: [notification: DesktopNotification]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const dateFormatter = computed(() => new Intl.DateTimeFormat(props.language, {
@@ -23,6 +23,8 @@ const dateFormatter = computed(() => new Intl.DateTimeFormat(props.language, {
   month: 'short',
 }))
 const title = computed(() => {
+  if (props.notification.kind === 'app.update-available')
+    return t('desktop.update.notificationTitle', { version: props.notification.payload.version })
   if (props.notification.kind === 'model.source-parameters-updated') {
     return t('desktop.notifications.modelSourceUpdatedTitle', {
       count: props.notification.payload.modelCount,
@@ -31,6 +33,8 @@ const title = computed(() => {
   return props.notification.payload.automationName
 })
 const description = computed(() => {
+  if (props.notification.kind === 'app.update-available')
+    return t('desktop.update.notificationDescription')
   if (props.notification.kind === 'model.source-parameters-updated')
     return t('desktop.notifications.modelSourceUpdatedDescription')
   return t(props.notification.kind === 'automation.run.completed'
@@ -38,6 +42,8 @@ const description = computed(() => {
     : 'desktop.notifications.automationFailedDescription')
 })
 const icon = computed(() => {
+  if (props.notification.kind === 'app.update-available')
+    return ArrowDownload20Regular
   if (props.notification.kind === 'automation.run.completed')
     return CheckmarkCircle20Regular
   if (props.notification.kind === 'automation.run.failed')

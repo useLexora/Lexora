@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { DesktopAppInfo, DesktopUpdateCheckResult } from '@buddy-electron/shared/desktopApi'
+import type { DesktopAppInfo } from '@buddy-electron/shared/desktopApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NButton, NTag, useMessage } from 'naive-ui'
-import { shallowRef } from 'vue'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useDesktopUpdatesContext } from '@/modules/updates'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { BRAND_ASSET_URLS } from '@/shared/branding/brandAssets'
 
@@ -14,22 +15,18 @@ const props = defineProps<{
 const { t } = useBuddyI18n(() => props.language)
 const api = requireDesktopApi()
 const message = useMessage()
-const checking = shallowRef(false)
-const updateResult = shallowRef<DesktopUpdateCheckResult | null>(null)
+const updates = useDesktopUpdatesContext()
+const checking = computed(() => updates.state.value?.checking ?? false)
+const updateResult = computed(() => updates.state.value?.result ?? null)
 
 async function checkForUpdates() {
   if (checking.value)
     return
-  checking.value = true
-  updateResult.value = null
   try {
-    updateResult.value = await api.app.checkForUpdates()
+    await updates.check()
   }
   catch {
     message.error(t('desktop.update.failed'))
-  }
-  finally {
-    checking.value = false
   }
 }
 
@@ -40,12 +37,6 @@ async function openLink(action: () => Promise<unknown>) {
   catch {
     message.error(t('desktop.command.failed'))
   }
-}
-
-function openReleasePage() {
-  const result = updateResult.value
-  if (result)
-    void openLink(() => api.app.openReleasePage(result.releaseUrl))
 }
 </script>
 
@@ -77,8 +68,8 @@ function openReleasePage() {
     <div v-if="updateResult?.status === 'update_available'" class="desktop-about-settings__update" role="status">
       <span>{{ t('desktop.update.available') }}</span>
       <span>{{ t('desktop.about.version', { version: updateResult.latestVersion }) }}</span>
-      <NButton text type="primary" @click="openReleasePage">
-        {{ t('desktop.update.openRelease') }}
+      <NButton text type="primary" @click="openLink(updates.openDetails)">
+        {{ t('desktop.update.view') }}
       </NButton>
     </div>
     <div v-if="appInfo" class="desktop-about-settings__versions">

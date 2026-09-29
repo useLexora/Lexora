@@ -74,6 +74,7 @@ export const runsResponseSchemas = {
 } as const
 
 export const runsRpc = {
+  isBusy: { method: 'runs.isBusy', input: z.object({}).strict(), response: z.boolean() },
   list: { method: 'runs.list', input: z.object({ conversationId: idSchema.nullable().optional(), limit: optionalLimitSchema }).strict(), response: runsResponseSchemas.runs },
   get: { method: 'runs.get', input: runsRequestSchemas.runId, response: runsResponseSchemas.run },
   listEvents: { method: 'runs.listEvents', input: runsRequestSchemas.runEvents, response: z.array(runsRequestSchemas.runStateEvent) },

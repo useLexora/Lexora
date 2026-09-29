@@ -13,6 +13,7 @@ import { ConversationStatusService } from './ConversationStatusService'
 import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
+  isBusy: () => boolean
   getCacheWarmingStatus?: ConversationStatusOptions['getCacheWarmingStatus']
   eventLog: Pick<RunEventReader, 'list' | 'listForConversation'>
   inputs: Pick<RunInputRepository, 'findByRunId'>
@@ -36,6 +37,7 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
     usage: options.usage,
   })
   const disposers = [
+    registerRuntimeRequest(options.rpc, runsRpc.isBusy, () => options.isBusy()),
     registerRuntimeRequest(options.rpc, runsStatusRpc.status, input => status.status(input.conversationId)),
     registerRuntimeRequest(options.rpc, runsRpc.list, (input) => {
       const records = input.conversationId

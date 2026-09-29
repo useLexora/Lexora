@@ -25,6 +25,7 @@ export interface RunRepository {
   create: (input: CreateRunInput) => RunRecord
   findById: (id: string) => RunRecord | null
   findLatestForBranch: (conversationId: string, branchId: string) => RunRecord | null
+  hasIncomplete: () => boolean
   listIncomplete: () => RunRecord[]
   listRecent: (limit?: number) => RunRecord[]
   listForConversation: (conversationId: string, limit?: number) => RunRecord[]
@@ -163,6 +164,9 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     },
     listIdsForConversation(conversationId) {
       return (listIds.all(conversationId) as unknown as Array<{ id: string }>).map(row => row.id)
+    },
+    hasIncomplete() {
+      return !!database.prepare('SELECT 1 FROM runs WHERE status IN (\'queued\', \'running\') LIMIT 1').get()
     },
     listIncomplete() {
       return (listIncomplete.all() as unknown as RunRow[]).map(toRunRecord)

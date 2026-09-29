@@ -6,6 +6,7 @@ import type { RendererDiagnosticReport } from '../../shared/diagnostics/renderer
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
 import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
 import type { DesktopCommandId } from '../shared/desktopCommands'
+import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopUpdates'
 import { ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
@@ -42,6 +43,12 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
         getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appStartupGetState),
         onStateChanged: (listener: (state: ApplicationStartupState) => void) => subscribe(DESKTOP_IPC_CHANNELS.appStartupStateChanged, listener),
         reportLifecycle: (report: RendererLifecycleReport) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appStartupReport, report),
+      }),
+      updates: Object.freeze({
+        getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appUpdatesState),
+        onChanged: (listener: (state: DesktopUpdateState) => void) => subscribe(DESKTOP_IPC_CHANNELS.appUpdatesChanged, listener),
+        acknowledge: (input: DesktopUpdateAction) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appUpdatesAcknowledge, { version: input.version, action: input.action }),
+        takeReminder: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appUpdatesTakeReminder),
       }),
       checkForUpdates: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appCheckForUpdates),
       getInfo: (): Promise<DesktopAppInfo> => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appGetInfo),

@@ -5,7 +5,7 @@ import { shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 const props = defineProps<ApplicationSettingsProps & {
-  field: 'launchAtLogin' | 'developerToolsEnabled'
+  field: 'launchAtLogin' | 'developerToolsEnabled' | 'updateNotificationsEnabled'
   label: string
   description: string
 }>()

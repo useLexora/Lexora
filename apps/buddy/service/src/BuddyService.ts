@@ -1199,6 +1199,7 @@ export async function startBuddyService(
       )
       register(
         registerRunRpc({
+          isBusy: () => runner.hasActiveExecutions || runs.hasIncomplete() || approvalsRepository.list({ status: 'pending', limit: 1 }).length > 0,
           getCacheWarmingStatus: (conversationId) => {
             const branchId = conversations.findById(conversationId)?.activeBranchId
             return branchId ? sessions.getReady(conversationId, branchId)?.getCacheWarmingStatus?.() ?? null : null

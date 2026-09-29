@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { DesktopUpdateCheckResult, DesktopUpdateState } from '@buddy-electron/shared/desktopUpdates'
 import type { Component } from 'vue'
 import { join } from 'node:path'
 import { LexoraConfigStore } from '@buddy-electron/main/config/LexoraConfigStore'
@@ -6,6 +7,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
+import { useDesktopUpdates, useProvideDesktopUpdates } from '@/modules/updates'
 import DesktopAboutSettings from '../DesktopAboutSettings.vue'
 import DesktopApplicationToggle from '../DesktopApplicationToggle.vue'
 import DesktopProxySettings from '../DesktopProxySettings.vue'
@@ -18,7 +20,32 @@ afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 function mount(component: Component, props: () => Record<string, unknown>) {
   const root = document.createElement('div')
   document.body.append(root)
-  const app = createApp({ render: () => h(NMessageProvider, { duration: 0 }, { default: () => h(component, props()) }) })
+  const app = createApp({
+    setup() {
+      let state: DesktopUpdateState = { revision: 0, checking: false, enabled: true, result: null, notification: null, reminderDueAt: null }
+      let changed = (_value: DesktopUpdateState) => {}
+      const updates = useDesktopUpdates({
+        checkForUpdates: async () => {
+          const result: DesktopUpdateCheckResult = await checkForUpdates()
+          state = { ...state, revision: state.revision + 1, result }
+          changed(state)
+          return result
+        },
+        updates: {
+          onChanged: (listener) => {
+            changed = listener
+            return () => {}
+          },
+          getState: async () => state,
+          acknowledge: async () => state,
+          takeReminder: async () => null,
+        },
+      })
+      useProvideDesktopUpdates(updates)
+      cleanups.push(updates.dispose)
+      return () => h(NMessageProvider, { duration: 0 }, { default: () => h(component, props()) })
+    },
+  })
   app.mount(root)
   cleanups.push(() => {
     app.unmount()

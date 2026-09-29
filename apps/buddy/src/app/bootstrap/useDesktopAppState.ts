@@ -3,6 +3,7 @@ import type { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { useModelProvidersStore } from '@/modules/models'
 import { useNotificationCenterStore } from '@/modules/notifications'
 import { useApplicationSettingsStore, useUsageStore } from '@/modules/settings'
+import { useDesktopUpdates } from '@/modules/updates'
 import { useRuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { requireInitialState } from './requireInitialState'
 
@@ -12,7 +13,8 @@ export interface UseDesktopAppStateOptions {
 
 export function useDesktopAppState(options: UseDesktopAppStateOptions) {
   const applicationSettings = useApplicationSettingsStore(options.api.settings)
-  const notifications = useNotificationCenterStore(options.api.localChat)
+  const updates = useDesktopUpdates(options.api.app)
+  const notifications = useNotificationCenterStore(options.api.localChat, updates)
   const modelProviders = useModelProvidersStore({
     api: options.api.localChat.providers,
     language: applicationSettings.language,
@@ -30,6 +32,7 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
     modelProviders,
     notifications,
     runtimeSupervisor,
+    updates,
     usage,
   } as const
 
@@ -47,6 +50,7 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
   }
 
   async function loadInitialState(): Promise<boolean> {
+    void updates.load().catch(() => {})
     const results = await Promise.allSettled([
       applicationSettings.load(),
       runtimeSupervisor.loadStatus(),
@@ -71,6 +75,7 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
     applicationSettings.dispose()
     modelProviders.dispose()
     notifications.dispose()
+    updates.dispose()
     runtimeSupervisor.dispose()
   }
 

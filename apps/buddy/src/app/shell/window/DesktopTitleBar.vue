@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type {
   DesktopAppInfo,
-  DesktopUpdateCheckResult,
   DesktopWindowState,
 } from '@buddy-electron/shared/desktopApi'
 import type { DesktopCommandId } from '@buddy-electron/shared/desktopCommands'
@@ -12,10 +11,10 @@ import { useMessage } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, onScopeDispose, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 import DesktopFeedbackDialog from '@/app/shell/window/DesktopFeedbackDialog.vue'
-import DesktopUpdateDialog from '@/app/shell/window/DesktopUpdateDialog.vue'
 import DesktopWindowMenuBar from '@/app/shell/window/DesktopWindowMenuBar.vue'
 import { useDesktopWorkbenchContext } from '@/app/workbench/desktopWorkbenchContext'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useDesktopUpdatesContext } from '@/modules/updates'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -37,8 +36,7 @@ const desktopApi = requireDesktopApi()
 const router = useRouter()
 const isMaximized = shallowRef(false)
 const showFeedback = shallowRef(false)
-const showUpdate = shallowRef(false)
-const updateResult = shallowRef<DesktopUpdateCheckResult | null>(null)
+const updates = useDesktopUpdatesContext()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const platform = computed(() => props.appInfo?.platform ?? 'linux')
@@ -119,8 +117,7 @@ async function minimize() {
 
 async function checkForUpdates() {
   try {
-    updateResult.value = await desktopApi.app.checkForUpdates()
-    showUpdate.value = true
+    await updates.check()
   }
   catch (error) {
     console.error('Lexora Buddy update check failed', error)
@@ -135,16 +132,6 @@ async function openFeedbackIssue(feedback: string) {
   }
   catch (error) {
     console.error('Lexora Buddy feedback page is unavailable', error)
-    message.error(t('desktop.command.failed'))
-  }
-}
-
-async function openReleasePage(url: string) {
-  try {
-    await desktopApi.app.openReleasePage(url)
-  }
-  catch (error) {
-    console.error('Lexora Buddy release page is unavailable', error)
     message.error(t('desktop.command.failed'))
   }
 }
@@ -233,12 +220,6 @@ function applyWindowState(state: DesktopWindowState) {
       v-model:show="showFeedback"
       :language="language"
       @open-github-issue="openFeedbackIssue"
-    />
-    <DesktopUpdateDialog
-      v-model:show="showUpdate"
-      :language="language"
-      :result="updateResult"
-      @open-release="openReleasePage"
     />
   </header>
 </template>

@@ -1,4 +1,5 @@
 import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
+import type { DesktopNotification } from '@/modules/notifications/contracts'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
@@ -24,7 +25,7 @@ async function fixture(ready = Promise.resolve()) {
     activeTaskId.value = id
     spaceId.value = space
   }
-  const markSeen = vi.fn(async (_value: LocalNotification) => true)
+  const markSeen = vi.fn(async (_value: DesktopNotification) => true)
   const getRun = vi.fn(async (id: string) => ({ conversationId: id, branchId: `branch-${id}`, triggeringMessageId: `message-${id}` }))
   const activeBranchId = shallowRef<string | null>(null)
   const activateRunBranch = vi.fn(async (run: { branchId: string }) => {
@@ -44,6 +45,7 @@ async function fixture(ready = Promise.resolve()) {
     getRun,
     activateRunBranch,
     notifications: { markSeen },
+    openUpdate: async () => {},
     onError: error => errors.push(error),
     session: { activeTaskId, spaceId, navigationVersion: () => version, openTask, startTask: async id => select(null, id) },
   }))!

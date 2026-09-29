@@ -1,13 +1,15 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalNotification, LocalNotificationList } from '@buddy-shared/notifications/notificationApi'
+import type { DesktopNotification } from '../contracts'
+import type { DesktopUpdates } from '@/modules/updates/contracts'
 import { computed, readonly, shallowRef } from 'vue'
 
 export type NotificationFilter = 'all' | 'unseen'
 
 export function filterNotifications(
-  items: ReadonlyArray<LocalNotification>,
+  items: ReadonlyArray<DesktopNotification>,
   filter: NotificationFilter,
-): ReadonlyArray<LocalNotification> {
+): ReadonlyArray<DesktopNotification> {
   return filter === 'unseen'
     ? items.filter(item => item.attention === 'unseen')
     : items
@@ -15,9 +17,14 @@ export function filterNotifications(
 
 export function useNotificationCenterStore(api: {
   notifications: LocalChatApi['notifications']
-}) {
-  const items = shallowRef<ReadonlyArray<LocalNotification>>([])
-  const unseenCount = shallowRef(0)
+}, updates: Pick<DesktopUpdates, 'state' | 'markSeen'>) {
+  const localItems = shallowRef<ReadonlyArray<LocalNotification>>([])
+  const items = computed<readonly DesktopNotification[]>(() => {
+    const update = updates.state.value?.notification
+    return [...(update ? [update] : []), ...localItems.value]
+      .sort(compareNotifications)
+  })
+  const unseenCount = computed(() => items.value.filter(item => item.attention === 'unseen').length)
   const isLoading = shallowRef(false)
   const error = shallowRef<unknown>(null)
   let loadPromise: Promise<boolean> | null = null
@@ -36,8 +43,7 @@ export function useNotificationCenterStore(api: {
   const hasNotifications = computed(() => items.value.length > 0)
 
   function apply(value: LocalNotificationList) {
-    items.value = value.items
-    unseenCount.value = value.unseenCount
+    localItems.value = value.items
   }
 
   function load(): Promise<boolean> {
@@ -120,12 +126,29 @@ export function useNotificationCenterStore(api: {
     return mutation
   }
 
-  function markSeen(notification: LocalNotification) {
-    return mutate(() => api.notifications.markSeen(notification.id, notification.revision))
+  async function markSeen(notification: DesktopNotification): Promise<boolean> {
+    if (stopped)
+      return false
+    if (notification.kind !== 'app.update-available')
+      return mutate(() => api.notifications.markSeen(notification.id, notification.revision))
+    try {
+      await updates.markSeen(notification.revision)
+      return true
+    }
+    catch (markError) {
+      if (!stopped)
+        error.value = markError
+      return false
+    }
   }
 
-  function markAllSeen() {
-    return mutate(() => api.notifications.markAllSeen())
+  async function markAllSeen() {
+    const update = updates.state.value?.notification
+    const results = await Promise.all([
+      mutate(() => api.notifications.markAllSeen()),
+      update ? markSeen(update) : true,
+    ])
+    return results.every(Boolean)
   }
 
   function dispose(): void {
@@ -151,3 +174,13 @@ export function useNotificationCenterStore(api: {
 }
 
 export type NotificationCenterStore = ReturnType<typeof useNotificationCenterStore>
+
+function compareNotifications(left: DesktopNotification, right: DesktopNotification): number {
+  if (left.attention !== right.attention)
+    return left.attention === 'unseen' ? -1 : 1
+  const leftActive = left.kind === 'app.update-available' || left.lifecycle === 'active'
+  const rightActive = right.kind === 'app.update-available' || right.lifecycle === 'active'
+  if (leftActive !== rightActive)
+    return leftActive ? -1 : 1
+  return right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id)
+}

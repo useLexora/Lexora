@@ -1,8 +1,8 @@
 import type { DesktopOpenTarget } from '@buddy-electron/shared/desktopApi'
-import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { RouteLocationRaw, Router } from 'vue-router'
 import type { NotificationCenterStore } from '@/modules/notifications'
+import type { DesktopNotification } from '@/modules/notifications/contracts'
 import type { TaskSession } from '@/modules/tasks/contracts'
 import { useTimeoutFn } from '@vueuse/core'
 import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
@@ -13,6 +13,7 @@ interface DesktopNavigationOptions {
   ready: Promise<void>
   session: Pick<TaskSession, 'activeTaskId' | 'spaceId' | 'navigationVersion' | 'openTask' | 'startTask'>
   notifications: Pick<NotificationCenterStore, 'markSeen'>
+  openUpdate: () => Promise<void>
   getRun: (runId: string) => Promise<RunTarget | null>
   activateRunBranch: (run: RunTarget) => Promise<boolean>
   onError: (error: unknown) => void
@@ -99,7 +100,16 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
     }
   }
 
-  function openNotification(notification: LocalNotification) {
+  async function openNotification(notification: DesktopNotification) {
+    if (notification.action.type === 'open-app-update') {
+      try {
+        await options.openUpdate()
+      }
+      catch (error) {
+        options.onError(error)
+      }
+      return
+    }
     void options.notifications.markSeen(notification)
     return notification.action.type === 'open-model-settings'
       ? navigate(desktopRouteLocations.settings('models'))

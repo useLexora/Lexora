@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DesktopAppInfo, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
-import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { DesktopNotification } from '@/modules/notifications/contracts'
 import type { DesktopNavigationEntry } from '@/shared/navigation/desktopPages'
 import { Alert20Regular } from '@vicons/fluent'
 import { NBadge, NButton, NPopover } from 'naive-ui'
@@ -21,7 +21,7 @@ const props = defineProps<{
   appVersion: string | null
   navigation: readonly DesktopNavigationEntry[]
   language: BuddyLocale
-  notificationItems: ReadonlyArray<LocalNotification>
+  notificationItems: ReadonlyArray<DesktopNotification>
   notificationLoading: boolean
   notificationUnseenCount: number
   profileConfig?: DesktopUserProfileConfig | null
@@ -30,7 +30,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   markAllNotificationsSeen: []
   navigate: [id: string]
-  openNotification: [notification: LocalNotification]
+  openNotification: [notification: DesktopNotification]
   refreshNotifications: []
 }>()
 const sidebar = useTemplateRef<HTMLElement>('sidebar')
@@ -49,7 +49,7 @@ function updateNotificationVisibility(show: boolean) {
     emit('refreshNotifications')
 }
 
-function openNotification(notification: LocalNotification) {
+function openNotification(notification: DesktopNotification) {
   showNotifications.value = false
   emit('openNotification', notification)
 }

@@ -70,6 +70,10 @@ export class ActiveRunRegistry {
     return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId)
   }
 
+  get hasActiveExecutions(): boolean {
+    return this.#executions.size > 0
+  }
+
   get isStopping(): boolean {
     return this.#disposed
   }

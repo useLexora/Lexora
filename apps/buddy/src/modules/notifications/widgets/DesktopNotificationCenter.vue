@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { LocalNotification } from '@buddy-shared/notifications/notificationApi'
+import type { DesktopNotification } from '../contracts'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { NotificationFilter } from '@/modules/notifications/state/useNotificationCenterStore'
@@ -12,14 +12,14 @@ import DesktopNotificationItem from '@/modules/notifications/widgets/DesktopNoti
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
-  items: ReadonlyArray<LocalNotification>
+  items: ReadonlyArray<DesktopNotification>
   language: BuddyLocale
   loading: boolean
   unseenCount: number
 }>()
 const emit = defineEmits<{
   markAllSeen: []
-  open: [notification: LocalNotification]
+  open: [notification: DesktopNotification]
 }>()
 const NOTIFICATION_ROW_SIZE = 72
 

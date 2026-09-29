@@ -80,6 +80,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     language: z.enum(['zh-CN', 'en-US']).optional(),
     launchAtLogin: z.boolean().optional(),
     notificationsEnabled: z.boolean().optional(),
+    updateNotificationsEnabled: z.boolean().optional(),
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),
     theme: z.enum(['system', 'light', 'dark']).optional(),

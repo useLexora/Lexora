@@ -17,6 +17,7 @@ describe('useDesktopAppState', () => {
         providers: { list: async () => [], listModels: async () => [], getDefaultModel: async () => null, onChanged: () => () => {}, onAuthChallenge: () => () => {} },
         runtime: { getStatus: () => status.promise, onStateChanged: () => () => {} },
       },
+      app: emptyUpdateApp(),
       settings: { get: async () => { throw new Error('unavailable') } },
     } as unknown as LexoraDesktopApi
     const appState = useDesktopAppState({ api })
@@ -50,6 +51,7 @@ describe('useDesktopAppState', () => {
           },
         },
       },
+      app: emptyUpdateApp(),
       settings: {
         update: async () => ({
           desktop: {
@@ -105,6 +107,7 @@ describe('useDesktopAppState', () => {
           },
         },
       },
+      app: emptyUpdateApp(),
       settings: {
         get: () => Promise.reject(new Error('settings unavailable')),
       },
@@ -132,6 +135,10 @@ describe('useDesktopAppState', () => {
     appState.dispose()
   })
 })
+
+function emptyUpdateApp() {
+  return { updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, result: null, notification: null, reminderDueAt: null }) } }
+}
 
 function emptyNotificationApi() {
   return {

@@ -104,6 +104,10 @@ export class BuddyAgentRunner {
     return this.#activeRuns.hasActiveExecution(conversationId)
   }
 
+  get hasActiveExecutions(): boolean {
+    return this.#activeRuns.hasActiveExecutions
+  }
+
   get isStopping(): boolean {
     return this.#activeRuns.isStopping
   }

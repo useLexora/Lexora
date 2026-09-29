@@ -15,6 +15,15 @@ const { t } = useBuddyI18n(language)
     <DesktopAboutSettings :app-info="appInfo" :language="language" />
     <div class="desktop-about-preferences">
       <DesktopApplicationToggle
+        field="updateNotificationsEnabled"
+        :label="t('desktop.update.notifications')"
+        :description="t('desktop.update.notificationsDescription')"
+        :config="config"
+        :error="settingsError"
+        :language="language"
+        :update-settings="updateSettings"
+      />
+      <DesktopApplicationToggle
         field="launchAtLogin"
         :label="t('settings.autostart')"
         :description="t('desktop.settings.autostartDescription')"

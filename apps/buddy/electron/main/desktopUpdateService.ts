@@ -1,8 +1,11 @@
 import type { DesktopUpdateCheckResult } from '../shared/desktopApi'
+import { readResponseBytes } from '../../platform/network/publicWebTransport'
+import { compareDesktopVersions, desktopUpdateResultSchema, desktopVersionSchema } from '../shared/desktopUpdates'
 import { isLexoraReleaseUrl, RELEASES_API_URL } from '../shared/productLinks'
 
 export interface CheckForDesktopUpdateOptions {
   currentVersion: string
+  signal?: AbortSignal
   fetchRelease?: (url: string, init?: RequestInit) => Promise<Response>
 }
 
@@ -11,10 +14,10 @@ interface GithubRelease {
   html_url: string
   prerelease: boolean
   tag_name: string
+  body?: string
 }
 
 const RELEASE_TAG_PREFIX = 'v'
-const SEMVER_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/
 
 export class DesktopUpdateCheckError extends Error {
   readonly code = 'UPDATE_CHECK_FAILED'
@@ -29,7 +32,9 @@ export async function checkForDesktopUpdate(
   options: CheckForDesktopUpdateOptions,
 ): Promise<DesktopUpdateCheckResult> {
   try {
+    const timeout = AbortSignal.timeout(15_000)
     const response = await (options.fetchRelease ?? fetch)(RELEASES_API_URL, {
+      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
       headers: {
         'accept': 'application/vnd.github+json',
         'user-agent': 'Lexora-Buddy',
@@ -38,16 +43,18 @@ export async function checkForDesktopUpdate(
     if (!response.ok)
       throw new Error(`GitHub release request failed with ${response.status}`)
 
-    const release = parseLatestBuddyRelease(await response.json())
-    const current = parseVersion(options.currentVersion)
-    return {
-      currentVersion: options.currentVersion,
-      latestVersion: release.version.raw,
+    const body = await readResponseBytes(response, 4 * 1024 * 1024)
+    const release = parseLatestBuddyRelease(JSON.parse(new TextDecoder().decode(body)))
+    const current = desktopVersionSchema.parse(options.currentVersion)
+    return desktopUpdateResultSchema.parse({
+      currentVersion: current,
+      latestVersion: release.version,
       releaseUrl: release.metadata.html_url,
-      status: compareVersions(release.version.parts, current.parts) > 0
+      releaseNotes: typeof release.metadata.body === 'string' ? release.metadata.body.trim().slice(0, 8_000) : '',
+      status: compareDesktopVersions(release.version, current) > 0
         ? 'update_available'
         : 'up_to_date',
-    }
+    })
   }
   catch (error) {
     throw new DesktopUpdateCheckError({ cause: error })
@@ -56,7 +63,7 @@ export async function checkForDesktopUpdate(
 
 function parseLatestBuddyRelease(value: unknown): {
   metadata: GithubRelease
-  version: ReturnType<typeof parseVersion>
+  version: string
 } {
   if (!Array.isArray(value))
     throw new Error('GitHub release response is invalid')
@@ -79,7 +86,7 @@ function parseLatestBuddyRelease(value: unknown): {
     try {
       return [{
         metadata: release as GithubRelease,
-        version: parseVersion(release.tag_name.slice(RELEASE_TAG_PREFIX.length)),
+        version: desktopVersionSchema.parse(release.tag_name.slice(RELEASE_TAG_PREFIX.length)),
       }]
     }
     catch {
@@ -90,25 +97,6 @@ function parseLatestBuddyRelease(value: unknown): {
     throw new Error('GitHub release response is invalid')
 
   return releases.reduce((latest, release) => (
-    compareVersions(release.version.parts, latest.version.parts) > 0 ? release : latest
+    compareDesktopVersions(release.version, latest.version) > 0 ? release : latest
   ))
-}
-
-function parseVersion(value: string): { parts: readonly number[], raw: string } {
-  const match = SEMVER_PATTERN.exec(value)
-  if (!match)
-    throw new Error('Lexora Buddy version is invalid')
-  return {
-    parts: match.slice(1).map(Number),
-    raw: value,
-  }
-}
-
-function compareVersions(left: readonly number[], right: readonly number[]): number {
-  for (let index = 0; index < 3; index += 1) {
-    const difference = left[index]! - right[index]!
-    if (difference !== 0)
-      return difference
-  }
-  return 0
 }

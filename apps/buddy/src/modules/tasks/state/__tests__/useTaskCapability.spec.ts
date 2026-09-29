@@ -1060,7 +1060,10 @@ function createDesktopApi() {
     .mockResolvedValueOnce([])
     .mockRejectedValue(new Error('collection refresh failed'))
   return {
-    app: { getInfo: vi.fn() },
+    app: {
+      getInfo: vi.fn(),
+      updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, result: null, notification: null, reminderDueAt: null }) },
+    },
     lifecycle: { quit: vi.fn() },
     localChat: {
       taskMarks: { list: async () => [], states: async () => [] },

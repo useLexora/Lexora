@@ -8,8 +8,11 @@ import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/
 import type { BuddyCapabilities } from '../../shared/platform'
 import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
+import type { DesktopUpdateApi, DesktopUpdateCheckResult } from './desktopUpdates'
 import type { LocalChatApi } from './localChatApi'
 import { BUDDY_DEFAULT_PERMISSION_MODE } from '../../shared/permissions/permissionMode'
+
+export { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from '../../shared/browser/browserDesktopApi'
 
 export const DESKTOP_IPC_CHANNELS = {
   workbenchRead: 'lexora:workbench:read',
@@ -26,6 +29,10 @@ export const DESKTOP_IPC_CHANNELS = {
   appStartupReport: 'lexora:app:startup:report',
   appStartupStateChanged: 'lexora:app:startup:state-changed',
   appCheckForUpdates: 'lexora:app:check-for-updates',
+  appUpdatesState: 'lexora:app:updates:state',
+  appUpdatesChanged: 'lexora:app:updates:changed',
+  appUpdatesAcknowledge: 'lexora:app:updates:acknowledge',
+  appUpdatesTakeReminder: 'lexora:app:updates:take-reminder',
   appGetInfo: 'lexora:app:get-info',
   appGetSandboxStatus: 'lexora:app:get-sandbox-status',
   appSetupSandbox: 'lexora:app:setup-sandbox',
@@ -66,13 +73,6 @@ export const DESKTOP_IPC_CHANNELS = {
   windowStateChanged: 'lexora:window:state-changed',
   windowToggleMaximize: 'lexora:window:toggle-maximize',
 } as const
-
-export interface DesktopUpdateCheckResult {
-  currentVersion: string
-  latestVersion: string
-  releaseUrl: string
-  status: 'up_to_date' | 'update_available'
-}
 
 export interface DesktopOpenTarget {
   conversationId: string
@@ -178,6 +178,7 @@ export interface LexoraConfig {
     language: 'zh-CN' | 'en-US'
     launchAtLogin: boolean
     notificationsEnabled: boolean
+    updateNotificationsEnabled: boolean
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig
     pluginAuthor: string
@@ -215,6 +216,7 @@ export interface LexoraDesktopApi {
       onStateChanged: (listener: (state: ApplicationStartupState) => void) => () => void
       reportLifecycle: (report: RendererLifecycleReport) => Promise<void>
     }
+    updates: DesktopUpdateApi
     checkForUpdates: () => Promise<DesktopUpdateCheckResult>
     getInfo: () => Promise<DesktopAppInfo>
     getSandboxStatus: () => Promise<SandboxEnvironmentStatus>
@@ -247,6 +249,6 @@ export interface LexoraDesktopApi {
   localChat: LocalChatApi
 }
 
-export { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from '../../shared/browser/browserDesktopApi'
 export type { DesktopBrowserApi, DesktopBrowserAttachGuestInput, DesktopBrowserEnsureSessionInput, DesktopBrowserError, DesktopBrowserErrorCode, DesktopBrowserGuestDescriptor, DesktopBrowserNavigateInput, DesktopBrowserOpenArtifactInput, DesktopBrowserProfileMode, DesktopBrowserSecurityKind, DesktopBrowserSecurityState, DesktopBrowserSessionInput, DesktopBrowserSetProfileModeInput, DesktopBrowserSetSurfaceInput, DesktopBrowserState, DesktopBrowserStatus } from '../../shared/browser/browserDesktopApi'
 export type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
+export type { DesktopUpdateCheckResult } from './desktopUpdates'

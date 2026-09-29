@@ -18,6 +18,17 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('enables update notifications for old profiles and preserves an opt-out across other settings and restart', async () => {
+    const { store, configPath } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop]\nnotifications_enabled = false\ntheme = "dark"\n[custom]\nkeep = true\n')
+    expect((await store.read()).desktop.updateNotificationsEnabled).toBe(true)
+    await store.update({ desktop: { updateNotificationsEnabled: false } })
+    await store.update({ desktop: { language: 'en-US' } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop).toMatchObject({ updateNotificationsEnabled: false, notificationsEnabled: false, theme: 'dark' })
+    expect(await readFile(configPath, 'utf8')).toContain('keep = true')
+  })
+
   it('defaults existing profiles to three retries and round-trips disabled, finite and unlimited limits', async () => {
     const { store, configPath } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
@@ -208,6 +219,7 @@ describe('lexoraConfigStore', () => {
       language: 'zh-CN',
       launchAtLogin: false,
       notificationsEnabled: true,
+      updateNotificationsEnabled: true,
       notifyWhenFocused: false,
       profile: {
         avatar: '',

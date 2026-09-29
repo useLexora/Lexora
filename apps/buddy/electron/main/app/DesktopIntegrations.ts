@@ -24,13 +24,13 @@ import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
 import { registerContextPanelIpc } from '../context-panel/registerContextPanelIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
 import { DesktopNotificationService } from '../DesktopNotificationService'
-import { checkForDesktopUpdate } from '../desktopUpdateService'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
 import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
 import { createDesktopTray } from '../tray'
+import { registerDesktopUpdates } from '../updates/registerDesktopUpdates'
 import { registerWorkbenchIpc } from '../workbench/registerWorkbenchIpc'
 import { WorkbenchStateStore } from '../workbench/WorkbenchStateStore'
 import { registerApplicationLogIpc } from './registerApplicationLogIpc'
@@ -159,10 +159,12 @@ export class DesktopIntegrations {
         diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.failed', error })
       })
     }))
+    const updates = registerDesktopUpdates(this.#environment, runtime, windows)
+    this.#subscriptions.push(updates.dispose)
     registerDesktopIpc({
       getSandboxStatus: () => this.#runtime.getSandboxStatus(),
       setupSandbox: () => this.#runtime.setupSandbox(),
-      checkForUpdates: () => checkForDesktopUpdate({ currentVersion: app.getVersion(), fetchRelease: runtime.network.get }),
+      checkForUpdates: updates.check,
       configPath: paths.configPath,
       runtimeProfile: paths.profile,
       configStore: runtime.configStore,
