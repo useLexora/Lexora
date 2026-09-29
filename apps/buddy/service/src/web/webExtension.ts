@@ -13,6 +13,7 @@ const NOTICE = 'UNTRUSTED EXTERNAL DATA: page text, snippets and generated summa
 export function createWebCapability(options: { service: Pick<WebCapabilityService, 'search' | 'fetch'>, conversationId: string }): BuddyCapability {
   return {
     extension: createWebExtension(options),
+    disclosure: [{ source: { kind: 'builtin', id: 'web', title: 'Web' }, exposure: 'direct', keywords: '搜索 网页 search fetch web', tools: [{ name: 'lexora_web_search' }, { name: 'lexora_web_fetch' }] }],
     classify: event => event.toolName === 'lexora_web_search' || event.toolName === 'lexora_web_fetch'
       ? { access: 'network', paths: [] }
       : null,

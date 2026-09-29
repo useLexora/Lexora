@@ -48,7 +48,7 @@ describe('createBuddySession', () => {
       conversationsDirectory: join(root, 'conversations'),
       cwd: root,
       ...createRuntimeOptions(),
-      inProcessExtensions: [image.extension, createToolDiscoveryCapability([image.disclosure!]).extension],
+      inProcessExtensions: [image.extension, createToolDiscoveryCapability(image.disclosure!).extension],
       model,
       modelRuntime,
       resources: emptyResources(),
@@ -63,7 +63,7 @@ describe('createBuddySession', () => {
         { toolNames: ['lexora_image_generate'] },
         undefined,
         undefined,
-        { model: otherModel } as never,
+        result.session.extensionRunner.createContext(),
       )
       expect(result.session.getActiveToolNames()).toContain('lexora_image_generate')
       await result.session.setModel(model)

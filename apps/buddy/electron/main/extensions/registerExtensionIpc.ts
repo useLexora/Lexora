@@ -1,7 +1,7 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
-import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
+import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { ExtensionConditionRuntime } from '../../../shared/extensions/extensionConditionContext'
@@ -29,7 +29,7 @@ export function registerExtensionIpc(options: {
   notificationsEnabled?: () => boolean
   taskActions: () => Promise<ExtensionTaskAction[]>
   invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
-  agentChanged?: () => void
+  agentChanged?: (catalog: ExtensionAgentCatalog) => void
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
@@ -135,7 +135,7 @@ export function registerExtensionIpc(options: {
     }),
     service.onDidChange((change) => {
       if (change.kind === 'contributions' && !change.initial)
-        options.agentChanged?.()
+        options.agentChanged?.(change.descriptors.map(({ id, revision, configurationRevision }) => ({ id, revision, configurationRevision })))
     }),
     observeExtensionDiagnostics(service, event => options.record?.(event)),
   ]

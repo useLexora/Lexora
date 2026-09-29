@@ -3,12 +3,13 @@ import type { BuddyInProcessExtension } from '../agent/extensions/BuddyInProcess
 
 import type { CreatePetToolOptions } from './createPetTool'
 import { createPetTool } from './createPetTool'
-import { classifyPetTool } from './petToolContract'
+import { classifyPetTool, PET_TOOL_NAME } from './petToolContract'
 
 export function createPetCapability(options: CreatePetToolOptions): BuddyCapability {
   return {
     extension: createPetExtension(options),
     classify: classifyPetTool,
+    disclosure: [{ source: { kind: 'builtin', id: 'pet', title: 'Desktop companion' }, exposure: 'direct', keywords: '桌宠 动作 陪伴 pet companion', tools: [{ name: PET_TOOL_NAME }] }],
   }
 }
 

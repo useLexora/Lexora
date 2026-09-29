@@ -41,7 +41,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: 'write', paths: [{ path: event.input.source, mode: 'existing' }, { path: event.input.output, mode: 'create' }] }
     },
-    disclosure: { group: 'plugins', keywords: 'plugin extension build create identity author inspect capabilities 插件 创建 身份 作者 编译 校验 安装 诊断 插槽', toolNames: [name, inspectName, capabilitiesName, identityName] },
+    disclosure: [{ source: { kind: 'builtin', id: 'plugins', title: 'Plugin authoring' }, exposure: 'on_demand', keywords: 'plugin extension build create identity author inspect capabilities 插件 创建 身份 作者 编译 校验 安装 诊断 插槽', tools: [name, inspectName, capabilitiesName, identityName].map(name => ({ name })) }],
     extension: {
       name: 'lexora-plugin-authoring',
       factory(pi) {

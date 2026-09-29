@@ -13,6 +13,7 @@ import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
 import type { BuddyCapability, BuddyCapabilityFactory, BuddyCapabilityResourceRevision } from './BuddyCapability'
 import type { BuddyExtensionRunContextStore } from './BuddyExtensionRunContext'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
+import type { BuddyToolExposureResolver } from './discovery/toolDiscoveryContract'
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { SessionDirectoryGrants } from '../../directories/SessionDirectoryGrants'
 import { observeSessionPermissions } from '../../permissions/observeSessionPermissions'
@@ -38,6 +39,7 @@ export interface BuddySessionExtensionServices {
   createCapabilities: BuddyCapabilityFactory
   directoryGrants: Pick<DirectoryGrantService, 'grant' | 'assertCurrent'>
   recordPermissions?: ApplicationDiagnosticReporter
+  resolveToolExposure?: BuddyToolExposureResolver
   shellSandbox?: Pick<ShellSandboxClient, 'exec'>
 }
 
@@ -147,9 +149,9 @@ export async function createBuddySessionExtensions(
     }
     creationSignal.throwIfAborted()
     const resourceRevisions = copyEventSnapshot(capabilities.flatMap(capability => capability.resourceRevisions ?? []))
-    toolCapabilities = new SessionToolCapabilities(resourceRevisions)
+    toolCapabilities = new SessionToolCapabilities(resourceRevisions, services.resolveToolExposure)
     stopToolDiagnostics = observeSessionTools(toolCapabilities, options.conversationId, () => runContext.current?.runId, services.recordPermissions)
-    const discovery = createToolDiscoveryCapability(capabilities.flatMap(capability => capability.disclosure ? [capability.disclosure] : []), toolCapabilities)
+    const discovery = createToolDiscoveryCapability(capabilities.flatMap(capability => capability.disclosure ?? []), toolCapabilities)
     const sessionCapabilities = [...capabilities, discovery]
     const inProcessExtensions: BuddyInProcessExtension[] = [
       createInputReferenceExtension(inputReferences),

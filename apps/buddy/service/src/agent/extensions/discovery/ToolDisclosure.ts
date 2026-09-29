@@ -1,10 +1,13 @@
-import type { Api, Message, Model } from '@earendil-works/pi-ai'
+import type { Message } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
-import type { BuddyToolDisclosurePolicy, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
+import type { BuddyCatalogTool } from './toolCatalog'
+import type { BuddyToolDisclosurePolicy, BuddyToolExposureContext, BuddyToolExposureResolver, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
+import type { ToolDiscoveryState } from './toolDiscoveryState'
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import MiniSearch from 'minisearch'
 import { Emitter } from '../../../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../../../shared/events/eventSnapshot'
+import { createToolCatalog } from './toolCatalog'
 import { isToolSearchResult, TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
@@ -17,80 +20,95 @@ export interface ToolDisclosureChange {
   readonly discovered: readonly string[]
 }
 
+export interface ToolDisclosureResolution {
+  readonly model: { readonly provider: string, readonly id: string } | null
+  readonly direct: string[]
+  readonly active: string[]
+  readonly external: { name: string, title: string, source: string, description: string }[]
+}
+
 export class ToolDisclosure {
   readonly #changes = new Emitter<ToolDisclosureChange>(() => console.error('TOOL_DISCLOSURE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   #revision = 0
   #disposed = false
-  readonly #policies: ReadonlyMap<string, BuddyToolDisclosurePolicy>
-  readonly #tools: ReadonlyMap<string, Readonly<Pick<ToolInfo, 'name' | 'description'>>>
+  readonly #tools: ReadonlyMap<string, BuddyCatalogTool>
   readonly #index: MiniSearch
-  readonly #resident: readonly string[]
+  readonly #resolveExposure: BuddyToolExposureResolver | undefined
   #discovered = new Set<string>()
 
-  constructor(tools: readonly ToolInfo[], resident: readonly string[], policies: readonly BuddyToolDisclosurePolicy[]) {
-    this.#tools = new Map(tools.map(tool => [tool.name, Object.freeze({ name: tool.name, description: tool.description })]))
-    this.#policies = new Map(policies.flatMap((policy) => {
-      const owned = copyEventSnapshot(policy)
-      return owned.toolNames.map(name => [name, owned] as const)
-    }))
-    this.#resident = Object.freeze([...new Set(resident.filter(name => !this.#policies.has(name)))])
+  constructor(tools: readonly ToolInfo[], baseline: readonly string[], policies: readonly BuddyToolDisclosurePolicy[], resolveExposure?: BuddyToolExposureResolver) {
+    this.#tools = createToolCatalog(tools, baseline, policies)
+    this.#resolveExposure = resolveExposure
     this.#index = new MiniSearch({
       idField: 'name',
-      fields: ['name', 'description', 'keywords', 'fields'],
+      fields: ['name', 'title', 'source', 'description', 'keywords', 'fields'],
       tokenize: text => [...segmenter.segment(text.replaceAll('_', ' '))].filter(part => part.isWordLike).map(part => part.segment),
-      searchOptions: { boost: { name: 5, keywords: 3 }, prefix: true },
+      searchOptions: { boost: { name: 5, title: 5, keywords: 3, source: 2 }, prefix: true },
     })
-    this.#index.addAll(tools.map(tool => ({
-      name: tool.name,
-      description: tool.description,
-      keywords: this.#policies.get(tool.name)?.keywords ?? '',
-      fields: parameterFields(tool.parameters).join(' '),
-    })))
+    this.#index.addAll([...this.#tools.values()].map(tool => ({ ...tool, fields: tool.fields.join(' '), source: `${tool.source.id} ${tool.source.title}` })))
   }
 
   get snapshot() { return Object.freeze({ revision: this.#revision, discovered: Object.freeze([...this.#discovered]) }) }
+
+  get persistedState(): ToolDiscoveryState {
+    return { version: 1, discovered: [...this.#discovered].map(name => this.#tools.get(name)!.id) }
+  }
 
   dispose(): void {
     this.#disposed = true
     this.#changes.dispose()
   }
 
-  active(model: Model<Api> | undefined): string[] {
-    return [...this.#resident, ...this.#discovered].filter(name => this.#available(name, model))
+  resolve(context: BuddyToolExposureContext): ToolDisclosureResolution {
+    const direct: string[] = []
+    const active: string[] = []
+    const external: ToolDisclosureResolution['external'] = []
+    for (const tool of this.#tools.values()) {
+      if (!this.#available(tool.name, context))
+        continue
+      const exposure = tool.name === TOOL_SEARCH_NAME ? 'direct' : this.#resolveExposure?.(tool, context) ?? tool.defaultExposure
+      if (exposure === 'direct')
+        direct.push(tool.name)
+      if (exposure === 'direct' || this.#discovered.has(tool.name))
+        active.push(tool.name)
+      else if (tool.source.kind !== 'builtin')
+        external.push({ name: tool.name, title: tool.title.slice(0, 160), source: tool.source.title.slice(0, 120), description: tool.description.slice(0, 180) })
+    }
+    const model = context.model ? Object.freeze({ provider: context.model.provider, id: context.model.id }) : null
+    return { model, direct, active, external }
   }
 
-  connectedTools(model: Model<Api> | undefined): { name: string, description: string }[] {
-    return [...this.#tools.values()]
-      .filter(tool => this.#policies.get(tool.name)?.group === 'mcp' && this.#available(tool.name, model))
-      .map(tool => ({ name: tool.name, description: tool.description.slice(0, 180) }))
+  active(context: BuddyToolExposureContext): string[] {
+    return this.resolve(context).active
   }
 
-  search(input: ToolSearchInput, model: Model<Api> | undefined): ToolSearchResult {
-    const available = (name: string) => this.#available(name, model)
-    const requested = input.toolNames ?? []
+  search(input: ToolSearchInput, context: BuddyToolExposureContext): ToolSearchResult {
+    const available = (name: string) => this.#available(name, context)
+    const requested = [...new Set(input.toolNames ?? [])]
     const query = input.query?.trim() ?? ''
     const exact = available(query) ? [query] : []
     const ranked = requested.length > 0
       ? requested.filter(available)
       : exact.length > 0
         ? exact
-        : this.#index.search(query, { filter: match => available(String(match.id)) }).map(match => String(match.id))
+        : this.#index.search(query, { filter: match => available(String(match.id)) })
+            .sort((a, b) => b.score - a.score || String(a.id).localeCompare(String(b.id), 'en'))
+            .map(match => String(match.id))
     const matches = ranked.slice(0, requested.length > 0 ? 5 : input.limit ?? 3)
-    const previous = new Set(this.active(model))
+    const previous = new Set(this.active(context))
     const discovered = new Set(this.#discovered)
-    const tools = matches.flatMap((name) => {
-      const tool = this.#tools.get(name)
-      if (!tool)
-        return []
-      if (!this.#resident.includes(name))
-        discovered.add(name)
-      return [{
+    const tools = matches.map((name) => {
+      const tool = this.#tools.get(name)!
+      discovered.add(name)
+      return {
         name,
+        id: tool.id,
+        title: tool.title.slice(0, 160),
         description: tool.description.slice(0, 240),
-        source: name.startsWith('mcp__') ? name.split('__').slice(0, 2).join('__') : 'buddy',
+        source: tool.source.kind === 'builtin' ? 'buddy' : `${tool.source.kind}:${tool.source.id}`,
         alreadyDisclosed: previous.has(name),
-      }]
+      }
     })
     this.#replace(discovered, 'discovery')
     return {
@@ -101,10 +119,15 @@ export class ToolDisclosure {
     }
   }
 
-  restore(messages: readonly Message[]): void {
+  restore(messages: readonly Message[], state?: ToolDiscoveryState): void {
+    if (state) {
+      const ids = new Set(state.discovered)
+      this.#replace(new Set([...this.#tools.values()].filter(tool => ids.has(tool.id)).map(tool => tool.name)), 'restore')
+      return
+    }
     const current = getCurrentSystemMessage(messages)
     if (current) {
-      this.#replace(new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#policies.has(name))), 'restore')
+      this.#replace(new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#tools.has(name))), 'restore')
       return
     }
     const discovered = new Set<string>()
@@ -125,8 +148,10 @@ export class ToolDisclosure {
           try {
             const result: unknown = JSON.parse(block.text)
             if (isToolSearchResult(result)) {
-              for (const tool of result.tools)
-                discovered.add(tool.name)
+              for (const tool of result.tools) {
+                if (tool.id === undefined || this.#tools.get(tool.name)?.id === tool.id)
+                  discovered.add(tool.name)
+              }
             }
           }
           catch {}
@@ -136,7 +161,7 @@ export class ToolDisclosure {
         discovered.add(message.toolName)
       }
     }
-    this.#replace(new Set([...discovered].filter(name => this.#policies.has(name))), 'restore')
+    this.#replace(new Set([...discovered].filter(name => this.#tools.has(name))), 'restore')
   }
 
   #replace(next: Set<string>, reason: ToolDisclosureChange['reason']): void {
@@ -146,26 +171,12 @@ export class ToolDisclosure {
     const removed = [...this.#discovered].filter(name => !next.has(name))
     if (!added.length && !removed.length)
       return
-    this.#discovered = next
-    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, reason, added, removed, discovered: [...next] }))
+    this.#discovered = new Set([...next].sort())
+    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, reason, added, removed, discovered: [...this.#discovered] }))
   }
 
-  #available(name: string, model: Model<Api> | undefined): boolean {
-    return this.#tools.has(name)
-      && (this.#resident.includes(name) || this.#policies.has(name))
-      && (this.#policies.get(name)?.available?.(model, name) ?? true)
+  #available(name: string, context: BuddyToolExposureContext): boolean {
+    const tool = this.#tools.get(name)
+    return !!tool && (tool.available?.(context, name) ?? true)
   }
-}
-
-function parameterFields(value: unknown, depth = 0): string[] {
-  if (!value || typeof value !== 'object' || depth > 12)
-    return []
-  if (Array.isArray(value))
-    return value.flatMap(item => parameterFields(item, depth + 1))
-  const schema = value as Record<string, unknown>
-  const properties = schema.properties
-  return [
-    ...(properties && typeof properties === 'object' ? Object.keys(properties) : []),
-    ...Object.values(schema).flatMap(item => parameterFields(item, depth + 1)),
-  ]
 }

@@ -8,21 +8,29 @@ import { randomUUID } from 'node:crypto'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it } from 'vitest'
 import { extensionAgentRpc } from '../../../../shared/extensions/extensionAgent'
+import { ToolDisclosure } from '../../agent/extensions/discovery/ToolDisclosure'
 import { ExtensionAgentRuntime } from '../ExtensionAgentRuntime'
 
 const descriptor: ExtensionAgentDescriptor = { id: 'tests.reader', name: 'Fixture', revision: 'package-revision', configurationRevision: 'config-revision', agent: { actions: [], instructions: 'fixture-private-instructions', tools: [{ id: 'tests.reader.read', title: 'Read', description: 'fixture-private-description', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } }] } }
 function fixture() {
   const requests = new Map<string, RuntimeRequestHandler>()
+  const notifications = new Set<Parameters<RuntimeRpcPeerContract['onNotification']>[0]>()
   const stop = new AbortController()
   const context: BuddyCapabilityContext = { conversationId: 'conversation-1', cwd: '/fixture-private', executionProfile: 'read_only', grants: [], getRunId: () => 'run-1', sessionMode: 'interactive', signal: stop.signal }
   let descriptors: ExtensionAgentDescriptor[] = [descriptor]
+  let list = async () => descriptors
   let unavailable = false
   let invoke: (input: unknown, signal?: AbortSignal) => Promise<unknown> = async () => null
   const handlers: ExtensionAgentHandlers = { 'task.messages': async () => [], 'task.get': async () => null, 'task.rename': async () => null, 'models.generateText': async () => null }
   const rpc: RuntimeRpcPeerContract = {
     notify() {},
     close() {},
-    onNotification: () => () => {},
+    onNotification: (listener) => {
+      notifications.add(listener)
+      return () => {
+        notifications.delete(listener)
+      }
+    },
     onRequest: (method, handler) => {
       requests.set(method, handler)
 
@@ -34,7 +42,7 @@ function fixture() {
       if (method === extensionAgentRpc.list) {
         if (unavailable)
           throw new Error('fixture-private-unavailable')
-        return descriptors
+        return list()
       }
       return invoke(input, signal)
     },
@@ -43,8 +51,14 @@ function fixture() {
   const facts: ExtensionAgentChange[] = []
   runtime.onDidChange(event => facts.push(event))
   runtime.bind()
-  return { runtime, context, stop, facts, handlers, setDescriptors: (value: ExtensionAgentDescriptor[]) => {
+  return { runtime, context, stop, facts, handlers, changed: (value: ExtensionAgentDescriptor[]) => {
     descriptors = value
+    const catalog = value.map(({ id, revision, configurationRevision }) => ({ id, revision, configurationRevision }))
+    for (const listener of notifications) listener(extensionAgentRpc.changed, catalog)
+  }, setDescriptors: (value: ExtensionAgentDescriptor[]) => {
+    descriptors = value
+  }, list: (value: typeof list) => {
+    list = value
   }, unavailable: (value: boolean) => {
     unavailable = value
   }, invoke: (value: typeof invoke) => {
@@ -60,6 +74,53 @@ function fixture() {
 }
 
 describe('extension agent capability and invocation lifetimes', () => {
+  it('keeps unchanged plugins available while withdrawing changed and removed definitions', async () => {
+    const f = fixture()
+    const other = { ...descriptor, id: 'tests.other', agent: { ...descriptor.agent, tools: [{ ...descriptor.agent.tools[0]!, id: 'tests.other.read' }] } }
+    f.setDescriptors([descriptor, other])
+    const capabilities = await f.runtime.capabilities(f.context)
+    const definitions: ToolDefinition[] = []
+    for (const capability of capabilities)
+      await capability.extension.factory({ registerTool: (tool: ToolDefinition) => definitions.push(tool), on() {} } as never)
+    const tools = definitions.map(tool => ({ ...tool, sourceInfo: { source: 'extension' as const, path: '', origin: 'top-level' as const, scope: 'temporary' as const } }))
+    const names = definitions.map(tool => tool.name)
+    const policies = capabilities.flatMap(capability => capability.disclosure!)
+    const disclosure = new ToolDisclosure(tools, names, policies)
+    const context = { model: undefined }
+    expect(disclosure.active(context)).toEqual([])
+    expect(disclosure.search({ toolNames: names }, context).tools).toMatchObject([{ title: 'Read', source: 'plugin:tests.reader' }, { title: 'Read', source: 'plugin:tests.other' }])
+    expect(disclosure.active(context)).toEqual([...names].sort())
+    const direct = new ToolDisclosure(tools, [], policies, () => 'direct')
+    expect(direct.active(context)).toEqual(disclosure.active(context))
+    f.changed([{ ...descriptor, configurationRevision: 'config-updated' }, other])
+    expect(disclosure.active(context)).toEqual([names[1]])
+    expect(direct.active(context)).toEqual([names[1]])
+    expect(disclosure.search({ toolNames: names }, context)).toMatchObject({ tools: [{ name: names[1] }], notFound: [names[0]] })
+    const current = await f.runtime.capabilities(f.context)
+    const refreshed = new ToolDisclosure(tools, [], current.flatMap(capability => capability.disclosure!))
+    refreshed.restore([], disclosure.persistedState)
+    expect(refreshed.active(context)).toEqual([...names].sort())
+    f.changed([other])
+    expect(refreshed.active(context)).toEqual([names[1]])
+    expect(direct.active(context)).toEqual([names[1]])
+    await f.runtime.dispose()
+    expect(refreshed.active(context)).toEqual([])
+  })
+
+  it('does not restore a stale plugin from an in-flight catalog response or discard unchanged plugins', async () => {
+    const f = fixture()
+    const other = { ...descriptor, id: 'tests.other', agent: { ...descriptor.agent, tools: [{ ...descriptor.agent.tools[0]!, id: 'tests.other.read' }] } }
+    const response = deferred<ExtensionAgentDescriptor[]>()
+    f.list(() => response.promise)
+    const pending = f.runtime.capabilities(f.context)
+    f.changed([{ ...descriptor, revision: 'package-updated' }, other])
+    response.resolve([descriptor, other])
+    const capabilities = await pending
+    expect(capabilities.flatMap(capability => capability.resourceRevisions!.map(resource => resource.id))).toEqual(['tests.other'])
+    expect(f.runtime.snapshot.projections[0]).toMatchObject({ status: 'accepted', descriptors: [{ id: 'tests.other' }] })
+    await f.runtime.dispose()
+  })
+
   it('holds quota through child draining, admits other plugins, and removes cancelled queued calls before execution', async () => {
     const f = fixture()
     const children = new Map<string, ReturnType<typeof deferred<void>>>()

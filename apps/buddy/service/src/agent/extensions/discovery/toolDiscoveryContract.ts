@@ -4,11 +4,34 @@ import { Type } from 'typebox'
 
 export const TOOL_SEARCH_NAME = 'lexora_tool_search'
 
+export type BuddyToolExposure = 'direct' | 'on_demand'
+
+export interface BuddyToolSource {
+  kind: 'builtin' | 'mcp' | 'plugin'
+  id: string
+  title: string
+}
+
+export interface BuddyToolExposureContext {
+  model: Model<Api> | undefined
+}
+
+export interface BuddyToolMetadata {
+  readonly id: string
+  readonly name: string
+  readonly title: string
+  readonly source: Readonly<BuddyToolSource>
+  readonly defaultExposure: BuddyToolExposure
+}
+
+export type BuddyToolExposureResolver = (tool: BuddyToolMetadata, context: BuddyToolExposureContext) => BuddyToolExposure | undefined
+
 export interface BuddyToolDisclosurePolicy {
-  group: 'browser' | 'automation' | 'system' | 'image_generation' | 'image_transform' | 'mcp' | 'plugins'
+  source: BuddyToolSource
+  exposure: BuddyToolExposure
   keywords: string
-  toolNames: readonly string[]
-  available?: (model: Model<Api> | undefined, toolName: string) => boolean
+  tools: readonly { name: string, id?: string, title?: string }[]
+  available?: (context: BuddyToolExposureContext, toolName: string) => boolean
 }
 
 export const toolSearchParameters = Type.Object({
@@ -21,7 +44,7 @@ export type ToolSearchInput = Static<typeof toolSearchParameters>
 
 export interface ToolSearchResult {
   version: 1
-  tools: { name: string, description: string, source: string, alreadyDisclosed: boolean }[]
+  tools: { name: string, id?: string, title?: string, description: string, source: string, alreadyDisclosed: boolean }[]
   candidates: { name: string, description: string }[]
   notFound: string[]
 }
@@ -32,6 +55,7 @@ export function isToolSearchResult(value: unknown): value is ToolSearchResult {
   const result = value as Partial<ToolSearchResult>
   return result.version === 1 && Array.isArray(result.tools) && result.tools.length <= 5
     && result.tools.every(tool => tool && typeof tool.name === 'string' && typeof tool.description === 'string'
+      && (tool.id === undefined || typeof tool.id === 'string') && (tool.title === undefined || typeof tool.title === 'string')
       && typeof tool.source === 'string' && typeof tool.alreadyDisclosed === 'boolean')
     && Array.isArray(result.candidates) && result.candidates.length <= 5
     && result.candidates.every(tool => tool && typeof tool.name === 'string' && typeof tool.description === 'string')

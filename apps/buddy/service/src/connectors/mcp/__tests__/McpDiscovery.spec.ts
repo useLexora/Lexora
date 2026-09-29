@@ -83,7 +83,7 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     await preparation
     expect(service.state('maps').status).toBe('ready')
     const mcp = createMcpCapability(service.getTools())
-    const discovery = createToolDiscoveryCapability([mcp.disclosure!])
+    const discovery = createToolDiscoveryCapability(mcp.disclosure!)
     const approvals: string[] = []
     const policy = createToolPolicyExtension({
       authorization: new ToolAuthorizationService({
@@ -106,7 +106,7 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     const model = runtime.getModels()[0]!
     await runtime.setRuntimeApiKey(model.provider, 'offline-fixture')
     const requests: Context[] = []
-    const toolName = mcp.disclosure!.toolNames[0]!
+    const toolName = mcp.disclosure![0]!.tools[0]!.name
     vi.spyOn(runtime, 'streamSimple').mockImplementation((selected, context) => {
       requests.push(structuredClone({
         systemPrompt: getCurrentSystemPrompt(context.messages),

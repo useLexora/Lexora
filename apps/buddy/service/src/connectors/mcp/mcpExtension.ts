@@ -18,12 +18,7 @@ export function createMcpCapability(mcp: BuddyMcpTools): BuddyCapability {
       return validate() ?? { ...classification, validateBeforeExecution: async () => validate() }
     },
     workspaceMutationTools: mcp.tools.map(tool => tool.name),
-    disclosure: {
-      available: (_model, name) => mcp.available(name),
-      group: 'mcp',
-      keywords: 'mcp connector connected service 连接器 已连接 服务',
-      toolNames: mcp.tools.map(tool => tool.name),
-    },
+    disclosure: mcp.disclosure.map(policy => ({ ...policy, available: (_context, name) => mcp.available(name) })),
   }
 }
 

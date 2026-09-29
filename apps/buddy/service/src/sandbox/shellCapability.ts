@@ -32,6 +32,10 @@ export function createShellCapability(options: {
     reason: Type.String({ minLength: 1, maxLength: 512 }),
   }, { additionalProperties: false })
   return {
+    disclosure: [
+      { source: { kind: 'builtin', id: 'sandbox', title: 'Directory authorization' }, exposure: 'direct', keywords: '授权 目录 authorize directory', tools: [{ name: 'lexora_authorize_directory' }] },
+      { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: options.execution.readOnly ? [] : [{ name: 'lexora_host_shell' }] },
+    ],
     workspaceMutationTools: ['lexora_host_shell'],
     async classify(event) {
       if (event.toolName === shellName)
@@ -51,7 +55,7 @@ export function createShellCapability(options: {
           description: `${native.description}\nRuns in an OS sandbox. Only authorized directories and installed toolchains are readable; credentials and host IPC are hidden. Writes are limited by the conversation profile. Network destinations pause for explicit approval. No automatic host fallback.`,
           promptGuidelines: [
             `Use ${shellName} for ordinary commands, pipelines, scripts and project builds inside the sandbox. Read failures outside granted directories require a directory authorization; do not disguise paths or use another interpreter to evade a denial.`,
-            'The sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access. Never use it to retry a request the user denied.',
+            'The sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
           ],
           async execute(toolCallId, parameters, signal, onUpdate, context) {
             const run = options.getRunContext()

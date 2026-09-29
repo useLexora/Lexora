@@ -237,7 +237,7 @@ function createCompositionServices(
       browserHost,
       connectorService: {
         getTools() {
-          return { classifications: new Map(), diagnostics: [], tools: [], available: () => false }
+          return { classifications: new Map(), diagnostics: [], tools: [], disclosure: [], available: () => false }
         },
       },
     } as unknown as BuddyCapabilityServices, new PetActionService({

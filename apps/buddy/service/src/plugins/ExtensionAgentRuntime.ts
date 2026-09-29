@@ -1,6 +1,6 @@
 import type { ListenerErrorHandler } from '../../../shared/events/Emitter'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
-import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
+import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
@@ -14,7 +14,7 @@ import { Check } from 'typebox/value'
 import { z } from 'zod'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { extensionAgentDescriptorSchema, extensionAgentRequestSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
+import { extensionAgentCatalogSchema, extensionAgentDescriptorSchema, extensionAgentRequestSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
@@ -50,6 +50,7 @@ export class ExtensionAgentRuntime {
   readonly onDidChange
   readonly #stop = new AbortController()
   #revision = 0
+  #catalog = new Map<string, ExtensionAgentCatalog[number]>()
   #disposing: Promise<void> | undefined
 
   constructor(options: ExtensionAgentRuntimeOptions) {
@@ -63,7 +64,15 @@ export class ExtensionAgentRuntime {
   }
 
   bind(): () => void {
-    return this.#options.rpc.onRequest(extensionAgentRpc.request, (input, signal) => this.#request(input, signal))
+    const request = this.#options.rpc.onRequest(extensionAgentRpc.request, (input, signal) => this.#request(input, signal))
+    const changed = this.#options.rpc.onNotification((method, params) => {
+      if (method === extensionAgentRpc.changed)
+        this.#setCatalog(extensionAgentCatalogSchema.parse(params))
+    })
+    return () => {
+      request()
+      changed()
+    }
   }
 
   async descriptors(signal: AbortSignal): Promise<ExtensionAgentDescriptor[]> {
@@ -127,12 +136,16 @@ export class ExtensionAgentRuntime {
     this.#stop.signal.throwIfAborted()
     const projection = this.#projection(context)
     const request = ++projection.request
+    const catalog = this.#catalog
     try {
       const descriptors = await this.descriptors(context.signal)
       context.signal.throwIfAborted()
       this.#stop.signal.throwIfAborted()
-      this.#acceptProjection(projection, request, 'accepted', descriptors)
-      return descriptors.filter(descriptor => descriptor.agent.tools.length).map(descriptor => this.#capability(context, descriptor))
+      if (catalog === this.#catalog)
+        this.#setCatalog(descriptors)
+      const current = descriptors.filter(descriptor => this.#isCurrent(descriptor))
+      this.#acceptProjection(projection, request, 'accepted', current)
+      return current.filter(descriptor => descriptor.agent.tools.length).map(descriptor => this.#capability(context, descriptor))
     }
     catch {
       context.signal.throwIfAborted()
@@ -154,6 +167,15 @@ export class ExtensionAgentRuntime {
     return this.#disposing
   }
 
+  #setCatalog(catalog: ExtensionAgentCatalog): void {
+    this.#catalog = new Map(catalog.map(({ id, revision, configurationRevision }) => [id, { id, revision, configurationRevision }]))
+  }
+
+  #isCurrent(descriptor: ExtensionAgentCatalog[number]): boolean {
+    const current = this.#catalog.get(descriptor.id)
+    return current?.revision === descriptor.revision && current.configurationRevision === descriptor.configurationRevision
+  }
+
   #capability(context: BuddyCapabilityContext, inputDescriptor: ExtensionAgentDescriptor): BuddyCapability {
     const descriptor: EventSnapshot<ExtensionAgentDescriptor> = copyEventSnapshot(inputDescriptor)
     const prefix = `plugin_${createHash('sha256').update(descriptor.id).digest('hex').slice(0, 12)}`
@@ -165,6 +187,14 @@ export class ExtensionAgentRuntime {
       return [key, tool.parameters.required.includes(key) ? value : Type.Optional(value)]
     })), { additionalProperties: false }) }))
     return {
+      resourceRevisions: [{ source: 'plugin', id: descriptor.id, revision: JSON.stringify([descriptor.revision, descriptor.configurationRevision]) }],
+      disclosure: [{
+        source: { kind: 'plugin', id: descriptor.id, title: descriptor.name },
+        exposure: 'on_demand',
+        keywords: 'plugin extension 插件 扩展',
+        tools: tools.map(tool => ({ name: tool.name, id: tool.id, title: tool.title })),
+        available: () => !context.signal.aborted && !this.#stop.signal.aborted && this.#isCurrent(descriptor),
+      }],
       classify: event => tools.some(tool => tool.name === event.toolName) ? { access: 'read', paths: [] } : null,
       extension: {
         name: `lexora-${prefix}`,

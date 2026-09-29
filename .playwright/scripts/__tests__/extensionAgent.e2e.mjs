@@ -36,8 +36,14 @@ test('agent plugin uses the originating model, persists settings and protects ma
       else finish()
       return
     }
-    const tool = body.tools.find(tool => tool.function.description.includes('Generate and save a concise title'))
-    if (tool && body.messages.at(-1).role !== 'tool') {
+    const tool = body.tools.find(tool => tool.function.name.startsWith('lexora_plugin_') && tool.function.description.includes('Generate and save a concise title'))
+    const search = body.tools.find(tool => tool.function.name === 'lexora_tool_search')
+    const last = body.messages.at(-1)
+    const discovered = last.role === 'tool' && String(last.content).includes('alreadyDisclosed')
+    if (!tool && search?.function.description.includes('Generate and save a concise title') && last.role !== 'tool') {
+      send({ tool_calls: [{ index: 0, id: `search-${requests.length}`, type: 'function', function: { name: search.function.name, arguments: JSON.stringify({ query: '生成标题', limit: 1 }) } }] }, 'tool_calls')
+    }
+    else if (tool && (last.role !== 'tool' || discovered)) {
       send({ tool_calls: [{ index: 0, id: `call-${requests.length}`, type: 'function', function: { name: tool.function.name, arguments: JSON.stringify({ summary: '整理本周项目计划' }) } }] }, 'tool_calls')
     }
     else {
@@ -152,11 +158,19 @@ test('agent plugin uses the originating model, persists settings and protects ma
     await settled()
     expect(latestTask()).toMatchObject({ title: '生成标题 1', title_source: 'generated' })
     expect(requests.filter(body => !body.tools?.length).map(body => body.model)).toEqual(['primary'])
-    expect(JSON.stringify(requests[0].messages)).toContain('proactively')
-    const pluginToolName = requests[0].tools.find(tool => tool.function.description.includes('Generate and save a concise title')).function.name
+    expect(JSON.stringify(requests[0].messages)).not.toContain('proactively')
+    expect(requests[0].tools.some(tool => tool.function.name.startsWith('lexora_plugin_'))).toBe(false)
+    expect(requests[0].tools.some(tool => tool.function.name === 'lexora_host_shell')).toBe(false)
+    expect(requests[0].tools.map(tool => tool.function.name)).toEqual(expect.arrayContaining(['read', 'write', 'edit', 'grep', 'find', 'ls', 'lexora_web_search', 'lexora_web_fetch', 'lexora_output_present', 'lexora_authorize_directory', 'lexora_tool_search']))
+    expect(requests[0].tools.find(tool => tool.function.name === 'lexora_tool_search').function.description).toContain('生成标题')
+    const disclosed = requests.find(body => body.tools?.some(tool => tool.function.name.startsWith('lexora_plugin_')))
+    expect(JSON.stringify(disclosed.messages)).toContain('proactively')
+    const pluginToolName = disclosed.tools.find(tool => tool.function.description.includes('Generate and save a concise title')).function.name
     await expect(page.getByText('生成标题 1', { exact: true }).first()).toBeVisible()
-    await expect(page.locator('.buddy-chat-tool__title').first()).toHaveText('工具调用')
-    await expect(page.locator('.buddy-chat-tool__summary').first()).toHaveText('标题自动生成 · 生成标题')
+    await page.getByRole('button', { name: '搜索 1 次 · 工具调用 1 次', exact: true }).click()
+    const pluginRow = page.locator('.buddy-chat-tool').filter({ has: page.locator('.buddy-chat-tool__summary', { hasText: '标题自动生成 · 生成标题' }) })
+    await expect(pluginRow.locator('.buddy-chat-tool__title')).toHaveText('工具调用')
+    await expect(pluginRow.locator('.buddy-chat-tool__summary')).toHaveText('标题自动生成 · 生成标题')
     await page.screenshot({ path: path.join(instance.artifactDirectory, 'plugin-tool-row.png'), animations: 'disabled' })
 
     await settings()
@@ -205,6 +219,16 @@ test('agent plugin uses the originating model, persists settings and protects ma
     const beforeProtected = requests.filter(body => !body.tools?.length).length
     await send('继续同一任务')
     await settled()
+    expect(requests.filter(body => !body.tools?.length)).toHaveLength(beforeProtected)
+
+    await instance.stop()
+    ;({ app, page, diagnostics } = await instance.launch())
+    await syntheticCredentials(app, page)
+    await taskPage()
+    const resumedRequests = requests.length
+    await send('重启后继续同一任务')
+    await settled()
+    expect(requests[resumedRequests].tools.some(tool => tool.function.name === pluginToolName)).toBe(true)
     expect(requests.filter(body => !body.tools?.length)).toHaveLength(beforeProtected)
 
     await send('取消任务时不写入迟到标题', true)

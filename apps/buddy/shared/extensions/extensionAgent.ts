@@ -52,6 +52,8 @@ export const extensionAgentDescriptorSchema = z.object({
   agent: extensionAgentSchema,
 }).strict()
 export type ExtensionAgentDescriptor = z.infer<typeof extensionAgentDescriptorSchema>
+export const extensionAgentCatalogSchema = z.array(extensionAgentDescriptorSchema.pick({ id: true, revision: true, configurationRevision: true }))
+export type ExtensionAgentCatalog = z.infer<typeof extensionAgentCatalogSchema>
 const invocationIdentity = {
   context: z.object({ taskId: z.string(), runId: z.string().nullable() }).strict().optional(),
   extensionId: z.string(),

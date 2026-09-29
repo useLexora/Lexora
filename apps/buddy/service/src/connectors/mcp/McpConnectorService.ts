@@ -4,6 +4,7 @@ import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../../../sh
 import type { Event, ListenerErrorHandler } from '../../../../shared/events/Emitter'
 import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { BuddyCapabilityResourceRevision } from '../../agent/extensions/BuddyCapability'
+import type { BuddyToolDisclosurePolicy } from '../../agent/extensions/discovery/toolDiscoveryContract'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
 import type { ConnectorRepository, McpServerRecord } from '../../storage/connectorRepository'
 import type { McpConnectionEvent, McpConnectorDetails, McpConnectorEvent } from './mcpEvents'
@@ -36,6 +37,7 @@ export interface McpConnectorServiceOptions {
 }
 
 export interface BuddyMcpTools {
+  disclosure: readonly BuddyToolDisclosurePolicy[]
   readonly resourceRevisions?: readonly BuddyCapabilityResourceRevision[]
   classifications: Map<string, BuddyToolClassification>
   diagnostics: Array<{ code: string, message: string }>
@@ -327,6 +329,7 @@ export class McpConnectorService {
     const classifications = new Map<string, BuddyToolClassification>()
     const diagnostics: BuddyMcpTools['diagnostics'] = []
     const tools: ToolDefinition[] = []
+    const disclosure: BuddyToolDisclosurePolicy[] = []
     const availability = new Map<string, () => boolean>()
     const resourceRevisions = this.resourceRevisions()
     for (const connector of this.list().filter(record => record.enabled)) {
@@ -344,11 +347,12 @@ export class McpConnectorService {
       for (const tool of result.tools)
         availability.set(tool.name, () => this.#manager.available(connector.id, generation))
       tools.push(...result.tools)
+      disclosure.push(result.disclosure)
       diagnostics.push(...result.diagnostics)
       for (const [name, classification] of result.classifications)
         classifications.set(name, classification)
     }
-    return { resourceRevisions: copyEventSnapshot(resourceRevisions), classifications, diagnostics, tools, available: name => availability.get(name)?.() ?? false }
+    return { resourceRevisions: copyEventSnapshot(resourceRevisions), classifications, diagnostics, tools, disclosure, available: name => availability.get(name)?.() ?? false }
   }
 
   async quiesce(): Promise<void> {

@@ -76,11 +76,12 @@ export function createBrowserCapability(options: BrowserCapabilityServiceOptions
     },
     extension: createBrowserExtension({ service, getExecutionGrants: options.getExecutionGrants, onOpened: options.onOpened }),
     classify: event => classifyBrowserTool(event, service),
-    disclosure: {
-      group: 'browser',
+    disclosure: [{
+      source: { kind: 'builtin', id: 'browser', title: 'Browser' },
+      exposure: 'on_demand',
       keywords: 'browser 浏览器 网页 打开 点击 按钮 表单 输入 快照 截图 navigate click snapshot',
-      toolNames: [BROWSER_OPEN_TOOL_NAME, BROWSER_SNAPSHOT_TOOL_NAME, BROWSER_ACT_TOOL_NAME],
-    },
+      tools: [BROWSER_OPEN_TOOL_NAME, BROWSER_SNAPSHOT_TOOL_NAME, BROWSER_ACT_TOOL_NAME].map(name => ({ name })),
+    }],
   }
 }
 

@@ -7,7 +7,7 @@ import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import type { BuddyToolDisclosurePolicy } from './discovery/toolDiscoveryContract'
 
 export interface BuddyCapabilityResourceRevision {
-  readonly source: 'connector'
+  readonly source: 'connector' | 'plugin'
   readonly id: string
   readonly revision: string
 }
@@ -19,7 +19,7 @@ export interface BuddyCapability {
   classify: (event: ToolCallEvent, signal: AbortSignal) =>
     BuddyToolClassificationResult | null | Promise<BuddyToolClassificationResult | null>
   workspaceMutationTools?: readonly string[]
-  disclosure?: BuddyToolDisclosurePolicy
+  disclosure?: readonly BuddyToolDisclosurePolicy[]
 }
 
 export interface BuddyCapabilityContext {

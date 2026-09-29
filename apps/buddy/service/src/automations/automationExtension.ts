@@ -8,11 +8,12 @@ export function createAutomationCapability(options: CreateAutomationToolOptions)
   return {
     extension: createAutomationExtension(options),
     classify: event => classifyAutomationToolCall(options.service, event),
-    disclosure: {
-      group: 'automation',
+    disclosure: [{
+      source: { kind: 'builtin', id: 'automation', title: 'Automation' },
+      exposure: 'on_demand',
       keywords: 'automation schedule cron 自动化 定时 任务 提醒 周期 每天 每周',
-      toolNames: [AUTOMATION_TOOL_NAME],
-    },
+      tools: [{ name: AUTOMATION_TOOL_NAME }],
+    }],
   }
 }
 

@@ -17,6 +17,7 @@ export function createOutputPresentationCapability(options: CreateOutputPresenta
   return {
     extension: createOutputPresentationExtension(options),
     classify: classifyOutputPresentTool,
+    disclosure: [{ source: { kind: 'builtin', id: 'output', title: 'Task outputs' }, exposure: 'direct', keywords: '产物 交付 输出 artifact output deliverable', tools: [{ name: OUTPUT_PRESENT_TOOL_NAME }] }],
   }
 }
 

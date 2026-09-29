@@ -93,7 +93,7 @@ export class DesktopIntegrations {
       conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.request(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
       taskActions: async () => extensionActionRpc.list.response.parse(await service.request(extensionActionRpc.list.method, {})),
       invokeTaskAction: async input => extensionActionRpc.invoke.response.parse(await service.request(extensionActionRpc.invoke.method, input, { timeoutMs: null })),
-      agentChanged: () => service.notify(extensionAgentRpc.changed, {}),
+      agentChanged: catalog => service.notify(extensionAgentRpc.changed, catalog),
       agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: 120000 })),
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })

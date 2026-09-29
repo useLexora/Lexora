@@ -20,11 +20,12 @@ export function createImageTransformCapability(options: CreateImageTransformExte
     extension: createImageTransformExtension(options),
     classify: classifyImageTransformTool,
     workspaceMutationTools: [IMAGE_TRANSFORM_TOOL_NAME],
-    disclosure: {
-      group: 'image_transform',
+    disclosure: [{
+      source: { kind: 'builtin', id: 'image_transform', title: 'Image transformation' },
+      exposure: 'on_demand',
       keywords: 'image transform chroma 图片 处理 变换 抠图 绿幕 透明 背景',
-      toolNames: [IMAGE_TRANSFORM_TOOL_NAME],
-    },
+      tools: [{ name: IMAGE_TRANSFORM_TOOL_NAME }],
+    }],
   }
 }
 

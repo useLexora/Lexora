@@ -28,6 +28,7 @@ import { containsCanonicalPath } from '../../../../platform/filesystem/filePaths
 import { buildBuddyRequestContext } from '../context/buildBuddyRequestContext'
 import { createEstimatedContextUsage } from '../context/contextUsageBreakdown'
 import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
+import { readToolDiscoveryState, TOOL_DISCOVERY_STATE } from '../extensions/discovery/toolDiscoveryState'
 import {
   getActivePiBuiltinToolNames,
   isPiShellToolName,
@@ -134,6 +135,9 @@ export async function createBuddyContextSnapshot(
   const persistedContextUsageUnknown = hasUnknownPostCompactionUsage(persistedSession)
   const recoveryMessages = convertToLlm(prepareBuddyInputHistory(persistedSession.buildSessionContext().messages))
   const sessionManager = SessionManager.inMemory(cwd)
+  const discovery = readToolDiscoveryState(persistedSession.getBranch())
+  if (discovery)
+    sessionManager.appendCustomEntry(TOOL_DISCOVERY_STATE, discovery)
   for (const message of recoveryMessages)
     sessionManager.appendMessage(message)
 

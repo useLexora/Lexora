@@ -23,12 +23,13 @@ export function createImageGenerationCapability(options: CreateImageGenerationEx
     extension: createImageGenerationExtension(options),
     classify: classifyImageGenerationTool,
     workspaceMutationTools: [IMAGE_GENERATION_TOOL_NAME],
-    disclosure: {
-      group: 'image_generation',
+    disclosure: [{
+      source: { kind: 'builtin', id: 'image_generation', title: 'Image generation' },
+      exposure: 'on_demand',
       keywords: 'image generate edit picture draw 图片 生成 绘制 画图 编辑 修改',
-      toolNames: [IMAGE_GENERATION_TOOL_NAME],
-      available: model => Boolean(model && options.service.supports(model)),
-    },
+      tools: [{ name: IMAGE_GENERATION_TOOL_NAME }],
+      available: ({ model }) => Boolean(model && options.service.supports(model)),
+    }],
   }
 }
 

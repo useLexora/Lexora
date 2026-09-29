@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { CallToolResult, Progress } from '@modelcontextprotocol/client'
 import type { TSchema } from 'typebox'
+import type { BuddyToolDisclosurePolicy } from '../../agent/extensions/discovery/toolDiscoveryContract'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
 import type { McpCatalogTool } from './mcpEvents'
 import type { McpResultWriter } from './mcpToolResults'
@@ -20,6 +21,7 @@ export interface CreateMcpToolsOptions {
 }
 
 export interface McpToolsResult {
+  disclosure: BuddyToolDisclosurePolicy
   classifications: Map<string, BuddyToolClassification>
   diagnostics: Array<{ code: 'MCP_TOOL_INVALID', message: string }>
   tools: ToolDefinition[]
@@ -39,6 +41,13 @@ export function createMcpTools(options: CreateMcpToolsOptions): McpToolsResult {
   const classifications = new Map<string, BuddyToolClassification>()
   const diagnostics: McpToolsResult['diagnostics'] = []
   const tools: ToolDefinition[] = []
+  const disclosure: BuddyToolDisclosurePolicy = {
+    source: { kind: 'mcp', id: options.serverId, title: options.serverName },
+    exposure: 'on_demand',
+    keywords: 'mcp connector connected service 连接器 已连接 服务',
+    tools: [],
+  }
+  const metadata: { name: string, id: string, title: string }[] = []
   const names = new Set<string>()
   for (const sourceTool of options.tools) {
     const remoteTool = copyEventSnapshot(sourceTool)
@@ -48,6 +57,7 @@ export function createMcpTools(options: CreateMcpToolsOptions): McpToolsResult {
       continue
     }
     names.add(name)
+    metadata.push({ name, id: remoteTool.name, title: remoteTool.title ?? remoteTool.name })
     tools.push(defineTool<TSchema, McpToolDetails>({
       name,
       label: `${options.serverName} · ${remoteTool.title ?? remoteTool.name}`,
@@ -78,7 +88,7 @@ export function createMcpTools(options: CreateMcpToolsOptions): McpToolsResult {
     }))
     classifications.set(name, classifyTool(options, remoteTool))
   }
-  return { classifications, diagnostics, tools }
+  return { classifications, diagnostics, tools, disclosure: { ...disclosure, tools: metadata } }
 }
 
 export function createMcpToolName(serverId: string, toolName: string): string {

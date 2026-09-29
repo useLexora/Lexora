@@ -36,11 +36,12 @@ export function createSystemCapability(host: SystemHostPort, report?: Applicatio
     },
     extension: createSystemExtension({ service }),
     classify: (event, signal) => classifySystemTool(service, event, signal),
-    disclosure: {
-      group: 'system',
+    disclosure: [{
+      source: { kind: 'builtin', id: 'system', title: 'System' },
+      exposure: 'on_demand',
       keywords: 'system process service terminate kill restart stop 系统 进程 服务 终止 杀死 停止 重启',
-      toolNames: [SYSTEM_ACTION_TOOL_NAME],
-    },
+      tools: [{ name: SYSTEM_ACTION_TOOL_NAME }],
+    }],
   }
 }
 

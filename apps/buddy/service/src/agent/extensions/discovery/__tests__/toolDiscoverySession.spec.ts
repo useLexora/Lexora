@@ -1,5 +1,6 @@
 import type { Api, AssistantMessage, Context, JsonObject, Model } from '@earendil-works/pi-ai'
 import type { BuddyInProcessExtension } from '../../BuddyInProcessExtension'
+import type { BuddyToolExposureResolver } from '../toolDiscoveryContract'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +13,9 @@ import { createEstimatedContextUsage } from '../../../context/contextUsageBreakd
 import { createIsolatedBuddyContextSnapshot as createBuddyContextSnapshot, createIsolatedBuddySession as createBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
 import { createReusableBuddySession } from '../../../sessions/createReusableBuddySession'
 import { createToolPolicyExtension } from '../../toolPolicyExtension'
+import { SessionToolCapabilities } from '../SessionToolCapabilities'
 import { createToolDiscoveryCapability } from '../toolDiscoveryExtension'
+import { readToolDiscoveryState } from '../toolDiscoveryState'
 
 const roots: string[] = []
 const name = 'lexora_sample_save'
@@ -20,7 +23,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture(resolveExposure?: BuddyToolExposureResolver) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-discovery-')))
   roots.push(root)
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
@@ -42,7 +45,7 @@ async function fixture() {
       })
     },
   }
-  const discovery = createToolDiscoveryCapability([{ group: 'system', toolNames: [name], keywords: 'sample 保存' }])
+  const discovery: BuddyInProcessExtension = { name: 'lexora-tool-discovery', factory: pi => createToolDiscoveryCapability([{ source: { kind: 'builtin', id: 'sample', title: 'Sample' }, exposure: 'on_demand', tools: [{ name }], keywords: 'sample 保存' }], new SessionToolCapabilities([], resolveExposure)).extension.factory(pi) }
   const options = {
     agentDir: join(root, 'agent'),
     branchId: 'branch-1',
@@ -54,7 +57,7 @@ async function fixture() {
     executionProfile: 'workspace_write' as const,
     model,
     modelRuntime: runtime,
-    inProcessExtensions: [extension, discovery.extension],
+    inProcessExtensions: [extension, discovery],
     resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
   }
   return { root, options, runtime, model }
@@ -77,6 +80,60 @@ function response(model: Model<Api>, calls: { name: string, arguments: JsonObjec
 }
 
 describe('real Pi tool discovery loop', () => {
+  it('applies live host policy and guidelines before the next request without persisting it as discovery', async () => {
+    let directlyExposed = false
+    const { root, options, runtime } = await fixture((tool, context) => tool.name === name && directlyExposed && context.model ? 'direct' : undefined)
+    await writeFile(join(root, 'input.txt'), 'Read this fixture while host policy changes')
+    const requests: { names: string[], prompt: string }[] = []
+    vi.spyOn(runtime, 'streamSimple').mockImplementation((model, context) => {
+      requests.push({ names: getCurrentTools(context.messages).map(tool => tool.name), prompt: getCurrentSystemPrompt(context.messages) })
+      if (requests.length === 1) {
+        directlyExposed = true
+        return response(model, [{ name: 'read', arguments: { path: join(root, 'input.txt') } }])
+      }
+      return response(model)
+    })
+    const created = await createBuddySession(options)
+    try {
+      await created.session.prompt('Initial on-demand tool')
+      expect(requests[0]?.names).not.toContain(name)
+      expect(requests[0]?.prompt).not.toContain('DISCLOSED_SAMPLE_GUIDELINE')
+      expect(requests[1]?.names).toContain(name)
+      expect(requests[1]?.prompt).toContain('DISCLOSED_SAMPLE_GUIDELINE')
+      expect(readToolDiscoveryState(created.session.sessionManager.getBranch())).toEqual({ version: 1, discovered: [] })
+    }
+    finally { await created.shutdown('quit') }
+    directlyExposed = false
+    const resumed = await createBuddySession({ ...options, piSessionFile: created.piSessionFile })
+    try {
+      expect(resumed.session.getActiveToolNames()).not.toContain(name)
+      await resumed.session.prompt('Continued after host policy changes')
+      expect(requests.at(-1)?.names).not.toContain(name)
+      expect(requests.at(-1)?.prompt).not.toContain('DISCLOSED_SAMPLE_GUIDELINE')
+      const preview = await createBuddyContextSnapshot({ ...options, piSessionFile: created.piSessionFile })
+      const context = requests.at(-1)!
+      expect(preview?.toolTokens).toBe(createEstimatedContextUsage({ systemPrompt: context.prompt, messages: [], tools: resumed.session.getAllTools().filter(tool => context.names.includes(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters })) }).toolTokens)
+    }
+    finally { await resumed.shutdown('quit') }
+  })
+
+  it('retains available tools declared by legacy sessions without discovery state entries', async () => {
+    const { options, runtime } = await fixture()
+    vi.spyOn(runtime, 'streamSimple').mockImplementation(model => response(model))
+    const legacy = await createBuddySession({ ...options, inProcessExtensions: options.inProcessExtensions.slice(0, 1) })
+    try {
+      await legacy.session.prompt('Legacy task with directly supplied sample')
+    }
+    finally { await legacy.shutdown('quit') }
+    const resumed = await createBuddySession({ ...options, piSessionFile: legacy.piSessionFile })
+    try {
+      expect(resumed.session.getActiveToolNames()).toContain(name)
+      await resumed.session.prompt('Continue legacy task')
+      expect(readToolDiscoveryState(resumed.session.sessionManager.getBranch())?.discovered).toContain(JSON.stringify(['builtin', 'sample', name]))
+    }
+    finally { await resumed.shutdown('quit') }
+  })
+
   it.each(['approved_once', 'denied'] as const)('preserves original approval and filesystem effects after discovery: %s', async (decision) => {
     const { root, options, runtime } = await fixture()
     const approvals: { toolName: string, arguments: unknown }[] = []
