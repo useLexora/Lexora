@@ -71,6 +71,18 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     return { result, output: Buffer.concat(output).toString('utf8') }
   }
 
+  it('records command process exit, pipe close and resource release without command contents', async () => {
+    const events: import('../../../../shared/permissions/sandboxLifecycle').SandboxLifecycleEvent[] = []
+    const { result } = await execute('printf private-fixture-content', { onLifecycle: event => events.push(event) })
+    expect(result).toEqual({ ok: true, exitCode: 0 })
+    const processes = events.filter(event => event.kind === 'process').map(event => event.snapshot.process!)
+    expect(processes.map(process => process.phase)).toEqual(['spawned', 'exited', 'closed', 'cleanup_requested', 'resources_released'])
+    expect(processes[0]?.pid).toBeGreaterThan(0)
+    expect(new Set(processes.map(process => process.pid)).size).toBe(1)
+    expect(processes.find(process => process.phase === 'exited')?.exitCode).toBe(0)
+    expect(JSON.stringify(events)).not.toMatch(/private-fixture|printf/)
+  })
+
   it('executes compound commands and workspace edits while masking secrets, symlink escapes and Git metadata', async () => {
     await mkdir(join(workspace, '.git'))
     await writeFile(join(workspace, '.git/config'), 'git-preserved')

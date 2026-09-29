@@ -25,6 +25,7 @@ import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
 import { ContextPanelHost } from '../context-panel/ContextPanelHost'
+import { DesktopPerformanceMonitor } from '../diagnostics/DesktopPerformanceMonitor'
 import { registerExtensionAuthoringRpc } from '../extensions/registerExtensionAuthoringRpc'
 import { DesktopNetwork } from '../network/DesktopNetwork'
 import { registerWebHostRpc } from '../network/registerWebHostRpc'
@@ -39,6 +40,7 @@ import { createCredentialVault } from '../secrets/CredentialVault'
 import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
 
 export class DesktopRuntimeHost {
+  readonly performance: DesktopPerformanceMonitor
   inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
   extensionAgent: ReturnType<typeof registerExtensionIpc>['agent'] | null = null
   readonly contextPanel: ContextPanelHost
@@ -60,6 +62,7 @@ export class DesktopRuntimeHost {
     this.#environment = environment
     this.#windows = windows
     this.#browser = browser
+    this.performance = new DesktopPerformanceMonitor(() => ({ metrics: app.getAppMetrics(), proxy: this.network.activity }), environment.events.publish)
     this.configStore = new LexoraConfigStore({ configPath: environment.paths.configPath })
     const configDiagnostics = this.configStore.onDidChange(change => environment.events.publish({ event: `settings.${change.kind.replaceAll('-', '_')}`, component: 'desktop.settings', level: change.kind.endsWith('failed') ? 'warn' : 'info', revision: change.revision, operationId: change.operationId, count: change.groups.length }))
     this.#subscriptions.push(() => configDiagnostics.dispose())
@@ -161,6 +164,17 @@ export class DesktopRuntimeHost {
         environment.diagnostics.record({ ...event, scope: 'local-service' })
       },
       bindPeer: (peer) => {
+        const sandbox = registerSandboxHostRpc(peer, {
+          buddyHome: environment.paths.buddyHome,
+          proxyUrl: this.#network!.sandboxProxyUrl,
+          ...this.#sandboxOptions(),
+        })
+        sandbox.onDidChange(event => environment.events.publish({
+          event: `sandbox.supervisor.${event.kind}`,
+          level: event.kind === 'cleanup_failed' ? 'warn' : 'info',
+          requestId: event.requestId,
+          sandboxProcess: { phase: event.kind, pid: event.pid, exitCode: event.exitCode },
+        }))
         const disposers = [
           peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
           peer.onRequest(extensionAgentRpc.invoke, (input, signal) => {
@@ -179,11 +193,7 @@ export class DesktopRuntimeHost {
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
           }),
           registerWebHostRpc(peer, this.#network!.authenticateProxy, this.#network!.assertAvailable),
-          registerSandboxHostRpc(peer, {
-            buddyHome: environment.paths.buddyHome,
-            proxyUrl: this.#network!.sandboxProxyUrl,
-            ...this.#sandboxOptions(),
-          }),
+          sandbox.dispose,
           registerBrowserHostRpc(peer, {
             createAdapterLease: input => this.#browser.adapter.issueLease(input),
             getHost: () => this.#browser.host,
@@ -241,6 +251,7 @@ export class DesktopRuntimeHost {
       powerMonitor.off('unlock-screen', wakeOnUnlock)
     })
     service.start()
+    this.performance.start()
     this.#subscriptions.push(installAttachmentProtocol(service))
     this.#subscriptions.push(installRendererProtocol())
   }
@@ -252,6 +263,7 @@ export class DesktopRuntimeHost {
   }
 
   async stop(): Promise<void> {
+    this.performance.stop()
     const failures: unknown[] = []
     for (const cleanup of [
       () => this.contextPanel.dispose(),

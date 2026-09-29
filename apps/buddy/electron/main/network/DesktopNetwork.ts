@@ -37,6 +37,7 @@ export class DesktopNetwork {
   #startupError: NetworkStartupError | null = null
 
   get startupError(): NetworkStartupError | null { return this.#startupError }
+  get activity() { return this.#proxy.activity }
   get snapshot() { return copyEventSnapshot({ revision: this.#revision, status: this.#status, mode: this.#settings?.mode ?? null, pendingSessions: this.#sessionSetup.size, failedSessions: this.#failedSessions.size, failure: this.#startupError?.failure ?? null }) }
   get proxyUrl(): string { return this.#startupError ? UNAVAILABLE_PROXY_URL : this.#proxy.url }
   get sandboxProxyUrl(): string { return this.#startupError ? UNAVAILABLE_PROXY_URL : this.#proxy.sandboxUrl }

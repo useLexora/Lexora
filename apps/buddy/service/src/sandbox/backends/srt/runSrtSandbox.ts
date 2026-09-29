@@ -10,6 +10,18 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
   let child: ChildProcess | undefined
   const kill = () => killProcessGroup(child?.pid)
   options.signal.addEventListener('abort', kill, { once: true })
+  const release = async () => {
+    options.onProcess?.({ phase: 'cleanup_requested', pid: child?.pid })
+    try {
+      kill()
+      await SandboxManager.reset()
+      options.onProcess?.({ phase: 'resources_released', pid: child?.pid })
+    }
+    catch (error) {
+      options.onProcess?.({ phase: 'cleanup_failed', pid: child?.pid })
+      throw error
+    }
+  }
   try {
     const { config, path } = await createSandboxPolicy(input, options.signal)
     await SandboxManager.initialize(config, ({ host, port }) => options.approveNetwork({ host, port: port ?? 443 }), false)
@@ -32,16 +44,22 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
       child.stdout!.on('data', options.onData)
       child.stderr!.on('data', options.onData)
       child.once('error', reject)
-      child.once('close', resolve)
-      child.once('spawn', options.onStarted)
+      child.once('exit', exitCode => options.onProcess?.({ phase: 'exited', pid: child?.pid, exitCode }))
+      child.once('close', (exitCode) => {
+        options.onProcess?.({ phase: 'closed', pid: child?.pid, exitCode })
+        resolve(exitCode)
+      })
+      child.once('spawn', () => {
+        options.onProcess?.({ phase: 'spawned', pid: child?.pid })
+        options.onStarted()
+      })
       if (options.signal.aborted)
         kill()
     })
   }
   finally {
     options.signal.removeEventListener('abort', kill)
-    kill()
-    await SandboxManager.reset()
+    await release()
   }
 }
 

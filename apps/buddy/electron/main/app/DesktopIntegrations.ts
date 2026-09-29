@@ -34,6 +34,7 @@ import { createDesktopTray } from '../tray'
 import { registerWorkbenchIpc } from '../workbench/registerWorkbenchIpc'
 import { WorkbenchStateStore } from '../workbench/WorkbenchStateStore'
 import { registerApplicationLogIpc } from './registerApplicationLogIpc'
+import { registerPerformanceIpc } from './registerPerformanceIpc'
 import { registerStartupIpc } from './registerStartupIpc'
 
 const browserArtifactEntrySchema = z.object({
@@ -107,7 +108,8 @@ export class DesktopIntegrations {
     this.#subscriptions.push(registerWorkbenchIpc(new WorkbenchStateStore(paths.buddyHome), () => windows.window))
     this.#subscriptions.push(registerContextPanelIpc(runtime.contextPanel, () => windows.window))
     this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window))
-    this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window, event => diagnostics.record(event)))
+    this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window, event => diagnostics.record(event), () => diagnostics.flushWithin(1000)))
+    this.#subscriptions.push(registerPerformanceIpc(runtime, () => windows.window, this.#environment.events.publish))
     this.#tray = createDesktopTray({
       appName: paths.appName,
       iconPath: trayIconPath,

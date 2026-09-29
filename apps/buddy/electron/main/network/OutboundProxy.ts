@@ -16,6 +16,10 @@ export class OutboundProxy {
   readonly #sandboxHttpAgent = new HttpAgent({ keepAlive: false })
   readonly #resolve: (url: string) => Promise<string>
   #generation = 0
+  #accepted = 0
+  #failed = 0
+  #opened = 0
+  #closed = 0
   readonly #sandboxGuard = createResolvedAddressGuard({ deniedResolvedAddresses: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', 'fc00::/7'] })
 
   constructor(resolve: (url: string) => Promise<string>) {
@@ -31,6 +35,7 @@ export class OutboundProxy {
           return { requestAuthentication: true }
         if (port === this.port && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname))
           throw new RequestError('Proxy loop', 502)
+        this.#accepted++
         const generation = this.#generation
         const authority = `${hostname}:${port}`
         const protocol = username.endsWith('-http') ? 'http' : 'https'
@@ -46,8 +51,13 @@ export class OutboundProxy {
         }
       },
     })
+    this.#server.server.on('connection', () => this.#opened++)
+    this.#server.on('connectionClosed', () => this.#closed++)
+    this.#server.on('requestFailed', () => this.#failed++)
+    this.#server.on('tunnelConnectFailed', () => this.#failed++)
   }
 
+  get activity() { return { accepted: this.#accepted, reportedFailures: this.#failed, opened: this.#opened, closed: this.#closed, active: this.#server.connections.size } }
   get port(): number { return this.#server.port }
   get url(): string { return `http://${this.username}:${this.password}@127.0.0.1:${this.port}` }
   get sandboxUrl(): string { return `http://lexora-sandbox:${this.#sandboxPassword}@127.0.0.1:${this.port}` }

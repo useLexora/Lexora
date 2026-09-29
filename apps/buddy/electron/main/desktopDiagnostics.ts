@@ -5,9 +5,10 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { APPLICATION_LOG_MAX_FILE_BYTES, APPLICATION_LOG_MAX_FILES } from '../../shared/diagnostics/applicationLog'
+import { DiagnosticAdmission } from '../../shared/diagnostics/DiagnosticAdmission'
 import { DiagnosticFile } from './diagnostics/diagnosticFile'
 import { captureDiagnosticOutput, createDiagnosticOutput } from './diagnostics/diagnosticOutput'
-import { encodeDiagnosticRecord, MAX_DIAGNOSTIC_RECORD_BYTES, redactDiagnosticText } from './diagnostics/diagnosticRecord'
+import { encodeDiagnosticRecord, MAX_DIAGNOSTIC_RECORD_BYTES } from './diagnostics/diagnosticRecord'
 
 export type { DesktopDiagnosticEvent, DesktopDiagnosticRecord, DesktopDiagnosticScope } from './diagnostics/diagnosticRecord'
 
@@ -57,6 +58,7 @@ export class DesktopDiagnosticLogger {
   }
 
   #queue: Buffer[] = []
+  readonly #admission = new DiagnosticAdmission()
   #sequence = 0
   #settled = 0
   #retryAt = 0
@@ -102,7 +104,7 @@ export class DesktopDiagnosticLogger {
   createWritable(scope: DesktopDiagnosticScope, options: Partial<Pick<DesktopDiagnosticEvent, 'event' | 'level' | 'sourceId'>> = {}): Writable {
     const sourceId = randomUUID()
     const output = createDiagnosticOutput(
-      message => this.#enqueue({ scope, sourceId, event: 'process.stderr', level: 'warn', ...options, message }),
+      output => this.#enqueue({ scope, sourceId, event: 'process.stderr', level: 'warn', ...options, output }),
       () => this.#drop(),
     )
     if (this.#status.state !== 'open') {
@@ -193,10 +195,13 @@ export class DesktopDiagnosticLogger {
     return this.status
   }
 
-  #enqueue(input: DesktopDiagnosticEvent): boolean {
+  #enqueue(input: DesktopDiagnosticEvent, internal = false): boolean {
     if (this.#status.state === 'closed')
       return false
-    if (performance.now() < this.#retryAt)
+    const now = performance.now()
+    if (now < this.#retryAt || this.#status.pendingBytes + MAX_DIAGNOSTIC_RECORD_BYTES > this.#maxQueueBytes)
+      return this.#drop()
+    if (!internal && !this.#admission.take())
       return this.#drop()
     const line = encodeDiagnosticRecord(input, this.#context, ++this.#sequence, performance.now() - this.#startedAt, this.#userHome)
     if (!line || this.#status.pendingBytes + line.length > this.#maxQueueBytes)
@@ -261,7 +266,7 @@ export class DesktopDiagnosticLogger {
       level: 'warn',
       event: 'recorder.loss',
       recorderLoss: { dropped: this.#status.dropped, failed: this.#status.failed },
-    })
+    }, true)
   }
 
   #drop(): false {
@@ -271,8 +276,7 @@ export class DesktopDiagnosticLogger {
   }
 
   #noteError(error: unknown): void {
-    const message = error instanceof Error ? error.message : 'Diagnostic I/O failure'
-    this.#status.lastError = redactDiagnosticText(message, this.#userHome).slice(0, 1024)
+    this.#status.lastError = error instanceof Error && 'code' in error && typeof error.code === 'string' && /^E[A-Z0-9_]{1,32}$/.test(error.code) ? error.code : 'DIAGNOSTIC_IO_FAILED'
   }
 
   #resolveFlushes(): void {

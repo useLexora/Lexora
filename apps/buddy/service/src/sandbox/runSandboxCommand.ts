@@ -7,7 +7,7 @@ import { runSrtSandbox } from './backends/srt/runSrtSandbox'
 import { runWindowsSandbox } from './backends/windows/runWindowsSandbox'
 import { SandboxExecutionLifecycle } from './sandboxExecutionLifecycle'
 
-export async function runSandboxCommand(input: SandboxProcessInput, options: Omit<SandboxExecutionOptions, 'onStarted'> & { onLifecycle?: (event: Readonly<SandboxLifecycleEvent>) => void }): Promise<SandboxResult> {
+export async function runSandboxCommand(input: SandboxProcessInput, options: Omit<SandboxExecutionOptions, 'onStarted' | 'onProcess'> & { onLifecycle?: (event: Readonly<SandboxLifecycleEvent>) => void }): Promise<SandboxResult> {
   const lifecycle = new SandboxExecutionLifecycle(options.signal, input.timeout)
   const subscription = options.onLifecycle ? lifecycle.onDidChange(options.onLifecycle) : undefined
   lifecycle.begin()
@@ -31,6 +31,7 @@ export async function runSandboxCommand(input: SandboxProcessInput, options: Omi
       ...options,
       signal: lifecycle.signal,
       approveNetwork: requestNetwork,
+      onProcess: process => lifecycle.processChanged(process),
       onStarted: () => {
         if (!lifecycle.signal.aborted)
           lifecycle.start()

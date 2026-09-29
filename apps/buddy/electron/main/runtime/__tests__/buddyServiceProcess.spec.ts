@@ -52,7 +52,7 @@ describe('buddyServiceProcess', () => {
     process.exit(7)
     expect(await logger.close()).toMatchObject({ written: 1, closeTimedOut: false })
     const record = JSON.parse(await readFile(join(directory, 'application.jsonl'), 'utf8'))
-    expect(record).toMatchObject({ scope: 'local-service', message: 'Authorization: <redacted>' })
+    expect(record).toMatchObject({ scope: 'local-service', output: { bytes: 36, chunks: 2 } })
   })
 
   it('finishes the capture and persists the terminal records when Electron removes stderr listeners at exit', async () => {
@@ -75,7 +75,7 @@ describe('buddyServiceProcess', () => {
     expect(await logger.close()).toMatchObject({ written: 2, failed: 0, unconfirmed: 0, closeTimedOut: false })
     const records = (await readFile(join(directory, 'application.jsonl'), 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line))
     expect(records).toMatchObject([
-      { scope: 'local-service', event: 'process.stderr', message: 'runtime cleanup completed' },
+      { scope: 'local-service', event: 'process.stderr', output: { bytes: 25, chunks: 2 } },
       { scope: 'desktop', event: 'app.stopped' },
     ])
   })
@@ -92,7 +92,7 @@ describe('buddyServiceProcess', () => {
     process.stderr.destroy(new Error('stderr read failed'))
     expect(await logger.close()).toMatchObject({ written: 1, closeTimedOut: false })
     const record = JSON.parse(await readFile(join(directory, 'application.jsonl'), 'utf8'))
-    expect(record).toMatchObject({ event: 'process.stderr_failed', error: { message: 'stderr read failed' } })
+    expect(record).toMatchObject({ event: 'process.stderr_failed', errorType: 'Error', errorCode: 'OPERATION_FAILED' })
     process.exit(1)
   })
 

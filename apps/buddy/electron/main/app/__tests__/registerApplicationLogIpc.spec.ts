@@ -36,7 +36,7 @@ async function fixture(record: (event: DesktopDiagnosticEvent) => boolean = () =
   const sender = { mainFrame: frame }
   const window = { webContents: sender, isDestroyed: () => false } as unknown as BrowserWindow
   const event = { sender, senderFrame: frame } as unknown as IpcMainInvokeEvent
-  registerApplicationLogIpc(new ApplicationLogReader(directory, 'launch-current', '/fixture'), () => window, record)
+  registerApplicationLogIpc(new ApplicationLogReader(directory, 'launch-current', '/fixture'), () => window, record, async () => {})
   const handler = native.handlers.get(DESKTOP_IPC_CHANNELS.appLogsExportDiagnostics)!
   return { directory, event, handler }
 }

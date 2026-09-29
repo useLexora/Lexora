@@ -1,52 +1,32 @@
-import { Buffer } from 'node:buffer'
+import type { Buffer } from 'node:buffer'
 import { Writable } from 'node:stream'
-import { MAX_DIAGNOSTIC_RECORD_BYTES } from './diagnosticRecord'
 
-export function createDiagnosticOutput(onLine: (line: string) => void, onDrop: () => void): Writable {
-  let pending: Buffer[] = []
+export function createDiagnosticOutput(onOutput: (output: { bytes: number, chunks: number }) => void, onDrop: () => void): Writable {
   let bytes = 0
-  let discarding = false
-
-  function append(chunk: Buffer) {
-    if (discarding || !chunk.length)
-      return
-    bytes += chunk.length
-    if (bytes > MAX_DIAGNOSTIC_RECORD_BYTES) {
-      pending = []
-      bytes = 0
-      discarding = true
-      onDrop()
-      return
-    }
-    pending.push(Buffer.from(chunk))
-  }
-
-  function finishLine() {
-    if (!discarding && bytes)
-      onLine(Buffer.concat(pending, bytes).toString('utf8').replace(/\r$/, ''))
-    pending = []
+  let chunks = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const flush = () => {
+    clearTimeout(timer)
+    timer = undefined
+    if (chunks)
+      onOutput({ bytes, chunks })
     bytes = 0
-    discarding = false
+    chunks = 0
   }
-
   const output = new Writable({
     write(chunk: Buffer, _encoding, callback) {
-      let start = 0
-      for (let end = chunk.indexOf(10); end !== -1; end = chunk.indexOf(10, start)) {
-        append(chunk.subarray(start, end))
-        finishLine()
-        start = end + 1
-      }
-      append(chunk.subarray(start))
+      bytes = Math.min(Number.MAX_SAFE_INTEGER, bytes + chunk.length)
+      chunks = Math.min(Number.MAX_SAFE_INTEGER, chunks + 1)
+      timer ??= setTimeout(flush, 5000)
+      timer.unref()
       callback()
     },
     final(callback) {
-      finishLine()
+      flush()
       callback()
     },
     destroy(error, callback) {
-      if (bytes || discarding)
-        finishLine()
+      flush()
       callback(error)
     },
   })

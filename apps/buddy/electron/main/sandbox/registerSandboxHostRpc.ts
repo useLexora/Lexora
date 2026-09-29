@@ -8,6 +8,7 @@ import { createSandboxDirectory } from '../../../platform/process/sandboxDirecto
 import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
+import { Emitter } from '../../../shared/events/Emitter'
 import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
 import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema } from '../../../shared/permissions/shellSandbox'
 import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
@@ -22,7 +23,9 @@ export interface SandboxHostOptions {
   windowsShell?: string
 }
 
-export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: SandboxHostOptions): () => void {
+export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: SandboxHostOptions) {
+  const changes = new Emitter<Readonly<{ requestId: string, kind: 'spawned' | 'exited' | 'cleanup_requested' | 'resources_released' | 'cleanup_failed', pid?: number, exitCode?: number }>>(() => console.error('SANDBOX_HOST_OBSERVER_FAILED'))
+  const publish = (event: Parameters<typeof changes.fire>[0]) => changes.fire(Object.freeze(event))
   const active = new Map<string, AbortController>()
   let disposed = false
   const disposers = [
@@ -43,6 +46,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
       active.set(input.requestId, controller)
       let directory: string | undefined
       let child: Electron.UtilityProcess | undefined
+      let pid: number | undefined
       let childPeer: BuddyServicePeer | undefined
       let exited: Promise<void> | undefined
       let forceKill: ReturnType<typeof setTimeout> | undefined
@@ -53,6 +57,26 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         catch {}
         forceKill ??= setTimeout(() => child?.kill(), 15_000)
         forceKill.unref()
+      }
+      const release = async () => {
+        publish({ requestId: input.requestId, kind: 'cleanup_requested', pid })
+        try {
+          child?.kill()
+          await exited
+          childPeer?.close(new Error('Sandbox command finished'))
+          if (directory)
+            await rm(directory, { recursive: true, force: true })
+          publish({ requestId: input.requestId, kind: 'resources_released', pid })
+        }
+        catch (error) {
+          publish({ requestId: input.requestId, kind: 'cleanup_failed', pid })
+          throw error
+        }
+        finally {
+          active.delete(input.requestId)
+          if (disposed && !active.size)
+            changes.dispose()
+        }
       }
       controller.signal.addEventListener('abort', cancel, { once: true })
       try {
@@ -73,11 +97,16 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           serviceName: 'Buddy Shell Sandbox',
           stdio: 'pipe',
         })
+        child.once('spawn', () => {
+          pid = child?.pid
+          publish({ requestId: input.requestId, kind: 'spawned', pid })
+        })
         child.stdout?.resume()
         child.stderr?.resume()
         childPeer = new BuddyServicePeer({ process: child })
         const processPeer = childPeer
-        exited = new Promise(resolve => child!.once('exit', () => {
+        exited = new Promise(resolve => child!.once('exit', (exitCode) => {
+          publish({ requestId: input.requestId, kind: 'exited', pid, exitCode })
           processPeer.close(new Error('Sandbox supervisor exited'))
           resolve()
         }))
@@ -122,19 +151,17 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         controller.signal.removeEventListener('abort', cancel)
         if (forceKill)
           clearTimeout(forceKill)
-        child?.kill()
-        await exited
-        childPeer?.close(new Error('Sandbox command finished'))
-        active.delete(input.requestId)
-        if (directory)
-          await rm(directory, { recursive: true, force: true })
+        await release()
       }
     }),
   ]
-  return () => {
+  const dispose = () => {
     disposed = true
     disposers.forEach(dispose => dispose())
     for (const controller of active.values())
       controller.abort()
+    if (!active.size)
+      changes.dispose()
   }
+  return { dispose, onDidChange: changes.event }
 }

@@ -14,6 +14,7 @@ import { toPublicRunEvent } from '../../shared/runs/publicRunEvent'
 import { runNotifications } from '../../shared/runs/runApi'
 import { buddyServiceFailureCodeSchema } from '../../shared/runtime/runtimeProtocol'
 import { startBuddyService } from './BuddyService'
+import { DiagnosticForwarder } from './diagnostics/DiagnosticForwarder'
 import { createRunEventLog } from './events/createRunEventLog'
 import { RunEventLogFatalError } from './events/RunEventFailure'
 import { startRuntimeNetwork } from './network/runtimeNetwork'
@@ -50,7 +51,8 @@ async function runBuddyService(): Promise<void> {
   let database: ReturnType<typeof openBuddyDatabase> | null = null
   let serviceServer: ReturnType<typeof createBuddyService> | null = null
   const events = new ApplicationEvents()
-  events.subscribe(event => serviceServer?.notify(APPLICATION_DIAGNOSTIC_METHOD, event))
+  const diagnostics = new DiagnosticForwarder(event => serviceServer?.notify(APPLICATION_DIAGNOSTIC_METHOD, event))
+  events.subscribe(event => diagnostics.record(event))
   const record = events.publish
   const lifecycle = new ServiceLifecycleSource(() => record({ event: 'observer.failed', component: 'runtime.lifecycle', level: 'warn' }))
   const host = new ServiceHost(lifecycle)
@@ -91,6 +93,7 @@ async function runBuddyService(): Promise<void> {
     record({ event: failed ? 'service.stop_failed' : 'service.stopped', level: failed ? 'error' : 'info', component: 'runtime.service' })
     lifecycleDelivery.dispose()
     stopLifecycleDiagnostics()
+    diagnostics.dispose()
     serviceServer?.close(new Error('Buddy Local Service is shutting down'))
     process.exit(failed ? 1 : exitCode)
   }
@@ -174,6 +177,7 @@ async function runBuddyService(): Promise<void> {
     await host.stop().catch(() => {})
     lifecycleDelivery.dispose()
     stopLifecycleDiagnostics()
+    diagnostics.dispose()
     serviceServer.close(new Error('Buddy Local Service startup failed'))
     closeDatabase()
     throw error

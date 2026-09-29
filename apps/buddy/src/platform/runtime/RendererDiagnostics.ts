@@ -1,4 +1,5 @@
 import type { RendererDiagnosticApi } from '@buddy-shared/diagnostics/rendererDiagnostic'
+import { DiagnosticAdmission } from '@buddy-shared/diagnostics/DiagnosticAdmission'
 import { rendererDiagnosticSchema } from '@buddy-shared/diagnostics/rendererDiagnostic'
 import { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 
@@ -12,16 +13,17 @@ export function createRendererDiagnostics(api: RendererDiagnosticApi) {
   const events = new ApplicationEvents()
   const sourceId = crypto.randomUUID()
   const pending = new Set<Promise<void>>()
+  const admission = new DiagnosticAdmission()
   let dropped = 0
   let failed = 0
   const unsubscribe = events.subscribe((event) => {
+    if (pending.size >= 128 || !admission.take()) {
+      dropped++
+      return
+    }
     const parsed = rendererDiagnosticSchema.safeParse(event)
     if (!parsed.success) {
       failed++
-      return
-    }
-    if (pending.size >= 128) {
-      dropped++
       return
     }
     const delivery = Promise.resolve()

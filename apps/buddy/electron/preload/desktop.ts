@@ -1,6 +1,7 @@
 import type { ContextPanelCommand, ContextPanelState } from '../../shared/context-panel/contextPanel'
 import type { ApplicationLogExport, ApplicationLogQuery } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
+import type { CpuProfileRequest } from '../../shared/diagnostics/performanceDiagnostic'
 import type { RendererDiagnosticReport } from '../../shared/diagnostics/rendererDiagnostic'
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
 import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
@@ -25,9 +26,13 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       onStateChanged: (listener: (state: ContextPanelState) => void) => subscribe(DESKTOP_IPC_CHANNELS.contextPanelStateChanged, listener),
     }),
     app: Object.freeze({
+      performance: Object.freeze({
+        snapshot: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appPerformanceSnapshot),
+        capture: (request: CpuProfileRequest) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appPerformanceCapture, { target: request.target, pid: request.pid }),
+      }),
       logs: Object.freeze({
         report: (input: RendererDiagnosticReport) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsReport, input),
-        exportDiagnostics: (input: ApplicationLogExport) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsExportDiagnostics, { launch: input.launch }),
+        exportDiagnostics: (input: ApplicationLogExport) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsExportDiagnostics, { launch: input.launch, anchor: input.anchor ? { ...input.anchor } : undefined }),
         query: (input: ApplicationLogQuery) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appLogsQuery, {
           ...input,
           anchor: input.anchor ? { launchId: input.anchor.launchId, sequence: input.anchor.sequence } : undefined,

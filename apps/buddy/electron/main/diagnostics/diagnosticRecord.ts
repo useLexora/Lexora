@@ -1,7 +1,7 @@
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ApplicationLogRecord } from '../../../shared/diagnostics/applicationLog'
 import { Buffer } from 'node:buffer'
-import { applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
+import { applicationDiagnosticSchema, readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 
 export const MAX_DIAGNOSTIC_RECORD_BYTES = 16 * 1024
 export type DesktopDiagnosticScope = 'desktop' | 'local-service' | 'native-pet'
@@ -43,9 +43,10 @@ export function encodeDiagnosticRecord(
   try {
     if (!/^[a-z][a-z\d._-]{0,95}$/.test(input.event))
       return null
-    const error = input.error instanceof Error ? input.error : undefined
+    const failure = input.error === undefined ? {} : readDiagnosticError(input.error)
     const record: DesktopDiagnosticRecord = {
       ...context,
+      ...failure,
       schemaVersion: 1,
       timestamp: new Date().toISOString(),
       elapsedMs: Math.round(elapsedMs),
@@ -53,21 +54,11 @@ export function encodeDiagnosticRecord(
       scope: input.scope,
       level: input.level,
       event: input.event,
-      message: input.message === undefined ? undefined : clean(input.message),
-      sourceId: input.sourceId === undefined ? undefined : clean(input.sourceId),
+      sourceId: typeof input.sourceId === 'string' && /^[\w:.-]{1,192}$/.test(input.sourceId) ? input.sourceId : undefined,
       sourcePid: typeof input.sourcePid === 'number' && Number.isSafeInteger(input.sourcePid) && input.sourcePid > 0 ? input.sourcePid : undefined,
-      operationId: input.operationId === undefined ? undefined : clean(input.operationId),
       durationMs: typeof input.durationMs === 'number' && Number.isFinite(input.durationMs) && input.durationMs >= 0 ? input.durationMs : undefined,
-      error: error
-        ? {
-            name: clean(error.name),
-            message: clean(error.message),
-            stack: error.stack === undefined ? undefined : clean(error.stack),
-            code: 'code' in error && typeof error.code === 'string' ? clean(error.code) : undefined,
-          }
-        : input.error === undefined ? undefined : { name: 'UnknownError', message: 'Non-Error failure' },
     }
-    for (const key of ['parentOperationId', 'producerInstanceId', 'extensionId', 'workingCopyId', 'markId', 'revision', 'contentVersion', 'savedVersion', 'dirty', 'generation', 'sessionId', 'providerId', 'connectorId', 'automationId', 'occurrenceId', 'toolCallId', 'sourceSequence', 'occurredAt', 'component', 'conversationId', 'spaceId', 'directoryId', 'branchId', 'runId', 'turnId', 'requestId', 'errorCode', 'errorType', 'failure', 'providerRequest', 'recorderLoss', 'processExit', 'loadFailure', 'recoveryAction', 'previousLaunchId', 'count', 'attempt', 'method'] as const) {
+    for (const key of ['operationId', 'parentOperationId', 'producerInstanceId', 'extensionId', 'workingCopyId', 'markId', 'revision', 'contentVersion', 'savedVersion', 'dirty', 'generation', 'sessionId', 'providerId', 'connectorId', 'automationId', 'occurrenceId', 'toolCallId', 'sourceSequence', 'occurredAt', 'component', 'conversationId', 'spaceId', 'directoryId', 'branchId', 'runId', 'turnId', 'requestId', 'errorCode', 'errorType', 'failure', 'providerRequest', 'recorderLoss', 'performanceSample', 'cpuProfile', 'output', 'sandboxProcess', 'processExit', 'loadFailure', 'recoveryAction', 'previousLaunchId', 'count', 'attempt', 'method'] as const) {
       const parsed = applicationDiagnosticSchema.shape[key].safeParse(input[key])
       if (!parsed.success)
         return null

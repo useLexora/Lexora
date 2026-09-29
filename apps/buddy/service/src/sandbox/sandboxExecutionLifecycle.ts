@@ -1,6 +1,6 @@
 import type { Buffer } from 'node:buffer'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
-import type { SandboxLifecycleEvent, SandboxLifecycleSnapshot } from '../../../shared/permissions/sandboxLifecycle'
+import type { SandboxLifecycleEvent, SandboxLifecycleSnapshot, SandboxProcessState } from '../../../shared/permissions/sandboxLifecycle'
 import type { SandboxNetworkTarget, SandboxResult } from '../../../shared/permissions/shellSandbox'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -10,6 +10,7 @@ export interface SandboxExecutionOptions {
   approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>
   onData: (data: Buffer) => void
   onStarted: () => void
+  onProcess?: (process: SandboxProcessState) => void
 }
 
 export class SandboxExecutionLifecycle {
@@ -36,6 +37,7 @@ export class SandboxExecutionLifecycle {
   #phase: SandboxLifecycleSnapshot['phase'] = 'preparing'
   #cancellation: SandboxLifecycleSnapshot['cancellation'] = 'none'
   #result: SandboxResult | undefined
+  #process: SandboxProcessState | undefined
 
   constructor(signal: AbortSignal, timeoutSeconds = 30 * 60, preparationTimeoutMs = 60_000) {
     this.#externalSignal = signal
@@ -53,7 +55,14 @@ export class SandboxExecutionLifecycle {
   get started(): boolean { return this.#started }
   get timedOut(): boolean { return this.#cancellation === 'timed-out' }
   get snapshot(): EventSnapshot<SandboxLifecycleSnapshot> {
-    return copyEventSnapshot({ phase: this.#phase, started: this.#started, waiting: this.#waiting, cancellation: this.#cancellation, ...this.#result ? { result: this.#result } : {} })
+    return copyEventSnapshot({ phase: this.#phase, started: this.#started, waiting: this.#waiting, cancellation: this.#cancellation, process: this.#process, ...this.#result ? { result: this.#result } : {} })
+  }
+
+  processChanged(process: SandboxProcessState): void {
+    if (this.#phase === 'finished')
+      return
+    this.#process = { ...process }
+    this.#publish('process')
   }
 
   begin(): void {

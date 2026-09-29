@@ -8,7 +8,7 @@ import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { saveApplicationDiagnosticBundle } from '../diagnostics/saveApplicationDiagnosticBundle'
 import { assertTrustedSender } from '../ipc'
 
-export function registerApplicationLogIpc(reader: ApplicationLogReader, getWindow: () => BrowserWindow | null, record: (event: DesktopDiagnosticEvent) => boolean): () => void {
+export function registerApplicationLogIpc(reader: ApplicationLogReader, getWindow: () => BrowserWindow | null, record: (event: DesktopDiagnosticEvent) => boolean, flush: () => Promise<unknown>): () => void {
   let exporting = false
   const producers = new WeakMap<WebFrameMain, Map<string, { id: string, sequence: number, accepted: boolean }>>()
   ipcMain.handle(DESKTOP_IPC_CHANNELS.appLogsReport, async (event, input: unknown) => {
@@ -54,6 +54,7 @@ export function registerApplicationLogIpc(reader: ApplicationLogReader, getWindo
       return { status: 'canceled' }
     exporting = true
     try {
+      await flush()
       return await saveApplicationDiagnosticBundle(reader, request, window)
     }
     catch {

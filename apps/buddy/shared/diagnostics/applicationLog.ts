@@ -70,7 +70,7 @@ export interface ApplicationLogApi {
 const domains: ReadonlyArray<readonly [ApplicationLogCategory, readonly string[]]> = [
   ['models', ['provider', 'providers', 'models']],
   ['automations', ['automation', 'automations', 'scheduler']],
-  ['execution', ['run', 'runs', 'turn', 'tool', 'session', 'sessions', 'session_factory', 'execution', 'chat', 'approvals', 'usage']],
+  ['execution', ['sandbox', 'run', 'runs', 'turn', 'tool', 'session', 'sessions', 'session_factory', 'execution', 'chat', 'approvals', 'usage']],
   ['storage', ['database', 'event_log', 'event_replay', 'recovery', 'artifacts', 'attachments', 'filesystem', 'spaces']],
   ['capabilities', ['connector', 'connectors', 'mcp', 'skills', 'web', 'browser', 'browser_adapter', 'pet', 'guard']],
   ['recorder', ['recorder', 'observer']],
@@ -92,7 +92,7 @@ export function applicationLogCategory(record: Pick<ApplicationLogRecord, 'event
     return 'capabilities'
   if (['app', 'window', 'desktop', 'renderer'].includes(event) || record.component?.startsWith('desktop') || record.component?.startsWith('renderer'))
     return 'application'
-  if (['runtime', 'rpc', 'process', 'service', 'component', 'startup'].includes(event) || record.component?.startsWith('runtime'))
+  if (['runtime', 'rpc', 'process', 'service', 'component', 'startup', 'performance'].includes(event) || record.component?.startsWith('runtime'))
     return 'runtime'
   return 'other'
 }

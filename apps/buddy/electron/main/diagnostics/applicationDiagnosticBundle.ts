@@ -1,5 +1,5 @@
 import type { ApplicationLogAnchor, ApplicationLogApi, ApplicationLogRecord } from '../../../shared/diagnostics/applicationLog'
-import { strToU8, zipSync } from 'fflate/browser'
+import { strToU8, zip } from 'fflate/node'
 import { applicationLogKey, applicationLogRecordSchema } from '../../../shared/diagnostics/applicationLog'
 import { isRoutineRpcRecord } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
 
@@ -47,6 +47,10 @@ const bundleRecordSchema = applicationLogRecordSchema.pick({
   failure: true,
   providerRequest: true,
   recorderLoss: true,
+  performanceSample: true,
+  cpuProfile: true,
+  sandboxProcess: true,
+  output: true,
   processExit: true,
   loadFailure: true,
   recoveryAction: true,
@@ -99,10 +103,11 @@ export async function createApplicationDiagnosticBundle(reader: Pick<Application
   const meaningful = records.filter(record => !isRoutineRpcRecord(record))
   const selectedRecord = selected ? records.find(record => applicationLogKey(record) === applicationLogKey(selected)) : undefined
   const allErrors = meaningful.filter(record => record.level === 'error')
+  const incidents = meaningful.filter(record => record.level === 'error' || record.event === 'performance.sustained_cpu' || record.event === 'performance.cpu_profile' || record.sandboxProcess?.phase === 'cleanup_failed')
   const seeds: ApplicationLogRecord[] = []
   const seen = new Set<string>()
-  for (const record of selected ? selectedRecord ? [selectedRecord] : [] : allErrors) {
-    const key = `${record.launchId}:${record.runId ?? record.operationId ?? 'startup'}`
+  for (const record of selected ? selectedRecord ? [selectedRecord] : [] : incidents) {
+    const key = `${record.launchId}:${record.runId ?? record.operationId ?? record.requestId ?? 'startup'}`
     if (seen.has(key))
       continue
     seen.add(key)
@@ -125,16 +130,17 @@ export async function createApplicationDiagnosticBundle(reader: Pick<Application
   context.sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.sequence - b.sequence)
   const scopedErrors = selected ? candidates.filter(record => record.level === 'error') : allErrors
   const errors = scopedErrors.slice(0, limits.errors).reverse()
-  const recorderLosses = new Map<string, { launchId: string, dropped: number | null, failed: number | null }>()
+  const recorderLosses = new Map<string, { launchId: string, producerInstanceId?: string, dropped: number | null, failed: number | null }>()
   for (const record of records) {
     if (record.event !== 'recorder.loss')
       continue
-    const loss = recorderLosses.get(record.launchId) ?? { launchId: record.launchId, dropped: null, failed: null }
+    const key = `${record.launchId}:${record.producerInstanceId ?? 'collector'}`
+    const loss = recorderLosses.get(key) ?? { launchId: record.launchId, producerInstanceId: record.producerInstanceId, dropped: null, failed: null }
     if (record.recorderLoss) {
       loss.dropped = Math.max(loss.dropped ?? 0, record.recorderLoss.dropped)
       loss.failed = Math.max(loss.failed ?? 0, record.recorderLoss.failed)
     }
-    recorderLosses.set(record.launchId, loss)
+    recorderLosses.set(key, loss)
   }
   const coverageReasons = Object.entries({
     scan_limit: records.length < first.total,
@@ -162,6 +168,7 @@ export async function createApplicationDiagnosticBundle(reader: Pick<Application
       anchor: { launchId: seed.launchId, sequence: seed.sequence },
       runId: seed.runId,
       operationId: seed.operationId,
+      association: isPerformanceIncident(seed) ? 'identities-and-observation-window' : 'identities',
       errorCode: seed.errorCode,
       matchedRecords: groups[index]!.length,
       runStartObserved: groups[index]!.some(record => record.event === 'run.started'),
@@ -178,17 +185,21 @@ export async function createApplicationDiagnosticBundle(reader: Pick<Application
     `Limited coverage: ${manifest.coverage.limited ? `yes - ${coverageReasons.join(', ')}; see manifest.json` : 'no export limit or recorded loss observed'}`,
     'context.jsonl is chronological and includes related normal events, retries and outcomes before and after errors.',
     'Coverage is limited to retained logs. A missing field or event is not evidence that it did not occur.',
-    'Recorder loss counters are cumulative per launch within the scanned records; null means unknown, not zero.',
+    'Recorder loss counters are cumulative per launch and producer within the scanned records; null means unknown, not zero.',
     'Provider response metadata is observational; unknown/unobserved does not mean no response was received.',
+    'Proxy counters are cumulative observations. Accepted means authenticated HTTP/CONNECT attempts, not successful upstream responses. Reported failures do not cover all failure paths.',
+    'Performance snapshots cover Electron processes only. Sandbox resource release does not prove that every descendant has exited.',
+    'Process CPU percentages are normalized across logicalCpuCount processors; 100% represents full machine utilization.',
+    'Performance incidents include runs with retained activity in the observation window. Temporal proximity is context, not proof of causation.',
     'No conversation bodies, raw requests/responses, credentials or user files. Nothing was uploaded.',
   ].join('\n')
   return {
-    bytes: zipSync({
+    bytes: await new Promise<Uint8Array>((resolve, reject) => zip({
       'manifest.json': strToU8(JSON.stringify(manifest, null, 2)),
       'summary.txt': strToU8(summary),
       'errors.jsonl': encodeRecords(errors),
       'context.jsonl': encodeRecords(context),
-    }),
+    }, (error, bytes) => error ? reject(error) : resolve(bytes))),
     errorCount: errors.length,
     contextCount: context.length,
     filename: `lexora-diagnostics-${capturedAt.replace(/[:.]/g, '-')}.zip`,
@@ -198,6 +209,25 @@ export async function createApplicationDiagnosticBundle(reader: Pick<Application
 function incidentRecords(records: ApplicationLogRecord[], seed: ApplicationLogRecord): ApplicationLogRecord[] {
   const launch = records.filter(record => record.launchId === seed.launchId)
   const runs = new Set<string>()
+  if (isPerformanceIncident(seed)) {
+    const times = [Date.parse(seed.timestamp)]
+    for (const record of launch) {
+      if (record.performanceSample && (applicationLogKey(record) === applicationLogKey(seed) || (seed.operationId && record.operationId === seed.operationId)))
+        times.push(Date.parse(record.performanceSample.sampledAt))
+    }
+    const from = Math.min(...times) - 30_000
+    const to = Math.max(...times) + 30_000
+    for (const record of launch) {
+      const time = Date.parse(record.timestamp)
+      if (record.runId && time >= from && time <= to)
+        runs.add(record.runId)
+    }
+  }
+  const requests = new Set<string>(seed.requestId ? [seed.requestId] : [])
+  for (const record of launch) {
+    if (record.requestId && requests.has(record.requestId) && record.runId)
+      runs.add(record.runId)
+  }
   if (seed.runId)
     runs.add(seed.runId)
   if (!seed.runId && seed.operationId) {
@@ -213,7 +243,12 @@ function incidentRecords(records: ApplicationLogRecord[], seed: ApplicationLogRe
     if (record.runId && runs.has(record.runId) && record.operationId)
       operations.add(record.operationId)
   }
+  for (const record of launch) {
+    if (record.requestId && ((record.runId && runs.has(record.runId)) || (!record.runId && record.operationId && operations.has(record.operationId))))
+      requests.add(record.requestId)
+  }
   const linked = (record: ApplicationLogRecord) => applicationLogKey(record) === applicationLogKey(seed)
+    || (record.requestId && requests.has(record.requestId))
     || (record.runId && runs.has(record.runId))
     || (!record.runId && ((record.operationId && operations.has(record.operationId))
       || (record.parentOperationId && operations.has(record.parentOperationId))))
@@ -224,6 +259,10 @@ function incidentRecords(records: ApplicationLogRecord[], seed: ApplicationLogRe
   return launch.filter(record => linked(record)
     || record.event === 'network.start_failed'
     || (!record.runId && (!record.operationId || /^(?:app|startup|runtime|recorder|component)\./.test(record.event)) && Date.parse(record.timestamp) >= from && Date.parse(record.timestamp) <= to))
+}
+
+function isPerformanceIncident(record: ApplicationLogRecord): boolean {
+  return !!record.performanceSample || !!record.cpuProfile || record.event === 'performance.sustained_cpu'
 }
 
 function encodeRecords(records: ApplicationLogRecord[]): Uint8Array {

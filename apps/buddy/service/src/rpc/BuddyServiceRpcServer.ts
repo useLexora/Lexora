@@ -2,8 +2,10 @@ import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/
 import type { RuntimeRequestHandler, RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BuddyServiceFailureCode } from '../../../shared/runtime/runtimeProtocol'
 import process from 'node:process'
+import { captureNodeCpuProfile } from '../../../platform/diagnostics/cpuProfile'
 import { RuntimeRpcPeer } from '../../../platform/ipc/runtimeRpcPeer'
 import { readDiagnosticErrorCode, safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import { cpuProfileRequestSchema } from '../../../shared/diagnostics/performanceDiagnostic'
 import { isRoutineRpc } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
@@ -102,6 +104,19 @@ export function createBuddyService(options: CreateBuddyServiceOptions): BuddySer
     recordDiagnostic: options.recordDiagnostic,
     port: options.port,
     onFatalError: options.onFatalError,
+  })
+  let profiling = false
+  server.onRequest('diagnostics.profile', async (input, signal) => {
+    const request = cpuProfileRequestSchema.parse(input)
+    if (request.target !== 'runtime' || request.pid !== process.pid)
+      throw new Error('CPU_PROFILE_PROCESS_CHANGED')
+    if (profiling)
+      throw new Error('CPU_PROFILE_BUSY')
+    profiling = true
+    try {
+      return await captureNodeCpuProfile('runtime', signal)
+    }
+    finally { profiling = false }
   })
   server.onRequest('runtime.status', () => ({
     name: SERVICE_NAME,

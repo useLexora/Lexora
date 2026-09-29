@@ -1,77 +1,54 @@
 <script setup lang="ts">
-import type { ApplicationLogApi, ApplicationLogExport, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
+import type { ApplicationLogQuery, ApplicationLogRecord } from '@buddy-shared/diagnostics/applicationLog'
+import type { useApplicationLogs } from '../../state/useApplicationLogs'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NButton, NPagination, useDialog, useMessage } from 'naive-ui'
-import { h } from 'vue'
+import { NButton, NPagination } from 'naive-ui'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopPaneBoundary from '@/shared/ui/loading/DesktopPaneBoundary.vue'
-import { useApplicationLogs } from '../../state/useApplicationLogs'
 import DesktopApplicationLogDetails from './DesktopApplicationLogDetails.vue'
 import DesktopApplicationLogFilters from './DesktopApplicationLogFilters.vue'
 import DesktopApplicationLogList from './DesktopApplicationLogList.vue'
-import DesktopDiagnosticExportSummary from './DesktopDiagnosticExportSummary.vue'
 
-const props = defineProps<{ api: ApplicationLogApi, language: BuddyLocale }>()
+const props = defineProps<{ logs: ReturnType<typeof useApplicationLogs>, language: BuddyLocale }>()
+const emit = defineEmits<{
+  'export': [record: ApplicationLogRecord]
+  'closeDetails': []
+  'update:launch': [value: string]
+  'update:category': [value: NonNullable<ApplicationLogQuery['category']>]
+  'update:level': [value: NonNullable<ApplicationLogQuery['level']>]
+  'update:search': [value: string]
+}>()
 const { t } = useBuddyI18n(() => props.language)
-const message = useMessage()
-const dialog = useDialog()
-const { launch, category, level, search, live, page, selected, loading, failed, exporting, viewKey, refresh, pause, changePage, follow, select, exportDiagnostics } = useApplicationLogs({
-  query: input => props.api.query(input),
-  exportDiagnostics: input => props.api.exportDiagnostics(input),
-})
-
-async function saveDiagnostics(input: ApplicationLogExport): Promise<void> {
-  try {
-    const result = await exportDiagnostics(input)
-    if (result.status === 'saved')
-      message.success(t('applicationLogs.exportSucceeded', { count: result.errorCount, context: result.contextCount }))
-    else if (result.status === 'empty')
-      message.info(t('applicationLogs.exportEmpty'))
-  }
-  catch {
-    message.error(t('applicationLogs.exportFailed'))
-  }
-}
-
-function confirmExport(record?: ApplicationLogRecord): void {
-  const input: ApplicationLogExport = record ? { launch: record.launchId, anchor: { launchId: record.launchId, sequence: record.sequence } } : { launch: launch.value }
-  dialog.create({
-    title: t('applicationLogs.exportDiagnostics'),
-    showIcon: false,
-    style: { width: 'min(480px, calc(100vw - 32px))' },
-    content: () => h(DesktopDiagnosticExportSummary, { language: props.language, selected: !!record }),
-    positiveText: t('applicationLogs.exportSave'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: () => saveDiagnostics(input),
-  })
-}
 </script>
 
 <template>
   <div class="application-logs">
-    <DesktopApplicationLogFilters v-model:launch="launch" v-model:category="category" v-model:level="level" v-model:search="search" :language="language" :launches="page?.launches ?? []" :current-launch-id="page?.currentLaunchId" :live="live" :loading="loading" :exporting="exporting" @refresh="refresh" @toggle-live="live ? pause() : follow()" @export-diagnostics="confirmExport()" />
-    <DesktopPaneBoundary :loading="!page && loading" :error="!page && failed ? t('applicationLogs.readFailed') : null" :label="t('desktop.loading.pane')" :retry-label="t('desktop.loading.retry')" @retry="refresh">
-      <DesktopApplicationLogList :key="viewKey" :records="page?.records ?? []" :selected="selected" :language="language" @select="select" @pause="pause" />
+    <DesktopApplicationLogFilters :launch="logs.launch.value" :category="logs.category.value" :level="logs.level.value" :search="logs.search.value" :language="language" :launches="logs.page.value?.launches ?? []" :current-launch-id="logs.page.value?.currentLaunchId" @update:launch="emit('update:launch', $event)" @update:category="emit('update:category', $event)" @update:level="emit('update:level', $event)" @update:search="emit('update:search', $event)" />
+    <DesktopPaneBoundary :loading="!logs.page.value && logs.loading.value" :error="!logs.page.value && logs.failed.value ? t('applicationLogs.readFailed') : null" :label="t('desktop.loading.pane')" :retry-label="t('desktop.loading.retry')" @retry="logs.refresh">
+      <DesktopApplicationLogList :key="logs.viewKey.value" :records="logs.page.value?.records ?? []" :selected="logs.selected.value" :language="language" @select="logs.select" @pause="logs.pause" />
     </DesktopPaneBoundary>
-    <DesktopApplicationLogDetails v-if="selected" :record="selected" :language="language" :exporting="exporting" @close="selected = null" @export-diagnostics="confirmExport(selected)" />
+    <DesktopApplicationLogDetails v-if="logs.selected.value" :record="logs.selected.value" :language="language" :exporting="logs.exporting.value" @close="emit('closeDetails')" @export-diagnostics="emit('export', logs.selected.value)" />
     <footer class="application-logs__footer">
       <div class="application-logs__status">
-        <span class="application-logs__indicator" :class="{ 'is-live': live }" aria-hidden="true" />
-        <span>{{ t(live ? 'applicationLogs.live' : 'applicationLogs.paused') }}</span>
+        <span class="application-logs__indicator" :class="{ 'is-live': logs.live.value }" aria-hidden="true" />
+        <span>{{ t(logs.live.value ? 'applicationLogs.live' : 'applicationLogs.paused') }}</span>
       </div>
       <div class="application-logs__pagination">
-        <NButton v-if="page?.anchorExpired" size="tiny" secondary @click="follow">
+        <NButton v-if="logs.page.value?.anchorExpired" size="tiny" secondary @click="logs.follow">
           {{ t('applicationLogs.expired') }}
         </NButton>
-        <NPagination v-else simple size="small" :page="page?.page ?? 1" :page-count="Math.max(1, Math.ceil((page?.total ?? 0) / (page?.pageSize ?? 100)))" :disabled="loading || !page?.total" @update:page="changePage">
+        <NPagination v-else simple size="small" :page="logs.page.value?.page ?? 1" :page-count="Math.max(1, Math.ceil((logs.page.value?.total ?? 0) / (logs.page.value?.pageSize ?? 100)))" :disabled="logs.loading.value || !logs.page.value?.total" @update:page="logs.changePage">
           <template #prefix>
-            <span class="application-logs__total">{{ t('applicationLogs.total', { count: page?.total ?? 0 }) }}</span>
+            <span class="application-logs__total">{{ t('applicationLogs.total', { count: logs.page.value?.total ?? 0 }) }}</span>
           </template>
         </NPagination>
       </div>
     </footer>
-    <div v-if="page && failed" class="application-logs__notice" role="status">
+    <div v-if="logs.page.value && logs.failed.value" class="application-logs__notice" role="status">
       {{ t('applicationLogs.readFailed') }}
+      <NButton size="tiny" text @click="logs.refresh">
+        {{ t('desktop.loading.retry') }}
+      </NButton>
     </div>
   </div>
 </template>

@@ -108,7 +108,7 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
   }
   finally {
     await client.dispose()
-    disposeHost()
+    disposeHost.dispose()
     host.close(new Error('Installation verification completed'))
     runtime.close(new Error('Installation verification completed'))
     channel.port1.close()

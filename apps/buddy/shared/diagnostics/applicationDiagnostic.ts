@@ -2,8 +2,10 @@ import type { LifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { z } from 'zod'
 import { extensionIdSchema } from '../extensions/extensionManifest'
 import { readLifecycleFailure } from '../lifecycle/lifecycleFailure'
+import { sandboxProcessStateSchema } from '../permissions/sandboxLifecycle'
 import { desktopBootstrapFailureSchema, processExitSchema, rendererLoadFailureSchema } from './desktopStartupDiagnostic'
 import { networkStartupFailureSchema } from './networkStartupFailure'
+import { cpuProfileSummarySchema, performanceSampleSchema } from './performanceDiagnostic'
 import { privateDirectoryFailureSchema } from './privateDirectoryFailure'
 import { providerRequestDiagnosticSchema } from './providerRequestDiagnostic'
 
@@ -44,6 +46,10 @@ export const applicationDiagnosticSchema = z.object({
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
   failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
+  performanceSample: performanceSampleSchema.optional(),
+  cpuProfile: cpuProfileSummarySchema.optional(),
+  output: z.object({ bytes: z.number().int().nonnegative(), chunks: z.number().int().nonnegative() }).strict().optional(),
+  sandboxProcess: sandboxProcessStateSchema.optional(),
   recorderLoss: z.object({ dropped: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).strict().optional(),
   processExit: processExitSchema.optional(),
   loadFailure: rendererLoadFailureSchema.optional(),

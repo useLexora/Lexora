@@ -1,6 +1,7 @@
 import type { DesktopBrowserApi } from '../../shared/browser/browserDesktopApi'
 import type { ApplicationLogApi } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
+import type { PerformanceDiagnosticApi } from '../../shared/diagnostics/performanceDiagnostic'
 import type { RendererDiagnosticApi } from '../../shared/diagnostics/rendererDiagnostic'
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
@@ -16,6 +17,8 @@ export const DESKTOP_IPC_CHANNELS = {
   contextPanelGetState: 'lexora:context-panel:get-state',
   contextPanelExecute: 'lexora:context-panel:execute',
   contextPanelStateChanged: 'lexora:context-panel:state-changed',
+  appPerformanceSnapshot: 'lexora:app:performance:snapshot',
+  appPerformanceCapture: 'lexora:app:performance:capture',
   appLogsQuery: 'lexora:app:logs:query',
   appLogsReport: 'lexora:app:logs:report',
   appLogsExportDiagnostics: 'lexora:app:logs:export-diagnostics',
@@ -205,6 +208,7 @@ export interface LexoraDesktopApi {
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi
   contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi
   app: {
+    performance: PerformanceDiagnosticApi
     logs: ApplicationLogApi & RendererDiagnosticApi
     startup: {
       getState: () => Promise<ApplicationStartupState>

@@ -2,6 +2,9 @@ import type { ApplicationLogRecord } from '@buddy-shared/diagnostics/application
 import type { BuddyI18nKey, BuddyLocale, BuddyTranslate } from '@/i18n/buddyI18n'
 
 const eventTitles: Record<string, BuddyI18nKey> = {
+  'performance.sample': 'applicationLogs.performance.sample',
+  'performance.cpu_profile': 'applicationLogs.performance.profile',
+  'performance.sustained_cpu': 'applicationLogs.performance.sustained',
   'app.starting': 'applicationLogs.event.appStarting',
   'app.ready': 'applicationLogs.event.appReady',
   'app.stopping': 'applicationLogs.event.appStopping',

@@ -162,86 +162,71 @@ describe('desktop diagnostics', () => {
       appVersion: '0.3.0',
       platform: process.platform,
       collectorPid: process.pid,
-      message: 'first\nsecond',
       operationId: 'startup-1',
       durationMs: 12,
     })
     expect(records[0]!.launchId).toBe(records[1]!.launchId)
-    expect(records[1]!.error).toMatchObject({ name: 'Error', code: 'EACCES', message: 'failed <home>/workspace token=<redacted>' })
+    expect(records[1]).toMatchObject({ errorType: 'Error', errorCode: 'EACCES' })
+    expect(records[0]).not.toHaveProperty('message')
+    expect(records[1]).not.toHaveProperty('error')
     expect(JSON.stringify(records)).not.toContain('fixture-')
-    expect(records[1]!.error).not.toHaveProperty('request')
     if (process.platform !== 'win32') {
       expect((await stat(directory)).mode & 0o777).toBe(0o700)
       expect((await stat(join(directory, 'application.jsonl'))).mode & 0o777).toBe(0o600)
     }
   })
 
-  it('reassembles UTF-8 and secrets across chunks before redaction', async () => {
+  it('counts split UTF-8 and arbitrary stderr without retaining any content', async () => {
     const { directory, logger } = await createLogger()
     const output = logger.createWritable('local-service')
-    const bytes = Buffer.from('中文 Authorization: Bearer fixture-secret\r\n  next line\nlast line')
+    const bytes = Buffer.from('中文 私密用户文本 /project/customer.mov Authorization: Bearer fixture-secret')
     for (const byte of bytes)
       output.write(Buffer.from([byte]))
     await logger.close()
     const records = await readRecords(directory)
-    expect(records.map(record => record.message)).toEqual([
-      '中文 Authorization: <redacted>',
-      '  next line',
-      'last line',
-    ])
-    expect(new Set(records.map(record => record.sourceId)).size).toBe(1)
-    expect(records.every(record => record.scope === 'local-service')).toBe(true)
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ scope: 'local-service', output: { bytes: bytes.length, chunks: bytes.length } })
+    expect(JSON.stringify(records)).not.toMatch(/私密|customer|fixture-secret/)
+    expect(records[0]).not.toHaveProperty('message')
   })
 
-  it('does not emit partial lines during flush and continues writing after flush', async () => {
+  it('aggregates stderr until its fixed interval or EOF without holding output bytes', async () => {
     const { directory, logger } = await createLogger()
     const output = logger.createWritable('local-service')
-    output.write('Authorization: Bea')
+    output.write('private text')
     await logger.flush()
     expect(logger.status.accepted).toBe(0)
-    output.write('rer fixture-secret\n')
-    await logger.flush()
-    for (let index = 0; index < 4; index++) {
-      logger.record({ ...event, message: `next-${index}` })
-      await logger.flush()
-    }
+    output.end('more text')
     await logger.close()
-    expect((await readRecords(directory)).map(record => record.message))
-      .toEqual(['Authorization: <redacted>', 'next-0', 'next-1', 'next-2', 'next-3'])
+    expect((await readRecords(directory))[0]?.output).toEqual({ bytes: 21, chunks: 2 })
   })
 
-  it('discards an oversized line in full and resumes at the next newline', async () => {
+  it('does not serialize arbitrary messages, error stacks or nested payloads', async () => {
     const { directory, logger } = await createLogger()
-    const output = logger.createWritable('native-pet')
-    output.write('x'.repeat(MAX_DIAGNOSTIC_RECORD_BYTES))
-    output.write('Authorization: Bea')
-    output.write('rer fixture-secret\nrecovered\n')
-    expect(logger.record({ ...event, message: 'x'.repeat(MAX_DIAGNOSTIC_RECORD_BYTES) })).toBe(false)
+    expect(logger.record({ ...event, message: 'private'.repeat(100000), error: new Error('unlabelled personal text') })).toBe(true)
     await logger.close()
     const records = await readRecords(directory)
-    expect(records.filter(record => record.scope === 'native-pet').map(record => record.message)).toEqual(['recovered'])
-    expect(logger.status.dropped).toBe(2)
-    expect(records.find(record => record.event === 'recorder.loss')?.recorderLoss).toEqual({ dropped: 2, failed: 0 })
-    expect(JSON.stringify(records)).not.toContain('fixture-secret')
+    expect(records[0]).toMatchObject({ errorType: 'Error', errorCode: 'OPERATION_FAILED' })
+    expect(JSON.stringify(records)).not.toMatch(/private|unlabelled/)
   })
 
-  it('bounds the pending queue without accumulating a Writable backlog', async () => {
-    const { directory, logger } = await createLogger({ maxQueueBytes: MAX_DIAGNOSTIC_RECORD_BYTES })
-    const output = logger.createWritable('local-service')
-    for (let index = 0; index < 100; index++)
-      output.write(`${index} ${'x'.repeat(2000)}\n`)
+  it('rejects a log storm before accessing payloads and bounds the pending queue', async () => {
+    const { logger } = await createLogger({ maxQueueBytes: MAX_DIAGNOSTIC_RECORD_BYTES })
+    expect(logger.record(event)).toBe(true)
+    const payload = { ...event, get error() {
+      throw new Error('must not inspect rejected payload')
+    } }
+    for (let index = 0; index < 10000; index++)
+      expect(logger.record(payload)).toBe(false)
     expect(logger.status.pendingBytes).toBeLessThanOrEqual(MAX_DIAGNOSTIC_RECORD_BYTES)
-    expect(output.writableLength).toBe(0)
-    expect(logger.status.dropped).toBeGreaterThan(0)
+    expect(logger.status.dropped).toBe(10000)
     await logger.close()
-    const records = await readRecords(directory)
-    expect(records.filter(record => record.scope === 'local-service').length + logger.status.dropped).toBe(100)
     expect(logger.status.pendingBytes).toBe(0)
   })
 
   it('persists a loss summary even when every input was rejected', async () => {
     const { directory, logger } = await createLogger()
-    logger.record({ ...event, message: 'x'.repeat(MAX_DIAGNOSTIC_RECORD_BYTES) })
+    logger.record({ ...event, event: 'INVALID_EVENT' })
     expect(await logger.close()).toMatchObject({ dropped: 1, written: 1 })
     expect((await readRecords(directory))[0]).toMatchObject({
       event: 'recorder.loss',
@@ -251,7 +236,7 @@ describe('desktop diagnostics', () => {
 
   it('reports bounded close loss once through stderr without writing back to the closed sink', async () => {
     const { directory, logger } = await createLogger()
-    logger.record({ ...event, message: 'fixture-private'.repeat(MAX_DIAGNOSTIC_RECORD_BYTES) })
+    logger.record({ ...event, event: 'INVALID_EVENT' })
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     await closeDesktopDiagnostics(logger)
     await closeDesktopDiagnostics(logger)
@@ -263,8 +248,8 @@ describe('desktop diagnostics', () => {
 
   it('bounds file size and count while retaining the latest complete records', async () => {
     const { directory, logger } = await createLogger({ maxFileBytes: MAX_DIAGNOSTIC_RECORD_BYTES, maxFiles: 3 })
-    for (let index = 0; index < 8; index++) {
-      logger.record({ ...event, operationId: String(index), message: 'x'.repeat(10000) })
+    for (let index = 0; index < 150; index++) {
+      logger.record({ ...event, operationId: String(index), component: 'component'.repeat(10) })
       await logger.flush()
     }
     await logger.close()
@@ -272,8 +257,7 @@ describe('desktop diagnostics', () => {
     expect(files.sort()).toEqual(['application.1.jsonl', 'application.2.jsonl', 'application.jsonl'])
     for (const file of files)
       expect((await stat(join(directory, file))).size).toBeLessThanOrEqual(MAX_DIAGNOSTIC_RECORD_BYTES)
-    expect((await readRecords(directory))[0]!.operationId).toBe('7')
-    expect((await readRecords(directory, 'application.2.jsonl'))[0]!.operationId).toBe('5')
+    expect((await readRecords(directory)).at(-1)!.operationId).toBe('149')
   })
 
   it('starts a clean file after a previous launch ended with an incomplete line', async () => {
@@ -298,7 +282,7 @@ describe('desktop diagnostics', () => {
     const output = logger.createWritable('local-service')
     const errors: Error[] = []
     output.on('error', error => errors.push(error))
-    output.write('first\n')
+    logger.record(event)
     expect(await logger.flush()).toMatchObject({ failed: 1, written: 0, pendingBytes: 0 })
     expect(logger.status.lastError).toBeTruthy()
     expect(errors).toEqual([])
@@ -312,15 +296,18 @@ describe('desktop diagnostics', () => {
     expect(logger.status.failed).toBe(1)
   })
 
-  it('isolates rotation failure and reports it without overwriting existing records', async () => {
+  it('isolates rotation failure and preserves already written records', async () => {
     const { directory, logger } = await createLogger({ maxFileBytes: MAX_DIAGNOSTIC_RECORD_BYTES, maxFiles: 2 })
-    logger.record({ ...event, message: 'x'.repeat(10000) })
+    logger.record({ ...event, operationId: 'first' })
     await logger.flush()
     await mkdir(join(directory, 'application.1.jsonl'))
-    logger.record({ ...event, message: 'y'.repeat(10000) })
+    for (let index = 0; index < 100 && !logger.status.failed; index++) {
+      logger.record({ ...event, operationId: String(index), component: 'component'.repeat(10) })
+      await logger.flush()
+    }
     await logger.close()
     expect(logger.status.failed).toBe(1)
-    expect((await readRecords(directory))[0]!.message).toBe('x'.repeat(10000))
+    expect((await readRecords(directory))[0]!.operationId).toBe('first')
   })
 
   it('waits for captured stream EOF and keeps process generations separate', async () => {
@@ -337,7 +324,7 @@ describe('desktop diagnostics', () => {
     second.end('rer fixture-secret')
     expect(await closing).toMatchObject({ written: 2, closeTimedOut: false })
     const records = await readRecords(directory)
-    expect(records.map(record => record.message)).toEqual(['first tail', 'Authorization: <redacted>'])
+    expect(records.map(record => record.output?.bytes)).toEqual([10, 36])
     expect(records[0]!.sourceId).not.toBe(records[1]!.sourceId)
   })
 
@@ -361,7 +348,8 @@ describe('desktop diagnostics', () => {
     expect(await logger.close()).toMatchObject({ written: 1, closeTimedOut: false })
     expect((await readRecords(directory))[0]).toMatchObject({
       event: 'process.stderr_failed',
-      error: { message: 'stderr read failed' },
+      errorType: 'Error',
+      errorCode: 'OPERATION_FAILED',
     })
   })
 
@@ -391,6 +379,6 @@ describe('desktop diagnostics', () => {
     const error = await new Promise<Error | null | undefined>(resolve => output.write('late\n', resolve))
     expect(error).toBeInstanceOf(Error)
     expect(logger.record(event)).toBe(false)
-    expect((await readRecords(directory)).map(record => record.message)).toEqual(['tail'])
+    expect((await readRecords(directory)).map(record => record.output?.bytes)).toEqual([4])
   })
 })

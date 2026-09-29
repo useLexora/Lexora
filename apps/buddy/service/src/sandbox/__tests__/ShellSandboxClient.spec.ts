@@ -3,6 +3,8 @@ import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { SandboxClientEvent } from '../ShellSandboxClient'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it } from 'vitest'
+import { diagnosticContext } from '../../diagnostics/diagnosticContext'
+import { observeSandboxClient } from '../observeSandboxClient'
 import { ShellSandboxClient } from '../ShellSandboxClient'
 
 function fixture() {
@@ -36,6 +38,20 @@ function fixture() {
 }
 
 describe('sandbox client facts', () => {
+  it('retains tool correlation across incoming backend notifications outside the original async scope', async () => {
+    const f = fixture()
+    const records: import('../../../../shared/diagnostics/applicationDiagnostic').ApplicationDiagnostic[] = []
+    const subscription = observeSandboxClient(f.client, event => records.push(event))
+    const pending = diagnosticContext.run({ runId: 'run-fixture', toolCallId: 'tool-fixture' }, f.execute)
+    f.backend(1, 'started')
+    f.response.resolve({ ok: true, exitCode: 0 })
+    await pending
+    expect(records).toHaveLength(3)
+    expect(records.every(event => event.runId === 'run-fixture' && event.toolCallId === 'tool-fixture')).toBe(true)
+    subscription.dispose()
+    await f.client.dispose()
+  })
+
   it('keeps successful settlement distinct from cleanup and ignores stale backend messages', async () => {
     const f = fixture()
     const pending = f.execute()

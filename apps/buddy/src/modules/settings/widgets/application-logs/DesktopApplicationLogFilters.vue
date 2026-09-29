@@ -2,15 +2,14 @@
 import type { ApplicationLogLaunch, ApplicationLogQuery } from '@buddy-shared/diagnostics/applicationLog'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { APPLICATION_LOG_CATEGORIES } from '@buddy-shared/diagnostics/applicationLog'
-import { ArrowClockwise20Regular, ArrowDownload20Regular, Pause20Regular, Play20Regular, Search20Regular } from '@vicons/fluent'
-import { NButton, NInput, NSelect } from 'naive-ui'
+import { Search20Regular } from '@vicons/fluent'
+import { NInput, NSelect } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { formatLogTime } from '../../model/applicationLogPresentation'
 
-const props = defineProps<{ language: BuddyLocale, launches: ApplicationLogLaunch[], currentLaunchId?: string, live: boolean, loading: boolean, exporting: boolean }>()
-const emit = defineEmits<{ refresh: [], toggleLive: [], exportDiagnostics: [] }>()
+const props = defineProps<{ language: BuddyLocale, launches: ApplicationLogLaunch[], currentLaunchId?: string }>()
 const launch = defineModel<string>('launch', { required: true })
 const category = defineModel<NonNullable<ApplicationLogQuery['category']>>('category', { required: true })
 const level = defineModel<NonNullable<ApplicationLogQuery['level']>>('level', { required: true })
@@ -36,23 +35,6 @@ const levelOptions = computed(() => (['all', 'error', 'warn', 'info', 'debug'] a
           <DesktopIcon :component="Search20Regular" />
         </template>
       </NInput>
-      <NButton size="small" secondary :aria-pressed="live" @click="emit('toggleLive')">
-        <template #icon>
-          <DesktopIcon :component="live ? Pause20Regular : Play20Regular" />
-        </template>
-        {{ t(live ? 'applicationLogs.pause' : 'applicationLogs.follow') }}
-      </NButton>
-      <NButton size="small" secondary :loading="exporting" :disabled="exporting" @click="emit('exportDiagnostics')">
-        <template #icon>
-          <DesktopIcon :component="ArrowDownload20Regular" />
-        </template>
-        {{ t('applicationLogs.exportDiagnostics') }}
-      </NButton>
-      <NButton size="small" quaternary :disabled="loading" :aria-label="t('applicationLogs.refresh')" :title="t('applicationLogs.refresh')" @click="emit('refresh')">
-        <template #icon>
-          <DesktopIcon :component="ArrowClockwise20Regular" />
-        </template>
-      </NButton>
     </div>
     <div class="log-filters__selectors">
       <NSelect v-model:value="launch" size="small" :options="launchOptions" :aria-label="t('applicationLogs.launch')" class="log-filters__launch" />
