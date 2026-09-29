@@ -27,6 +27,17 @@ export type ExtensionPackage = z.infer<typeof packageSchema>
 export type InstalledExtension = z.infer<typeof recordSchema>
 export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number }
 
+async function verifyExistingPackage(root: string, pkg: ExtensionPackage, renameError: unknown): Promise<void> {
+  const files = await readExtensionDirectory(root).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      throw renameError
+    throw error
+  })
+  const hashes = Object.fromEntries([...files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
+  if (!isDeepStrictEqual(hashes, pkg.hashes) || sha256(JSON.stringify(hashes)) !== pkg.revision)
+    throw new Error('EXTENSION_PACKAGE_CHANGED')
+}
+
 export class ExtensionPackageStore {
   readonly root: string
   readonly appVersion: string
@@ -150,6 +161,7 @@ export class ExtensionPackageStore {
     if (current && !candidate.development && !gt(pkg.manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
     const parent = join(this.root, 'packages', pkg.manifest.id)
+    const target = this.packageRoot(pkg)
     const temporary = join(parent, `.install-${randomUUID()}`)
     let created = false
     let committed = false
@@ -162,13 +174,11 @@ export class ExtensionPackageStore {
         await writeFile(path, bytes, { flag: 'wx', mode: 0o600, flush: true })
       }
       try {
-        await rename(temporary, this.packageRoot(pkg))
+        await rename(temporary, target)
         created = true
       }
       catch (error) {
-        if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? ''))
-          throw error
-        for (const [name, hash] of Object.entries(pkg.hashes)) await verifiedExtensionAsset(this.packageRoot(pkg), name, hash)
+        await verifyExistingPackage(target, pkg, error)
       }
       await this.#update((index) => {
         signal?.throwIfAborted()
@@ -185,7 +195,7 @@ export class ExtensionPackageStore {
     finally {
       await rm(temporary, { recursive: true, force: true })
       if (created && !committed)
-        await rm(this.packageRoot(pkg), { recursive: true, force: true })
+        await rm(target, { recursive: true, force: true })
     }
   }
 

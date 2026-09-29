@@ -60,6 +60,17 @@ describe('extension package contract', () => {
     expect(reloaded.installed['tests.reader']!.pending).toBeNull()
     await expect(store.install(update.token)).rejects.toThrow('EXTENSION_REVIEW_EXPIRED')
   })
+  it('reuses only a complete matching immutable revision', async () => {
+    const { root, store } = await fixture()
+    await store.install((await reviewPackage(root, store)).token)
+    const pkg = store.installed['tests.reader']!.current
+    await store.uninstall('tests.reader')
+    await store.install((await reviewPackage(root, store)).token)
+    expect(store.installed['tests.reader']!.current.revision).toBe(pkg.revision)
+    await store.uninstall('tests.reader')
+    await writeFile(join(store.packageRoot(pkg), 'unexpected.js'), 'unexpected')
+    await expect(store.install((await reviewPackage(root, store)).token)).rejects.toThrow('EXTENSION_PACKAGE_CHANGED')
+  })
   it('refuses incompatible versions and missing entry modules before installation', async () => {
     const { root, store } = await fixture()
     await expect(reviewPackage(root, store, manifest({ engines: { lexora: '>=1' } }))).rejects.toThrow('EXTENSION_INCOMPATIBLE')
