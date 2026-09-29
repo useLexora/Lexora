@@ -116,14 +116,20 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-tool-details')).toBe(details)
   })
 
-  it('finishes a mixed group without borrowing progress and avoids duplicate loaders during another call', async () => {
+  it('finishes a mixed group without borrowing progress from waiting tools or the model', async () => {
     const first = readTool('one', 'running')
     const second = readTool('two', 'completed')
     const { root, turn } = mountTurn([{ id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking output' }, first, second])
     expect(root.querySelector('.buddy-chat-run-activity')).not.toBeNull()
     const header = root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
+    expect(header.textContent?.trim()).toBe('思考 · 读取 1 个文件')
+    expect(header.getAttribute('aria-label')).toContain('运行中')
+    expect(header.querySelector('.buddy-chat-activity-spinner')).not.toBeNull()
     header.click()
     await nextTick()
+    expect(header.querySelector('.buddy-chat-activity-spinner')).toBeNull()
+    expect(header.querySelector('.buddy-shimmer-text--continuous')).not.toBeNull()
+    expect(root.querySelector('[data-tool-call-id="one"] .buddy-chat-activity-spinner')).not.toBeNull()
     turn.value = { ...turn.value, nodes: [turn.value.nodes[0]!, { ...first, status: 'completed' }, second], progress: { phase: 'model_requesting', toolName: null } }
     await nextTick()
     expect(header.textContent?.trim()).toBe('思考 · 读取 1 个文件')
@@ -134,6 +140,12 @@ describe('activity disclosure', () => {
     await nextTick()
     expect(root.querySelector('.buddy-chat-run-activity')).not.toBeNull()
     expect(root.querySelector('.buddy-chat-tool.is-awaiting_approval')?.textContent).toContain('等待批准')
+    expect(root.querySelector('.buddy-chat-activity-group .buddy-chat-activity-spinner')).toBeNull()
+    header.click()
+    await nextTick()
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(header.querySelector('.buddy-chat-activity-spinner')).toBeNull()
+    expect(header.querySelector('.buddy-shimmer-text--continuous')).toBeNull()
   })
 
   it('mounts expensive details only on request, keeps manual state through completion and group collapse', async () => {
@@ -164,7 +176,7 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-tool-details')).not.toBeNull()
   })
 
-  it('opens pure thinking directly, shows its content once and retains it when tools arrive', async () => {
+  it('retains one open reasoning row while adjacent blocks stream, settle and are followed by tools', async () => {
     const title = 'Investigating image upload naming'
     const thought: ChatAgentTurnNode = { id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: `**${title}**` }
     const { root, turn } = mountTurn([thought])
@@ -176,11 +188,52 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-reasoning-entry__label')?.textContent).toBe('思考')
     expect(root.textContent?.split(title)).toHaveLength(2)
     expect(body?.textContent?.trim()).toBe(title)
-    turn.value = { ...turn.value, nodes: [thought, readTool('one', 'running')] }
+    const following: ChatAgentTurnNode = { ...thought, id: 'following', contentIndex: 1, status: 'running', text: 'Check the extension' }
+    turn.value = { ...turn.value, nodes: [thought, following] }
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-activity-group__header')).toBeNull()
+    expect(root.querySelectorAll('.buddy-chat-reasoning-entry__header')).toHaveLength(1)
+    expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBe(body)
+    expect(body?.textContent).toContain('Check the extension')
+    expect(root.querySelector('.buddy-chat-reasoning-entry__header .buddy-chat-activity-spinner')).not.toBeNull()
+    const settled: ChatAgentTurnNode[] = [thought, { ...following, status: 'completed', text: 'Check the extension and format' }]
+    turn.value = { ...turn.value, nodes: settled }
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBe(body)
+    expect(body?.textContent).toContain('Check the extension and format')
+    expect(root.querySelector('.buddy-chat-reasoning-entry__header .buddy-chat-activity-spinner')).toBeNull()
+    turn.value = { ...turn.value, nodes: [...settled, readTool('one', 'running')] }
     await nextTick()
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBe(body)
     expect(root.textContent?.split(title)).toHaveLength(2)
     expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
+  })
+
+  it('keeps a manually closed reasoning row closed as more blocks arrive and interruption settles it', async () => {
+    const thought: ChatAgentTurnNode = { id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'First thought' }
+    const { root, turn } = mountTurn([thought])
+    const header = root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!
+    header.click()
+    await nextTick()
+    header.click()
+    await nextTick()
+    const following: ChatAgentTurnNode[] = Array.from({ length: 9 }, (_, index) => ({ ...thought, id: `following:${index}`, contentIndex: index + 1, text: `Thought ${index}` }))
+    turn.value = { ...turn.value, nodes: [thought, ...following, { ...thought, id: 'active', contentIndex: 10, status: 'running', text: '' }] }
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-reasoning-entry__header')).toBe(header)
+    expect(root.querySelectorAll('.buddy-chat-reasoning-entry__header')).toHaveLength(1)
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(header.textContent).toContain('正在思考')
+    expect(root.querySelector('.buddy-chat-activity-group__header')).toBeNull()
+    expect(root.querySelector('.buddy-chat-activity-group__collapse')).toBeNull()
+    turn.value = { ...turn.value, status: 'cancelled', nodes: [thought, ...following, { ...thought, id: 'active', contentIndex: 10, status: 'interrupted', text: 'Partial thought' }] }
+    await nextTick()
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(header.textContent).toContain('已中断')
+    await vi.waitFor(() => expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull())
+    header.click()
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('Partial thought')
   })
 
   it.each(['reasoning', 'tool'] as const)('preserves a manually closed %s when the next tool forms a group', async (kind) => {
@@ -387,6 +440,36 @@ describe('activity disclosure', () => {
 })
 
 describe('current status and historical activity', () => {
+  it('keeps per-tool loading feedback when a preparing call becomes an expanded parallel group', async () => {
+    const preparing = readTool('first', 'preparing')
+    const parallel = readTool('second', 'running')
+    const pending = readTool('pending', 'awaiting_approval')
+    const failed = readTool('failed', 'failed')
+    const { root, turn } = mountTurn([preparing])
+    const first = root.querySelector('[data-tool-call-id="first"]')!
+    const icon = first.querySelector('.buddy-chat-activity-row__icon')
+    expect(first.querySelector('.buddy-chat-tool__status')?.textContent).toContain('准备')
+    expect(first.querySelector('.buddy-chat-tool__status .buddy-chat-activity-spinner')).not.toBeNull()
+    first.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
+    await nextTick()
+    turn.value = { ...turn.value, nodes: [{ ...preparing, status: 'running' }, parallel, pending, failed] }
+    await nextTick()
+    const content = root.querySelector('.buddy-chat-activity-group__content')!
+    expect(first.querySelector('.buddy-chat-activity-row__icon')).toBe(icon)
+    expect(first.querySelector('.buddy-chat-tool__status')?.textContent).toContain('运行中')
+    expect(first.querySelector('.buddy-chat-tool__status .buddy-chat-activity-spinner')).not.toBeNull()
+    expect(content.querySelector('[data-tool-call-id="second"] .buddy-chat-activity-spinner')).not.toBeNull()
+    expect(content.querySelector('[data-tool-call-id="pending"] .buddy-chat-tool__status')?.textContent).toContain('等待批准')
+    expect(content.querySelector('[data-tool-call-id="pending"] .buddy-chat-activity-spinner')).toBeNull()
+    expect(content.querySelector('[data-tool-call-id="failed"] .buddy-chat-activity-spinner')).toBeNull()
+    expect(content.querySelectorAll('.buddy-chat-activity-spinner')).toHaveLength(2)
+    expect(content.querySelector('.buddy-shimmer-text--continuous')).toBeNull()
+    turn.value = { ...turn.value, nodes: [{ ...preparing, status: 'completed' }, { ...parallel, status: 'cancelled' }, pending, failed] }
+    await nextTick()
+    expect(content.querySelector('.buddy-chat-activity-spinner')).toBeNull()
+    expect(first.querySelector('.buddy-chat-activity-row__icon')).toBe(icon)
+  })
+
   it('keeps the accumulated header and open output while reasoning starts and finishes', async () => {
     const history = [readTool('one', 'completed'), readTool('two', 'completed')]
     const { root, turn } = mountTurn(history)
@@ -410,6 +493,7 @@ describe('current status and historical activity', () => {
     const status = root.querySelector('.buddy-chat-run-activity')!
     expect(status.textContent).toContain('正在思考')
     expect(status.textContent).not.toContain('Reviewing the results')
+    expect(root.querySelector('.buddy-chat-reasoning-entry__header .buddy-chat-activity-spinner')).not.toBeNull()
     root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!.click()
     await nextTick()
     const body = root.querySelector('.buddy-chat-reasoning-entry__body')
@@ -421,6 +505,7 @@ describe('current status and historical activity', () => {
     expect(group.textContent?.trim()).toBe('思考 · 读取 1 个文件')
     expect(group.querySelector('.buddy-chat-activity-row__icon')).toBe(icon)
     expect(group.querySelector('.buddy-shimmer-text--continuous')).toBeNull()
+    expect(root.querySelector('.buddy-chat-reasoning-entry__header .buddy-chat-activity-spinner')).toBeNull()
     expect(root.querySelector('.buddy-chat-tool-details')).toBe(output)
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBe(body)
   })
@@ -431,6 +516,7 @@ describe('current status and historical activity', () => {
     const header = root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!
     expect(header.disabled).toBe(true)
     expect(header.textContent).toBe('正在思考')
+    expect(header.querySelector('.buddy-chat-activity-spinner')).not.toBeNull()
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull()
     turn.value = { ...turn.value, nodes: [{ ...thought, text: 'Checking the layout' }] }
     await nextTick()
@@ -448,6 +534,7 @@ describe('current status and historical activity', () => {
     await nextTick()
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBe(body)
     expect(header.textContent).toBe('思考已中断')
+    expect(header.querySelector('.buddy-chat-activity-spinner')).toBeNull()
     expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
   })
 
@@ -484,8 +571,10 @@ describe('current status and historical activity', () => {
     expect(groups[0]?.querySelector('.buddy-chat-activity-group__approval')?.textContent).toContain('1 项待批准')
     expect(groups[0]?.querySelector('.buddy-chat-activity-group__issues')?.textContent).toContain('1 项异常')
     expect(groups[0]?.querySelector('.buddy-shimmer-text--continuous')).not.toBeNull()
+    expect(groups[0]?.querySelector('.buddy-chat-activity-group__header .buddy-chat-activity-spinner')).not.toBeNull()
     expect(groups[1]?.getAttribute('data-status')).toBe('awaiting_approval')
     expect(groups[1]?.querySelector('.buddy-shimmer-text--continuous')).toBeNull()
+    expect(groups[1]?.querySelector('.buddy-chat-activity-spinner')).toBeNull()
     expect(status.textContent).toContain('有操作待批准')
     expect(status.querySelector('.buddy-chat-activity-loader')).toBeNull()
     stopping.value = true

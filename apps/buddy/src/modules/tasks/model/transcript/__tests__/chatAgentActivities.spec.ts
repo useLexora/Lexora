@@ -74,6 +74,18 @@ describe('activity grouping', () => {
     expect(summarizeChatActivity(mixed, 'zh-CN')).toMatchObject({ icon: 'activity' })
   })
 
+  it.each(['before', 'after'] as const)('uses the aggregate icon with reasoning %s a command, independent of execution status', (position) => {
+    const command: ChatAgentToolNode = { ...tool('command'), toolName: 'bash', presentation: { card: 'terminal', command: 'pwd', cwd: '.', description: null, output: null, exitCode: null, signal: null, truncated: false } }
+    for (const status of ['running', 'completed', 'interrupted'] as const) {
+      const reasoning = thought('thought', status)
+      const nodes = position === 'before' ? [reasoning, command] : [command, reasoning]
+      const group = createChatAgentActivityProjector().project(nodes)[0]!
+      if (group.kind !== 'activity-group')
+        throw new Error('Expected activity group')
+      expect(summarizeChatActivity(group, 'zh-CN')).toEqual({ icon: 'activity', label: '思考 · 运行 1 条命令' })
+    }
+  })
+
   it('does not change the summary when only a large tool output is appended', () => {
     const call = tool('one', 'running')
     const projector = createChatAgentActivityProjector()
@@ -108,6 +120,38 @@ describe('activity grouping', () => {
     skill.presentation.path = 'skills/review/SKILL.md'
     expect(presentChatActivityLayout([skill, tool('file')]).compact.size).toBe(0)
   })
+
+  it('merges adjacent reasoning in order without changing source nodes or crossing tool boundaries', () => {
+    const first = { ...thought('first'), text: '**First**\n\nDetails' }
+    const second = { ...thought('second'), text: 'Second paragraph' }
+    const third = { ...thought('third'), text: 'After tools' }
+    const fourth = { ...thought('fourth'), text: 'Last paragraph' }
+    const nodes = [first, second, tool('one'), tool('two'), third, fourth]
+    const original = structuredClone(nodes)
+    const layout = presentChatActivityLayout(nodes)
+    expect(layout.entries).toEqual([
+      { ...first, text: '**First**\n\nDetails\n\nSecond paragraph' },
+      nodes[2],
+      nodes[3],
+      { id: 'details:tool:one', kind: 'tool-details', node: nodes[2] },
+      { id: 'details:tool:two', kind: 'tool-details', node: nodes[3] },
+      { ...third, text: 'After tools\n\nLast paragraph' },
+    ])
+    expect(nodes).toEqual(original)
+    expect(presentChatActivityLayout([first]).entries[0]).toBe(first)
+  })
+
+  it.each([
+    ['completed', 'completed', 'completed'],
+    ['completed', 'running', 'running'],
+    ['interrupted', 'running', 'running'],
+    ['interrupted', 'completed', 'interrupted'],
+    ['completed', 'interrupted', 'interrupted'],
+  ] as const)('combines reasoning states %s and %s as %s, including empty active blocks', (first, last, status) => {
+    const layout = presentChatActivityLayout([thought('first', first), { ...thought('last', last), text: '' }])
+    expect(layout.entries).toEqual([{ ...thought('first', status) }])
+  })
+
   it('disambiguates filenames with the shortest unique suffix and retains repeated reads', () => {
     const nodes = ['src/a/index.ts', 'src/b/index.ts', 'lib/a/index.ts', 'src/a/index.ts', 'src/main.ts'].map((path, index) => {
       const node = tool(String(index))

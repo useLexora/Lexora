@@ -5,6 +5,7 @@ import { ChevronRight20Regular } from '@vicons/fluent'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { canExpandChatTool, describeChatTool, isChatToolActive, isChatToolIssue } from '../../model/transcript/chatToolDisplay'
+import BuddyChatActivitySpinner from './BuddyChatActivitySpinner.vue'
 import BuddyChatShimmerText from './BuddyChatShimmerText.vue'
 import BuddyChatToolIcon from './BuddyChatToolIcon.vue'
 import { useChatContent } from './chatContentContext'
@@ -17,14 +18,14 @@ const props = defineProps<{
   compactTarget?: string
   hasNext?: boolean
   highlighted?: boolean
-  animate?: boolean
+  shimmer?: boolean
 }>()
 const emit = defineEmits<{ toggle: [] }>()
 const actions = useChatContent()
 const display = computed(() => describeChatTool(props.node, props.language))
 const canExpand = computed(() => canExpandChatTool(props.node, actions.canPreviewFile))
 const active = computed(() => isChatToolActive(props.node))
-const animating = computed(() => props.animate && (props.node.status === 'running' || props.node.status === 'preparing'))
+const processing = computed(() => props.node.status === 'running' || props.node.status === 'preparing')
 const issue = computed(() => isChatToolIssue(props.node))
 </script>
 
@@ -39,13 +40,14 @@ const issue = computed(() => isChatToolIssue(props.node))
       @click="emit('toggle')"
     >
       <BuddyChatToolIcon v-if="compact !== 'continuation'" :icon="display.icon" class="buddy-chat-activity-row__icon" aria-hidden="true" />
-      <BuddyChatShimmerText v-if="compact !== 'continuation'" class="buddy-chat-tool__title buddy-chat-activity-row__label" :mode="animating ? 'continuous' : 'static'">
+      <BuddyChatShimmerText v-if="compact !== 'continuation'" class="buddy-chat-tool__title buddy-chat-activity-row__label" :mode="shimmer && processing ? 'continuous' : 'static'">
         {{ display.label }}
       </BuddyChatShimmerText>
       <span v-if="display.target" class="buddy-chat-tool__summary">{{ compactTarget ?? display.target }}<span v-if="hasNext" class="buddy-chat-tool__separator" aria-hidden="true">,</span></span>
       <span v-if="display.context && !compact" class="buddy-chat-tool__context">{{ display.context }}</span>
       <span v-if="issue || active || node.status === 'cancelled' || node.status === 'skipped' || node.presentation.card === 'directory-authorization' || node.presentation.card === 'system'" class="buddy-chat-tool__status" :class="{ 'is-issue': issue }">
-        <span>{{ display.status }}</span>
+        <span class="buddy-chat-tool__status-label">{{ display.status }}</span>
+        <BuddyChatActivitySpinner v-if="processing" />
       </span>
       <DesktopIcon v-if="!compact" :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open, 'is-hidden': !canExpand }" aria-hidden="true" />
     </button>
@@ -149,7 +151,7 @@ const issue = computed(() => isChatToolIssue(props.node))
   white-space: nowrap;
 }
 
-.buddy-chat-tool__status > span {
+.buddy-chat-tool__status-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }

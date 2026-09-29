@@ -5,6 +5,7 @@ import { ChevronRight20Regular, Thinking20Regular } from '@vicons/fluent'
 import { computed, useId, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import BuddyChatActivitySpinner from './BuddyChatActivitySpinner.vue'
 import BuddyChatDisclosure from './BuddyChatDisclosure.vue'
 import BuddyChatReasoningBody from './BuddyChatReasoningBody.vue'
 import BuddyChatShimmerText from './BuddyChatShimmerText.vue'
@@ -13,14 +14,14 @@ const props = defineProps<{
   language: BuddyLocale
   node: ChatAgentReasoningNode
   open: boolean
-  animate?: boolean
+  shimmer?: boolean
 }>()
 const emit = defineEmits<{ toggle: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const bodyId = useId()
 const header = useTemplateRef<HTMLButtonElement>('header')
 const hasContent = computed(() => !!props.node.text.trim())
-const active = computed(() => props.animate !== false && props.node.status === 'running')
+const active = computed(() => props.node.status === 'running')
 const label = computed(() => t(props.node.status === 'interrupted'
   ? 'desktop.chat.processReasoningInterrupted'
   : props.node.status === 'running' ? 'desktop.chat.processReasoningRunning' : 'desktop.chat.processReasoning'))
@@ -36,9 +37,10 @@ function collapse() {
   <div class="buddy-chat-reasoning-entry">
     <button ref="header" class="buddy-chat-reasoning-entry__header buddy-chat-activity-row" type="button" :disabled="!hasContent" :aria-expanded="hasContent ? open : undefined" :aria-controls="hasContent ? bodyId : undefined" @click="emit('toggle')">
       <DesktopIcon :component="Thinking20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
-      <BuddyChatShimmerText class="buddy-chat-reasoning-entry__label buddy-chat-activity-row__label" :mode="active ? 'continuous' : 'static'">
+      <BuddyChatShimmerText class="buddy-chat-reasoning-entry__label buddy-chat-activity-row__label" :mode="active && shimmer !== false ? 'continuous' : 'static'">
         {{ label }}
       </BuddyChatShimmerText>
+      <BuddyChatActivitySpinner v-if="active" />
       <DesktopIcon v-if="hasContent" :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open }" aria-hidden="true" />
     </button>
     <BuddyChatDisclosure>

@@ -99,6 +99,8 @@ function summarizeGroup(id: string, nodes: ChatAgentActivityGroup['nodes']): Cha
     if (isChatToolIssue(node))
       issueCount++
   }
+  if (reasoningCount && toolCount)
+    icon = 'activity'
   const status = running ? 'running' : preparing ? 'preparing' : approvalCount ? 'awaiting_approval' : interrupted ? 'interrupted' : 'completed'
   return { id, kind: 'activity-group', nodes, issueCount, toolCount, reasoningCount, approvalCount, status, icon, counts: [...counts].map(([category, count]) => ({ category, count, files: files.get(category)?.size ?? null })) }
 }

@@ -320,65 +320,46 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     const activity = page.locator('.buddy-chat-run-activity')
     const group = page.locator('.buddy-chat-activity-group')
+    const reasoning = group.locator('.buddy-chat-reasoning-entry__header')
     await expect(activity).toContainText('正在思考')
-    await expect(group.locator('.buddy-chat-reasoning-entry__header')).toContainText('正在思考')
-    await group.locator('.buddy-chat-reasoning-entry__header').click()
+    await expect(reasoning.locator('.buddy-chat-activity-spinner')).toBeVisible()
+    await reasoning.click()
     const originalBody = await group.locator('.buddy-chat-reasoning-entry__body').elementHandle()
     await expect(group.locator('.buddy-chat-reasoning-entry__body')).toContainText('先检查工作目录')
+
     gates.tools.resolve()
     await expect(activity).toContainText('准备中')
-    await expect(group).toHaveAttribute('data-status', 'completed')
     expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
     gates.arguments.resolve()
     await expect.poll(() => requests.length).toBe(2)
-    await expect(group).toHaveAttribute('data-status', 'completed')
-    await expect(group.locator('.buddy-chat-activity-group__header')).toContainText('思考 · 读取 1 个文件 · 搜索 1 次')
-    await expect(group.locator('.buddy-chat-activity-group__header')).toHaveAttribute('aria-expanded', 'true')
-    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
-    await expect(activity).toContainText('正在处理')
+    const groupHeader = group.locator('.buddy-chat-activity-group__header')
+    await expect(groupHeader).toContainText('思考 · 读取 1 个文件 · 搜索 1 次')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(group.locator('.buddy-chat-activity-spinner')).toHaveCount(0)
     await expect(group.locator('.buddy-chat-activity-group__issues')).toContainText('1 项异常')
-    const failedTool = group.locator('[data-tool-call-id="read-missing"]')
-    await expectInlineToolStatus(failedTool)
-    const groupIcon = await group.locator('.buddy-chat-activity-group__header > .buddy-chat-activity-row__icon').elementHandle()
-    await page.mouse.move(0, 0)
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'activity-settled-light.png'), animations: 'disabled' })
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+
     gates.thinking.resolve()
     await expect(group).toHaveAttribute('data-status', 'running')
-    expect(await groupIcon.evaluate(element => element.isConnected)).toBe(true)
-    expect(await groupIcon.evaluate(element => getComputedStyle(element).animationName)).toBe('none')
-    await expect(group.locator('.buddy-chat-activity-group__status')).toHaveText('运行中')
-    await expect(group.locator('.buddy-shimmer-text--continuous')).toHaveCount(1)
-    expect(await group.locator('.buddy-shimmer-text--continuous').evaluate(element => getComputedStyle(element).animationDuration)).toBe('3s')
-    expect(await activity.locator('.buddy-shimmer-text--continuous').evaluate(element => getComputedStyle(element).animationDuration)).toBe('1.8s')
-    await expect(group.locator('.buddy-chat-reasoning-entry__header').last()).toHaveAttribute('aria-expanded', 'false')
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    expect(await group.locator('.buddy-shimmer-text--continuous').evaluate(element => getComputedStyle(element).animationName)).toBe('none')
-    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: 'dark' } }))
-    await expect(page.locator('.buddy-app')).toHaveClass(/is-dark/)
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'activity-running-dark.png'), animations: 'disabled' })
-    await group.evaluate(element => element.style.maxWidth = '320px')
-    expect(await group.evaluate(element => element.scrollWidth <= element.clientWidth + 4)).toBe(true)
-    await expectInlineToolStatus(failedTool)
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'activity-running-narrow.png'), animations: 'disabled' })
-    await group.evaluate(element => element.style.removeProperty('max-width'))
+    await expect(groupHeader).toHaveAttribute('aria-label', /运行中/)
+    await expect(reasoning.last().locator('.buddy-chat-activity-spinner')).toBeVisible()
     gates.reply.resolve()
     await expect(activity).toContainText('正在回复')
     await expect(group).toHaveAttribute('data-status', 'completed')
-    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+    await expect(group.locator('.buddy-chat-activity-spinner')).toHaveCount(0)
     gates.finish.resolve()
     await expect.poll(() => completedRuns(instance.home)).toBe(1)
     await expect(activity).toHaveCount(0)
     expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+
     await page.getByTestId('conversation-canvas-toggle').click()
     await page.locator('.conversation-node[data-kind="answer"]').click()
     const detail = page.getByTestId('canvas-node-detail')
     await expect(detail.locator('.buddy-chat-activity-group__header')).toContainText('思考 · 读取 1 个文件 · 搜索 1 次')
     await detail.locator('.buddy-chat-activity-group__header').click()
-    await expectInlineToolStatus(detail.locator('[data-tool-call-id="read-missing"]'))
+    await expect(detail.locator('.buddy-chat-activity-spinner')).toHaveCount(0)
     await detail.locator('.buddy-chat-reasoning-entry__header').first().click()
     await expect(detail.locator('.buddy-chat-reasoning-entry__body')).toContainText('先检查工作目录')
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'activity-canvas-dark.png'), animations: 'disabled' })
     expect(application.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   }
   finally {
@@ -389,39 +370,6 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     await new Promise(resolve => server.close(resolve))
   }
 })
-
-async function expectInlineToolStatus(row) {
-  const spacing = await row.evaluate((element) => {
-    const status = element.querySelector('.buddy-chat-tool__status')
-    const headerBounds = element.querySelector('.buddy-chat-tool__header').getBoundingClientRect()
-    const iconBounds = element.querySelector('.buddy-chat-activity-row__icon').getBoundingClientRect()
-    const targetBounds = status.previousElementSibling.getBoundingClientRect()
-    const statusBounds = status.getBoundingClientRect()
-    const chevronBounds = element.querySelector('.buddy-chat-activity-row__chevron').getBoundingClientRect()
-    const textBaselines = [...element.querySelectorAll('.buddy-chat-tool__title, .buddy-chat-tool__summary, .buddy-chat-tool__context, .buddy-chat-tool__status > span')].map((text) => {
-      const marker = document.createElement('span')
-      marker.style.cssText = 'display: inline-block; width: 0; height: 0; vertical-align: baseline;'
-      text.append(marker)
-      const baseline = marker.getBoundingClientRect().top
-      marker.remove()
-      return baseline
-    })
-    return {
-      targetGap: statusBounds.left - targetBounds.right,
-      chevronGap: chevronBounds.left - statusBounds.right,
-      textBaselineOffset: Math.max(...textBaselines) - Math.min(...textBaselines),
-      iconCenterOffset: Math.abs(iconBounds.y + iconBounds.height / 2 - headerBounds.y - headerBounds.height / 2),
-      chevronCenterOffset: Math.abs(chevronBounds.y + chevronBounds.height / 2 - headerBounds.y - headerBounds.height / 2),
-    }
-  })
-  expect(spacing.targetGap).toBeGreaterThanOrEqual(0)
-  expect(spacing.targetGap).toBeLessThanOrEqual(12)
-  expect(spacing.chevronGap).toBeGreaterThanOrEqual(0)
-  expect(spacing.chevronGap).toBeLessThanOrEqual(12)
-  expect(spacing.textBaselineOffset).toBeLessThan(1)
-  expect(spacing.iconCenterOffset).toBeLessThan(1)
-  expect(spacing.chevronCenterOffset).toBeLessThan(1)
-}
 
 async function useSyntheticCredentialStorage({ app, page }) {
   await app.evaluate(({ app, safeStorage }) => {

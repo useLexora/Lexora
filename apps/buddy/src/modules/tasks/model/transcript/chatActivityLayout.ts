@@ -1,5 +1,5 @@
 import type { ChatAgentActivityGroup } from './chatAgentActivities'
-import type { ChatAgentToolNode } from './chatAgentTurn'
+import type { ChatAgentReasoningNode, ChatAgentToolNode } from './chatAgentTurn'
 import { getChatToolRegistration, isRegisteredChatTool } from './chatToolRegistry'
 
 interface ChatToolDetailsEntry {
@@ -18,13 +18,14 @@ export function presentChatActivityLayout(nodes: ChatAgentActivityGroup['nodes']
   const entries: Array<ChatAgentActivityGroup['nodes'][number] | ChatToolDetailsEntry> = []
   const compact = new Map<string, ChatCompactRead>()
   let reads: ChatAgentToolNode[] = []
+  let reasoning: ChatAgentReasoningNode[] = []
   let readIcon: string | null = null
 
   function details(node: ChatAgentToolNode): ChatToolDetailsEntry {
     return { id: `details:${node.id}`, kind: 'tool-details', node }
   }
 
-  function flush() {
+  function flushReads() {
     if (reads.length > 1) {
       const paths = reads.map((node) => {
         const path = node.presentation.card === 'read' ? node.presentation.path.replaceAll('\\', '/') : ''
@@ -42,24 +43,45 @@ export function presentChatActivityLayout(nodes: ChatAgentActivityGroup['nodes']
     readIcon = null
   }
 
+  function flushReasoning() {
+    const first = reasoning[0]
+    if (!first)
+      return
+    entries.push(reasoning.length === 1
+      ? first
+      : {
+          ...first,
+          text: reasoning.map(node => node.text).filter(text => text.trim()).join('\n\n'),
+          status: reasoning.some(node => node.status === 'running')
+            ? 'running'
+            : reasoning.some(node => node.status === 'interrupted') ? 'interrupted' : 'completed',
+        })
+    reasoning = []
+  }
+
   for (const node of nodes) {
-    if (node.kind === 'tool' && isRegisteredChatTool(node.toolName) && node.presentation.card === 'read' && node.presentation.path
+    if (node.kind === 'reasoning') {
+      flushReads()
+      reasoning.push(node)
+      continue
+    }
+    flushReasoning()
+    if (isRegisteredChatTool(node.toolName) && node.presentation.card === 'read' && node.presentation.path
       && node.status === 'completed' && !node.isError) {
       const icon = getChatToolRegistration(node).icon
       if (readIcon !== icon)
-        flush()
+        flushReads()
       readIcon = icon
       reads.push(node)
       entries.push(node)
     }
     else {
-      flush()
-      entries.push(node)
-      if (node.kind === 'tool')
-        entries.push(details(node))
+      flushReads()
+      entries.push(node, details(node))
     }
   }
-  flush()
+  flushReads()
+  flushReasoning()
   return { entries, compact }
 }
 
