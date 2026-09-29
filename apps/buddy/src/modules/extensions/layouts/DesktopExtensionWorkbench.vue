@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { NScrollbar } from 'naive-ui'
 import { computed } from 'vue'
+import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmentedControl.vue'
 import { extensionLabels } from '../extensionLabels'
 
 const props = defineProps<{ language: string }>()
@@ -10,19 +11,21 @@ defineSlots<{
 }>()
 const section = defineModel<'marketplace' | 'installed'>('section', { required: true })
 const labels = computed(() => extensionLabels(props.language))
+const sections = computed(() => [
+  { label: labels.value.marketplace, value: 'marketplace' },
+  { label: labels.value.installed, value: 'installed' },
+] as const)
 </script>
 
 <template>
   <section class="desktop-extension-workbench">
     <header class="desktop-extension-workbench__header">
-      <nav class="desktop-extension-workbench__sections" :aria-label="labels.title">
-        <button type="button" :class="{ 'is-active': section === 'marketplace' }" :aria-pressed="section === 'marketplace'" @click="section = 'marketplace'">
-          {{ labels.marketplace }}
-        </button>
-        <button type="button" :class="{ 'is-active': section === 'installed' }" :aria-pressed="section === 'installed'" @click="section = 'installed'">
-          {{ labels.installed }}
-        </button>
-      </nav>
+      <DesktopSegmentedControl
+        v-model="section"
+        class="desktop-extension-workbench__sections"
+        :aria-label="labels.title"
+        :options="sections"
+      />
       <div class="desktop-extension-workbench__actions">
         <slot name="actions" />
       </div>
@@ -58,41 +61,12 @@ const labels = computed(() => extensionLabels(props.language))
   padding: 0 18px;
 }
 
-.desktop-extension-workbench__sections {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 2px;
-  border-radius: 6px;
-  background: var(--buddy-surface-subtle);
-  padding: 2px;
-
-  > button {
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--buddy-text-secondary);
-    cursor: pointer;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 580;
-    line-height: 1;
-    padding: 7px 12px;
-    white-space: nowrap;
-
-    &:hover { color: var(--buddy-text-strong); }
-    &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 1px; }
-    &.is-active { background: var(--buddy-surface-base); color: var(--buddy-text-strong); }
-  }
-}
-
 .desktop-extension-workbench__actions { display: flex; flex: none; align-items: center; gap: 8px; }
 .desktop-extension-workbench__scroll { min-height: 0; flex: 1; }
 .desktop-extension-workbench__content { display: flex; min-height: 100%; box-sizing: border-box; flex-direction: column; gap: 12px; padding: 14px 18px 36px; }
 
 @container (max-width: 600px) {
   .desktop-extension-workbench__header { gap: 8px; padding: 0 12px; }
-  .desktop-extension-workbench__sections > button { padding-inline: 8px; }
   .desktop-extension-workbench__actions { gap: 4px; }
   .desktop-extension-workbench__content { padding: 10px 12px 28px; }
 }

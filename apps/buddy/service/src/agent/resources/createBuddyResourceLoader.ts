@@ -12,6 +12,7 @@ import {
   DefaultResourceLoader,
   SettingsManager as PiSettingsManager,
 } from '@earendil-works/pi-coding-agent'
+import { DEFAULT_MODEL_RETRY_LIMIT } from '../../../../shared/runtime/runtimePreferences'
 import { SHELL_SANDBOX_EXTENSION } from '../../sandbox/shellCapability'
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
@@ -35,6 +36,13 @@ export interface CreateBuddyResourceLoaderOptions {
 export function createBuddySettingsManager(): SettingsManager {
   return PiSettingsManager.inMemory({
     cacheWarming: 'off',
+    retry: {
+      enabled: true,
+      maxRetries: DEFAULT_MODEL_RETRY_LIMIT,
+      baseDelayMs: 2_000,
+      maxAgentDelayMs: 60_000,
+      provider: { maxRetries: 0 },
+    },
     enableAnalytics: false,
     enableInstallTelemetry: false,
     extensions: [],

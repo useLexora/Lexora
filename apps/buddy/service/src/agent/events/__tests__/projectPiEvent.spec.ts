@@ -1,6 +1,7 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it } from 'vitest'
+import { publicRunEventSchema, toPublicRunEvent } from '../../../../../shared/runs/publicRunEvent'
 
 import {
   createPiEventProjectionState,
@@ -8,6 +9,70 @@ import {
   projectToolExecutionAuthorized,
   projectToolExecutionDenied,
 } from '../projectPiEvent'
+
+describe('projectPiEvent retries', () => {
+  it.each([3, Infinity])('preserves the %s budget and deadline through public JSON and clears it on settlement', (maxAttempts) => {
+    const state = createPiEventProjectionState()
+    const now = Date.parse('2026-09-21T00:00:00Z')
+    const projection = projectPiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts, delayMs: 2000, errorMessage: 'private upstream error' }, state, now)
+    const retry = { attempt: 1, maxAttempts: maxAttempts === Infinity ? 'unlimited' : maxAttempts, retryAt: '2026-09-21T00:00:02.000Z' }
+    expect(projection.events).toEqual([{ type: 'run.progress', payload: { phase: 'model_requesting', toolName: null, retry } }])
+    const wire = JSON.parse(JSON.stringify(toPublicRunEvent({ ...projection.events[0]!, createdAt: new Date(now).toISOString(), runId: 'retry-run', sequence: 1 })))
+    expect(publicRunEventSchema.parse(wire).payload).toEqual(projection.events[0]!.payload)
+    expect(JSON.stringify(wire)).not.toContain('private upstream')
+    projectPiEvent({ type: 'agent_start' }, state)
+    expect(projectPiEvent({ type: 'turn_start' }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'model_requesting', toolName: null, retry: { ...retry, retryAt: null } } }])
+    expect(projectPiEvent({ type: 'auto_retry_end', success: true, attempt: 1 }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'model_requesting', toolName: null } }])
+    projectPiEvent({ type: 'auto_retry_start', attempt: 2, maxAttempts, delayMs: 4000, errorMessage: 'private' }, state, now)
+    expect(projectPiEvent({ type: 'agent_settled' }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'idle', toolName: null } }])
+  })
+
+  it.each(['thinking_delta', 'text_delta', 'toolcall_delta'] as const)('restores live activity on the first nonempty %s before the retried response finishes', (type) => {
+    const state = createPiEventProjectionState()
+    const partial: AssistantMessage = {
+      api: 'openai-completions',
+      content: [],
+      model: 'retry-fixture',
+      provider: 'retry-fixture',
+      role: 'assistant',
+      stopReason: 'pending',
+      timestamp: 1,
+      usage: emptyUsage(),
+    }
+    projectPiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: '503 transient' }, state)
+    projectPiEvent({ type: 'agent_start' }, state)
+    projectPiEvent({ type: 'turn_start' }, state)
+    projectPiEvent({ type: 'message_start', message: partial }, state)
+    const update = (delta: string) => projectPiEvent({
+      type: 'message_update',
+      message: partial,
+      assistantMessageEvent: { type, contentIndex: 0, delta, partial },
+    }, state)
+    update('')
+    expect(state.progress?.retry).toEqual({ attempt: 1, maxAttempts: 3, retryAt: null })
+    const recovered = update('Recovered content')
+    expect(recovered.events.at(-1)).toEqual({
+      type: 'run.progress',
+      payload: { phase: state.progress!.phase, toolName: null },
+    })
+    expect(state.progress?.retry).toBeUndefined()
+    expect(update('More content').events.some(event => event.type === 'run.progress')).toBe(false)
+    projectPiEvent({ type: 'auto_retry_start', attempt: 2, maxAttempts: 3, delayMs: 4000, errorMessage: '503 transient' }, state)
+    expect(state.progress?.retry).toMatchObject({ attempt: 2, maxAttempts: 3 })
+  })
+
+  it('projects summary retries and clears the progress after exhaustion or cancellation', () => {
+    const state = createPiEventProjectionState()
+    projectPiEvent({ type: 'summarization_retry_scheduled', attempt: 2, maxAttempts: 3, delayMs: 4000, errorMessage: 'private' }, state)
+    projectPiEvent({ type: 'summarization_retry_attempt_start', source: 'compaction', reason: 'overflow' }, state)
+    expect(state.progress?.retry).toEqual({ attempt: 2, maxAttempts: 3, retryAt: null })
+    projectPiEvent({ type: 'summarization_retry_finished' }, state)
+    expect(state.progress?.retry).toBeUndefined()
+    projectPiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 1, delayMs: 2000, errorMessage: 'private' }, state)
+    projectPiEvent({ type: 'auto_retry_end', attempt: 1, success: false, finalError: 'private' }, state)
+    expect(state.progress?.retry).toBeUndefined()
+  })
+})
 
 describe('projectPiEvent compaction', () => {
   it('projects manual and automatic compaction without exposing Pi session details', () => {

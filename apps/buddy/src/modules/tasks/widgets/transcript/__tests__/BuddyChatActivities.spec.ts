@@ -18,6 +18,39 @@ afterEach(() => {
 })
 
 describe('activity disclosure', () => {
+  it('shows finite and unlimited retries with a live deadline and uninterrupted total duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-09T00:00:18Z'))
+    const { root, turn } = mountTurn([])
+    const retry = { attempt: 2, maxAttempts: 5, retryAt: '2026-09-09T00:00:25Z' }
+    turn.value = { ...turn.value, progress: { phase: 'model_requesting', toolName: null, retry } }
+    await nextTick()
+    const status = root.querySelector('.buddy-chat-run-activity')!
+    expect(status.textContent).toContain('7 秒后重试')
+    expect(status.textContent).toMatch(/重试 2\s*\/\s*5/)
+    expect(status.textContent).toContain('已用 18s')
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(status.textContent).toContain('4 秒后重试')
+    expect(status.textContent).toContain('已用 21s')
+    turn.value = { ...turn.value, progress: { phase: 'model_requesting', toolName: null, retry: { ...retry, maxAttempts: 'unlimited' } } }
+    await nextTick()
+    expect(status.textContent).toMatch(/重试 2\s*\//)
+    const unlimited = status.querySelector('.buddy-chat-run-activity__unlimited')!
+    expect(unlimited.getAttribute('aria-label')).toBe('不限次数')
+    expect(unlimited.querySelector('svg')).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(status.textContent).toContain('正在重试')
+    expect(status.textContent).toContain('已用 25s')
+    expect(status.textContent).not.toContain('0 秒后')
+    turn.value = { ...turn.value, progress: { phase: 'model_streaming', toolName: null } }
+    await nextTick()
+    expect(status.textContent).toContain('生成回复中')
+    expect(status.textContent).not.toContain('重试')
+    turn.value = { ...turn.value, status: 'cancelled', completedAt: '2026-09-09T00:00:25Z', progress: null }
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
+  })
+
   it('uses shared grouping, issue navigation and retained details for an independent action and built-in tool', async () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
     cleanups.push(() => {

@@ -1370,7 +1370,7 @@ function createRuntimeRpcHarness(
         value?: unknown
       }
       if (method === 'host.runtimePreferences.get')
-        return Promise.resolve({ cacheWarming: 'off' })
+        return Promise.resolve({ cacheWarming: 'off', modelRetryLimit: 3 })
       if (method === 'host.credentials.list') {
         return Promise.resolve({
           ok: true,

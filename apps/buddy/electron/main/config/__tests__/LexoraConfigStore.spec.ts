@@ -18,6 +18,27 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults existing profiles to three retries and round-trips disabled, finite and unlimited limits', async () => {
+    const { store, configPath } = await createConfigStore()
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[runtime]\ncache_warming = "streaming"\nfuture = true\n')
+    expect((await store.read()).runtime).toEqual({ cacheWarming: 'streaming', modelRetryLimit: 3 })
+    for (const modelRetryLimit of [0, 7, 'unlimited'] as const) {
+      await store.update({ runtime: { modelRetryLimit } })
+      await store.update({ desktop: { language: 'en-US' } })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toEqual({ cacheWarming: 'streaming', modelRetryLimit })
+      expect(await readFile(configPath, 'utf8')).toContain('future = true')
+    }
+    const saved = await readFile(configPath, 'utf8')
+    expect(saved).toContain('model_retry_limit = "unlimited"')
+    for (const modelRetryLimit of [-1, 1.5, Infinity, Number.NaN, Number.MAX_SAFE_INTEGER + 1, 'invalid'] as const)
+      await expect(store.update({ runtime: { modelRetryLimit: modelRetryLimit as never } })).rejects.toThrow()
+    await expect(store.update({ runtime: { modelRetryLimit: 0 } }, () => {
+      throw new Error('Apply failed')
+    })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+  })
+
   it('defaults warming off and preserves runtime preferences across saves and restart', async () => {
     const { store, configPath } = await createConfigStore()
     expect((await store.read()).runtime.cacheWarming).toBe('off')

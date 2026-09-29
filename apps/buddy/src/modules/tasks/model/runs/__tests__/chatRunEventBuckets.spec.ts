@@ -49,6 +49,17 @@ describe('chat run event buckets', () => {
     })
   })
 
+  it.each(['run.completed', 'run.failed', 'run.cancelled'])('keeps another run\'s retry progress when merging a %s event', (type) => {
+    const previousProgress = { ...event('settled', 1), type: 'run.progress', payload: { phase: 'model_requesting', toolName: null } }
+    const terminal = { ...event('settled', 2), type, payload: {} }
+    const activeProgress = {
+      ...event('active', 1),
+      type: 'run.progress',
+      payload: { phase: 'model_requesting', toolName: null, retry: { attempt: 1, maxAttempts: 'unlimited', retryAt: null } },
+    }
+    expect(compactChatRunEventSnapshots([previousProgress, terminal, activeProgress])).toEqual([terminal, activeProgress])
+  })
+
   it('compacts preparing events when tool has started or completed, but preserves preparing for failed tools', () => {
     const events: LocalRunEvent[] = [
       {

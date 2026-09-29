@@ -221,7 +221,8 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   }
 
   #enqueueEvent(event: AgentSessionEvent): void {
-    this.#eventTail = this.#eventTail.then(() => this.#handleEvent(event))
+    const observedAt = Date.now()
+    this.#eventTail = this.#eventTail.then(() => this.#handleEvent(event, observedAt))
   }
 
   #flushPendingTerminalToolUpdates(): void {
@@ -249,8 +250,8 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     this.#terminalToolUpdateTimer.unref()
   }
 
-  async #handleEvent(event: AgentSessionEvent): Promise<void> {
-    const projected = projectPiEvent(event, this.#projectionState)
+  async #handleEvent(event: AgentSessionEvent, observedAt: number): Promise<void> {
+    const projected = projectPiEvent(event, this.#projectionState, observedAt)
     if (projected.failureCode) {
       this.#failureCode = projected.failureCode
       this.#failureMessage = projected.failureMessage

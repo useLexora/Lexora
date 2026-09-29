@@ -182,6 +182,7 @@ function publicRunProgress(source: Record<string, unknown>): Record<string, unkn
   const progress = buddyRunProgressSchema.safeParse({
     phase: source.phase,
     toolName: source.toolName ?? null,
+    ...(source.retry === undefined ? {} : { retry: source.retry }),
   })
   return progress.success ? progress.data : {}
 }

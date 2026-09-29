@@ -57,9 +57,18 @@ export function createReusableBuddySession(
 ): ReusableBuddySession & { applyPreferences: (preferences: RuntimePreferences) => void } {
   const { session } = options
   let preferences = DEFAULT_RUNTIME_PREFERENCES
-  function applyCacheWarming(mode: RuntimePreferences['cacheWarming']) {
+  let turnRetryLimit: RuntimePreferences['modelRetryLimit'] | undefined
+  function applySessionSettings(mode: RuntimePreferences['cacheWarming']) {
     if (session.settingsManager.getCacheWarmingMode() !== mode)
       session.setCacheWarmingMode(mode)
+    if (turnRetryLimit !== undefined) {
+      session.settingsManager.applyOverrides({
+        retry: {
+          enabled: turnRetryLimit !== 0,
+          maxRetries: turnRetryLimit === 'unlimited' ? Number.POSITIVE_INFINITY : turnRetryLimit,
+        },
+      })
+    }
   }
   const convertToLlm = session.agent.convertToLlm
   const streamFunction = session.agent.streamFunction
@@ -206,7 +215,7 @@ export function createReusableBuddySession(
     }),
     applyPreferences: (next) => {
       preferences = next
-      applyCacheWarming(options.runContext.current && !options.runContext.current.signal.aborted ? preferences.cacheWarming : 'off')
+      applySessionSettings(options.runContext.current && !options.runContext.current.signal.aborted ? preferences.cacheWarming : 'off')
     },
     getModelUsage: () => session.model ? { providerId: session.model.provider, modelId: session.model.id } : null,
     getInputContext: () => {
@@ -222,7 +231,7 @@ export function createReusableBuddySession(
     steer: (prepare, skills) => enqueueInput('steer', prepare, skills),
     followUp: (prepare, skills) => enqueueInput('followUp', prepare, skills),
     abort: () => {
-      applyCacheWarming('off')
+      applySessionSettings('off')
       pendingInputs.clear()
       session.agent.clearSteeringQueue()
       session.agent.clearFollowUpQueue()
@@ -235,6 +244,7 @@ export function createReusableBuddySession(
     ),
     async activateTurn(input) {
       input.signal.throwIfAborted()
+      turnRetryLimit = preferences.modelRetryLimit
       options.runContext.current = {
         flushProjectedEvents: input.flushProjectedEvents,
         onToolExecutionAuthorized: input.onToolExecutionAuthorized,
@@ -250,18 +260,21 @@ export function createReusableBuddySession(
             await options.tree?.begin(session, input.runId)
             await applyModelSelection(session, options.assertModelAccess, input)
             input.signal.throwIfAborted()
-            applyCacheWarming(preferences.cacheWarming)
+            applySessionSettings(preferences.cacheWarming)
           },
         )
       }
       catch (error) {
+        turnRetryLimit = undefined
         options.runContext.current = null
         throw error
       }
       return () => {
-        applyCacheWarming('off')
-        if (options.runContext.current?.runId === input.runId)
+        applySessionSettings('off')
+        if (options.runContext.current?.runId === input.runId) {
+          turnRetryLimit = undefined
           options.runContext.current = null
+        }
       }
     },
     shutdown: options.shutdown,

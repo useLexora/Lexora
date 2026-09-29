@@ -15,7 +15,7 @@ defineProps<{
   <div class="buddy-chat-activity-status" :class="{ 'is-warning': warning }" role="status">
     <BuddyChatActivityLoader v-if="active" />
     <slot v-else name="icon" />
-    <BuddyChatShimmerText class="buddy-chat-activity-status__label" :mode="active ? 'continuous' : 'static'">
+    <BuddyChatShimmerText class="buddy-chat-activity-status__label" :mode="active && !warning ? 'continuous' : 'static'">
       {{ label }}
     </BuddyChatShimmerText>
     <span v-if="target" class="buddy-chat-activity-status__target">{{ target }}</span>

@@ -7,7 +7,7 @@ import type {
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { BuddyAssistantTextPhase } from '../../../../shared/runs/assistantTextPhase'
 import type { BuddyToolPresentation } from '../../../../shared/runs/runEventPresentation'
-import type { BuddyRunProgress } from '../../../../shared/runs/runProgress'
+import type { BuddyRunProgress, BuddyRunRetry } from '../../../../shared/runs/runProgress'
 import { randomUUID } from 'node:crypto'
 
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../../shared/conversation/buddyMessageContent'
@@ -112,15 +112,26 @@ export function createPiEventProjectionState(
 export function projectPiEvent(
   event: AgentSessionEvent,
   state: PiEventProjectionState,
+  now = Date.now(),
 ): PiEventProjection {
   switch (event.type) {
     case 'agent_start':
       return progressProjection(state, 'preparing')
     case 'agent_settled':
-      return progressProjection(state, 'idle')
+      return progressProjection(state, 'idle', null, null)
     case 'turn_start':
+    case 'summarization_retry_attempt_start':
+      return progressProjection(state, 'model_requesting', null, state.progress?.retry ? { ...state.progress.retry, retryAt: null } : null)
     case 'auto_retry_start':
-      return progressProjection(state, 'model_requesting')
+    case 'summarization_retry_scheduled':
+      return progressProjection(state, 'model_requesting', null, {
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts === Number.POSITIVE_INFINITY ? 'unlimited' : event.maxAttempts,
+        retryAt: new Date(now + event.delayMs).toISOString(),
+      })
+    case 'auto_retry_end':
+    case 'summarization_retry_finished':
+      return progressProjection(state, state.progress?.phase ?? 'model_requesting', state.progress?.toolName ?? null, null)
     case 'compaction_start':
       return {
         events: [{
@@ -132,8 +143,21 @@ export function projectPiEvent(
       return projectCompactionEnd(event)
     case 'message_start':
       return projectMessageStart(event.message, state)
-    case 'message_update':
-      return projectMessageUpdate(event.assistantMessageEvent, state)
+    case 'message_update': {
+      const update = event.assistantMessageEvent
+      const projected = projectMessageUpdate(update, state)
+      if (
+        !state.progress?.retry
+        || (update.type !== 'thinking_delta' && update.type !== 'text_delta' && update.type !== 'toolcall_delta')
+        || !update.delta
+      ) {
+        return projected
+      }
+      return {
+        ...projected,
+        events: [...projected.events, ...progressProjection(state, state.progress.phase, null, null).events],
+      }
+    }
     case 'message_end':
       return projectMessageEnd(event.message, state)
     case 'tool_execution_start': {
@@ -382,14 +406,19 @@ function progressProjection(
   state: PiEventProjectionState,
   phase: BuddyRunProgress['phase'],
   toolName: string | null = null,
+  retry: BuddyRunRetry | null = state.progress?.retry ?? null,
 ): PiEventProjection {
   const progress: BuddyRunProgress = {
     phase,
     toolName: toolName?.slice(0, 256) || null,
+    ...(retry ? { retry } : {}),
   }
   if (
     state.progress?.phase === progress.phase
     && state.progress.toolName === progress.toolName
+    && state.progress.retry?.attempt === progress.retry?.attempt
+    && state.progress.retry?.maxAttempts === progress.retry?.maxAttempts
+    && state.progress.retry?.retryAt === progress.retry?.retryAt
   ) {
     return { events: [] }
   }

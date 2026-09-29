@@ -1,3 +1,4 @@
+import type { BuddyRunRetry } from '@buddy-shared/runs/runProgress'
 import type { ChatAgentReasoningNode, ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
 import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import { translateBuddy } from '@/i18n/buddyI18n'
@@ -8,11 +9,12 @@ export interface ChatCurrentActivity {
   label: string
   target: string
   detail: string
+  retry?: BuddyRunRetry
   reasoning: ChatAgentReasoningNode | null
   tools: readonly ChatAgentToolNode[]
 }
 
-export function describeChatCurrentActivity(turn: ChatAgentTurn, language: BuddyLocale): ChatCurrentActivity | null {
+export function describeChatCurrentActivity(turn: ChatAgentTurn, language: BuddyLocale, now = Date.now()): ChatCurrentActivity | null {
   if (turn.status !== 'queued' && turn.status !== 'running')
     return null
   const running: ChatAgentToolNode[] = []
@@ -47,6 +49,16 @@ export function describeChatCurrentActivity(turn: ChatAgentTurn, language: Buddy
       preparing.length ? t('desktop.chat.activityPreparingCount', { count: preparing.length }) : '',
     ].filter(Boolean).join(' · ')
     return activity
+  }
+  const retry = turn.progress?.retry
+  if (retry) {
+    const seconds = retry.retryAt ? Math.max(0, Math.ceil((Date.parse(retry.retryAt) - now) / 1000)) : 0
+    return {
+      ...activity,
+      label: seconds > 0 ? t('desktop.chat.retryWaiting', { seconds }) : t('desktop.chat.retryRequesting'),
+      retry,
+      tools: [],
+    }
   }
   if (compacting)
     return { ...activity, label: t('desktop.chat.compactionStarted') }
