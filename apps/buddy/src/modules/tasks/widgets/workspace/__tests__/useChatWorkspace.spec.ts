@@ -76,6 +76,7 @@ function createOwner(name: string) {
       beginFollowup: async () => false,
       cancelFollowup: () => {},
       activeRun: shallowRef(null),
+      stoppingRunId: shallowRef<string | null>(null),
       approvalViews: shallowRef([]),
       canMutateBranch: shallowRef(true),
       canSend: shallowRef(false),

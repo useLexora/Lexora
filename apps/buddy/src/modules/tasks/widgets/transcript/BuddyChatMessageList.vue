@@ -26,7 +26,6 @@ import BuddyChatMessageRow from './BuddyChatMessageRow.vue'
 import BuddyChatOutline from './BuddyChatOutline.vue'
 import BuddyChatRunActivity from './BuddyChatRunActivity.vue'
 import BuddyChatTranscriptViewport from './BuddyChatTranscriptViewport.vue'
-import { useChatActivityNavigation } from './useChatActivityNavigation'
 
 const props = defineProps<{
   activeBranchId: string
@@ -38,6 +37,7 @@ const props = defineProps<{
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
   language: BuddyLocale
+  stoppingRunId?: string | null
   outlineItems: ReadonlyArray<ChatOutlineItem>
   outlineLoading: boolean
   outlinePosition: DesktopChatOutlinePosition
@@ -59,7 +59,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
-const activityNavigation = useChatActivityNavigation()
 const transcriptViewport = useTemplateRef<BuddyChatTranscriptViewportHandle>('transcriptViewport')
 const OUTLINE_HIGHLIGHT_DURATION_MS = 1_200
 const activeOutlineMessageId = shallowRef<string | null>(null)
@@ -215,7 +214,6 @@ onBeforeUnmount(clearOutlineHighlight)
 
         <BuddyChatAgentTurn
           v-else-if="item.kind === 'agent-turn'"
-          :ref="view => activityNavigation.register(item.key, view, item.turn.nodes.map(node => node.id))"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
           :branch-navigator="branchNavigators.get(item.turn.runId) ?? null"
@@ -235,7 +233,7 @@ onBeforeUnmount(clearOutlineHighlight)
           class="buddy-chat-transcript-row"
           :language="language"
           :turn="item.turn"
-          @reveal-activity="activityNavigation.reveal(item.turn.runId, $event)"
+          :stopping="stoppingRunId === item.turn.runId"
         />
 
         <div

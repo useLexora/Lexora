@@ -29,6 +29,7 @@ const props = defineProps<{
   hasOlderMessages: boolean
   isLoadingOlderMessages: boolean
   language: BuddyLocale
+  stoppingRunId?: string | null
   loadOutlineMessages: () => Promise<ReadonlyArray<LocalMessage>>
   runEventBuckets: ChatRunEventBuckets
   runOutputs: ReadonlyArray<LocalRunOutput>
@@ -135,6 +136,7 @@ defineExpose<BuddyChatMessageListHandle>({
     :has-older-messages="hasOlderMessages"
     :is-loading-older-messages="isLoadingOlderMessages"
     :language="language"
+    :stopping-run-id="stoppingRunId"
     :outline-items="outlineItems"
     :outline-position="chat.outlinePosition"
     :outline-loading="outlineLoading"

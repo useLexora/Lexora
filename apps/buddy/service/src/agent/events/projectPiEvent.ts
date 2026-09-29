@@ -432,6 +432,36 @@ function projectMessageUpdate(
   event: AssistantMessageEvent,
   state: PiEventProjectionState,
 ): PiEventProjection {
+  const content = projectMessageContentUpdate(event, state)
+  let phase: BuddyRunProgress['phase'] | null = null
+  switch (event.type) {
+    case 'thinking_start':
+    case 'thinking_delta':
+      phase = 'model_thinking'
+      break
+    case 'text_start':
+    case 'text_delta':
+      phase = resolvePiTextPhase(event.partial.content[event.contentIndex]) === 'commentary' ? 'model_streaming' : 'model_responding'
+      break
+    case 'thinking_end':
+      phase = state.progress?.phase === 'model_thinking' ? 'model_streaming' : null
+      break
+    case 'text_end':
+      phase = state.progress?.phase === 'model_responding' ? 'model_streaming' : null
+      break
+    case 'toolcall_start':
+    case 'toolcall_delta':
+    case 'toolcall_end':
+      phase = 'preparing'
+      break
+  }
+  return { events: [...content.events, ...(phase ? progressProjection(state, phase).events : [])] }
+}
+
+function projectMessageContentUpdate(
+  event: AssistantMessageEvent,
+  state: PiEventProjectionState,
+): PiEventProjection {
   const messageId = state.assistantMessageId ?? randomUUID()
   state.assistantMessageId = messageId
   if (event.type === 'thinking_start') {

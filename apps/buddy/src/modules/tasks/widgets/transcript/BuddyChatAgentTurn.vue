@@ -3,7 +3,7 @@ import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMess
 
 import type { ChatAgentTurn } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { computed, useTemplateRef } from 'vue'
+import { computed } from 'vue'
 
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import {
@@ -32,8 +32,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
-const flow = useTemplateRef('flow')
-defineExpose({ revealActivity: (nodeId: string) => flow.value?.revealActivity(nodeId) })
 const isActive = computed(() => props.turn.status === 'queued' || props.turn.status === 'running')
 const duration = computed(() => formatChatRunDuration(
   props.turn.startedAt,
@@ -93,7 +91,6 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     </div>
     <BuddyChatAgentTurnFlow
       v-if="turn.nodes.length || failureDetailText"
-      ref="flow"
       :failure-detail-text="failureDetailText"
       :language="language"
       :nodes="turn.nodes"

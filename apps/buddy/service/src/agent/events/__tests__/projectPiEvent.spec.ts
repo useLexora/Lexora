@@ -230,6 +230,21 @@ describe('projectPiEvent product messages', () => {
     }])
   })
 
+  it.each([undefined, 'commentary', 'final_answer'] as const)('distinguishes %s text from thinking, tool arguments and empty message starts', (textPhase) => {
+    const state = createPiEventProjectionState()
+    const partial: AssistantMessage = { api: 'openai-responses', content: [{ type: 'text', text: '', textSignature: JSON.stringify({ v: 1, id: 'text', phase: textPhase }) }], model: 'fixture', provider: 'fixture', role: 'assistant', stopReason: 'pending', timestamp: 1, usage: emptyUsage() }
+    projectPiEvent({ type: 'message_start', message: partial }, state)
+    expect(state.progress?.phase).toBe('model_streaming')
+    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial } }, state)
+    expect(state.progress?.phase).toBe(textPhase === 'commentary' ? 'model_streaming' : 'model_responding')
+    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'thinking_end', contentIndex: 1, content: 'Previous thought', partial } }, state)
+    expect(state.progress?.phase).toBe(textPhase === 'commentary' ? 'model_streaming' : 'model_responding')
+    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Visible text', partial } }, state)
+    expect(state.progress?.phase).toBe('model_streaming')
+    const preparing = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1, partial } }, state)
+    expect(preparing.events).toEqual([{ type: 'run.progress', payload: { phase: 'preparing', toolName: null } }])
+  })
+
   it('keeps Harness-tracked file changes out of run outputs', () => {
     const state = createPiEventProjectionState()
     projectPiEvent({
@@ -482,7 +497,7 @@ describe('projectPiEvent product messages', () => {
         messageId,
       },
       type: 'message.block.started',
-    }])
+    }, { type: 'run.progress', payload: { phase: 'model_thinking', toolName: null } }])
     expect(projectPiEvent({
       assistantMessageEvent: {
         contentIndex: 0,
@@ -519,7 +534,7 @@ describe('projectPiEvent product messages', () => {
         messageId,
       },
       type: 'message.block.completed',
-    }])
+    }, { type: 'run.progress', payload: { phase: 'model_streaming', toolName: null } }])
     expect(JSON.stringify(completed)).not.toContain('private-provider-signature')
   })
 

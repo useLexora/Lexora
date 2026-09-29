@@ -18,8 +18,11 @@ describe('useChatTurnExecution cancellation ownership', () => {
   it('applies cancellation to the current projection and preserves its Draft', async () => {
     const fixture = createFixture()
     const cancelling = fixture.execution.cancelActiveRun()
+    expect(fixture.execution.stoppingRunId.value).toBe(fixture.run.id)
+    expect(fixture.projectedRuns.value[0]?.status).toBe('running')
     fixture.pending.resolve({ ...fixture.run, status: 'cancelled' })
     await cancelling
+    expect(fixture.execution.stoppingRunId.value).toBeNull()
 
     expect(fixture.projectedRuns.value).toEqual([{ ...fixture.run, status: 'cancelled' }])
     expect(fixture.drafts.draft.value).toBe('pending input')
@@ -30,8 +33,10 @@ describe('useChatTurnExecution cancellation ownership', () => {
   it('reports a cancellation failure only in the originating view', async () => {
     const fixture = createFixture()
     const cancelling = fixture.execution.cancelActiveRun()
+    expect(fixture.execution.stoppingRunId.value).toBe(fixture.run.id)
     fixture.pending.reject(new Error('cancel failed'))
     await cancelling
+    expect(fixture.execution.stoppingRunId.value).toBeNull()
 
     expect(fixture.error.value).toBeTruthy()
     expect(fixture.projectedRuns.value).toEqual([fixture.run])
@@ -62,6 +67,7 @@ describe('useChatTurnExecution cancellation ownership', () => {
       const fixture = createFixture()
       const cancelling = fixture.execution.cancelActiveRun()
       fixture.navigate(navigation)
+      expect(fixture.execution.stoppingRunId.value).toBeNull()
       fixture.pending.resolve({ ...fixture.run, status: 'cancelled' })
       await cancelling
 

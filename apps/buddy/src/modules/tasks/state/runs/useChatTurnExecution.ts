@@ -16,7 +16,7 @@ import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskInde
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
-import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
+import { computed, onScopeDispose, readonly, shallowReactive, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { createRequestIdRegistry } from '@/modules/tasks/model/requests/chatRequestIdentity'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
@@ -68,12 +68,18 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
   const isSending = shallowRef(false)
   const requestIds = createRequestIdRegistry()
   const pendingCancellationWatches = new Set<() => void>()
+  const pendingCancellationIds = shallowReactive(new Set<string>())
+  const stoppingRunId = computed(() => {
+    const run = options.activeRun.value
+    return run && pendingCancellationIds.has(run.id) ? run.id : null
+  })
   let isDisposed = false
   onScopeDispose(() => {
     isDisposed = true
     for (const stop of pendingCancellationWatches)
       stop()
     pendingCancellationWatches.clear()
+    pendingCancellationIds.clear()
   }, true)
   const canSend = computed(() =>
     options.runtimeSupervisor.runtimeState.value.status === 'ready'
@@ -258,8 +264,9 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
 
   async function cancelActiveRun() {
     const run = options.activeRun.value
-    if (!run || isDisposed)
+    if (!run || isDisposed || pendingCancellationIds.has(run.id))
       return
+    pendingCancellationIds.add(run.id)
     const navigationVersion = options.session.generation()
     let sourceViewChanged = false
     const stopWatchingView = watch(
@@ -286,6 +293,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     finally {
       stopWatchingView()
       pendingCancellationWatches.delete(stopWatchingView)
+      pendingCancellationIds.delete(run.id)
     }
   }
 
@@ -301,6 +309,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     ...queue,
     canSend: readonly(canSend),
     cancelActiveRun,
+    stoppingRunId: readonly(stoppingRunId),
     isSending: readonly(isSending),
     send,
   }

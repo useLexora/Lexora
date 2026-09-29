@@ -5,6 +5,7 @@ import type { ChatAgentTurn } from '../chatStreamingMessage'
 import { describe, expect, it } from 'vitest'
 
 import { createChatAgentActivityProjector } from '../chatAgentActivities'
+import { createChatAgentTurnReducer } from '../chatAgentTurn'
 import * as chatProjections from '../chatStreamingMessage'
 import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
 import {
@@ -351,6 +352,49 @@ describe('projectStreamingAssistantMessage', () => {
       failureMessage: 'The configured model does not exist',
       status: 'failed',
     })])
+  })
+
+  it('shows a real thinking start before content but does not retain empty terminal blocks', () => {
+    const events = [event(1, 'message.block.started', { contentIndex: 0, kind: 'reasoning', messageId: 'thought' })]
+    expect(projectChatAgentTurns([], [run('running')])[0]?.nodes).toEqual([])
+    expect(projectChatAgentTurns(events, [run('running')])[0]?.nodes).toMatchObject([{ kind: 'reasoning', text: '', status: 'running' }])
+    expect(projectChatAgentTurns(events, [run('cancelled')])[0]?.nodes).toEqual([])
+    expect(projectChatAgentTurns([...events, event(2, 'message.block.completed', { contentIndex: 0, kind: 'reasoning', messageId: 'thought', content: '' })], [run('running')])[0]?.nodes).toEqual([])
+  })
+
+  it('settles thinking as text begins even when its end event is delayed, and resumes only on real reasoning', () => {
+    const thought = [
+      event(1, 'message.block.started', { contentIndex: 0, kind: 'reasoning', messageId: 'stream' }),
+      event(2, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'stream', delta: 'Checking' }),
+    ]
+    const responding = [...thought, event(3, 'message.delta', { contentIndex: 1, messageId: 'stream', delta: 'Answer' })]
+    const reducer = createChatAgentTurnReducer(run('running'))
+    reducer.append(thought)
+    const thinking = reducer.project()
+    reducer.append([responding[2]!])
+    const settled = reducer.project()
+    expect(settled).not.toBe(thinking)
+    expect(settled.nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
+    reducer.append([event(4, 'message.delta', { contentIndex: 1, messageId: 'stream', delta: ' continues' })])
+    expect(reducer.project()).toBe(settled)
+    expect(projectChatAgentTurns(thought, [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking' }])
+    expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: null })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed' }])
+    expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: 'read' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running' }])
+    expect(projectChatAgentTurns(responding, [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
+    expect(projectChatAgentTurns([...responding, event(4, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'stream', delta: ' more' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking more' }])
+    expect(projectChatAgentTurns([...thought, event(3, 'message.block.started', { contentIndex: 1, kind: 'text', messageId: 'stream', phase: 'commentary' })], [run('running')])[0]?.nodes[0]).toMatchObject({ status: 'completed' })
+  })
+
+  it.each(['failed', 'length'])('retains interrupted thinking after a %s message while a retry waits', (stopReason) => {
+    const events = [
+      event(1, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'attempt-1', delta: 'Partial thought' }),
+      event(2, 'message.completed', { messageId: 'attempt-1', content: { text: '' }, stopReason }),
+      event(3, 'run.progress', { phase: 'model_requesting', toolName: null, retry: { attempt: 1, maxAttempts: 3, retryAt: '2026-08-14T00:00:05Z' } }),
+    ]
+    expect(projectChatAgentTurns(events, [run('running')])[0]?.nodes).toMatchObject([{ status: 'interrupted', text: 'Partial thought' }])
+    expect(projectChatAgentTurns(events, [run('cancelled')])[0]?.nodes).toMatchObject([{ status: 'interrupted', text: 'Partial thought' }])
+    const next = [...events, event(4, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'attempt-2', delta: 'Next thought' })]
+    expect(projectChatAgentTurns(next, [run('running')])[0]?.nodes).toMatchObject([{ status: 'interrupted', text: 'Partial thought' }, { status: 'running', text: 'Next thought' }])
   })
 
   it('removes empty reasoning blocks and duplicate tool-use narration', () => {

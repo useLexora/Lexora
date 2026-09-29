@@ -9,7 +9,6 @@ import { createChatAgentActivityProjector } from '../../model/transcript/chatAge
 import BuddyChatActivityGroup from './BuddyChatActivityGroup.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
 import BuddyChatNarrationBody from './BuddyChatNarrationBody.vue'
-import { useChatActivityNavigation } from './useChatActivityNavigation'
 
 const props = defineProps<{
   failureDetailText: string | null
@@ -24,13 +23,6 @@ function toggleEntry(id: string) {
   openEntries.set(id, !openEntries.get(id))
 }
 const rows = computed(() => rowProjector.project(props.nodes))
-const navigation = useChatActivityNavigation()
-function revealActivity(nodeId: string) {
-  const group = rows.value.find(row => row.kind === 'activity-group' && row.nodes.some(node => node.id === nodeId))
-  if (group)
-    navigation.reveal(group.id, nodeId)
-}
-defineExpose({ revealActivity })
 </script>
 
 <template>
@@ -38,7 +30,6 @@ defineExpose({ revealActivity })
     <template v-for="row in rows" :key="row.id">
       <BuddyChatActivityGroup
         v-if="row.kind === 'activity-group'"
-        :ref="view => navigation.register(row.id, view)"
         :group="row"
         :language="language"
         :open-entries="openEntries"

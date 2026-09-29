@@ -127,6 +127,7 @@ export interface TaskComposer {
 }
 
 export interface TaskExecution {
+  stoppingRunId: State<string | null>
   queuedMessages: State<readonly LocalChatQueueItem[]>
   pendingQueueActions: State<ReadonlySet<string>>
   cancelQueuedMessage: (id: string) => Promise<void>

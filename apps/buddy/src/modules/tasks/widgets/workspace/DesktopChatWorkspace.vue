@@ -204,6 +204,7 @@ function openDetailChanges(id: string) {
           v-else-if="viewMode !== 'canvas' && transcriptBindings"
           ref="messageList"
           v-bind="transcriptBindings"
+          :stopping-run-id="workspace.execution.stoppingRunId.value"
           class="desktop-chat-page__messages"
           @activate-branch="workspace.transcript.activateBranch"
           @content-resize="viewport.handleContentResize"
@@ -227,6 +228,7 @@ function openDetailChanges(id: string) {
       <aside v-if="detailVisible && nodeDetail.target.value" class="desktop-chat-page__node-detail" data-testid="canvas-detail-pane">
         <ConversationNodeDetail
           :target="nodeDetail.target.value" :rows="nodeDetail.rows.value" :language="language"
+          :stopping-run-id="workspace.execution.stoppingRunId.value"
           :loading="nodeDetail.loading.value" :error="nodeDetail.error.value"
           :can-edit="workspace.execution.canMutateBranch.value" :editing="editingQuestion"
           @close="nodeDetail.close" @reload="nodeDetail.refresh"

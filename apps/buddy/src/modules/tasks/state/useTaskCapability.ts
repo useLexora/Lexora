@@ -509,6 +509,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       editingMessageId,
       isMutatingBranch: readonly(isMutatingBranch),
       isSending: readonly(isSending),
+      stoppingRunId: readonly(execution.stoppingRunId),
       regenerateAssistant,
       resolveApproval,
       resolvingApprovalActions: readonly(resolvingApprovalActions),

@@ -218,6 +218,8 @@ describe('buddyAgentRunner', () => {
       'message.started',
       'run.progress',
       'message.delta',
+      'run.progress',
+      'message.delta',
       'message.completed',
       'usage.recorded',
     ])
@@ -263,6 +265,8 @@ describe('buddyAgentRunner', () => {
     expect((await fixture.eventLog.read(run.id)).map(event => event.type)).toEqual([
       'run.started',
       'message.started',
+      'run.progress',
+      'message.delta',
       'run.progress',
       'message.delta',
       'message.completed',

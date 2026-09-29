@@ -13,34 +13,44 @@ function turn(nodes: ChatAgentTurnNode[], phase: NonNullable<ChatAgentTurn['prog
 }
 
 describe('current execution status', () => {
-  it('separates preparing and approval counts from tools actually running', () => {
+  it('keeps local details in their groups and gives approval priority during parallel execution', () => {
     const running = [tool('one', 'running'), tool('two', 'running')]
     const preparing = tool('three', 'preparing')
     const approval = tool('four', 'awaiting_approval')
-    const current = describeChatCurrentActivity(turn([...running, preparing, approval, thought]), 'zh-CN')!
-    expect(current.label).toBe('等待批准')
-    expect(current.detail).toBe('2 项运行中 · 1 项待批准 · 1 项准备中')
-    expect(current.tools.map(node => node.id)).toEqual(['four', 'one', 'two', 'three'])
-    const parallel = describeChatCurrentActivity(turn([...running, preparing]), 'zh-CN')!
-    expect(parallel).toMatchObject({ label: '正在执行 2 项调用', target: '', detail: '1 项准备中', reasoning: null })
-    expect(describeChatCurrentActivity(turn([preparing]), 'zh-CN')).toMatchObject({ label: '正在准备 1 项调用', target: '运行命令' })
-  })
-
-  it('keeps long commands in their original tool instead of the current status', () => {
-    const node = tool('one', 'running')
-    const current = describeChatCurrentActivity(turn([node]), 'zh-CN')!
-    expect(current).toMatchObject({ label: '正在运行命令', target: '', detail: '' })
-    expect(current.tools[0]).toBe(node)
-    expect(describeChatCurrentActivity(turn([node]), 'en-US')?.label).toBe('Running: Run command')
+    expect(describeChatCurrentActivity(turn([...running, preparing, approval, thought]), 'zh-CN')).toEqual({ label: '有操作待批准', active: false, warning: true })
+    expect(describeChatCurrentActivity(turn([...running, preparing]), 'zh-CN')).toEqual({ label: '正在执行', active: true })
+    expect(describeChatCurrentActivity(turn([preparing]), 'zh-CN')).toEqual({ label: '准备中', active: true })
+    expect(describeChatCurrentActivity(turn(running), 'en-US')).toEqual({ label: 'Running', active: true })
   })
 
   it('moves between reasoning, compaction and model progress using the current event state', () => {
-    expect(describeChatCurrentActivity(turn([tool('done', 'completed'), thought]), 'zh-CN')).toMatchObject({ label: '正在思考', target: 'Details', reasoning: thought, tools: [] })
-    expect(describeChatCurrentActivity(turn([thought, compaction]), 'zh-CN')).toMatchObject({ label: '正在整理上下文', reasoning: null })
+    expect(describeChatCurrentActivity(turn([tool('done', 'completed'), thought]), 'zh-CN')).toEqual({ label: '正在思考', active: true })
+    expect(describeChatCurrentActivity(turn([thought, compaction]), 'zh-CN')).toEqual({ label: '正在整理上下文', active: true })
     const nodes = [{ ...thought, status: 'completed' } as ChatAgentTurnNode, { ...compaction, status: 'completed' } as ChatAgentTurnNode]
     expect(describeChatCurrentActivity(turn(nodes), 'zh-CN')?.label).toBe('等待模型响应')
-    expect(describeChatCurrentActivity(turn(nodes, 'model_streaming'), 'zh-CN')?.label).toBe('生成回复中')
+    expect(describeChatCurrentActivity(turn(nodes, 'model_streaming'), 'zh-CN')?.label).toBe('正在处理')
+    expect(describeChatCurrentActivity(turn(nodes, 'model_responding'), 'zh-CN')?.label).toBe('正在回复')
+    expect(describeChatCurrentActivity(turn(nodes, 'tool_executing'), 'zh-CN')?.label).toBe('正在处理')
     expect(describeChatCurrentActivity({ ...turn([thought]), status: 'cancelled' }, 'zh-CN')).toBeNull()
+  })
+})
+
+describe('waiting and cancellation feedback', () => {
+  it('only animates retry requests, not their deadlines, and keeps their budgets', () => {
+    const current = turn([])
+    const retry = { attempt: 2, maxAttempts: 'unlimited' as const, retryAt: '2026-09-10T00:00:05Z' }
+    current.progress = { phase: 'model_requesting', toolName: null, retry }
+    expect(describeChatCurrentActivity(current, 'zh-CN', Date.parse('2026-09-10T00:00:03Z'))).toEqual({ label: '2 秒后重试', active: false, warning: true, retry })
+    expect(describeChatCurrentActivity(current, 'zh-CN', Date.parse('2026-09-10T00:00:06Z'))?.active).toBe(false)
+    current.progress.retry = { ...retry, retryAt: null }
+    expect(describeChatCurrentActivity(current, 'zh-CN')).toMatchObject({ label: '正在重试', active: true })
+    expect(describeChatCurrentActivity(current, 'zh-CN', Date.now(), true)).toEqual({ label: '正在停止', active: false })
+  })
+
+  it('waits to start without inventing a queue and hides feedback only after termination', () => {
+    expect(describeChatCurrentActivity({ ...turn([]), status: 'queued' }, 'zh-CN')).toEqual({ label: '等待开始', active: false })
+    for (const status of ['completed', 'failed', 'cancelled'] as const)
+      expect(describeChatCurrentActivity({ ...turn([thought]), status }, 'zh-CN', Date.now(), true)).toBeNull()
   })
 })
 

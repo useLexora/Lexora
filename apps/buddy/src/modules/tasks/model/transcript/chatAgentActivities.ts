@@ -9,6 +9,9 @@ export interface ChatAgentActivityGroup {
   nodes: ReadonlyArray<ChatAgentReasoningNode | ChatAgentToolNode>
   issueCount: number
   toolCount: number
+  reasoningCount: number
+  approvalCount: number
+  status: 'running' | 'preparing' | 'awaiting_approval' | 'interrupted' | 'completed'
   icon: ChatToolIcon | 'reasoning'
   counts: ReadonlyArray<{ category: ChatToolCategory, count: number, files: number | null }>
 }
@@ -61,10 +64,22 @@ function summarizeGroup(id: string, nodes: ChatAgentActivityGroup['nodes']): Cha
   const files = new Map<ChatToolCategory, Set<string> | null>()
   let issueCount = 0
   let toolCount = 0
+  let reasoningCount = 0
+  let approvalCount = 0
+  let running = false
+  let preparing = false
+  let interrupted = false
   let icon: ChatAgentActivityGroup['icon'] = 'reasoning'
   for (const node of nodes) {
-    if (node.kind === 'reasoning')
+    running ||= node.status === 'running'
+    preparing ||= node.status === 'preparing'
+    interrupted ||= node.status === 'interrupted' || node.status === 'cancelled'
+    if (node.status === 'awaiting_approval')
+      approvalCount++
+    if (node.kind === 'reasoning') {
+      reasoningCount++
       continue
+    }
     toolCount++
     const { category, icon: toolIcon } = getChatToolRegistration(node)
     icon = icon === 'reasoning' || icon === toolIcon ? toolIcon : 'activity'
@@ -84,5 +99,6 @@ function summarizeGroup(id: string, nodes: ChatAgentActivityGroup['nodes']): Cha
     if (isChatToolIssue(node))
       issueCount++
   }
-  return { id, kind: 'activity-group', nodes, issueCount, toolCount, icon, counts: [...counts].map(([category, count]) => ({ category, count, files: files.get(category)?.size ?? null })) }
+  const status = running ? 'running' : preparing ? 'preparing' : approvalCount ? 'awaiting_approval' : interrupted ? 'interrupted' : 'completed'
+  return { id, kind: 'activity-group', nodes, issueCount, toolCount, reasoningCount, approvalCount, status, icon, counts: [...counts].map(([category, count]) => ({ category, count, files: files.get(category)?.size ?? null })) }
 }

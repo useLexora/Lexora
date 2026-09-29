@@ -13,6 +13,8 @@ export const buddyRunProgressSchema = z.object({
     'idle',
     'model_requesting',
     'model_streaming',
+    'model_thinking',
+    'model_responding',
     'preparing',
     'awaiting_approval',
     'tool_executing',

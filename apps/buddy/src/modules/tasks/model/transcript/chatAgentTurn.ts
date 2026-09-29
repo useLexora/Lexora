@@ -137,6 +137,15 @@ export function createChatAgentTurnReducer(
     }
   }
 
+  function settleReasoning(messageId?: string, status: 'completed' | 'interrupted' = 'completed') {
+    for (const node of reasoning.values()) {
+      if (node.status === 'running' && (messageId === undefined || node.id === `reasoning:${messageId}:${node.contentIndex}`)) {
+        reasoning.set(node.id, { ...node, status })
+        projection = null
+      }
+    }
+  }
+
   function apply(event: LocalRunEvent) {
     const payload = readPayload(event.payload)
     if (!payload)
@@ -164,8 +173,11 @@ export function createChatAgentTurnReducer(
     }
     if (event.type === 'run.progress') {
       const parsed = buddyRunProgressSchema.safeParse(payload)
-      if (parsed.success)
+      if (parsed.success) {
         progress = parsed.data.phase === 'idle' ? null : parsed.data
+        if (progress?.phase === 'preparing' && progress.toolName === null)
+          settleReasoning()
+      }
       return
     }
     if (event.type.startsWith('context.compaction.')) {
@@ -179,6 +191,7 @@ export function createChatAgentTurnReducer(
       if (!messageId || contentIndex === null)
         return
       if (payload.kind === 'text') {
+        settleReasoning(messageId)
         const phase = readAssistantTextPhase(payload.phase)
         if (phase !== 'commentary')
           return
@@ -227,6 +240,7 @@ export function createChatAgentTurnReducer(
       if (event.type === 'message.block.delta') {
         reasoning.set(id, {
           ...node,
+          status: 'running',
           text: node.text + readString(payload.delta),
         })
       }
@@ -245,6 +259,7 @@ export function createChatAgentTurnReducer(
     if (event.type === 'message.delta') {
       const phase = readAssistantTextPhase(payload.phase)
       const messageId = readString(payload.messageId)
+      settleReasoning(messageId)
       const contentIndex = readNonnegativeInteger(payload.contentIndex)
       if (phase !== 'commentary' || !messageId || contentIndex === null)
         return
@@ -271,6 +286,7 @@ export function createChatAgentTurnReducer(
       const content = readPayload(payload.content)
       if (!messageId)
         return
+      settleReasoning(messageId, payload.stopReason === 'failed' || payload.stopReason === 'length' ? 'interrupted' : 'completed')
       const phase = readAssistantTextPhase(payload.phase)
       const isCommentary = phase === 'commentary'
         || (!phase && payload.stopReason === 'tool_use')
@@ -461,7 +477,7 @@ export function createChatAgentTurnReducer(
     if (projection)
       return projection
     const terminal = run.status !== 'queued' && run.status !== 'running'
-    const reasoningNodes = [...reasoning.values()].filter(node => node.text.trim())
+    const reasoningNodes = [...reasoning.values()].filter(node => node.text.trim() || (!terminal && node.status === 'running'))
     const narrationNodes = [...text.values()].filter(node => node.text.trim())
     const awaitingApproval = [...tools.values()]
       .filter(node => node.status === 'awaiting_approval')

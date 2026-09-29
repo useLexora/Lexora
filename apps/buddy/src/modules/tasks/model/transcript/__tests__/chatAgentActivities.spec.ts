@@ -1,20 +1,20 @@
 import type { ChatAgentReasoningNode, ChatAgentToolNode, ChatAgentTurnNode } from '../chatAgentTurn'
 import { describe, expect, it } from 'vitest'
 import { presentChatActivityLayout } from '../chatActivityLayout'
-import { reasoningPreview, summarizeChatActivity, summarizeChatActivityCounts } from '../chatActivitySummary'
+import { summarizeChatActivity, summarizeChatActivityCounts } from '../chatActivitySummary'
 import { createChatAgentActivityProjector } from '../chatAgentActivities'
 import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
 import { projectExtensionActionTool } from '../chatTranscriptActivities'
 
 describe('activity grouping', () => {
-  it('keeps the beginning in historical previews and follows the latest visible content while thinking', () => {
-    const text = '**Initial observation**\n\nChecking details\n\n**Latest finding**\n```\n\n'
-    expect(reasoningPreview(text)).toBe('Initial observation')
-    expect(reasoningPreview(text, true)).toBe('Latest finding')
-    const longParagraph = `${'Earlier work '.repeat(8_000)}Current result`
-    expect(reasoningPreview(longParagraph, true)).toHaveLength(240)
-    expect(reasoningPreview(longParagraph, true).endsWith('Current result')).toBe(true)
-    expect(reasoningPreview('\n ** \n```\n', true)).toBe('')
+  it('derives local execution, approval and interruption independently from issue counts', () => {
+    const projector = createChatAgentActivityProjector()
+    expect(projector.project([thought('a', 'running'), tool('bad', 'failed'), tool('pending', 'awaiting_approval')])[0]).toMatchObject({ status: 'running', issueCount: 1, approvalCount: 1, reasoningCount: 1 })
+    expect(projector.project([thought('a'), tool('pending', 'awaiting_approval')])[0]).toMatchObject({ status: 'awaiting_approval', approvalCount: 1 })
+    expect(projector.project([tool('preparing', 'preparing'), tool('pending', 'awaiting_approval')])[0]).toMatchObject({ status: 'preparing', approvalCount: 1 })
+    expect(projector.project([thought('a', 'interrupted'), tool('done')])[0]).toMatchObject({ status: 'interrupted' })
+    expect(projector.project([tool('cancelled', 'cancelled'), tool('done')])[0]).toMatchObject({ status: 'interrupted' })
+    expect(projector.project([thought('a'), tool('done')])[0]).toMatchObject({ status: 'completed' })
   })
 
   it('keeps alternating thinking and calls together and separates public narration and compaction', () => {
@@ -54,7 +54,7 @@ describe('activity grouping', () => {
     expect(row).toMatchObject({ toolCount: 3, counts: [{ category: 'read', count: 3 }] })
     if (row.kind !== 'activity-group')
       throw new Error('Expected activity group')
-    expect(summarizeChatActivity(row, 'zh-CN')).toMatchObject({ label: '读取 1 个文件', target: '' })
+    expect(summarizeChatActivity(row, 'zh-CN')).toMatchObject({ label: '思考 · 读取 1 个文件' })
   })
 
   it('settles a completed group immediately using its own tool semantics', () => {
@@ -188,7 +188,7 @@ describe('tool display registration', () => {
     const group = createChatAgentActivityProjector().project([action, thought('checking'), node, tool('read')])[0]!
     expect(group).toMatchObject({ toolCount: 3, counts: [{ category: 'other', count: 2 }, { category: 'read', count: 1 }] })
     if (group.kind === 'activity-group')
-      expect(summarizeChatActivity(group, 'zh-CN').label).toBe('读取 1 个文件 · 工具调用 2 次')
+      expect(summarizeChatActivity(group, 'zh-CN').label).toBe('思考 · 读取 1 个文件 · 工具调用 2 次')
   })
 
   it('does not expose denied output and preserves an unfamiliar tool name', () => {

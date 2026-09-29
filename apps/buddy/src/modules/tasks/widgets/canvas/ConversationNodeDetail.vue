@@ -12,12 +12,12 @@ import BuddyChatMessageBody from '../transcript/BuddyChatMessageBody.vue'
 import BuddyChatRunActivity from '../transcript/BuddyChatRunActivity.vue'
 import BuddyChatTokenUsage from '../transcript/BuddyChatTokenUsage.vue'
 import { useChatContent } from '../transcript/chatContentContext'
-import { useChatActivityNavigation } from '../transcript/useChatActivityNavigation'
 
 const props = defineProps<{
   target: ConversationNodeDetailRequest
   rows: readonly ChatTranscriptRow[]
   language: BuddyLocale
+  stoppingRunId?: string | null
   loading: boolean
   error: string | null
   canEdit: boolean
@@ -26,7 +26,6 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [], reload: [], edit: [], openArtifact: [id: string], openChanges: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const { writeClipboardText } = useChatContent()
-const activityNavigation = useChatActivityNavigation()
 </script>
 
 <template>
@@ -60,10 +59,10 @@ const activityNavigation = useChatActivityNavigation()
           <BuddyChatTokenUsage v-if="row.turnUsage && !row.streaming" :usage="row.turnUsage" :language="language" />
         </div>
         <template v-else-if="row.kind === 'agent-turn'">
-          <BuddyChatAgentTurn :ref="view => activityNavigation.register(row.key, view, row.turn.nodes.map(node => node.id))" :turn="row.turn" :show-identity="row.showIdentity" :show-outcome="row.showOutcome" :language="language" />
+          <BuddyChatAgentTurn :turn="row.turn" :show-identity="row.showIdentity" :show-outcome="row.showOutcome" :language="language" />
           <BuddyChatTokenUsage v-if="row.ownsResultActions && row.turn.usage" :usage="row.turn.usage" :language="language" />
         </template>
-        <BuddyChatRunActivity v-else-if="row.kind === 'activity'" :turn="row.turn" :language="language" @reveal-activity="activityNavigation.reveal(row.turn.runId, $event)" />
+        <BuddyChatRunActivity v-else-if="row.kind === 'activity'" :turn="row.turn" :language="language" :stopping="stoppingRunId === row.turn.runId" />
         <BuddyChatAgentTurnFlow v-else-if="row.kind === 'activity-flow'" :nodes="row.nodes" :failure-detail-text="null" :language="language" />
         <BuddyChatCompactionRow v-else-if="row.kind === 'compaction'" :node="row.compaction" :language="language" />
         <p v-else-if="row.kind === 'recovery-notice'" class="conversation-node-detail__notice" role="status">

@@ -2,7 +2,6 @@ import type { ChatAgentActivityGroup } from './chatAgentActivities'
 import type { ChatToolCategory, ChatToolIcon } from './chatToolRegistry'
 import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import { translateBuddy } from '@/i18n/buddyI18n'
-import { normalizeProcessNarration } from './chatToolPresentation'
 
 const countLabels: Record<ChatToolCategory, BuddyI18nKey> = {
   read: 'desktop.chat.activityReadCount',
@@ -24,19 +23,11 @@ const summaryOrder: readonly ChatToolCategory[] = ['create', 'edit', 'read', 'se
 
 export interface ChatActivitySummary {
   label: string
-  target: string
   icon: ChatToolIcon | 'reasoning'
 }
 
 export function summarizeChatActivity(group: ChatAgentActivityGroup, language: BuddyLocale): ChatActivitySummary {
-  const reasoning = group.nodes.findLast(node => node.kind === 'reasoning' && node.status !== 'running')
-  return {
-    label: group.counts.length
-      ? summarizeChatActivityCounts(group, language)
-      : translateBuddy(language, reasoning?.status === 'interrupted' ? 'desktop.chat.processReasoningInterrupted' : 'desktop.chat.processReasoningDone'),
-    target: group.toolCount === 0 && reasoning?.kind === 'reasoning' ? reasoningPreview(reasoning.text) : '',
-    icon: group.icon,
-  }
+  return { label: summarizeChatActivityCounts(group, language), icon: group.icon }
 }
 
 export function summarizeChatActivityCounts(group: ChatAgentActivityGroup, language: BuddyLocale, limit = 3): string {
@@ -50,17 +41,7 @@ export function summarizeChatActivityCounts(group: ChatAgentActivityGroup, langu
   const remaining = counts.slice(limit).reduce((total, entry) => total + entry.count, 0)
   if (remaining)
     labels.push(translateBuddy(language, 'desktop.chat.activityMoreCalls', { count: remaining }))
+  if (group.reasoningCount)
+    labels.unshift(translateBuddy(language, 'desktop.chat.processReasoning'))
   return labels.join(' · ')
-}
-
-export function reasoningPreview(text: string, fromEnd = false): string {
-  const lines = text.trim().split('\n')
-  if (fromEnd)
-    lines.reverse()
-  for (const line of lines) {
-    const preview = normalizeProcessNarration(fromEnd ? line.slice(-240) : line.slice(0, 240))
-    if (preview)
-      return preview
-  }
-  return ''
 }
