@@ -8,7 +8,7 @@ const result = {
   latestVersion: version,
   status: 'update_available',
   releaseUrl: `https://github.com/useLexora/Lexora/releases/tag/v${version}`,
-  releaseNotes: '## 更新亮点\n- 改善任务恢复\n- 修复文件操作\n- 优化资源使用\n![external](https://example.invalid/image.png)',
+  releaseNotes: '## 更新亮点\n- feat(buddy): 改善任务恢复 by @contributor in https://github.com/useLexora/Lexora/pull/301\n- 修复文件操作\n- 优化资源使用\n![external](https://example.invalid/image.png)',
 }
 
 async function seedUpdate(instance, enabled = true) {
@@ -32,6 +32,11 @@ async function seedUpdate(instance, enabled = true) {
 async function about(page) {
   await page.locator('.desktop-app-sidebar').getByRole('button', { name: '设置', exact: true }).click()
   await page.locator('.desktop-settings-sidebar').getByRole('link', { name: '关于', exact: true }).click()
+}
+
+async function checkFromApplicationMenu(page) {
+  await page.locator('.desktop-window-menu').getByRole('button', { name: 'Lexora Buddy', exact: true }).click()
+  await page.getByRole('menuitem').filter({ hasText: '检查更新…' }).click()
 }
 
 function toggle(page) {
@@ -65,6 +70,8 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
   const dialog = () => desktop.page.locator('.desktop-update-dialog')
   await expect(dialog()).toBeVisible()
   await expect(dialog()).toContainText('改善任务恢复')
+  await expect(dialog()).not.toContainText('@contributor')
+  await expect(dialog()).not.toContainText('/pull/301')
   await expect(dialog().locator('img')).toHaveCount(0)
   await expect.poll(() => decisions(instance)).toMatchObject({ seenVersion: version })
   await desktop.app.evaluate(({ shell }) => {
@@ -95,10 +102,29 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
     ipcMain.removeHandler('lexora:app:check-for-updates')
     ipcMain.handle('lexora:app:check-for-updates', () => ({ ...result, currentVersion: app.getVersion() }))
   }, result)
-  await desktop.page.getByRole('button', { name: '检查更新', exact: true }).click()
+  await desktop.page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
+  await checkFromApplicationMenu(desktop.page)
   await expect(dialog()).toContainText(version)
   await expect(reminder()).toHaveCount(0)
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'update-details.png'), animations: 'disabled' })
+  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'update-available.png'), animations: 'disabled' })
+  await dialog().getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dialog()).toHaveCount(0)
+  await desktop.app.evaluate(({ ipcMain, app }) => {
+    const currentVersion = app.getVersion()
+    ipcMain.removeHandler('lexora:app:check-for-updates')
+    ipcMain.handle('lexora:app:check-for-updates', () => ({
+      currentVersion,
+      latestVersion: currentVersion,
+      status: 'up_to_date',
+      releaseUrl: `https://github.com/useLexora/Lexora/releases/tag/v${currentVersion}`,
+      releaseNotes: '',
+    }))
+  })
+  await checkFromApplicationMenu(desktop.page)
+  await expect(dialog()).toContainText('已是最新版本')
+  await expect(dialog().getByRole('button', { name: '忽略此版本', exact: true })).toHaveCount(0)
+  await expect(dialog().getByRole('button', { name: '前往下载', exact: true })).toHaveCount(0)
+  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'up-to-date.png'), animations: 'disabled' })
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 

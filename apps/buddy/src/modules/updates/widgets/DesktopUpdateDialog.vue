@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { DesktopUpdateCheckResult } from '@buddy-electron/shared/desktopUpdates'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { ArrowDownload20Regular, ArrowUpRight20Regular, CheckmarkCircle20Regular } from '@vicons/fluent'
 import { NButton, NModal } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { updateReleaseHighlights } from '../model/updateReleaseNotes'
 
 const props = defineProps<{
@@ -18,6 +20,7 @@ const emit = defineEmits<{
   'update:show': [show: boolean]
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const updateAvailable = computed(() => props.result?.status === 'update_available')
 const highlights = computed(() => updateReleaseHighlights(props.result?.releaseNotes ?? ''))
 </script>
 
@@ -28,41 +31,98 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
     class="desktop-update-dialog"
     :style="{ width: 'min(32rem, calc(100vw - 2rem))' }"
     :title="t('desktop.update.title')"
+    :auto-focus="false"
     @update:show="emit('update:show', $event)"
   >
     <template v-if="result">
-      <p class="desktop-update-dialog__status">
-        {{ result.status === 'up_to_date' ? t('desktop.update.latest') : t('desktop.update.available') }}
-      </p>
-      <dl class="desktop-update-dialog__versions">
-        <div><dt>{{ t('desktop.update.currentVersion') }}</dt><dd>{{ result.currentVersion }}</dd></div>
-        <div><dt>{{ t('desktop.update.latestVersion') }}</dt><dd>{{ result.latestVersion }}</dd></div>
-      </dl>
-      <section v-if="result.status === 'update_available'" class="desktop-update-dialog__notes">
-        <h3>{{ t('desktop.update.highlights') }}</h3>
-        <ul v-if="highlights.length">
-          <li v-for="(line, index) in highlights" :key="index">
-            {{ line }}
-          </li>
-        </ul>
-        <p v-else>
-          {{ t('desktop.update.notesUnavailable') }}
-        </p>
-        <NButton text :disabled="pending" @click="emit('openRelease', result.releaseUrl)">
-          {{ t('desktop.update.openRelease') }}
-        </NButton>
-      </section>
+      <!-- 发现新版本视图 -->
+      <template v-if="updateAvailable">
+        <header class="desktop-update-dialog__header">
+          <div class="desktop-update-dialog__icon-wrap is-update">
+            <DesktopIcon :component="ArrowDownload20Regular" :size="22" aria-hidden="true" />
+          </div>
+          <div class="desktop-update-dialog__header-copy">
+            <div class="desktop-update-dialog__title-row">
+              <h2 class="desktop-update-dialog__version-title">
+                Lexora Buddy {{ result.latestVersion }}
+              </h2>
+              <span class="desktop-update-dialog__badge">{{ t('desktop.update.latestTag') }}</span>
+            </div>
+            <p class="desktop-update-dialog__meta">
+              {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
+            </p>
+          </div>
+        </header>
+
+        <section class="desktop-update-dialog__card">
+          <div class="desktop-update-dialog__card-header">
+            <h3 class="desktop-update-dialog__card-title">
+              {{ t('desktop.update.highlights') }}
+            </h3>
+            <NButton
+              text
+              type="primary"
+              size="tiny"
+              class="desktop-update-dialog__release-link"
+              :disabled="pending"
+              @click="emit('openRelease', result.releaseUrl)"
+            >
+              <template #icon>
+                <DesktopIcon :component="ArrowUpRight20Regular" :size="14" />
+              </template>
+              {{ t('desktop.update.openRelease') }}
+            </NButton>
+          </div>
+
+          <ul v-if="highlights.length" class="desktop-update-dialog__list">
+            <li v-for="(line, index) in highlights" :key="`${index}:${line}`">
+              {{ line }}
+            </li>
+          </ul>
+          <p v-else class="desktop-update-dialog__notes-empty">
+            {{ t('desktop.update.notesUnavailable') }}
+          </p>
+        </section>
+      </template>
+
+      <!-- 已是最新版本视图 -->
+      <template v-else>
+        <div class="desktop-update-dialog__latest-state">
+          <div class="desktop-update-dialog__icon-wrap is-latest">
+            <DesktopIcon :component="CheckmarkCircle20Regular" :size="24" aria-hidden="true" />
+          </div>
+          <h2 class="desktop-update-dialog__latest-title">
+            {{ t('desktop.update.latest') }}
+          </h2>
+          <p class="desktop-update-dialog__latest-desc">
+            {{ t('desktop.update.latestDescription') }} (v{{ result.currentVersion }})
+          </p>
+        </div>
+      </template>
     </template>
+
     <template #footer>
       <div class="desktop-update-dialog__actions">
-        <NButton v-if="result?.status === 'update_available'" quaternary :disabled="pending" @click="emit('ignore', result.latestVersion)">
+        <NButton
+          v-if="updateAvailable"
+          quaternary
+          :disabled="pending"
+          @click="emit('ignore', result?.latestVersion ?? '')"
+        >
           {{ t('desktop.update.ignore') }}
         </NButton>
-        <div class="desktop-update-dialog__primary">
+        <div v-else class="desktop-update-dialog__spacer" />
+
+        <div class="desktop-update-dialog__primary-group">
           <NButton @click="emit('update:show', false)">
             {{ t('common.close') }}
           </NButton>
-          <NButton v-if="result?.status === 'update_available'" type="primary" :disabled="pending" @click="emit('openRelease', result.releaseUrl)">
+          <NButton
+            v-if="updateAvailable"
+            type="primary"
+            :loading="pending"
+            @click="emit('openRelease', result?.releaseUrl ?? '')"
+          >
             {{ t('desktop.update.download') }}
           </NButton>
         </div>
@@ -72,61 +132,166 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
 </template>
 
 <style scoped>
-.desktop-update-dialog__status {
-  margin: 0 0 1rem;
-  color: var(--buddy-text-strong);
-  font-size: 14px;
-}
-.desktop-update-dialog__versions {
-  display: grid;
-  gap: 0.5rem;
-  margin: 0;
-  font-size: 13px;
-}
-.desktop-update-dialog__versions div {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.desktop-update-dialog__versions dt {
-  color: var(--buddy-text-secondary);
-}
-.desktop-update-dialog__versions dd {
-  margin: 0;
-  font-family: var(--buddy-font-mono);
-}
-.desktop-update-dialog__notes {
-  margin-top: 20px;
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding-top: 12px;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.desktop-update-dialog__notes h3 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.desktop-update-dialog__notes ul {
-  margin: 0 0 12px;
-  padding-left: 18px;
-  color: var(--buddy-text-secondary);
-  line-height: 1.7;
-}
-.desktop-update-dialog__notes p {
-  color: var(--buddy-text-secondary);
-}
-.desktop-update-dialog__actions,
-.desktop-update-dialog__primary {
+.desktop-update-dialog__header {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 14px;
+  padding: 2px 0 14px;
+}
+
+.desktop-update-dialog__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.desktop-update-dialog__icon-wrap.is-update {
+  background: var(--buddy-accent-surface);
+  color: var(--buddy-accent-text);
+  border: 1px solid var(--buddy-accent-border, transparent);
+}
+
+.desktop-update-dialog__icon-wrap.is-latest {
+  background: var(--buddy-status-success-surface);
+  color: var(--buddy-status-success-text);
+  border: 1px solid var(--buddy-status-success-border, transparent);
+}
+
+.desktop-update-dialog__header-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.desktop-update-dialog__title-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
-.desktop-update-dialog__actions {
-  justify-content: space-between;
+
+.desktop-update-dialog__version-title {
+  margin: 0;
+  color: var(--buddy-text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
 }
-.desktop-update-dialog__primary {
-  margin-left: auto;
+
+.desktop-update-dialog__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: var(--buddy-accent-surface);
+  color: var(--buddy-accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.desktop-update-dialog__meta {
+  margin: 3px 0 0;
+  color: var(--buddy-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.desktop-update-dialog__card {
+  border-radius: 8px;
+  border: 1px solid var(--buddy-border-subtle);
+  background: var(--buddy-surface-raised);
+  padding: 12px 14px;
+}
+
+.desktop-update-dialog__card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.desktop-update-dialog__card-title {
+  margin: 0;
+  color: var(--buddy-text-strong);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.desktop-update-dialog__release-link {
+  font-size: 12px;
+}
+
+.desktop-update-dialog__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--buddy-text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.desktop-update-dialog__list li {
+  overflow-wrap: anywhere;
+}
+
+.desktop-update-dialog__list li::marker {
+  color: var(--buddy-accent-text);
+}
+
+.desktop-update-dialog__notes-empty {
+  margin: 0;
+  color: var(--buddy-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.desktop-update-dialog__latest-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 0 12px;
+}
+
+.desktop-update-dialog__latest-title {
+  margin: 12px 0 4px;
+  color: var(--buddy-text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.desktop-update-dialog__latest-desc {
+  margin: 0;
+  color: var(--buddy-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.desktop-update-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.desktop-update-dialog__spacer {
+  flex: 1;
+}
+
+.desktop-update-dialog__primary-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>
