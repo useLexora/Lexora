@@ -10,16 +10,20 @@ const props = defineProps<{
   item: ExtensionSettingItem
   value: ExtensionSettingValue
   disabled: boolean
+  saving?: boolean
+  repairDisabled?: boolean
+  conditionReason?: string
+  conditionUnavailable?: boolean
   invalid: boolean
   models: readonly LocalRuntimeModelOption[]
   providers: readonly LocalProvider[]
   language: BuddyLocale
 }>()
-const emit = defineEmits<{ change: [value: ExtensionSettingValue] }>()
+const emit = defineEmits<{ change: [value: ExtensionSettingValue], draft: [value: ExtensionSettingValue], retry: [] }>()
 const labelId = useId()
 const draft = shallowRef(props.value)
-watch([() => props.value, () => props.disabled, () => props.item.id], ([value, disabled]) => {
-  if (!disabled)
+watch([() => props.value, () => props.saving, () => props.item.id], ([value, saving]) => {
+  if (!saving)
     draft.value = value
 })
 function commit(value: ExtensionSettingValue) {
@@ -38,8 +42,14 @@ function commit(value: ExtensionSettingValue) {
       <small v-if="item.description">{{ item.description }}</small>
       <small v-if="invalid" class="plugin-setting-field__issue" role="status">
         {{ language === 'zh-CN' ? '原值已保留，但不符合当前版本的要求。请修改此项或恢复默认值。' : 'The saved value is preserved but is incompatible with this version. Change this field or restore its default.' }}
-        <NButton text size="tiny" :disabled="disabled" @click="emit('change', item.default)">
+        <NButton text size="tiny" :disabled="repairDisabled ?? disabled" @click="emit('change', item.default)">
           {{ language === 'zh-CN' ? '恢复默认值' : 'Restore default' }}
+        </NButton>
+      </small>
+      <small v-if="conditionReason" role="status">
+        {{ conditionReason }}
+        <NButton v-if="conditionUnavailable" text size="tiny" :disabled="repairDisabled" @click="emit('retry')">
+          {{ language === 'zh-CN' ? '重试' : 'Retry' }}
         </NButton>
       </small>
     </div>
@@ -48,7 +58,7 @@ function commit(value: ExtensionSettingValue) {
       <DesktopPluginModelSetting v-else-if="item.type === 'model'" :value="value && typeof value === 'object' ? value : null" :models="models" :providers="providers" :language="language" :disabled="disabled" :label-id="labelId" @change="emit('change', $event)" />
       <NSelect v-else-if="item.type === 'select'" :value="typeof value === 'string' ? value : null" :options="item.options" :disabled="disabled" :aria-labelledby="labelId" @update:value="emit('change', $event)" />
       <NInputNumber v-else-if="item.type === 'number'" :value="typeof draft === 'number' ? draft : null" :update-value-on-input="false" :min="item.min" :max="item.max" :disabled="disabled" :aria-labelledby="labelId" @update:value="$event !== null && commit($event)" />
-      <NInput v-else :value="String(draft ?? '')" :maxlength="8192" :disabled="disabled" :aria-labelledby="labelId" @update:value="draft = $event" @change="commit" @keydown.enter="!$event.isComposing && commit(String(draft ?? ''))" />
+      <NInput v-else :value="String(draft ?? '')" :maxlength="8192" :disabled="disabled" :aria-labelledby="labelId" @update:value="draft = $event; emit('draft', $event)" @change="commit" @keydown.enter="!$event.isComposing && commit(String(draft ?? ''))" />
     </div>
   </div>
 </template>

@@ -27,7 +27,7 @@ const open = shallowRef(false)
 const highlightedIssue = shallowRef<string | null>(null)
 const content = useTemplateRef<HTMLDivElement>('content')
 const header = useTemplateRef<HTMLButtonElement>('header')
-const hasHistory = computed(() => props.group.nodes.some(node => node.kind === 'tool' ? !isChatToolActive(node) : node.status !== 'running'))
+const hasVisibleActivity = computed(() => props.group.nodes.some(node => node.kind === 'tool' ? node.progressPlacement === 'inline' || !isChatToolActive(node) : node.status !== 'running'))
 const singleTool = computed(() => props.group.toolCount === 1 && props.group.nodes.every(node => node.kind === 'tool' || node.status === 'running'))
 const singleReasoning = computed(() => props.group.nodes.length === 1 && props.group.nodes[0]?.kind === 'reasoning')
 const layout = computed(() => presentChatActivityLayout(props.group.nodes))
@@ -59,8 +59,8 @@ async function revealActivity(nodeId: string) {
   await nextTick()
   if (!open.value || highlightedIssue.value !== node.id)
     return
-  const row = [...(content.value?.querySelectorAll<HTMLElement>('[data-tool-call-id]') ?? [])]
-    .find(element => element.dataset.toolCallId === node.toolCallId)
+  const row = [...(content.value?.querySelectorAll<HTMLElement>('[data-activity-node-id]') ?? [])]
+    .find(element => element.dataset.activityNodeId === node.id)
   const target = row?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? row
   target?.focus({ preventScroll: true })
   target?.scrollIntoView({ block: 'center', behavior: 'instant' })
@@ -77,7 +77,7 @@ defineExpose({ revealActivity })
 
 <template>
   <section
-    v-show="hasHistory || open || group.toolCount > 1"
+    v-show="hasVisibleActivity || open || group.toolCount > 1"
     class="buddy-chat-activity-group"
     :data-activity-id="group.id"
     :class="{ 'is-open': open, 'is-grouped': !singleTool && !singleReasoning }"
@@ -95,7 +95,7 @@ defineExpose({ revealActivity })
       </button>
     </div>
     <BuddyChatDisclosure>
-      <div v-if="open || ((singleTool || singleReasoning) && hasHistory)" ref="content" class="buddy-chat-activity-group__content">
+      <div v-if="open || ((singleTool || singleReasoning) && hasVisibleActivity)" ref="content" class="buddy-chat-activity-group__content">
         <template v-for="entry in layout.entries" :key="entry.id">
           <BuddyChatToolRow
             v-if="entry.kind === 'tool'"
@@ -110,6 +110,7 @@ defineExpose({ revealActivity })
             <BuddyChatToolDetails
               v-if="openEntries.get(entry.node.id) && canExpandChatTool(entry.node, actions.canPreviewFile)"
               :data-tool-detail-id="entry.node.toolCallId"
+              :data-action-detail-id="entry.node.invocation?.id"
               :error-code="entry.node.errorCode"
               :language="language" :presentation="entry.node.presentation"
               :status="entry.node.status" :tool-name="entry.node.toolName"

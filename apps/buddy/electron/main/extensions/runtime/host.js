@@ -1,8 +1,12 @@
+import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { ExtensionHostEvents } from './ExtensionHostEvents'
 
 const bridge = window.lexoraExtensionHost
 const commands = new Map()
 const agentTools = new Map()
+const agentActions = new Map()
+const conditions = new Map()
+const conditionEvaluations = new Map()
 const agentInvocations = new Map()
 const source = new ExtensionHostEvents()
 const events = source.events
@@ -73,6 +77,17 @@ bridge.subscribe(async ({ id, method, params }) => {
         placements: { show: (id, options) => request('placements.show', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }), hide: (id, options) => request('placements.hide', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }) },
         resources: { readText: resource => request('resources.readText', { id: resource.id }) },
         storage: { get: () => request('storage.get'), set: value => request('storage.set', { value, version: manifest.dataVersion }) },
+        conditions: {
+          register(id, callback) {
+            if (activated || !manifest.contributes.conditions?.some(condition => condition.id === id) || conditions.has(id) || typeof callback !== 'function') {
+              registrationError = new Error('EXTENSION_CONDITION_INVALID')
+              throw registrationError
+            }
+            conditions.set(id, callback)
+            return disposable(() => conditions.delete(id))
+          },
+          invalidate: (input = {}) => request('conditions.invalidate', input),
+        },
         configuration: {
           get: () => request('configuration.get'),
           onChange: listener => source.registerConfigurationApplier(listener),
@@ -84,6 +99,13 @@ bridge.subscribe(async ({ id, method, params }) => {
           }
           agentTools.set(id, callback)
           return disposable(() => agentTools.delete(id))
+        }, registerAction(id, callback) {
+          if (activated || !manifest.contributes.agent?.actions.some(action => action.id === id) || agentActions.has(id) || typeof callback !== 'function') {
+            registrationError = new Error('EXTENSION_ACTION_INVALID')
+            throw registrationError
+          }
+          agentActions.set(id, callback)
+          return disposable(() => agentActions.delete(id))
         } },
         network: { get: url => request('network.get', { url }) },
         notifications: { show: notification => request('notifications.show', notification) },
@@ -111,6 +133,10 @@ bridge.subscribe(async ({ id, method, params }) => {
         throw new Error('EXTENSION_COMMAND_MISSING')
       if (manifest.contributes.agent?.tools.some(tool => !agentTools.has(tool.id)))
         throw new Error('EXTENSION_TOOL_MISSING')
+      if (manifest.contributes.agent?.actions.some(action => !agentActions.has(action.id)))
+        throw new Error('EXTENSION_ACTION_MISSING')
+      if (manifest.contributes.conditions?.some(condition => !conditions.has(condition.id)))
+        throw new Error('EXTENSION_CONDITION_MISSING')
       activated = true
     }
     else if (method === 'configuration.changed') {
@@ -122,8 +148,36 @@ bridge.subscribe(async ({ id, method, params }) => {
       }
       catch { throw new Error('EXTENSION_CONFIGURATION_UPDATE_FAILED') }
     }
+    else if (method === 'conditions.evaluate') {
+      if (!activated || !conditions.has(params.condition) || conditionEvaluations.size >= 32)
+        throw new Error('EXTENSION_CONDITION_UNAVAILABLE')
+      const controller = new AbortController()
+      conditionEvaluations.set(params.evaluationId, controller)
+      const timeout = setTimeout(() => controller.abort(), 2000)
+      let cancel
+      try {
+        const cancelled = new Promise((_, reject) => {
+          cancel = () => reject(new Error('EXTENSION_CONDITION_CANCELLED'))
+          controller.signal.addEventListener('abort', cancel, { once: true })
+        })
+        result = await Promise.race([
+          Promise.resolve().then(() => conditions.get(params.condition)(Object.freeze({ ...copyEventSnapshot(params.context), signal: controller.signal }), copyEventSnapshot(params.params))),
+          cancelled,
+        ])
+        controller.signal.throwIfAborted()
+      }
+      catch { throw new Error('EXTENSION_CONDITION_FAILED') }
+      finally {
+        clearTimeout(timeout)
+        controller.signal.removeEventListener('abort', cancel)
+        conditionEvaluations.delete(params.evaluationId)
+      }
+    }
+    else if (method === 'conditions.cancel') {
+      conditionEvaluations.get(params.evaluationId)?.abort()
+    }
     else if (method === 'agent.invoke') {
-      if (!activated || !agentTools.has(params.tool))
+      if (!activated || !(params.action ? agentActions.has(params.action) : agentTools.has(params.tool)))
         throw new Error('EXTENSION_AGENT_UNAVAILABLE')
       const controller = new AbortController()
       agentInvocations.set(params.invocationId, controller)
@@ -132,11 +186,12 @@ bridge.subscribe(async ({ id, method, params }) => {
         return request('agent.request', { invocationId: params.invocationId, method, params: value })
       }
       try {
-        result = await agentTools.get(params.tool)(params.input, Object.freeze({
+        const invocation = Object.freeze({
           signal: controller.signal,
-          task: Object.freeze({ get: () => call('task.get'), rename: value => call('task.rename', value) }),
+          task: Object.freeze({ get: () => call('task.get'), messages: () => call('task.messages'), rename: value => call('task.rename', value) }),
           models: Object.freeze({ generateText: value => call('models.generateText', value) }),
-        })) ?? null
+        })
+        result = (params.action ? await agentActions.get(params.action)(Object.freeze({ ...invocation, cause: copyEventSnapshot(params.cause) })) : await agentTools.get(params.tool)(params.input, invocation)) ?? null
       }
       finally { agentInvocations.delete(params.invocationId) }
     }
@@ -156,6 +211,8 @@ bridge.subscribe(async ({ id, method, params }) => {
       interactions.delete(params.id)
     }
     else if (method === 'deactivate') {
+      for (const controller of conditionEvaluations.values()) controller.abort()
+      conditionEvaluations.clear()
       for (const controller of agentInvocations.values()) controller.abort()
       agentInvocations.clear()
       for (const controller of interactions.values()) controller.abort()

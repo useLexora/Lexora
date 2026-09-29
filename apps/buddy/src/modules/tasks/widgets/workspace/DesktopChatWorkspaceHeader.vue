@@ -6,6 +6,7 @@ import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
+  taskId?: string | null
   viewMode?: 'chat' | 'canvas'
   canToggleCanvas: boolean
   language: BuddyLocale
@@ -27,7 +28,7 @@ const { t } = useBuddyI18n(() => props.language)
     </div>
 
     <div class="desktop-chat-workspace-header__actions">
-      <WorkbenchMenu target="task.actions" />
+      <WorkbenchMenu target="task.actions" :task-id="taskId" />
       <slot name="leadingActions" />
       <button
         v-if="canToggleCanvas"

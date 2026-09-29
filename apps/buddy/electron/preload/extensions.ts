@@ -6,9 +6,13 @@ import { subscribe } from './subscribe'
 export function createExtensionApi(): ExtensionApi {
   const request = (input: ExtensionManagementRequest) => ipcRenderer.invoke(EXTENSION_IPC.request, input)
   return Object.freeze({
+    taskActions: () => request({ action: 'taskActions' }),
+    invokeTaskAction: input => request({ action: 'invokeTaskAction', input }),
     list: () => request({ action: 'list' }),
     configuration: id => request({ action: 'configuration', id }),
     configurationSnapshot: id => request({ action: 'configurationSnapshot', id }),
+    settingConditions: (id, items, form) => request({ action: 'settingConditions', id, items, form }),
+    onConditionsChanged: listener => subscribe(EXTENSION_IPC.conditionsChanged, listener),
     configure: (id, patch) => request({ action: 'configure', id, patch }),
     installations: () => request({ action: 'installations' }),
     catalog: (refresh = false) => request({ action: 'catalog', refresh }),

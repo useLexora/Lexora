@@ -68,7 +68,7 @@ function fixture() {
   databases.push(database)
   const repository = createConversationRepository(database)
   repository.create({ id: 'task-1', branchId: 'branch-1', spaceId: null, title: 'Original', approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt: '2026-09-28T00:00:00.000Z' })
-  database.prepare('UPDATE conversations SET title_source = ? WHERE id = ?').run('fallback', 'task-1')
+  database.prepare('UPDATE conversations SET title_source = ?, title_revision = 0 WHERE id = ?').run('fallback', 'task-1')
   const invalidate = vi.fn(async (_id: string) => ({ pending: 0, degraded: 0 }))
   const resolveModel = vi.fn(async (selection: NonNullable<ReturnType<typeof repository.findById>>['modelSelection']) => selection!)
   const service = new ConversationMetadataService({ repository, resolveModelSelection: resolveModel, sessions: { invalidateConversation: invalidate } })

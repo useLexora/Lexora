@@ -18,7 +18,7 @@ import type {
   BuddyComposerSpaceFileSelect,
 } from '../../shared/conversation/composerResource'
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
-import type { LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
+import type { ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
@@ -127,6 +127,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsListMessages: 'lexora:buddy:conversations:list-messages',
   conversationsRename: 'lexora:buddy:conversations:rename',
   conversationsChanged: 'lexora:buddy:conversations:changed',
+  conversationsTimelineChanged: 'lexora:buddy:conversations:timeline-changed',
   conversationsSetPermissionSettings: 'lexora:buddy:conversations:set-permission-settings',
   conversationsSetModelSelection: 'lexora:buddy:conversations:set-model-selection',
   conversationsListTimeline: 'lexora:buddy:conversations:list-timeline',
@@ -382,6 +383,7 @@ export interface LocalChatApi {
   }
   conversations: {
     onChanged: (listener: (conversation: LocalConversation) => void) => () => void
+    onTimelineChanged: (listener: (event: ConversationTimelineChangeNotice) => void) => () => void
     getNodeDetail: (input: ConversationNodeDetailRequest) => Promise<LocalConversationTimelinePage>
     getTree: (conversationId: string) => Promise<LocalConversationTree>
     list: (limit?: number) => Promise<ReadonlyArray<LocalConversationSummary>>

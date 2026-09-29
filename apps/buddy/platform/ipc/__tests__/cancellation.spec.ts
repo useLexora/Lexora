@@ -1,5 +1,5 @@
 import type { RuntimeMessageTransport } from '../../../shared/runtime/rpcPeer'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { RuntimeRpcPeer } from '../runtimeRpcPeer'
 
 function peers() {
@@ -15,7 +15,7 @@ function peers() {
   } }
   return [new RuntimeRpcPeer({ transport: first }), new RuntimeRpcPeer({ transport: second })] as const
 }
-it('cancels remote work and discards late replies without cancelling later requests', async () => {
+it.each([5000, null])('cancels remote work and discards late replies with timeout %s without cancelling later requests', async (timeout) => {
   const [client, server] = peers()
   let signal: AbortSignal | undefined
   let complete!: (value: string) => void
@@ -25,7 +25,7 @@ it('cancels remote work and discards late replies without cancelling later reque
   })
   server.onRequest('next', () => 'next result')
   const controller = new AbortController()
-  const promise = client.request('slow', {}, 5000, controller.signal)
+  const promise = client.request('slow', {}, timeout, controller.signal)
   const rejected = expect(promise).rejects.toMatchObject({ name: 'AbortError' })
   controller.abort()
   await rejected
@@ -35,19 +35,40 @@ it('cancels remote work and discards late replies without cancelling later reque
   client.close(new Error('closed'))
   server.close(new Error('closed'))
 })
-it('aborts handlers when their connection closes', async () => {
+it.each([undefined, null])('aborts handlers when their connection closes with timeout %s', async (timeout) => {
   const [client, server] = peers()
   let signal: AbortSignal | undefined
   server.onRequest('slow', (_, received) => {
     signal = received
     return new Promise(resolve => received?.addEventListener('abort', () => resolve(null)))
   })
-  const promise = client.request('slow', {})
+  const promise = client.request('slow', {}, timeout)
   const rejected = expect(promise).rejects.toThrow('closed')
   server.close(new Error('closed'))
   client.close(new Error('closed'))
   await rejected
   expect(signal?.aborted).toBe(true)
+})
+
+it('waits for lifecycle-owned requests without a transport deadline while preserving default deadlines', async () => {
+  vi.useFakeTimers()
+  const [client, server] = peers()
+  let complete!: (value: string) => void
+  server.onRequest('queued', () => new Promise(resolve => complete = resolve))
+  server.onRequest('timed', () => new Promise(() => {}))
+  try {
+    const queued = client.request('queued', {}, null)
+    const timed = expect(client.request('timed', {})).rejects.toMatchObject({ code: 'RUNTIME_REQUEST_TIMEOUT' })
+    await vi.advanceTimersByTimeAsync(150000)
+    await timed
+    complete('completed')
+    expect(await queued).toBe('completed')
+  }
+  finally {
+    client.close(new Error('closed'))
+    server.close(new Error('closed'))
+    vi.useRealTimers()
+  }
 })
 
 it('keeps notification observers independent from request outcomes and preserves delivery order under reentry', async () => {

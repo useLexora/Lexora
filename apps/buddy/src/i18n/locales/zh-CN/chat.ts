@@ -390,6 +390,7 @@ export default {
   'desktop.chat.processToolImageReferenceLatest': '参考当前对话中的最新图片',
   'desktop.chat.processToolImageRunning': '生成中',
   'desktop.chat.processToolInput': '输入',
+  'desktop.chat.processToolSkipped': '已跳过',
   'desktop.chat.processToolInterrupted': '已中断',
   'desktop.chat.processToolNoOutput': '命令未产生输出',
   'desktop.chat.processToolPet': '桌宠动作',

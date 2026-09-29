@@ -4,12 +4,15 @@ import type { RunEventWriter } from '../events/RunEventPorts'
 import type { UsageRecord, UsageRepository } from '../storage/usageRepository'
 import type { BuddyUsagePurpose } from './recordPiUsage'
 import { randomUUID } from 'node:crypto'
+import { Emitter } from '../../../shared/events/Emitter'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 
 import { recordPiUsage } from './recordPiUsage'
 
 export interface UsageServiceOptions {
   eventLog: Pick<RunEventWriter, 'append'>
   repository: UsageRepository
+  onObserverError?: (error: unknown) => void
 }
 
 export interface RecordBuddyUsageInput {
@@ -35,9 +38,26 @@ export class UsageService {
   readonly #eventLog: Pick<RunEventWriter, 'append'>
   readonly #repository: UsageRepository
 
+  readonly #recorded: Emitter<Readonly<UsageRecord>>
+  readonly onDidRecord
+
   constructor(options: UsageServiceOptions) {
+    this.#recorded = new Emitter(options.onObserverError ?? (() => {}))
+    this.onDidRecord = this.#recorded.event
     this.#eventLog = options.eventLog
     this.#repository = options.repository
+  }
+
+  dispose(): void {
+    this.#recorded.dispose()
+  }
+
+  recordInvocation(input: Omit<RecordBuddyUsageInput, 'runId' | 'purpose'> & { invocationId: string }): UsageRecord | null {
+    const record = { ...recordPiUsage({ ...input, id: randomUUID(), runId: null, purpose: 'extension.action' }), runId: null, invocationId: input.invocationId }
+    if (!this.#repository.recordInvocation(record))
+      return null
+    this.#recorded.fire(copyEventSnapshot(record))
+    return record
   }
 
   async record(input: RecordBuddyUsageInput): Promise<UsageRecord | null> {
@@ -50,9 +70,10 @@ export class UsageService {
     await this.#eventLog.append({
       createdAt: record.createdAt,
       payload: durableUsagePayload(record),
-      runId: record.runId,
+      runId: input.runId,
       type: 'usage.recorded',
     })
+    this.#recorded.fire(copyEventSnapshot(record))
     return record
   }
 

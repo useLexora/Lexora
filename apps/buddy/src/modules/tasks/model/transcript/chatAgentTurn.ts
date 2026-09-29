@@ -1,4 +1,5 @@
 import type { ContextPanelOperation } from '@buddy-shared/context-panel/contextPanel'
+import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentation'
 
@@ -42,10 +43,12 @@ export interface ChatAgentToolNode {
   description: string | null
   id: string
   isError: boolean
+  invocation?: Readonly<ExtensionActionTimelineItem>
   kind: 'tool'
   presentation: BuddyToolPresentation
-  status: 'awaiting_approval' | 'completed' | 'denied' | 'failed' | 'interrupted' | 'preparing' | 'running'
-  toolCallId: string
+  progressPlacement?: 'inline'
+  status: 'awaiting_approval' | 'cancelled' | 'completed' | 'denied' | 'failed' | 'interrupted' | 'preparing' | 'running' | 'skipped'
+  toolCallId?: string
   toolName: string
   toolLabel?: string
 }
@@ -112,7 +115,7 @@ export function createChatAgentTurnReducer(
   const compactions = createChatRunCompactionReducer(run.id)
   const usage = createChatRunTokenUsageReducer(run.id)
   const reasoning = new Map<string, ChatAgentReasoningNode>()
-  const tools = new Map<string, ChatAgentToolNode>()
+  const tools = new Map<string, ChatAgentToolNode & { toolCallId: string }>()
   const approvalTools = new Map<string, string>()
   const text = new Map<string, ChatAgentNarrationNode>()
   const panels = new Map<string, ChatAgentPanelNode>()

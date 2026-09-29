@@ -13,7 +13,6 @@ interface PendingRequest {
   dispose: () => void
   reject: (error: Error) => void
   resolve: (result: unknown) => void
-  timeout: ReturnType<typeof setTimeout>
 }
 
 export class RuntimeProtocolError extends Error {
@@ -82,7 +81,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
     return () => this.#handlers.delete(method)
   }
 
-  request(method: string, params: unknown, timeoutMs = this.#defaultTimeoutMs, signal?: AbortSignal, requestId?: string): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs: number | null = this.#defaultTimeoutMs, signal?: AbortSignal, requestId?: string): Promise<unknown> {
     if (this.#closed)
       return Promise.reject(new Error('Runtime RPC peer is closed'))
     if (signal?.aborted)
@@ -107,14 +106,16 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
         }
       }
       const aborted = () => cancel(signal?.reason ?? new DOMException('Request cancelled', 'AbortError'))
-      const timeout = setTimeout(() => {
-        cancel(new RuntimeRequestTimeoutError(method))
-      }, timeoutMs)
+      const timeout = timeoutMs === null
+        ? undefined
+        : setTimeout(() => {
+            cancel(new RuntimeRequestTimeoutError(method))
+          }, timeoutMs)
       const dispose = () => {
         clearTimeout(timeout)
         signal?.removeEventListener('abort', aborted)
       }
-      this.#pending.set(id, { reject, resolve, timeout, dispose })
+      this.#pending.set(id, { reject, resolve, dispose })
       signal?.addEventListener('abort', aborted, { once: true })
       try {
         this.#transport.postMessage({ jsonrpc: '2.0', id, method, params })

@@ -1,5 +1,5 @@
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
-import type { ExtensionAgentDescriptor } from '../../../shared/extensions/extensionAgent'
+import type { ExtensionActionTrigger, ExtensionAgentDescriptor } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
 
 export interface ExtensionCapabilityProjection {
@@ -14,7 +14,9 @@ interface InvocationIdentity {
   readonly invocationId: string
   readonly extensionId: string
   readonly conversationId: string
-  readonly runId: string
+  readonly runId: string | null
+  readonly actionId?: string
+  readonly trigger?: ExtensionActionTrigger
 }
 
 export type ExtensionAgentFact

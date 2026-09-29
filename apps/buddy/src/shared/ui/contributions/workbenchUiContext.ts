@@ -38,6 +38,7 @@ export interface WorkbenchMenuSelection {
 }
 export interface WorkbenchMenuProps {
   target: WorkbenchMenu
+  taskId?: string | null
   disabled?: boolean
   values?: WorkbenchContextValues
   capture?: () => WorkbenchMenuSelection

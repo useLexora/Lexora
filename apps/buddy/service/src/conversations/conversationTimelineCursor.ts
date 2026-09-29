@@ -15,7 +15,7 @@ interface CreateConversationTimelineCursorInput extends ConversationTimelineCurs
 const timelineBoundarySchema = z.object({
   branchId: z.string().trim().min(1).max(256),
   id: z.string().trim().min(1).max(256),
-  kind: z.enum(['message', 'compaction']),
+  kind: z.enum(['message', 'compaction', 'extension-action']),
   occurredAt: z.iso.datetime(),
 }).strict()
 

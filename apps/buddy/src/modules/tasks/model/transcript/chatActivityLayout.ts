@@ -1,6 +1,6 @@
 import type { ChatAgentActivityGroup } from './chatAgentActivities'
 import type { ChatAgentToolNode } from './chatAgentTurn'
-import { getChatToolRegistration } from './chatToolRegistry'
+import { getChatToolRegistration, isRegisteredChatTool } from './chatToolRegistry'
 
 interface ChatToolDetailsEntry {
   id: string
@@ -43,7 +43,7 @@ export function presentChatActivityLayout(nodes: ChatAgentActivityGroup['nodes']
   }
 
   for (const node of nodes) {
-    if (node.kind === 'tool' && node.presentation.card === 'read' && node.presentation.path
+    if (node.kind === 'tool' && isRegisteredChatTool(node.toolName) && node.presentation.card === 'read' && node.presentation.path
       && node.status === 'completed' && !node.isError) {
       const icon = getChatToolRegistration(node).icon
       if (readIcon !== icon)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ChatAgentToolNode } from '../../model/transcript/chatStreamingMessage'
+import type { ChatAgentToolNode } from '../../model/transcript/chatAgentTurn'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronRight20Regular } from '@vicons/fluent'
 import { computed } from 'vue'
@@ -11,7 +11,7 @@ import { useChatContent } from './chatContentContext'
 const props = defineProps<{
   language: BuddyLocale
   node: ChatAgentToolNode
-  open: boolean
+  open?: boolean
   compact?: 'start' | 'continuation'
   compactTarget?: string
   hasNext?: boolean
@@ -26,10 +26,10 @@ const issue = computed(() => isChatToolIssue(props.node))
 </script>
 
 <template>
-  <section class="buddy-chat-tool" :class="[`is-${node.status}`, compact && `is-compact-${compact}`, { 'is-selected': open, 'is-highlighted': highlighted }]" :data-tool-call-id="node.toolCallId" tabindex="-1">
+  <section class="buddy-chat-tool" :class="[`is-${node.status}`, compact && `is-compact-${compact}`, { 'is-selected': open, 'is-highlighted': highlighted }]" :data-activity-node-id="node.id" :data-tool-call-id="node.toolCallId" :data-action-id="node.invocation?.id" :data-action-status="node.invocation?.status" tabindex="-1">
     <button
       class="buddy-chat-tool__header buddy-chat-activity-row"
-      :aria-expanded="canExpand ? open : undefined"
+      :aria-expanded="canExpand ? open === true : undefined"
       :aria-label="[display.label, display.fullTarget, issue || active ? display.status : ''].filter(Boolean).join(' · ')"
       :disabled="!canExpand"
       type="button"
@@ -37,9 +37,9 @@ const issue = computed(() => isChatToolIssue(props.node))
     >
       <BuddyChatToolIcon v-if="compact !== 'continuation'" :icon="display.icon" class="buddy-chat-activity-row__icon" aria-hidden="true" />
       <span v-if="compact !== 'continuation'" class="buddy-chat-tool__title buddy-chat-activity-row__label">{{ display.label }}</span>
-      <code v-if="display.target" class="buddy-chat-tool__summary">{{ compactTarget ?? display.target }}<span v-if="hasNext" class="buddy-chat-tool__separator" aria-hidden="true">,</span></code>
+      <span v-if="display.target" class="buddy-chat-tool__summary">{{ compactTarget ?? display.target }}<span v-if="hasNext" class="buddy-chat-tool__separator" aria-hidden="true">,</span></span>
       <span v-if="display.context && !compact" class="buddy-chat-tool__context">{{ display.context }}</span>
-      <span v-if="issue || active || node.presentation.card === 'directory-authorization' || node.presentation.card === 'system'" class="buddy-chat-tool__status" :class="{ 'is-issue': issue }">
+      <span v-if="issue || active || node.status === 'cancelled' || node.status === 'skipped' || node.presentation.card === 'directory-authorization' || node.presentation.card === 'system'" class="buddy-chat-tool__status" :class="{ 'is-issue': issue }">
         <span v-if="active && node.status !== 'awaiting_approval'" class="buddy-chat-tool__spinner" aria-hidden="true" />
         <span>{{ display.status }}</span>
       </span>
@@ -112,7 +112,6 @@ const issue = computed(() => isChatToolIssue(props.node))
   overflow: hidden;
   color: var(--buddy-text-primary);
   font: inherit;
-  font-family: var(--buddy-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

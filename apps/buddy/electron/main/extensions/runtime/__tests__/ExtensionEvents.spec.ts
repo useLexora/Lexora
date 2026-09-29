@@ -1,5 +1,8 @@
 import type * as Sdk from '../../../../../service/resources/skills/plugin-creator/references/api'
-import type { EventMessage, EventPattern, EventSubscriber } from '../../../../../shared/events/eventTypes'
+import type { TaskActionEvents } from '../../../../../shared/conversation/taskEvents'
+import type { EventMessage, EventPattern, EventSnapshot, EventSubscriber } from '../../../../../shared/events/eventTypes'
+import type { ExtensionActionCause } from '../../../../../shared/extensions/extensionAgent'
+import type { ExtensionConditionContext } from '../../../../../shared/extensions/extensionConditionContext'
 import type { ExtensionHostEvents, ExtensionViewEvents } from '../../../../../shared/extensions/extensionEvents'
 import { deferred } from '@buddy-tests/deferred'
 import { expect, expectTypeOf, it } from 'vitest'
@@ -7,7 +10,10 @@ import { ExtensionHostEvents as HostSource } from '../ExtensionHostEvents'
 import { ExtensionViewState } from '../ExtensionViewState'
 
 it('keeps the self-contained public SDK and internal event contracts equivalent', () => {
+  expectTypeOf<Omit<Sdk.ConditionContext, 'signal'>>().toEqualTypeOf<EventSnapshot<ExtensionConditionContext>>()
   expectTypeOf<Sdk.ExtensionEvents>().toEqualTypeOf<ExtensionHostEvents>()
+  expectTypeOf<Sdk.TaskActionEvents>().toEqualTypeOf<TaskActionEvents>()
+  expectTypeOf<Sdk.AgentActionContext['cause']>().toEqualTypeOf<ExtensionActionCause>()
   expectTypeOf<Sdk.ViewEvents>().toEqualTypeOf<ExtensionViewEvents>()
   expectTypeOf<Sdk.EventPattern<Sdk.ViewEvents>>().toEqualTypeOf<EventPattern<ExtensionViewEvents>>()
   expectTypeOf<Sdk.EventMessage<Sdk.ViewEvents, 'view:**' | 'control:changed'>>().toEqualTypeOf<EventMessage<ExtensionViewEvents, 'view:**' | 'control:changed'>>()

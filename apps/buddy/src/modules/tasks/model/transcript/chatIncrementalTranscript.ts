@@ -213,12 +213,16 @@ export function createChatTranscriptProjectionCache(
   })
   const runProjections = input.runProjections ?? null
   const interleavedRunIds = new Set(input.runs.filter(run => input.timelineItems.some(item => (
-    item.kind === 'message'
-    && item.role === 'user'
-    && item.id !== run.triggeringMessageId
-    && item.branchId === run.branchId
-    && item.createdAt >= run.startedAt
-    && (run.completedAt === null || item.createdAt <= run.completedAt)
+    item.kind === 'extension-action'
+      ? item.branchId === run.branchId
+      && item.sourceMessageId === run.triggeringMessageId
+      && (item.status !== 'skipped' || item.trigger === 'user')
+      : item.kind === 'message'
+        && item.role === 'user'
+        && item.id !== run.triggeringMessageId
+        && item.branchId === run.branchId
+        && item.createdAt >= run.startedAt
+        && (run.completedAt === null || item.createdAt <= run.completedAt)
   ))).map(run => run.id))
   const seenTurns = new Set<string>()
   for (const row of projection.rows) {

@@ -1,17 +1,21 @@
 import type { z } from 'zod'
+import type { ExtensionActionCause } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
 
 export interface ExtensionInvocationScope {
   conversationId: string
-  runId: string
+  runId: string | null
+  action?: {
+    id: string
+    cause: ExtensionActionCause
+  }
   extensionId: string
   invocationId: string
   signal: AbortSignal
 }
 export interface ExtensionCapabilityContext extends ExtensionInvocationScope {
-  model: { providerId: string, modelId: string }
   callNumber: number
 }
 export type ExtensionAgentHandlers = Record<ExtensionAgentMethod, (input: unknown, context: ExtensionCapabilityContext) => Promise<JsonValue>>

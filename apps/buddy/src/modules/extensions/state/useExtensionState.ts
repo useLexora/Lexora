@@ -1,8 +1,10 @@
+import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
 import type { ExtensionApi, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 
 export function useExtensionState(api: ExtensionApi) {
+  const taskActions = shallowRef<ExtensionTaskAction[]>([])
   const installed = shallowRef<ExtensionStatus[]>([])
   const installedError = shallowRef('')
   const installationsError = shallowRef('')
@@ -14,6 +16,13 @@ export function useExtensionState(api: ExtensionApi) {
     const current = ++revision
     const currentResult = () => !disposed && current === revision
     await Promise.all([
+      api.taskActions().then((items) => {
+        if (currentResult())
+          taskActions.value = items
+      }).catch(() => {
+        if (currentResult())
+          taskActions.value = []
+      }),
       api.list().then((snapshot) => {
         if (currentResult()) {
           installed.value = snapshot
@@ -39,7 +48,7 @@ export function useExtensionState(api: ExtensionApi) {
     disposed = true
     revision++
   })
-  return { api, installed, installations, error, refresh }
+  return { api, taskActions, installed, installations, error, refresh }
 }
 
 export function extensionErrorCode(reason: unknown): string {

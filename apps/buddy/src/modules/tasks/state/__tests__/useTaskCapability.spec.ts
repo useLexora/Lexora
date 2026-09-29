@@ -26,8 +26,10 @@ describe('useTaskCapability', () => {
     vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({ changeSets: [changed], items: [], nextCursor: null, outputs: [], runEvents: [], runs: [] })
     const notice = vi.mocked(api.localChat.changes.onChanged).mock.calls[0]![0]
     const artifactNotice = vi.mocked(api.localChat.artifacts.onChanged).mock.calls[0]![0]
+    const timelineNotice = vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls[0]![0]
     notice({ sourceId: 'changes-source', revision: 1, conversationId: 'conversation-1', runId: 'run-1' })
     artifactNotice({ sourceId: 'artifact-source', revision: 1, conversationId: 'conversation-1' })
+    timelineNotice({ sourceId: 'action-source', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
     await vi.waitFor(() => expect(chat.workspace.transcript.changeSets.value).toEqual([changed]))
     expect(chat.workspace.transcript.runOutputs.value).toEqual([])
     const calls = vi.mocked(api.localChat.conversations.listTimeline).mock.calls.length
@@ -1190,6 +1192,7 @@ function createDesktopApi() {
         markSeen: vi.fn(async () => ({ items: [], unseenCount: 0 })),
       },
       conversations: {
+        onTimelineChanged: vi.fn(() => () => {}),
         onChanged: () => () => {},
         activateBranch: vi.fn(),
         delete: vi.fn(),

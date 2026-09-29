@@ -20,7 +20,7 @@ export interface RegisterRunRpcOptions {
     RunRepository,
     'findById' | 'listForConversation' | 'listRecent'
   >
-  usage: Pick<UsageRepository, 'listForRun'>
+  usage: Pick<UsageRepository, 'listForConversation'>
   rpc: RuntimeRequestRegistrar
 }
 

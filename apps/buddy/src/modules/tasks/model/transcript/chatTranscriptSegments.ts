@@ -1,15 +1,15 @@
 import type { ChatAgentTurnNode } from './chatAgentTurn'
-import type { ChatTranscriptAgentTurnRow, ChatTranscriptCompactionRow, ChatTranscriptMessageRow, ChatTranscriptRow } from './chatTranscriptTypes'
-
-type PersistedRow = ChatTranscriptAgentTurnRow | ChatTranscriptCompactionRow | ChatTranscriptMessageRow
+import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './chatTranscriptActivities'
+import type { ChatTranscriptAgentTurnRow, ChatTranscriptRow } from './chatTranscriptTypes'
+import { mergeChatTranscriptActivities } from './chatTranscriptActivities'
 
 export function interleaveChatTranscriptSegments(
-  rows: readonly PersistedRow[],
+  rows: readonly PersistedChatTranscriptRow[],
   messageStartedAt: ReadonlyMap<string, string>,
-): PersistedRow[] {
-  const timestamp = (row: ChatTranscriptMessageRow | ChatTranscriptCompactionRow) => row.kind === 'message'
+): PresentedChatTranscriptRow[] {
+  const timestamp = (row: Exclude<PersistedChatTranscriptRow, ChatTranscriptAgentTurnRow>) => row.kind === 'message'
     ? messageStartedAt.get(row.message.id) ?? row.message.createdAt
-    : row.compaction.createdAt
+    : row.kind === 'extension-action' ? row.action.createdAt : row.compaction.createdAt
   const timeline = rows.filter(row => row.kind !== 'agent-turn').sort((left, right) => timestamp(left).localeCompare(timestamp(right)))
   const positions = new Map(timeline.map((row, index) => [row.key, index]))
   const segments = new Map<number, ChatTranscriptAgentTurnRow[]>()
@@ -62,10 +62,10 @@ export function interleaveChatTranscriptSegments(
       segments.set(position, siblings)
     })
   }
-  return alignChatAssistantIdentity([...(segments.get(-1) ?? []), ...timeline.flatMap((row, index) => [row, ...(segments.get(index) ?? [])])])
+  return alignChatAssistantIdentity(mergeChatTranscriptActivities([...(segments.get(-1) ?? []), ...timeline.flatMap((row, index) => [row, ...(segments.get(index) ?? [])])]))
 }
 
-function alignChatAssistantIdentity(rows: PersistedRow[]): PersistedRow[] {
+function alignChatAssistantIdentity(rows: PresentedChatTranscriptRow[]): PresentedChatTranscriptRow[] {
   const visibleRunIds = new Set<string>()
   return rows.map((row) => {
     const runId = row.kind === 'agent-turn'

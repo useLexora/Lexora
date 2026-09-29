@@ -20,7 +20,8 @@ import { changesChanged } from '../../shared/changes/changeApi'
 import { connectorNotifications } from '../../shared/connectors/connectorApi'
 import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
-import { CONVERSATION_CHANGED } from '../../shared/conversation/conversationApi'
+import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
+import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
@@ -89,6 +90,7 @@ import { registerContextRpc } from './context/registerContextRpc'
 import { ConversationLifecycleService } from './conversations/ConversationLifecycleService'
 import { ConversationMetadataService } from './conversations/ConversationMetadataService'
 import { createExtensionTaskCapabilities } from './conversations/extensionTaskCapabilities'
+import { ExtensionTaskContext } from './conversations/ExtensionTaskContext'
 import { registerConversationRpc } from './conversations/registerConversationRpc'
 import { registerConversationTreeRpc } from './conversations/registerConversationTreeRpc'
 import { registerTaskMarkRpc } from './conversations/registerTaskMarkRpc'
@@ -105,16 +107,19 @@ import { NotificationProjection } from './notifications/NotificationProjection'
 import { registerNotificationRpc } from './notifications/registerNotificationRpc'
 import { observePetActionDiagnostics } from './pet/observePetActionDiagnostics'
 import { PetActionService } from './pet/PetActionService'
+import { bindExtensionActions } from './plugins/bindExtensionActions'
+import { ExtensionActionService } from './plugins/ExtensionActionService'
 import { ExtensionAgentRuntime } from './plugins/ExtensionAgentRuntime'
 import { observeExtensionAgentDiagnostics } from './plugins/observeExtensionAgentDiagnostics'
 import { PluginAuthoringService } from './plugins/PluginAuthoringService'
+import { registerExtensionConditionRpc } from './plugins/registerExtensionConditionRpc'
 import { createProviderService } from './providers/createProviderService'
-import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 
+import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
-import { BuddyServiceError } from './rpc/runtimeRequest'
+import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunContinuityService } from './runs/RunContinuityService'
 import { RunLifecycleService } from './runs/RunLifecycleService'
@@ -145,8 +150,11 @@ import { createComposerResourceRepository } from './storage/composerResourceRepo
 import { createConnectorRepository } from './storage/connectorRepository'
 import { createConversationDeletionRepository } from './storage/conversationDeletionRepository'
 import { createConversationDirectoryGrantRepository } from './storage/conversationDirectoryGrantRepository'
+import { createConversationHistoryStore } from './storage/conversationHistoryRepository'
 import { createConversationRepository } from './storage/conversationRepository'
 import { createConversationTreeRepository } from './storage/conversationTreeRepository'
+import { createExtensionInvocationRepository } from './storage/extensionInvocationRepository'
+import { createExtensionTaskContextRepository } from './storage/extensionTaskContextRepository'
 import { createNotificationAttentionRepository } from './storage/notificationAttentionRepository'
 import { createProviderRepository } from './storage/providerRepository'
 import { createRunInputRepository } from './storage/runInputRepository'
@@ -319,10 +327,16 @@ export async function startBuddyService(
       })
       return service
     })
-    const usageService = await host.start('runtime.usage', () => {
+    const usageService = await host.start('runtime.usage', ({ defer }) => {
       const service = new UsageService({
         eventLog: options.eventLog,
         repository: usageRepository,
+        onObserverError: () => record({ event: 'usage.observer_failed', level: 'warn' }),
+      })
+      const diagnostics = service.onDidRecord(event => record({ event: 'usage.committed', level: 'info', operationId: event.invocationId ?? event.id, runId: event.runId ?? undefined }))
+      defer(() => {
+        service.dispose()
+        diagnostics.dispose()
       })
       return service
     })
@@ -471,19 +485,17 @@ export async function startBuddyService(
       })
       return service
     })
+    const extensionHistory = createExtensionTaskContextRepository(options.database, createConversationHistoryStore(options.database).lineage)
+    const extensionTaskContext = new ExtensionTaskContext(conversations, extensionHistory, runs, runInputs)
     const extensionAgent = await host.start('runtime.plugins', ({ defer }) => {
       const service = new ExtensionAgentRuntime({
         rpc: options.rpc,
-        handlers: {
-          ...createExtensionTaskCapabilities(conversationMetadata),
-          ...createExtensionModelCapabilities(executionModels, usageService),
-        },
-        context: (scope) => {
-          const run = runs.findById(scope.runId)
-          const task = conversations.findById(scope.conversationId)
-          if (!run || run.conversationId !== scope.conversationId || run.status !== 'running' || !task || task.deletedAt !== null)
-            throw new Error('EXTENSION_TASK_UNAVAILABLE')
-          return { ...scope, model: { providerId: run.provider, modelId: run.model } }
+        createHandlers: (scope) => {
+          const task = extensionTaskContext.open(scope)
+          return {
+            ...createExtensionTaskCapabilities(conversationMetadata, extensionHistory, task, scope),
+            ...createExtensionModelCapabilities(executionModels, usageService, task),
+          }
         },
         onObserverError: () => record({ event: 'plugins.observer_failed', level: 'warn' }),
       })
@@ -934,6 +946,28 @@ export async function startBuddyService(
       })
       return service
     })
+    const extensionActions = await host.start('runtime.plugin_actions', ({ defer }) => {
+      const service = new ExtensionActionService({
+        runtime: extensionAgent,
+        repository: createExtensionInvocationRepository(options.database),
+        capture: (conversationId, source) => extensionTaskContext.captureAction(conversationId, source),
+        onObserverError: () => record({ event: 'plugins.action.observer_failed', level: 'warn' }),
+      })
+      const binding = bindExtensionActions(service, { turns: turnRequests, execution: runner, metadata: conversationMetadata, deletions: conversationLifecycle, runs })
+      const diagnostics = service.onDidFail(event => record({ event: 'plugins.action.failed', level: 'warn', ...event }))
+      const notification = service.onDidChange(event => options.rpc.notify(conversationTimelineChanged.method, event))
+      const list = registerRuntimeRequest(options.rpc, extensionActionRpc.list, (_input, signal) => service.list(signal))
+      const invoke = registerRuntimeRequest(options.rpc, extensionActionRpc.invoke, (input, signal) => service.invoke(input, signal))
+      defer(async () => {
+        binding.dispose()
+        list()
+        invoke()
+        await service.dispose()
+        diagnostics.dispose()
+        notification.dispose()
+      })
+      return service
+    }, ['runtime.plugins', 'runtime.task_metadata', 'runtime.usage'])
     taskAttention.start(conversationLifecycle, runLifecycleService)
     const automationOccurrenceLifecycle = await host.start('runtime.automation_deletion', ({ defer }) => {
       const service = new AutomationOccurrenceLifecycleService({
@@ -1037,6 +1071,10 @@ export async function startBuddyService(
     })
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
       const service = new ChatQueueService({ queue: createChatQueueRepository(options.database), turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
+      const actionInputs = service.onDidChange((event) => {
+        if (event.committed?.messageId && event.committed.runId)
+          extensionActions.dispatch({ type: 'task:input:committed', data: { conversationId: event.scope.conversationId, branchId: event.scope.branchId, runId: event.committed.runId, messageId: event.committed.messageId, commitId: event.committed.commitId } })
+      })
       const continuation = new QueueContinuation({ queue: service, runner, runs, eventLog: options.eventLog, record })
       const diagnostics = service.onDidChange((event) => {
         const committed = event.committed
@@ -1051,6 +1089,7 @@ export async function startBuddyService(
           record({ event: `attachments.${committed.attachmentOwnership.kind}_bound`, level: 'info', operationId: committed.commitId, conversationId: event.scope.conversationId, count: committed.attachmentOwnership.attachmentIds.length, ...(committed.runId ? { runId: committed.runId } : {}) })
       })
       defer(async () => {
+        actionInputs.dispose()
         const stopped = continuation.dispose()
         service.dispose()
         await stopped
@@ -1128,6 +1167,7 @@ export async function startBuddyService(
 
     await host.start('runtime.rpc', ({ defer }) => {
       const register = (dispose: () => void) => defer(dispose)
+      register(registerExtensionConditionRpc({ rpc: options.rpc, tasks: conversations, history: extensionHistory, runs, inputs: runInputs, providers: providerService }))
       register(
         registerWebSettingsRpc(options.rpc, webSettings),
       )

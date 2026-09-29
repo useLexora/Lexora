@@ -62,6 +62,7 @@ useProvideChatContent({
 <template>
   <div class="desktop-task-editor">
     <DesktopChatWorkspaceHeader
+      :task-id="activeTaskId"
       :view-mode="viewMode"
       :can-toggle-canvas="activeTaskId !== null"
       :language="language"

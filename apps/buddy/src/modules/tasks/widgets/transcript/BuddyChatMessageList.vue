@@ -20,6 +20,7 @@ import {
   formatChatDayDividerLabel,
 } from '../../model/transcript/chatMessageTime'
 import BuddyChatAgentTurn from './BuddyChatAgentTurn.vue'
+import BuddyChatAgentTurnFlow from './BuddyChatAgentTurnFlow.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
 import BuddyChatMessageRow from './BuddyChatMessageRow.vue'
 import BuddyChatOutline from './BuddyChatOutline.vue'
@@ -245,6 +246,15 @@ onBeforeUnmount(clearOutlineHighlight)
         >
           <span>{{ recoveryNoticeLabel(item.notice) }}</span>
         </div>
+
+        <BuddyChatAgentTurnFlow
+          v-else-if="item.kind === 'activity-flow'"
+          :data-chat-row-key="item.key"
+          class="buddy-chat-transcript-row"
+          :nodes="item.nodes"
+          :failure-detail-text="null"
+          :language="language"
+        />
 
         <BuddyChatCompactionRow
           v-else-if="item.kind === 'compaction'"

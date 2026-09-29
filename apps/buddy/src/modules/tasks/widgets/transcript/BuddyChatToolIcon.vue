@@ -26,8 +26,9 @@ const icons = {
   'pet': { component: AnimalCat20Regular },
   'search': { name: 'toolSearch' },
   'skill': { component: SkillIcon },
+  'system': { component: Wrench20Regular },
   'terminal': { component: WindowConsole20Regular },
-  'tool': { component: Wrench20Regular },
+  'tool': { name: 'toolUse' },
 } satisfies Record<ChatToolIcon, { name: DesktopIconName } | { component: Component }>
 </script>
 

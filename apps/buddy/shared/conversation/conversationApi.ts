@@ -2,12 +2,19 @@ import type { RuntimeRequestContract } from '../runtime/apiContract'
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { changeSetSummarySchema } from '../changes/changeApi'
+import { extensionActionTimelineSchema } from '../extensions/extensionActionApi'
 import { runEventSchema, runOutputSchema, runSchema, runStatusSchema } from '../runs/runApi'
 import { approvalPolicySchema, executionProfileSchema, idSchema, nullableTimestampSchema, optionalCursorSchema, optionalLimitSchema, timestampSchema, validationRequestSchemas, validationResponseSchemas } from '../runtime/apiValidation'
 import { attachmentSchema } from './attachmentApi'
 import { BUDDY_SERVICE_TIERS, BUDDY_THINKING_LEVELS } from './modelSelection'
 
 export const CONVERSATION_CHANGED = 'conversations.changed'
+
+export const conversationTimelineChanged = {
+  method: 'conversations.timeline.changed',
+  params: z.object({ sourceId: z.uuid(), revision: z.number().int().positive(), conversationId: idSchema, branchId: idSchema }).strict(),
+} as const
+export type ConversationTimelineChangeNotice = z.infer<typeof conversationTimelineChanged.params>
 
 export const modelSelectionSchema = z.object({
   modelId: idSchema,
@@ -59,6 +66,7 @@ export const messageSchema = z.object({
 }).strict()
 
 export const conversationTimelineItemSchema = z.discriminatedUnion('kind', [
+  extensionActionTimelineSchema,
   messageSchema.extend({ kind: z.literal('message') }).strict(),
   z.object({
     branchId: idSchema,

@@ -17,6 +17,7 @@ import spaceNoneUrl from './assets/space-none.svg'
 import toolCreateFileUrl from './assets/tool-create-file.svg'
 import toolEditFileUrl from './assets/tool-edit-file.svg'
 import toolSearchUrl from './assets/tool-search.svg'
+import toolUseUrl from './assets/tool-use.svg'
 import windowCloseUrl from './assets/window-close.svg'
 import windowMaximizeUrl from './assets/window-maximize.svg'
 import windowMinimizeUrl from './assets/window-minimize.svg'
@@ -43,6 +44,7 @@ export const DESKTOP_ICON_URLS = {
   toolCreateFile: toolCreateFileUrl,
   toolEditFile: toolEditFileUrl,
   toolSearch: toolSearchUrl,
+  toolUse: toolUseUrl,
   windowClose: windowCloseUrl,
   windowMaximize: windowMaximizeUrl,
   windowMinimize: windowMinimizeUrl,

@@ -17,6 +17,8 @@ export interface OpenBuddyDatabaseOptions {
 }
 
 const BUDDY_CURRENT_SCHEMA_COLUMNS = {
+  extension_invocations: ['id', 'extension_id', 'action_id', 'conversation_id', 'trigger', 'status', 'branch_id', 'source_message_id', 'extension_name', 'action_title', 'result_message'],
+  usage_records: ['run_id', 'invocation_id'],
   conversations: ['title_source', 'title_revision'],
   connector_tool_catalogs: ['connector_id', 'tools_json', 'updated_at'],
   provider_states: ['provider_id', 'request_headers_json'],

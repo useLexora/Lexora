@@ -46,6 +46,8 @@ function fixture() {
   const reads: ReturnType<typeof deferred<ExtensionConfiguration>>[] = []
   const writes: ReturnType<typeof deferred<void>>[] = []
   const store = scope.run(() => usePluginSettings(installed, {
+    settingConditions: async () => ({}),
+    onConditionsChanged: () => () => {},
     configurationSnapshot: () => {
       const result = deferred<ExtensionConfiguration>()
       reads.push(result)

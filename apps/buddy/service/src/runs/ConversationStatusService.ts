@@ -8,7 +8,7 @@ export interface ConversationStatusOptions {
   getCacheWarmingStatus?: (conversationId: string) => LocalConversationStatus['cacheWarming']
   events: Pick<RunEventReader, 'listForConversation'>
   repository: Pick<RunRepository, 'listForConversation'>
-  usage: Pick<UsageRepository, 'listForRun'>
+  usage: Pick<UsageRepository, 'listForConversation'>
 }
 
 interface ConversationStatusEvent {
@@ -51,7 +51,7 @@ export class ConversationStatusService {
     const runs = this.#options.repository.listForConversation(conversationId, RUN_LIMIT)
     const events = await this.#options.events.listForConversation(conversationId, { limit: EVENT_LIMIT })
     const ordered = [...events].sort((left, right) => left.sequence - right.sequence)
-    const usage = runs.flatMap(run => this.#options.usage.listForRun(run.id))
+    const usage = this.#options.usage.listForConversation(conversationId)
 
     return {
       cacheWarming: this.#options.getCacheWarmingStatus?.(conversationId) ?? null,
@@ -106,7 +106,8 @@ function foldTokens(usage: readonly UsageRecord[]) {
     const modelKey = `${record.provider}:${record.model}`
     const model = byModel.get(modelKey) ?? { ...emptyCounts(), modelId: record.model, providerId: record.provider, runIds: new Set<string>() }
     addRecord(model, record)
-    model.runIds.add(record.runId)
+    if (record.runId)
+      model.runIds.add(record.runId)
     byModel.set(modelKey, model)
     const purpose = byPurpose.get(record.purpose) ?? emptyCounts()
     addRecord(purpose, record)
@@ -273,7 +274,7 @@ function foldTiming(
     }
   }
   const outputTokens = usage
-    .reduce((sum, record) => sum + (record.purpose === 'turn' ? record.outputTokens : 0), 0)
+    .reduce((sum, record) => sum + (record.purpose === 'turn' && record.runId && chatRunIds.has(record.runId) ? record.outputTokens : 0), 0)
   const wall = foldWall(events)
   return {
     modelMs,

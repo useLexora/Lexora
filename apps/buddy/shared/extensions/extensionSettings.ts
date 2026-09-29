@@ -1,6 +1,7 @@
 import type { EventSnapshot } from '../events/eventTypes'
 import { z } from 'zod'
 import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog'
+import { extensionConditionReferenceSchema } from './extensionConditions'
 
 export const extensionSettingIdSchema = z.string().max(180).regex(/^[a-z][a-z0-9.-]+$/)
 export const extensionSettingKeySchema = z.string().max(80).regex(/^[a-z][a-zA-Z0-9]*$/)
@@ -22,7 +23,7 @@ export const extensionConfigurationSnapshotSchema = z.object({ values: extension
 export type ExtensionConfigurationSnapshot = z.infer<typeof extensionConfigurationSnapshotSchema>
 export const extensionSettingsModules = builtinSettingsModuleIds
 export const extensionSettingsGroups = publicSettingsGroups
-const itemBase = { id: extensionSettingIdSchema, key: extensionSettingKeySchema, group: extensionSettingIdSchema, title: z.string().min(1).max(100), description: z.string().max(500).default(''), order: z.number().int().min(-1000).max(1000).default(0) }
+const itemBase = { enabledWhen: extensionConditionReferenceSchema.optional(), id: extensionSettingIdSchema, key: extensionSettingKeySchema, group: extensionSettingIdSchema, title: z.string().min(1).max(100), description: z.string().max(500).default(''), order: z.number().int().min(-1000).max(1000).default(0) }
 export const extensionSettingItemSchema = z.discriminatedUnion('type', [
   z.object({ ...itemBase, type: z.literal('boolean'), default: z.boolean() }).strict(),
   z.object({ ...itemBase, type: z.literal('string'), default: z.string().max(8192) }).strict(),

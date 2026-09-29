@@ -65,9 +65,11 @@ export function projectChatTranscriptDisplayRows(
       )
     const dayAnchorAt = row.kind === 'agent-turn'
       ? row.turn.startedAt
-      : row.kind === 'message' && !assistantMessageBelongsToAgentTurn
-        ? row.message.createdAt
-        : null
+      : row.kind === 'activity-flow'
+        ? row.createdAt
+        : row.kind === 'message' && !assistantMessageBelongsToAgentTurn
+          ? row.message.createdAt
+          : null
     if (dayAnchorAt) {
       const dayKey = dayjs(dayAnchorAt).format('YYYY-MM-DD')
       if (dayKey !== previousDayKey) {

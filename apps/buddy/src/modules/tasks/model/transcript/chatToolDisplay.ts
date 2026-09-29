@@ -36,15 +36,17 @@ export function describeChatTool(node: ChatAgentToolNode, language: BuddyLocale)
   const t: BuddyTranslate = (key, params) => translateBuddy(language, key, params)
   const registration = getChatToolRegistration(node)
   const p = node.presentation
+  if (!isRegisteredChatTool(node.toolName)) {
+    const name = node.toolLabel && node.toolLabel !== node.toolName
+      ? node.toolLabel
+      : p.card === 'connector' ? p.tool : node.toolName
+    return { label: t('tool.use'), icon: 'tool' as const, target: name, fullTarget: name, context: '', status: toolStatus(node, language, t) }
+  }
   let label = t(registration.label)
   if (p.card === 'automation')
     label = t(automationLabels[p.operation])
   else if (p.card === 'system')
     label = translateSystemAction(language, p.action)
-  else if (p.card === 'connector')
-    label = node.toolLabel && node.toolLabel !== node.toolName ? node.toolLabel : p.tool
-  else if (p.card === 'generic' && !isRegisteredChatTool(node.toolName))
-    label = node.toolLabel ?? node.toolName
 
   const rawTarget = toolTarget(node, t)
   const target = rawTarget === label ? '' : rawTarget
@@ -89,6 +91,10 @@ function toolTarget(node: ChatAgentToolNode, t: BuddyTranslate): string {
 }
 
 function toolStatus(node: ChatAgentToolNode, language: BuddyLocale, t: BuddyTranslate): string {
+  if (node.status === 'cancelled')
+    return t('run.status.cancelled')
+  if (node.status === 'skipped')
+    return t('desktop.chat.processToolSkipped')
   if (node.errorCode === 'PATH_NOT_FOUND') {
     if (node.toolName === 'ls' || node.toolName === 'find')
       return t('desktop.chat.processToolDirectoryNotFound')

@@ -4,7 +4,7 @@ import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
-import type { ChatAgentTurn } from './chatAgentTurn'
+import type { ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
 import type { ChatRecoveryNotice } from './chatRunRecovery'
 import type { ChatRunTranscriptProjection } from './chatRunTranscriptProjector'
 
@@ -32,6 +32,19 @@ export interface ChatTranscriptCompactionRow {
   kind: 'compaction'
 }
 
+export interface ChatTranscriptExtensionActionRow {
+  action: Extract<LocalConversationTimelineItem, { kind: 'extension-action' }>
+  key: string
+  kind: 'extension-action'
+}
+
+export interface ChatTranscriptActivityFlowRow {
+  createdAt: string
+  key: string
+  kind: 'activity-flow'
+  nodes: ReadonlyArray<ChatAgentToolNode>
+}
+
 export interface ChatTranscriptAgentTurnRow {
   showIdentity?: false
   showOutcome?: false
@@ -57,6 +70,7 @@ export type ChatTranscriptRow
   = | ChatTranscriptActivityRow
     | ChatTranscriptAgentTurnRow
     | ChatTranscriptCompactionRow
+    | ChatTranscriptActivityFlowRow
     | ChatTranscriptMessageRow
     | ChatTranscriptRecoveryNoticeRow
 

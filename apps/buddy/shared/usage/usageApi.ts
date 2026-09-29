@@ -18,7 +18,8 @@ export const usageRecordSchema = z.object({
   providerId: idSchema,
   purpose: z.string().min(1),
   reasoningTokens: z.number().int().nonnegative().nullable(),
-  runId: idSchema,
+  runId: idSchema.nullable(),
+  invocationId: idSchema.nullable().optional(),
   totalCost: z.number().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
 }).strict()

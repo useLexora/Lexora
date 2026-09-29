@@ -117,6 +117,7 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
         void options.runSync.refreshActiveConversation().catch(options.onError)
     }, 100)
   }
+  const stopTimeline = options.api.conversations.onTimelineChanged(refreshCommittedContent)
   const stopArtifacts = options.api.artifacts.onChanged(refreshCommittedContent)
   const stopChanges = options.api.changes.onChanged(refreshCommittedContent)
   const stopRunEventListener = options.api.chat.onRunEvent(event => options.runSync.handleRunEvent(event))
@@ -130,6 +131,7 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
     dispose() {
       isDisposed = true
       stopRunEventListener()
+      stopTimeline()
       stopArtifacts()
       stopChanges()
       if (contentRefresh !== null)

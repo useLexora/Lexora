@@ -4,6 +4,7 @@ import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { projectExtensionActionTool } from '../../../model/transcript/chatTranscriptActivities'
 import BuddyChatAgentTurn from '../BuddyChatAgentTurn.vue'
 import BuddyChatRunActivity from '../BuddyChatRunActivity.vue'
 import { useProvideChatContent } from '../chatContentContext'
@@ -17,6 +18,35 @@ afterEach(() => {
 })
 
 describe('activity disclosure', () => {
+  it('uses shared grouping, issue navigation and retained details for an independent action and built-in tool', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+    cleanups.push(() => {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    })
+    const action = projectExtensionActionTool({ kind: 'extension-action', id: 'naming', conversationId: 'conversation', branchId: 'branch', sourceMessageId: 'question', extensionId: 'tests.title', extensionName: 'Title', actionId: 'tests.title.generate', title: '重新生成标题', trigger: 'task:input:committed', status: 'running', message: '正在生成', createdAt: '2026-09-09T00:00:01Z', completedAt: null })
+    const { root, turn } = mountTurn([action])
+    expect(root.querySelector('[data-action-status="running"]')?.textContent).toContain('重新生成标题')
+    turn.value = { ...turn.value, nodes: [action, readTool('read', 'completed')] }
+    await nextTick()
+    const group = root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
+    expect(group.textContent).toContain('读取 1 个文件 · 工具调用 1 次')
+    turn.value = { ...turn.value, nodes: [{ ...action, status: 'failed', isError: true, presentation: { card: 'generic', argumentNames: [], description: null, output: '模型不可用', truncated: false } }, turn.value.nodes[1]!] }
+    await nextTick()
+    root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__issues')!.click()
+    await nextTick()
+    await nextTick()
+    const tool = root.querySelector<HTMLButtonElement>('[data-action-id="naming"] button')!
+    expect(tool.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(tool)
+    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
+    group.click()
+    await nextTick()
+    await vi.waitFor(() => expect(root.querySelector('[data-action-detail-id="naming"]')).toBeNull())
+    group.click()
+    await nextTick()
+    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
+  })
+
   it('keeps a single tool and its open output stable while model progress runs independently', async () => {
     vi.useFakeTimers()
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: () => {}, configurable: true })

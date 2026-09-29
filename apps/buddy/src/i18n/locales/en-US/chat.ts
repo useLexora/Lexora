@@ -392,6 +392,7 @@ export default {
   'desktop.chat.processToolImageReferenceLatest': 'Latest image in this conversation',
   'desktop.chat.processToolImageRunning': 'Generating',
   'desktop.chat.processToolInput': 'Input',
+  'desktop.chat.processToolSkipped': 'Skipped',
   'desktop.chat.processToolInterrupted': 'Interrupted',
   'desktop.chat.processToolNoOutput': 'Command produced no output',
   'desktop.chat.processToolPet': 'Pet action',

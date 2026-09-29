@@ -128,9 +128,10 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       if (!isCurrent(request))
         return
       let page = latest
-      const newestItem = projection.state.timelineItems.value.at(-1)
-      const rememberedStart = newestItem
-        ? timelineItemKey(newestItem)
+      const refreshBoundary = projection.state.timelineItems.value.find(item => item.kind === 'extension-action' && item.status === 'running')
+        ?? projection.state.timelineItems.value.at(-1)
+      const rememberedStart = refreshBoundary
+        ? timelineItemKey(refreshBoundary)
         : loadedRanges.get(`${request.conversationId}:${request.branchId}`)
       while (page.nextCursor) {
         if (!rememberedStart || page.items.some(item => timelineItemKey(item) === rememberedStart))

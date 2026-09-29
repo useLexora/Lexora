@@ -23,7 +23,7 @@ const extension: ExtensionStatus = {
 it('publishes installed contributions even while installation jobs are pending or fail', async () => {
   const jobs = deferred<ExtensionInstallation[]>()
   const scope = effectScope()
-  const api: Partial<ExtensionApi> = { list: async () => [extension], installations: () => jobs.promise, onChanged: () => () => {} }
+  const api: Partial<ExtensionApi> = { list: async () => [extension], installations: () => jobs.promise, taskActions: async () => [], onChanged: () => () => {} }
   const state = scope.run(() => useExtensionState(api as ExtensionApi))!
   try {
     const pending = state.refresh()
@@ -43,7 +43,7 @@ it('does not let stale or disposed refreshes overwrite current contributions', a
   const delayed = deferred<ExtensionStatus[]>()
   let requests = 0
   const scope = effectScope()
-  const api: Partial<ExtensionApi> = { list: () => ++requests === 1 ? delayed.promise : Promise.resolve(requests === 2 ? [extension] : []), installations: async () => [], onChanged: () => () => {} }
+  const api: Partial<ExtensionApi> = { list: () => ++requests === 1 ? delayed.promise : Promise.resolve(requests === 2 ? [extension] : []), installations: async () => [], taskActions: async () => [], onChanged: () => () => {} }
   const state = scope.run(() => useExtensionState(api as ExtensionApi))!
   const previous = state.refresh()
   await state.refresh()

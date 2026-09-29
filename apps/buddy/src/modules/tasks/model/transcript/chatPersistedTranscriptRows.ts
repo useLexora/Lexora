@@ -4,9 +4,8 @@ import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 
 import type { ChatAgentTurn } from './chatAgentTurn'
+import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './chatTranscriptActivities'
 import type {
-  ChatTranscriptAgentTurnRow,
-  ChatTranscriptCompactionRow,
   ChatTranscriptMessageRow,
   ChatTranscriptTurnOutputs,
 } from './chatTranscriptTypes'
@@ -20,16 +19,8 @@ export function projectPersistedChatTranscriptRows(
   outputs: ReadonlyArray<LocalRunOutput> = [],
   changeSets: ReadonlyArray<LocalChangeSetSummary> = [],
   includeUnanchoredTurns = false,
-): Array<
-  ChatTranscriptAgentTurnRow
-  | ChatTranscriptCompactionRow
-  | ChatTranscriptMessageRow
-> {
-  const rows: Array<
-    ChatTranscriptAgentTurnRow
-    | ChatTranscriptCompactionRow
-    | ChatTranscriptMessageRow
-  > = []
+): PresentedChatTranscriptRow[] {
+  const rows: PersistedChatTranscriptRow[] = []
   const turnsByTrigger = new Map<string, ChatAgentTurn[]>()
   const turnsByRunId = new Map(turns.map(turn => [turn.runId, turn]))
   const outputsByRunId = projectTurnOutputs(outputs)
@@ -53,8 +44,15 @@ export function projectPersistedChatTranscriptRows(
   }))
   const processMessageIds = new Set(turns.flatMap(turn => turn.processMessageIds))
   const timelineMessageIds = new Set(items.filter(item => item.kind === 'message').map(item => item.id))
+  const visibleActions = items.filter((item): item is Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> => item.kind === 'extension-action' && (item.status !== 'skipped' || item.trigger === 'user'))
+  const messageCreatedAt = new Map(items.filter(item => item.kind === 'message').map(item => [item.id, item.createdAt]))
   for (const turn of [...turns].sort((left, right) => left.startedAt.localeCompare(right.startedAt) || left.runId.localeCompare(right.runId))) {
-    if (!shouldShowAgentTurn(turn))
+    const responseStartedAt = turn.finalMessageId
+      ? turn.messageStartedAt?.[turn.finalMessageId] ?? messageCreatedAt.get(turn.finalMessageId)
+      : null
+    const hasLeadingAction = responseStartedAt && visibleActions.some(action => action.sourceMessageId === turn.triggeringMessageId
+      && action.branchId === turn.branchId && action.createdAt <= responseStartedAt)
+    if (!shouldShowAgentTurn(turn) && !hasLeadingAction)
       continue
     if (includeUnanchoredTurns && !timelineMessageIds.has(turn.triggeringMessageId)) {
       rows.push({
@@ -71,6 +69,11 @@ export function projectPersistedChatTranscriptRows(
   }
 
   for (const item of items) {
+    if (item.kind === 'extension-action') {
+      if (item.status !== 'skipped' || item.trigger === 'user')
+        rows.push({ action: item, key: `extension-action:${item.id}`, kind: 'extension-action' })
+      continue
+    }
     if (item.kind === 'compaction') {
       if (projectConversationCompactionState(item.status, item.errorCode) === 'not_needed')
         continue

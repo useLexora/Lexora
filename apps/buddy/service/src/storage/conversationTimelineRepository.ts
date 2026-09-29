@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ExtensionActionTimelineItem } from '../../../shared/extensions/extensionActionApi'
 import type {
   ConversationBranchLineage,
   MessageRecord,
@@ -6,6 +7,7 @@ import type {
   VisibleConversationBranchSegment,
 } from './conversationHistoryRepository'
 import type { RunStatus } from './runRecord'
+import { extensionActionTimelineSchema } from '../../../shared/extensions/extensionActionApi'
 
 export interface ConversationTimelineMessageRecord extends MessageRecord {
   kind: 'message'
@@ -27,6 +29,7 @@ export interface ConversationTimelineCompactionRecord {
 export type ConversationTimelineItemRecord
   = | ConversationTimelineMessageRecord
     | ConversationTimelineCompactionRecord
+    | ExtensionActionTimelineItem
 
 export interface ConversationTimelineBoundaryRecord {
   branchId: string
@@ -64,7 +67,7 @@ interface MessageRow {
 }
 
 interface ConversationTimelineRow {
-  kind: 'message' | 'compaction'
+  kind: ConversationTimelineItemRecord['kind']
   id: string
   conversation_id: string
   branch_id: string
@@ -77,6 +80,7 @@ interface ConversationTimelineRow {
   compaction_payload_json: string | null
   occurred_at: string
   sort_rank: number
+  action_json?: string | null
 }
 
 interface ConversationTimelineRowsPage {
@@ -95,6 +99,7 @@ export function createConversationTimelineRepository(
     SELECT * FROM runs
     WHERE id = ? AND purpose = 'conversation.compaction'
   `)
+  const findAction = database.prepare('SELECT id, conversation_id, branch_id, started_at FROM extension_invocations WHERE id = ? AND branch_id IS NOT NULL')
   const findTriggeringMessageForRun = database.prepare(`
     SELECT messages.* FROM runs
     INNER JOIN messages ON messages.id = runs.triggering_message_id
@@ -114,7 +119,8 @@ export function createConversationTimelineRepository(
       NULL AS completed_at,
       NULL AS compaction_payload_json,
       created_at AS occurred_at,
-      0 AS sort_rank
+      0 AS sort_rank,
+      NULL AS action_json
     FROM messages
     WHERE conversation_id = ? AND branch_id = ?
     UNION ALL
@@ -136,10 +142,29 @@ export function createConversationTimelineRepository(
         LIMIT 1
       ) AS compaction_payload_json,
       runs.started_at AS occurred_at,
-      1 AS sort_rank
+      1 AS sort_rank,
+      NULL AS action_json
     FROM runs
     WHERE conversation_id = ? AND branch_id = ?
       AND purpose = 'conversation.compaction'
+    UNION ALL
+    SELECT
+      'extension-action' AS kind,
+      id, conversation_id, branch_id,
+      NULL AS run_id, NULL AS role, NULL AS content_json,
+      NULL AS status, NULL AS error_code, completed_at,
+      NULL AS compaction_payload_json, started_at AS occurred_at,
+      2 AS sort_rank,
+      json_object(
+        'kind', 'extension-action', 'id', id, 'conversationId', conversation_id,
+        'branchId', branch_id, 'sourceMessageId', source_message_id,
+        'extensionId', extension_id, 'extensionName', COALESCE(extension_name, extension_id),
+        'actionId', action_id, 'title', COALESCE(action_title, action_id),
+        'trigger', trigger, 'status', status, 'message', result_message,
+        'createdAt', started_at, 'completedAt', completed_at
+      ) AS action_json
+    FROM extension_invocations
+    WHERE conversation_id = ? AND branch_id = ?
   `
   const listNewestTimelineForBranch = database.prepare(`
     WITH timeline AS (${timelineProjection})
@@ -188,6 +213,8 @@ export function createConversationTimelineRepository(
         segment.branchId,
         conversationId,
         segment.branchId,
+        conversationId,
+        segment.branchId,
       ] as const
       const rows = boundary && index === segmentIndex
         ? listTimelineForBranchBefore.all(
@@ -227,7 +254,7 @@ export function createConversationTimelineRepository(
         return { items: [], nextBefore: null }
       const segments = branches.listVisibleSegments(conversationId, branchId)
       const boundary = options.before
-        ? resolveTimelineBoundary(options.before, findMessage, findCompactionRun)
+        ? resolveTimelineBoundary(options.before, findMessage, findCompactionRun, findAction)
         : null
       if (options.before) {
         const segmentIndex = boundary
@@ -395,6 +422,7 @@ function resolveTimelineBoundary(
   boundary: ConversationTimelineBoundaryRecord,
   findMessage: ReturnType<DatabaseSync['prepare']>,
   findCompactionRun: ReturnType<DatabaseSync['prepare']>,
+  findAction: ReturnType<DatabaseSync['prepare']>,
 ): ConversationTimelineRow | null {
   if (boundary.kind === 'message') {
     const message = findMessage.get(boundary.id) as MessageRow | undefined
@@ -407,7 +435,7 @@ function resolveTimelineBoundary(
     }
     return toMessageTimelineRow(message)
   }
-  const run = findCompactionRun.get(boundary.id) as {
+  const run = (boundary.kind === 'extension-action' ? findAction : findCompactionRun).get(boundary.id) as {
     id: string
     conversation_id: string
     branch_id: string
@@ -428,11 +456,11 @@ function resolveTimelineBoundary(
     conversation_id: run.conversation_id,
     error_code: null,
     id: run.id,
-    kind: 'compaction',
+    kind: boundary.kind,
     occurred_at: run.started_at,
     role: null,
     run_id: run.id,
-    sort_rank: 1,
+    sort_rank: boundary.kind === 'extension-action' ? 2 : 1,
     status: null,
   }
 }
@@ -475,6 +503,8 @@ function compareTimelineOrder(
 }
 
 function toTimelineItem(row: ConversationTimelineRow): ConversationTimelineItemRecord {
+  if (row.kind === 'extension-action')
+    return extensionActionTimelineSchema.parse(JSON.parse(row.action_json!))
   if (row.kind === 'message') {
     if (!row.role || row.content_json === null)
       throw new Error(`Lexora Buddy timeline message is invalid: ${row.id}`)

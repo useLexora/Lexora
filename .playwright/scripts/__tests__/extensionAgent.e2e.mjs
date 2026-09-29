@@ -155,6 +155,9 @@ test('agent plugin uses the originating model, persists settings and protects ma
     expect(JSON.stringify(requests[0].messages)).toContain('proactively')
     const pluginToolName = requests[0].tools.find(tool => tool.function.description.includes('Generate and save a concise title')).function.name
     await expect(page.getByText('生成标题 1', { exact: true }).first()).toBeVisible()
+    await expect(page.locator('.buddy-chat-tool__title').first()).toHaveText('工具调用')
+    await expect(page.locator('.buddy-chat-tool__summary').first()).toHaveText('标题自动生成 · 生成标题')
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'plugin-tool-row.png'), animations: 'disabled' })
 
     await settings()
     const modelField = () => page.locator(`[data-setting-id="${pluginId}.model"]`)
@@ -305,6 +308,306 @@ function activate(context) {
       return { applied: false }
     const configuration = await context.configuration.get()
     const result = await invocation.models.generateText({ prompt: input.summary, model: configuration.model })
-    return invocation.task.rename({ title: result.text, expectedRevision: task.titleRevision })
+    return invocation.task.rename({ title: result.text })
+  })
+}
+
+test('background plugin actions preserve event context, protected titles and independent usage', async ({ buddy }) => {
+  test.setTimeout(180000)
+  const requests = []
+  const pending = []
+  let hold = true
+  let generated = 0
+  const server = createServer(async (request, response) => {
+    if (request.url !== '/v1/chat/completions') {
+      response.writeHead(404).end()
+      return
+    }
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const body = JSON.parse(Buffer.concat(chunks).toString())
+    requests.push(body)
+    const background = !body.tools?.length
+    const content = background ? `后台标题 ${++generated}` : '任务回答已完成。'
+    const finish = () => {
+      const common = { id: `action-${requests.length}`, model: body.model, object: 'chat.completion.chunk', created: 1 }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      if (!background)
+        response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: '检查任务目标和执行步骤。' }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+    }
+    if (background && hold)
+      pending.push(finish)
+    else finish()
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const instance = await buddy.createInstance('background-title')
+  try {
+    const { app, page, diagnostics } = await instance.launch()
+    await syntheticCredentials(app, page)
+    await page.evaluate(async (baseUrl) => {
+      const providers = window.lexoraDesktop.localChat.providers
+      await providers.upsertCustom({ id: 'title-fixture', displayName: 'Title fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'primary', name: 'primary', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
+      const stop = providers.onAuthChallenge((challenge) => {
+        if (challenge.providerId === 'title-fixture' && challenge.type === 'secret')
+          void providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
+      })
+      try {
+        await providers.login('title-fixture', 'api_key')
+      }
+      finally { stop() }
+      await providers.setDefaultModel({ providerId: 'title-fixture', modelId: 'primary', reasoning: null })
+    }, `http://127.0.0.1:${server.address().port}/v1`)
+    const source = process.env.LEXORA_TEST_ACTION_PLUGIN ?? path.join(instance.home, 'action-fixture')
+    if (!process.env.LEXORA_TEST_ACTION_PLUGIN)
+      await writeActionFixture(source)
+    const previous = process.env.LEXORA_TEST_ACTION_PLUGIN_PREVIOUS
+    if (previous) {
+      await app.evaluate(({ dialog }, previous) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [previous] })
+      }, previous)
+      await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
+      await page.getByTestId('extension-install-options').click()
+      await page.getByTestId((await fs.stat(previous)).isDirectory() ? 'extension-development' : 'extension-install').click()
+      await page.getByTestId('extension-confirm-install').click()
+      await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).length)).toBe(1)
+      await page.evaluate(async () => {
+        const plugin = (await window.lexoraDesktop.extensions.list())[0]
+        await window.lexoraDesktop.extensions.configure(plugin.manifest.id, { enabled: false, model: { providerId: 'title-fixture', modelId: 'primary' }, updateOnGoalChange: true })
+      })
+    }
+    const development = (await fs.stat(source)).isDirectory()
+    await page.reload()
+    await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
+    await app.evaluate(({ dialog }, source) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
+    }, source)
+    await page.getByTestId('extension-install-options').click()
+    await page.getByTestId(development ? 'extension-development' : 'extension-install').click()
+    await expect(page.getByText('读取任务消息', { exact: true })).toBeVisible()
+    await page.getByTestId('extension-confirm-install').click()
+    await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).length)).toBe(1)
+    const pluginId = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.id)
+    if (previous) {
+      await expect.poll(() => page.evaluate(async () => !!(await window.lexoraDesktop.extensions.list())[0].pending)).toBe(true)
+      await page.locator(`[data-extension-id="${pluginId}"]`).getByTestId('extension-card-more').click()
+      await page.getByTestId('extension-restart').click()
+      await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].pending)).toBeNull()
+      expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toMatchObject({ enabled: false, model: { providerId: 'title-fixture', modelId: 'primary' }, updateOnGoalChange: true })
+      await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { enabled: true, model: null, updateOnGoalChange: false }), pluginId)
+    }
+
+    const declaredActions = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.agent.actions)
+    const pluginSettings = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.settings.items)
+    await page.locator(`[data-extension-id="${pluginId}"]`).getByRole('button', { name: '打开', exact: true }).click()
+    const master = page.locator(`[data-setting-id="${pluginId}.enabled"]`).getByRole('switch')
+    const model = page.locator(`[data-setting-id="${pluginId}.model"] .plugin-model-setting__select`)
+    const updates = page.locator(`[data-setting-id="${pluginSettings.find(item => item.key === 'updateOnGoalChange').id}"]`).getByRole('switch')
+    await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { updateOnGoalChange: true }), pluginId)
+    await expect(updates).toBeChecked()
+    const preservedConfiguration = await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)
+    await expect(master).toBeChecked()
+    await expect(model).toBeEnabled()
+    await master.click()
+    await expect(model).toBeDisabled()
+    await expect(updates).toBeDisabled()
+    await expect(master).toBeEnabled()
+    const disabledConfiguration = await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)
+    expect(disabledConfiguration).toEqual({ ...preservedConfiguration, enabled: false })
+    await expect(updates).toBeChecked()
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-settings-disabled.png'), animations: 'disabled' })
+    await page.reload()
+    await expect(model).toBeDisabled()
+    await master.click()
+    await expect(model).toBeEnabled()
+    await expect(updates).toBeEnabled()
+    expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toEqual(preservedConfiguration)
+    await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { updateOnGoalChange: false }), pluginId)
+
+    await page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
+    const latest = () => rows(instance.home, 'SELECT * FROM conversations ORDER BY created_at DESC LIMIT 1')[0]
+    async function send(text, fresh = false) {
+      if (fresh) {
+        await page.getByRole('button', { name: '新任务', exact: true }).click()
+        await expect(page.locator('.desktop-chat-workspace-header__copy:visible')).toHaveText('新任务')
+        await expect(page.locator('.desktop-chat-page.is-empty:not(.is-loading):visible')).toBeVisible()
+      }
+      const before = rows(instance.home, 'SELECT id FROM runs').length
+      await page.locator('.desktop-chat-composer__prosemirror:visible').fill(text)
+      await page.getByRole('button', { name: '发送消息', exact: true }).click()
+      await expect.poll(() => rows(instance.home, 'SELECT id FROM runs').length).toBe(before + 1)
+      await expect.poll(() => rows(instance.home, 'SELECT id FROM runs WHERE status IN (\'queued\', \'running\')').length).toBe(0)
+    }
+    const settled = () => expect.poll(() => rows(instance.home, 'SELECT id FROM extension_invocations WHERE status = \'running\'').length).toBe(0)
+    const backgroundRequests = () => requests.filter(body => !body.tools?.length).length
+    async function revealActions() {
+      const group = page.locator('.buddy-chat-message-list .buddy-chat-activity-group__header').first()
+      await expect(group).toContainText('工具调用')
+      if (await group.getAttribute('aria-expanded') === 'false')
+        await group.click()
+    }
+    await send('整理项目发布计划')
+    await expect.poll(() => pending.length).toBe(1)
+    await revealActions()
+    await expect(page.locator('[data-action-status="running"]').filter({ hasText: '重新生成标题' })).toBeVisible()
+    expect(latest().title_source).toBe('fallback')
+    expect(rows(instance.home, 'SELECT status FROM runs')).toEqual([{ status: 'completed' }])
+    expect(requests.filter(body => body.tools?.length).every(body => !body.tools.some(tool => tool.function.name.startsWith('lexora_plugin_')))).toBe(true)
+    pending.shift()()
+    await settled()
+    expect(latest()).toMatchObject({ title: '后台标题 1', title_source: 'generated' })
+    await expect(page.locator('[data-action-status="completed"]').filter({ hasText: '重新生成标题' })).toBeVisible()
+    const savedTimeline = await page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), latest().id)
+    expect(savedTimeline.items.filter(item => item.kind === 'extension-action')).toEqual(expect.arrayContaining([expect.objectContaining({ extensionId: pluginId, title: '重新生成标题', status: 'completed', branchId: latest().active_branch_id })]))
+    await page.reload()
+    await revealActions()
+    const completedAction = page.locator('[data-action-status="completed"]').filter({ hasText: '重新生成标题' })
+    await expect(completedAction).toBeVisible()
+    await expect(completedAction.locator('.buddy-chat-tool__title')).toHaveText('工具调用')
+    await expect(completedAction.locator('.buddy-chat-tool__summary')).toHaveText('重新生成标题')
+    const identities = page.locator('.buddy-chat-message-list .buddy-chat-agent-identity')
+    await expect(identities).toHaveCount(1)
+    const identityBounds = await identities.boundingBox()
+    const actionBounds = await completedAction.boundingBox()
+    const answerBounds = await page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant').boundingBox()
+    expect(identityBounds.y + identityBounds.height).toBeLessThanOrEqual(actionBounds.y)
+    expect(actionBounds.y + actionBounds.height).toBeLessThanOrEqual(answerBounds.y)
+    if (process.env.LEXORA_TEST_ACTION_PLUGIN) {
+      await completedAction.getByRole('button', { name: /重新生成标题/ }).click()
+      const actionId = await completedAction.getAttribute('data-action-id')
+      await expect(page.locator(`[data-action-detail-id="${actionId}"]`)).toContainText('后台标题 1')
+      await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-action-details.png'), animations: 'disabled' })
+    }
+
+    expect(rows(instance.home, 'SELECT run_id, invocation_id, purpose FROM usage_records WHERE purpose = \'extension.action\'')).toEqual([{ run_id: null, invocation_id: expect.any(String), purpose: 'extension.action' }])
+    const inputActions = declaredActions.filter(action => action.triggers.includes('task:input:committed')).map(action => action.id).sort()
+    expect(rows(instance.home, 'SELECT action_id, status FROM extension_invocations WHERE trigger = \'task:input:committed\' ORDER BY action_id')).toEqual(inputActions.map(action_id => ({ action_id, status: 'completed' })))
+    const status = await page.evaluate(conversationId => window.lexoraDesktop.localChat.runs.status({ conversationId }), latest().id)
+    expect(status.tokens.totals).toMatchObject({ totalTokens: 60, recordCount: 2 })
+    expect(status.tokens.byPurpose.find(entry => entry.purpose === 'extension.action')).toMatchObject({ totalTokens: 30, recordCount: 1 })
+    expect(status.tokens.byModel).toMatchObject([{ modelId: 'primary', totalTokens: 60, runCount: 1 }])
+    expect(status.activity.runs.chat.total).toBe(1)
+    await send('补充测试范围')
+    await settled()
+    expect(backgroundRequests()).toBe(1)
+
+    await page.evaluate(id => window.lexoraDesktop.localChat.conversations.rename(id, '手动保留'), latest().id)
+    await send('继续完成细节')
+    await settled()
+    expect(backgroundRequests()).toBe(1)
+    const taskId = latest().id
+    const database = new DatabaseSync(path.join(instance.home, 'buddy/buddy.sqlite3'))
+    database.prepare('UPDATE conversations SET title_revision = 0 WHERE id = ?').run(taskId)
+    database.close()
+    await send('历史标题也应保留')
+    await settled()
+    expect(backgroundRequests()).toBe(1)
+
+    hold = false
+    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+    await page.locator('.n-dropdown-menu').getByText('重新生成标题', { exact: true }).click()
+    await expect.poll(() => latest().title).toBe('后台标题 2')
+    await settled()
+    await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { updateOnGoalChange: true }), pluginId)
+    await send('把主目标调整为插件架构评审')
+    await expect.poll(() => latest().title).toBe('后台标题 3')
+    await settled()
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'generated-task-title.png'), animations: 'disabled' })
+
+    hold = true
+    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+    await page.locator('.n-dropdown-menu').getByText('重新生成标题', { exact: true }).click()
+    await expect.poll(() => pending.length).toBe(1)
+    await page.evaluate(id => window.lexoraDesktop.localChat.conversations.rename(id, '用户最终命名'), taskId)
+    pending.shift()()
+    await settled()
+    expect(latest().title).toBe('用户最终命名')
+
+    await send('停用插件时保留输入标题', true)
+    await expect.poll(() => pending.length).toBe(1)
+    const original = latest().title
+    await page.evaluate(id => window.lexoraDesktop.extensions.enable(id, false), pluginId)
+    pending.shift()()
+    await settled()
+    expect(latest().title).toBe(original)
+    const stoppedActions = rows(instance.home, `SELECT action_id, status FROM extension_invocations WHERE conversation_id = '${latest().id}'`)
+    const namingActionIds = new Set(declaredActions.filter(action => action.triggers.includes('user')).map(action => action.id))
+    const stoppedNaming = stoppedActions.filter(action => namingActionIds.has(action.action_id))
+    expect(stoppedNaming.length).toBeGreaterThan(0)
+    expect(stoppedNaming.every(action => action.status === 'cancelled')).toBe(true)
+    expect(stoppedActions.every(action => ['cancelled', 'completed', 'skipped'].includes(action.status))).toBe(true)
+    await expect(page.locator('[data-workbench-menu="task.actions"]:visible')).toHaveCount(0)
+    expect(rows(instance.home, 'SELECT id FROM runs WHERE status = \'failed\'')).toEqual([])
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'background-actions.png'), animations: 'disabled' })
+    expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+    const persistedTaskId = latest().id
+    const beforeRestart = await page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), persistedTaskId)
+    await instance.stop()
+    const restarted = await instance.launch()
+    const afterRestart = await restarted.page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), persistedTaskId)
+    expect(afterRestart.items.filter(item => item.kind === 'extension-action')).toEqual(beforeRestart.items.filter(item => item.kind === 'extension-action'))
+    expect(afterRestart.runs).toEqual(beforeRestart.runs)
+    expect(restarted.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  }
+  finally {
+    await instance.stop()
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
+async function writeActionFixture(directory) {
+  const id = 'tests.actions'
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(path.join(directory, 'extension.json'), JSON.stringify({
+    schemaVersion: 1,
+    id,
+    name: '后台动作测试',
+    version: '1.0.0',
+    apiVersion: 3,
+    engines: { lexora: '*' },
+    entry: 'extension.js',
+    permissions: { agent: true, models: true, tasks: 'title', taskMessages: true },
+    contributes: {
+      conditions: [{ id: `${id}.available`, inputs: ['configuration', 'form'] }],
+      settings: { items: [
+        { id: `${id}.enabled`, key: 'enabled', group: 'settings.general.general', type: 'boolean', title: '启用', default: true },
+        { id: `${id}.updates`, key: 'updateOnGoalChange', group: 'settings.general.general', type: 'boolean', title: '允许更新', default: false, enabledWhen: { condition: `${id}.available` } },
+        { id: `${id}.model`, key: 'model', group: 'settings.general.general', type: 'model', title: '模型', default: null, enabledWhen: { condition: `${id}.available` } },
+      ] },
+      agent: { enabledWhen: 'enabled', actions: [
+        { id: `${id}.generate`, title: '重新生成标题', triggers: ['task:input:committed', 'task:turn:completed', 'user'] },
+        ...Array.from({ length: 15 }, (_, index) => ({ id: `${id}.read${index}`, title: `Read ${index}`, triggers: ['task:input:committed'] })),
+      ] },
+    },
+  }))
+  await fs.writeFile(path.join(directory, 'extension.js'), `export const activate = ${activateActionFixture.toString()}`)
+}
+
+function activateActionFixture(context) {
+  context.conditions.register(`${context.extension.id}.available`, ctx => ctx.configuration.status === 'available' && ctx.configuration.values.enabled === true)
+  for (let index = 0; index < 15; index++) {
+    context.agent.registerAction(`${context.extension.id}.read${index}`, async (invocation) => {
+      await invocation.task.messages()
+      return { status: 'completed' }
+    })
+  }
+  context.agent.registerAction(`${context.extension.id}.generate`, async (invocation) => {
+    const config = await context.configuration.get()
+    const task = await invocation.task.get()
+    const cause = invocation.cause.type
+    if (cause !== 'user' && ['manual', 'legacy'].includes(task.titleSource))
+      return { status: 'skipped' }
+    if (cause === 'task:input:committed' && task.titleSource !== 'fallback')
+      return { status: 'skipped' }
+    const messages = await invocation.task.messages()
+    if (cause === 'task:turn:completed' && (!config.updateOnGoalChange || task.titleSource !== 'generated' || messages.filter(message => message.role === 'user').length < 2))
+      return { status: 'skipped' }
+    const result = await invocation.models.generateText({ prompt: JSON.stringify(messages) })
+    const saved = await invocation.task.rename({ title: result.text })
+    return { status: saved.applied ? 'completed' : 'skipped' }
   })
 }

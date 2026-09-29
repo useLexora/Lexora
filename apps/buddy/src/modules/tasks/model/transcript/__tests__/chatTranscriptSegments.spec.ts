@@ -26,6 +26,9 @@ const run: LocalRun = {
 function message(id: string, role: 'user' | 'assistant', seconds: number): LocalConversationTimelineItem {
   return { kind: 'message', id, role, branchId: run.branchId, conversationId: run.conversationId, runId: role === 'assistant' ? run.id : null, attachments: [], content: { text: id }, createdAt: time(seconds) }
 }
+function action(seconds: number, overrides: Partial<Extract<LocalConversationTimelineItem, { kind: 'extension-action' }>> = {}): Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> {
+  return { kind: 'extension-action', id: `action-${seconds}`, conversationId: run.conversationId, branchId: run.branchId, sourceMessageId: run.triggeringMessageId, extensionId: 'tests.title', extensionName: 'Title', actionId: 'tests.title.generate', title: 'Generate title', trigger: 'task:input:committed', status: 'completed', message: 'Updated', createdAt: time(seconds), completedAt: time(seconds + 1), ...overrides }
+}
 const eventInputs: Array<[number, string, LocalRunEvent['payload']]> = [
   [1, 'message.completed', { role: 'assistant', messageId: 'before', phase: 'commentary', content: { text: 'before steering' } }],
   [30, 'message.completed', { role: 'assistant', messageId: 'between', phase: 'commentary', content: { text: 'after steering' } }],
@@ -44,6 +47,52 @@ function order(projection: ReturnType<typeof projectChatTranscript>) {
 }
 
 describe('interleaved conversation segments', () => {
+  it('keeps the avatar before leading actions while the first reply arrives and when it is cancelled', () => {
+    const items = [message('initial', 'user', 0), action(1), action(2)]
+    const first = input(run, [], items)
+    const projector = createChatTranscriptProjector()
+    expect(projector.project(first).rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'activity:run'])
+    const thinking = { ...first, runProjections: [{ ...first.runProjections[0]!, turn: { ...first.runProjections[0]!.turn, nodes: [{ id: 'reasoning', kind: 'reasoning' as const, contentIndex: 0, status: 'running' as const, text: 'Planning' }], nodeStartedAt: { reasoning: time(3) } } }] }
+    expect(projector.project(thinking).rows).toEqual(projectChatTranscript(thinking).rows)
+    const narration: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(3), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'commentary', content: { text: 'Working' } } }
+    const next = { ...first, runProjections: input(run, [narration], items).runProjections }
+    const active = projector.project(next)
+    expect(active.rows).toEqual(projectChatTranscript(next).rows)
+    expect(active.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'activity:run'])
+    expect(active.rows[1]).toMatchObject({ kind: 'agent-turn', turn: { nodes: [{ id: 'extension-action:action-1' }, { id: 'extension-action:action-2' }, { messageId: 'reply' }] } })
+    const ended = projector.project(input({ ...run, status: 'cancelled', completedAt: time(5) }, [narration], items))
+    expect(ended.rows.filter(row => row.kind === 'agent-turn' && row.showIdentity !== false).map(row => row.key)).toEqual(['agent-turn:run'])
+    expect(ended.rows.at(-1)).toMatchObject({ kind: 'agent-turn', ownsResultActions: true })
+  })
+
+  it('retains a single avatar above a leading action for a completed text-only reply', () => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
+    const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
+    const result = projectChatTranscript(input(completed, [reply], [message('initial', 'user', 0), action(1), message('reply', 'assistant', 5)]))
+    expect(result.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
+    expect(result.rows.at(-1)).toMatchObject({ showIdentity: false, resultRunId: run.id })
+  })
+
+  it('keeps later actions after the answer and does not associate another branch or input with the reply', () => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
+    const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
+    for (const invocation of [action(6), action(1, { branchId: 'another-branch' }), action(1, { sourceMessageId: 'another-input' }), action(1, { status: 'skipped' })]) {
+      const result = projectChatTranscript(input(completed, [reply], [message('initial', 'user', 0), invocation, message('reply', 'assistant', 5)]))
+      expect(result.rows.filter(row => row.kind === 'agent-turn')).toHaveLength(0)
+      expect(result.rows.filter(row => row.kind === 'message').find(row => row.message.id === 'reply')?.showIdentity).not.toBe(false)
+      if (invocation.createdAt > reply.createdAt)
+        expect(result.rows.at(-1)).toMatchObject({ kind: 'activity-flow' })
+    }
+  })
+
+  it('groups adjacent independent actions while preserving input boundaries and completed outcomes', () => {
+    const completed = { ...run, status: 'cancelled' as const, completedAt: time(5) }
+    const result = projectChatTranscript(input(completed, [], [message('initial', 'user', 0), action(6), action(7), message('next', 'user', 8), action(9, { sourceMessageId: 'next' })]))
+    expect(result.rows.map(row => row.kind)).toEqual(['message', 'agent-turn', 'activity-flow', 'message', 'activity-flow'])
+    expect(result.rows[2]).toMatchObject({ nodes: [{ invocation: { id: 'action-6' } }, { invocation: { id: 'action-7' } }] })
+    expect(result.rows[4]).toMatchObject({ nodes: [{ invocation: { sourceMessageId: 'next' } }] })
+  })
+
   it('keeps later activity below an intermediate answer and withholds run result controls while running', () => {
     const projection = projectChatTranscript(input())
     expect(order(projection)).toEqual(['initial', 'before', 'steer-a', 'steer-b', 'between', 'hello', 'continuation'])

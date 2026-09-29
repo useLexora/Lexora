@@ -8,8 +8,9 @@ function capability<I extends z.ZodType, O extends z.ZodType>(input: I, output: 
 }
 
 export const extensionAgentCapabilities = {
-  'task.get': capability(z.null(), z.object({ id: z.string(), title: z.string().nullable(), titleSource: z.enum(['manual', 'fallback', 'generated']), titleRevision: z.number().int().nonnegative() }).strict(), permissions => permissions.tasks !== 'none'),
-  'task.rename': capability(z.object({ title: z.string().trim().min(1).max(80).refine(value => [...value].every(character => character.charCodeAt(0) >= 32)), expectedRevision: z.number().int().nonnegative() }).strict(), z.object({ applied: z.boolean() }).strict(), permissions => permissions.tasks === 'title'),
+  'task.get': capability(z.null(), z.object({ id: z.string(), title: z.string().nullable(), titleSource: z.enum(['legacy', 'manual', 'fallback', 'generated']) }).strict(), permissions => permissions.tasks !== 'none'),
+  'task.messages': capability(z.null(), z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) }).strict()).max(16), permissions => permissions.taskMessages),
+  'task.rename': capability(z.object({ title: z.string().trim().min(1).max(80).refine(value => [...value].every(character => character.charCodeAt(0) >= 32)) }).strict(), z.object({ applied: z.boolean() }).strict(), permissions => permissions.tasks === 'title'),
   'models.generateText': capability(z.object({
     model: extensionModelSelectionSchema.nullable().default(null),
     system: z.string().max(8192).default(''),

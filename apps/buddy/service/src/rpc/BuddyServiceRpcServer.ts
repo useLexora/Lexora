@@ -88,7 +88,7 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
     })
   }
 
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal, requestId?: string): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs?: number | null, signal?: AbortSignal, requestId?: string): Promise<unknown> {
     return this.#peer.request(method, params, timeoutMs, signal, requestId)
   }
 

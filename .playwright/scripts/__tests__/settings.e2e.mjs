@@ -52,7 +52,7 @@ test('registered plugin settings share groups, recover read/save errors and with
   const instance = await buddy.createInstance('settings-registry')
   let { app, page, diagnostics } = await instance.launch()
   const directory = path.join(instance.home, 'settings-plugin')
-  await writeSettingsPlugin(directory)
+  await writeSettingsPlugin(directory, true)
   await app.evaluate(({ ipcMain, dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
     const original = ipcMain._invokeHandlers.get('lexora:extensions:request')
@@ -60,6 +60,10 @@ test('registered plugin settings share groups, recover read/save errors and with
     globalThis.settingsFixtureSaves = []
     ipcMain.removeHandler('lexora:extensions:request')
     ipcMain.handle('lexora:extensions:request', async (event, request) => {
+      if (request.action === 'settingConditions') {
+        globalThis.settingsFixtureConditionReads = (globalThis.settingsFixtureConditionReads ?? 0) + 1
+        await globalThis.settingsFixtureConditionGate
+      }
       if (request.action === 'configure') {
         globalThis.settingsFixtureSaves.push(request.patch)
         await globalThis.settingsFixtureSaveGate
@@ -101,8 +105,16 @@ test('registered plugin settings share groups, recover read/save errors and with
 
   const label = () => page.locator('[data-setting-id="tests.settings.label"] input')
   await expect(label()).toBeEnabled()
-  await label().pressSequentially('editable')
+  await app.evaluate(() => {
+    globalThis.settingsFixtureConditionReads = 0
+    globalThis.settingsFixtureConditionGate = new Promise(resolve => globalThis.releaseSettingsFixtureCondition = resolve)
+  })
+  await label().pressSequentially('editable', { delay: 75 })
   await expect(label()).toHaveValue('editable')
+  await expect(label()).toBeFocused()
+  await expect(label()).toBeEnabled()
+  await expect.poll(() => app.evaluate(() => globalThis.settingsFixtureConditionReads)).toBeGreaterThan(0)
+  await app.evaluate(() => globalThis.releaseSettingsFixtureCondition())
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ label: '' })
   await app.evaluate(() => {
     globalThis.settingsFixtureSaves = []
@@ -122,6 +134,17 @@ test('registered plugin settings share groups, recover read/save errors and with
   await expect(label()).toHaveValue('editable')
   await expect(label()).toBeEnabled()
   await app.evaluate(() => globalThis.settingsFixtureFailures.save = false)
+  await label().fill('')
+  const ime = await page.context().newCDPSession(page)
+  await ime.send('Input.imeSetComposition', { text: '组合输入', selectionStart: 4, selectionEnd: 4 })
+  await expect(label()).toHaveValue('组合输入')
+  await expect(label()).toBeFocused()
+  await expect(label()).toBeEnabled()
+  expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ label: 'editable' })
+  await page.keyboard.insertText('组合输入')
+  await expect(label()).toHaveValue('组合输入')
+  await expect(label()).toBeFocused()
+  await ime.detach()
   await label().fill('粘贴后的名称')
   await expect(label()).toHaveValue('粘贴后的名称')
   await label().press('Enter')
@@ -379,7 +402,7 @@ function panelSettings(page) {
     return { global: desktop.contextPanelGlobal, mode: desktop.contextPanelMode }
   })
 }
-async function writeSettingsPlugin(directory) {
+async function writeSettingsPlugin(directory, conditional = false) {
   await fs.mkdir(directory, { recursive: true })
   await fs.writeFile(path.join(directory, 'extension.json'), JSON.stringify({
     schemaVersion: 1,
@@ -389,7 +412,7 @@ async function writeSettingsPlugin(directory) {
     apiVersion: 3,
     engines: { lexora: '*' },
     entry: 'extension.js',
-    contributes: { commands: [{ id: 'tests.settings.open', title: 'Open fixture' }], views: [{ id: 'tests.settings.view', title: 'Fixture view', resource: 'none', entry: 'view.js' }], settings: {
+    contributes: { conditions: conditional ? [{ id: 'tests.settings.available', inputs: ['form'] }] : [], commands: [{ id: 'tests.settings.open', title: 'Open fixture' }], views: [{ id: 'tests.settings.view', title: 'Fixture view', resource: 'none', entry: 'view.js' }], settings: {
       modules: [{ id: 'tests.settings.module', title: '注册设置' }],
       groups: [
         { id: 'tests.settings.group', module: 'tests.settings.module', title: '插件分组' },
@@ -398,13 +421,13 @@ async function writeSettingsPlugin(directory) {
       ],
       items: [
         { id: 'tests.settings.enabled', key: 'enabled', group: 'tests.settings.group', type: 'boolean', title: '启用', default: false },
-        { id: 'tests.settings.label', key: 'label', group: 'tests.settings.group', type: 'string', title: '名称', default: '' },
+        { id: 'tests.settings.label', key: 'label', group: 'tests.settings.group', type: 'string', title: '名称', default: '', ...(conditional ? { enabledWhen: { condition: 'tests.settings.available' } } : {}) },
         { id: 'tests.settings.inline', key: 'inline', group: 'settings.general.general', type: 'boolean', title: '分组内单项', default: false },
         { id: 'tests.settings.extra-item', key: 'extra', group: 'tests.settings.extra', type: 'number', title: '数值', default: 0 },
         { id: 'tests.settings.logs-item', key: 'log', group: 'tests.settings.logs', type: 'boolean', title: '日志附加项', default: false },
       ],
     } },
   }))
-  await fs.writeFile(path.join(directory, 'extension.js'), `export function activate(context) { context.commands.register('tests.settings.open', async () => { await context.storage.set({ retained: true }); await context.views.open('tests.settings.view', { state: { position: 17 } }); }); }\n`)
+  await fs.writeFile(path.join(directory, 'extension.js'), `export function activate(context) { ${conditional ? 'context.conditions.register(\'tests.settings.available\', () => true);' : ''} context.commands.register('tests.settings.open', async () => { await context.storage.set({ retained: true }); await context.views.open('tests.settings.view', { state: { position: 17 } }); }); }\n`)
   await fs.writeFile(path.join(directory, 'view.js'), 'export function render(context, container) { container.textContent = "Fixture view"; }\n')
 }

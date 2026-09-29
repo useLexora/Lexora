@@ -1,6 +1,7 @@
 import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../shared/extensions/extensionAgent'
 import type { ExtensionMenuInvocation, ExtensionResource, ExtensionStatus, ExtensionViewInput, ExtensionViewSession, ExtensionWorkbenchEvent } from '../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../shared/extensions/extensionAuthoring'
+import type { ExtensionConditionRuntime } from '../../shared/extensions/extensionConditionContext'
 import type { ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
@@ -14,10 +15,11 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import { Emitter } from '../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../shared/events/eventSnapshot'
-import { extensionAgentRequestSchema } from '../../shared/extensions/extensionAgent'
+import { extensionAgentInvocationLimits, extensionAgentRequestSchema } from '../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../shared/extensions/extensionAgentCapabilities'
 import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
+import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
@@ -26,6 +28,7 @@ import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInter
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
+import { ExtensionConditions } from './ExtensionConditions'
 import { sha256, unpackExtension } from './extensionFiles'
 import { ExtensionInstallations } from './ExtensionInstallations'
 import { extensionActivationOrder } from './ExtensionPackageStore'
@@ -45,6 +48,7 @@ export interface ExtensionServicePorts {
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   changed?: () => void
   agentChanged?: () => void
+  conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
   notify?: (id: string, notification: { title: string, body: string }) => boolean
   compile?: ExtensionCompiler
@@ -78,6 +82,7 @@ export class ExtensionService {
   readonly onDidChange = this.#changes.event
   readonly #configurationApplications = new Map<string, ExtensionConfigurationApplication>()
   #revision = 0
+  readonly conditions: ExtensionConditions
   readonly store: ExtensionPackageStore
   readonly scheduler: ExtensionScheduler
   readonly installations: ExtensionInstallations
@@ -110,6 +115,22 @@ export class ExtensionService {
   constructor(store: ExtensionPackageStore, ports: ExtensionServicePorts) {
     this.store = store
     this.#ports = ports
+    this.conditions = new ExtensionConditions({
+      package: async (id) => {
+        await this.initialize()
+        await this.#mutating
+        this.#order(id)
+        return this.store.installed[id]!.current
+      },
+      packages: () => Object.values(this.store.installed).filter(record => record.enabled).map(record => record.current),
+      configuration: id => this.store.configurationSnapshot(id),
+      activate: async (id) => {
+        const running = await this.#activate(id)
+        return { generation: running.generation, host: running.host, signal: running.abort.signal }
+      },
+      runtime: ports.conditionRuntime,
+      workbench: () => this.#panes.map(({ id, active, visible }) => ({ id, active, visible })),
+    })
     this.onDidChange((change) => {
       ports.changed?.()
       if (change.kind === 'contributions' && !change.initial)
@@ -229,6 +250,7 @@ export class ExtensionService {
       if (!changedKeys.length)
         return
       await this.store.saveConfiguration(id, current)
+      this.conditions.invalidate({ extensionId: id, inputs: ['configuration', 'form'] })
       const operationId = randomUUID()
       const configurationRevision = sha256(JSON.stringify(current))
       const running = this.#running.get(id)
@@ -289,7 +311,7 @@ export class ExtensionService {
       try {
         this.#order(id)
         const configuration = await this.store.configuration(id)
-        if (agent.enabledWhen && configuration[agent.enabledWhen] !== true)
+        if (typeof agent.enabledWhen === 'string' && configuration[agent.enabledWhen] !== true)
           continue
         result.push({ id, name: manifest.name, revision, configurationRevision: sha256(JSON.stringify(configuration)), agent })
       }
@@ -315,16 +337,34 @@ export class ExtensionService {
   async invokeAgent(input: ExtensionAgentInvocation, signal: AbortSignal): Promise<JsonValue> {
     signal.throwIfAborted()
     const contribution = (await this.agentContributions()).find(item => item.id === input.extensionId)
-    if (!contribution || contribution.revision !== input.revision || contribution.configurationRevision !== input.configurationRevision || !contribution.agent.tools.some(tool => tool.id === input.tool))
-      throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+    if (!contribution || contribution.revision !== input.revision || contribution.configurationRevision !== input.configurationRevision || !('tool' in input ? contribution.agent.tools.some(tool => tool.id === input.tool) : contribution.agent.actions.some(action => action.id === input.action && action.triggers.includes(input.cause.type))))
+      throw Object.assign(new Error('EXTENSION_AGENT_UNAVAILABLE'), { code: 'EXTENSION_AGENT_UNAVAILABLE' })
     const running = await this.#activate(input.extensionId)
     const current = (await this.agentContributions()).find(item => item.id === input.extensionId)
     if (!current || current.revision !== input.revision || current.configurationRevision !== input.configurationRevision)
+      throw Object.assign(new Error('EXTENSION_AGENT_UNAVAILABLE'), { code: 'EXTENSION_AGENT_UNAVAILABLE' })
+    const references = [
+      ...(typeof current.agent.enabledWhen === 'object' ? [{ reference: current.agent.enabledWhen, target: { kind: 'agent' as const, id: current.id } }] : []),
+      ...('action' in input ? current.agent.actions.filter(action => action.id === input.action && action.enabledWhen).map(action => ({ reference: action.enabledWhen!, target: { kind: 'action' as const, id: action.id } })) : []),
+    ]
+    for (const { reference, target } of references) {
+      if (!input.context)
+        throw new Error('EXTENSION_CONDITION_UNAVAILABLE')
+      const state = await this.conditions.evaluate(running.package, reference, target, { kind: 'task', ...input.context }, { cache: false, signal })
+      signal.throwIfAborted()
+      this.#assertCurrent(running)
+      if (!state.value) {
+        if (state.status === 'ready' && 'action' in input)
+          return { status: 'skipped', ...(state.reason ? { message: state.reason } : {}) }
+        throw new Error('EXTENSION_CONDITION_UNAVAILABLE')
+      }
+    }
+    if (references.length && (await this.agentContributions()).find(item => item.id === input.extensionId)?.configurationRevision !== input.configurationRevision)
       throw new Error('EXTENSION_AGENT_UNAVAILABLE')
     const controller = new AbortController()
     const abort = AbortSignal.any([signal, running.abort.signal, controller.signal, AbortSignal.timeout(120000)])
     abort.throwIfAborted()
-    if (this.#agentInvocations.has(input.invocationId) || [...this.#agentInvocations.values()].filter(item => item.running === running).length >= 4)
+    if (this.#agentInvocations.has(input.invocationId) || [...this.#agentInvocations.values()].filter(item => item.running === running).length >= extensionAgentInvocationLimits.concurrentPerExtension)
       throw new Error('EXTENSION_REQUEST_LIMIT')
     this.#agentInvocations.set(input.invocationId, { running, signal: abort, abort: controller })
     const cancel = () => {
@@ -332,10 +372,15 @@ export class ExtensionService {
     }
     abort.addEventListener('abort', cancel, { once: true })
     try {
-      const result = await running.host.call('agent.invoke', { invocationId: input.invocationId, tool: input.tool, input: input.input })
+      const result = await running.host.call('agent.invoke', { invocationId: input.invocationId, ...('tool' in input ? { tool: input.tool, input: input.input } : { action: input.action, cause: input.cause }) })
       abort.throwIfAborted()
       this.#assertCurrent(running)
       return extensionJsonSchema.parse(result)
+    }
+    catch (error) {
+      if (abort.aborted)
+        throw Object.assign(new Error('EXTENSION_AGENT_CANCELLED'), { code: 'EXTENSION_AGENT_CANCELLED' })
+      throw error
     }
     finally {
       abort.removeEventListener('abort', cancel)
@@ -500,7 +545,10 @@ export class ExtensionService {
   }
 
   updatePanes(panes: WorkbenchPaneSnapshot[]): void {
+    const changed = JSON.stringify(this.#panes.map(({ id, active, visible }) => ({ id, active, visible }))) !== JSON.stringify(panes.map(({ id, active, visible }) => ({ id, active, visible })))
     this.#panes = structuredClone(panes)
+    if (changed)
+      this.conditions.invalidate({ inputs: ['workbench'] })
     for (const running of this.#running.values()) {
       if (running.active)
         this.#publishPanes(running)
@@ -847,6 +895,7 @@ export class ExtensionService {
       return this.#disposal
     this.#disposed = true
     this.#disposal = Promise.resolve().then(async () => {
+      this.conditions.dispose()
       this.scheduler.dispose()
       this.catalog.dispose()
       const stopping = this.resetHosts()
@@ -959,6 +1008,13 @@ export class ExtensionService {
       let result: JsonValue
       if (method === 'configuration.get') {
         result = await this.store.configuration(id)
+      }
+      else if (method === 'conditions.invalidate') {
+        const input = extensionConditionInvalidationSchema.parse(params)
+        if (input.condition && !running.package.manifest.contributes.conditions.some(condition => condition.id === input.condition))
+          throw new Error('EXTENSION_CONDITION_INVALID')
+        this.conditions.invalidate({ extensionId: id, ...input })
+        result = null
       }
       else if (method === 'agent.request') {
         const input = extensionAgentRequestSchema.parse(params)
@@ -1151,6 +1207,7 @@ export class ExtensionService {
   }
 
   async #stopHost(id: string): Promise<void> {
+    this.conditions.invalidate({ extensionId: id })
     const running = this.#running.get(id)
     if (!running)
       return

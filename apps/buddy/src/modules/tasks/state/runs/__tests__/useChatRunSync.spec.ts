@@ -5,9 +5,53 @@ import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { effectScope, ref } from 'vue'
 
+import { projectPersistedChatTranscriptRows } from '../../../model/transcript/chatPersistedTranscriptRows'
 import { useChatRunSync } from '../useChatRunSync'
 
 describe('useChatRunSync', () => {
+  it('refreshes a running action on an older page and removes only automatic skipped actions from the transcript', async () => {
+    const action: Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> = {
+      kind: 'extension-action',
+      id: 'automatic',
+      conversationId: 'task',
+      branchId: 'branch',
+      sourceMessageId: null,
+      extensionId: 'tests.action',
+      extensionName: 'Action',
+      actionId: 'tests.action.run',
+      title: 'Run',
+      trigger: 'task:input:committed',
+      status: 'running',
+      message: null,
+      createdAt: '2026-09-29T00:00:00.000Z',
+      completedAt: null,
+    }
+    const manual = { ...action, id: 'manual', trigger: 'user' as const, status: 'skipped' as const }
+    const latest = timelineMessage('latest', 'task', 'branch', 2)
+    let completed = false
+    const api = createApi({ listTimeline: async input => input.cursor
+      ? timelinePage([{ ...action, status: completed ? 'skipped' : 'running' }, manual], null)
+      : timelinePage([latest], 'older') })
+    const sync = useChatRunSync({ activeBranchId: ref('branch'), activeConversationId: ref('task'), api, onError: (error) => {
+      throw error
+    } })
+    try {
+      await sync.refreshActiveConversation()
+      await sync.loadOlderMessages()
+      expect(sync.timelineItems.value.find(item => item.id === action.id)).toMatchObject({ status: 'running' })
+      expect(projectPersistedChatTranscriptRows(sync.timelineItems.value, [])).toHaveLength(2)
+      completed = true
+      await sync.refreshActiveConversation()
+      expect(sync.timelineItems.value.find(item => item.id === action.id)).toMatchObject({ status: 'skipped' })
+      const rows = projectPersistedChatTranscriptRows(sync.timelineItems.value, [])
+      expect(JSON.stringify(rows)).not.toContain('"id":"automatic"')
+      expect(JSON.stringify(rows)).toContain('"id":"manual"')
+      expect(sync.messages.value).toEqual([latest])
+      expect(sync.hasOlderMessages.value).toBe(false)
+    }
+    finally { sync.dispose() }
+  })
+
   it('restores the loaded range with fresh pages and keeps a switched task loading until the range is ready', async () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')

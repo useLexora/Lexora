@@ -36,7 +36,7 @@ export interface RenameConversationInput {
 
 export interface ConversationTitleState {
   title: string | null
-  source: 'manual' | 'fallback' | 'generated'
+  source: 'legacy' | 'manual' | 'fallback' | 'generated'
   revision: number
 }
 
@@ -62,7 +62,7 @@ export interface ConversationRepository
   markDeleted: (id: string, deletedAt: string) => boolean
   rename: (input: RenameConversationInput) => ConversationRecord
   getTitleState: (id: string) => ConversationTitleState | null
-  renameGenerated: (input: RenameConversationInput & { expectedRevision: number }) => ConversationRecord | null
+  renameGenerated: (input: RenameConversationInput & { expectedRevision: number, userInitiated?: boolean }) => ConversationRecord | null
   setPermissionSettings: (
     input: SetConversationPermissionSettingsInput,
   ) => ConversationRecord | null
@@ -76,18 +76,18 @@ export function createConversationRepository(database: DatabaseSync): Conversati
   const insertConversation = database.prepare(`
     INSERT INTO conversations (
       id, space_id, title, active_branch_id, created_at, updated_at,
-      approval_policy, execution_profile, origin, deleted_at
-    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL)
+      approval_policy, execution_profile, origin, deleted_at, title_source, title_revision
+    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'manual', 1)
   `)
   const renameConversation = database.prepare(`
     UPDATE conversations
     SET title = ?, title_source = 'manual', title_revision = title_revision + 1
     WHERE id = ? AND deleted_at IS NULL
   `)
-  const findTitle = database.prepare('SELECT title, title_source AS source, title_revision AS revision FROM conversations WHERE id = ? AND deleted_at IS NULL')
+  const findTitle = database.prepare(`SELECT title, CASE WHEN title_source = 'manual' AND title_revision = 0 THEN 'legacy' ELSE title_source END AS source, title_revision AS revision FROM conversations WHERE id = ? AND deleted_at IS NULL`)
   const renameGenerated = database.prepare(`
     UPDATE conversations SET title = ?, title_source = 'generated', title_revision = title_revision + 1
-    WHERE id = ? AND title_revision = ? AND title_source != 'manual' AND deleted_at IS NULL
+    WHERE id = ? AND title_revision = ? AND (title_source != 'manual' OR ? = 1) AND deleted_at IS NULL
   `)
   const setPermissionSettings = database.prepare(`
     UPDATE conversations
@@ -178,7 +178,7 @@ export function createConversationRepository(database: DatabaseSync): Conversati
       return findTitle.get(id) as unknown as ConversationTitleState | undefined ?? null
     },
     renameGenerated(input) {
-      if (Number(renameGenerated.run(input.title, input.id, input.expectedRevision).changes) !== 1)
+      if (Number(renameGenerated.run(input.title, input.id, input.expectedRevision, input.userInitiated ? 1 : 0).changes) !== 1)
         return null
       return requireConversationRecord(findConversation.get(input.id), input.id)
     },

@@ -8,8 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createComposerResourceRepository } from '../composerResourceRepository'
 import { openBuddyDatabase } from '../database'
+import { createExtensionInvocationRepository } from '../extensionInvocationRepository'
 import { BUDDY_V15_CAPABILITY_OVERRIDES_SCHEMA_SQL, BUDDY_V15_CATALOG_MODEL_ID_SCHEMA_SQL, BUDDY_V15_CATALOG_SELECTION_SCHEMA_SQL, BUDDY_V15_MODEL_SERVICES_SCHEMA_SQL, BUDDY_V15_PROVIDER_INSTANCES_SCHEMA_SQL, BUDDY_V15_REQUEST_HEADERS_SCHEMA_SQL } from '../migrations/v15ModelServices'
 import { BUDDY_SCHEMA_MIGRATIONS, BUDDY_SCHEMA_VERSION } from '../schema'
+import { createUsageAnalyticsRepository } from '../usageAnalyticsRepository'
 import { createUsageRepository } from '../usageRepository'
 import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from './migrationFixture'
 
@@ -78,6 +80,48 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('preserves v21 usage and attributes independent actions without modifying completed runs', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-action-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 21))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    previous.exec(`
+      UPDATE runs SET status = 'completed', completed_at = '2026-08-14T00:01:00.000Z';
+      INSERT INTO usage_records (
+        id, run_id, source_entry_id, provider, model, purpose,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens,
+        input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost, created_at
+      ) VALUES ('usage-1', 'run-1', 'source-1', 'provider', 'model', 'turn', 10, 5, 3, 2, 1, 20, 0.1, 0.2, 0.3, 0.4, 1, '2026-08-14T00:00:00.000Z');
+      PRAGMA user_version = 21;
+    `)
+    const before = previous.prepare('SELECT * FROM usage_records').all()
+    const runs = previous.prepare('SELECT * FROM runs').all()
+    previous.close()
+    const upgraded = openBuddyDatabase({ databasePath })
+    databases.push(upgraded)
+    expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(before.map(record => ({ ...record, invocation_id: null })))
+    expect(upgraded.prepare('PRAGMA table_info(extension_invocations)').all().map(column => column.name)).toEqual(expect.arrayContaining(['branch_id', 'source_message_id', 'extension_name', 'action_title', 'result_message']))
+    const invocations = createExtensionInvocationRepository(upgraded)
+    invocations.start({ id: 'invocation', extensionId: 'test.action', actionId: 'test.action.generate', conversationId: 'conversation-1', trigger: 'user', startedAt: '2026-08-14T00:02:00.000Z' })
+    const usage = createUsageRepository(upgraded)
+    const original = usage.listForRun('run-1')[0]!
+    const action = { ...original, id: 'usage-2', runId: null, invocationId: 'invocation', purpose: 'extension.action' }
+    expect(usage.recordInvocation(action)).toBe(true)
+    expect(usage.recordInvocation({ ...action, id: 'duplicate' })).toBe(false)
+    expect(usage.listForRun('run-1')).toEqual([original])
+    expect(usage.summarize()).toMatchObject({ recordCount: 2, totalTokens: 40, totalCost: 2 })
+    expect(createUsageAnalyticsRepository(upgraded).topTasks({ startDate: '2026-08-14', endDate: '2026-08-14', timeZone: 'UTC', model: null })).toMatchObject([{ conversationId: 'conversation-1', totalTokens: 40, recordCount: 2 }])
+    expect(() => upgraded.prepare('UPDATE usage_records SET run_id = \'run-1\' WHERE id = \'usage-2\'').run()).toThrow(/CHECK constraint/)
+    expect(() => upgraded.prepare('UPDATE usage_records SET invocation_id = NULL WHERE id = \'usage-2\'').run()).toThrow(/CHECK constraint/)
+    invocations.recover()
+    expect(upgraded.prepare('SELECT status FROM extension_invocations').get()).toEqual({ status: 'interrupted' })
+    expect(upgraded.prepare('SELECT * FROM runs').all()).toEqual(runs)
+    expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+
   it('upgrades v18 without rewriting legacy sources and permits independent local reference identities', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-local-reference-migration-'))
     directories.push(directory)

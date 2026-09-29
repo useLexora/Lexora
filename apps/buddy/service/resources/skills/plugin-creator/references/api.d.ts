@@ -62,15 +62,52 @@ export interface WorkbenchPaneEvents {
   'workbench:panes:changed': { readonly panes: readonly PaneSnapshot[] }
 }
 export interface ExtensionEvents extends ConfigurationEvents, WorkbenchPaneEvents {}
+export interface TaskTitle {
+  id: string
+  title: string | null
+  titleSource: 'legacy' | 'manual' | 'fallback' | 'generated'
+}
 export interface AgentToolContext {
   readonly signal: AbortSignal
   readonly task: {
-    get: () => Promise<{ id: string, title: string | null, titleSource: 'manual' | 'fallback' | 'generated', titleRevision: number }>
-    rename: (input: { title: string, expectedRevision: number }) => Promise<{ applied: boolean }>
+    get: () => Promise<TaskTitle>
+    messages: () => Promise<{ role: 'user' | 'assistant', text: string }[]>
+    rename: (input: { title: string }) => Promise<{ applied: boolean }>
   }
   readonly models: {
     generateText: (input: { prompt: string, system?: string, model?: ModelSelection | null, maxTokens?: number }) => Promise<{ text: string, model: ModelSelection }>
   }
+}
+export interface TaskActionEvents {
+  'task:input:committed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string, readonly commitId: string }
+  'task:turn:completed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly triggeringMessageId: string, readonly completedAt: string }
+}
+export interface AgentActionContext extends AgentToolContext {
+  readonly cause: EventMessage<TaskActionEvents> | Readonly<{ type: 'user' }>
+}
+export interface AgentActionResult { status: 'completed' | 'skipped', message?: string }
+export type ConditionInput = 'configuration' | 'runtime.models' | 'runtime.task' | 'workbench' | 'form'
+export interface ConditionReference { condition: string, params?: ReadonlyJsonObject }
+export interface ConditionResult { value: boolean, reason?: string }
+export type ConfigurationScope = { kind: 'global' } | { kind: 'space', spaceId: string } | { kind: 'task', taskId: string }
+export type ConditionInvocationScope = { kind: 'settings', moduleId: string, groupId: string } | { kind: 'task', taskId: string, runId: string | null }
+export type ConditionData<T> = EventSnapshot<{ status: 'available', revision: string } & T> | Readonly<{ status: 'not_requested' | 'no_context' | 'denied' | 'unsupported' | 'loading' | 'invalid' }>
+export interface ConditionContext {
+  readonly version: 1
+  readonly signal: AbortSignal
+  readonly scope: EventSnapshot<{ key: string, configuration: ConfigurationScope, invocation: ConditionInvocationScope }>
+  readonly target: Readonly<{ kind: 'setting' | 'agent' | 'action', id: string }>
+  readonly configuration: ConditionData<{ values: Record<string, SettingValue>, sources: Record<string, ConfigurationScope> }>
+  readonly runtime: Readonly<{
+    models: ConditionData<{ selection: ModelSelection | null, models: { providerId: string, modelId: string, name: string, available: boolean, capabilities: string[] }[] }>
+    task: ConditionData<{ id: string, spaceId: string | null, branchId: string, title: string | null, titleSource: 'fallback' | 'generated' | 'manual' | 'legacy', activity: 'idle' | 'running' | 'awaiting_approval', modelSelection: ModelSelection | null }>
+  }>
+  readonly workbench: ConditionData<{ panes: { id: string, active: boolean, visible: boolean }[] }>
+  readonly form: ConditionData<{ values: Record<string, SettingValue>, dirtyKeys: string[] }>
+}
+export interface ConditionApi {
+  register: (id: string, evaluate: (context: ConditionContext, params: ReadonlyJsonObject) => boolean | ConditionResult | Promise<boolean | ConditionResult>) => Disposable
+  invalidate: (input?: { condition?: string, scopeKey?: string }) => Promise<void>
 }
 export interface ExtensionContext {
   readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 }
@@ -79,7 +116,11 @@ export interface ExtensionContext {
     get: () => Promise<Record<string, SettingValue>>
     onChange: (listener: (configuration: Readonly<Record<string, SettingValue>>) => void | Promise<void>) => Disposable
   }
-  readonly agent: { registerTool: (id: string, execute: (input: Record<string, string | number | boolean>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable }
+  readonly conditions: ConditionApi
+  readonly agent: {
+    registerTool: (id: string, execute: (input: Record<string, string | number | boolean>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable
+    registerAction: (id: string, execute: (context: AgentActionContext) => AgentActionResult | Promise<AgentActionResult>) => Disposable
+  }
   readonly subscriptions: { add: <T extends Disposable>(disposable: T) => T }
   readonly commands: { register: (id: string, execute: (context: { resource: Resource | null, arguments: Json, invocation: CommandInvocation | null }) => Json | void | Promise<Json | void>) => Disposable }
   readonly placements: { show: (id: string, options?: string | PlacementOptions) => Promise<string>, hide: (id: string, options?: string | PlacementOptions) => Promise<string | null> }

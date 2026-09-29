@@ -4,6 +4,7 @@ import { presentChatActivityLayout } from '../chatActivityLayout'
 import { reasoningPreview, summarizeChatActivity, summarizeChatActivityCounts } from '../chatActivitySummary'
 import { createChatAgentActivityProjector } from '../chatAgentActivities'
 import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
+import { projectExtensionActionTool } from '../chatTranscriptActivities'
 
 describe('activity grouping', () => {
   it('keeps the beginning in historical previews and follows the latest visible content while thinking', () => {
@@ -152,11 +153,13 @@ describe('tool display registration', () => {
     expect(describeChatTool(node, 'en-US').label).toBe(english)
   })
 
-  it('keeps a structured operation label and icon together when an extension supplies the card', () => {
+  it('keeps external calls generic even when their output uses a built-in card', () => {
     const presentation = { card: 'diff', operation: 'created', path: 'output.txt', diff: null, firstChangedLine: null, description: null, output: null, truncated: false } as const
     const node: ChatAgentToolNode = { ...tool('extension'), toolName: 'extension_file', presentation }
-    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '创建文件', icon: 'create', target: 'output.txt' })
-    expect(describeChatTool({ ...node, presentation: { ...presentation, operation: 'edited' } }, 'zh-CN')).toMatchObject({ label: '编辑文件', icon: 'edit' })
+    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'extension_file' })
+    expect(describeChatTool({ ...node, presentation: { ...presentation, operation: 'edited' } }, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'extension_file' })
+    const reads = [tool('one'), tool('two')].map(node => ({ ...node, toolName: 'external_read' }))
+    expect(presentChatActivityLayout(reads).compact.size).toBe(0)
   })
 
   it('omits argument names from output presentation while keeping a meaningful description', () => {
@@ -173,13 +176,25 @@ describe('tool display registration', () => {
 
   it('uses a registered runtime label when no localized display registration exists', () => {
     const node: ChatAgentToolNode = { ...tool('external'), toolName: 'external_tool', toolLabel: 'Query local data', presentation: { card: 'generic', argumentNames: [], description: null, output: null, truncated: false } }
-    expect(describeChatTool(node, 'zh-CN').label).toBe('Query local data')
+    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'Query local data', context: '' })
+    expect(describeChatTool(node, 'en-US')).toMatchObject({ label: 'Tool call', target: 'Query local data' })
+  })
+
+  it('uses the same heading for connector calls and independent plugin actions', () => {
+    const node: ChatAgentToolNode = { ...tool('mcp'), toolName: 'mcp_server_lookup', presentation: { card: 'connector', connector: 'Local data', tool: 'lookup', argumentNames: [], description: null, output: 'found', truncated: false } }
+    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'lookup', context: '' })
+    const action = projectExtensionActionTool({ kind: 'extension-action', id: 'action', conversationId: 'conversation', branchId: 'branch', sourceMessageId: 'source', extensionId: 'tests.title', extensionName: '标题自动生成', actionId: 'tests.title.generate', title: '重新生成标题', trigger: 'user', status: 'completed', message: '已更新', createdAt: '2026-09-29T00:00:00.000Z', completedAt: '2026-09-29T00:00:01.000Z' })
+    expect(describeChatTool(action, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: '重新生成标题', context: '', status: '已完成' })
+    const group = createChatAgentActivityProjector().project([action, thought('checking'), node, tool('read')])[0]!
+    expect(group).toMatchObject({ toolCount: 3, counts: [{ category: 'other', count: 2 }, { category: 'read', count: 1 }] })
+    if (group.kind === 'activity-group')
+      expect(summarizeChatActivity(group, 'zh-CN').label).toBe('读取 1 个文件 · 工具调用 2 次')
   })
 
   it('does not expose denied output and preserves an unfamiliar tool name', () => {
     const node: ChatAgentToolNode = { ...tool('external', 'denied'), toolName: 'external_tool', presentation: { card: 'generic', argumentNames: [], description: null, output: 'not authorized', truncated: false } }
     expect(canExpandChatTool(node)).toBe(false)
-    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: 'external_tool', status: '未获批准' })
+    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', target: 'external_tool', status: '未获批准' })
     expect(canExpandChatTool({ ...node, presentation: { card: 'diff', operation: 'edited', path: 'private.txt', diff: '+1 private', firstChangedLine: 1, output: null, truncated: false, description: null } })).toBe(false)
   })
 })

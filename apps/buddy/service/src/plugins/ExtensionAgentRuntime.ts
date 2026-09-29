@@ -1,12 +1,12 @@
 import type { ListenerErrorHandler } from '../../../shared/events/Emitter'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
-import type { ExtensionAgentDescriptor } from '../../../shared/extensions/extensionAgent'
+import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { BuddyCapability, BuddyCapabilityContext } from '../agent/extensions/BuddyCapability'
 import type { ExtensionAgentChange, ExtensionAgentFact, ExtensionCapabilityProjection } from './ExtensionAgentEvents'
-import type { ExtensionAgentHandlers, ExtensionCapabilityContext, ExtensionInvocationScope } from './extensionAgentHandlers'
+import type { ExtensionAgentHandlers, ExtensionInvocationScope } from './extensionAgentHandlers'
 import { createHash, randomUUID } from 'node:crypto'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
@@ -18,9 +18,11 @@ import { extensionAgentDescriptorSchema, extensionAgentRequestSchema, extensionA
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
+import { ExtensionInvocationQueue } from './ExtensionInvocationQueue'
 
 interface Invocation {
   scope: ExtensionInvocationScope
+  handlers: ExtensionAgentHandlers
   requests: Map<ExtensionAgentMethod, { calls: number, active: number }>
   pending: Set<Promise<JsonValue>>
   accepting: boolean
@@ -34,14 +36,15 @@ interface ProjectionState {
 }
 interface ExtensionAgentRuntimeOptions {
   rpc: RuntimeRpcPeerContract
-  handlers: ExtensionAgentHandlers
-  context: (scope: ExtensionInvocationScope) => Omit<ExtensionCapabilityContext, 'callNumber'>
+  createHandlers: (scope: ExtensionInvocationScope) => ExtensionAgentHandlers
   onObserverError?: ListenerErrorHandler
 }
+type InvocationRequest = { tool: string, input: Record<string, string | number | boolean> } | { action: string, cause: NonNullable<ExtensionInvocationScope['action']>['cause'] }
 
 export class ExtensionAgentRuntime {
   readonly #options: ExtensionAgentRuntimeOptions
   readonly #invocations = new Map<string, Invocation>()
+  readonly #queue = new ExtensionInvocationQueue()
   readonly #projections = new Map<AbortSignal, ProjectionState>()
   readonly #changes: Emitter<ExtensionAgentChange>
   readonly onDidChange
@@ -63,17 +66,73 @@ export class ExtensionAgentRuntime {
     return this.#options.rpc.onRequest(extensionAgentRpc.request, (input, signal) => this.#request(input, signal))
   }
 
+  async descriptors(signal: AbortSignal): Promise<ExtensionAgentDescriptor[]> {
+    signal.throwIfAborted()
+    return z.array(extensionAgentDescriptorSchema.extend({ id: extensionIdSchema })).parse(await this.#options.rpc.request(extensionAgentRpc.list, {}, 10000, AbortSignal.any([signal, this.#stop.signal])))
+  }
+
+  async invoke(descriptor: ExtensionAgentDescriptor, request: InvocationRequest, scope: Omit<ExtensionInvocationScope, 'extensionId' | 'invocationId' | 'signal'>, signal: AbortSignal, invocationId = randomUUID()): Promise<JsonValue> {
+    const controller = new AbortController()
+    const abort = AbortSignal.any([signal, this.#stop.signal, controller.signal])
+    abort.throwIfAborted()
+    let settle!: () => void
+    const invocationScope = { ...scope, extensionId: descriptor.id, invocationId, signal: abort }
+    const invocation: Invocation = { scope: invocationScope, handlers: this.#options.createHandlers(invocationScope), requests: new Map(), pending: new Set(), accepting: true, settled: new Promise<void>(resolve => settle = resolve), settle: () => settle() }
+    const release = await this.#queue.acquire(descriptor.id, invocationId, abort)
+    try {
+      abort.throwIfAborted()
+      return await this.#execute(descriptor, request, invocation, controller)
+    }
+    finally {
+      release()
+    }
+  }
+
+  async #execute(descriptor: ExtensionAgentDescriptor, request: InvocationRequest, invocation: Invocation, controller: AbortController): Promise<JsonValue> {
+    const scope = invocation.scope
+    const { invocationId, signal: abort } = scope
+    const timeout = setTimeout(() => controller.abort(new DOMException('Extension invocation timed out', 'TimeoutError')), 120000)
+    this.#invocations.set(invocationId, invocation)
+    const identity = { invocationId, extensionId: descriptor.id, conversationId: scope.conversationId, runId: scope.runId, ...(scope.action ? { actionId: scope.action.id, trigger: scope.action.cause.type } : {}) }
+    const startedAt = performance.now()
+    let outcome: 'completed' | 'failed' | 'cancelled' = 'completed'
+    this.#publish({ kind: 'invocation', stage: 'started', ...identity })
+    try {
+      const input: ExtensionAgentInvocation = { extensionId: descriptor.id, revision: descriptor.revision, configurationRevision: descriptor.configurationRevision, invocationId, context: { taskId: scope.conversationId, runId: scope.runId }, ...request }
+      const result = extensionJsonSchema.parse(await this.#options.rpc.request(extensionAgentRpc.invoke, input, 125000, abort))
+      abort.throwIfAborted()
+      return result
+    }
+    catch (error) {
+      const revoked = z.object({ data: z.object({ code: z.enum(['EXTENSION_AGENT_CANCELLED', 'EXTENSION_AGENT_UNAVAILABLE']) }) }).safeParse(error).success
+      outcome = abort.aborted || revoked ? 'cancelled' : 'failed'
+      if (revoked)
+        throw new DOMException('Extension invocation revoked', 'AbortError')
+      throw error
+    }
+    finally {
+      clearTimeout(timeout)
+      invocation.accepting = false
+      this.#publish({ kind: 'invocation', stage: 'returned', outcome, durationMs: Math.round(performance.now() - startedAt), ...identity })
+      controller.abort()
+      await Promise.allSettled([...invocation.pending])
+      this.#invocations.delete(invocationId)
+      this.#publish({ kind: 'invocation', stage: 'settled', outcome, durationMs: Math.round(performance.now() - startedAt), ...identity })
+      invocation.settle()
+    }
+  }
+
   async capabilities(context: BuddyCapabilityContext): Promise<BuddyCapability[]> {
     context.signal.throwIfAborted()
     this.#stop.signal.throwIfAborted()
     const projection = this.#projection(context)
     const request = ++projection.request
     try {
-      const descriptors = z.array(extensionAgentDescriptorSchema.extend({ id: extensionIdSchema })).parse(await this.#options.rpc.request(extensionAgentRpc.list, {}, 10000, AbortSignal.any([context.signal, this.#stop.signal])))
+      const descriptors = await this.descriptors(context.signal)
       context.signal.throwIfAborted()
       this.#stop.signal.throwIfAborted()
       this.#acceptProjection(projection, request, 'accepted', descriptors)
-      return descriptors.map(descriptor => this.#capability(context, descriptor))
+      return descriptors.filter(descriptor => descriptor.agent.tools.length).map(descriptor => this.#capability(context, descriptor))
     }
     catch {
       context.signal.throwIfAborted()
@@ -95,8 +154,8 @@ export class ExtensionAgentRuntime {
     return this.#disposing
   }
 
-  #capability(context: BuddyCapabilityContext, input: ExtensionAgentDescriptor): BuddyCapability {
-    const descriptor: EventSnapshot<ExtensionAgentDescriptor> = copyEventSnapshot(input)
+  #capability(context: BuddyCapabilityContext, inputDescriptor: ExtensionAgentDescriptor): BuddyCapability {
+    const descriptor: EventSnapshot<ExtensionAgentDescriptor> = copyEventSnapshot(inputDescriptor)
     const prefix = `plugin_${createHash('sha256').update(descriptor.id).digest('hex').slice(0, 12)}`
     const names = new Map(descriptor.agent.tools.map(tool => [tool.id, `lexora_plugin_${createHash('sha256').update(tool.id).digest('hex').slice(0, 16)}`]))
     const instructions = descriptor.agent.instructions.replace(/\{\{([^}]+)\}\}/g, (_match, id: string) => names.get(id) ?? id)
@@ -119,37 +178,15 @@ export class ExtensionAgentRuntime {
               parameters: tool.schema,
               execute: async (_toolCallId, input, signal) => {
                 const runId = context.getRunId()
-                if (this.#stop.signal.aborted || context.signal.aborted || !runId || !Check(tool.schema, input))
+                if (!runId || !Check(tool.schema, input))
                   throw new Error('EXTENSION_AGENT_UNAVAILABLE')
-                const controller = new AbortController()
-                const abort = AbortSignal.any([context.signal, this.#stop.signal, controller.signal, ...signal ? [signal] : [], AbortSignal.timeout(120000)])
-                const invocationId = randomUUID()
-                let settle!: () => void
-                const invocation: Invocation = { scope: { conversationId: context.conversationId, runId, extensionId: descriptor.id, invocationId, signal: abort }, requests: new Map(), pending: new Set(), accepting: true, settled: new Promise<void>(resolve => settle = resolve), settle: () => settle() }
-                this.#invocations.set(invocationId, invocation)
-                const identity = { invocationId, extensionId: descriptor.id, conversationId: context.conversationId, runId }
-                const startedAt = performance.now()
-                let outcome: 'completed' | 'failed' | 'cancelled' = 'completed'
-                this.#publish({ kind: 'invocation', stage: 'started', ...identity })
                 try {
-                  abort.throwIfAborted()
-                  const result = extensionJsonSchema.parse(await this.#options.rpc.request(extensionAgentRpc.invoke, { extensionId: descriptor.id, revision: descriptor.revision, configurationRevision: descriptor.configurationRevision, invocationId, tool: tool.id, input }, 125000, abort))
-                  abort.throwIfAborted()
+                  const result = await this.invoke(inputDescriptor, { tool: tool.id, input }, { conversationId: context.conversationId, runId }, signal ?? new AbortController().signal)
                   return { content: [{ type: 'text', text: JSON.stringify(result) }], details: { ok: true, result } }
                 }
                 catch (error) {
-                  outcome = abort.aborted ? 'cancelled' : 'failed'
                   const code = error instanceof Error ? error.message.match(/EXTENSION_[A-Z_]+/)?.[0] : null
                   return { content: [{ type: 'text', text: code ?? 'EXTENSION_AGENT_FAILED' }], details: { ok: false, result: null }, isError: true }
-                }
-                finally {
-                  invocation.accepting = false
-                  this.#publish({ kind: 'invocation', stage: 'returned', outcome, durationMs: Math.round(performance.now() - startedAt), ...identity })
-                  controller.abort()
-                  await Promise.allSettled([...invocation.pending])
-                  this.#invocations.delete(invocationId)
-                  this.#publish({ kind: 'invocation', stage: 'settled', outcome, durationMs: Math.round(performance.now() - startedAt), ...identity })
-                  invocation.settle()
                 }
               },
             }))
@@ -171,7 +208,7 @@ export class ExtensionAgentRuntime {
     const signal = requestSignal ? AbortSignal.any([invocation.scope.signal, requestSignal]) : invocation.scope.signal
     signal.throwIfAborted()
     const contract = extensionAgentCapabilities[input.method]
-    const context = this.#options.context({ ...invocation.scope, signal })
+    const context = { ...invocation.scope, signal }
     const requests = invocation.requests.get(input.method) ?? { calls: 0, active: 0 }
     if (contract.limits && (requests.calls >= contract.limits.calls || requests.active >= contract.limits.concurrent))
       throw new Error(contract.limits.error)
@@ -184,7 +221,7 @@ export class ExtensionAgentRuntime {
     let handler: 'completed' | 'failed' = 'failed'
     const pending = Promise.resolve().then(async () => {
       signal.throwIfAborted()
-      const result = await this.#options.handlers[input.method](input.params, { ...context, callNumber })
+      const result = await invocation.handlers[input.method](input.params, { ...context, callNumber })
       handler = 'completed'
       signal.throwIfAborted()
       return result

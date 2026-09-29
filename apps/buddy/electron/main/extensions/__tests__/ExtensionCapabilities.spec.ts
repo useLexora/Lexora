@@ -28,7 +28,7 @@ it('discovers a compact host index and exact target contracts without loading pl
     expect(extensionPlacementSchema.parse({ ...placement, enabled: false })).toMatchObject({ height: detail.targets[0]!.height!.default, enabled: false })
     expect(extensionPlacementSchema.safeParse({ ...placement, height: detail.targets[0]!.height!.max + 1 }).success).toBe(false)
     expect(extensionCapabilitiesSchema.parse(await query({ target: 'document.body' })).targets).toEqual([])
-    expect(extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' })).targets.map(target => target.target)).toEqual(['events', 'agent.tools', 'agent.models', 'agent.task', 'settings', 'commands', 'workbench.panes', 'workbench.interactions'])
+    expect(extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' })).targets.map(target => target.target)).toEqual(['events', 'agent.tools', 'agent.actions', 'agent.models', 'agent.task', 'agent.taskMessages', 'conditions', 'settings', 'commands', 'workbench.panes', 'workbench.interactions'])
     await expect(query({ kind: 'arbitrary' })).rejects.toThrow()
   }
   finally { dispose() }

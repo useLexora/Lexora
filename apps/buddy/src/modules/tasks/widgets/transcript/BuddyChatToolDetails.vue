@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentation'
 import type { ToolFailureCode } from '@buddy-shared/runs/toolFailure'
-import type { ChatAgentToolNode } from '../../model/transcript/chatStreamingMessage'
+import type { ChatAgentToolNode } from '../../model/transcript/chatAgentTurn'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'

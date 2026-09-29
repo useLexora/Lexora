@@ -27,7 +27,7 @@ async function fixture() {
   let identityTool: ToolDefinition | undefined
   let rejectReview = false
   const peer = {
-    request: async (_method: string, input: unknown, _timeout?: number, signal?: AbortSignal) => buildExtensionPackage(input, async (files, manifest, _signal, report) => compileExtensionSource(files, manifest, report), signal!),
+    request: async (_method: string, input: unknown, _timeout?: number | null, signal?: AbortSignal) => buildExtensionPackage(input, async (files, manifest, _signal, report) => compileExtensionSource(files, manifest, report), signal!),
     notify: (_method: string, input: unknown) => {
       if (rejectReview)
         throw new Error('fixture-private-review-failure')

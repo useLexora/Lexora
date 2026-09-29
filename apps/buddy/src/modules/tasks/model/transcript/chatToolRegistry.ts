@@ -2,7 +2,7 @@ import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentat
 import type { ChatAgentToolNode } from './chatAgentTurn'
 import type { BuddyI18nKey } from '@/i18n/buddyI18n'
 
-export type ChatToolIcon = 'activity' | 'artifact' | 'authorization' | 'automation' | 'browser' | 'browser-act' | 'browser-open' | 'browser-snapshot' | 'connector' | 'create' | 'directory' | 'edit' | 'file' | 'image' | 'image-edit' | 'pet' | 'search' | 'skill' | 'terminal' | 'tool'
+export type ChatToolIcon = 'activity' | 'artifact' | 'authorization' | 'automation' | 'browser' | 'browser-act' | 'browser-open' | 'browser-snapshot' | 'connector' | 'create' | 'directory' | 'edit' | 'file' | 'image' | 'image-edit' | 'pet' | 'search' | 'skill' | 'system' | 'terminal' | 'tool'
 export type ChatToolCategory = 'read' | 'search' | 'command' | 'create' | 'edit' | 'web' | 'other'
 
 interface ChatToolRegistration {
@@ -22,7 +22,7 @@ const cards = {
   'image': { category: 'other', icon: 'image', label: 'desktop.chat.processToolImage' },
   'pet': { category: 'other', icon: 'pet', label: 'desktop.chat.processToolPet' },
   'automation': { category: 'other', icon: 'automation', label: 'desktop.chat.processToolAutomation' },
-  'system': { category: 'other', icon: 'tool', label: 'desktop.chat.processToolSystemAction' },
+  'system': { category: 'other', icon: 'system', label: 'desktop.chat.processToolSystemAction' },
   'directory-authorization': { category: 'other', icon: 'authorization', label: 'desktop.chat.processToolDirectoryAuthorization' },
   'generic': { category: 'other', icon: 'tool', label: 'tool.use' },
 } as const satisfies Record<BuddyToolPresentation['card'], ChatToolRegistration>
@@ -72,6 +72,8 @@ const builtins: Readonly<Record<string, ChatToolRegistration>> = {
 }
 
 export function getChatToolRegistration(node: ChatAgentToolNode): ChatToolRegistration {
+  if (!isRegisteredChatTool(node.toolName))
+    return cards.generic
   const p = node.presentation
   if (p.card === 'read' && /(?:^|[/\\])[^/\\]+[/\\]SKILL\.md$/.test(p.path))
     return skillRead
@@ -81,7 +83,7 @@ export function getChatToolRegistration(node: ChatAgentToolNode): ChatToolRegist
     return webOperations[p.operation]
   if (p.card === 'browser')
     return browserOperations[p.operation]
-  return Object.hasOwn(builtins, node.toolName) ? builtins[node.toolName]! : cards[p.card]
+  return builtins[node.toolName]!
 }
 
 export function isRegisteredChatTool(toolName: string): boolean {

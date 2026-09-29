@@ -4,6 +4,7 @@ import { workbenchSlashSchema } from '../workbench/workbenchCommand'
 import { workbenchConditionSchema } from '../workbench/workbenchContext'
 import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi'
 import { extensionAgentSchema } from './extensionAgent'
+import { extensionConditionDefinitionSchema } from './extensionConditions'
 import { extensionAuthorSchema } from './extensionIdentity'
 import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings'
 
@@ -58,6 +59,7 @@ export const extensionPermissionsSchema = z.object({
   agent: z.boolean().default(false),
   models: z.boolean().default(false),
   tasks: z.enum(['none', 'read', 'title']).default('none'),
+  taskMessages: z.boolean().default(false),
   windowEffects: z.boolean().default(false),
   controls: z.array(workbenchControlSchema).max(workbenchControlSchema.options.length).default([]),
   notifications: z.boolean().default(false),
@@ -89,6 +91,7 @@ export const extensionManifestSchema = z.object({
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
   permissions: extensionPermissionsSchema.prefault({}),
   contributes: z.object({
+    conditions: z.array(extensionConditionDefinitionSchema).max(32).default([]),
     agent: extensionAgentSchema.optional(),
     settings: extensionSettingsSchema.prefault({}),
     commands: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), hidden: z.boolean().default(false), slash: workbenchSlashSchema.optional(), when: workbenchConditionSchema.optional() }).strict()).max(64).default([]),
@@ -101,18 +104,31 @@ export const extensionManifestSchema = z.object({
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
-  for (const contribution of [...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? []]) {
+  for (const contribution of [...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
   }
   const issue = (message: string) => context.addIssue({ code: 'custom', message })
-  if (manifest.apiVersion < 3 && (agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.tasks !== 'none'))
+  if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
   if (agent && (!manifest.entry || !manifest.permissions.agent))
     issue('Agent contributions require an entry and agent permission')
-  if (agent?.enabledWhen && !settings.items.some(item => item.key === agent.enabledWhen && item.type === 'boolean'))
+  if (typeof agent?.enabledWhen === 'string' && !settings.items.some(item => item.key === agent.enabledWhen && item.type === 'boolean'))
     issue('Agent enabledWhen must reference a boolean setting')
+  const conditionReferences = [...settings.items.map(item => item.enabledWhen), ...agent?.actions.map(action => action.enabledWhen) ?? [], typeof agent?.enabledWhen === 'object' ? agent.enabledWhen : undefined].filter(reference => reference !== undefined)
+  if (manifest.contributes.conditions.length && !manifest.entry)
+    issue('Conditions require an extension entry')
+  for (const reference of conditionReferences) {
+    if (!manifest.contributes.conditions.some(condition => condition.id === reference.condition))
+      issue('Condition references must be declared by the extension')
+  }
+  for (const condition of manifest.contributes.conditions) {
+    if (condition.inputs.includes('runtime.models') && !manifest.permissions.models)
+      issue('Model conditions require models permission')
+    if (condition.inputs.includes('runtime.task') && manifest.permissions.tasks === 'none')
+      issue('Task conditions require task permission')
+  }
   const keys = new Set<string>()
   for (const group of settings.groups) {
     if (!settings.modules.some(module => module.id === group.module) && !extensionSettingsModules.includes(group.module))
@@ -182,6 +198,7 @@ export function extensionCompatible(manifest: ExtensionManifest, version: string
 
 export function addedExtensionPermissions(previous: ExtensionPermissions | undefined, next: ExtensionPermissions): string[] {
   return [
+    ...(next.taskMessages && !previous?.taskMessages ? ['taskMessages'] : []),
     ...(next.agent && !previous?.agent ? ['agent'] : []),
     ...(next.models && !previous?.models ? ['models'] : []),
     ...(next.tasks !== 'none' && next.tasks !== previous?.tasks && previous?.tasks !== 'title' ? [`tasks:${next.tasks}`] : []),

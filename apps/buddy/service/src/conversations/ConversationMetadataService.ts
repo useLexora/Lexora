@@ -11,7 +11,7 @@ export type ConversationMetadataCommit = EventSnapshot<{
   kind: 'title' | 'permissions' | 'model' | 'branch'
   conversation: ConversationRecord
   titleRevision?: number
-  titleSource?: 'manual' | 'fallback' | 'generated'
+  titleSource?: 'legacy' | 'manual' | 'fallback' | 'generated'
 }>
 
 export interface ConversationMetadataServiceOptions {
@@ -46,7 +46,7 @@ export class ConversationMetadataService {
     return conversation
   }
 
-  renameGenerated(input: RenameConversationInput & { expectedRevision: number }): ConversationRecord | null {
+  renameGenerated(input: RenameConversationInput & { expectedRevision: number, userInitiated?: boolean }): ConversationRecord | null {
     if (this.#disposed)
       throw new BuddyServiceError('VALIDATION_FAILED')
     const conversation = this.#options.repository.renameGenerated(input)

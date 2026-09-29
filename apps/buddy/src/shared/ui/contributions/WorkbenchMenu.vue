@@ -7,5 +7,5 @@ const host = useOptionalWorkbenchUi()
 </script>
 
 <template>
-  <component :is="host.menuRenderer" v-if="host" :target="target" :disabled="disabled" :values="values" :capture="capture" />
+  <component :is="host.menuRenderer" v-if="host" :target="target" :task-id="taskId" :disabled="disabled" :values="values" :capture="capture" />
 </template>

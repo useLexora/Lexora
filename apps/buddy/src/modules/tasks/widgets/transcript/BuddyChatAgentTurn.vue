@@ -86,7 +86,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
   >
     <div v-if="showIdentity !== false" class="buddy-chat-agent-turn__heading">
       <BuddyChatAgentIdentity :language="language" />
-      <div v-if="!isActive && showOutcome !== false" class="buddy-chat-agent-turn__status">
+      <div v-if="!isActive" class="buddy-chat-agent-turn__status">
         <span class="buddy-chat-agent-turn__status-label">{{ statusLabel }}</span>
         <span class="buddy-chat-agent-turn__duration">{{ duration }}</span>
       </div>

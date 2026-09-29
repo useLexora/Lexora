@@ -5,7 +5,7 @@ import { automationNotifications } from '../../../shared/automation/automationAp
 import { changesChanged } from '../../../shared/changes/changeApi'
 import { connectorNotifications } from '../../../shared/connectors/connectorApi'
 import { composerResourcesChanged } from '../../../shared/conversation/composerApi'
-import { CONVERSATION_CHANGED, conversationSchema } from '../../../shared/conversation/conversationApi'
+import { CONVERSATION_CHANGED, conversationSchema, conversationTimelineChanged } from '../../../shared/conversation/conversationApi'
 import { webSettingsChanged } from '../../../shared/network/webApi'
 import { notificationsChanged } from '../../../shared/notifications/notificationApi'
 import { providerNotifications } from '../../../shared/providers/providerApi'
@@ -52,6 +52,12 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const changed = webSettingsChanged.params.safeParse(notification.params)
       if (changed.success)
         sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.webSettingsChanged, changed.data)
+      return
+    }
+    if (notification.method === conversationTimelineChanged.method) {
+      const result = conversationTimelineChanged.params.safeParse(notification.params)
+      if (result.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.conversationsTimelineChanged, result.data)
       return
     }
     if (notification.method === CONVERSATION_CHANGED) {

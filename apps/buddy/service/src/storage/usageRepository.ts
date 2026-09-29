@@ -2,7 +2,8 @@ import type { DatabaseSync } from 'node:sqlite'
 
 export interface UsageRecord {
   id: string
-  runId: string
+  runId: string | null
+  invocationId?: string | null
   sourceEntryId: string
   provider: string
   model: string
@@ -33,15 +34,19 @@ export interface UsageTotals {
 }
 
 export interface UsageRepository {
+  recordInvocation: (record: UsageRecord & { runId: null, invocationId: string }) => boolean
+
   findBySource: (runId: string, sourceEntryId: string, purpose: string) => UsageRecord | null
   listRecent: (limit?: number) => UsageRecord[]
   listForRun: (runId: string) => UsageRecord[]
+  listForConversation: (conversationId: string) => UsageRecord[]
   summarize: () => UsageTotals
 }
 
 interface UsageRecordRow {
   id: string
-  run_id: string
+  run_id: string | null
+  invocation_id: string | null
   source_entry_id: string
   provider: string
   model: string
@@ -82,6 +87,16 @@ export function createUsageRepository(database: DatabaseSync): UsageRepository {
   const listRecent = database.prepare(`
     SELECT * FROM usage_records ORDER BY created_at DESC, id DESC LIMIT ?
   `)
+  const listForConversation = database.prepare(`
+    SELECT usage.* FROM usage_records usage
+    JOIN runs ON runs.id = usage.run_id
+    WHERE runs.conversation_id = ?
+    UNION ALL
+    SELECT usage.* FROM usage_records usage
+    JOIN extension_invocations invocations ON invocations.id = usage.invocation_id
+    WHERE invocations.conversation_id = ?
+    ORDER BY created_at, id
+  `)
   const summarize = database.prepare(`
     SELECT
       COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
@@ -96,6 +111,34 @@ export function createUsageRepository(database: DatabaseSync): UsageRepository {
   `)
 
   return {
+    recordInvocation(record) {
+      return Number(database.prepare(`INSERT INTO usage_records (
+        id, run_id, invocation_id, source_entry_id, provider, model, purpose,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+        reasoning_tokens, total_tokens, input_cost, output_cost,
+        cache_read_cost, cache_write_cost, total_cost, created_at
+      ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(invocation_id, source_entry_id, purpose) DO NOTHING`).run(
+        record.id,
+        record.invocationId,
+        record.sourceEntryId,
+        record.provider,
+        record.model,
+        record.purpose,
+        record.inputTokens,
+        record.outputTokens,
+        record.cacheReadTokens,
+        record.cacheWriteTokens,
+        record.reasoningTokens,
+        record.totalTokens,
+        record.inputCost,
+        record.outputCost,
+        record.cacheReadCost,
+        record.cacheWriteCost,
+        record.totalCost,
+        record.createdAt,
+      ).changes) === 1
+    },
     findBySource(runId, sourceEntryId, purpose) {
       const row = findBySource.get(runId, sourceEntryId, purpose) as unknown as UsageRecordRow
         | undefined
@@ -103,6 +146,9 @@ export function createUsageRepository(database: DatabaseSync): UsageRepository {
     },
     listForRun(runId) {
       return (list.all(runId) as unknown as UsageRecordRow[]).map(toUsageRecord)
+    },
+    listForConversation(conversationId) {
+      return (listForConversation.all(conversationId, conversationId) as unknown as UsageRecordRow[]).map(toUsageRecord)
     },
     listRecent(limit = 500) {
       return (listRecent.all(limit) as unknown as UsageRecordRow[]).map(toUsageRecord)
@@ -127,6 +173,7 @@ function toUsageRecord(row: UsageRecordRow): UsageRecord {
   return {
     id: row.id,
     runId: row.run_id,
+    invocationId: row.invocation_id,
     sourceEntryId: row.source_entry_id,
     provider: row.provider,
     model: row.model,

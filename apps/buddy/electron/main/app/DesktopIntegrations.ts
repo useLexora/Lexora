@@ -10,9 +10,14 @@ import process from 'node:process'
 import { app, Notification, shell } from 'electron'
 import { z } from 'zod'
 import buddyVersion from '../../../buddy.version.json'
+import { CONVERSATION_CHANGED, conversationSchema } from '../../../shared/conversation/conversationApi'
+import { extensionActionRpc } from '../../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAuthoring'
+import { extensionConditionSnapshotRpc } from '../../../shared/extensions/extensionConditionContext'
+import { providerNotifications } from '../../../shared/providers/providerApi'
+import { runNotifications } from '../../../shared/runs/runApi'
 import { spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
@@ -84,11 +89,15 @@ export class DesktopIntegrations {
       getWindow: () => windows.window,
       get: runtime.network.get,
       notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
+      conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.request(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
+      taskActions: async () => extensionActionRpc.list.response.parse(await service.request(extensionActionRpc.list.method, {})),
+      invokeTaskAction: async input => extensionActionRpc.invoke.response.parse(await service.request(extensionActionRpc.invoke.method, input, { timeoutMs: null })),
       agentChanged: () => service.notify(extensionAgentRpc.changed, {}),
       agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: 120000 })),
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
     this.#subscriptions.push(extensions.dispose)
+    this.#subscriptions.push(service.onStateChange(() => extensions.conditions.invalidate({ inputs: ['runtime.models', 'runtime.task'] })))
     runtime.inspectExtension = extensions.inspect
     runtime.extensionAgent = extensions.agent
     this.#subscriptions.push(() => {
@@ -122,6 +131,18 @@ export class DesktopIntegrations {
       request: service.request.bind(service),
     })
     this.#subscriptions.push(service.onNotification((notification) => {
+      if (notification.method === providerNotifications.changed.method)
+        extensions.conditions.invalidate({ inputs: ['runtime.models'] })
+      if (notification.method === CONVERSATION_CHANGED) {
+        const task = conversationSchema.safeParse(notification.params)
+        if (task.success)
+          extensions.conditions.invalidate({ inputs: ['runtime.task', 'runtime.models'], taskId: task.data.id })
+      }
+      if (notification.method === runNotifications.event.method) {
+        const event = runNotifications.event.params.safeParse(notification.params)
+        if (event.success && /^(?:run\.(?:started|completed|failed|cancelled)|approval\.(?:requested|resolved))$/.test(event.data.type))
+          extensions.conditions.invalidate({ inputs: ['runtime.task'] })
+      }
       if (notification.method === EXTENSION_REVIEW_REQUEST) {
         const input = z.object({ path: z.string().min(1).max(4096) }).strict().safeParse(notification.params)
         if (input.success) {

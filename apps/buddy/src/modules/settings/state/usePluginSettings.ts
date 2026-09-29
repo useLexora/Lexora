@@ -3,6 +3,7 @@ import type { ExtensionConfiguration, ExtensionConfigurationSnapshot, ExtensionS
 import type { Ref } from 'vue'
 import type { PluginSettingField } from '../model/settingsRegistry'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
+import { usePluginSettingConditions } from './usePluginSettingConditions'
 import { activeSettingsExtensions } from './useSettingsRegistry'
 
 interface ConfigurationSession {
@@ -12,9 +13,10 @@ interface ConfigurationSession {
   loading: boolean
 }
 
-export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, api: Pick<ExtensionApi, 'configurationSnapshot' | 'configure'>) {
+export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, api: Pick<ExtensionApi, 'configurationSnapshot' | 'configure' | 'settingConditions' | 'onConditionsChanged'>) {
   const snapshots = shallowRef<Record<string, ExtensionConfigurationSnapshot>>({})
   const configurations = computed<Record<string, ExtensionConfiguration>>(() => Object.fromEntries(Object.entries(snapshots.value).map(([id, snapshot]) => [id, snapshot.values])))
+  const conditions = usePluginSettingConditions(api, configurations)
   const invalidKeys = computed<Record<string, readonly string[]>>(() => Object.fromEntries(Object.entries(snapshots.value).map(([id, snapshot]) => [id, snapshot.invalidKeys])))
   const errors = shallowRef<ReadonlySet<string>>(new Set())
   const pending = shallowRef<ReadonlySet<string>>(new Set())
@@ -113,10 +115,11 @@ export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, a
       return 'failed'
     }
     finally {
+      conditions.draft(field, undefined)
       session.saving = false
       syncPending()
     }
   }
-  return { configurations, invalidKeys, errors, pending, loading, save, reload }
+  return { conditions, configurations, invalidKeys, errors, pending, loading, save, reload }
 }
 export type PluginSettings = ReturnType<typeof usePluginSettings>

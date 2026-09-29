@@ -1,8 +1,10 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
 import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
+import type { ExtensionConditionRuntime } from '../../../shared/extensions/extensionConditionContext'
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { join } from 'node:path'
@@ -25,10 +27,13 @@ export function registerExtensionIpc(options: {
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   developmentDirectory?: string
   notificationsEnabled?: () => boolean
+  taskActions: () => Promise<ExtensionTaskAction[]>
+  invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
   agentChanged?: () => void
   record?: ApplicationDiagnosticReporter
+  conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
@@ -52,6 +57,7 @@ export function registerExtensionIpc(options: {
     createView: pkg => protocol.register(pkg, 'view'),
     readText: options.readText,
     agentRequest: options.agentRequest,
+    conditionRuntime: options.conditionRuntime,
     get: options.get,
     compile: compileExtension,
     selectResources: async (name, selection, signal) => {
@@ -176,9 +182,12 @@ export function registerExtensionIpc(options: {
       await prepared
       await service.initialize()
       switch (input.action) {
+        case 'taskActions': return await options.taskActions()
+        case 'invokeTaskAction': return await options.invokeTaskAction(input.input)
         case 'list': return await service.list()
         case 'configuration': return await service.configuration(input.id)
         case 'configurationSnapshot': return await service.configurationSnapshot(input.id)
+        case 'settingConditions': return await service.conditions.settings(input.id, input.items, input.form)
         case 'configure': return await service.configure(input.id, input.patch)
         case 'installations': return service.installations.list()
         case 'catalog': return service.catalog.list(input.refresh)
@@ -257,7 +266,13 @@ export function registerExtensionIpc(options: {
       ipcMain.off(EXTENSION_IPC.workbenchReply, onWorkbenchReply)
     }
   }
+  subscriptions.push(service.conditions.onDidInvalidate((event) => {
+    const owner = window()
+    if (owner && !owner.isDestroyed())
+      owner.webContents.send(EXTENSION_IPC.conditionsChanged, event)
+  }))
   return {
+    conditions: service.conditions,
     dispose,
     agent: {
       list: async () => {

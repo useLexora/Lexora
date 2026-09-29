@@ -34,7 +34,7 @@ describe('native search usage projection', () => {
     const result = await tools[0]!.execute('search-1', { query: 'fixture' }, new AbortController().signal, undefined, { model } as never)
     const events: unknown[] = []
     const usageService = new UsageService({
-      repository: { findBySource: () => null, listRecent: () => [], listForRun: () => [], summarize: () => { throw new Error('Unused') } },
+      repository: { recordInvocation: () => false, findBySource: () => null, listRecent: () => [], listForRun: () => [], listForConversation: () => [], summarize: () => { throw new Error('Unused') } },
       eventLog: { append: async (event) => {
         events.push(event)
         return event as never

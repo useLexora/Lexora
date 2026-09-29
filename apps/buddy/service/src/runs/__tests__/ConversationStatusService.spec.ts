@@ -1,6 +1,11 @@
 import type { RunRecord } from '../../storage/runRecord'
 import type { UsageRecord } from '../../storage/usageRepository'
 import { describe, expect, it } from 'vitest'
+import { createConversationRepository } from '../../storage/conversationRepository'
+import { openBuddyDatabase } from '../../storage/database'
+import { createExtensionInvocationRepository } from '../../storage/extensionInvocationRepository'
+import { createRunRepository } from '../../storage/runRepository'
+import { createUsageRepository } from '../../storage/usageRepository'
 import { ConversationStatusService } from '../ConversationStatusService'
 
 const conversationId = 'conversation-1'
@@ -62,11 +67,73 @@ function service(runs: readonly RunRecord[], events: readonly unknown[], records
   return new ConversationStatusService({
     events: { listForConversation: async () => events } as never,
     repository: { listForConversation: () => runs } as never,
-    usage: { listForRun: (runId: string) => records.filter(record => record.runId === runId) } as never,
+    usage: { listForConversation: () => records } as never,
   })
 }
 
 describe('conversation status fold', () => {
+  it('includes the task independent ledger, including cancelled consumption, without inventing runs or mixing other tasks', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    try {
+      const conversations = createConversationRepository(database)
+      const runs = createRunRepository(database)
+      const invocations = createExtensionInvocationRepository(database)
+      const records = createUsageRepository(database)
+      for (const id of [conversationId, 'other-task', 'action-only'])
+        conversations.create({ id, branchId: `${id}-branch`, title: null, spaceId: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt: '2026-09-20T10:00:00.000Z' })
+      for (const id of [conversationId, 'other-task']) {
+        const runId = id === conversationId ? 'run-1' : 'other-run'
+        runs.create({ ...run(runId, 'chat', 'completed', 'message-1'), conversationId: id, branchId: `${id}-branch` })
+        database.prepare(`INSERT INTO usage_records (
+          id, run_id, source_entry_id, provider, model, purpose,
+          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, total_tokens,
+          input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost, created_at
+        ) VALUES (?, ?, 'turn', 'provider-a', 'model-a', 'turn', 10, 20, 0, 0, NULL, 30, 0, 0, 0, 0, 0.1, '2026-09-20T10:00:10.000Z')`).run(runId, runId)
+      }
+      const events = [
+        event(1, 'message.started', { messageId: 'assistant', role: 'assistant' }, '2026-09-20T10:00:00.000Z'),
+        event(2, 'message.block.started', { messageId: 'assistant', kind: 'text' }, '2026-09-20T10:00:01.000Z'),
+        event(3, 'message.completed', { messageId: 'assistant', role: 'assistant' }, '2026-09-20T10:00:11.000Z'),
+      ]
+      const statusService = new ConversationStatusService({ repository: runs, usage: records, events: { listForConversation: async (id: string) => id === conversationId ? events : [] } as never })
+      const before = await statusService.status(conversationId)
+      for (const id of [conversationId, 'other-task', 'action-only']) {
+        invocations.start({ id, conversationId: id, extensionId: 'tests.action', actionId: 'tests.action.generate', trigger: 'user', startedAt: '2026-09-20T10:00:20.000Z' })
+        records.recordInvocation({ ...usage(id, 'provider-b', 'model-b', 'extension.action', { cacheReadTokens: 300, inputTokens: 100, outputTokens: 200, totalCost: 0.4 }), runId: null, invocationId: id, sourceEntryId: 'generation', reasoningTokens: 50 })
+        invocations.finish(id, 'cancelled')
+      }
+      const status = await statusService.status(conversationId)
+      expect(records.listForConversation(conversationId).map(record => record.id)).toEqual([conversationId, 'run-1'])
+      expect(status.tokens.totals).toEqual({ inputTokens: 110, outputTokens: 220, cacheReadTokens: 300, cacheWriteTokens: 0, reasoningTokens: 50, totalTokens: 630, totalCost: 0.5, recordCount: 2 })
+      expect(status.tokens.byModel).toMatchObject([{ modelId: 'model-b', runCount: 0, totalTokens: 600 }, { modelId: 'model-a', runCount: 1, totalTokens: 30 }])
+      expect(status.tokens.byPurpose).toMatchObject([{ purpose: 'extension.action', totalTokens: 600 }, { purpose: 'turn', totalTokens: 30 }])
+      expect(status.activity).toEqual(before.activity)
+      expect(status.timing).toEqual(before.timing)
+      expect(status.timing.throughput.tokensPerSecond).toBe(2)
+
+      const actionOnly = await statusService.status('action-only')
+      expect(actionOnly.tokens.totals).toMatchObject({ totalTokens: 600, totalCost: 0.4, recordCount: 1 })
+      expect(actionOnly.activity.runs.chat.total).toBe(0)
+      expect(actionOnly.timing.throughput).toEqual({ samples: 0, tokensPerSecond: 0 })
+      expect((await statusService.status('unknown-task')).tokens.totals.totalTokens).toBe(0)
+    }
+    finally { database.close() }
+  })
+
+  it('keeps lifetime usage outside the run sampling window out of sampled throughput', async () => {
+    const events = [
+      event(1, 'message.started', { messageId: 'assistant' }, '2026-09-20T10:00:00.000Z'),
+      event(2, 'message.block.started', { messageId: 'assistant', kind: 'text' }, '2026-09-20T10:00:01.000Z'),
+      event(3, 'message.completed', { messageId: 'assistant' }, '2026-09-20T10:00:11.000Z'),
+    ]
+    const status = await service([run('run-1', 'chat', 'completed', 'message-1')], events, [
+      usage('run-1', 'provider', 'model', 'turn', { cacheReadTokens: 0, inputTokens: 10, outputTokens: 20, totalCost: 0.1 }),
+      usage('old-run', 'provider', 'model', 'turn', { cacheReadTokens: 0, inputTokens: 10, outputTokens: 2000, totalCost: 10 }),
+    ]).status(conversationId)
+    expect(status.tokens.totals).toMatchObject({ totalTokens: 2040, totalCost: 10.1 })
+    expect(status.timing.throughput.tokensPerSecond).toBe(2)
+  })
+
   it('folds activity, timing, and per-model tokens from runs, events, and usage records', async () => {
     const runs = [
       run('run-1', 'chat', 'completed', 'message-1'),

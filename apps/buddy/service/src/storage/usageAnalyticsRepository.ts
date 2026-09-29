@@ -45,8 +45,9 @@ export function createUsageAnalyticsRepository(database: DatabaseSync): UsageAna
     SELECT c.id AS conversationId, c.title, s.name AS spaceName,
       SUM(u.total_tokens) AS totalTokens, COUNT(*) AS recordCount
     FROM usage_records u
-    JOIN runs r ON r.id = u.run_id
-    JOIN conversations c ON c.id = r.conversation_id AND c.deleted_at IS NULL
+    LEFT JOIN runs r ON r.id = u.run_id
+    LEFT JOIN extension_invocations invocation ON invocation.id = u.invocation_id
+    JOIN conversations c ON c.id = COALESCE(r.conversation_id, invocation.conversation_id) AND c.deleted_at IS NULL
     LEFT JOIN spaces s ON s.id = c.space_id AND s.revoked_at IS NULL
     WHERE u.created_at >= $startAt AND u.created_at < $endAt
       AND ($provider IS NULL OR (u.provider = $provider AND u.model = $model))

@@ -35,7 +35,7 @@
 | `views` | 数组，每项必填 `id`、`title`、`entry`；`resource` 为 `selected-file`（默认）或 `none`；`location` 默认 `context`；`stateVersion` 为正整数，默认 1 |
 | `placements` | 数组，每项必填 `id`、`view`、`kind`，并按 kind 添加后文规定的 `anchor`、`target` 或 `presentation`；不要把它们写入视图定义 |
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
-| `agent` | API 3；指令、工具和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
+| `agent` | API 3；指令、工具、任务动作和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
 | `settings` | API 3；声明 modules/groups/items，由宿主渲染并保存，见 [Agent 与设置](agent-settings.md) |
 
 插件 ID 使用小写字母开头的两段名称，中间以 `.` 分隔，每段可含小写字母、数字与 `-`；贡献 ID 在插件 ID 后追加由小写字母、数字、`.`、`-` 组成的后缀。声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
@@ -60,9 +60,10 @@
 
 | permissions 字段 | 能力 |
 | --- | --- |
-| `agent: true` | 追加 Agent 指令和可调用工具 |
-| `models: true` | 工具调用期间请求已配置模型，凭据留在宿主 |
+| `agent: true` | 追加 Agent 指令、可调用工具或任务动作 |
+| `models: true` | 工具或动作调用期间请求已配置模型，凭据留在宿主 |
 | `tasks: "read" / "title"` | 读取当前任务标题元数据；title 额外允许安全改名 |
+| `taskMessages: true` | 工具或动作调用期间读取原任务可见分支的有限消息文本，详见 [任务权限](agent-settings.md#模型与任务权限) |
 | `windowEffects: true` | 锚点装饰、窗口效果与无内容的对话输入活动 |
 | `controls: ["model.reasoning"]` | 提供可由用户选用的思考等级控件 |
 | `notifications: true` | 宿主 `context.notifications.show({title,body})` |

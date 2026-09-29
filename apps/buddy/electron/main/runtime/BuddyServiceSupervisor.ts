@@ -40,7 +40,7 @@ export interface BuddyServiceNotification {
 export interface BuddyServiceRequestOptions {
   requestId?: string
   signal?: AbortSignal
-  timeoutMs?: number
+  timeoutMs?: number | null
 }
 
 export interface BuddyServiceSupervisorOptions {
