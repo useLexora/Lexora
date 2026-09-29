@@ -492,7 +492,8 @@ export function createChatAgentTurnReducer(
         if (
           node.kind === 'text'
           || !terminal
-          || (node.status !== 'preparing' && node.status !== 'running')
+          || (node.status !== 'preparing' && node.status !== 'running'
+            && !(run.status === 'cancelled' && node.kind === 'tool' && node.status === 'awaiting_approval'))
         ) {
           return node
         }

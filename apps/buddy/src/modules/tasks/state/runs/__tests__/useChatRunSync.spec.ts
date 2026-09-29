@@ -6,9 +6,59 @@ import { describe, expect, it, vi } from 'vitest'
 import { effectScope, ref } from 'vue'
 
 import { projectPersistedChatTranscriptRows } from '../../../model/transcript/chatPersistedTranscriptRows'
+import { projectChatTranscript } from '../../../model/transcript/chatTranscriptProjection'
 import { useChatRunSync } from '../useChatRunSync'
 
 describe('useChatRunSync', () => {
+  it('stops presentation immediately while retaining execution ownership and reconciles the final result', async () => {
+    const running = run('run-a', 'conversation-a')
+    const initialEvents: LocalRunEvent[] = [
+      { ...event(running.id, 1), type: 'message.started', payload: { messageId: 'answer' } },
+      { ...event(running.id, 2), type: 'message.delta', payload: { messageId: 'answer', delta: 'Visible answer', phase: 'answer' } },
+    ]
+    const question = timelineMessage(running.triggeringMessageId, running.conversationId, running.branchId, 1)
+    let page = timelinePage([question], null, [running], initialEvents)
+    const sync = useChatRunSync({ activeBranchId: ref(running.branchId), activeConversationId: ref(running.conversationId), api: createApi({ listTimeline: async () => page }), onError: vi.fn() })
+    try {
+      await sync.refreshActiveConversation()
+      sync.cancelRunPresentation(running.id)
+      expect(sync.runs.value[0]).toMatchObject({ status: 'cancelled', errorCode: 'RUN_CANCELLED' })
+      expect(sync.executionRuns.value[0]?.status).toBe('running')
+      expect(sync.messages.value.find(message => message.id === 'answer')?.content).toEqual({ text: 'Visible answer' })
+      const rows = projectChatTranscript({ timelineItems: sync.timelineItems.value, runs: sync.runs.value, runEvents: sync.runEventBuckets.value.get(running.id)?.events, outputs: [] }).rows
+      expect(rows.some(row => row.kind === 'activity')).toBe(false)
+      const answer = rows.find(row => row.kind === 'message' && row.message.id === 'answer')
+      expect(answer?.kind === 'message' ? answer.streaming : true).toBeUndefined()
+
+      page = timelinePage([question], null, [running], [...initialEvents,
+        { ...event(running.id, 3), type: 'message.delta', payload: { messageId: 'answer', delta: ' late text', phase: 'answer' } },
+      ])
+      await sync.refreshActiveConversation()
+      expect(sync.runs.value[0]?.status).toBe('cancelled')
+      expect(sync.messages.value.find(message => message.id === 'answer')?.content).toEqual({ text: 'Visible answer' })
+
+      const final = { ...timelineMessage('answer', running.conversationId, running.branchId, 2, 'assistant'), runId: running.id, content: { text: 'Final saved answer' } }
+      page = timelinePage([question, final], null, [{ ...running, status: 'cancelled', completedAt: '2026-08-14T00:00:03.000Z' }])
+      await sync.refreshActiveConversation()
+      expect(sync.executionRuns.value[0]?.status).toBe('cancelled')
+      expect(sync.messages.value.find(message => message.id === 'answer')?.content).toEqual(final.content)
+    }
+    finally { sync.dispose() }
+  })
+
+  it('restores authoritative presentation if the cancellation request fails', async () => {
+    const running = run('run-a', 'conversation-a')
+    const sync = useChatRunSync({ activeBranchId: ref(running.branchId), activeConversationId: ref(running.conversationId), api: createApi({}), onError: vi.fn() })
+    try {
+      await sync.refreshActiveConversation()
+      sync.cancelRunPresentation(running.id)
+      expect(sync.runs.value[0]?.status).toBe('cancelled')
+      sync.restoreRunPresentation(running.id)
+      expect(sync.runs.value[0]?.status).toBe('running')
+    }
+    finally { sync.dispose() }
+  })
+
   it('refreshes a running action on an older page and removes only automatic skipped actions from the transcript', async () => {
     const action: Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> = {
       kind: 'extension-action',

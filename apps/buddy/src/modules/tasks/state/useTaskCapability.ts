@@ -100,7 +100,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     timelineItems,
   } = runSync
 
-  const activeRun = computed(() => runs.value.find(
+  const activeRun = computed(() => runSync.executionRuns.value.find(
     run => run.status === 'queued' || run.status === 'running',
   ) ?? null)
   const hasAvailableProvider = computed(() => modelProviders.providers.value.some(
@@ -493,7 +493,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       },
     },
     execution: {
-      activeRun: readonly(activeRun),
+      activeRun: computed(() => runs.value.find(run => run.status === 'queued' || run.status === 'running') ?? null),
       approvalViews: readonly(approvalViews),
       canMutateBranch: readonly(canMutateBranch),
       canSend: readonly(canSend),
