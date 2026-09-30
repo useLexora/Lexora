@@ -7,7 +7,7 @@ import { ToolDisclosure } from '../ToolDisclosure'
 import { TOOL_SEARCH_NAME } from '../toolDiscoveryContract'
 
 const names = ['read', TOOL_SEARCH_NAME, 'lexora_browser_open', 'lexora_browser_act', 'lexora_buddy_automation', 'lexora_image_generate', 'mcp__calendar__events']
-const tools: ToolInfo[] = names.map(name => ({ name, description: name, parameters: Type.Object({ query: Type.String() }), sourceInfo: { source: 'extension', path: '', origin: 'top-level', scope: 'temporary' } }))
+const tools: ToolInfo[] = names.map(name => ({ name, exposure: 'direct' as const, description: name, parameters: Type.Object({ query: Type.String() }), sourceInfo: { source: 'extension', path: '', origin: 'top-level', scope: 'temporary' } }))
 const model = { id: 'image-model' } as Model<Api>
 function create() {
   return new ToolDisclosure(tools, names, [

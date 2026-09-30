@@ -5,7 +5,7 @@ import { buildBuddyRequestContext } from '../buildBuddyRequestContext'
 
 describe('buildBuddyRequestContext', () => {
   it('includes only active first-party guidelines once and does not promote MCP metadata into instructions', () => {
-    const tools = ['lexora_visible', 'lexora_hidden', 'mcp__service__action'].map(name => ({ name, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level' as const, scope: 'temporary' as const }, promptGuidelines: [`GUIDELINE_${name}`, `GUIDELINE_${name}`] }))
+    const tools = ['lexora_visible', 'lexora_hidden', 'mcp__service__action'].map(name => ({ name, exposure: 'direct' as const, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level' as const, scope: 'temporary' as const }, promptGuidelines: [`GUIDELINE_${name}`, `GUIDELINE_${name}`] }))
     const context = buildBuddyRequestContext({ systemPrompt: 'Buddy base prompt', messages: [], tools: [tools[0]!, tools[2]!] }, tools)
     expect(getCurrentSystemPrompt(context.messages).match(/GUIDELINE_lexora_visible/g)).toHaveLength(1)
     expect(getCurrentSystemPrompt(context.messages)).not.toContain('GUIDELINE_lexora_hidden')
@@ -14,7 +14,7 @@ describe('buildBuddyRequestContext', () => {
   })
 
   it('preserves transcript history and follows the current tool declarations after removal', () => {
-    const tools = ['lexora_old', 'lexora_new'].map(name => ({ name, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level' as const, scope: 'temporary' as const }, promptGuidelines: [`GUIDELINE_${name}`] }))
+    const tools = ['lexora_old', 'lexora_new'].map(name => ({ name, exposure: 'direct' as const, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level' as const, scope: 'temporary' as const }, promptGuidelines: [`GUIDELINE_${name}`] }))
     const input = normalizeContext({ messages: [
       { role: 'system', content: 'Buddy base prompt', toolsAdded: [tools[0]!], timestamp: 0 },
       { role: 'user', content: 'Continue', timestamp: 1 },

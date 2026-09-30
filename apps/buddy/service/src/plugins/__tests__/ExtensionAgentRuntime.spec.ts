@@ -82,7 +82,7 @@ describe('extension agent capability and invocation lifetimes', () => {
     const definitions: ToolDefinition[] = []
     for (const capability of capabilities)
       await capability.extension.factory({ registerTool: (tool: ToolDefinition) => definitions.push(tool), on() {} } as never)
-    const tools = definitions.map(tool => ({ ...tool, sourceInfo: { source: 'extension' as const, path: '', origin: 'top-level' as const, scope: 'temporary' as const } }))
+    const tools = definitions.map(tool => ({ ...tool, exposure: tool.exposure ?? 'direct', sourceInfo: { source: 'extension' as const, path: '', origin: 'top-level' as const, scope: 'temporary' as const } }))
     const names = definitions.map(tool => tool.name)
     const policies = capabilities.flatMap(capability => capability.disclosure!)
     const disclosure = new ToolDisclosure(tools, names, policies)

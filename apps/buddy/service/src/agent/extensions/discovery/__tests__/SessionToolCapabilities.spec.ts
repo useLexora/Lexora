@@ -5,7 +5,7 @@ import { Type } from 'typebox'
 import { describe, expect, it } from 'vitest'
 import { SessionToolCapabilities } from '../SessionToolCapabilities'
 
-const tools: ToolInfo[] = ['read', 'create_image'].map(name => ({ name, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level', scope: 'temporary' } }))
+const tools: ToolInfo[] = ['read', 'create_image'].map(name => ({ name, exposure: 'direct' as const, description: name, parameters: Type.Object({}), sourceInfo: { source: 'extension', path: '', origin: 'top-level', scope: 'temporary' } }))
 const model = { provider: 'fixture', id: 'images' } as Model<Api>
 function setup() {
   const state = new SessionToolCapabilities([{ source: 'connector', id: 'fixture', revision: 'catalog-1' }])

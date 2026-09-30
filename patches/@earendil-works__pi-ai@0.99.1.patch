@@ -1,11 +1,11 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index fc8e893..04c2c95 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -1123,6 +1123,14 @@ export function convertMessages(model, context, compat, options) {
+@@ -1122,6 +1122,14 @@
+             continue;
          }
          lastRole = msg.role;
-     }
++    }
 +    if (params.some((message) => message.role === "assistant" &&
 +        typeof message.reasoning_content === "string")) {
 +        for (const message of params) {
@@ -13,15 +13,13 @@ index fc8e893..04c2c95 100644
 +                message.reasoning_content = "";
 +            }
 +        }
-+    }
+     }
      return params;
  }
- function convertTools(tools, compat) {
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 53597d2..170d9a4 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
-@@ -355,7 +355,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -355,7 +355,11 @@
          }
          if (item.type === "message") {
              applyMessagePhaseStopReason(item);

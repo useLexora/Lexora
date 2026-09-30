@@ -66,6 +66,7 @@ describe('built-in model discovery through the production runtime', () => {
     { providerId: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1' },
     { providerId: 'openai-codex', api: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' },
     { providerId: 'anthropic', api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
+    { providerId: 'openrouter', api: 'openai-completions', baseUrl: 'https://openrouter.ai/api/v1' },
   ] as const)('refreshes $providerId for legacy and new instances, preserving independent state and offline execution', async ({ providerId, api, baseUrl }) => {
     const remote: Model<Api> = {
       id: 'fixture-new-model',
@@ -83,11 +84,16 @@ describe('built-in model discovery through the production runtime', () => {
     let contextWindow = remote.contextWindow
     let status = 200
     vi.stubGlobal('fetch', async (input: URL | string, init: RequestInit) => {
-      expect(String(input)).toBe(`https://pi.dev/api/models/providers/${providerId}`)
+      const url = new URL(input)
+      expect(`${url.origin}${url.pathname}`).toBe(`https://pi.dev/api/models/providers/${providerId}`)
+      expect(url.searchParams.get('types')).toBe('chat,image,classifier')
       expect(new Headers(init.headers).has('authorization')).toBe(false)
       if (status !== 200)
         return new Response(null, { status })
-      return Response.json([{ ...remote, contextWindow }], { headers: { 'last-modified': 'Fri, 01 Jan 2100 00:00:00 GMT' } })
+      const models: unknown[] = [{ ...remote, contextWindow }]
+      if (providerId === 'openrouter')
+        models.push({ id: remote.id, name: 'Image model', type: 'image', api: 'openrouter-images', provider: providerId, baseUrl, input: ['text'], output: ['image'], cost: remote.cost })
+      return Response.json(models, { headers: { 'last-modified': 'Fri, 01 Jan 2100 00:00:00 GMT' } })
     })
     const harness = await fixture()
     harness.credentials.set(providerId, providerId === 'openai-codex' ? oauth('account-a') : { type: 'api_key', key: 'fixture-key' })
@@ -135,5 +141,10 @@ describe('built-in model discovery through the production runtime', () => {
     expect(await restored.getDefaultModel()).toMatchObject({ providerId, modelId: remote.id })
     const resolved = await restored.executionModels.resolveAvailable({ providerId, modelId: remote.id, contextWindow: null, maxTokens: null })
     expect(resolved).toMatchObject({ id: remote.id, api, contextWindow: 64_000, input: ['text', 'image'] })
+    if (providerId === 'openrouter') {
+      const runtime = restored.executionModels.getRuntime()
+      expect(runtime.getModelOfType('image', other.id, remote.id)).toMatchObject({ type: 'image', provider: other.id, id: remote.id })
+      expect(runtime.getModels(other.id).filter(model => model.id === remote.id)).toHaveLength(1)
+    }
   })
 })

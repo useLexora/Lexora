@@ -9,7 +9,9 @@ import { registerBunOAuthFlows } from '@earendil-works/pi-ai/bun-oauth'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { createProviderRepository } from '../storage/providerRepository'
+import { createWorkspaceRepository } from '../storage/workspaceRepository'
 import { AuthInteractionService } from './AuthInteractionService'
+import { createProviderLoginOptions } from './createProviderLoginOptions'
 import { createProviderModelRuntime } from './createProviderModelRuntime'
 import { HostCredentialStore } from './HostCredentialStore'
 import { createProviderCredentialStatus } from './ProviderCredentialStatus'
@@ -57,6 +59,7 @@ export async function createProviderService(
   authInteractions.onDidChange(change => options.record?.({ event: `provider.auth.${change.kind.replaceAll('-', '_')}`, level: 'info', operationId: change.loginId, count: change.kind === 'challenge-opened' ? 1 : 0 }))
   const service = new ProviderService({
     authInteractions,
+    loginOptions: createProviderLoginOptions(createWorkspaceRepository(options.database)),
     credentials,
     credentialStatus: createProviderCredentialStatus(credentials),
     getActiveRuns: options.getActiveRuns,

@@ -1,5 +1,5 @@
 import type { ToolResultMessage } from '@earendil-works/pi-ai'
-import type { ExtensionContext, ReadToolInput, ReadToolOptions } from '@earendil-works/pi-coding-agent'
+import type { ExtensionToolContext, ReadToolInput, ReadToolOptions } from '@earendil-works/pi-coding-agent'
 import { Buffer } from 'node:buffer'
 import { mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,7 +12,7 @@ import { createBuddyReadTool } from '../readFileExtension'
 function createReadTool(cwd: string, options?: Pick<ReadToolOptions, 'autoResizeImages'>) {
   const tool = createBuddyReadTool(cwd, options)
   return {
-    execute: (id: string, parameters: ReadToolInput, signal?: AbortSignal) => tool.execute(id, parameters, signal, undefined, { cwd } as ExtensionContext),
+    execute: (id: string, parameters: ReadToolInput, signal?: AbortSignal) => tool.execute(id, parameters, signal, undefined, { cwd } as ExtensionToolContext),
   }
 }
 

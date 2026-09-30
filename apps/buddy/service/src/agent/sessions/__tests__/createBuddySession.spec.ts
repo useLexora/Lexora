@@ -1,3 +1,4 @@
+import type { ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,7 +64,7 @@ describe('createBuddySession', () => {
         { toolNames: ['lexora_image_generate'] },
         undefined,
         undefined,
-        result.session.extensionRunner.createContext(),
+        result.session.extensionRunner.createContext() as ExtensionToolContext,
       )
       expect(result.session.getActiveToolNames()).toContain('lexora_image_generate')
       await result.session.setModel(model)

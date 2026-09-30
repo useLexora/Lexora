@@ -39,14 +39,13 @@ describe('createBuddyToolPresentation', () => {
         },
       },
     })
-    const error = await tool.execute('tool-1', { command: 'fixture' }).then(
-      () => { throw new Error('Expected the command to fail') },
-      error => error as Error,
-    )
+    const result = await tool.execute('tool-1', { command: 'fixture' })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toMatchObject({ exit_code: 2 })
     expect(createBuddyToolPresentation({
       arguments: { command: 'fixture' },
       isError: true,
-      result: { content: [{ type: 'text', text: error.message }] },
+      result,
       toolName: 'bash',
     })).toMatchObject({ card: 'terminal', exitCode: 2, signal: null })
   })

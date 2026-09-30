@@ -1,14 +1,19 @@
-import type { Api, AssistantMessage, Context, Model, Provider } from '@earendil-works/pi-ai'
+import type { AnyModel, Api, AssistantMessage, Context, Model, Provider } from '@earendil-works/pi-ai'
 import type { DatabaseSync } from 'node:sqlite'
-import { createModels, InMemoryCredentialStore, InMemoryModelsStore, lazyStream } from '@earendil-works/pi-ai'
+import { createModels, InMemoryCredentialStore, InMemoryModelsStore, isModelType, lazyStream } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { createProviderRepository } from '../../storage/providerRepository'
+import { createProviderStateRepository } from '../../storage/providerStateRepository'
+import { createWorkspaceRepository } from '../../storage/workspaceRepository'
 import { AuthInteractionService } from '../AuthInteractionService'
 import { createBuiltinProviderInstance } from '../createBuiltinProviderInstance'
+import { createProviderLoginOptions } from '../createProviderLoginOptions'
+import { createProviderModelRuntime } from '../createProviderModelRuntime'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
 import { ProviderModelSnapshotService } from '../ProviderModelSnapshotService'
+import { ProviderRequestHeaders } from '../ProviderRequestHeaders'
 import { providerAuthChallengeSchema } from '../providerSchemas'
 import { ProviderService } from '../ProviderService'
 import { resolveInteractiveModelSelection } from '../resolveInteractiveModelSelection'
@@ -17,6 +22,92 @@ const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
 
 describe('built-in provider instances', () => {
+  it('preserves mixed catalogs and authenticates each operation with its own instance and headers', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const credentials = new InMemoryCredentialStore()
+    const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
+    const states = createProviderStateRepository(database)
+    const headers = new ProviderRequestHeaders(states)
+    const registration = createProviderModelRuntime(runtime, headers)
+    const { provider } = createSource()
+    const chat = provider.getModels()[0]!
+    const base = { id: chat.id, name: chat.name, provider: provider.id, baseUrl: chat.baseUrl, input: chat.input, cost: chat.cost }
+    const catalog: AnyModel[] = [chat, { ...base, type: 'image', api: 'fixture-images', output: ['image'] }, { ...base, type: 'classifier', api: 'fixture-classifier', contextWindow: 8000 }]
+    provider.getAllModels = () => catalog
+    provider.filterAllModels = models => models.filter(model => model.provider === provider.id)
+    const requests: unknown[] = []
+    provider.generateImages = async (model, _context, options) => {
+      requests.push({ model, key: options?.apiKey, headers: options?.headers })
+      return { api: model.api, provider: model.provider, model: model.id, output: [], stopReason: 'stop', timestamp: 1 }
+    }
+    provider.classify = async (model, _context, options) => {
+      requests.push({ model, key: options?.apiKey, headers: options?.headers })
+      return { api: model.api, provider: model.provider, model: model.id, answers: {}, stopReason: 'stop', timestamp: 1 }
+    }
+    for (const id of ['account-a', 'account-b']) {
+      states.upsert({ providerId: id, enabled: true, createdAt: 'now', updatedAt: 'now' })
+      registration.registerNativeProvider(createBuiltinProviderInstance({ id, name: id, source: provider, getCatalogModels: () => catalog }))
+      await credentials.modify(id, async () => ({ type: 'api_key', key: `fixture-${id}` }))
+      headers.save(id, [{ name: 'X-Account', value: id }, { name: 'X-Token', value: `\${apiKey}` }])
+      expect(runtime.getModels(id)).toMatchObject([{ id: chat.id, provider: id }])
+      expect(await runtime.getAllAvailable(id)).toHaveLength(3)
+      const image = runtime.getModelOfType('image', id, chat.id)!
+      const classifier = runtime.getModelOfType('classifier', id, chat.id)!
+      expect(await runtime.generateImages(image, { input: [{ type: 'text', text: 'fixture' }] })).toMatchObject({ provider: id, stopReason: 'stop' })
+      expect(await runtime.classify(classifier, { state: {}, questions: {} })).toMatchObject({ provider: id, stopReason: 'stop' })
+      expect(requests.slice(-2)).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({ model: expect.objectContaining({ provider: provider.id }), key: `fixture-${id}`, headers: expect.objectContaining({ 'x-account': id, 'x-token': `fixture-${id}` }) })))
+    }
+    expect(catalog.every(model => model.provider === provider.id)).toBe(true)
+  })
+
+  it('reuses a lazily persisted installation ID across provider logins and runtime recreation', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const settings = createWorkspaceRepository(database)
+    const ids: string[] = []
+    const credentials = new InMemoryCredentialStore()
+    const setup = async () => {
+      const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
+      const source = () => {
+        const { provider } = createSource()
+        provider.auth.oauth!.login = async (_interaction, options) => {
+          const id = options?.getDeviceId?.()
+          expect(id).toMatch(/^[0-9a-f-]{36}$/)
+          ids.push(id!)
+          return { type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3_600_000 }
+        }
+        return provider
+      }
+      runtime.registerNativeProvider(source())
+      const service = new ProviderService({
+        authInteractions: new AuthInteractionService(),
+        createBuiltinSource: source,
+        credentialStatus: createProviderCredentialStatus(credentials),
+        loginOptions: createProviderLoginOptions(createWorkspaceRepository(database)),
+        modelDiscovery: { supports: () => false, discover: async () => [] },
+        modelRuntime: runtime,
+        providers: createProviderRepository(database),
+      })
+      await service.initializeProviders()
+      return service
+    }
+    const first = await setup()
+    const account = await first.addProvider('fixture-builtin')
+    expect(settings.listKeys()).toEqual([])
+    await first.login(account.id, 'oauth')
+    await first.dispose()
+    const restored = await setup()
+    await restored.login(account.id, 'oauth')
+    const other = await restored.addProvider('fixture-builtin')
+    await restored.login(other.id, 'oauth')
+    await restored.dispose()
+    expect(ids).toHaveLength(3)
+    expect(new Set(ids).size).toBe(1)
+    expect(settings.get('buddy.providers.device-id')).toBe(ids[0])
+    expect(JSON.stringify(settings.get('buddy.providers.device-id'))).not.toContain('fixture-access')
+  })
+
   it('keeps account model availability consistent across login, sync and runtime recreation', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
@@ -91,7 +182,7 @@ describe('built-in provider instances', () => {
         provider.refreshModels = async (context) => {
           const next = context.allowNetwork && context.credential?.type === 'api_key'
             ? [{ ...baseline, id: context.credential.key! }]
-            : context.stored?.models.filter(model => model.provider === provider.id) ?? []
+            : context.stored?.models.filter(model => isModelType(model, 'chat')).filter(model => model.provider === provider.id) ?? []
           await context.publish({
             persist: { models: next },
             update: () => {
@@ -131,6 +222,8 @@ describe('built-in provider instances', () => {
       sessionRuntime: runtime,
     })
     const instance = await service.addProvider('openai-codex')
+    expect(service.listBuiltinPresets()).not.toContainEqual(expect.objectContaining({ id: 'typesafe' }))
+    expect(runtime.getModelsOfType('classifier', 'typesafe')).not.toHaveLength(0)
     expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-5.6-sol', api: 'openai-codex-responses' }))
       .toEqual([{ displayName: 'Fast', id: 'priority' }])
     expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-6-astra', api: 'openai-codex-responses' }))
@@ -267,13 +360,17 @@ describe('built-in provider instances', () => {
     const model = runtime.getModels('account-a')[0]!
     const ownHistory = answer(model)
     const legacyHistory = { ...ownHistory, provider: 'fixture-builtin' }
-    const stream = runtime.streamSimple(model, { messages: [legacyHistory, ownHistory] })
+    const observedProviders: string[] = []
+    const stream = runtime.streamSimple(model, { messages: [legacyHistory, ownHistory] }, {
+      onProviderStreamEvent: (_data, observed) => { observedProviders.push(observed.provider) },
+    })
     const events = []
     for await (const event of stream)
       events.push(event)
     expect(events.map(event => event.type)).toEqual(['start', 'done'])
     expect(events[0]).toMatchObject({ partial: { provider: 'account-a' } })
     expect(await stream.result()).toMatchObject({ provider: 'account-a' })
+    expect(observedProviders).toEqual(['account-a'])
     expect(await credentials.read('account-a')).toMatchObject({ access: 'refreshed-account-a' })
     expect(await credentials.read('account-b')).toMatchObject({ access: 'account-b' })
     expect(sources.requests[0]?.context.messages).toMatchObject([
@@ -302,6 +399,7 @@ function createSource() {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   }
   const stream: Provider['streamSimple'] = (model, context, options) => lazyStream(model, async () => {
+    await options?.onProviderStreamEvent?.({ type: 'fixture' }, model)
     requests.push({ provider: model.provider, key: options?.apiKey, context })
     const message = answer(model)
     return (async function* () {

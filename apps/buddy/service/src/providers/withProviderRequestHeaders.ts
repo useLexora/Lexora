@@ -3,11 +3,11 @@ import type { ProviderRequestHeaders } from './ProviderRequestHeaders'
 import { lazyStream } from '@earendil-works/pi-ai'
 
 export function withProviderRequestHeaders(provider: Provider, headers: ProviderRequestHeaders): Provider {
-  async function prepare<T extends ProviderRequestOptions>(options?: T): Promise<T & ProviderRequestOptions> {
+  async function prepare<T extends Pick<ProviderRequestOptions, 'headers' | 'apiKey'>>(options?: T): Promise<T> {
     return {
       ...options,
       headers: await headers.resolve(provider.id, options?.headers, options?.apiKey),
-    } as T & ProviderRequestOptions
+    } as T
   }
   return {
     ...provider,
@@ -18,6 +18,12 @@ export function withProviderRequestHeaders(provider: Provider, headers: Provider
       : undefined,
     cancelDeferred: provider.cancelDeferred
       ? async (model, handle, options) => provider.cancelDeferred!(model, handle, await prepare(options))
+      : undefined,
+    generateImages: provider.generateImages
+      ? async (model, context, options) => provider.generateImages!(model, context, await prepare(options))
+      : undefined,
+    classify: provider.classify
+      ? async (model, context, options) => provider.classify!(model, context, await prepare(options))
       : undefined,
   }
 }

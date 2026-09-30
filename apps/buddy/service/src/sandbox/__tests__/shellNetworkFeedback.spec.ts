@@ -77,18 +77,17 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
     [new Error('synthetic-private-error-detail'), 'NETWORK_APPROVAL_FAILED'],
   ])('preserves authorization outcome %s without replacing the command exit status', async (decision, code) => {
     const check = await fixture({ dialect, decision })
-    const error = await check.invoke().catch(error => error as Error)
-    expect(error).toBeInstanceOf(Error)
-    if (!(error instanceof Error))
-      throw new Error('Expected a command failure')
-    expect(error.message).toContain('original-command-output')
-    expect(error.message).toContain(JSON.stringify({ ...target, code }))
-    expect(error.message).not.toContain('synthetic-private-error-detail')
+    const result = await check.invoke()
+    expect(result.isError).toBe(true)
+    const output = result.content.find(item => item.type === 'text')!.text
+    expect(output).toContain('original-command-output')
+    expect(output).toContain(JSON.stringify({ ...target, code }))
+    expect(output).not.toContain('synthetic-private-error-detail')
     if (code !== 'APPROVAL_DENIED')
-      expect(error.message).not.toContain('APPROVAL_DENIED')
-    expect(error.message).toMatch(/Command exited with code 22$/)
+      expect(output).not.toContain('APPROVAL_DENIED')
+    expect(output).toMatch(/Command exited with code 22$/)
     expect(check.decisions).toEqual([false])
-    expect(createBuddyToolPresentation({ toolName: dialect, arguments: { command: 'fixture' }, isError: true, result: { content: [{ type: 'text', text: error.message }] } })).toMatchObject({ card: 'terminal', exitCode: 22 })
+    expect(createBuddyToolPresentation({ toolName: dialect, arguments: { command: 'fixture' }, isError: true, result })).toMatchObject({ card: 'terminal', exitCode: 22 })
   })
 
   it('keeps successful command recovery successful while reporting the refused request', async () => {
@@ -102,17 +101,16 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
 
   it('keeps an ordinary failure free of network or sandbox advice', async () => {
     const check = await fixture({ dialect, decision: 'approved_once', exitCode: 7 })
-    await expect(check.invoke()).rejects.toThrow(/^original-command-output\n\nCommand exited with code 7$/)
+    await expect(check.invoke()).resolves.toMatchObject({ isError: true, content: [{ type: 'text', text: 'original-command-output\n\nCommand exited with code 7' }], structuredContent: { exit_code: 7 } })
     expect(check.decisions).toEqual([true])
   })
 
   it('keeps background unavailability distinct from user refusal', async () => {
     const check = await fixture({ dialect, background: true })
-    const error = await check.invoke().catch(error => error as Error)
-    expect(error).toBeInstanceOf(Error)
-    if (!(error instanceof Error))
-      throw new Error('Expected a command failure')
-    expect(error.message).toContain(JSON.stringify({ ...target, code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' }))
+    const result = await check.invoke()
+    expect(result.isError).toBe(true)
+    const output = result.content.find(item => item.type === 'text')!.text
+    expect(output).toContain(JSON.stringify({ ...target, code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' }))
     expect(check.decisions).toEqual([false])
   })
 

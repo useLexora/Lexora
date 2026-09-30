@@ -50,11 +50,15 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     evidence.doneMarker = 'not_observed'
     const decoder = new TextDecoder()
     let tail = '\n\n'
+    let afterCarriageReturn = false
     const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         if (!receivedDone) {
-          const text = tail + decoder.decode(chunk, { stream: true })
-          receivedDone = /\r?\n\r?\ndata: ?\[DONE\]\r?\n\r?\n/.test(text)
+          const decoded = decoder.decode(chunk, { stream: true })
+          const text = tail + (afterCarriageReturn && decoded.startsWith('\n') ? decoded.slice(1) : decoded).replace(/\r\n?/g, '\n')
+          if (decoded.length)
+            afterCarriageReturn = decoded.endsWith('\r')
+          receivedDone = /\n\ndata: ?\[DONE\]\n\n/.test(text)
           if (receivedDone)
             evidence.doneMarker = 'observed'
           tail = text.slice(-32)

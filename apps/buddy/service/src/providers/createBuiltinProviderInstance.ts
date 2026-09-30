@@ -1,18 +1,23 @@
-import type { Api, AssistantMessageEvent, Model, Provider, TranscriptContext } from '@earendil-works/pi-ai'
-import { lazyStream } from '@earendil-works/pi-ai'
+import type { AnyModel, Api, AssistantMessageEvent, Model, Provider, StreamOptions, TranscriptContext } from '@earendil-works/pi-ai'
+import { isModelType, lazyStream } from '@earendil-works/pi-ai'
 
 interface BuiltinProviderInstanceOptions {
   id: string
   name: string
   source: Provider
-  getCatalogModels: () => readonly Model<Api>[]
+  getCatalogModels: () => readonly AnyModel[]
 }
 
 export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOptions): Provider {
   const { id, name, source } = options
-  let models = source.getModels()
-  const toSourceModel = <T extends Api>(model: Model<T>): Model<T> => ({ ...model, provider: source.id })
-  const toInstanceModel = (model: Model<Api>): Model<Api> => ({ ...model, provider: id })
+  const readSourceModels = () => source.getAllModels?.() ?? source.getModels()
+  let models = readSourceModels()
+  const toSourceModel = <T extends AnyModel>(model: T): T => ({ ...model, provider: source.id })
+  const toInstanceModel = <T extends AnyModel>(model: T): T => ({ ...model, provider: id })
+  const getAllModels = () => (source.refreshModels ? models : options.getCatalogModels()).map(toInstanceModel)
+  const toSourceOptions = <T extends StreamOptions>(options?: T): T | undefined => options?.onProviderStreamEvent
+    ? { ...options, onProviderStreamEvent: (data, model) => options.onProviderStreamEvent!(data, toInstanceModel(model)) }
+    : options
   const toSourceContext = (context: TranscriptContext): TranscriptContext => ({
     ...context,
     messages: context.messages.map((message) => {
@@ -35,9 +40,13 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
     baseUrl: source.baseUrl,
     headers: source.headers,
     auth: source.auth,
-    getModels: () => (source.refreshModels ? models : options.getCatalogModels()).map(toInstanceModel),
+    getModels: () => getAllModels().filter(model => isModelType(model, 'chat')),
+    getAllModels,
     filterModels: source.filterModels
       ? (models, credential) => source.filterModels!(models.map(toSourceModel), credential).map(toInstanceModel)
+      : undefined,
+    filterAllModels: source.filterAllModels
+      ? (models, credential) => source.filterAllModels!(models.map(toSourceModel), credential).map(toInstanceModel)
       : undefined,
     refreshModels: source.refreshModels
       ? context => source.refreshModels!({
@@ -47,7 +56,7 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
           ...publication,
           update: () => {
             publication.update?.()
-            models = source.getModels()
+            models = readSourceModels()
           },
           persist: publication.persist && {
             ...publication.persist,
@@ -56,13 +65,19 @@ export function createBuiltinProviderInstance(options: BuiltinProviderInstanceOp
         }),
       })
       : undefined,
-    stream: (model, context, streamOptions) => forward(model, () => source.stream(toSourceModel(model), toSourceContext(context), streamOptions)),
-    streamSimple: (model, context, streamOptions) => forward(model, () => source.streamSimple(toSourceModel(model), toSourceContext(context), streamOptions)),
+    stream: (model, context, streamOptions) => forward(model, () => source.stream(toSourceModel(model), toSourceContext(context), toSourceOptions(streamOptions))),
+    streamSimple: (model, context, streamOptions) => forward(model, () => source.streamSimple(toSourceModel(model), toSourceContext(context), toSourceOptions(streamOptions))),
     fetchDeferred: source.fetchDeferred
       ? (model, handle, fetchOptions) => forward(model, () => source.fetchDeferred!(toSourceModel(model), handle, fetchOptions))
       : undefined,
     cancelDeferred: source.cancelDeferred
       ? (model, handle, cancelOptions) => source.cancelDeferred!(toSourceModel(model), handle, cancelOptions)
+      : undefined,
+    generateImages: source.generateImages
+      ? async (model, context, imageOptions) => ({ ...await source.generateImages!(toSourceModel(model), context, imageOptions), provider: id })
+      : undefined,
+    classify: source.classify
+      ? async (model, context, classifierOptions) => ({ ...await source.classify!(toSourceModel(model), context, classifierOptions), provider: id })
       : undefined,
   }
 }

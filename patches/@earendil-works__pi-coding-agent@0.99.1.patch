@@ -1,6 +1,37 @@
+diff --git a/dist/config.js b/dist/config.js
+--- a/dist/config.js
++++ b/dist/config.js
+@@ -9,8 +9,8 @@
+ // =============================================================================
+ // Package Detection
+ // =============================================================================
+-const __filename = fileURLToPath(import.meta.url);
+-const __dirname = dirname(__filename);
++const moduleFilename = fileURLToPath(import.meta.url);
++const moduleDirectory = dirname(moduleFilename);
+ /**
+  * Detect if we're running as a Bun compiled binary.
+  * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
+@@ -45,7 +45,7 @@
+     if (isBunBinary) {
+         return "bun-binary";
+     }
+-    const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
++    const resolvedPath = `${moduleDirectory}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
+     if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
+         return "pnpm";
+     }
+@@ -319,7 +319,7 @@
+         // Bun binary: process.execPath points to the compiled executable
+         return dirname(process.execPath);
+     }
+-    return findNodePackageDir(__dirname);
++    return findNodePackageDir(moduleDirectory);
+ }
+ /**
+  * Get path to built-in themes directory (shipped with package)
 diff --git a/dist/core/tools/find-execution.js b/dist/core/tools/find-execution.js
 new file mode 100644
-index 0000000..dd03780
 --- /dev/null
 +++ b/dist/core/tools/find-execution.js
 @@ -0,0 +1,67 @@
@@ -72,7 +103,6 @@ index 0000000..dd03780
 +    };
 +}
 diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
-index a3bab76..de47f3e 100644
 --- a/dist/core/tools/find.js
 +++ b/dist/core/tools/find.js
 @@ -1,12 +1,9 @@
@@ -90,7 +120,7 @@ index a3bab76..de47f3e 100644
  /** Relativize a find result against the search root and normalize it to posix separators. */
  export function relativizeFindResultPath(resultPath, searchPath, pathModule = path) {
      const hadTrailingSeparator = resultPath.endsWith(pathModule.sep) || (pathModule.sep === "\\" && resultPath.endsWith("/"));
-@@ -26,11 +23,6 @@ export const findToolSystemPromptContribution = {
+@@ -26,11 +23,6 @@
      guidelines: [],
  };
  const DEFAULT_LIMIT = 1000;
@@ -102,7 +132,7 @@ index a3bab76..de47f3e 100644
  export function createFindToolDefinition(cwd, options) {
      const customOps = options?.operations;
      return {
-@@ -39,208 +31,8 @@ export function createFindToolDefinition(cwd, options) {
+@@ -39,208 +31,8 @@
          description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
          promptSnippet: findToolSystemPromptContribution.snippet,
          parameters: findSchema,
@@ -315,7 +345,6 @@ index a3bab76..de47f3e 100644
      };
 diff --git a/dist/core/tools/grep-execution.js b/dist/core/tools/grep-execution.js
 new file mode 100644
-index 0000000..b72872c
 --- /dev/null
 +++ b/dist/core/tools/grep-execution.js
 @@ -0,0 +1,82 @@
@@ -402,7 +431,6 @@ index 0000000..b72872c
 +    };
 +}
 diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
-index d427d07..d564283 100644
 --- a/dist/core/tools/grep.js
 +++ b/dist/core/tools/grep.js
 @@ -1,13 +1,9 @@
@@ -421,7 +449,7 @@ index d427d07..d564283 100644
  const grepSchema = Type.Object({
      pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
      path: Type.Optional(Type.String({ description: "Directory or file to search (default: current directory)" })),
-@@ -34,214 +30,8 @@ export function createGrepToolDefinition(cwd, options) {
+@@ -34,214 +30,8 @@
          description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
          promptSnippet: grepToolSystemPromptContribution.snippet,
          parameters: grepSchema,
@@ -640,7 +668,6 @@ index d427d07..d564283 100644
      };
 diff --git a/dist/core/tools/search-process.js b/dist/core/tools/search-process.js
 new file mode 100644
-index 0000000..a897970
 --- /dev/null
 +++ b/dist/core/tools/search-process.js
 @@ -0,0 +1,74 @@
@@ -719,23 +746,21 @@ index 0000000..a897970
 +    return Math.min(Math.max(1, value), maximum);
 +}
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 52dcaaf..8053eec 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -3,7 +3,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+@@ -3,7 +3,7 @@
  export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
 -export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
 +export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, prepareCompaction, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
  export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
- export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolInfo, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
 diff --git a/dist/index.js b/dist/index.js
-index d833966..e7503c1 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -5,7 +5,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+@@ -5,7 +5,7 @@
  export { AgentSession, parseSkillBlock, } from "./core/agent-session.js";
  export { readStoredCredential } from "./core/auth-storage.js";
  // Compaction
@@ -745,7 +770,6 @@ index d833966..e7503c1 100644
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.js";
  export { convertToLlm } from "./core/messages.js";
 diff --git a/dist/utils/shell.js b/dist/utils/shell.js
-index 19605cc..5777711 100644
 --- a/dist/utils/shell.js
 +++ b/dist/utils/shell.js
 @@ -1,5 +1,5 @@
@@ -755,7 +779,7 @@ index 19605cc..5777711 100644
  import { spawn, spawnSync } from "child_process";
  import { getBinDir } from "../config.js";
  /**
-@@ -106,6 +106,12 @@ export function getPowerShellConfig() {
+@@ -106,6 +106,12 @@
      if (process.platform !== "win32") {
          throw new Error("The powershell tool is only available on Windows.");
      }
@@ -769,7 +793,6 @@ index 19605cc..5777711 100644
      if (!shell) {
          throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
-index 39b1f1a..f2747a3 100644
 --- a/dist/utils/tools-manager.js
 +++ b/dist/utils/tools-manager.js
 @@ -1,7 +1,7 @@
@@ -781,7 +804,7 @@ index 39b1f1a..f2747a3 100644
  import { Readable } from "stream";
  import { pipeline } from "stream/promises";
  import { APP_NAME, getBinDir } from "../config.js";
-@@ -76,6 +76,16 @@ export function getToolPath(tool) {
+@@ -76,6 +76,16 @@
      const config = TOOLS[tool];
      if (!config)
          return null;

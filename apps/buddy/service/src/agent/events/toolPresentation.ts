@@ -145,6 +145,9 @@ function readDiff(value: unknown): string | null {
 function readExitCode(value: unknown, isError: boolean | undefined): number | null {
   if (value === undefined)
     return null
+  const structured = readRecord(readRecord(value)?.structuredContent)?.exit_code
+  if (typeof structured === 'number' && Number.isSafeInteger(structured))
+    return structured
   if (isError === false)
     return 0
   if (isError === undefined)

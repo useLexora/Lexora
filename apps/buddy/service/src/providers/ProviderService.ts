@@ -1,5 +1,6 @@
 import type {
   AuthType,
+  LoginOptions,
   Provider,
 } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
@@ -63,6 +64,7 @@ export interface ProviderModelRuntime extends ProviderModelCatalogRuntime {
 type ModelSnapshot = Pick<ProviderModelSnapshotService, 'initialize' | 'getModels' | 'getProviders' | 'getStatus' | 'refresh'> & Partial<Pick<ProviderModelSnapshotService, 'onDidChange' | 'dispose'>>
 
 export interface ProviderServiceOptions {
+  loginOptions?: LoginOptions
   requestHeaders?: ProviderRequestHeaders
   createBuiltinSource?: (providerId: string) => Provider | undefined
   authInteractions: AuthInteractionService
@@ -78,6 +80,7 @@ export interface ProviderServiceOptions {
 }
 
 export class ProviderService {
+  readonly #loginOptions: LoginOptions | undefined
   readonly #requestHeaders: ProviderRequestHeaders
   readonly #builtins: BuiltinProviderConfigRepository
   readonly #builtinTemplates: ReadonlyMap<string, Provider>
@@ -111,6 +114,7 @@ export class ProviderService {
   get snapshot() { return this.#state.snapshot }
 
   constructor(options: ProviderServiceOptions) {
+    this.#loginOptions = options.loginOptions
     this.#requestHeaders = options.requestHeaders ?? new ProviderRequestHeaders(options.providers.states)
     this.#builtins = options.providers.builtins
     this.#builtinTemplates = new Map(options.modelRuntime.getProviders().map(provider => [provider.id, provider]))
@@ -194,7 +198,7 @@ export class ProviderService {
   }
 
   listBuiltinPresets() {
-    return [...this.#builtinTemplates.values()].map(provider => ({
+    return [...this.#builtinTemplates.values()].filter(provider => provider.getModels().length > 0 || !provider.getAllModels?.().length).map(provider => ({
       id: provider.id,
       displayName: provider.name,
       baseUrl: provider.baseUrl ?? null,
@@ -521,7 +525,7 @@ export class ProviderService {
       const handle = this.#authInteractions.beginLogin(providerId)
       let outcome: 'completed' | 'failed' | 'cancelled' = 'failed'
       try {
-        await this.#modelRuntime.login(providerId, type, handle.interaction)
+        await this.#modelRuntime.login(providerId, type, handle.interaction, this.#loginOptions)
         const instance = this.#builtins.findById(providerId)
         if (instance) {
           if (provider.refreshModels)
@@ -664,7 +668,7 @@ export class ProviderService {
       id: instance.id,
       name: instance.displayName ?? template.name,
       source,
-      getCatalogModels: () => template.getModels(),
+      getCatalogModels: () => template.getAllModels?.() ?? template.getModels(),
     })
   }
 

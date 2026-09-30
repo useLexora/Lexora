@@ -47,7 +47,7 @@ function stream(body: ReadableStream<Uint8Array> | string, options: StreamOption
 }
 
 describe('openAI stream completion compatibility', () => {
-  it.each(['\n', '\r\n'])('preserves incremental Unicode text and usage with a byte-split %j terminator', async (newline) => {
+  it.each(['\n', '\r\n', '\r'])('preserves incremental Unicode text and usage with a byte-split %j terminator', async (newline) => {
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const body = new ReadableStream<Uint8Array>({ start: value => controller = value })
     const response = stream(body)
@@ -63,7 +63,7 @@ describe('openAI stream completion compatibility', () => {
           controller.close()
         }
       }
-      expect(event.type).not.toBe('error')
+      expect(event.type, event.type === 'error' ? event.error.errorMessage : undefined).not.toBe('error')
     }
     const result = await response.result()
     expect(deltas).toEqual(['你好', '，世界'])
