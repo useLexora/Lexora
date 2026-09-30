@@ -103,9 +103,12 @@ function imageToolFailure(
   const diagnosticText = diagnostic
     ? Object.entries(diagnostic).map(([key, value]) => `${key}=${value}`).join(', ')
     : ''
+  const recovery = code === 'IMAGE_GENERATION_INCOMPLETE'
+    ? '. The provider result is unknown; do not automatically repeat this image request.'
+    : ''
   return {
     content: [{
-      text: `Lexora Buddy image generation failed: ${code}${diagnosticText ? ` (${diagnosticText})` : ''}`,
+      text: `Lexora Buddy image generation failed: ${code}${diagnosticText ? ` (${diagnosticText})` : ''}${recovery}`,
       type: 'text' as const,
     }],
     details: {

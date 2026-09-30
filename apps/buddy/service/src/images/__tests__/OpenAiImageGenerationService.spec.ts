@@ -8,8 +8,202 @@ import {
 } from '../OpenAiImageGenerationService'
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+const imageItem = { id: 'image-call-1', result: png.toString('base64'), status: 'completed', type: 'image_generation_call' }
 
 describe('openAiImageGenerationService', () => {
+  it.each(['response.completed', 'response.done', '[DONE]'])('settles %s without waiting for the connection or cancellation cleanup to close', async (type) => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    let cancelled = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start: value => controller = value,
+      cancel() {
+        cancelled = true
+        return new Promise<void>(() => {})
+      },
+    }))
+    const service = streamedService(response)
+    const pending = service.generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })
+    let settled = false
+    void pending.then(() => settled = true, () => settled = true)
+    controller.enqueue(new TextEncoder().encode([
+      sse({ type: 'response.created', response: { id: 'response-1', status: 'in_progress' } }),
+      sse({ type: 'response.output_item.done', item: imageItem }),
+      type === '[DONE]' ? 'data: [DONE]\n\n' : sse({ type, response: { id: 'response-1', status: 'completed', output: [imageItem] } }),
+    ].join('')))
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true))
+      await expect(pending).resolves.toEqual({ images: [{ bytes: new Uint8Array(png), mimeType: 'image/png' }], responseId: 'response-1' })
+      expect(cancelled).toBe(true)
+      expect(response.body?.locked).toBe(false)
+    }
+    finally {
+      if (!cancelled)
+        controller.close()
+      await pending.catch(() => {})
+    }
+  })
+
+  it.each(['\n', '\r\n', '\r'])('parses byte-split %j frames, multiline data and the final EOF frame without duplicating images', async (newline) => {
+    const text = [
+      ': 心跳',
+      '',
+      `data: ${JSON.stringify({ type: 'response.output_item.done', item: imageItem })}`,
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed",',
+      `data: "response":${JSON.stringify({ id: 'response-1', status: 'completed', output: [imageItem], metadata: '中文' })}}`,
+    ].join(newline)
+    const bytes = new TextEncoder().encode(text)
+    let offset = 0
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset < bytes.length)
+          controller.enqueue(bytes.slice(offset, ++offset))
+        else
+          controller.close()
+      },
+    }))
+    await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).resolves.toEqual({
+      images: [{ bytes: new Uint8Array(png), mimeType: 'image/png' }],
+      responseId: 'response-1',
+    })
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it.each([
+    { type: 'error', code: 'provider_failure', message: 'private provider message' },
+    { type: 'error', error: { code: 'provider_failure', message: 'private provider message' } },
+    ...['response.failed', 'response.incomplete', 'response.cancelled', 'response.done'].map(type => ({
+      type,
+      response: { status: 'failed', error: { code: 'provider_failure', message: 'private provider message' }, output: [imageItem] },
+    })),
+  ])('rejects $type immediately even after receiving a completed image', async (event) => {
+    let cancelled = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode([
+          sse({ type: 'response.output_item.done', item: imageItem }),
+          sse(event),
+        ].join('')))
+      },
+      cancel: () => { cancelled = true },
+    }), { headers: { 'x-request-id': 'req_image_fixture' } })
+    await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
+      code: 'IMAGE_GENERATION_FAILED',
+      diagnostic: { providerCode: 'provider_failure', requestId: 'req_image_fixture' },
+      message: 'Lexora Buddy image generation failed',
+    })
+    expect(cancelled).toBe(true)
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it.each(['eof', 'disconnect'])('reports an unknown result on %s before a response terminal event', async (ending) => {
+    let sent = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(new TextEncoder().encode(sse({ type: 'response.output_item.done', item: imageItem })))
+        }
+        else if (ending === 'disconnect') {
+          controller.error(new Error('private transport failure'))
+        }
+        else {
+          controller.close()
+        }
+      },
+    }), { headers: { 'x-request-id': 'req_image_fixture' } })
+    await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
+      code: 'IMAGE_GENERATION_INCOMPLETE',
+      diagnostic: { requestId: 'req_image_fixture' },
+    })
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it('reports an unknown result and keeps the request id when a JSON response disconnects', async () => {
+    let sent = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sent) {
+          sent = true
+          controller.enqueue(new TextEncoder().encode('{"status":"completed","output":['))
+        }
+        else {
+          controller.error(new Error('private transport failure'))
+        }
+      },
+    }), { headers: { 'x-request-id': 'req_image_fixture' } })
+    await expect(streamedService(response).generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
+      code: 'IMAGE_GENERATION_INCOMPLETE',
+      diagnostic: { requestId: 'req_image_fixture' },
+      message: 'Lexora Buddy image generation failed',
+    })
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it.each([openAiModel(), codexModel()])('cancels a blocked $api body read without waiting for transport cleanup', async (model) => {
+    let cancelled = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true
+        return new Promise<void>(() => {})
+      },
+    }))
+    const abort = new AbortController()
+    const pending = streamedService(response).generate({ inputImages: [], model, prompt: 'fixture', signal: abort.signal })
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(response.body?.locked).toBe(true))
+    abort.abort()
+    await assertion
+    expect(cancelled).toBe(true)
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it('allows a long-running stream to complete after an hour without a total timeout', async () => {
+    vi.useFakeTimers()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const response = new Response(new ReadableStream<Uint8Array>({ start: value => controller = value }))
+    const abort = new AbortController()
+    const pending = streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: abort.signal })
+    let settled = false
+    void pending.then(() => settled = true, () => settled = true)
+    try {
+      await vi.waitFor(() => expect(response.body?.locked).toBe(true))
+      controller.enqueue(new TextEncoder().encode(sse({ type: 'response.in_progress', response: { id: 'response-1', status: 'in_progress' } })))
+      await vi.advanceTimersByTimeAsync(3_600_000)
+      expect(settled).toBe(false)
+      controller.enqueue(new TextEncoder().encode(sse({ type: 'response.completed', response: { id: 'response-1', status: 'completed', output: [imageItem] } })))
+      await expect(pending).resolves.toMatchObject({ images: [{ mimeType: 'image/png' }], responseId: 'response-1' })
+    }
+    finally {
+      abort.abort()
+      await pending.catch(() => {})
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['malformed frame', 'data: {invalid}\n\n', 'IMAGE_GENERATION_INVALID_RESPONSE'],
+    ['empty terminal', sse({ type: 'response.completed', response: { status: 'completed', output: [] } }), 'IMAGE_GENERATION_FAILED'],
+    ['unfinished image', sse({ type: 'response.completed', response: { status: 'completed', output: [{ ...imageItem, status: 'in_progress' }] } }), 'IMAGE_GENERATION_FAILED'],
+  ])('rejects %s and releases the stream', async (_name, body, code) => {
+    let cancelled = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start: controller => controller.enqueue(new TextEncoder().encode(body)),
+      cancel: () => { cancelled = true },
+    }))
+    await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({ code })
+    expect(cancelled).toBe(true)
+  })
+
+  it('rejects a failed JSON response even when it contains an earlier image result', async () => {
+    const response = Response.json({ status: 'failed', output: [imageItem], error: { code: 'provider_failure', message: 'private failure' } })
+    await expect(streamedService(response).generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
+      code: 'IMAGE_GENERATION_FAILED',
+      diagnostic: { providerCode: 'provider_failure' },
+    })
+  })
+
   it.each(['openai', 'builtin-personal'])('uses the selected instance %s for OpenAI Responses image generation', async (providerId) => {
     const getAuth = vi.fn(async () => ({
       auth: { apiKey: `fixture-key-${providerId}` },
@@ -182,6 +376,38 @@ describe('openAiImageGenerationService', () => {
     })).rejects.toMatchObject({ code: 'PROVIDER_AUTHENTICATION_FAILED' })
   })
 
+  it('does not submit an image request when cancellation occurs during authentication', async () => {
+    const abort = new AbortController()
+    const request = vi.fn()
+    const service = new OpenAiImageGenerationService({
+      fetch: request,
+      modelRuntime: { getAuth: async () => {
+        abort.abort()
+        return { auth: { apiKey: 'fixture-key' } }
+      } },
+    })
+    await expect(service.generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('releases a response arriving after cancellation without reading it', async () => {
+    const abort = new AbortController()
+    let cancelled = false
+    const response = new Response(new ReadableStream<Uint8Array>({
+      cancel: () => { cancelled = true },
+    }))
+    const service = new OpenAiImageGenerationService({
+      fetch: async () => {
+        abort.abort()
+        return response
+      },
+      modelRuntime: { getAuth: async () => ({ auth: { apiKey: 'fixture-key' } }) },
+    })
+    await expect(service.generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(cancelled).toBe(true)
+    expect(response.body?.locked).toBe(false)
+  })
+
   it('stops reading an undeclared response once the bounded size is exceeded', async () => {
     let cancelled = false
     let pulls = 0
@@ -246,4 +472,15 @@ function jwt(payload: Record<string, unknown>): string {
     Buffer.from(JSON.stringify(payload)).toString('base64url'),
     'signature',
   ].join('.')
+}
+
+function streamedService(response: Response) {
+  return new OpenAiImageGenerationService({
+    fetch: async () => response,
+    modelRuntime: { getAuth: async () => ({ auth: { apiKey: jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'account-1' } }) } }) },
+  })
+}
+
+function sse(event: unknown): string {
+  return `data: ${JSON.stringify(event)}\n\n`
 }
