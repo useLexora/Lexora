@@ -64,12 +64,16 @@ describe('toolDisclosure', () => {
     expect(disclosure.active({ model })).not.toContain(name)
   })
 
-  it('does not expose undeclared extensions just because Pi initially activates them', () => {
-    const disclosure = new ToolDisclosure(tools, names, [])
-    expect(disclosure.active({ model })).toEqual([TOOL_SEARCH_NAME, 'read'])
-    expect(disclosure.search({ toolNames: ['lexora_browser_act'] }, { model }).tools).toEqual([])
-    const deferred = new ToolDisclosure(tools, names, [], () => 'on_demand')
-    expect(deferred.active({ model })).toEqual([TOOL_SEARCH_NAME])
+  it('keeps undeclared extensions unavailable regardless of Pi initial activation', () => {
+    for (const initial of [names, ['read', TOOL_SEARCH_NAME]]) {
+      const disclosure = new ToolDisclosure(tools, initial, [])
+      expect(disclosure.active({ model })).toEqual([TOOL_SEARCH_NAME, 'read'])
+      expect(disclosure.search({ toolNames: ['lexora_browser_act'] }, { model })).toMatchObject({ tools: [], notFound: ['lexora_browser_act'] })
+      expect(disclosure.search({ query: 'lexora_browser_act' }, { model }).tools.map(tool => tool.name)).not.toContain('lexora_browser_act')
+      expect(disclosure.active({ model })).toEqual([TOOL_SEARCH_NAME, 'read'])
+      const deferred = new ToolDisclosure(tools, initial, [], () => 'on_demand')
+      expect(deferred.active({ model })).toEqual([TOOL_SEARCH_NAME])
+    }
   })
 
   it('keeps catalog ordering independent of registration and search order and rejects ambiguous identities', () => {
@@ -81,13 +85,6 @@ describe('toolDisclosure', () => {
     expect(a.active({ model })).toEqual(b.active({ model }))
     expect(a.persistedState).toEqual(b.persistedState)
     expect(() => new ToolDisclosure(tools, names, [policy, policy])).toThrow('TOOL_CATALOG_DUPLICATE')
-  })
-
-  it('does not activate registered tools outside the platform baseline or a disclosure policy', () => {
-    const disclosure = new ToolDisclosure(tools, ['read', TOOL_SEARCH_NAME], [])
-    expect(disclosure.search({ toolNames: ['lexora_browser_act'] }, { model }).notFound).toEqual(['lexora_browser_act'].sort())
-    expect(disclosure.search({ query: 'lexora_browser_act' }, { model }).tools.map(tool => tool.name)).not.toContain('lexora_browser_act')
-    expect(disclosure.active({ model })).toEqual(['read', TOOL_SEARCH_NAME].sort())
   })
 
   it('keeps large and external schemas out of new sessions and discovers Chinese capabilities', () => {

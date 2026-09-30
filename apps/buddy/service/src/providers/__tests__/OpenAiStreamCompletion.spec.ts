@@ -116,14 +116,6 @@ describe('openAI stream completion compatibility', () => {
     expect(result.diagnostics).toBeUndefined()
   })
 
-  it('keeps completion evidence isolated between concurrent requests', async () => {
-    const results = await Promise.all([
-      stream(`${textDelta('complete')}data: [DONE]\n\n`).result(),
-      stream(textDelta('partial')).result(),
-    ])
-    expect(results.map(result => result.stopReason)).toEqual(['stop', 'error'])
-  })
-
   it('leaves the existing provider-specific compatibility policy intact', async () => {
     const result = await provider.stream({ ...model, compat: { supportsFinishReason: false } }, context, {
       apiKey: 'fixture-key',
@@ -144,16 +136,20 @@ describe('openAI stream completion compatibility', () => {
     expect(JSON.stringify(diagnostics)).not.toMatch(/private|fixture-key|fixture.example/)
   })
 
-  it('correlates concurrent requests without cross-talk and observes inferred versus standard completions', async () => {
-    await Promise.all([
+  it('isolates concurrent completion evidence and diagnostics for inferred, standard and incomplete streams', async () => {
+    const messages = await Promise.all([
       diagnosticContext.run({ operationId: 'operation-a', runId: 'run-a' }, () => stream(`${textDelta('private-answer')}data: [DONE]\n\n`).result()),
       diagnosticContext.run({ operationId: 'operation-b', runId: 'run-b' }, () => stream(`${textDelta('private-answer')}${frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}data: [DONE]\n\n`).result()),
+      diagnosticContext.run({ operationId: 'operation-c', runId: 'run-c' }, () => stream(textDelta('private-answer')).result()),
     ])
+    expect(messages.map(message => message.stopReason)).toEqual(['stop', 'stop', 'error'])
     const results = diagnostics.filter(record => record.event === 'provider.request.completed')
     expect(results).toHaveLength(2)
     expect(results.find(record => record.runId === 'run-a')).toMatchObject({ operationId: 'operation-a', providerRequest: { completion: 'inferred', doneMarker: 'observed', contentEvents: 1, toolCalls: 0 } })
     expect(results.find(record => record.runId === 'run-b')).toMatchObject({ operationId: 'operation-b', providerRequest: { completion: 'sdk' } })
-    expect(new Set(results.map(record => record.requestId)).size).toBe(2)
+    const failed = diagnostics.filter(record => record.event === 'provider.request.failed')
+    expect(failed).toMatchObject([{ operationId: 'operation-c', runId: 'run-c', providerRequest: { completion: 'incomplete', doneMarker: 'not_observed' } }])
+    expect(new Set([...results, ...failed].map(record => record.requestId)).size).toBe(3)
     expect(JSON.stringify(diagnostics)).not.toContain('private-answer')
   })
 

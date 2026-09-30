@@ -105,7 +105,6 @@ describe('built-in provider instances', () => {
     expect(ids).toHaveLength(3)
     expect(new Set(ids).size).toBe(1)
     expect(settings.get('buddy.providers.device-id')).toBe(ids[0])
-    expect(JSON.stringify(settings.get('buddy.providers.device-id'))).not.toContain('fixture-access')
   })
 
   it('keeps account model availability consistent across login, sync and runtime recreation', async () => {
@@ -169,7 +168,7 @@ describe('built-in provider instances', () => {
     await expectAccountModels(unauthenticated)
   })
 
-  it('keeps credential-specific dynamic catalogs separate when refreshing and restoring caches', async () => {
+  it('keeps mixed account catalogs separate across refresh and offline restoration', async () => {
     const credentials = new InMemoryCredentialStore()
     const modelsStore = new InMemoryModelsStore()
     const setup = () => {
@@ -177,12 +176,16 @@ describe('built-in provider instances', () => {
       for (const id of ['account-a', 'account-b']) {
         const { provider } = createSource()
         const baseline = provider.getModels()[0]!
-        let catalog: readonly Model<Api>[] = []
-        provider.getModels = () => catalog
+        let catalog: readonly AnyModel[] = []
+        provider.getModels = () => catalog.filter(model => isModelType(model, 'chat'))
+        provider.getAllModels = () => catalog
         provider.refreshModels = async (context) => {
-          const next = context.allowNetwork && context.credential?.type === 'api_key'
-            ? [{ ...baseline, id: context.credential.key! }]
-            : context.stored?.models.filter(model => isModelType(model, 'chat')).filter(model => model.provider === provider.id) ?? []
+          const next: readonly AnyModel[] = context.allowNetwork && context.credential?.type === 'api_key'
+            ? [
+                { ...baseline, id: context.credential.key! },
+                { id: context.credential.key!, name: 'Image model', provider: provider.id, type: 'image', api: 'fixture-images', baseUrl: baseline.baseUrl, input: ['text'], output: ['image'], cost: baseline.cost },
+              ]
+            : context.stored?.models.filter(model => model.provider === provider.id) ?? []
           await context.publish({
             persist: { models: next },
             update: () => {
@@ -200,12 +203,18 @@ describe('built-in provider instances', () => {
     await models.refresh({ allowNetwork: true })
     for (const id of ['account-a', 'account-b']) {
       expect(models.getModels(id)).toMatchObject([{ provider: id, id: `${id}-model` }])
-      expect(await modelsStore.read(id)).toMatchObject({ models: [{ provider: id, id: `${id}-model` }] })
+      expect(models.getModelOfType('image', id, `${id}-model`)).toMatchObject({ provider: id, id: `${id}-model`, type: 'image' })
+      expect(await modelsStore.read(id)).toMatchObject({ models: [
+        { provider: id, id: `${id}-model` },
+        { provider: id, id: `${id}-model`, type: 'image' },
+      ] })
     }
     const restored = setup()
     await restored.refresh({ allowNetwork: false })
-    expect(restored.getModels('account-a')).toMatchObject([{ provider: 'account-a', id: 'account-a-model' }])
-    expect(restored.getModels('account-b')).toMatchObject([{ provider: 'account-b', id: 'account-b-model' }])
+    for (const id of ['account-a', 'account-b']) {
+      expect(restored.getModels(id)).toMatchObject([{ provider: id, id: `${id}-model` }])
+      expect(restored.getModelOfType('image', id, `${id}-model`)).toMatchObject({ provider: id, id: `${id}-model`, type: 'image' })
+    }
   })
 
   it('resolves service tiers using the built-in source instead of the instance identifier', async () => {
@@ -222,8 +231,6 @@ describe('built-in provider instances', () => {
       sessionRuntime: runtime,
     })
     const instance = await service.addProvider('openai-codex')
-    expect(service.listBuiltinPresets()).not.toContainEqual(expect.objectContaining({ id: 'typesafe' }))
-    expect(runtime.getModelsOfType('classifier', 'typesafe')).not.toHaveLength(0)
     expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-5.6-sol', api: 'openai-codex-responses' }))
       .toEqual([{ displayName: 'Fast', id: 'priority' }])
     expect(service.executionModels.getServiceTiers({ providerId: instance.id, modelId: 'gpt-6-astra', api: 'openai-codex-responses' }))

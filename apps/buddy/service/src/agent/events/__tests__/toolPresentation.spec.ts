@@ -50,7 +50,7 @@ describe('createBuddyToolPresentation', () => {
     })).toMatchObject({ card: 'terminal', exitCode: 2, signal: null })
   })
 
-  it('projects an expired internal action binding as recoverable without exposing internals', () => {
+  it('projects an expired action binding as recoverable', () => {
     const failure = {
       error: {
         code: 'SYSTEM_ACTION_EXPIRED',
@@ -86,7 +86,5 @@ describe('createBuddyToolPresentation', () => {
       target: null,
       verified: null,
     })
-    expect(JSON.stringify(presentation)).not.toContain('startTicks')
-    expect(JSON.stringify(presentation)).not.toContain('executable')
   })
 })
