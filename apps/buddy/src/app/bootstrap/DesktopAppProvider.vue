@@ -32,6 +32,7 @@ import { desktopWorkbenchKey } from '../workbench/desktopWorkbenchContext'
 import { useDesktopKeybindings } from '../workbench/useDesktopKeybindings'
 import { useDesktopWorkbench } from '../workbench/useDesktopWorkbench'
 import { useExtensionContributions } from '../workbench/useExtensionContributions'
+import { useTaskResourceSpaces } from '../workbench/useTaskResourceSpaces'
 import { createDesktopCapabilities } from './desktopCapabilities'
 import { useDesktopAppState } from './useDesktopAppState'
 import { useDesktopLifecycle } from './useDesktopLifecycle'
@@ -105,6 +106,7 @@ useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocatio
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))
 const selectedTask = workbench.activeTask
 const resources = useTaskResourcePanel({
+  scopeSpaceIds: useTaskResourceSpaces({ controller: workbench.controller, pool: workbench.pool, tasks: taskIndex.index.tasks }),
   activeConversationId: workbench.activeTaskId,
   activeDraftId: computed(() => selectedTask.value?.workspace.composer.draftId.value ?? null),
   activeBranchId: computed(() => selectedTask.value?.workspace.session.activeBranchId.value ?? null),

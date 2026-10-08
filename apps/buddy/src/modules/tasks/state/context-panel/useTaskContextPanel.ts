@@ -11,11 +11,12 @@ import { resolveChatToolFileTarget } from '../../model/transcript/chatToolFileTa
 import { useContextPanelTabs } from './useContextPanelTabs'
 
 export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
-  const store = useContextPanelTabs({ mode: options.mode, conversationId: options.activeConversationId, draftId: options.activeDraftId })
+  const store = useContextPanelTabs({ mode: options.mode, scopeSpaceIds: options.scopeSpaceIds, conversationId: options.activeConversationId, draftId: options.activeDraftId })
+  const linked = computed(() => options.mode.value !== 'independent')
   const control = useContextPanelControl({
     api: options.control,
     getSource: () => contextTabSource(store.activeTab.value)
-      ?? (options.mode.value === 'task' && options.taskVisible.value ? currentSource() ?? null : null),
+      ?? (linked.value && options.taskVisible.value ? currentSource() ?? null : null),
     onError: options.onError,
     onTarget: (target) => {
       const tab = spaceTaskBrowserTab(target.source.conversationId)
@@ -27,13 +28,13 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     && space.primaryDirectory && space.primaryDirectory.revokedAt === null))
   const currentFileSpace = computed(() => fileSpaces.value.find(space => space.id === options.activeSpace?.value?.id) ?? null)
   const fileEntry = computed(() => {
-    if (options.mode.value === 'independent')
+    if (!linked.value)
       return { kind: 'space-picker' as const }
     return options.taskVisible.value && currentFileSpace.value
       ? { kind: 'directory' as const, spaceId: currentFileSpace.value.id }
       : null
   })
-  const canAddChanges = computed(() => options.mode.value === 'task' && options.taskVisible.value
+  const canAddChanges = computed(() => linked.value && options.taskVisible.value
     && Boolean(options.activeConversationId.value)
     && !store.tabs.value.some(tab => tab.kind === 'changes' && tab.conversationId === options.activeConversationId.value))
   const changeRevision = computed(() => options.changeSets.value.filter(set => set.conversationId === options.activeConversationId.value)
@@ -46,7 +47,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
       if (tab.kind !== 'changes' || tab.conversationId !== options.activeConversationId.value)
         return tab
       if (tab.branchId !== branchId)
-        return options.mode.value === 'task' ? { ...tab, branchId, revision, changeSet: null, source: currentSource() } : tab
+        return linked.value ? { ...tab, branchId, revision, changeSet: null, source: currentSource() } : tab
       return tab.revision !== revision ? { ...tab, revision } : tab
     })
   })
@@ -120,7 +121,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
       kind: 'files',
       rootName: directory.root.split(/[\\/]/).filter(Boolean).at(-1) ?? directory.root,
       target: { spaceId: space.id, directoryId: directory.id, revision: directory.revision, path: '' },
-      source: options.mode.value === 'task' ? currentSource() : undefined,
+      source: linked.value ? currentSource() : undefined,
     })
   }
 

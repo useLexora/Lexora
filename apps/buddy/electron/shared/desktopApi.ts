@@ -137,7 +137,7 @@ export interface DesktopTaskSidebarPreferences {
 
 export type DesktopChatWelcomeVariantId = typeof DESKTOP_CHAT_WELCOME_VARIANT_IDS[number]
 export type DesktopChatWelcomePreference = 'none' | 'random' | DesktopChatWelcomeVariantId
-export type DesktopContextPanelMode = 'task' | 'independent'
+export type DesktopContextPanelMode = 'task' | 'space' | 'independent'
 
 export const DESKTOP_CHAT_OUTLINE_POSITIONS = [
   'top-left',

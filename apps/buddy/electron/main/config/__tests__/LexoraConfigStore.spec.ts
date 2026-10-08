@@ -147,16 +147,16 @@ describe('lexoraConfigStore', () => {
     expect((await store.read()).desktop.language).toBe('en-US')
   })
 
-  it('defaults global panels off and persists mode and visibility independently across restarts', async () => {
+  it.each(['independent', 'space'] as const)('defaults global panels off and persists %s mode and visibility independently across restarts', async (mode) => {
     const { configPath, store } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(configPath, '[desktop]\nlanguage = "en-US"\n[future]\nvalue = true\n')
     expect((await store.read()).desktop).toMatchObject({ contextPanelMode: 'task', contextPanelGlobal: false })
-    await store.update({ desktop: { contextPanelMode: 'independent', contextPanelGlobal: true } })
+    await store.update({ desktop: { contextPanelMode: mode, contextPanelGlobal: true } })
     await store.update({ desktop: { theme: 'dark' } })
     const restarted = new LexoraConfigStore({ configPath })
     expect((await restarted.read()).desktop).toMatchObject({
-      contextPanelMode: 'independent',
+      contextPanelMode: mode,
       contextPanelGlobal: true,
       language: 'en-US',
       theme: 'dark',

@@ -69,7 +69,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
       permissionMode: z.enum(BUDDY_PERMISSION_MODES).optional(),
       welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).optional(),
     }).strict().optional(),
-    contextPanelMode: z.enum(['task', 'independent']).optional(),
+    contextPanelMode: z.enum(['task', 'space', 'independent']).optional(),
     contextPanelGlobal: z.boolean().optional(),
     keybindings: keybindingsSchema.optional(),
     taskSidebarPinnedItems: taskSidebarPinnedItemsSchema.optional(),

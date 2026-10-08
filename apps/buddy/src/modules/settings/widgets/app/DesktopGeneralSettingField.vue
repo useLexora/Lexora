@@ -14,6 +14,7 @@ const pending = shallowRef(false)
 const labelId = useId()
 const contextPanelModes = computed(() => [
   { label: t('desktop.settings.contextPanelTask'), value: 'task' },
+  { label: t('desktop.settings.contextPanelSpace'), value: 'space' },
   { label: t('desktop.settings.contextPanelIndependent'), value: 'independent' },
 ])
 const labels = computed(() => ({

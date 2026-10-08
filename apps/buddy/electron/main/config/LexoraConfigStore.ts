@@ -47,7 +47,7 @@ const desktopConfigSchema = z.object({
     permission_mode: z.enum(BUDDY_PERMISSION_MODES).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode),
     welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome),
   }).passthrough().prefault({}),
-  context_panel_mode: z.enum(['task', 'independent']).default('task'),
+  context_panel_mode: z.enum(['task', 'space', 'independent']).default('task'),
   context_panel_global: z.boolean().default(false),
   keybindings: keybindingsSchema.default({}),
   task_sidebar_pinned_items: z.array(taskSidebarPinnedItemSchema)

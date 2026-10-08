@@ -7,6 +7,7 @@ import type { Ref } from 'vue'
 
 export interface UseTaskContextPanelOptions {
   mode: Readonly<Ref<DesktopContextPanelMode>>
+  scopeSpaceIds: Readonly<Ref<ReadonlyMap<string, string | null>>>
   control: ContextPanelApi
   onError: () => void
   activeBranchId: Readonly<Ref<string | null>>

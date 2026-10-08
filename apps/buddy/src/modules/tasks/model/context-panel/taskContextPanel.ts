@@ -1,3 +1,4 @@
+import type { DesktopContextPanelMode } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
@@ -6,6 +7,14 @@ import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 
 export type ArtifactViewMode = 'preview' | 'source'
 export type ContextPanelScope = `task:${string}` | `draft:${string}` | 'independent' | 'workspace'
+export type ContextPanelSelectionScope = ContextPanelScope | `space:${string}`
+
+export function contextPanelSelectionScope(mode: DesktopContextPanelMode, scope: ContextPanelScope, spaceIds: ReadonlyMap<string, string | null>): ContextPanelSelectionScope {
+  if (mode === 'independent')
+    return 'independent'
+  const spaceId = mode === 'space' ? spaceIds.get(scope) : null
+  return spaceId ? `space:${spaceId}` : scope
+}
 
 interface ContextTabSource {
   scope: ContextPanelScope

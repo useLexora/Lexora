@@ -19,6 +19,7 @@ export function contextPanelFixture(overrides: Partial<UseTaskContextPanelOption
     activeBranchId: shallowRef('branch'),
     activeRunId: shallowRef(null),
     mode: shallowRef('task'),
+    scopeSpaceIds: shallowRef(new Map()),
     taskVisible: shallowRef(true),
     spaces: shallowRef([]),
     changeSets: shallowRef([]),
