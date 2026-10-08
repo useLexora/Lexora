@@ -20,6 +20,7 @@ interface UseDesktopWorkbenchResizeOptions {
   workspaceMinimumWidth?: () => number
   container: Readonly<Ref<HTMLElement | null>>
   context: Readonly<Ref<HTMLElement | null>>
+  contextOnLeft?: () => boolean
   contextVisible?: () => boolean
   sidebar: Readonly<Ref<HTMLElement | null>>
   sidebarResizable: () => boolean
@@ -114,10 +115,12 @@ export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOption
     const bounds = resizeBounds
     if (!bounds)
       return
-    setPanelWidth(
-      panel,
-      panel === 'sidebar' ? clientX - bounds.left : bounds.right - clientX,
-    )
+    const width = panel === 'sidebar'
+      ? clientX - bounds.left
+      : options.contextOnLeft?.()
+        ? clientX - bounds.left - widths.value.sidebarWidth
+        : bounds.right - clientX
+    setPanelWidth(panel, width)
   }
 
   function flushResize(): void {
@@ -198,6 +201,7 @@ export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOption
       ? widths.value.sidebarWidth
       : widths.value.contextWidth
     const step = event.shiftKey ? KEYBOARD_RESIZE_LARGE_STEP : KEYBOARD_RESIZE_STEP
+    const growsLeft = panel === 'context' && !options.contextOnLeft?.()
     let nextWidth: number | null = null
 
     if (event.key === 'Home')
@@ -205,9 +209,9 @@ export function useWorkbenchPanelResize(options: UseDesktopWorkbenchResizeOption
     else if (event.key === 'End')
       nextWidth = range.maximum
     else if (event.key === 'ArrowLeft')
-      nextWidth = currentWidth + (panel === 'context' ? step : -step)
+      nextWidth = currentWidth + (growsLeft ? step : -step)
     else if (event.key === 'ArrowRight')
-      nextWidth = currentWidth + (panel === 'context' ? -step : step)
+      nextWidth = currentWidth + (growsLeft ? -step : step)
 
     if (nextWidth === null)
       return

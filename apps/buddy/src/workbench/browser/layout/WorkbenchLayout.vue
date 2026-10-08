@@ -1,34 +1,45 @@
 <script setup lang="ts">
+import type { ComponentPublicInstance } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed, nextTick, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { DESKTOP_WORKBENCH_WIDTH_LIMITS } from '../../common/workbenchPanelLayout'
 import { useWorkbenchPanelResize } from './useWorkbenchPanelResize'
 
 const props = withDefaults(defineProps<{
   language: BuddyLocale
   contextVisible?: boolean
+  contextOnLeft?: boolean
+  contextMaximized?: boolean
   sidebarCollapsible?: boolean
   sidebarResizable?: boolean
   workspaceMinimumWidth?: number
 }>(), {
   contextVisible: true,
+  contextOnLeft: false,
+  contextMaximized: false,
   sidebarCollapsible: false,
   sidebarResizable: false,
   workspaceMinimumWidth: 288,
 })
 const slots = defineSlots<{
   context?: () => unknown
-  default: () => unknown
+  workspace: () => unknown
   sidebar?: () => unknown
 }>()
 const sidebarCollapsed = defineModel<boolean>('sidebarCollapsed', { default: false })
 const sidebarWidthPreference = defineModel<number | null>('sidebarWidth', { default: null })
 const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
-const context = useTemplateRef<HTMLElement>('context')
+const context = shallowRef<HTMLElement | null>(null)
+function setContextElement(element: Element | ComponentPublicInstance | null) {
+  context.value = element instanceof HTMLElement ? element : null
+}
 const sidebar = useTemplateRef<HTMLElement>('sidebar')
+const maximized = computed(() => props.contextVisible && props.contextMaximized)
+const regions = computed(() => props.contextOnLeft ? ['context', 'workspace'] as const : ['workspace', 'context'] as const)
 useWorkbenchAnchor('workbench.sidebar', () => sidebar.value)
 function sidebarVisible() {
   const collapsible = props.sidebarCollapsible
@@ -53,8 +64,9 @@ const {
 } = useWorkbenchPanelResize({
   container,
   context,
-  contextVisible: () => props.contextVisible,
-  workspaceMinimumWidth: () => props.workspaceMinimumWidth,
+  contextOnLeft: () => props.contextOnLeft,
+  contextVisible: () => props.contextVisible && !maximized.value,
+  workspaceMinimumWidth: () => maximized.value ? DESKTOP_WORKBENCH_WIDTH_LIMITS.context.minimum : props.workspaceMinimumWidth,
   onSidebarWidthCommit: (width) => {
     sidebarWidthPreference.value = width
   },
@@ -110,6 +122,8 @@ onBeforeUnmount(() => {
     :class="{
       'is-resizing': activePanel !== null,
       'is-sidebar-transitioning': sidebarTransitioning,
+      'is-context-on-left': contextOnLeft,
+      'is-context-maximized': maximized,
     }"
     :style="layoutStyle"
   >
@@ -161,27 +175,35 @@ onBeforeUnmount(() => {
     >
       <DesktopIcon class="desktop-workbench-layout__sidebar-chevron" name="sidebarChevron" />
     </button>
-    <main class="desktop-workbench-layout__workspace">
-      <slot />
-    </main>
-    <div
-      v-if="$slots.context && contextVisible"
-      class="desktop-workbench-layout__resizer"
-      :class="{ 'is-active': activePanel === 'context' }"
-      data-testid="workbench-context-resizer"
-      role="separator"
-      :aria-label="t('desktop.layout.resizeContext')"
-      aria-orientation="vertical"
-      :aria-valuemax="Math.round(contextRange.maximum)"
-      :aria-valuemin="Math.round(contextRange.minimum)"
-      :aria-valuenow="Math.round(contextWidth)"
-      tabindex="0"
-      @keydown="handleResizeKeydown('context', $event)"
-      @pointerdown="beginResize('context', $event)"
-    />
-    <aside v-if="$slots.context" v-show="contextVisible" ref="context" class="desktop-workbench-layout__context" :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible">
-      <slot name="context" />
-    </aside>
+    <template v-for="(region, index) in regions" :key="region">
+      <main
+        v-if="region === 'workspace'" v-show="!maximized" class="desktop-workbench-layout__workspace"
+        :inert="maximized" :aria-hidden="maximized"
+      >
+        <slot name="workspace" />
+      </main>
+      <aside
+        v-else-if="$slots.context" v-show="contextVisible" :ref="setContextElement" class="desktop-workbench-layout__context"
+        :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible"
+      >
+        <slot name="context" />
+      </aside>
+      <div
+        v-if="index === 0 && $slots.context && contextVisible && !maximized"
+        class="desktop-workbench-layout__resizer"
+        :class="{ 'is-active': activePanel === 'context' }"
+        data-testid="workbench-context-resizer"
+        role="separator"
+        :aria-label="t('desktop.layout.resizeContext')"
+        aria-orientation="vertical"
+        :aria-valuemax="Math.round(contextRange.maximum)"
+        :aria-valuemin="Math.round(contextRange.minimum)"
+        :aria-valuenow="Math.round(contextWidth)"
+        tabindex="0"
+        @keydown="handleResizeKeydown('context', $event)"
+        @pointerdown="beginResize('context', $event)"
+      />
+    </template>
     <div v-if="activePanel" class="desktop-workbench-layout__resize-shield" />
   </section>
 </template>
@@ -237,6 +259,16 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: none;
   border-left: 1px solid var(--buddy-border-subtle);
+}
+
+.desktop-workbench-layout.is-context-on-left > .desktop-workbench-layout__context {
+  border-right: 1px solid var(--buddy-border-subtle);
+  border-left: 0;
+}
+
+.desktop-workbench-layout.is-context-maximized > .desktop-workbench-layout__context {
+  flex: 1;
+  border: 0;
 }
 
 .desktop-workbench-layout__resizer {

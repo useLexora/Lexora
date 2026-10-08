@@ -2,6 +2,7 @@
 import type { Component } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Add20Regular, Dismiss16Regular } from '@vicons/fluent'
+import { useResizeObserver } from '@vueuse/core'
 import { NPopover } from 'naive-ui'
 import { nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -18,7 +19,7 @@ const emit = defineEmits<{
   closeTab: [tabId: string]
   selectTab: [tabId: string]
 }>()
-defineSlots<{ default?: () => unknown, toolbar?: () => unknown, icon?: (props: { tab: Tab }) => unknown }>()
+defineSlots<{ 'default'?: () => unknown, 'header-actions'?: () => unknown, 'toolbar'?: () => unknown, 'icon'?: (props: { tab: Tab }) => unknown }>()
 const { t } = useBuddyI18n(() => props.language)
 const panelId = `context-${useId()}`
 const menuOpen = shallowRef(false)
@@ -52,10 +53,12 @@ function handleTabsWheel(event: WheelEvent) {
   event.preventDefault()
   root.scrollBy({ left: event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? root.clientWidth : 1) })
 }
-watch(() => [props.activeTabId, props.tabs.length], async () => {
+async function revealActiveTab() {
   await nextTick()
   tabsScrollRoot.value?.querySelector('[aria-selected="true"]')?.closest('.desktop-task-context-panel__tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-})
+}
+watch(() => [props.activeTabId, props.tabs.length], revealActiveTab)
+useResizeObserver(tabsScrollRoot, revealActiveTab)
 </script>
 
 <template>
@@ -86,6 +89,9 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
           </button>
         </div>
       </NPopover>
+      <div v-if="$slots['header-actions']" class="desktop-task-context-panel__actions">
+        <slot name="header-actions" />
+      </div>
     </header>
     <div v-if="$slots.toolbar" class="desktop-task-context-panel__toolbar">
       <slot name="toolbar" />
@@ -129,6 +135,13 @@ watch(() => [props.activeTabId, props.tabs.length], async () => {
   flex: 0 1 calc(var(--tab-count) * 11rem);
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+.desktop-task-context-panel__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin: 0 0.375rem 0 auto;
 }
 
 :deep(.desktop-task-context-panel__tabs-scrollbar) {

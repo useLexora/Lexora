@@ -4,10 +4,12 @@ import type { DropPosition, WorkbenchLayout } from '../common/workbench'
 import type { workbenchLabels } from '../common/workbenchLabels'
 import type { WorkbenchController } from '../services/WorkbenchController'
 import type { WorkingCopyService } from '../services/WorkingCopyService'
+import type { WorkbenchPanelPresentation } from './layout/useWorkbenchPanelPresentation'
 import type { WorkbenchResize } from './useWorkbenchResize'
 import { inject } from 'vue'
 
 export interface WorkbenchContext {
+  panels: WorkbenchPanelPresentation
   resize: WorkbenchResize
   controller: WorkbenchController
   copies: WorkingCopyService

@@ -20,7 +20,7 @@ const emit = defineEmits<{
   closeTab: [tabId: string]
   selectTab: [tabId: string]
 }>()
-defineSlots<{ default?: () => unknown, toolbar?: () => unknown }>()
+defineSlots<{ 'default'?: () => unknown, 'header-actions'?: () => unknown, 'toolbar'?: () => unknown }>()
 const { t } = useBuddyI18n(() => props.language)
 const actions = computed(() => [
   ...(props.canAddChanges ? [{ id: 'changes' as const, label: t('desktop.context.changes'), icon: Code16Regular }] : []),
@@ -43,6 +43,9 @@ function add(id: string) {
     </template>
     <template v-if="$slots.toolbar" #toolbar>
       <slot name="toolbar" />
+    </template>
+    <template v-if="$slots['header-actions']" #header-actions>
+      <slot name="header-actions" />
     </template>
     <slot />
   </WorkbenchResourcePanel>

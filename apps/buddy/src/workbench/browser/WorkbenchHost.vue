@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { WorkbenchMountTarget } from '@buddy-shared/workbench/workbenchUi'
-import type { DragEndEvent } from '@dnd-kit/vue'
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/vue'
 import type { DropPosition, ResourceRef, WorkbenchView } from '../common/workbench'
 import type { WorkbenchController } from '../services/WorkbenchController'
 import type { WorkingCopyService } from '../services/WorkingCopyService'
@@ -13,6 +13,7 @@ import { computed, onMounted, onScopeDispose, provide, shallowRef, triggerRef } 
 import { useOptionalWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { commandLabel } from '../common/workbench'
 import { workbenchLabels } from '../common/workbenchLabels'
+import { useWorkbenchPanelPresentation } from './layout/useWorkbenchPanelPresentation'
 import WorkbenchMountPortals from './mounts/WorkbenchMountPortals.vue'
 import { useWorkbenchResize } from './useWorkbenchResize'
 import { workbenchKey } from './workbenchContext'
@@ -27,6 +28,7 @@ const ui = useOptionalWorkbenchUi()
 const plugins = createWorkbenchDragPlugins()
 const sensors = [PointerSensor.configure({ activationConstraints: () => [new PointerActivationConstraints.Distance({ value: 6 })] }), KeyboardSensor]
 const resize = useWorkbenchResize(props.controller)
+const panels = useWorkbenchPanelPresentation(props.controller, () => props.active)
 const layout = shallowRef(props.controller.layout)
 const revision = shallowRef(0)
 const labels = computed(() => workbenchLabels(props.language))
@@ -73,7 +75,7 @@ const commands = computed(() => {
 const dropPosition = shallowRef<{ paneId: string, position: DropPosition } | null>(null)
 function viewVisible(id: string): boolean {
   const view = props.controller.layout.views[id]
-  return !!view && mounts.value.has(id) && (props.active || view.location !== 'main') && props.controller.matchesViewContext(view)
+  return !!view && mounts.value.has(id) && (panels.mainVisible.value || view.location !== 'main') && props.controller.matchesViewContext(view)
 }
 function viewTarget(id: string): HTMLElement | null {
   return mounts.value.get(id) ?? null
@@ -88,13 +90,19 @@ async function execute(id: string, source: 'palette' | 'shortcut' = 'palette') {
     commandFailed.value = true
   }
 }
+function dragStart(event: DragStartEvent) {
+  dragging.value = true
+  if (event.operation.source?.type === 'workbench-task')
+    panels.beginDrag()
+}
 function dragEnd(event: DragEndEvent) {
   dragging.value = false
   const destination = dropPosition.value
+  const source = event.operation.source
+  panels.endDrag(!event.canceled && !!destination && !!source?.data.resource)
   dropPosition.value = null
   if (event.canceled || !destination)
     return
-  const source = event.operation.source
   if (source?.data.resource)
     emit('dropResource', source.data.resource as ResourceRef, destination.paneId, destination.position)
 }
@@ -138,11 +146,11 @@ onMounted(() => {
   window.addEventListener('keydown', keyboard)
 })
 onScopeDispose(() => window.removeEventListener('keydown', keyboard))
-provide(workbenchKey, { resize, controller: props.controller, copies: props.copies, layout, revision, mountPoints, registerMountPoint, labels, viewVisible, viewTarget, mountView, dropPosition })
+provide(workbenchKey, { panels, resize, controller: props.controller, copies: props.copies, layout, revision, mountPoints, registerMountPoint, labels, viewVisible, viewTarget, mountView, dropPosition })
 </script>
 
 <template>
-  <DragDropProvider :sensors="sensors" :plugins="plugins" @drag-start="dragging = true" @drag-end="dragEnd">
+  <DragDropProvider :sensors="sensors" :plugins="plugins" @drag-start="dragStart" @drag-end="dragEnd">
     <main class="workbench" :class="{ 'is-dragging': dragging, 'is-resizing': resize.active.value.length > 0 }" :style="{ '--workbench-resize-cursor': resize.cursor.value }" data-testid="workbench">
       <div v-if="backupError" class="workbench__error" role="alert">
         {{ labels.backupFailed }} <button type="button" @click="emit('retryBackup')">

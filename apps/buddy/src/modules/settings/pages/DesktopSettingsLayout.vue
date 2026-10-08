@@ -18,6 +18,8 @@ const { language, appSidebarCollapsed } = useDesktopUi()
         :capabilities="platformCapabilities"
       />
     </template>
-    <RouterView />
+    <template #workspace>
+      <RouterView />
+    </template>
   </WorkbenchLayout>
 </template>

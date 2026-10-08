@@ -58,6 +58,9 @@ function add(kind: 'changes' | 'files' | 'browser') {
 <template>
   <DesktopFileSpacePicker v-model:show="fileSpacePickerOpen" :spaces="panel.fileSpaces.value" :language="language" @select="panel.openFiles" />
   <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" :can-add-files="Boolean(panel.fileEntry.value)" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
+    <template v-if="$slots['header-actions']" #header-actions>
+      <slot name="header-actions" />
+    </template>
     <DesktopFilesContextSurface :tab="activeTab?.kind === 'files' ? activeTab : null" :files="context.files" :has-tab="panel.hasTab" :language="language" @select="panel.selectFile">
       <template #file-toolbar="bindings">
         <slot name="file-toolbar" v-bind="bindings" />

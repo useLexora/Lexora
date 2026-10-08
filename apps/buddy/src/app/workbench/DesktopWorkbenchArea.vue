@@ -3,18 +3,22 @@ import type { ComponentPublicInstance } from 'vue'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import { NSpin } from 'naive-ui'
 import { computed, watch } from 'vue'
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 import { DesktopTaskIndexView, DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
 import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import WorkbenchLayoutNode from '@/workbench/browser/WorkbenchLayoutNode.vue'
+import WorkbenchResourcePanelActions from '@/workbench/browser/WorkbenchResourcePanelActions.vue'
 import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
 import DesktopDirectoryFileSurface from './DesktopDirectoryFileSurface.vue'
 
 const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean }>()
-const { controller, layout, revision, labels } = useWorkbench()
+const { controller, layout, revision, labels, panels } = useWorkbench()
+const route = useRoute()
+const contextVisible = computed(() => (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
+watch([contextVisible, () => route.path], panels.restore)
 const pendingTaskIds = computed(() => {
   void revision.value
   return [...controller.navigation.entries.values()].filter(entry => entry.status === 'loading' && entry.view.resource.scheme === 'task').map(entry => entry.view.resource.id)
@@ -49,27 +53,32 @@ function focusContext() {
 </script>
 
 <template>
-  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
+  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="contextVisible" :context-on-left="panels.contextOnLeft.value" :context-maximized="panels.contextMaximized.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
     <template v-if="tasksVisible" #sidebar>
       <WorkbenchMountPoint target="workbench.sidebar">
         <DesktopTaskIndexView :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTaskId.value" @open-task="bindings.workbench.openTask" @new-task="bindings.workbench.newTask" />
       </WorkbenchMountPoint>
     </template>
-    <div v-show="tasksVisible" class="desktop-workbench-area__tasks">
-      <WorkbenchLayoutNode :node="layout.root" />
-    </div>
-    <RouterView v-if="!tasksVisible" />
+    <template #workspace>
+      <div v-show="tasksVisible" class="desktop-workbench-area__tasks">
+        <WorkbenchLayoutNode :node="layout.root" />
+      </div>
+      <RouterView v-if="!tasksVisible" />
+    </template>
     <template #context>
       <div class="desktop-workbench-area__context" data-workbench-context @focusin="focusContext" @pointerdown="focusContext">
-        <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value">
+        <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="contextVisible">
+          <template #header-actions>
+            <WorkbenchResourcePanelActions :language="language" :maximized="panels.contextMaximized.value" :on-left="panels.contextOnLeft.value" :can-swap="tasksVisible" @swap="panels.swap" @toggle-maximize="panels.toggleMaximize" />
+          </template>
           <template #view="{ viewId }">
-            <WorkbenchSurface :view-id="viewId" :visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" />
+            <WorkbenchSurface :view-id="viewId" :visible="contextVisible" />
           </template>
           <template #file-toolbar="{ tab }">
             <div :ref="element => toolbarTarget(tab.id, element)" class="desktop-workbench-area__file-toolbar" />
           </template>
           <template #file="{ wrap, setWrap }">
-            <DesktopDirectoryFileSurface v-if="selectedFile" :view="selectedFile" :wrap="wrap" :visible="(tasksVisible || bindings.contextPanelGlobal.value) && bindings.resources.isOpen.value" @update-wrap="setWrap" />
+            <DesktopDirectoryFileSurface v-if="selectedFile" :view="selectedFile" :wrap="wrap" :visible="contextVisible" @update-wrap="setWrap" />
             <div v-else class="desktop-workbench-area__file-loading">
               <NSpin size="small" />{{ labels.loading }}
             </div>
