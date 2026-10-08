@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
+import { artifactQuote } from '../../../../shared/artifacts/__tests__/artifactSelectionFixture'
+import { browserQuote } from '../../../../shared/browser/__tests__/browserSelectionFixture'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import {
   ComposerDraftConflictError,
@@ -52,6 +54,39 @@ describe('composerDraftRepository', () => {
     expect(createComposerDraftRepository(database).findById(initial.draftId)).toEqual(saved)
     expect(saved.content.quotes).toEqual([quote])
     expect(initial.content).toEqual(createBuddyUserContent('Hello'))
+  })
+
+  it('restores file excerpt snapshots without creating attachments or comments', () => {
+    const database = createDatabase()
+    const repository = createComposerDraftRepository(database)
+    const initial = repository.open(createOpenInput())
+    const quote = { id: 'file-quote', text: 'frozen excerpt', source: { kind: 'file' as const, title: 'auth.ts', file: { spaceId: 'space', directoryId: 'directory', revision: 1, path: 'auth.ts' }, format: 'source' as const } }
+    const saved = repository.save({ ...initial, content: { ...initial.content, resourceQuotes: [quote] }, expectedRevision: 0, now: initial.updatedAt })
+    expect(createComposerDraftRepository(database).findById(initial.draftId)?.content.resourceQuotes).toEqual([quote])
+    expect(saved.content.panelResourceIds).toEqual([])
+    expect(saved.content.body).toEqual(initial.content.body)
+  })
+
+  it('restores browser element snapshots from SQLite without reopening the page', () => {
+    const database = createDatabase()
+    const repository = createComposerDraftRepository(database)
+    const initial = repository.open(createOpenInput())
+    repository.save({ ...initial, content: { ...initial.content, resourceQuotes: [browserQuote] }, expectedRevision: 0, now: initial.updatedAt })
+    const restored = createComposerDraftRepository(database).findById(initial.draftId)!
+    expect(restored.content.resourceQuotes).toEqual([browserQuote])
+    expect(restored.content.panelResourceIds).toEqual([])
+    expect(restored.content.body).toEqual(initial.content.body)
+  })
+
+  it('preserves artifact excerpts in the existing draft storage without attaching the original file', () => {
+    const database = createDatabase()
+    const repository = createComposerDraftRepository(database)
+    const initial = repository.open(createOpenInput())
+    repository.save({ ...initial, content: { ...initial.content, resourceQuotes: [artifactQuote] }, expectedRevision: 0, now: initial.updatedAt })
+    const saved = repository.findById(initial.draftId)!
+    expect(saved.content.resourceQuotes).toEqual([artifactQuote])
+    expect(saved.content.panelResourceIds).toEqual([])
+    expect(saved.content.body).toEqual(initial.content.body)
   })
 
   it('opens one canonical draft per scope and persists the complete initial snapshot', () => {

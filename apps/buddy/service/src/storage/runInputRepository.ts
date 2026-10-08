@@ -5,7 +5,8 @@ import { BUDDY_SERVICE_TIERS, BUDDY_THINKING_LEVELS } from '../../../shared/conv
 import { skillReferenceSchema } from '../../../shared/skills/skillApi'
 
 const contextItemSchema = z.object({
-  kind: z.enum(['file', 'skill', 'slashCommand']),
+  kind: z.enum(['file', 'skill', 'slashCommand', 'sessionReference']),
+  title: z.string().max(80).optional(),
   value: z.string().min(1),
   skill: skillReferenceSchema.optional(),
 }).strict()

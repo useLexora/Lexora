@@ -242,8 +242,8 @@ const nodeProps: DropdownNodeProps = () => ({
   --n-option-text-color-active: var(--buddy-text-on-accent) !important;
   --n-option-text-color-hover: var(--buddy-text-on-accent) !important;
 
-  width: 12.5rem;
-  min-width: 12.5rem;
+  width: var(--buddy-menu-width);
+  min-width: var(--buddy-menu-width);
   overflow: hidden;
   border: 1px solid var(--buddy-border-strong);
   border-radius: var(--desktop-window-menu-panel-radius);

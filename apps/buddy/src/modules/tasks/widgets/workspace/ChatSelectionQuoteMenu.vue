@@ -67,9 +67,9 @@ function selectQuote() {
 
 <template>
   <NDropdown
-    class="chat-selection-quote-menu" trigger="manual" placement="bottom-start"
+    class="chat-selection-quote-menu" trigger="manual" placement="bottom-start" size="small"
     :show="pending !== null" :x="position.x" :y="position.y" :options="options"
-    :menu-props="() => ({ 'role': 'menu', 'aria-label': t('desktop.chat.quoteSelection') })" :node-props="() => ({ role: 'menuitem' })"
+    :menu-props="() => ({ 'class': 'buddy-selection-menu', 'role': 'menu', 'aria-label': t('desktop.chat.quoteSelection') })" :node-props="() => ({ role: 'menuitem' })"
     @select="selectQuote" @clickoutside="close" @update:show="show => !show && close()"
   />
 </template>

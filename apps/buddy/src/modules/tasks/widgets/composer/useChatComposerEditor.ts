@@ -7,10 +7,11 @@ import { useEditor } from '@tiptap/vue-3'
 import { computed, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { createChatComposerContentFromText, findChatComposerTrigger, getChatComposerResourceIds, serializeChatComposerContent, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
-import { ChatComposerDocument, ChatComposerPromptDirective, ChatComposerResourceClipboard, ChatComposerResourceReference, moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
+import { ChatComposerDocument, ChatComposerPromptDirective, ChatComposerResourceClipboard, ChatComposerResourceReference, ChatComposerSessionReference, moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { resolveFileIcon } from '@/shared/ui/file-icon'
 import { getChatImageLabels } from '../../model/attachments/chatAttachmentView'
+import { parseSessionReferenceClipboard } from '../../model/sessionReferenceClipboard'
 
 export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   const { t } = useBuddyI18n(options.language)
@@ -59,6 +60,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
           }
         },
       }),
+      ChatComposerSessionReference,
       ChatComposerResourceClipboard.configure({
         draftId: () => options.draftId.value,
         rejectedIds: options.rejectedResourceIds,
@@ -113,9 +115,11 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   watch(
     [options.draft, options.composerContent],
     ([draft, composerContent]) => {
+      const incomingContent = serializeChatComposerContent(composerContent)
+      const currentContent = serializedContent.value
       if (
-        draft === serializedContent.value.content
-        && JSON.stringify(composerContent) === JSON.stringify(contentJSON.value)
+        draft === currentContent.content
+        && JSON.stringify(incomingContent.userContent) === JSON.stringify(currentContent.userContent)
       ) {
         return
       }
@@ -130,7 +134,9 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
         const panelChanged = panelResourceIds.length !== nextPanelResourceIds.length
           || panelResourceIds.some((id, index) => id !== nextPanelResourceIds[index])
         const quotesChanged = JSON.stringify(current.state.doc.attrs.quotes) !== JSON.stringify(document.attrs.quotes)
-        if (!bodyChanged && !panelChanged && !quotesChanged)
+          || JSON.stringify(current.state.doc.attrs.resourceQuotes) !== JSON.stringify(document.attrs.resourceQuotes)
+        const sessionReferencesChanged = JSON.stringify(current.state.doc.attrs.sessionReferences) !== JSON.stringify(document.attrs.sessionReferences)
+        if (!bodyChanged && !panelChanged && !quotesChanged && !sessionReferencesChanged)
           return
       }
 
@@ -146,6 +152,8 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
           current.view.dispatch(transaction
             .setDocAttribute('panelResourceIds', document.attrs.panelResourceIds)
             .setDocAttribute('quotes', document.attrs.quotes)
+            .setDocAttribute('resourceQuotes', document.attrs.resourceQuotes)
+            .setDocAttribute('sessionReferences', document.attrs.sessionReferences)
             .setMeta('addToHistory', false))
         }
         options.onTrigger(null)
@@ -196,6 +204,15 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   }
 
   function handleEditorPaste(event: ClipboardEvent) {
+    const clipboardText = event.clipboardData?.getData('text/plain')
+    if (clipboardText) {
+      const parsed = parseSessionReferenceClipboard(clipboardText)
+      if (parsed) {
+        event.preventDefault()
+        options.onPasteSessionReferences(parsed.references, parsed.text)
+        return true
+      }
+    }
     const files = [...(event.clipboardData?.files ?? [])]
     if (!files.length)
       return false

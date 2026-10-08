@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import type { BuddyResourceQuote, BuddyTextQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
+import type { SelectionReferenceEditSource } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { shallowRef, useTemplateRef, watch } from 'vue'
 import { loadDesktopMonaco, observeDesktopMonacoTheme } from '@/shared/ui/monaco/desktopMonaco'
+import { registerMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
 
-const props = defineProps<{ text: string, path: string, wrap: boolean }>()
+const props = defineProps<{ text: string, path: string, wrap: boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: (quote: BuddyResourceQuote, x: number, y: number, isEditable?: boolean, editSource?: SelectionReferenceEditSource) => (() => void) | null }>()
 const container = useTemplateRef<HTMLElement>('container')
 const failed = shallowRef(false)
 const languages: Record<string, string> = {
@@ -70,6 +73,9 @@ watch(container, async (element, _previous, onCleanup) => {
       renderLineHighlight: 'none',
       padding: { top: 8, bottom: 8 },
     })
+    if (props.quoteSource && props.prepareQuote) {
+      registerMonacoResourceQuote(editor, { source: () => props.quoteSource!, prepare: (quote, x, y, editable, editSource) => props.prepareQuote?.(quote, x, y, editable, editSource) ?? null })
+    }
     stopTheme = observeDesktopMonacoTheme(monaco)
     stopUpdates = watch(() => [props.text, props.path, props.wrap] as const, ([text, path, wrap], previous) => {
       if (!editor || !model)

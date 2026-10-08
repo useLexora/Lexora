@@ -10,9 +10,12 @@ import {
   DESKTOP_CHAT_OUTLINE_POSITIONS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
   DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH,
+  DESKTOP_SELECTION_EDIT_COMMANDS,
   DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
 import { isLexoraReleaseUrl } from './productLinks'
+
+export const desktopSelectionReferenceEditInputSchema = z.object({ command: z.enum(DESKTOP_SELECTION_EDIT_COMMANDS) }).strict()
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().min(1).max(128), kind: z.literal('conversation') }).strict(),

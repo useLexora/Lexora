@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe('registerDesktopIpc', () => {
   it('exposes clipboard writes and sandbox status to the trusted Renderer only', async () => {
-    const webContents = { mainFrame: {} }
+    const webContents = { mainFrame: {}, copy: vi.fn(), paste: vi.fn() }
     const window = { webContents } as unknown as BrowserWindow
     registerDesktopIpc({
       checkForUpdates: vi.fn(),
@@ -61,6 +61,14 @@ describe('registerDesktopIpc', () => {
       'Untrusted Desktop IPC sender',
     )
     expect(electron.writeText).toHaveBeenCalledOnce()
+    const edit = electron.handlers.get('lexora:selection-reference:edit')!
+    expect(() => edit(untrustedEvent, { command: 'copy' })).toThrow('Untrusted Desktop IPC sender')
+    expect(() => edit({ sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent, { command: 'copy' })).toThrow('Untrusted Desktop IPC sender')
+    expect(edit(trustedEvent, { command: 'copy' })).toBeUndefined()
+    expect(webContents.copy).toHaveBeenCalledOnce()
+    expect(() => edit(trustedEvent, { command: 'quit' })).toThrow()
+    expect(() => edit(trustedEvent, { command: 'paste', unexpected: true })).toThrow()
+    expect(webContents.paste).not.toHaveBeenCalled()
     const readSandboxStatus = electron.handlers.get('lexora:app:get-sandbox-status')
     if (!readSandboxStatus)
       throw new Error('Sandbox status IPC handler was not registered')

@@ -1,5 +1,7 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { BrowserHost } from '../BrowserHost'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { DESKTOP_IPC_CHANNELS } from '../../../shared/desktopApi'
@@ -180,6 +182,28 @@ describe('registerBrowserDesktopIpc', () => {
     expect(host.reload).toHaveBeenCalledOnce()
   })
 
+  it('restricts element picking to fixed validated commands from the trusted main frame', async () => {
+    const webContents = { mainFrame: {} }
+    const host = { pickElement: vi.fn(async () => ({ status: 'cancelled' })), cancelElementPick: vi.fn() } as unknown as BrowserHost
+    registerBrowserDesktopIpc({
+      data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
+      screenshots: new BrowserScreenshotService(() => DEFAULT_BROWSER_PREFERENCES),
+      getHost: () => host,
+      getWindow: () => ({ webContents }) as unknown as BrowserWindow,
+      resolveArtifactEntry: async () => {
+        throw new Error('unused')
+      },
+    })
+    const event = { sender: webContents, senderFrame: webContents.mainFrame } as unknown as IpcMainInvokeEvent
+    const input = { sessionId: 'session', requestId: '00000000-0000-4000-8000-000000000001' }
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, event, input)).resolves.toEqual({ status: 'cancelled' })
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, event, { ...input, script: 'alert(1)' })).rejects.toThrow()
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, { sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent, input)).rejects.toThrow()
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserCancelElementPick, event, input)).resolves.toBeUndefined()
+    expect(host.pickElement).toHaveBeenCalledOnce()
+    expect(host.cancelElementPick).toHaveBeenCalledExactlyOnceWith(input.sessionId, input.requestId)
+  })
+
   it('binds only a webview guest owned by the trusted Desktop renderer', async () => {
     const sessionId = 'd86be868-6a84-45da-90aa-ff61f3c88f85'
     const attachGuest = vi.fn()
@@ -317,7 +341,7 @@ describe('registerBrowserDesktopIpc', () => {
       sessionId,
       status: 'ready',
       title: 'Example: page?',
-      url: 'file:///picked/space/site/index.html',
+      url: pathToFileURL(resolve('/picked/space/site/index.html')).href,
       visible: true,
     } as const
     const getState = vi.fn().mockReturnValue(state)
@@ -351,7 +375,7 @@ describe('registerBrowserDesktopIpc', () => {
       sessionId,
     })).resolves.toBe(true)
     expect(electron.openPath).toHaveBeenCalledExactlyOnceWith(
-      '/picked/space/site/index.html',
+      resolve('/picked/space/site/index.html'),
     )
 
     await expect(invoke(DESKTOP_IPC_CHANNELS.browserCaptureScreenshot, trustedEvent, {
@@ -370,7 +394,7 @@ describe('registerBrowserDesktopIpc', () => {
       sessionId,
     })).resolves.toBe(true)
     expect(electron.showItemInFolder).toHaveBeenCalledExactlyOnceWith(
-      '/picked/space/site/index.html',
+      resolve('/picked/space/site/index.html'),
     )
 
     getState.mockReturnValue({

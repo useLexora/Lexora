@@ -61,7 +61,8 @@ export function projectConversationTree(input: {
       kind: 'question',
       messageId: message.id,
       runId: null,
-      text: conversationTreePreview(readText(message.content, input.attachments)),
+      text: conversationTreePreview(readText(message.content, input.attachments)
+        || readBuddyUserMessageContent(message.content)?.userContent.resourceQuotes?.map(quote => `${quote.source.title}: ${quote.text}`).join('\n') || ''),
       quotes: quotes.slice(0, 3).map(quote => ({
         ...quote,
         text: quote.text.length > CONVERSATION_QUOTE_PREVIEW_LENGTH ? `${quote.text.slice(0, CONVERSATION_QUOTE_PREVIEW_LENGTH - 1)}…` : quote.text,

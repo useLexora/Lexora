@@ -100,6 +100,7 @@ const desktopBrowserSecurityStateSchema: z.ZodType<DesktopBrowserSecurityState>
   ])
 
 export const desktopBrowserStateSchema: z.ZodType<DesktopBrowserState> = z.object({
+  documentVersion: z.number().int().nonnegative().optional(),
   zoomFactor: browserZoomFactorSchema,
   canGoBack: z.boolean(),
   canGoForward: z.boolean(),

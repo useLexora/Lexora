@@ -9,6 +9,7 @@ import {
   ChatComposerDocument,
   ChatComposerPromptDirective,
   ChatComposerResourceReference,
+  ChatComposerSessionReference,
   insertChatComposerResources,
   insertResolvedChatComposerResource,
   replaceChatComposerDocument,
@@ -155,6 +156,7 @@ function createEditor() {
         }),
       }),
       ChatComposerPromptDirective,
+      ChatComposerSessionReference,
     ],
   })
   editors.push(editor)

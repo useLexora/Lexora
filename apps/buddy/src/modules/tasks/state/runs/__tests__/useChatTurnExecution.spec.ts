@@ -1,6 +1,7 @@
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
+import { browserQuote } from '@buddy-shared/browser/__tests__/browserSelectionFixture'
 import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { formatLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { deferred } from '@buddy-tests/deferred'
@@ -96,6 +97,20 @@ describe('useChatTurnExecution cancellation ownership', () => {
 })
 
 describe('turn submission conflicts', () => {
+  it.each(['file', 'browser'])('submits a %s-reference-only draft without requiring a question or comment', async (kind) => {
+    const f = createFixture()
+    f.projectedRuns.value = []
+    f.selectedModel.value = { modelId: 'model-a', providerId: 'provider-a' } as LocalRuntimeModelOption
+    const quote = { id: 'file-quote', text: 'frozen excerpt', source: { kind: 'file' as const, title: 'notes.md', file: { spaceId: 'space', directoryId: 'directory', revision: 1, path: 'notes.md' }, format: 'markdown' as const } }
+    const content = { ...createBuddyUserContent(), resourceQuotes: [kind === 'browser' ? browserQuote : quote] }
+    f.drafts.setUserContent(content)
+    const key = 'conversation:conversation-a:branch-a'
+    const snapshot = f.drafts.snapshot(key)
+    f.drafts.confirmOpen(snapshot, { content, draftId: snapshot.draftId, executionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile }, modelSelection: null, revision: 1, scope: { kind: 'conversation_branch', conversationId: 'conversation-a', branchId: 'branch-a' }, updatedAt: '2026-10-02T00:00:00.000Z' })
+    f.api.chat.startTurn.mockResolvedValue({ conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, status: 'queued' }, draftReceipt: { draftId: snapshot.draftId, sourceRevision: 1, committedRevision: 2 } })
+    expect(await f.execution.send({ content: '', userContent: content })).toBe(true)
+    expect(f.api.chat.startTurn).toHaveBeenCalledWith(expect.objectContaining({ draftId: snapshot.draftId, expectedRevision: 1 }))
+  })
   it('keeps the confirmed review and resources when its revision changes before submission', async () => {
     const f = createFixture()
     f.projectedRuns.value = []

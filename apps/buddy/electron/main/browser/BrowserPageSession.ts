@@ -2,10 +2,12 @@ import type { Input, MouseInputEvent, WebContents } from 'electron'
 import type { EventEmitter } from 'node:events'
 import type { BrowserErrorCode } from '../../../shared/browser'
 import type { DesktopBrowserError, DesktopBrowserGuestDescriptor, DesktopBrowserProfileMode, DesktopBrowserState } from '../../../shared/browser/browserDesktopApi'
+import type { BrowserLocateElementInput, BrowserPickResult } from '../../../shared/browser/browserSelection'
 import type { BrowserOperationGuard } from './BrowserOperationGuard'
 import type { BrowserSecurityPage, BrowserSecuritySession } from './BrowserSecurityPolicy'
 import { browserZoomFactorSchema, stepBrowserZoom } from '../../../shared/browser/browserPreferences'
 import { BrowserDebugger } from './BrowserDebugger'
+import { BrowserElementPicker } from './BrowserElementPicker'
 import { BrowserHostError } from './BrowserHostError'
 import { BrowserPageActivity } from './BrowserPageActivity'
 import { BrowserSecurityPolicy, isLoopbackBrowserUrl } from './BrowserSecurityPolicy'
@@ -45,6 +47,7 @@ export interface BrowserPage extends BrowserSecurityPage {
 }
 
 export interface BrowserSessionState {
+  documentVersion?: number
   zoomFactor: number
   canGoBack: boolean
   canGoForward: boolean
@@ -88,6 +91,9 @@ export class BrowserPageSession {
   readonly descriptor: DesktopBrowserGuestDescriptor
   #listeners: Array<() => void> = []
   mainFrameCommitSequence: number | null = null
+  documentVersion = 0
+  elementPicker: BrowserElementPicker | null = null
+  #pickRequest: string | null = null
   navigationSequence = 0
   page: BrowserPage | null = null
   #connection: BrowserDebugger | null = null
@@ -106,9 +112,44 @@ export class BrowserPageSession {
     this.descriptor = options.descriptor
   }
 
+  async pickElement(requestId: string): Promise<BrowserPickResult> {
+    const picker = this.elementPicker
+    if (!picker || this.state.status !== 'ready' || !this.state.visible || this.state.controller !== 'human')
+      return { status: 'unavailable' }
+    this.#pickRequest = requestId
+    try {
+      return await this.runWhileActive(() => this.#pickRequest === requestId ? picker.start(requestId) : Promise.resolve({ status: 'cancelled' } as const))
+    }
+    finally {
+      if (this.#pickRequest === requestId)
+        this.#pickRequest = null
+    }
+  }
+
+  async locateElement(input: BrowserLocateElementInput): Promise<boolean> {
+    const current = () => input.source.pageId === this.state.pageId && input.source.url === this.state.url
+      && input.source.documentVersion === this.documentVersion && this.state.status === 'ready' && this.state.controller === 'human'
+    if (!current())
+      return false
+    return this.runWhileActive(() => current() ? this.elementPicker?.locate(input, current) ?? Promise.resolve(false) : Promise.resolve(false))
+  }
+
+  cancelElementPick(requestId?: string): void {
+    if (!requestId || this.#pickRequest === requestId)
+      this.#pickRequest = null
+    this.elementPicker?.cancel(requestId)
+  }
+
+  invalidateElementReferences(): void {
+    this.documentVersion += 1
+    this.state.documentVersion = this.documentVersion
+    this.cancelElementPick()
+  }
+
   async setZoomFactor(factor: number | null): Promise<DesktopBrowserState> {
     this.#options.operations.assertCanMutate()
     const page = this.requirePage()
+    this.cancelElementPick()
     page.setZoomFactor(browserZoomFactorSchema.parse(factor ?? this.#options.getDefaultZoomFactor()))
     this.state.zoomFactor = page.getZoomFactor()
     this.semanticDriver?.invalidateDocument()
@@ -118,7 +159,7 @@ export class BrowserPageSession {
 
   publish(): void {
     void this.updateActivity().catch(this.#options.onActivityError)
-    this.#options.onStateChanged(snapshot(this.state))
+    this.#options.onStateChanged({ ...snapshot(this.state), documentVersion: this.documentVersion })
   }
 
   updateActivity(): Promise<void> {
@@ -140,6 +181,7 @@ export class BrowserPageSession {
   attach(page: BrowserPage): void {
     this.page = page
     this.#connection = new BrowserDebugger(page.debugger)
+    this.elementPicker = new BrowserElementPicker(this.#connection, () => page.getZoomFactor())
     this.#activity = new BrowserPageActivity({
       connection: this.#connection,
       getFreezeDelay: () => this.state.controller === 'human'
@@ -221,6 +263,11 @@ export class BrowserPageSession {
       page,
       'before-input-event',
       (event: { preventDefault: () => void }, input: Input) => {
+        if (this.elementPicker?.handleKey(input)) {
+          event.preventDefault()
+          this.markActive()
+          return
+        }
         if (this.agentActionDepth > 0)
           return
         if ((input.type === 'keyDown' || input.type === 'rawKeyDown') && (input.control || input.meta) && !input.alt && ['+', '=', '-', '0'].includes(input.key)) {
@@ -237,7 +284,12 @@ export class BrowserPageSession {
     this.#listen(
       page,
       'before-mouse-event',
-      (_event: unknown, input: MouseInputEvent) => {
+      (event: { preventDefault: () => void }, input: MouseInputEvent) => {
+        if (this.elementPicker?.handleMouse(input, () => ({ kind: 'browser', title: this.state.title.trim() || new URL(this.state.url).hostname || this.state.url, url: this.state.url, sessionId: this.state.sessionId, pageId: this.state.pageId, documentVersion: this.documentVersion }))) {
+          event.preventDefault()
+          this.markActive()
+          return
+        }
         if (this.agentActionDepth === 0 && input.type === 'mouseMove')
           this.markActive()
         if (
@@ -249,6 +301,7 @@ export class BrowserPageSession {
       },
     )
     this.#listen(page, 'did-start-loading', () => {
+      this.invalidateElementReferences()
       const isIndependentNavigation = this.activeNavigationSequence === null
       if (isIndependentNavigation) {
         this.navigationSequence += 1
@@ -316,6 +369,7 @@ export class BrowserPageSession {
       page,
       'did-navigate-in-page',
       (_event: unknown, url: string, isMainFrame: boolean) => {
+        this.invalidateElementReferences()
         this.semanticDriver?.invalidateDocument()
         if (isMainFrame)
           updateNavigation(_event, url)
@@ -458,6 +512,9 @@ export class BrowserPageSession {
   }
 
   releasePage(): void {
+    this.invalidateElementReferences()
+    this.elementPicker?.dispose()
+    this.elementPicker = null
     this.#activity?.dispose()
     this.#activity = null
     try {
@@ -512,6 +569,7 @@ function normalizeBrowserUrl(rawUrl: string): string | null {
 export function snapshot(state: BrowserSessionState): DesktopBrowserState {
   return {
     ...state,
+    documentVersion: state.documentVersion ?? 0,
     error: state.error ? { ...state.error } : null,
     security: projectSecurityState(state.url, state.error?.code),
   }

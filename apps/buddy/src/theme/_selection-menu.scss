@@ -1,0 +1,31 @@
+// Shared reference menus follow the incumbent desktop window menu's visual treatment.
+.buddy-selection-menu.n-dropdown-menu {
+  --n-option-color-active: var(--buddy-accent-solid-pressed) !important;
+  --n-option-color-hover: var(--buddy-accent-solid) !important;
+  --n-option-text-color-active: var(--buddy-text-on-accent) !important;
+  --n-option-text-color-hover: var(--buddy-text-on-accent) !important;
+
+  box-sizing: border-box;
+  width: var(--buddy-menu-width);
+  max-width: min(var(--buddy-menu-max-width), calc(100vw - 16px));
+  border: 1px solid var(--buddy-border-strong);
+  border-radius: var(--buddy-menu-radius);
+  box-shadow: var(--buddy-shadow-overlay);
+}
+
+.buddy-selection-menu.n-dropdown-menu .n-dropdown-option-body {
+  font-size: 0.75rem;
+  transition-duration: 80ms;
+}
+
+.buddy-selection-menu.n-dropdown-menu .n-dropdown-option-body::before {
+  border-radius: var(--buddy-menu-item-radius);
+  transition-duration: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .buddy-selection-menu.n-dropdown-menu .n-dropdown-option-body,
+  .buddy-selection-menu.n-dropdown-menu .n-dropdown-option-body::before {
+    transition-duration: 0ms;
+  }
+}

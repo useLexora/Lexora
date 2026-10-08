@@ -97,6 +97,7 @@ async function mountFlow() {
   })
   const draft = shallowRef('')
   const errors: unknown[] = []
+  const sent = vi.fn()
   const resources = useComposerResources({
     api,
     draftId,
@@ -129,7 +130,7 @@ async function mountFlow() {
         loadContextOptions: async () => ({ files: [], skills: [] }),
         beginImport: resources.begin,
         selectSource: resources.selectSource,
-        onSend: () => {},
+        onSend: sent,
         onUpdateContent: (text, value) => {
           draft.value = text
           content.value = value
@@ -161,7 +162,7 @@ async function mountFlow() {
     Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } })
     editor.view.dom.dispatchEvent(event)
   }
-  return { api, changes, accepting, uploading, records, storedFiles, content, draftId, resources, root, composer, editor, pasteImages, errors }
+  return { sent, api, changes, accepting, uploading, records, storedFiles, content, draftId, resources, root, composer, editor, pasteImages, errors }
 }
 
 describe('composer resource flow', () => {
@@ -184,6 +185,28 @@ describe('composer resource flow', () => {
     flow.changes.fire({ revision: 4, draftIds: ['draft-1'] })
     await Promise.resolve()
     expect(flow.resources.resources.value).toEqual([])
+  })
+
+  it('hydrates file quotes without changing input focus and sends, removes and restores their snapshots', async () => {
+    const flow = await mountFlow()
+    const quote = { id: 'file-quote', text: '    frozen excerpt\n', source: { kind: 'file' as const, title: 'notes.md', file: { spaceId: 'space', directoryId: 'directory', revision: 1, path: 'notes.md' }, format: 'markdown' as const } }
+    const focus = document.activeElement
+    const original = chatComposerDocumentToUserContent(flow.editor.getJSON())
+    flow.content.value = userContentToChatComposerDocument({ ...original, resourceQuotes: [quote] })
+    await nextTick()
+    expect(document.activeElement).toBe(focus)
+    expect(flow.composer.resourceQuotes.value).toEqual([quote])
+    expect(flow.composer.canSubmit.value).toBe(true)
+    flow.composer.submit()
+    expect(flow.sent).toHaveBeenCalledWith(expect.objectContaining({ userContent: expect.objectContaining({ resourceQuotes: [quote] }) }))
+    expect(flow.records.size).toBe(0)
+    flow.editor.commands.insertContent('normal question')
+    flow.composer.removeResourceQuote(quote.id)
+    expect(flow.composer.resourceQuotes.value).toEqual([])
+    expect(flow.editor.getText()).toBe('normal question')
+    flow.editor.commands.undo()
+    expect(flow.composer.resourceQuotes.value).toEqual([quote])
+    expect(flow.editor.getText()).toBe('normal question')
   })
 
   it('keeps identical excerpts from distinct positions while deduplicating the same selection', async () => {

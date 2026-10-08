@@ -7,7 +7,8 @@ import { skillReferenceSchema } from '../skills/skillApi'
 import { buddyComposerDraftSendSchema } from './composerDraft'
 
 export const _contextItemSchema = z.object({
-  kind: z.enum(['file', 'skill', 'slashCommand']),
+  kind: z.enum(['file', 'skill', 'slashCommand', 'sessionReference']),
+  title: z.string().max(80).optional(),
   value: z.string().min(1),
   skill: skillReferenceSchema.optional(),
 }).strict()

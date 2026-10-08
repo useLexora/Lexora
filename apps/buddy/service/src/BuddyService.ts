@@ -807,6 +807,8 @@ export async function startBuddyService(
         imageGenerationGateway,
         imageTransformService,
         webService,
+        conversations,
+        runInputs,
       }, petActions),
     }
     const sessionBlueprints = new BuddySessionBlueprintService({

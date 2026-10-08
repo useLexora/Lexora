@@ -1,5 +1,6 @@
 @use './animation';
 @use './fonts';
+@use './selection-menu';
 
 :root {
   color-scheme: light;
@@ -47,6 +48,8 @@
   --buddy-icon-button-radius: var(--buddy-radius-micro);
   --buddy-composer-control-height: 2rem;
   --buddy-composer-control-radius: 0.5rem;
+  --buddy-menu-width: 12.5rem;
+  --buddy-menu-max-width: 17.5rem;
   --buddy-menu-radius: 6px;
   --buddy-menu-item-radius: 3px;
   --buddy-menu-row-height: 32px;

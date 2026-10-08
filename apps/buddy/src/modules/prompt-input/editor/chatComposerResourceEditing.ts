@@ -1,8 +1,9 @@
-import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddySessionReference, BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { Editor } from '@tiptap/core'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import { buddyPromptDirectiveSchema, buddyPromptDirectiveToText, buddyResourceIdSchema } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyPromptDirectiveSchema, buddyPromptDirectiveToText, buddyResourceIdSchema, buddySessionReferenceSchema } from '@buddy-shared/conversation/buddyUserContent'
 import { Extension, Node } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import { DOMSerializer, Fragment, Slice } from '@tiptap/pm/model'
@@ -11,6 +12,7 @@ import { watchEffect } from 'vue'
 import {
   CHAT_PROMPT_DIRECTIVE_NODE_NAME,
   CHAT_RESOURCE_REFERENCE_NODE_NAME,
+  CHAT_SESSION_REFERENCE_NODE_NAME,
   userContentToChatComposerDocument,
 } from '../model/chatComposerDocument'
 
@@ -83,7 +85,7 @@ export const ChatComposerDocument = Node.create({
   content: 'paragraph+',
 
   addAttributes() {
-    return { panelResourceIds: { default: [], rendered: false }, quotes: { default: null, rendered: false } }
+    return { panelResourceIds: { default: [], rendered: false }, quotes: { default: null, rendered: false }, resourceQuotes: { default: null, rendered: false }, sessionReferences: { default: null, rendered: false } }
   },
 
   addProseMirrorPlugins() {
@@ -201,6 +203,141 @@ export const ChatComposerPromptDirective = Node.create({
   },
 })
 
+export const ChatComposerSessionReference = Node.create({
+  name: CHAT_SESSION_REFERENCE_NODE_NAME,
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      sessionId: { default: null, rendered: false },
+      title: { default: '', rendered: false },
+    }
+  },
+
+  renderHTML({ node }) {
+    return [
+      'span',
+      { 'class': 'chat-prompt-token-node chat-session-reference-token', 'contenteditable': 'false', 'data-type': 'chat-session-reference' },
+      `@${node.attrs.title}`,
+    ]
+  },
+
+  renderText() {
+    return ''
+  },
+
+  addProseMirrorPlugins() {
+    const nodeName = this.name
+    return [new Plugin({
+      appendTransaction: (_transactions, oldState, newState) => {
+        const existing = (newState.doc.attrs.sessionReferences as BuddySessionReference[] | null) ?? []
+        const existingById = new Map(existing.map(reference => [reference.id, reference]))
+        const references: BuddySessionReference[] = []
+        const duplicateRanges: Array<{ from: number, to: number }> = []
+        const seen = new Set<string>()
+        let hasTokens = false
+        newState.doc.descendants((node, position) => {
+          if (node.type.name !== nodeName)
+            return
+          hasTokens = true
+          const parsed = buddySessionReferenceSchema.safeParse({
+            id: node.attrs.sessionId,
+            title: node.attrs.title || node.attrs.sessionId,
+          })
+          if (!parsed.success) {
+            duplicateRanges.push({ from: position, to: position + node.nodeSize })
+            return
+          }
+          if (seen.has(parsed.data.id)) {
+            duplicateRanges.push({ from: position, to: position + node.nodeSize })
+            return
+          }
+          seen.add(parsed.data.id)
+          references.push(existingById.get(parsed.data.id) ?? parsed.data)
+        })
+
+        let previouslyHadTokens = false
+        oldState.doc.descendants((node) => {
+          if (node.type.name === nodeName)
+            previouslyHadTokens = true
+        })
+        if (!hasTokens && !previouslyHadTokens)
+          return null
+
+        const next = references.length ? references : null
+        const transaction = newState.tr
+        for (const range of duplicateRanges.reverse())
+          transaction.delete(range.from, range.to)
+        if (JSON.stringify(existing) !== JSON.stringify(next ?? []))
+          transaction.setDocAttribute('sessionReferences', next)
+        return transaction.docChanged ? transaction.setMeta('addToHistory', false) : null
+      },
+    })]
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span')
+      dom.className = 'chat-prompt-token-node chat-session-reference-token'
+      dom.contentEditable = 'false'
+      dom.dataset.type = 'chat-session-reference'
+      dom.dataset.sessionId = node.attrs.sessionId
+      dom.title = node.attrs.title
+      dom.textContent = `@${node.attrs.title}`
+      return { dom }
+    }
+  },
+})
+
+export function insertChatComposerSessionReferences(
+  editor: Editor,
+  references: readonly { id: string, title: string }[],
+): boolean {
+  if (!references.length || editor.isDestroyed || !editor.isEditable)
+    return false
+
+  const parsed = references.map(reference => buddySessionReferenceSchema.parse(reference))
+  const existing = editor.state.doc.attrs.sessionReferences as Array<{ id: string, title: string }> ?? []
+  const byId = new Map(existing.map(reference => [reference.id, reference]))
+  const nodes: ProseMirrorNode[] = []
+  for (const reference of parsed) {
+    if (byId.has(reference.id) || byId.size >= 16)
+      continue
+    byId.set(reference.id, reference)
+    nodes.push(editor.schema.nodes[CHAT_SESSION_REFERENCE_NODE_NAME]!.create({ sessionId: reference.id, title: reference.title }))
+  }
+
+  const transaction = editor.state.tr
+  if (nodes.length)
+    transaction.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0))
+  const nextReferences = [...byId.values()]
+  if (JSON.stringify(existing) !== JSON.stringify(nextReferences))
+    transaction.setDocAttribute('sessionReferences', nextReferences)
+  return dispatchResourceEdit(editor, transaction)
+}
+
+export function removeChatComposerSessionReference(editor: Editor, sessionId: string): boolean {
+  if (editor.isDestroyed || !editor.isEditable)
+    return false
+  const transaction = editor.state.tr
+  const ranges: Array<{ from: number, to: number }> = []
+  transaction.doc.descendants((node, position) => {
+    if (node.type.name === CHAT_SESSION_REFERENCE_NODE_NAME && node.attrs.sessionId === sessionId)
+      ranges.push({ from: position, to: position + node.nodeSize })
+  })
+  for (const range of ranges.reverse())
+    transaction.delete(range.from, range.to)
+  const current = (transaction.doc.attrs.sessionReferences as BuddySessionReference[] | null) ?? []
+  if (current.some(reference => reference.id === sessionId)) {
+    const next = current.filter(reference => reference.id !== sessionId)
+    transaction.setDocAttribute('sessionReferences', next.length ? next : null)
+  }
+  return dispatchResourceEdit(editor, transaction)
+}
+
 export function insertChatComposerResources(
   editor: Editor,
   resourceIds: readonly string[],
@@ -310,7 +447,8 @@ export function replaceChatComposerDocument(editor: Editor, content: BuddyUserCo
   return dispatchResourceEdit(editor, editor.state.tr
     .replaceWith(0, editor.state.doc.content.size, document.content)
     .setDocAttribute('panelResourceIds', document.attrs.panelResourceIds)
-    .setDocAttribute('quotes', document.attrs.quotes))
+    .setDocAttribute('quotes', document.attrs.quotes)
+    .setDocAttribute('sessionReferences', document.attrs.sessionReferences))
 }
 
 function dispatchResourceEdit(editor: Editor, transaction: Transaction): boolean {

@@ -1,22 +1,38 @@
 <script setup lang="ts">
+import type { BuddyFileQuote, BuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
+import type { SelectionReferenceEditSource } from '@/shared/ui/selection/workbenchSelectionReferences'
 import type { TextModelPool } from '@/workbench/browser/TextModelPool'
 import type { ResourceRef, WorkbenchView } from '@/workbench/common/workbench'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, useTemplateRef, watch } from 'vue'
+import { useBuddyI18n } from '@/i18n/buddyI18n'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, isMarkdownFile, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
 import { observeDesktopMonacoTheme } from '@/shared/ui/monaco/desktopMonaco'
+import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
+import { registerMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
+import { useSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 
 const props = withDefaults(defineProps<{ view: WorkbenchView, models: TextModelPool, language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
 const { copies, controller, labels } = useWorkbench()
 const container = useTemplateRef<HTMLElement>('container')
+const quoteMenu = useTemplateRef<InstanceType<typeof ResourceSelectionQuoteMenu>>('quoteMenu')
+const references = useSelectionReferences()
+const { t } = useBuddyI18n(() => props.language)
+function quoteSource(format: 'source' | 'markdown' = 'source'): BuddyFileQuote['source'] {
+  return { kind: 'file', title: props.view.title, file: spaceFileTargetSchema.parse(props.view.resource.data), format }
+}
+function prepareQuote(quote: BuddyResourceQuote, x: number, y: number, isEditable = false, editSource?: SelectionReferenceEditSource) {
+  return quoteMenu.value?.prepare(quote, x, y, isEditable, editSource) ?? null
+}
 const failed = shallowRef(false)
+const failedQuote = shallowRef(false)
 const copy = shallowRef(copies.get(props.view.resource))
 const modes = computed(() => fileDocumentModes({ preview: isMarkdownFile(props.view.title), source: !!copy.value?.etag, edit: !!copy.value?.etag }))
 const mode = computed({
@@ -35,6 +51,7 @@ watch(identity, (_, __, onCleanup) => {
   const resource = props.view.resource
   let active = true
   failed.value = false
+  failedQuote.value = false
   copy.value = copies.get(resource)
   onCleanup(copies.onDidChangeResource(resource)(() => copy.value = copies.get(resource)).dispose)
   onCleanup(() => active = false)
@@ -99,11 +116,15 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
       tabSize: Number(controller.configuration.get('workbench.tabSize') ?? 2),
       scrollBeyondLastLine: false,
       padding: { top: 12, bottom: 12 },
+      contextmenu: false,
     })
     editor = ownedEditor
+    if (references)
+      registerMonacoResourceQuote(ownedEditor, { source: () => quoteSource(), prepare: prepareQuote, editable: () => mode.value === 'edit' })
     stopTheme = observeDesktopMonacoTheme(lease.monaco)
     if (props.view.state.editor)
       ownedEditor.restoreViewState(JSON.parse(JSON.stringify(props.view.state.editor)) as Monaco.editor.ICodeEditorViewState)
+    applyQuoteSelection()
     const schedule = () => {
       if (disposed)
         return
@@ -121,6 +142,25 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
   }
 }, { immediate: true })
 watch(mode, value => editor?.updateOptions({ readOnly: value !== 'edit', domReadOnly: value !== 'edit' }))
+watch(() => props.view.state.quoteSelection, applyQuoteSelection, { flush: 'post' })
+function applyQuoteSelection() {
+  failedQuote.value = false
+  const value = props.view.state.quoteSelection
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !editor)
+    return
+  const data = value as Record<string, unknown>
+  if (typeof data.text !== 'string' || !['startLineNumber', 'startColumn', 'endLineNumber', 'endColumn'].every(key => Number.isSafeInteger(data[key]) && Number(data[key]) > 0))
+    return
+  const range = data as unknown as Monaco.IRange
+  if (editor.getModel()?.getValueInRange(range) === data.text) {
+    editor.setSelection(range)
+    editor.revealRangeInCenter(range)
+  }
+  else {
+    // Preserve the snapshot; never highlight different text at an old location.
+    failedQuote.value = true
+  }
+}
 watch(() => props.view.state.wrap, value => editor?.updateOptions({ wordWrap: (value ?? controller.configuration.get('workbench.wordWrap')) ? 'on' : 'off' }))
 async function retry() {
   const key = identity.value
@@ -166,7 +206,14 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
         {{ labels.retry }}
       </button>
     </div>
-    <DesktopDocumentContent :mode="mode" :name="view.title" :text="copy?.text ?? ''" :language="language" :write-clipboard-text="writeClipboardText">
+    <p v-if="failedQuote" class="file-editor__status" role="status">
+      {{ t('desktop.chat.resourceQuoteTextUnavailable') }}
+    </p>
+    <ResourceSelectionQuoteMenu v-if="references" ref="quoteMenu" :view-id="view.id" :owner-key="`${view.id}:${identity}:${mode}`" :language="language" :visible="visible" />
+    <DesktopDocumentContent
+      :mode="mode" :name="view.title" :text="copy?.text ?? ''" :language="language" :write-clipboard-text="writeClipboardText"
+      :quote-source="references ? quoteSource('markdown') : undefined" :prepare-quote="prepareQuote" @scroll.capture="quoteMenu?.close()"
+    >
       <template #source>
         <div ref="container" class="file-editor__monaco" data-testid="workbench-text-editor" />
       </template>

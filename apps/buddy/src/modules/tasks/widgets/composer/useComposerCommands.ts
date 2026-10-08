@@ -28,7 +28,7 @@ export function useComposerCommands(draftId: Readonly<Ref<string>>, choose: (nam
     const directives = content?.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive')) ?? []
     const reference = directives.find(node => node.directive === 'slash_command' && node.commandId)
     const candidates = entries.value.filter(entry => entry.name === invocation?.name && (!reference || (reference.directive === 'slash_command' && entry.id === reference.commandId)))
-    if (!port || !content || !invocation || directives.length > (reference ? 1 : 0) || getBuddyUserContentResourceIds(content).length || content.quotes?.length) {
+    if (!port || !content || !invocation || directives.length > (reference ? 1 : 0) || getBuddyUserContentResourceIds(content).length || content.quotes?.length || content.resourceQuotes?.length) {
       port?.reportFailure()
       return
     }

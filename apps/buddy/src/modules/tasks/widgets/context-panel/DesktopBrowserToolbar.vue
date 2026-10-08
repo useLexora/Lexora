@@ -15,6 +15,7 @@ import {
   ArrowLeft16Regular,
   ArrowRight16Regular,
   Camera20Regular,
+  CursorHover20Regular,
   FolderOpen20Regular,
   Globe16Regular,
   LockClosed16Regular,
@@ -32,11 +33,15 @@ import { getBrowserToolbarMenuActions } from './browserToolbarMenu'
 import DesktopBrowserZoomControls from './DesktopBrowserZoomControls.vue'
 
 const props = defineProps<{
+  picking?: boolean
+  pickLabel?: string
+  pickDisabled?: boolean
   busyAction: BrowserToolbarBusyAction | null
   language: BuddyLocale
   state: DesktopBrowserState | null
 }>()
 const emit = defineEmits<{
+  pick: []
   back: []
   forward: []
   menu: [action: BrowserToolbarMenuActionKey]
@@ -237,6 +242,19 @@ function selectAddress(event: FocusEvent): void {
         {{ t(isLoading ? 'desktop.context.browserStop' : 'desktop.context.browserReload') }}
       </span>
     </NTooltip>
+    <NTooltip placement="bottom">
+      <template #trigger>
+        <button
+          class="desktop-browser-toolbar__action" :class="{ 'desktop-browser-toolbar__action--picking': picking }"
+          data-testid="browser-pick-element" type="button" :disabled="pickDisabled"
+          :aria-pressed="Boolean(picking)" :aria-label="picking ? t('desktop.context.browserCancelPick') : pickLabel || t('desktop.context.browserPickElement')"
+          @click="emit('pick')"
+        >
+          <DesktopIcon aria-hidden="true" :component="CursorHover20Regular" />
+        </button>
+      </template>
+      <span role="tooltip">{{ picking ? t('desktop.context.browserCancelPick') : pickLabel || t('desktop.context.browserPickElement') }}</span>
+    </NTooltip>
     <NDropdown
       trigger="click"
       placement="bottom-end"
@@ -309,6 +327,8 @@ function selectAddress(event: FocusEvent): void {
   outline: 2px solid var(--buddy-focus-ring);
   outline-offset: -2px;
 }
+
+.desktop-browser-toolbar__action--picking { background: var(--buddy-accent-surface-subtle); color: var(--buddy-accent-text); }
 
 .desktop-browser-toolbar__action:disabled {
   cursor: default;

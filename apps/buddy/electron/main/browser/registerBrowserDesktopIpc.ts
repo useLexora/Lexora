@@ -17,6 +17,7 @@ import {
   desktopBrowserGuestDescriptorsSchema,
   desktopBrowserStateSchema,
 } from '../../../shared/browser/browserDesktopSchemas'
+import { browserLocateElementInputSchema, browserPickInputSchema, browserPickResultSchema } from '../../../shared/browser/browserSelection'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { assertTrustedSender } from '../ipc'
 
@@ -47,6 +48,23 @@ export function registerBrowserDesktopIpc(
     })
   }
 
+  handle(DESKTOP_IPC_CHANNELS.browserPickElement, async (host, input, event) => {
+    if (event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Element picking requires the trusted main frame')
+    const { sessionId, requestId } = browserPickInputSchema.parse(input)
+    return browserPickResultSchema.parse(await host.pickElement(sessionId, requestId))
+  })
+  handle(DESKTOP_IPC_CHANNELS.browserCancelElementPick, (host, input, event) => {
+    if (event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Element picking requires the trusted main frame')
+    const { sessionId, requestId } = browserPickInputSchema.parse(input)
+    host.cancelElementPick(sessionId, requestId)
+  })
+  handle(DESKTOP_IPC_CHANNELS.browserLocateElement, (host, input, event) => {
+    if (event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Element location requires the trusted main frame')
+    return host.locateElement(browserLocateElementInputSchema.parse(input))
+  })
   handle(DESKTOP_IPC_CHANNELS.browserAttachGuest, (host, input, event) => {
     const { sessionId, webContentsId } = browserAttachGuestInputSchema.parse(input)
     const guest = webContents.fromId(webContentsId)

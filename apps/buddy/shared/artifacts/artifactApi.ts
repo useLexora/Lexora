@@ -54,3 +54,12 @@ export const artifactChangeNoticeSchema = z.object({
 
 export type ArtifactChangeNotice = z.infer<typeof artifactChangeNoticeSchema>
 export const artifactsChanged = { method: 'artifacts.changed', params: artifactChangeNoticeSchema } as const
+
+export function isTextArtifactMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('text/') || [
+    'application/json',
+    'application/toml',
+    'application/xml',
+    'application/yaml',
+  ].includes(mimeType)
+}

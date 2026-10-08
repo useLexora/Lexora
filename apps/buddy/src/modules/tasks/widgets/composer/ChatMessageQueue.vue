@@ -19,7 +19,7 @@ const emit = defineEmits<{ cancel: [id: string], steer: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const rows = computed(() => props.items.map(item => ({
   ...item,
-  text: [buddyUserContentToText(item.content.userContent, () => '').trim(), ...(item.content.userContent.quotes ?? []).map(quote => quote.text)].filter(Boolean).join(' · '),
+  text: [buddyUserContentToText(item.content.userContent, () => '').trim(), ...[...item.content.userContent.quotes ?? [], ...item.content.userContent.resourceQuotes ?? []].map(quote => quote.text)].filter(Boolean).join(' · '),
   visibleAttachments: item.attachments.slice(0, 2),
   attachmentNames: item.attachments.map(attachment => attachment.name).join('\n'),
 })))

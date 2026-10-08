@@ -1,16 +1,31 @@
 <script setup lang="ts">
+import type { BuddyResourceQuote, BuddyTextQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { SelectionReferenceEditSource } from '@/shared/ui/selection/workbenchSelectionReferences'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
+import { readResourceTextSelection } from '@/shared/ui/selection/resourceQuoteSelection'
 import DesktopMonacoFile from './DesktopMonacoFile.vue'
 
-withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean }>(), { wrap: true })
+const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: (quote: BuddyResourceQuote, x: number, y: number, isEditable?: boolean, editSource?: SelectionReferenceEditSource) => (() => void) | null }>(), { wrap: true })
 defineSlots<{ source?: () => unknown }>()
+function quoteText(event: MouseEvent) {
+  if (!props.quoteSource || !props.prepareQuote || !(event.currentTarget instanceof HTMLElement))
+    return
+  const quote = readResourceTextSelection(event.currentTarget, window.getSelection(), props.quoteSource)
+  if (!quote || !(event.target instanceof Node) || !window.getSelection()?.containsNode(event.target, true))
+    return
+  const show = props.prepareQuote(quote, event.clientX, event.clientY)
+  if (show) {
+    event.preventDefault()
+    show()
+  }
+}
 </script>
 
 <template>
   <div class="desktop-document-content">
-    <article v-if="mode === 'preview' && text != null" class="desktop-document-content__markdown">
+    <article v-if="mode === 'preview' && text != null" class="desktop-document-content__markdown" @contextmenu="quoteText">
       <DesktopMarkdownContent :content="text" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
     </article>
     <div v-else-if="mode === 'preview' && imageUrl" class="desktop-document-content__image">
@@ -18,7 +33,7 @@ defineSlots<{ source?: () => unknown }>()
     </div>
     <template v-else-if="(mode === 'source' || mode === 'edit') && text != null">
       <slot name="source">
-        <DesktopMonacoFile :text="text" :path="name" :wrap="wrap" />
+        <DesktopMonacoFile :text="text" :path="name" :wrap="wrap" :quote-source="quoteSource" :prepare-quote="prepareQuote" />
       </slot>
     </template>
     <div v-else class="desktop-document-content__empty">

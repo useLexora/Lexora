@@ -1,5 +1,6 @@
 import type { BrowserClearDataInput } from '../../shared/browser/browserData'
 import type { BrowserScreenshotResult } from '../../shared/browser/browserDesktopApi'
+import type { BrowserLocateElementInput } from '../../shared/browser/browserSelection'
 import type { DesktopBrowserGuestDescriptor, DesktopBrowserProfileMode, DesktopBrowserSetSurfaceInput, DesktopBrowserState, LexoraDesktopApi } from '../shared/desktopApi'
 import { ipcRenderer } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
@@ -8,6 +9,9 @@ import { subscribe } from './subscribe'
 export function createBrowserApi(): Pick<LexoraDesktopApi, 'browser'> {
   return {
     browser: Object.freeze({
+      pickElement: (sessionId: string, requestId: string) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.browserPickElement, { sessionId, requestId }),
+      cancelElementPick: (sessionId: string, requestId: string) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.browserCancelElementPick, { sessionId, requestId }),
+      locateElement: (input: BrowserLocateElementInput) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.browserLocateElement, input),
       attachGuest: (sessionId: string, webContentsId: number) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.browserAttachGuest,
         { sessionId, webContentsId },

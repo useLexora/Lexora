@@ -15,6 +15,7 @@ import { BUDDY_DEFAULT_PERMISSION_MODE } from '../../shared/permissions/permissi
 export { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from '../../shared/browser/browserDesktopApi'
 
 export const DESKTOP_IPC_CHANNELS = {
+  selectionReferenceEdit: 'lexora:selection-reference:edit',
   workbenchRead: 'lexora:workbench:read',
   workbenchWrite: 'lexora:workbench:write',
   contextPanelGetState: 'lexora:context-panel:get-state',
@@ -42,6 +43,9 @@ export const DESKTOP_IPC_CHANNELS = {
   appHidden: 'lexora:app:hidden',
   appPrepareQuit: 'lexora:app:prepare-quit',
   appPrepareQuitAck: 'lexora:app:prepare-quit-ack',
+  browserPickElement: 'lexora:browser:pick-element',
+  browserCancelElementPick: 'lexora:browser:cancel-element-pick',
+  browserLocateElement: 'lexora:browser:locate-element',
   browserAttachGuest: 'lexora:browser:attach-guest',
   browserCaptureScreenshot: 'lexora:browser:capture-screenshot',
   browserClearData: 'lexora:browser:clear-data',
@@ -73,6 +77,9 @@ export const DESKTOP_IPC_CHANNELS = {
   windowStateChanged: 'lexora:window:state-changed',
   windowToggleMaximize: 'lexora:window:toggle-maximize',
 } as const
+
+export const DESKTOP_SELECTION_EDIT_COMMANDS = ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'] as const
+export type DesktopSelectionEditCommand = typeof DESKTOP_SELECTION_EDIT_COMMANDS[number]
 
 export interface DesktopOpenTarget {
   conversationId: string
@@ -205,6 +212,7 @@ export interface LexoraConfigPatch {
 }
 
 export interface LexoraDesktopApi {
+  selectionReferenceMenu?: { executeEdit: (command: DesktopSelectionEditCommand) => Promise<void> }
   extensions: import('../../shared/extensions/extensionApi').ExtensionApi
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi
   contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi

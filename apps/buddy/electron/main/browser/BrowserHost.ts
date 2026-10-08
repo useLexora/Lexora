@@ -17,6 +17,7 @@ import type {
   DesktopBrowserSetSurfaceInput,
   DesktopBrowserState,
 } from '../../../shared/browser/browserDesktopApi'
+import type { BrowserLocateElementInput, BrowserPickResult } from '../../../shared/browser/browserSelection'
 import type { BrowserHostChange, BrowserHostFact } from './BrowserHostEvents'
 import type { BrowserPage } from './BrowserPageSession'
 import type { BrowserSessionTeardownReason } from './BrowserSessionRegistry'
@@ -153,6 +154,24 @@ export class BrowserHost {
     return session.setZoomFactor(factor)
   }
 
+  async pickElement(sessionId: string, requestId: string): Promise<BrowserPickResult> {
+    this.#operations.assertCanMutate()
+    const session = this.#requireSession(sessionId)
+    const result = await session.pickElement(requestId)
+    if (result.status === 'selected' && (this.#sessions.get(sessionId) !== session || session.documentVersion !== result.source.documentVersion))
+      return { status: 'cancelled' }
+    return result
+  }
+
+  cancelElementPick(sessionId: string, requestId: string): void {
+    this.#sessions.get(sessionId)?.cancelElementPick(requestId)
+  }
+
+  async locateElement(input: BrowserLocateElementInput): Promise<boolean> {
+    const session = this.#sessions.get(input.source.sessionId)
+    return session ? session.locateElement(input) : false
+  }
+
   ensureSession(conversationId: string | null, tabId?: string): DesktopBrowserState {
     return this.#ensureSession(conversationId, 'default', tabId)
   }
@@ -215,7 +234,8 @@ export class BrowserHost {
   }
 
   getState(sessionId: string): DesktopBrowserState {
-    return snapshot(this.#requireSession(sessionId).state)
+    const session = this.#requireSession(sessionId)
+    return { ...snapshot(session.state), documentVersion: session.documentVersion }
   }
 
   getStateForConversation(conversationId: string): DesktopBrowserState {
@@ -259,6 +279,7 @@ export class BrowserHost {
     if (!session.state.conversationId)
       throw new BrowserHostError('BROWSER_CONTROL_REQUIRED', 'Standalone browser sessions remain under human control')
     this.#assertCurrentPage(session, input.pageId, 'before acquiring control')
+    session.cancelElementPick()
     this.#advanceControlEpoch(session)
     session.state.controller = 'agent'
     this.#sessions.setProtected(input.sessionId, 'runtime', true)
@@ -1022,6 +1043,7 @@ export class BrowserHost {
   }
 
   #hide(session: BrowserPageSession): void {
+    session.cancelElementPick()
     this.#sessions.setProtected(session.state.sessionId, 'surface', false)
     if (session.state.visible) {
       session.state.visible = false

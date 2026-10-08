@@ -5,14 +5,22 @@ import { buddyUserContentV1Schema } from '@buddy-shared/conversation/buddyUserCo
 
 export const CHAT_RESOURCE_REFERENCE_NODE_NAME = 'chatResourceReference'
 export const CHAT_PROMPT_DIRECTIVE_NODE_NAME = 'chatPromptDirective'
+export const CHAT_SESSION_REFERENCE_NODE_NAME = 'chatSessionReference'
 
 export function userContentToChatComposerDocument(content: BuddyUserContentV1): JSONContent {
+  const body = content.body.map(paragraph => ({
+    content: paragraph.content.map(node => inlineNodeToEditorNode(node, content.sessionReferences ?? [])),
+    type: 'paragraph',
+  }))
+  const presentSessionIds = new Set(content.body.flatMap(paragraph => paragraph.content.flatMap(
+    node => node.type === 'session_ref' ? [node.sessionId] : [],
+  )))
+  const missingReferences = (content.sessionReferences ?? []).filter(reference => !presentSessionIds.has(reference.id))
+  if (missingReferences.length)
+    body[0]!.content.unshift(...missingReferences.map(reference => inlineNodeToEditorNode({ sessionId: reference.id, type: 'session_ref' }, content.sessionReferences ?? [])))
   return {
-    attrs: { panelResourceIds: [...content.panelResourceIds], ...(content.quotes?.length ? { quotes: content.quotes } : {}) },
-    content: content.body.map(paragraph => ({
-      content: paragraph.content.map(inlineNodeToEditorNode),
-      type: 'paragraph',
-    })),
+    attrs: { panelResourceIds: [...content.panelResourceIds], ...(content.quotes?.length ? { quotes: content.quotes } : {}), ...(content.resourceQuotes?.length ? { resourceQuotes: content.resourceQuotes } : {}), ...(content.sessionReferences?.length ? { sessionReferences: content.sessionReferences } : {}) },
+    content: body,
     type: 'doc',
   }
 }
@@ -26,23 +34,37 @@ export function chatComposerDocumentToUserContent(document: JSONContent): BuddyU
       if (paragraph.type !== 'paragraph')
         throw new Error(`Unsupported Composer paragraph: ${paragraph.type}`)
       return {
-        content: (paragraph.content ?? []).map(editorNodeToInlineNode),
+        content: (paragraph.content ?? [])
+          .filter(node => node.type !== CHAT_SESSION_REFERENCE_NODE_NAME)
+          .map(editorNodeToInlineNode),
         type: 'paragraph',
       }
     }),
     panelResourceIds: document.attrs?.panelResourceIds ?? [],
     ...(document.attrs?.quotes?.length ? { quotes: document.attrs.quotes } : {}),
+    ...(document.attrs?.resourceQuotes?.length ? { resourceQuotes: document.attrs.resourceQuotes } : {}),
+    ...(document.attrs?.sessionReferences?.length ? { sessionReferences: document.attrs.sessionReferences } : {}),
     version: 1,
   })
 }
 
-function inlineNodeToEditorNode(node: BuddyInlineNodeV1): JSONContent {
+function inlineNodeToEditorNode(
+  node: BuddyInlineNodeV1,
+  sessionReferences: NonNullable<BuddyUserContentV1['sessionReferences']>,
+): JSONContent {
   switch (node.type) {
     case 'text': return { text: node.text, type: 'text' }
     case 'hard_break': return { type: 'hardBreak' }
     case 'resource_ref': return {
       attrs: { resourceId: node.resourceId },
       type: CHAT_RESOURCE_REFERENCE_NODE_NAME,
+    }
+    case 'session_ref': {
+      const reference = sessionReferences.find(item => item.id === node.sessionId)
+      return {
+        attrs: { sessionId: node.sessionId, title: reference?.title ?? node.sessionId },
+        type: CHAT_SESSION_REFERENCE_NODE_NAME,
+      }
     }
     case 'prompt_directive': return node.directive === 'slash_command' && !node.commandId && isRetiredBuddyPromptCommand(node.value)
       ? { text: node.value, type: 'text' }
@@ -65,6 +87,10 @@ function editorNodeToInlineNode(node: JSONContent): unknown {
     case CHAT_RESOURCE_REFERENCE_NODE_NAME: return {
       resourceId: node.attrs?.resourceId,
       type: 'resource_ref',
+    }
+    case CHAT_SESSION_REFERENCE_NODE_NAME: return {
+      sessionId: node.attrs?.sessionId,
+      type: 'session_ref',
     }
     case CHAT_PROMPT_DIRECTIVE_NODE_NAME: {
       const attrs = node.attrs ?? {}

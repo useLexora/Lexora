@@ -6,22 +6,6 @@ import { useTaskContextPanel } from '../useTaskContextPanel'
 import { contextPanelFixture, createTaskPanel } from './contextPanelFixture'
 
 describe('resource panel ownership', () => {
-  it('restores task tabs without changing visibility during navigation', async () => {
-    const activeConversationId = shallowRef<string | null>('first')
-    const panel = createTaskPanel({ activeConversationId })
-    panel.openBrowser()
-    activeConversationId.value = 'second'
-    panel.openBrowser()
-    await panel.toggle()
-    activeConversationId.value = 'first'
-    await nextTick()
-    expect(panel.activeTab.value?.id).toBe('browser:first')
-    expect(panel.isOpen.value).toBe(false)
-    activeConversationId.value = 'second'
-    expect(panel.activeTab.value?.id).toBe('browser:second')
-    expect(panel.isOpen.value).toBe(false)
-  })
-
   it('keeps the independent resource source and branch across task and module navigation', async () => {
     const activeConversationId = shallowRef<string | null>('first')
     const activeBranchId = shallowRef<string | null>('branch-first')

@@ -9,10 +9,13 @@ import { useMessage } from 'naive-ui'
 import { computed, shallowRef, toRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
+import { useSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
 import WorkbenchPanelContent from '@/workbench/browser/WorkbenchPanelContent.vue'
 import DesktopBrowserToolbar from './DesktopBrowserToolbar.vue'
 import { useBrowserAddress } from './useBrowserAddress'
 import { useBrowserContextSurface } from './useBrowserContextSurface'
+import { browserElementPickMenuPosition, useBrowserElementReference } from './useBrowserElementReference'
 
 const props = defineProps<{
   tab: TaskBrowserContextTab | null
@@ -42,6 +45,34 @@ const browserView = useBrowserContextSurface({
 })
 const { address, openAddress, updateAddress } = useBrowserAddress(browserView.state, browserView.navigate)
 const browserState = browserView.state
+const quoteMenu = useTemplateRef<InstanceType<typeof ResourceSelectionQuoteMenu>>('quoteMenu')
+const selectionReferences = useSelectionReferences()
+const browserViewId = computed(() => `browser:${browserTab.value?.id ?? ''}`)
+const pickerOwner = computed(() => JSON.stringify([browserTab.value?.scope, browserState.value?.sessionId, browserState.value?.pageId, browserState.value?.documentVersion, browserState.value?.url]))
+const picker = useBrowserElementReference({
+  api: props.api,
+  state: browserState,
+  viewId: browserViewId,
+  visible: toRef(() => props.visible),
+  feedback(result, title) {
+    if (result === 'added')
+      message.success(t('desktop.chat.quoteAddedToTarget', { title: title ?? '' }))
+    else if (result === 'duplicate')
+      message.info(t('desktop.chat.quoteDuplicate'))
+    else
+      message.warning(t(result === 'limit' ? 'desktop.chat.quoteLimit' : 'desktop.context.browserPickUnavailable'))
+  },
+  choose(request, anchor) {
+    const rect = surfaceElement.value?.getBoundingClientRect()
+    if (!rect?.width || !rect.height) {
+      message.warning(t('desktop.context.browserPickUnavailable'))
+      return
+    }
+    const position = browserElementPickMenuPosition(anchor, rect)
+    quoteMenu.value?.openRequest(request, position.x, position.y)
+  },
+})
+watch(() => selectionReferences?.captureScope(browserViewId.value)?.sourceIdentity, () => picker.cancel(), { flush: 'sync' })
 const browserBlank = computed(() => browserState.value?.url === 'about:blank' && browserState.value.status !== 'loading')
 const controlAnnouncement = shallowRef('')
 watch(() => browserState.value?.controller, (controller, previous) => {
@@ -85,8 +116,9 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 <template>
   <WorkbenchPanelContent v-if="browserTab">
     <template #toolbar>
-      <DesktopBrowserToolbar :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" />
+      <DesktopBrowserToolbar :picking="picker.picking.value" :pick-label="t('desktop.context.browserPickElement')" :pick-disabled="!selectionReferences || browserState?.status !== 'ready' || browserState?.controller === 'agent' || busyAction !== null" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" @pick="picker.toggle" />
     </template>
+    <ResourceSelectionQuoteMenu ref="quoteMenu" :view-id="browserViewId" :owner-key="pickerOwner" :language="language" :visible="visible" />
     <div v-if="browserView.failed.value" class="context-resource-state" role="alert">
       {{ t('desktop.context.browserLoadFailed') }}
     </div>

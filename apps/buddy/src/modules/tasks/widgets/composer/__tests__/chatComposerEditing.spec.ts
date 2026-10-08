@@ -128,6 +128,25 @@ async function mountComposer(options: {
 }
 
 describe('chat composer editing', () => {
+  it('keeps a referenced session unsendable until the body contains non-whitespace text', async () => {
+    const flow = await mountComposer()
+    flow.editor.view.dispatch(flow.editor.state.tr.setDocAttribute('sessionReferences', [{ id: 'session-1', title: 'History' }]))
+    await nextTick()
+
+    expect(flow.composer.canSubmit.value).toBe(false)
+    flow.editor.commands.insertContent('   ')
+    await nextTick()
+    expect(flow.composer.canSubmit.value).toBe(false)
+    flow.composer.submit()
+    expect(flow.sentPayloads).toEqual([])
+
+    flow.editor.commands.insertContent('question')
+    await nextTick()
+    expect(flow.composer.canSubmit.value).toBe(true)
+    flow.composer.submit()
+    expect(flow.sentPayloads).toHaveLength(1)
+  })
+
   it.each(['select', 'submit'] as const)('submits a run action with its arguments through %s', async (source) => {
     const flow = await mountComposer()
     const prefix = source === 'select' ? '/com' : '/compact'

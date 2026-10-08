@@ -101,7 +101,8 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     const contextItems: ReadonlyArray<LocalPromptContextItem> = userContent
       ? userContent.body.flatMap(paragraph => paragraph.content.flatMap(node => node.type === 'prompt_directive' ? [{ kind: node.directive === 'skill' ? 'skill' as const : 'slashCommand' as const, value: node.value }] : []))
       : []
-    const hasQuotes = Boolean((userContent ?? options.drafts.snapshot(options.draftScopeKey.value).content).quotes?.length)
+    const currentContent = userContent ?? options.drafts.snapshot(options.draftScopeKey.value).content
+    const hasQuotes = Boolean(currentContent.quotes?.length || currentContent.resourceQuotes?.length)
     if ((!content.trim() && !resourceIds.length && !hasQuotes) || !canSend.value)
       return false
     const command = parseBuddyChatCommand(content)

@@ -68,7 +68,7 @@ function add(kind: 'changes' | 'files' | 'browser') {
     </DesktopFilesContextSurface>
     <DesktopChangesContextSurface :tab="activeTab?.kind === 'changes' ? activeTab : null" :context="context" :has-tab="panel.hasTab" :language="language" />
     <DesktopBrowserContextSurface :tab="activeTab?.kind === 'browser' ? activeTab : null" :api="browser" :guest-host="browserGuests" :state="panel.activeBrowserState.value" :update-state="panel.updateBrowserState" :session-ready="panel.retainBrowserSession" :language="language" :visible="visible && activeTab?.kind === 'browser'" />
-    <DesktopArtifactContextSurface v-if="activeTab?.kind === 'artifact'" :key="activeTab.id" :artifact="activeTab.artifact" :language="language" :view-mode="activeTab.viewMode" :read-artifact-text="context.readArtifactText" :write-clipboard-text="clipboard.writeText" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
+    <DesktopArtifactContextSurface v-if="activeTab?.kind === 'artifact'" :key="activeTab.id" :artifact="activeTab.artifact" :tab-id="activeTab.id" :visible="visible" :language="language" :view-mode="activeTab.viewMode" :read-artifact-text="context.readArtifactText" :write-clipboard-text="clipboard.writeText" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
     <slot v-if="activeTab?.kind === 'view'" name="view" :view-id="activeTab.viewId" />
   </DesktopTaskContextPanel>
 </template>

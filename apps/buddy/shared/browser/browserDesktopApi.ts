@@ -1,4 +1,5 @@
 import type { BrowserClearDataInput, BrowserClearDataResult, BrowserDataSummary } from './browserData'
+import type { BrowserLocateElementInput, BrowserPickResult } from './browserSelection'
 import type { BrowserFailureReason } from './primitives'
 
 export type BrowserScreenshotResult = 'saved' | 'copied' | 'canceled'
@@ -45,6 +46,7 @@ export type DesktopBrowserSecurityState = {
 }
 
 export interface DesktopBrowserState {
+  documentVersion?: number
   zoomFactor: number
   canGoBack: boolean
   canGoForward: boolean
@@ -102,6 +104,9 @@ export interface DesktopBrowserSetSurfaceInput {
 }
 
 export interface DesktopBrowserApi {
+  pickElement: (sessionId: string, requestId: string) => Promise<BrowserPickResult>
+  cancelElementPick: (sessionId: string, requestId: string) => Promise<void>
+  locateElement: (input: BrowserLocateElementInput) => Promise<boolean>
   attachGuest: (sessionId: string, webContentsId: number) => Promise<void>
   captureScreenshot: (sessionId: string) => Promise<BrowserScreenshotResult>
   clearData: (input: BrowserClearDataInput) => Promise<BrowserClearDataResult>

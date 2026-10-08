@@ -22,6 +22,7 @@ import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
 import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
 import WorkbenchSurfaceHost from '@/workbench/browser/surfaces/WorkbenchSurfaceHost.vue'
@@ -64,6 +65,7 @@ onScopeDispose(() => {
   void workbench.dispose().finally(() => diagnostics.dispose()).catch(() => {})
 })
 provide(desktopWorkbenchKey, workbench)
+provide(workbenchSelectionReferencesKey, workbench.selectionReferences)
 const extensions = useExtensionState(api.extensions)
 const settingsRegistry = useSettingsRegistry(extensions.installed)
 const pages = useDesktopPages(router, extensions.installed, stores.applicationSettings.language)

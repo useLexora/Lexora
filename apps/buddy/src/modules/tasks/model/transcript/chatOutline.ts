@@ -175,7 +175,7 @@ function projectChatTranscriptMessages(
 }
 
 function toOutlineItem(message: LocalMessage): ChatOutlineItem {
-  const summary = getChatMessageText(message) || getChatMessageUserContent(message)?.userContent.quotes?.map(quote => quote.text).join('\n') || ''
+  const summary = getChatMessageText(message) || getChatMessageUserContent(message)?.userContent.quotes?.map(quote => quote.text).join('\n') || getChatMessageUserContent(message)?.userContent.resourceQuotes?.map(quote => quote.text).join('\n') || ''
   const text = outlineSnippet(summary)
 
   return {

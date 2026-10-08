@@ -1,6 +1,7 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import { isTextArtifactMimeType } from '@buddy-shared/artifacts/artifactApi'
 import { isMarkdownFile } from '@/shared/ui/files/fileDocumentPresentation'
 
 export function resolveFileType(artifact: LocalArtifact): string {
@@ -32,14 +33,7 @@ export function resolveArtifactDisplayMode(
     return viewMode
   if (artifact.mimeType.startsWith('image/'))
     return 'preview'
-  return isTextMimeType(artifact.mimeType) ? 'source' : 'file'
+  return isTextArtifactMimeType(artifact.mimeType) ? 'source' : 'file'
 }
 
-export function isTextMimeType(mimeType: string): boolean {
-  return mimeType.startsWith('text/') || [
-    'application/json',
-    'application/toml',
-    'application/xml',
-    'application/yaml',
-  ].includes(mimeType)
-}
+export { isTextArtifactMimeType as isTextMimeType }
