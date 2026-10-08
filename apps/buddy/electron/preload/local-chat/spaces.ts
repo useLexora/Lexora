@@ -10,6 +10,8 @@ export function createSpacesApi(): Pick<LocalChatApi, 'spaces'> {
       onChanged: listener => subscribe<SpaceChangeNotice>(LOCAL_CHAT_IPC_CHANNELS.spacesChanged, listener),
       readDocument: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentRead, { ...input }),
       saveDocument: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentSave, { ...input }),
+      mutateEntry: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesMutate, { ...input }),
+      locateEntry: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesLocate, { ...input }),
       listDirectory: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesList, { ...input }),
       readFile: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesRead, { ...input }),
       revealFile: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spaceFilesReveal, { ...input }),

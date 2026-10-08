@@ -216,7 +216,7 @@ const shellBindings: DesktopShellBindings = {
   resources,
   resourceContext: {
     getChangeOverview: api.localChat.changes.overview,
-    files: { listDirectory: api.localChat.spaces.listDirectory, readFile: api.localChat.spaces.readFile, revealFile: api.localChat.spaces.revealFile },
+    files: workbench.workspaceFiles,
     getNodeDetail: api.localChat.conversations.getNodeDetail,
     getChangeSet: api.localChat.changes.get,
     readArtifactText: api.localChat.artifacts.readText,

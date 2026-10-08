@@ -6,6 +6,7 @@ import type { ResourceRef, WorkbenchView } from '@/workbench/common/workbench'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, useTemplateRef, watch } from 'vue'
+import { useBuddyI18n } from '@/i18n/buddyI18n'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
@@ -15,6 +16,7 @@ import { useWorkbench } from '@/workbench/browser/workbenchContext'
 
 const props = withDefaults(defineProps<{ view: WorkbenchView, models: TextModelPool, language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
 const { copies, controller, labels } = useWorkbench()
+const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const failed = shallowRef(false)
 const copy = shallowRef(copies.get(props.view.resource))
@@ -89,8 +91,8 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
     release = lease.release
     ownedEditor = lease.monaco.editor.create(element, {
       model: lease.model,
-      readOnly: mode.value !== 'edit',
-      domReadOnly: mode.value !== 'edit',
+      readOnly: mode.value !== 'edit' || !!copy.value?.blocked,
+      domReadOnly: mode.value !== 'edit' || !!copy.value?.blocked,
       automaticLayout: true,
       fontSize: 13,
       lineHeight: 21,
@@ -120,7 +122,7 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
       failed.value = true
   }
 }, { immediate: true })
-watch(mode, value => editor?.updateOptions({ readOnly: value !== 'edit', domReadOnly: value !== 'edit' }))
+watch([mode, () => copy.value?.blocked], ([value, blocked]) => editor?.updateOptions({ readOnly: value !== 'edit' || !!blocked, domReadOnly: value !== 'edit' || !!blocked }), { flush: 'sync' })
 watch(() => props.view.state.wrap, value => editor?.updateOptions({ wordWrap: (value ?? controller.configuration.get('workbench.wordWrap')) ? 'on' : 'off' }))
 async function retry() {
   const key = identity.value
@@ -141,11 +143,14 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
 
 <template>
   <div class="file-editor" :data-dirty="copy?.dirty">
+    <p v-if="copy?.blocked" role="status">
+      {{ t('desktop.context.fileAction.mutationBlocked') }}
+    </p>
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
           <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
-          <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
+          <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || copy.blocked || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
             {{ labels.save }}
           </NButton>
         </template>

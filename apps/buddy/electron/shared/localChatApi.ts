@@ -52,6 +52,8 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   taskMarksSetRead: 'lexora:buddy:task-marks:set-read',
   taskMarksClear: 'lexora:buddy:task-marks:clear',
   changesOverview: 'lexora:buddy:changes:overview',
+  spaceFilesMutate: 'lexora:buddy:space-files:mutate',
+  spaceFilesLocate: 'lexora:buddy:space-files:locate',
   spaceFilesList: 'lexora:buddy:space-files:list',
   spaceFilesRead: 'lexora:buddy:space-files:read',
   spaceFilesReveal: 'lexora:buddy:space-files:reveal',
@@ -320,6 +322,8 @@ export interface LocalChatApi {
     onChanged: (listener: (event: SpaceChangeNotice) => void) => () => void
     readDocument: (input: SpaceFileTarget) => Promise<import('../../shared/spaces/spaceFileApi').SpaceTextDocument>
     saveDocument: (input: import('../../shared/spaces/spaceFileApi').SpaceSaveDocument) => Promise<import('../../shared/spaces/spaceFileApi').SpaceSaveResult>
+    mutateEntry: (input: import('../../shared/spaces/spaceFileApi').SpaceFileMutation) => Promise<import('../../shared/spaces/spaceFileApi').SpaceFileMutationResult>
+    locateEntry: (input: SpaceFileTarget) => Promise<{ path: string, kind: 'directory' | 'file' }>
     listDirectory: (input: SpaceDirectoryRequest) => Promise<LocalSpaceDirectoryPage>
     readFile: (input: SpaceFileTarget) => Promise<LocalSpaceFilePreview>
     revealFile: (input: SpaceFileTarget) => Promise<void>

@@ -86,7 +86,7 @@ export class WorkbenchController {
   #stopping = false
   #disposal: Promise<void> | undefined
 
-  constructor(registry: ContributionRegistry, beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>) => Promise<ViewCloseDecision> = async () => true, layout = createLayout()) {
+  constructor(registry: ContributionRegistry, beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>) => Promise<ViewCloseDecision> = async () => true, layout = createLayout(), readonly canOpenResource: (resource: ResourceRef) => boolean = () => true) {
     this.#layout = copyEventSnapshot(layout)
     this.registry = registry
     this.configuration = new ConfigurationService(registry)
@@ -207,7 +207,7 @@ export class WorkbenchController {
   }
 
   async open(resource: ResourceRef, title: string, options: OpenViewOptions = {}): Promise<string | null> {
-    if (this.#stopping || options.signal?.aborted)
+    if (this.#stopping || options.signal?.aborted || !this.canOpenResource(resource))
       return null
     if (this.#invokingBeforeClose)
       throw new Error('WORKBENCH_CLOSE_PREPARATION_IN_PROGRESS')
@@ -248,7 +248,7 @@ export class WorkbenchController {
           return null
       }
       const opened = await this.#enqueue(async () => {
-        if (this.#stopping || options.signal?.aborted || (options.interactionId && !this.interactions.entries.has(options.interactionId)))
+        if (this.#stopping || options.signal?.aborted || !this.canOpenResource(resource) || (options.interactionId && !this.interactions.entries.has(options.interactionId)))
           return null
         if (prepared && (this.pane(prepared.paneId)?.view !== prepared.previousViewId || this.navigation.find(prepared.view.id)?.status !== 'loading'))
           return null
@@ -293,7 +293,7 @@ export class WorkbenchController {
         const close = await this.#prepareClose(previous ? [previous.id] : [], options.signal)
         if (!close)
           return null
-        if (this.#stopping || options.signal?.aborted || !this.#valid(close)
+        if (this.#stopping || options.signal?.aborted || !this.canOpenResource(resource) || !this.#valid(close)
           || this.registry.views.get(descriptor.id) !== descriptor
           || this.pane(target.id)?.view !== target.view
           || (prepared && this.navigation.find(prepared.view.id)?.status !== 'loading')) {
@@ -414,6 +414,18 @@ export class WorkbenchController {
     })
   }
 
+  // Called only after the filesystem commit, with dirty-copy decisions already settled.
+  commitFileMutation(changes: readonly { id: string, resource: ResourceRef, title: string }[], removed: readonly string[] = []): void {
+    this.#commit(removed.length ? 'closed' : 'updated', () => {
+      for (const id of removed) this.#removeView(id)
+      for (const change of changes) {
+        const view = this.#layout.views[change.id]
+        if (view)
+          this.#layout.views[change.id] = copyEventSnapshot({ ...view, resource: change.resource, title: change.title })
+      }
+    })
+  }
+
   rebindAuxiliary(id: string, change: Pick<WorkbenchView, 'type' | 'resource' | 'location' | 'title' | 'placement' | 'mountInstanceId'>): void {
     const view = this.#layout.views[id]
     if (!view || view.location === 'main' || change.location === 'main' || resourceKey(view.resource) !== resourceKey(change.resource))
@@ -512,6 +524,8 @@ export class WorkbenchController {
 
   #valid(prepared: PreparedClose): boolean {
     try {
+      if ([...prepared.targets.values()].some(view => !this.canOpenResource(view.resource)))
+        return false
       if (prepared.plans.some(plan => plan.validate && !plan.validate()))
         return false
       return prepared.layoutRevision === this.#layoutRevision && [...prepared.targets].every(([id, view]) => this.#layout.views[id] === view)

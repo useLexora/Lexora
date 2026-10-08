@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSpaceRepository } from '../../storage/spaceRepository'
@@ -89,9 +90,21 @@ describe('space file browsing', () => {
     const f = await fixture()
     await writeFile(join(f.root, 'outside.txt'), 'outside')
     await writeFile(join(f.workspace, 'inside.txt'), 'inside')
-    await symlink(join(f.root, 'outside.txt'), join(f.workspace, 'escape'))
+    // Windows directory junctions do not require the symlink creation privilege.
+    // Keep file-symlink coverage on other platforms and exercise directory traversal on Windows.
+    let escapePath = 'escape'
+    if (process.platform === 'win32') {
+      const outsideDirectory = join(f.root, 'outside-directory')
+      await mkdir(outsideDirectory)
+      await writeFile(join(outsideDirectory, 'outside.txt'), 'outside')
+      await symlink(outsideDirectory, join(f.workspace, 'escape'), 'junction')
+      escapePath = 'escape/outside.txt'
+    }
+    else {
+      await symlink(join(f.root, 'outside.txt'), join(f.workspace, 'escape'))
+    }
     expect((await f.files.list(f.target)).entries.find(entry => entry.name === 'escape')).toMatchObject({ unavailable: true })
-    for (const path of ['../outside.txt', join(f.root, 'outside.txt'), 'escape'])
+    for (const path of ['../outside.txt', join(f.root, 'outside.txt'), escapePath])
       await expect(f.files.read({ ...f.target, path })).rejects.toThrow()
     await expect(f.files.read({ ...f.target, path: 'inside.txt', revision: 99 })).rejects.toThrow()
     await f.spaces.delete(f.target.spaceId)

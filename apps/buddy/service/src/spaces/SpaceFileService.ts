@@ -1,11 +1,15 @@
-import type { LocalSpaceDirectoryPage, LocalSpaceFileEntry, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget, SpaceSaveDocument, SpaceSaveResult, SpaceTextDocument } from '../../../shared/spaces/spaceFileApi'
+import type { BoundedEntryMutation, BoundedEntryMutationResult } from '../../../platform/filesystem/mutateBoundedEntry'
+import type { LocalSpaceDirectoryPage, LocalSpaceFileEntry, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileMutation, SpaceFileMutationResult, SpaceFileTarget, SpaceSaveDocument, SpaceSaveResult, SpaceTextDocument } from '../../../shared/spaces/spaceFileApi'
 import type { SpaceRepository } from '../storage/spaceRepository'
 import { createHash, randomUUID } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import process from 'node:process'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
+import { mutateBoundedEntry } from '../../../platform/filesystem/mutateBoundedEntry'
 import { saveBoundedTextFile } from '../../../platform/filesystem/saveBoundedTextFile'
 import { Emitter } from '../../../shared/events/Emitter'
+import { validSpaceFileName } from '../../../shared/spaces/spaceFileNames'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { readFilePreview } from '../files/readFilePreview'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
@@ -17,7 +21,7 @@ export interface SpaceFileChange {
   readonly spaceId: string
   readonly directoryId: string
   readonly directoryRevision: number
-  readonly kind: 'saved' | 'conflict' | 'response-denied'
+  readonly kind: 'saved' | 'conflict' | 'response-denied' | 'mutated'
 }
 
 export class SpaceFileService {
@@ -27,9 +31,49 @@ export class SpaceFileService {
   #revision = 0
   #disposed = false
   readonly #saves = new Map<string, Promise<SpaceSaveResult>>()
+  readonly #mutations = new Map<string, Promise<SpaceFileMutationResult>>()
 
-  constructor(spaces: Pick<SpaceRepository, 'findById'>) {
+  readonly #mutateEntry: (input: BoundedEntryMutation, beforeCommit: () => void) => Promise<BoundedEntryMutationResult>
+
+  constructor(spaces: Pick<SpaceRepository, 'findById'>, mutateEntry: (input: BoundedEntryMutation, beforeCommit: () => void) => Promise<BoundedEntryMutationResult> = mutateBoundedEntry) {
     this.#spaces = spaces
+    this.#mutateEntry = mutateEntry
+  }
+
+  mutate(input: SpaceFileMutation): Promise<SpaceFileMutationResult> {
+    input = { ...input }
+    const directory = this.requireDirectory(input)
+    if (this.#disposed || this.#mutations.has(directory.id) || [...this.#saves.keys()].some(key => JSON.parse(key)[0] === directory.id))
+      return Promise.resolve({ status: 'failed', reason: 'busy' })
+    const creating = input.operation === 'create-file' || input.operation === 'create-directory'
+    if (isAbsolute(input.path) || input.path.includes('\\') || input.path.split('/').some(part => part === '.' || part === '..' || (!part && input.path !== '')) || (!creating && !input.path))
+      return Promise.resolve({ status: 'failed', reason: 'unsafe-path' })
+    if (input.operation !== 'trash' && !validSpaceFileName(input.name, process.platform === 'win32'))
+      return Promise.resolve({ status: 'failed', reason: 'invalid-name' })
+    const oldName = input.path.split('/').at(-1)!
+    if (input.operation === 'rename' && oldName !== input.name && oldName.toLowerCase() === input.name.toLowerCase())
+      return Promise.resolve({ status: 'failed', reason: 'case-only' })
+    const operation = Promise.resolve().then(async (): Promise<SpaceFileMutationResult> => {
+      this.requireDirectory(input)
+      // Pass the lexical path, NOT a realpath that would hide a link ancestor from the helper.
+      const result = await this.#mutateEntry({ root: directory.canonicalRoot, path: resolve(directory.canonicalRoot, input.path), operation: input.operation, ...('name' in input ? { name: input.name } : {}) }, () => this.requireDirectory(input))
+      if (result.status === 'failed')
+        return result
+      this.#changes.fire(Object.freeze({ revision: ++this.#revision, operationId: randomUUID(), spaceId: input.spaceId, directoryId: input.directoryId, directoryRevision: input.revision, kind: 'mutated' }))
+      try {
+        this.requireDirectory(input)
+      }
+      catch {
+        return { status: 'failed', reason: 'result-unknown' }
+      }
+      const parent = input.path.includes('/') ? input.path.slice(0, input.path.lastIndexOf('/')) : ''
+      const path = creating
+        ? [input.path, 'name' in input ? input.name : ''].filter(Boolean).join('/')
+        : input.operation === 'rename' ? [parent, input.name].filter(Boolean).join('/') : parent
+      return { status: 'completed', path, kind: result.kind }
+    }).finally(() => this.#mutations.delete(directory.id))
+    this.#mutations.set(directory.id, operation)
+    return operation
   }
 
   async list(input: SpaceDirectoryRequest): Promise<LocalSpaceDirectoryPage> {
@@ -52,7 +96,7 @@ export class SpaceFileService {
           unavailable = true
         }
       }
-      return { name: entry.name, path, kind, unavailable }
+      return { name: entry.name, path, kind, unavailable, writable: !entry.isSymbolicLink() && !unavailable }
     }))
     this.requireDirectory(input)
     return { entries: result, nextCursor: cursorIndex + 1 + page.length < entries.length ? page.at(-1)?.name ?? null : null }
@@ -76,6 +120,8 @@ export class SpaceFileService {
   }
 
   async readDocument(input: SpaceFileTarget): Promise<SpaceTextDocument> {
+    if (this.#mutations.has(input.directoryId))
+      throw new BuddyServiceError('VALIDATION_FAILED')
     const target = await this.resolve(input)
     const bytes = await readBoundedFile(target.root, target.path, 1024 * 1024)
     this.requireDirectory(input)
@@ -86,7 +132,7 @@ export class SpaceFileService {
   }
 
   saveDocument(input: SpaceSaveDocument): Promise<SpaceSaveResult> {
-    if (this.#disposed)
+    if (this.#disposed || this.#mutations.has(input.directoryId))
       return Promise.reject(new Error('SPACE_FILES_STOPPED'))
     input = { ...input }
     const operationId = randomUUID()
@@ -123,7 +169,7 @@ export class SpaceFileService {
 
   async dispose(): Promise<void> {
     this.#disposed = true
-    await Promise.allSettled([...this.#saves.values()])
+    await Promise.allSettled([...this.#saves.values(), ...this.#mutations.values()])
     this.#changes.dispose()
   }
 

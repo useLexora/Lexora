@@ -17,7 +17,7 @@ const copyEvents = {
   'save-failed': 'save_failed',
   'conflict-resolved': 'conflict_resolved',
   'discarded': 'discarded',
-} as const satisfies Record<WorkingCopyChangeKind, string>
+} as const satisfies Record<Exclude<WorkingCopyChangeKind, 'access-changed'>, string>
 
 const layoutEvents = {
   'opened': 'workbench.layout.opened',
@@ -33,6 +33,8 @@ export class WorkbenchDiagnostics {
   constructor({ controller, copies, events }: { controller: WorkbenchController, copies: WorkingCopyService, events: ApplicationEvents }) {
     this.#subscriptions = [
       copies.onDidChange((change) => {
+        if (change.kind === 'access-changed')
+          return
         if (change.kind === 'edited' && change.copy.dirty === change.previous?.dirty)
           return
         events.publish({

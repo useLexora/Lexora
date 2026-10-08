@@ -11,8 +11,8 @@ export const spaceFileTargetSchema = z.object({
   path: z.string().max(4096),
 }).strict()
 
-export const spaceFileEntrySchema = fileEntrySchema
-export const spaceDirectoryPageSchema = directoryPageSchema
+export const spaceFileEntrySchema = fileEntrySchema.extend({ writable: z.boolean().optional() })
+export const spaceDirectoryPageSchema = directoryPageSchema.extend({ entries: z.array(spaceFileEntrySchema).max(250) })
 export const spaceFilePreviewSchema = filePreviewSchema
 
 export const spaceTextDocumentSchema = z.object({
@@ -44,7 +44,23 @@ export type SpaceDirectoryRequest = z.infer<typeof spaceDirectoryRequestSchema>
 
 export const spaceDirectoryRequestSchema = spaceFileTargetSchema.extend({ cursor: z.string().max(512).optional() }).strict()
 
+export const spaceFileMutationSchema = z.discriminatedUnion('operation', [
+  spaceFileTargetSchema.extend({ operation: z.literal('create-file'), name: z.string().max(1024) }).strict(),
+  spaceFileTargetSchema.extend({ operation: z.literal('create-directory'), name: z.string().max(1024) }).strict(),
+  spaceFileTargetSchema.extend({ operation: z.literal('rename'), name: z.string().max(1024) }).strict(),
+  spaceFileTargetSchema.extend({ operation: z.literal('trash') }).strict(),
+])
+export const spaceFileMutationErrorSchema = z.enum(['invalid-name', 'exists', 'missing', 'unsafe-path', 'permission', 'busy', 'unsupported', 'case-only', 'open-resource', 'result-unknown', 'failed'])
+export const spaceFileMutationResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('completed'), path: z.string().max(4096), kind: z.enum(['file', 'directory']) }).strict(),
+  z.object({ status: z.literal('failed'), reason: spaceFileMutationErrorSchema }).strict(),
+])
+export type SpaceFileMutation = z.infer<typeof spaceFileMutationSchema>
+export type SpaceFileMutationResult = z.infer<typeof spaceFileMutationResultSchema>
+export type SpaceFileMutationError = z.infer<typeof spaceFileMutationErrorSchema>
+
 export const spaceFilesRpc = {
+  mutate: { method: 'spaceFiles.mutate', input: spaceFileMutationSchema, response: spaceFileMutationResultSchema },
   readDocument: { method: 'spaceFiles.readDocument', input: spaceFileTargetSchema, response: spaceTextDocumentSchema },
   saveDocument: { method: 'spaceFiles.saveDocument', input: spaceSaveDocumentSchema, response: spaceSaveResultSchema },
   list: { method: 'spaceFiles.list', input: spaceDirectoryRequestSchema, response: spaceDirectoryPageSchema },

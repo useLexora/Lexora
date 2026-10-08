@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TreeOption, TreeOverrideNodeClickBehavior } from 'naive-ui'
+import type { FileTreeMenuTarget } from './fileTreeContextMenu'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NTree } from 'naive-ui'
 import { computed, h } from 'vue'
@@ -11,8 +12,9 @@ const props = defineProps<{
   nodes: readonly TreeOption[]
   selectedKey: string | null
   load?: (node: TreeOption) => Promise<void>
+  contextMenu?: boolean
 }>()
-const emit = defineEmits<{ select: [key: string] }>()
+const emit = defineEmits<{ select: [key: string], menu: [target: FileTreeMenuTarget] }>()
 const expandedKeys = defineModel<Array<string | number>>('expandedKeys', { required: true })
 const { t } = useBuddyI18n(() => props.language)
 const data = computed(() => [...props.nodes])
@@ -43,6 +45,24 @@ function suffix({ option }: { option: TreeOption }) {
     'stroke-linecap': 'round',
   }, [h('rect', { height: 11.5, rx: 2, width: 11.5, x: 2.25, y: 2.25 }), mark])
 }
+function menu(event: MouseEvent | KeyboardEvent, option?: TreeOption) {
+  if (!props.contextMenu)
+    return
+  if (event instanceof KeyboardEvent && !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')))
+    return
+  event.preventDefault()
+  event.stopPropagation()
+  emit('menu', { event, path: option ? String(option.key) : '', name: option ? String(option.label) : '', kind: option?.kind === 'file' ? 'file' : 'directory', writable: !option?.disabled && option?.writable !== false, unavailable: Boolean(option?.disabled) })
+}
+function nodeProps({ option }: { option: TreeOption }) {
+  if (!props.contextMenu)
+    return {}
+  return { tabindex: 0, onContextmenu: (event: MouseEvent) => menu(event, option), onKeydown: (event: KeyboardEvent) => menu(event, option) }
+}
+function rootKey(event: KeyboardEvent) {
+  if (event.target === event.currentTarget)
+    menu(event)
+}
 function select(keys: Array<string | number>) {
   const key = keys.at(-1)
   if (typeof key === 'string')
@@ -51,10 +71,10 @@ function select(keys: Array<string | number>) {
 </script>
 
 <template>
-  <div class="desktop-context-file-tree" data-testid="context-file-tree">
+  <div class="desktop-context-file-tree" data-testid="context-file-tree" :tabindex="contextMenu ? 0 : undefined" @contextmenu="menu($event)" @keydown="rootKey">
     <NTree
       v-model:expanded-keys="expandedKeys" block-line :cancelable="false" :data="data" :on-load="load"
-      :override-default-node-click-behavior="clickBehavior" :render-prefix="prefix" :render-suffix="suffix"
+      :node-props="nodeProps" :override-default-node-click-behavior="clickBehavior" :render-prefix="prefix" :render-suffix="suffix"
       :selected-keys="selectedKey ? [selectedKey] : []" @update:selected-keys="select"
     />
   </div>

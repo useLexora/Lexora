@@ -1,3 +1,4 @@
+pub mod file_mutation;
 pub mod file_reader;
 pub mod file_writer;
 pub mod private_directories;

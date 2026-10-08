@@ -2,12 +2,13 @@
 import type { TaskFilesContextTab } from '../../model/context-panel/taskContextPanel'
 import type { WorkspaceFilesApi } from './useWorkspaceFilePreview'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { toRef } from 'vue'
+import { toRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopContextFileTree from '@/shared/ui/files/DesktopContextFileTree.vue'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
 import DesktopFileToolbar from '@/shared/ui/files/DesktopFileToolbar.vue'
 import WorkbenchPanelContent from '@/workbench/browser/WorkbenchPanelContent.vue'
+import DesktopWorkspaceFileMenu from './DesktopWorkspaceFileMenu.vue'
 import { useWorkspaceFilePreview } from './useWorkspaceFilePreview'
 
 const props = defineProps<{
@@ -15,15 +16,31 @@ const props = defineProps<{
   files: WorkspaceFilesApi
   hasTab: (id: string) => boolean
   language: BuddyLocale
+  writeClipboardText: (text: string) => Promise<void>
 }>()
 const emit = defineEmits<{ select: [id: string, path: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const fileTab = toRef(() => props.tab)
 const filePreview = useWorkspaceFilePreview(fileTab, props.files, id => props.hasTab(id))
 const fileView = filePreview.current
+const menu = useTemplateRef<InstanceType<typeof DesktopWorkspaceFileMenu>>('menu')
+function select(path: string) {
+  if (fileView.value)
+    fileView.value.selectedKey = null
+  if (fileTab.value)
+    emit('select', fileTab.value.id, path)
+}
+function choose(id: string, path: string, open: boolean) {
+  if (fileTab.value?.id !== id || !fileView.value)
+    return
+  fileView.value.selectedKey = path || null
+  if (open)
+    emit('select', id, path)
+}
 </script>
 
 <template>
+  <DesktopWorkspaceFileMenu ref="menu" :tab="fileTab" :files="files" :language="language" :write-clipboard-text="writeClipboardText" :refresh="filePreview.refresh" :expand="filePreview.expand" @choose="choose" />
   <WorkbenchPanelContent v-if="fileTab && fileView">
     <template #toolbar>
       <DesktopFileToolbar :path="fileTab.target.path" :root-name="fileTab.rootName" :language="language" :wrap="fileView.wrap" :tree-visible="fileView.treeVisible" @toggle-wrap="fileView.wrap = !fileView.wrap" @toggle-tree="fileView.treeVisible = !fileView.treeVisible" @refresh="filePreview.refresh()">
@@ -44,7 +61,7 @@ const fileView = filePreview.current
             {{ t('desktop.context.retry') }}
           </button>
         </div>
-        <DesktopContextFileTree v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :selected-key="fileTab.target.path || null" :language="language" :load="filePreview.load" @select="emit('select', fileTab.id, $event)" />
+        <DesktopContextFileTree v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :selected-key="fileView.selectedKey ?? (fileTab.target.path || null)" :language="language" :load="filePreview.load" context-menu @select="select" @menu="menu?.show($event)" />
       </template>
     </DesktopContextSplit>
   </WorkbenchPanelContent>
