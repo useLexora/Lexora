@@ -1,7 +1,8 @@
 diff --git a/dist/config.js b/dist/config.js
+index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347fc267f3e 100644
 --- a/dist/config.js
 +++ b/dist/config.js
-@@ -9,8 +9,8 @@
+@@ -9,8 +9,8 @@ import { stripBom } from "./utils/text.js";
  // =============================================================================
  // Package Detection
  // =============================================================================
@@ -12,7 +13,7 @@ diff --git a/dist/config.js b/dist/config.js
  /**
   * Detect if we're running as a Bun compiled binary.
   * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
-@@ -45,7 +45,7 @@
+@@ -45,7 +45,7 @@ export function detectInstallMethod() {
      if (isBunBinary) {
          return "bun-binary";
      }
@@ -21,7 +22,7 @@ diff --git a/dist/config.js b/dist/config.js
      if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
          return "pnpm";
      }
-@@ -319,7 +319,7 @@
+@@ -322,7 +322,7 @@ export function getPackageDir() {
          // Bun binary: process.execPath points to the compiled executable
          return dirname(process.execPath);
      }
@@ -30,8 +31,65 @@ diff --git a/dist/config.js b/dist/config.js
  }
  /**
   * Get path to built-in themes directory (shipped with package)
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index c5ad71905832cac59341cff04729260936dfba77..55be2ca2c55d16b64e7ffb941da79f2ac505b9ea 100644
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -320,11 +320,11 @@ export class AgentSession {
+      * happens here instead of in wrappers.
+      */
+     _installAgentToolHooks() {
+-        this.agent.beforeToolCall = (context) => this._beforeToolCall(context);
++        this.agent.beforeToolCall = (context, signal) => this._beforeToolCall(context, undefined, signal);
+         this.agent.afterToolCall = (context) => this._afterToolCall(context);
+     }
+     /** `tool_call` handlers. `parentToolCallId` is set for calls another tool made. */
+-    async _beforeToolCall({ toolCall, args }, parentToolCallId) {
++    async _beforeToolCall({ toolCall, args }, parentToolCallId, signal) {
+         const runner = this._extensionRunner;
+         if (!runner.hasHandlers("tool_call")) {
+             return undefined;
+@@ -335,6 +335,7 @@ export class AgentSession {
+                 toolName: toolCall.name,
+                 toolCallId: toolCall.id,
+                 ...(parentToolCallId ? { parentToolCallId } : {}),
++                signal,
+                 input: args,
+             });
+         }
+@@ -402,7 +403,7 @@ export class AgentSession {
+                     tools: this._getCallableTools(),
+                     assistantMessage,
+                     context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
+-                    beforeToolCall: (context) => this._beforeToolCall(context, parentId),
++                    beforeToolCall: (context, signal) => this._beforeToolCall(context, parentId, signal),
+                     afterToolCall: (context) => this._afterToolCall(context, parentId),
+                     signal,
+                     onUpdate,
+@@ -2976,6 +2977,8 @@ export class AgentSession {
+      * Context overflow errors are NOT retryable (handled by compaction instead).
+      */
+     _isRetryableError(message) {
++        if (message.content.some((block) => block.type === "toolCall" || block.type === "text" && block.text.trim()))
++            return false;
+         // Context overflow is handled by compaction, not retry.
+         if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0))
+             return false;
+diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
+index 586c761f16bbdf4885bd31d4d6890fdfd2c27815..654727af6f0f8585594a9f6a5b50ed07272cb475 100644
+--- a/dist/core/extensions/types.d.ts
++++ b/dist/core/extensions/types.d.ts
+@@ -906,6 +906,7 @@ export type InputEventResult = {
+ };
+ interface ToolCallEventBase {
+     type: "tool_call";
++    signal?: AbortSignal;
+     /**
+      * The call's id. For calls another tool made (with `parentToolCallId` set), pi assigns
+      * `<parent id>/<n>`; such ids never appear as tool calls or tool results in the transcript, only
 diff --git a/dist/core/tools/find-execution.js b/dist/core/tools/find-execution.js
 new file mode 100644
+index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b6742421290949
 --- /dev/null
 +++ b/dist/core/tools/find-execution.js
 @@ -0,0 +1,67 @@
@@ -103,6 +161,7 @@ new file mode 100644
 +    };
 +}
 diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
+index a3bab76c952c2a03d6534aba80a72f7743a52b94..de47f3e210a12db7a487525a2de2380c959a2e00 100644
 --- a/dist/core/tools/find.js
 +++ b/dist/core/tools/find.js
 @@ -1,12 +1,9 @@
@@ -120,7 +179,7 @@ diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
  /** Relativize a find result against the search root and normalize it to posix separators. */
  export function relativizeFindResultPath(resultPath, searchPath, pathModule = path) {
      const hadTrailingSeparator = resultPath.endsWith(pathModule.sep) || (pathModule.sep === "\\" && resultPath.endsWith("/"));
-@@ -26,11 +23,6 @@
+@@ -26,11 +23,6 @@ export const findToolSystemPromptContribution = {
      guidelines: [],
  };
  const DEFAULT_LIMIT = 1000;
@@ -132,7 +191,7 @@ diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
  export function createFindToolDefinition(cwd, options) {
      const customOps = options?.operations;
      return {
-@@ -39,208 +31,8 @@
+@@ -39,208 +31,8 @@ export function createFindToolDefinition(cwd, options) {
          description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
          promptSnippet: findToolSystemPromptContribution.snippet,
          parameters: findSchema,
@@ -345,6 +404,7 @@ diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
      };
 diff --git a/dist/core/tools/grep-execution.js b/dist/core/tools/grep-execution.js
 new file mode 100644
+index 0000000000000000000000000000000000000000..b72872c74e6c615946bc1a0ae0f791c85d160475
 --- /dev/null
 +++ b/dist/core/tools/grep-execution.js
 @@ -0,0 +1,82 @@
@@ -431,6 +491,7 @@ new file mode 100644
 +    };
 +}
 diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
+index d427d071582ead6e0c876121a8b67ad9fe6c45f7..d56428341dda4d1c833bee46de4e4755d5c2a5b9 100644
 --- a/dist/core/tools/grep.js
 +++ b/dist/core/tools/grep.js
 @@ -1,13 +1,9 @@
@@ -449,7 +510,7 @@ diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
  const grepSchema = Type.Object({
      pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
      path: Type.Optional(Type.String({ description: "Directory or file to search (default: current directory)" })),
-@@ -34,214 +30,8 @@
+@@ -34,214 +30,8 @@ export function createGrepToolDefinition(cwd, options) {
          description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
          promptSnippet: grepToolSystemPromptContribution.snippet,
          parameters: grepSchema,
@@ -668,6 +729,7 @@ diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
      };
 diff --git a/dist/core/tools/search-process.js b/dist/core/tools/search-process.js
 new file mode 100644
+index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb851743d3e
 --- /dev/null
 +++ b/dist/core/tools/search-process.js
 @@ -0,0 +1,74 @@
@@ -745,22 +807,87 @@ new file mode 100644
 +    if (!Number.isSafeInteger(value) || value < 0) throw new Error("Search limits must be non-negative integers");
 +    return Math.min(Math.max(1, value), maximum);
 +}
+diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/execute.js
+index 4b00fa14744bac1674d133b4841e217e4ed64cf0..d6dfa692e95b90bff0104e7108cc27c0819677fd 100644
+--- a/dist/extensions/codemode/execute.js
++++ b/dist/extensions/codemode/execute.js
+@@ -412,6 +412,9 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+     }));
+     const sandbox = new CodemodeSandbox({
+         tools: sandboxTools,
++        computeTimeoutMs: options.runtime?.computeTimeoutMs,
++        maxPendingToolCalls: options.runtime?.maxPendingToolCalls,
++        maxQueuedToolCalls: options.runtime?.maxQueuedToolCalls,
+         globals: [
+             ...createDiscoveryGlobals(callable, samples, options),
+             ...(options.models && ctx
+@@ -447,8 +450,11 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+             scriptOutput.push({ type: "text", text: valueText(result.value) });
+     }
+     const items = formatOutput(scriptOutput);
+-    if (!result.ok)
++    if (!result.ok) {
+         items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
++        if (calls.length > 0)
++            items.push({ type: "text", text: "Nested tools may have completed or left partial effects before the script failed. Inspect the current state before continuing; do not replay the entire script or completed actions." });
++    }
+     if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
+         items.push({
+             type: "text",
+diff --git a/dist/extensions/codemode/index.d.ts b/dist/extensions/codemode/index.d.ts
+index 7de9c24e9d7ac437265eeb911ca9c841b36dca9f..891f90bd0eff36ca5facc2f32fb4a2902de7aedb 100644
+--- a/dist/extensions/codemode/index.d.ts
++++ b/dist/extensions/codemode/index.d.ts
+@@ -8,6 +8,7 @@
+ import type { ExtensionFactory } from "../../core/extensions/types.ts";
+ import type { CodemodeMode } from "../../core/settings-manager.ts";
+ export interface CodemodeExtensionOptions {
++    runtime?: { computeTimeoutMs?: number; maxPendingToolCalls?: number; maxQueuedToolCalls?: number };
+     /** Overrides the `codemode.mode` setting. */
+     mode?: CodemodeMode;
+     /** Overrides the `codemode.inlineBudget` setting. */
+diff --git a/dist/extensions/codemode/index.js b/dist/extensions/codemode/index.js
+index 94edd2166b4d5e3821795bc936a68c6ca4d03305..958c5400e98645522e575e84dd48355e379e32c2 100644
+--- a/dist/extensions/codemode/index.js
++++ b/dist/extensions/codemode/index.js
+@@ -19,6 +19,7 @@ export function createCodemodeExtension(options = {}) {
+             ...createCodemodeToolDefinition({
+                 appendEntry: (customType, data) => pi.appendEntry(customType, data),
+                 models: options.models ?? true,
++                runtime: options.runtime,
+                 getToolNamespace: (name) => pi.getAllTools().find((tool) => tool.name === name)?.namespace,
+                 getToolGuidelines: () => new Map(pi.getAllTools().map((tool) => [tool.name, tool.promptGuidelines ?? []])),
+                 getMode: () => options.mode ?? readMode(pi),
+diff --git a/dist/extensions/codemode/tool.d.ts b/dist/extensions/codemode/tool.d.ts
+index 5e667824a3e4615df9c82c949256e9720faffc72..c392da59bcce89ad5edc917f84ee12dd74e3c9b3 100644
+--- a/dist/extensions/codemode/tool.d.ts
++++ b/dist/extensions/codemode/tool.d.ts
+@@ -36,6 +36,7 @@ export interface CodemodeStoreEntryData {
+ /** The part of the model registry that scripts reach through `models`. */
+ export type CodemodeModelRuntime = Pick<ModelRegistry, "getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages">;
+ export interface CodemodeToolOptions {
++    runtime?: { computeTimeoutMs?: number; maxPendingToolCalls?: number; maxQueuedToolCalls?: number };
+     /** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
+     getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
+     /** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
 diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 9f9bd7370e5ecc288de58d20e81b2a0aadb6ea4b..bc07b6f2ef57e81762c7f159d3c2b02103654eaa 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -3,7 +3,7 @@
+@@ -3,7 +3,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
  export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
 -export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
 +export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, prepareCompaction, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
  export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
- export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
 diff --git a/dist/index.js b/dist/index.js
+index c48934f78d61fd5f5f8008bc9e09d8c4558d330a..d563686b971390d8ab816e38684f7797171662c6 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -5,7 +5,7 @@
+@@ -5,7 +5,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
  export { AgentSession, parseSkillBlock, } from "./core/agent-session.js";
  export { readStoredCredential } from "./core/auth-storage.js";
  // Compaction
@@ -770,6 +897,7 @@ diff --git a/dist/index.js b/dist/index.js
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.js";
  export { convertToLlm } from "./core/messages.js";
 diff --git a/dist/utils/shell.js b/dist/utils/shell.js
+index e5c17aa10e917137151962f2d4f6eac7265c02c1..24d1920206852f8e97299d35ed7bb0f4ca9d98fd 100644
 --- a/dist/utils/shell.js
 +++ b/dist/utils/shell.js
 @@ -1,5 +1,5 @@
@@ -779,7 +907,7 @@ diff --git a/dist/utils/shell.js b/dist/utils/shell.js
  import { spawn, spawnSync } from "child_process";
  import { getBinDir } from "../config.js";
  /**
-@@ -106,6 +106,12 @@
+@@ -106,6 +106,12 @@ export function getPowerShellConfig() {
      if (process.platform !== "win32") {
          throw new Error("The powershell tool is only available on Windows.");
      }
@@ -793,6 +921,7 @@ diff --git a/dist/utils/shell.js b/dist/utils/shell.js
      if (!shell) {
          throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
 diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
+index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb78681e1f9022 100644
 --- a/dist/utils/tools-manager.js
 +++ b/dist/utils/tools-manager.js
 @@ -1,7 +1,7 @@
@@ -804,7 +933,7 @@ diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
  import { Readable } from "stream";
  import { pipeline } from "stream/promises";
  import { APP_NAME, getBinDir } from "../config.js";
-@@ -76,6 +76,16 @@
+@@ -76,6 +76,16 @@ export function getToolPath(tool) {
      const config = TOOLS[tool];
      if (!config)
          return null;
@@ -821,3 +950,15 @@ diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
      // Check our tools directory first
      const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
      if (existsSync(localPath)) {
+diff --git a/examples/extensions/custom-provider-anthropic/package-lock.json b/examples/extensions/custom-provider-anthropic/package-lock.json
+deleted file mode 100644
+index c42cc37205ed3120ac234575dba2de27052d8afe..0000000000000000000000000000000000000000
+diff --git a/examples/extensions/gondolin/package-lock.json b/examples/extensions/gondolin/package-lock.json
+deleted file mode 100644
+index d47e327924bcf79aaeb8ac2c0035c0f4a978cbd0..0000000000000000000000000000000000000000
+diff --git a/examples/extensions/sandbox/package-lock.json b/examples/extensions/sandbox/package-lock.json
+deleted file mode 100644
+index d67e9229aaf4603c92ead47b00e3cf83d2e9913e..0000000000000000000000000000000000000000
+diff --git a/examples/extensions/with-deps/package-lock.json b/examples/extensions/with-deps/package-lock.json
+deleted file mode 100644
+index 4b2a877a14d66c9aed27865bf9ff7ba4a545994a..0000000000000000000000000000000000000000

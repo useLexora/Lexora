@@ -5,13 +5,13 @@ import type { RuntimePreferences } from '@buddy-shared/runtime/runtimePreference
 import type { ApplicationSettingsProps } from '../app/typing'
 import { BUDDY_PERMISSION_MODES } from '@buddy-shared/permissions/permissionMode'
 import { DEFAULT_MODEL_RETRY_LIMIT } from '@buddy-shared/runtime/runtimePreferences'
-import { NInputNumber, NSelect, useMessage } from 'naive-ui'
+import { NInputNumber, NSelect, NSwitch, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopFullAccessConfirmationDialog } from '@/modules/prompt-input/ui'
 import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmentedControl.vue'
 
-type RuntimeSettingField = 'cacheWarming' | 'defaultPermissionMode' | 'modelRetryLimit'
+type RuntimeSettingField = 'cacheWarming' | 'codemode' | 'defaultPermissionMode' | 'modelRetryLimit'
 type RetryMode = 0 | 'limited' | 'unlimited'
 
 const props = defineProps<ApplicationSettingsProps>()
@@ -26,6 +26,8 @@ const fullAccessConfirmationText = computed(() => ({
 const message = useMessage()
 const cacheWarmingLabelId = useId()
 const cacheWarmingDescriptionId = useId()
+const codemodeLabelId = useId()
+const codemodeDescriptionId = useId()
 const defaultPermissionLabelId = useId()
 const defaultPermissionDescriptionId = useId()
 const retryLabelId = useId()
@@ -113,6 +115,10 @@ function updateRetryCount(count: number | null) {
 function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
   void save('cacheWarming', { runtime: { cacheWarming } })
 }
+
+function updateCodemode(codemode: boolean) {
+  void save('codemode', { runtime: { codemode } })
+}
 </script>
 
 <template>
@@ -158,6 +164,24 @@ function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
             </NInputNumber>
           </div>
         </div>
+      </div>
+    </section>
+    <section class="runtime-settings__section">
+      <h2>{{ t('desktop.settings.runtime.toolExecution') }}</h2>
+      <div class="runtime-settings__row" data-testid="codemode-setting">
+        <div class="runtime-settings__copy">
+          <strong :id="codemodeLabelId">{{ t('desktop.settings.runtime.codemode') }}</strong>
+          <small :id="codemodeDescriptionId">{{ t('desktop.settings.runtime.codemodeDescription') }}</small>
+        </div>
+        <NSwitch
+          class="runtime-settings__toggle"
+          :aria-labelledby="codemodeLabelId"
+          :aria-describedby="codemodeDescriptionId"
+          :value="config.runtime.codemode"
+          :loading="pendingFields.has('codemode')"
+          :disabled="pendingFields.has('codemode')"
+          @update:value="updateCodemode"
+        />
       </div>
     </section>
     <section class="runtime-settings__section">
@@ -258,6 +282,10 @@ function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
   justify-self: end;
 }
 
+.runtime-settings__toggle {
+  justify-self: end;
+}
+
 .runtime-settings__retry-count {
   width: 8rem;
   justify-self: end;
@@ -282,7 +310,8 @@ function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
   }
 
   .runtime-settings__retry-modes,
-  .runtime-settings__retry-count {
+  .runtime-settings__retry-count,
+  .runtime-settings__toggle {
     justify-self: start;
   }
 }

@@ -80,6 +80,49 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('upgrades Azure source identifiers without changing account identities, selections or history', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-azure-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 22))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    previous.exec(`
+      PRAGMA user_version = 22;
+      UPDATE runs SET provider = 'azure-openai-responses';
+      INSERT INTO provider_states (provider_id, enabled, request_headers_json, created_at, updated_at)
+      VALUES ('azure-openai-responses', 1, '[{"name":"api-key","value":"\${apiKey}"}]', 'created', 'updated');
+      INSERT INTO builtin_provider_configs (id, builtin_provider_id, display_name, created_at, updated_at)
+      VALUES ('azure-openai-responses', 'azure-openai-responses', 'Personal Azure', 'created', 'updated'),
+        ('builtin-work', 'azure-openai-responses', 'Work Azure', 'created', 'updated'),
+        ('anthropic', 'anthropic', NULL, 'created', 'updated');
+      INSERT INTO default_model_setting (singleton, provider_id, model_id, reasoning, updated_at)
+      VALUES (1, 'azure-openai-responses', 'model', 'high', 'updated');
+      INSERT INTO provider_model_states (provider_id, model_id, display_name, api, input_json, reasoning, cost_json,
+        context_window, max_tokens, override_context_window, override_max_tokens, source, enabled, available, created_at, updated_at)
+      VALUES ('azure-openai-responses', 'model', 'Model', 'azure-openai-responses', '["text"]', 1, '{}',
+        32000, 4000, 16000, 2000, 'builtin', 1, 1, 'created', 'updated');
+      INSERT INTO provider_configs (id, display_name, api, base_url, models_json, enabled, created_at, updated_at)
+      VALUES ('custom-azure', 'Custom Azure', 'azure-openai-responses', 'https://example.test/v1', '[]', 1, 'created', 'updated');
+    `)
+    const configs = previous.prepare('SELECT * FROM builtin_provider_configs ORDER BY id').all()
+    const tables = ['runs', 'provider_states', 'provider_model_states', 'provider_configs', 'default_model_setting']
+    const before = tables.map(table => previous.prepare(`SELECT * FROM ${table}`).all())
+    previous.close()
+    const upgraded = openBuddyDatabase({ databasePath })
+    expect(upgraded.prepare('SELECT * FROM builtin_provider_configs ORDER BY id').all()).toEqual(configs.map(config => ({
+      ...config,
+      builtin_provider_id: config.builtin_provider_id === 'azure-openai-responses' ? 'azure' : config.builtin_provider_id,
+    })))
+    expect(tables.map(table => upgraded.prepare(`SELECT * FROM ${table}`).all())).toEqual(before)
+    upgraded.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(tables.map(table => reopened.prepare(`SELECT * FROM ${table}`).all())).toEqual(before)
+    expect(reopened.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+
   it('preserves v21 usage and attributes independent actions without modifying completed runs', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-action-migration-'))
     directories.push(directory)
@@ -183,6 +226,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     seedRun(legacy)
     const now = '2026-09-12T00:00:00.000Z'
     legacy.prepare('INSERT INTO provider_states VALUES (?, ?, ?, ?)').run('anthropic', 1, now, now)
+    legacy.prepare('INSERT INTO provider_states VALUES (?, ?, ?, ?)').run('azure-openai-responses', 1, now, now)
     legacy.prepare('INSERT INTO provider_states VALUES (?, ?, ?, ?)').run('proxy', 1, now, now)
     legacy.prepare(`INSERT INTO provider_configs (id, display_name, api, base_url, models_json, credential_ref, enabled, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run('proxy', 'Proxy', 'openai-completions', 'https://models.example.test/v1', '[]', 'proxy', 1, now, now)
@@ -197,6 +241,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     expect(upgraded.prepare('SELECT * FROM runs').all()).toEqual(runs)
     expect(upgraded.prepare('SELECT id, builtin_provider_id, display_name FROM builtin_provider_configs').all()).toEqual([
       { id: 'anthropic', builtin_provider_id: 'anthropic', display_name: null },
+      { id: 'azure-openai-responses', builtin_provider_id: 'azure', display_name: null },
     ])
     expect(upgraded.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
     expect((upgraded.prepare('PRAGMA table_info(provider_model_states)').all() as Array<{ name: string }>).map(column => column.name))

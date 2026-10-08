@@ -14,7 +14,7 @@ const buddyRoot = path.join(repoRoot, 'apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
 const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
 
-export async function createBuddyTestRun({ runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()) } = {}) {
+export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()) } = {}) {
   runId ??= `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
   assert(/^[\w-]{1,100}$/.test(runId), 'Invalid test run ID')
   const root = await canonicalPath(path.resolve(dataRoot))
@@ -89,7 +89,7 @@ export async function createBuddyTestRun({ runId = process.env.LEXORA_TEST_RUN_I
       try {
         application = await electron.launch({
           executablePath: require('electron'),
-          args: [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), '--disable-gpu', buddyRoot],
+          args: [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), '--disable-gpu', path.resolve(appPath)],
           chromiumSandbox: true,
           cwd: repoRoot,
           env: environment,

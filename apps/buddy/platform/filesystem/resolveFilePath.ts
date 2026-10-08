@@ -31,6 +31,8 @@ export async function resolveFilePath(
       try {
         const canonicalParent = filePaths.resolveInput(await realpath(cursor))
         const metadata = await stat(canonicalParent)
+        if (!metadata.isFile() && !metadata.isDirectory())
+          throw new FilePathResolutionError('INVALID_PATH')
         if (missingSegments.length > 0 && !metadata.isDirectory())
           throw new FilePathResolutionError('INVALID_PATH')
         return {

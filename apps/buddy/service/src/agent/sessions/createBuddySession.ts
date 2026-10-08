@@ -155,12 +155,11 @@ export async function createBuddyContextSnapshot(
     if (persistedContextUsageUnknown)
       return null
 
-    const tools = result.session.getActiveToolNames().flatMap((name) => {
-      const tool = result.session.getToolDefinition(name)
-      return tool
-        ? [{ description: tool.description, name: tool.name, parameters: tool.parameters }]
-        : []
-    })
+    const tools = result.session.agent.state.tools.map(tool => ({
+      description: tool.description,
+      name: tool.name,
+      parameters: tool.parameters,
+    }))
     return createEstimatedContextUsage(buildBuddyRequestContext({
       messages: convertToLlm(prepareBuddyInputHistory(result.session.messages)).filter(message => message.role !== 'system'),
       systemPrompt: result.session.systemPrompt,

@@ -9,6 +9,7 @@ interface RunEventCompactionFacts {
   readonly completedBlockKeys: ReadonlySet<string>
   readonly completedMessageIds: ReadonlySet<string>
   readonly completedToolCallIds: ReadonlySet<string>
+  readonly reusedToolCallIds: ReadonlySet<string>
   readonly latestToolReplacementSequences: ReadonlyMap<string, number>
 }
 
@@ -27,12 +28,17 @@ export function createRunEventCompactionPlan(
     const key = readMessageBlockKey(event.payload)
     return key ? [key] : []
   }))
-  const completedToolCallIds = new Set(events.flatMap((event) => {
-    if (event.type !== 'tool.completed')
-      return []
+  const completedToolCallIds = new Set<string>()
+  const reusedToolCallIds = new Set<string>()
+  for (const event of events) {
     const toolCallId = readToolCallId(event.payload)
-    return toolCallId ? [toolCallId] : []
-  }))
+    if (!toolCallId)
+      continue
+    if (event.type === 'tool.completed')
+      completedToolCallIds.add(toolCallId)
+    else if ((event.type === 'tool.preparing' || event.type === 'tool.started') && completedToolCallIds.has(toolCallId))
+      reusedToolCallIds.add(toolCallId)
+  }
   const latestToolReplacementSequences = new Map<string, number>()
   for (const event of events) {
     if (event.type !== 'tool.updated' || isToolPresentationDelta(event.payload))
@@ -45,6 +51,7 @@ export function createRunEventCompactionPlan(
     completedBlockKeys,
     completedMessageIds,
     completedToolCallIds,
+    reusedToolCallIds,
     latestToolReplacementSequences,
   }))
   const removedSequences = new Set(removed.map(event => event.sequence))
@@ -66,11 +73,13 @@ function shouldRemoveRunEvent(
     return facts.completedBlockKeys.has(readMessageBlockKey(event.payload) ?? '')
   if (event.type === 'tool.preparing') {
     const toolCallId = readToolCallId(event.payload) ?? ''
-    return facts.completedToolCallIds.has(toolCallId)
+    return facts.completedToolCallIds.has(toolCallId) && !facts.reusedToolCallIds.has(toolCallId)
   }
   if (event.type !== 'tool.updated')
     return false
   const toolCallId = readToolCallId(event.payload) ?? ''
+  if (facts.reusedToolCallIds.has(toolCallId))
+    return false
   if (facts.completedToolCallIds.has(toolCallId))
     return true
   const latestReplacementSequence = facts.latestToolReplacementSequences.get(toolCallId)

@@ -44,7 +44,7 @@ export class PiApplicationObserver {
       case 'tool_execution_end': {
         const tool = this.#tools.get(event.toolCallId)
         if (tool?.authorized)
-          this.#events.publish({ event: event.isError ? 'pi.tool.failed' : 'pi.tool.completed', level: event.isError ? 'warn' : 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: tool.turnId, durationMs: Math.round(performance.now() - tool.startedAt) })
+          this.#events.publish({ event: event.isError ? 'pi.tool.failed' : 'pi.tool.completed', level: event.isError ? 'warn' : 'info', toolCallId: diagnosticToolCallId(event.toolCallId), turnId: tool.turnId, durationMs: event.durationMs })
         this.#tools.delete(event.toolCallId)
         break
       }
@@ -65,7 +65,7 @@ export class PiApplicationObserver {
         this.#compactionStartedAt = undefined
         break
       case 'agent_settled':
-        this.#events.publish({ event: 'pi.agent.settled', level: 'info' })
+        this.#events.publish({ event: 'pi.agent.settled', level: 'info', ...(event.aborted ? { errorCode: 'MODEL_REQUEST_ABORTED' } : {}) })
         break
     }
   }

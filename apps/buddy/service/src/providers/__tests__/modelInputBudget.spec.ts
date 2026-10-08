@@ -15,6 +15,8 @@ describe('complete provider input budgets', () => {
     expect(() => assertModelRequestBytes(model, { messages: [{ role: 'user', content: 'Hello' }] })).not.toThrow()
     expect(getModelRequestBytesLimit({ api: 'openai-completions' })).toBe(32 * 1024 * 1024)
     expect(getModelRequestBytesLimit({ api: 'google-generative-ai' })).toBe(20_000_000)
+    expect(getModelRequestBytesLimit({ api: 'anthropic-messages' })).toBe(32_000_000)
+    expect(getModelRequestBytesLimit({ api: 'bedrock-converse-stream' })).toBe(20_000_000)
   })
 
   it.each([

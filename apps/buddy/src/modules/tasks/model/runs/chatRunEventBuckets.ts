@@ -115,10 +115,13 @@ export function compactChatRunEventSnapshots(
   const completedToolKeys = new Set<string>()
   const startedOrCompletedToolKeys = new Set<string>()
   const latestToolReplacementSequence = new Map<string, number>()
+  const reusedToolKeys = new Set<string>()
   for (const event of events) {
     const toolKey = runToolKey(event)
     if (!toolKey)
       continue
+    if ((event.type === 'tool.preparing' || event.type === 'tool.started') && completedToolKeys.has(toolKey))
+      reusedToolKeys.add(toolKey)
     if (event.type === 'tool.completed')
       completedToolKeys.add(toolKey)
     if (event.type === 'tool.started' || event.type === 'tool.completed')
@@ -131,12 +134,14 @@ export function compactChatRunEventSnapshots(
       return false
     if (event.type === 'tool.preparing') {
       const toolKey = runToolKey(event)
-      return toolKey ? !startedOrCompletedToolKeys.has(toolKey) : true
+      return toolKey ? reusedToolKeys.has(toolKey) || !startedOrCompletedToolKeys.has(toolKey) : true
     }
     if (event.type !== 'tool.updated')
       return true
     const toolKey = runToolKey(event)
     if (toolKey === null)
+      return true
+    if (reusedToolKeys.has(toolKey))
       return true
     if (completedToolKeys.has(toolKey))
       return false

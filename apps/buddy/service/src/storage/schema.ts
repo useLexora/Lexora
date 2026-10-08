@@ -23,6 +23,7 @@ import { BUDDY_V20_TASK_DRAFTS_SCHEMA_SQL } from './migrations/v20TaskDrafts'
 import { BUDDY_V21_TITLE_SCHEMA_SQL } from './migrations/v21Title'
 
 import { BUDDY_V22_EXTENSION_SCHEMA_SQL } from './migrations/v22Extension'
+import { BUDDY_V23_PROVIDERS_SCHEMA_SQL } from './migrations/v23Providers'
 
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
@@ -30,7 +31,7 @@ export interface BuddySchemaMigration {
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 22 as const
+export const BUDDY_SCHEMA_VERSION = 23 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -55,4 +56,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { foreignKeys: 'off', sql: BUDDY_V20_TASK_DRAFTS_SCHEMA_SQL, version: 20 },
   { sql: BUDDY_V21_TITLE_SCHEMA_SQL, version: 21 },
   { sql: BUDDY_V22_EXTENSION_SCHEMA_SQL, version: 22 },
+  { sql: BUDDY_V23_PROVIDERS_SCHEMA_SQL, version: 23 },
 ]

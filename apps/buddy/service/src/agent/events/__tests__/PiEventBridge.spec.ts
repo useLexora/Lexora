@@ -8,6 +8,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { PiEventBridge } from '../PiEventBridge'
 
 describe('piEventBridge', () => {
+  it('preserves cancellation reported by Pi after a continuation settles without an aborted message', async () => {
+    const { appended, channel, emit } = createProjectionHarness()
+    emit({ type: 'agent_start' })
+    emit({ type: 'agent_settled', aborted: true })
+    await channel.flush()
+    expect(channel.outcome.failureCode).toBe('MODEL_REQUEST_ABORTED')
+    expect(appended.at(-1)).toMatchObject({ type: 'run.progress', payload: { phase: 'idle', toolName: null } })
+  })
+
   it('preserves registered labels in replayable tool events without adding them to output deltas', async () => {
     const { appended, channel, emit } = createProjectionHarness(undefined, () => 'Query local data')
     emit({ type: 'tool_execution_start', toolCallId: 'custom', toolName: 'custom_query', args: {} })
@@ -131,7 +140,7 @@ describe('piEventBridge', () => {
         type: 'tool_execution_update',
       })
     }
-    emit({ type: 'agent_settled' })
+    emit({ type: 'agent_settled', aborted: false })
 
     await channel.flush()
 

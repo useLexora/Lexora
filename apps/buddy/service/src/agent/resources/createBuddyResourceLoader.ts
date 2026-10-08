@@ -14,6 +14,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import { DEFAULT_MODEL_RETRY_LIMIT } from '../../../../shared/runtime/runtimePreferences'
 import { SHELL_SANDBOX_EXTENSION } from '../../sandbox/shellCapability'
+import { CODEMODE_EXTENSION, CODEMODE_TOOL_NAME } from '../extensions/codemodeExtension'
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
 import { createSystemSectionsExtension } from '../extensions/systemSectionsExtension'
@@ -125,7 +126,8 @@ function validateLoadedExtensions(loader: DefaultResourceLoader): void {
       (PI_BUILTIN_TOOL_NAME_SET.has(toolName)
         && !(toolName === getPiShellToolName(process.platform) && extension.path === `<inline:${SHELL_SANDBOX_EXTENSION}>`)
         && !(toolName === 'read' && extension.path === `<inline:${READ_FILE_EXTENSION}>`))
-      || (!toolName.startsWith('lexora_') && !toolName.startsWith('mcp__') && !PI_BUILTIN_TOOL_NAME_SET.has(toolName))
+      || (!toolName.startsWith('lexora_') && !toolName.startsWith('mcp__') && !PI_BUILTIN_TOOL_NAME_SET.has(toolName)
+        && !(toolName === CODEMODE_TOOL_NAME && extension.path === `<inline:${CODEMODE_EXTENSION}>`))
     ))
   ))
   const hasInvalidToolSchema = result.extensions.some(extension => (

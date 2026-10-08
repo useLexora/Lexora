@@ -16,6 +16,33 @@ afterEach(async () => {
 })
 
 describe('model retry policy', () => {
+  it('retries a busy provider within the same run and input', async () => {
+    let requests = 0
+    const fixture = await createFixture(() => ++requests === 1 ? 'server_busy' : undefined)
+    const release = await fixture.activate(1)
+    await fixture.reusable.prompt('Retry the busy provider')
+    expect(requests).toBe(2)
+    expect(fixture.session.messages.at(-1)).toMatchObject({ stopReason: 'stop' })
+    expect(fixture.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(1)
+    release()
+  })
+
+  it.each([
+    [[{ type: 'text' as const, text: 'Already delivered output' }]],
+    [[{ type: 'toolCall' as const, id: 'side-effect', name: 'write', arguments: { path: 'result', content: 'written' } }]],
+  ])('preserves committed output without replaying a failed request', async (content) => {
+    let requests = 0
+    const fixture = await createFixture(() => {
+      requests++
+      return '503 service unavailable'
+    }, content)
+    const release = await fixture.activate('unlimited')
+    await fixture.reusable.prompt('Keep partial progress')
+    expect(requests).toBe(1)
+    expect(fixture.session.messages.at(-1)).toMatchObject({ stopReason: 'error', content })
+    release()
+  })
+
   it.each([0, 2, 'unlimited'] as const)('executes the %s budget without duplicating the user input', async (limit) => {
     let requests = 0
     const fixture = await createFixture(() => ++requests <= 5 ? '503 service unavailable' : undefined)
@@ -27,7 +54,7 @@ describe('model retry policy', () => {
     release()
   })
 
-  it.each(['401 invalid api key', '429 insufficient_quota', '403 forbidden'])('does not retry %s even with an unlimited budget', async (failure) => {
+  it.each(['401 invalid api key', '429 insufficient_quota', '403 forbidden', '400 server_error'])('does not retry %s even with an unlimited budget', async (failure) => {
     let requests = 0
     const fixture = await createFixture(() => {
       requests++
@@ -69,9 +96,9 @@ describe('model retry policy', () => {
       return '503 service unavailable'
     })
     let release = await fixture.activate(2)
-    fixture.reusable.applyPreferences({ cacheWarming: 'streaming', modelRetryLimit: 0 })
+    fixture.reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 0 })
     expect(fixture.session.settingsManager.getRetrySettings()).toMatchObject({ enabled: true, maxRetries: 2 })
-    fixture.reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: 0 })
+    fixture.reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.reusable.prompt('First run')
     expect(requests).toBe(3)
@@ -84,13 +111,13 @@ describe('model retry policy', () => {
   })
 })
 
-async function createFixture(failure: () => string | undefined) {
+async function createFixture(failure: () => string | undefined, failureContent: AssistantMessage['content'] = []) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-model-retry-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
   const model = runtime.getModels().find(model => model.provider === 'anthropic')!
   await runtime.setRuntimeApiKey(model.provider, 'offline-fixture')
-  vi.spyOn(runtime, 'streamSimple').mockImplementation(target => response(target, failure()))
+  vi.spyOn(runtime, 'streamSimple').mockImplementation(target => response(target, failure(), failureContent))
   const created = await createIsolatedBuddySession({
     agentDir: join(root, 'agent'),
     canonicalRoot: root,
@@ -120,7 +147,7 @@ async function createFixture(failure: () => string | undefined) {
   let run = 0
   async function activate(limit?: ModelRetryLimit) {
     if (limit !== undefined)
-      reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: limit })
+      reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: limit })
     const release = await reusable.activateTurn({
       runId: `retry-run-${++run}`,
       provider: model.provider,
@@ -138,14 +165,14 @@ async function createFixture(failure: () => string | undefined) {
   return { session, reusable, activate }
 }
 
-function response(model: Model<Api>, failure?: string) {
+function response(model: Model<Api>, failure?: string, failureContent: AssistantMessage['content'] = []) {
   const message: AssistantMessage = {
     api: model.api,
     provider: model.provider,
     model: model.id,
     role: 'assistant',
     timestamp: Date.now(),
-    content: failure ? [] : [{ type: 'text', text: 'Recovered' }],
+    content: failure ? failureContent : [{ type: 'text', text: 'Recovered' }],
     stopReason: failure ? 'error' : 'stop',
     errorMessage: failure,
     usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },

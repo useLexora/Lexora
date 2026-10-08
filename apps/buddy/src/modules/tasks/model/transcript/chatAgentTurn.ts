@@ -116,6 +116,7 @@ export function createChatAgentTurnReducer(
   const usage = createChatRunTokenUsageReducer(run.id)
   const reasoning = new Map<string, ChatAgentReasoningNode>()
   const tools = new Map<string, ChatAgentToolNode & { toolCallId: string }>()
+  const previousTools: ChatAgentToolNode[] = []
   const approvalTools = new Map<string, string>()
   const text = new Map<string, ChatAgentNarrationNode>()
   const panels = new Map<string, ChatAgentPanelNode>()
@@ -374,7 +375,7 @@ export function createChatAgentTurnReducer(
       const approvalId = readString(payload.id)
       const toolCallId = approvalTools.get(approvalId)
       const current = toolCallId ? tools.get(toolCallId) : undefined
-      if (current?.status === 'awaiting_approval') {
+      if (current?.status === 'awaiting_approval' && current.approvalId === approvalId) {
         const status = payload.status === 'approved'
           ? 'preparing'
           : payload.status === 'denied'
@@ -413,7 +414,12 @@ export function createChatAgentTurnReducer(
       const toolName = readString(payload.toolName)
       if (!toolCallId || !toolName)
         return
-      const current = tools.get(toolCallId)
+      let current = tools.get(toolCallId)
+      if (current && (event.type === 'tool.preparing' || (event.type === 'tool.started' && ['completed', 'failed', 'denied', 'interrupted'].includes(current.status)))) {
+        previousTools.push(current)
+        tools.delete(toolCallId)
+        current = undefined
+      }
       const presentation = readToolPresentationUpdate(payload, current?.presentation)
       if (!presentation)
         return
@@ -434,15 +440,16 @@ export function createChatAgentTurnReducer(
           ?? null
       if (!isStructuredTool && toolNarration && description === toolNarration.text)
         text.delete(toolNarration.id)
+      const id = current?.id ?? (nodeOrder.has(`tool:${toolCallId}`) ? `tool:${toolCallId}:${event.sequence}` : `tool:${toolCallId}`)
       if (!current)
-        rememberNode(`tool:${toolCallId}`, event)
+        rememberNode(id, event)
       tools.set(toolCallId, {
         ...(current?.approvalId ? { approvalId: current.approvalId } : {}),
         ...(current?.denialCode ? { denialCode: current.denialCode } : {}),
         ...(current?.errorCode ? { errorCode: current.errorCode } : {}),
         description,
         ...(toolLabel ? { toolLabel } : {}),
-        id: `tool:${toolCallId}`,
+        id,
         isError: isError || Boolean(current?.denialCode || current?.errorCode),
         kind: 'tool',
         presentation,
@@ -486,7 +493,7 @@ export function createChatAgentTurnReducer(
       nodeOrder.set(node.id, sequence)
       return node
     })
-    const nodes = [...reasoningNodes, ...narrationNodes, ...tools.values(), ...compactionNodes, ...panels.values()]
+    const nodes = [...reasoningNodes, ...narrationNodes, ...previousTools, ...tools.values(), ...compactionNodes, ...panels.values()]
       .sort((left, right) => readNodeOrder(left) - readNodeOrder(right))
       .map((node) => {
         if (

@@ -118,7 +118,10 @@ export function projectPiEvent(
     case 'agent_start':
       return progressProjection(state, 'preparing')
     case 'agent_settled':
-      return progressProjection(state, 'idle', null, null)
+      return {
+        ...progressProjection(state, 'idle', null, null),
+        ...(event.aborted ? { failureCode: 'MODEL_REQUEST_ABORTED' as const } : {}),
+      }
     case 'turn_start':
     case 'summarization_retry_attempt_start':
       return progressProjection(state, 'model_requesting', null, state.progress?.retry ? { ...state.progress.retry, retryAt: null } : null)

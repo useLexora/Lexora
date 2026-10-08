@@ -23,6 +23,14 @@ afterEach(async () => {
 })
 
 describe('native conversation tree', () => {
+  it('counts separate tool invocations when a provider reuses a call ID across steps', async () => {
+    const fixture = await createFixture()
+    const run = fixture.run('reused-tools', 'b0', 'q1')
+    for (let sequence = 1; sequence <= 2; sequence++)
+      fixture.toolEvent(run.id, sequence, 'provider-call')
+    expect(fixture.repository.listToolCounts('conversation').get(run.id)).toBe(2)
+  })
+
   it('retains a durable file commit when binding fails and reconciles without recreating the file', async () => {
     const fixture = await createFixture()
     const commits: BuddyTreeCommit[] = []
@@ -365,6 +373,10 @@ async function createFixture(recovery?: BuddySessionRecoveryService['create']) {
       if (answerId) {
         conversations.createMessage({ id: answerId, branchId: run.branchId, conversationId: run.conversationId, content: { text: answerId }, role: 'assistant', runId: run.id, createdAt: now() })
       }
+    },
+    toolEvent(runId: string, sequence: number, toolCallId: string) {
+      database.prepare('INSERT INTO run_events (run_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(runId, sequence, 'tool.started', JSON.stringify({ toolCallId, toolName: 'read' }), now())
     },
     source(runId: string, sourceRunId: string, position: string) {
       database.prepare('INSERT INTO run_tree_sources (run_id, source_run_id, position) VALUES (?, ?, ?)').run(runId, sourceRunId, position)

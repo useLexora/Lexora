@@ -22,6 +22,63 @@ const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
 
 describe('built-in provider instances', () => {
+  it('restores credential-only Azure accounts and runs both Responses and Foundry chat models through their original identity', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const credentials = new InMemoryCredentialStore()
+    const providerId = 'azure-openai-responses'
+    await credentials.modify(providerId, async () => ({
+      type: 'api_key',
+      key: 'fixture-azure-key',
+      env: { AZURE_OPENAI_BASE_URL: 'https://azure.example.test/v1' },
+    }))
+    const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
+    const service = new ProviderService({
+      authInteractions: new AuthInteractionService(),
+      credentialStatus: createProviderCredentialStatus(credentials),
+      modelDiscovery: { supports: () => false, discover: async () => [] },
+      modelRuntime: runtime,
+      providers: createProviderRepository(database),
+      sessionRuntime: runtime,
+    })
+    try {
+      await service.initializeProviders()
+      expect(await service.listProviders()).toContainEqual(expect.objectContaining({ id: providerId, builtinProviderId: 'azure', status: 'available' }))
+      expect(service.listBuiltinPresets().filter(preset => preset.id.startsWith('azure'))).toMatchObject([{ id: 'azure' }])
+      expect(await credentials.read(providerId)).toMatchObject({ key: 'fixture-azure-key' })
+      const requests: Array<{ url: string, headers: Headers }> = []
+      const request: typeof fetch = async (input, init) => {
+        requests.push({ url: String(input), headers: new Headers(init?.headers) })
+        const item = { type: 'message', id: 'msg_fixture', role: 'assistant', content: [{ type: 'output_text', text: 'Azure answer', annotations: [] }] }
+        const events = String(input).includes('/chat/completions')
+          ? [{ id: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'Azure answer' }, finish_reason: 'stop' }] }]
+          : [
+              { type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } },
+              { type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: item.id, delta: 'Azure answer' },
+              { type: 'response.output_item.done', output_index: 0, item },
+              { type: 'response.completed', response: { id: 'resp_fixture', status: 'completed', output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
+            ]
+        return new Response(`${events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      }
+      for (const api of ['azure-openai-responses', 'openai-completions']) {
+        const model = runtime.getModels(providerId).find(model => model.api === api)!
+        expect(model).toBeDefined()
+        const result = await runtime.completeSimple(model, { messages: [{ role: 'user', content: 'hello', timestamp: 1 }] }, { fetch: request })
+        expect(result, result.errorMessage).toMatchObject({ provider: providerId, stopReason: 'stop', content: [expect.objectContaining({ type: 'text', text: 'Azure answer' })] })
+        expect(result.durationMs).toEqual(expect.any(Number))
+        const headers = requests.at(-1)!.headers
+        expect(headers.get('authorization') ?? headers.get('api-key')).toContain('fixture-azure-key')
+      }
+      expect(requests.every(request => request.url.startsWith('https://azure.example.test/'))).toBe(true)
+      const other = await service.addProvider('azure')
+      expect(other).toMatchObject({ builtinProviderId: 'azure', status: 'authentication_required' })
+      expect(await credentials.read(other.id)).toBeUndefined()
+    }
+    finally {
+      await service.dispose()
+    }
+  })
+
   it('preserves mixed catalogs and authenticates each operation with its own instance and headers', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
@@ -72,6 +129,7 @@ describe('built-in provider instances', () => {
       const source = () => {
         const { provider } = createSource()
         provider.auth.oauth!.login = async (_interaction, options) => {
+          expect(options?.agentName).toBe('Lexora')
           const id = options?.getDeviceId?.()
           expect(id).toMatch(/^[0-9a-f-]{36}$/)
           ids.push(id!)

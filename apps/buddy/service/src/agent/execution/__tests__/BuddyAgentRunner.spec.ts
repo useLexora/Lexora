@@ -1086,7 +1086,7 @@ class OfflineSession implements ReusableBuddySession {
       type: 'compaction_end',
       willRetry: false,
     })
-    this.#emit({ type: 'agent_settled' })
+    this.#emit({ type: 'agent_settled', aborted: false })
   }
 
   subscribe(listener: (event: AgentSessionEvent) => void): () => void {
@@ -1176,7 +1176,7 @@ class WaitingSession implements ReusableBuddySession {
 
   async abort(): Promise<void> {
     this.#releasePrompt()
-    this.#emit({ type: 'agent_settled' })
+    this.#emit({ type: 'agent_settled', aborted: true })
   }
 
   abortCompaction(): void {}

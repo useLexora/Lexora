@@ -1,4 +1,4 @@
-import type { Api, AssistantMessageEvent, AssistantMessageEventStream, Model, Provider, StreamOptions } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Model, Provider, StreamOptions } from '@earendil-works/pi-ai'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ProviderRequestDiagnostic } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { lazyStream } from '@earendil-works/pi-ai'
@@ -6,6 +6,7 @@ import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationD
 import { diagnosticResponseType, diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
 
+export const MODEL_PROGRESS_TIMEOUT_MS = 5 * 60 * 1000
 export const INFERRED_STREAM_COMPLETION = 'model.stream.completion_inferred'
 
 export function withProviderStream(provider: Provider, record?: ApplicationDiagnosticReporter): Provider {
@@ -86,14 +87,55 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
 
   async function* finish(): AsyncIterable<AssistantMessageEvent> {
     let textCompleted = false
+    let latest: AssistantMessage | undefined
+    const deadline = new AbortController()
+    const signal = options?.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let ended = false
+    let rejectWait: ((reason: unknown) => void) | undefined
+    const interrupt = () => rejectWait?.(signal.reason)
+    signal.addEventListener('abort', interrupt, { once: true })
+    const progress = () => {
+      if (ended)
+        return
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        const error = new Error('Model stream timeout: no model progress for 300 seconds')
+        deadline.abort(error)
+      }, MODEL_PROGRESS_TIMEOUT_MS)
+      timer.unref?.()
+    }
+    let iterator: AsyncIterator<AssistantMessageEvent> | undefined
     try {
-      const source = start({ ...options, fetch, onResponse: async (response, responseModel) => {
+      const source = start({ ...options, fetch, signal, onProviderStreamEvent: async (event, responseModel) => {
+        if (hasProviderProgress(event))
+          progress()
+        await options?.onProviderStreamEvent?.(event, responseModel)
+      }, onResponse: async (response, responseModel) => {
         observedResponse(response.status, new Headers(response.headers))
         await options?.onResponse?.(response, responseModel)
       } } as T)
-      for await (let event of source) {
-        if (event.type === 'text_delta' || event.type === 'thinking_delta' || event.type === 'toolcall_delta')
+      iterator = source[Symbol.asyncIterator]()
+      progress()
+      while (true) {
+        const next = await new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
+          rejectWait = reject
+          if (signal.aborted)
+            reject(signal.reason)
+          else
+            void iterator!.next().then(resolve, reject)
+        })
+        if (next.done)
+          break
+        let event = next.value
+        latest = event.type === 'done' ? event.message : event.type === 'error' ? event.error : event.partial
+        if (deadline.signal.aborted)
+          throw deadline.signal.reason
+        if (event.type === 'text_delta' || event.type === 'thinking_delta' || event.type === 'toolcall_delta') {
           evidence.contentEvents!++
+          if (event.delta.length)
+            progress()
+        }
         if (event.type === 'text_end' && event.content.trim())
           textCompleted = true
         if (
@@ -116,7 +158,16 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
             },
           }
         }
+        if (event.type === 'done' && hasInvalidToolCallIds(event.message)) {
+          event = {
+            type: 'error',
+            reason: 'error',
+            error: { ...event.message, stopReason: 'error', errorMessage: 'Model returned duplicate or empty tool call IDs in one response. No tool calls from this response were executed.' },
+          }
+        }
         if (event.type === 'done' || event.type === 'error') {
+          ended = true
+          clearTimeout(timer)
           const message = event.type === 'done' ? event.message : event.error
           evidence.textCharacters = message.content.reduce((count, block) => count + (block.type === 'text' ? block.text.length : 0), 0)
           evidence.toolCalls = message.content.filter(block => block.type === 'toolCall').length
@@ -130,11 +181,69 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     }
     catch (error) {
       evidence.transportCode ??= diagnosticTransportCode(error)
+      if (!latest && !signal.aborted) {
+        recordEnd(true)
+        throw error
+      }
+      ended = true
+      clearTimeout(timer)
+      evidence.completion = evidence.contentEvents! > 0 ? 'incomplete' : 'unknown'
       recordEnd(true, options?.signal?.aborted)
-      throw error
+      const message: AssistantMessage = {
+        ...latest ?? {
+          role: 'assistant',
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          content: [],
+          usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0 } },
+        },
+        stopReason: options?.signal?.aborted ? 'aborted' : 'error',
+        errorMessage: options?.signal?.aborted ? 'Request aborted' : error instanceof Error ? error.message : String(error),
+      }
+      yield { type: 'error', reason: options?.signal?.aborted ? 'aborted' : 'error', error: message }
     }
     finally {
+      ended = true
+      clearTimeout(timer)
+      rejectWait = undefined
+      signal.removeEventListener('abort', interrupt)
+      void iterator?.return?.().catch(() => {})
       recordEnd(true, options?.signal?.aborted)
     }
   }
+}
+
+function hasProviderProgress(value: unknown): boolean {
+  if (!value || typeof value !== 'object')
+    return false
+  const event = value as Record<string, unknown>
+  if (typeof event.delta === 'string')
+    return event.delta.length > 0
+  const delta = event.delta && typeof event.delta === 'object' ? event.delta as Record<string, unknown> : undefined
+  if (delta && ['text', 'thinking', 'signature', 'partial_json'].some(key => typeof delta[key] === 'string' && delta[key].length > 0))
+    return true
+  if (!Array.isArray(event.choices))
+    return false
+  return event.choices.some((choice) => {
+    const delta = choice?.delta
+    if (!delta || typeof delta !== 'object')
+      return false
+    return ['content', 'reasoning_content', 'reasoning', 'thinking'].some(key => typeof delta[key] === 'string' && delta[key].length > 0)
+      || (Array.isArray(delta.tool_calls) && delta.tool_calls.some((call: { function?: { name?: string, arguments?: string } }) => Boolean(call.function?.name || call.function?.arguments)))
+  })
+}
+
+function hasInvalidToolCallIds(message: AssistantMessage): boolean {
+  const seen = new Set<string>()
+  for (const block of message.content) {
+    if (block.type !== 'toolCall')
+      continue
+    const id = message.api.endsWith('responses') ? block.id.split('|')[0]! : block.id
+    if (!id.trim() || seen.has(id))
+      return true
+    seen.add(id)
+  }
+  return false
 }

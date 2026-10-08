@@ -24,7 +24,7 @@ describe('projectPiEvent retries', () => {
     expect(projectPiEvent({ type: 'turn_start' }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'model_requesting', toolName: null, retry: { ...retry, retryAt: null } } }])
     expect(projectPiEvent({ type: 'auto_retry_end', success: true, attempt: 1 }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'model_requesting', toolName: null } }])
     projectPiEvent({ type: 'auto_retry_start', attempt: 2, maxAttempts, delayMs: 4000, errorMessage: 'private' }, state, now)
-    expect(projectPiEvent({ type: 'agent_settled' }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'idle', toolName: null } }])
+    expect(projectPiEvent({ type: 'agent_settled', aborted: false }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'idle', toolName: null } }])
   })
 
   it.each(['thinking_delta', 'text_delta', 'toolcall_delta'] as const)('restores live activity on the first nonempty %s before the retried response finishes', (type) => {
@@ -224,7 +224,7 @@ describe('projectPiEvent product messages', () => {
       },
       type: 'tool.denied',
     }])
-    expect(projectPiEvent({ type: 'agent_settled' }, state).events).toEqual([{
+    expect(projectPiEvent({ type: 'agent_settled', aborted: false }, state).events).toEqual([{
       payload: { phase: 'idle', toolName: null },
       type: 'run.progress',
     }])

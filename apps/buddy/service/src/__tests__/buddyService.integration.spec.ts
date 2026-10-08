@@ -1145,7 +1145,7 @@ class OfflinePiSession implements ReusableBuddySession {
     }
     this.#emit({ type: 'message_end', message: toolMessage })
     this.#emit({ type: 'entry_appended', entry: entry('pi-tool-1', toolMessage) })
-    this.#emit({ type: 'agent_settled' })
+    this.#emit({ type: 'agent_settled', aborted: false })
   }
 
   subscribe(listener: (event: AgentSessionEvent) => void): () => void {
@@ -1370,7 +1370,7 @@ function createRuntimeRpcHarness(
         value?: unknown
       }
       if (method === 'host.runtimePreferences.get')
-        return Promise.resolve({ cacheWarming: 'off', modelRetryLimit: 3 })
+        return Promise.resolve({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
       if (method === 'host.credentials.list') {
         return Promise.resolve({
           ok: true,

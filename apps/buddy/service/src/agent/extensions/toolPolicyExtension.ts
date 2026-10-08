@@ -24,14 +24,18 @@ export function createToolPolicyExtension(options: CreateToolPolicyExtensionOpti
           const run = options.getRunContext()
           if (!run)
             return block('RUN_CONTEXT_UNAVAILABLE')
-          const classification = await options.classifyTool?.(event, run)
+          const signal = event.signal ? AbortSignal.any([run.signal, event.signal]) : run.signal
+          signal.throwIfAborted()
+          const classification = await options.classifyTool?.(event, event.signal ? { ...run, signal } : run)
+          signal.throwIfAborted()
           const reason = classification && isToolClassificationFailure(classification)
             ? classification.reason
-            : await options.authorization.authorize(event, run, classification ?? {})
+            : await options.authorization.authorize(event, run, classification ?? {}, { signal })
           if (reason) {
             await run.onToolExecutionDenied?.({ denialCode: reason, toolCallId: event.toolCallId, toolName: event.toolName })
             return block(reason)
           }
+          signal.throwIfAborted()
           await run.onToolExecutionAuthorized({
             arguments: event.input,
             toolCallId: event.toolCallId,

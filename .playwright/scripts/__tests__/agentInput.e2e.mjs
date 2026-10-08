@@ -127,6 +127,84 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
   })
 }
 
+test('codemode opt-in executes native sandbox tools and stays disabled after opting out and restarting', async ({ buddy }) => {
+  const requests = []
+  const server = createServer(async (request, response) => {
+    if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
+      response.writeHead(404).end()
+      return
+    }
+    const chunks = []
+    for await (const chunk of request)
+      chunks.push(chunk)
+    const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    requests.push(payload)
+    const enabled = payload.tools?.some(tool => tool.function?.name === 'codemode')
+    const execute = enabled && payload.messages.findLastIndex(message => message.role === 'user') > payload.messages.findLastIndex(message => message.role === 'tool')
+    const common = { id: `codemode-${requests.length}`, model: 'codemode-fixture', object: 'chat.completion.chunk', created: 1 }
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    const delta = execute
+      ? { role: 'assistant', tool_calls: [{ index: 0, id: `script-${requests.length}`, type: 'function', function: { name: 'codemode', arguments: JSON.stringify({ code: 'await tools.write({ path: "codemode-result.txt", content: "codemode verified" }); text(await tools.read({ path: "codemode-result.txt" }));' }) } }] }
+      : { role: 'assistant', content: 'Codemode preference verified.' }
+    response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: execute ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 } })}\n\n`)
+    response.end('data: [DONE]\n\n')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const instance = await buddy.createInstance('codemode-native')
+  try {
+    let desktop = await instance.launch()
+    await useSyntheticCredentialStorage(desktop)
+    await desktop.page.evaluate(async (baseUrl) => {
+      const providers = window.lexoraDesktop.localChat.providers
+      await providers.upsertCustom({ id: 'codemode-fixture', displayName: 'Codemode fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'codemode-fixture', name: 'Codemode fixture', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
+      const stop = providers.onAuthChallenge((challenge) => {
+        if (challenge.providerId === 'codemode-fixture' && challenge.type === 'secret')
+          void providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
+      })
+      try {
+        await providers.login('codemode-fixture', 'api_key')
+      }
+      finally {
+        stop()
+      }
+      await providers.setDefaultModel({ providerId: 'codemode-fixture', modelId: 'codemode-fixture', reasoning: null })
+    }, `http://127.0.0.1:${server.address().port}/v1`)
+    await desktop.page.reload()
+    const send = async (text, count) => {
+      await desktop.page.locator('.desktop-chat-composer__prosemirror:visible').fill(text)
+      await desktop.page.getByRole('button', { name: '发送消息', exact: true }).click()
+      await expect.poll(() => completedRuns(instance.home)).toBe(count)
+    }
+    await send('Verify the default tools.', 1)
+    expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
+    await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: true } }))
+    await send('Run the script and inspect its file.', 2)
+    const scriptResult = requests.at(-1).messages.findLast(message => message.role === 'tool' && message.content.includes('Script completed'))
+    expect(scriptResult?.content).toContain('codemode verified')
+    const journal = await sessionJournal(instance.home)
+    expect(journal).toContain('"nestedCalls"')
+    expect(journal).toContain('codemode-result.txt')
+    await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'codemode-native-tools.png'), animations: 'disabled' })
+    await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: false } }))
+    await send('Verify ordinary tools again.', 3)
+    expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
+    await instance.stop()
+    desktop = await instance.launch()
+    await useSyntheticCredentialStorage(desktop)
+    await desktop.page.reload()
+    await send('Verify tools after restart.', 4)
+    expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
+    expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  }
+  finally {
+    await instance.stop()
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
 test('model retries retain their run budget, expose progress and allow cancelling unlimited backoff', async ({ buddy }) => {
   const requests = []
   const finishThinking = Promise.withResolvers()

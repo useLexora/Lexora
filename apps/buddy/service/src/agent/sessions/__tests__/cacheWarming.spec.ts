@@ -108,7 +108,7 @@ describe('buddy cache warming', () => {
     const unsubscribe = channel.subscribe()
     let task: Promise<void> | undefined
     try {
-      reusable.applyPreferences({ cacheWarming: 'streaming', modelRetryLimit: 3 })
+      reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
       expect(created.session.settingsManager.getCacheWarmingMode()).toBe('off')
       expect(reusable.getCacheWarmingStatus?.()).toBe(stop === 'unsupported' ? 'unsupported' : 'idle')
       const release = await reusable.activateTurn({
@@ -155,7 +155,7 @@ describe('buddy cache warming', () => {
         expect(warmRequests).toBe(1)
         expect(reusable.getCacheWarmingStatus?.()).toBe('refreshing')
         if (stop === 'inflight-disable')
-          reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: 3 })
+          reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
         if (stop === 'inflight-abort')
           await reusable.abort()
         if (stop === 'inflight-shutdown')
@@ -186,7 +186,7 @@ describe('buddy cache warming', () => {
       expect(await usage.record({ createdAt: records[0]!.createdAt, model: model.id, provider: model.provider, purpose: 'cache_warm', runId: 'run-1', sourceEntryId: entry.id, usage: responseUsage(true) })).toBeNull()
       expect(repository.listForRun('run-1').filter(record => record.purpose === 'cache_warm')).toHaveLength(1)
       if (stop === 'disable')
-        reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: 3 })
+        reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
       if (stop === 'abort')
         await reusable.abort()
       if (stop === 'model')

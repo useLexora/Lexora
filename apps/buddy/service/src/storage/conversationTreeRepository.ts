@@ -28,7 +28,7 @@ export function createConversationTreeReader(database: DatabaseSync) {
     created_at AS createdAt
     FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant') ORDER BY created_at, id`)
   const tools = database.prepare(`SELECT run_events.run_id AS runId,
-    COUNT(DISTINCT json_extract(payload_json, '$.toolCallId')) AS count
+    COUNT(*) AS count
     FROM run_events INNER JOIN runs ON runs.id = run_events.run_id
     WHERE runs.conversation_id = ? AND event_type = 'tool.started' GROUP BY run_events.run_id`)
   const runMessages = database.prepare(`SELECT id, conversation_id AS conversationId,

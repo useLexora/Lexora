@@ -7,7 +7,9 @@ const MAX_REQUEST_BYTES = 32 * 1024 * 1024
 const DEFAULT_IMAGE_RESIZE = { maxWidth: 2000, maxHeight: 2000, maxBytes: 4.5 * 1024 * 1024, jpegQuality: 80 }
 
 export function getModelRequestBytesLimit(model: BudgetModel): number {
-  const limit = model.api === 'google-generative-ai' ? 20_000_000 : MAX_REQUEST_BYTES
+  const limit = model.api === 'google-generative-ai' || model.api === 'bedrock-converse-stream'
+    ? 20_000_000
+    : model.api === 'anthropic-messages' ? 32_000_000 : MAX_REQUEST_BYTES
   return boundedLimit(model.inputLimits?.maxRequestBytes, limit)
 }
 

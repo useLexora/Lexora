@@ -1,0 +1,292 @@
+diff --git a/dist/runtime/host.js b/dist/runtime/host.js
+index 3b3710af42b46c0efd2be95753867e0a9cb3b584..046b37c6d50b306cb485a33d9727ed63975fd02d 100644
+--- a/dist/runtime/host.js
++++ b/dist/runtime/host.js
+@@ -94,6 +94,9 @@ class Execution {
+     output = [];
+     calls = [];
+     pending = new Map();
++    queued = [];
++    maxPendingToolCalls;
++    maxQueuedToolCalls;
+     finished = false;
+     constructor(options) {
+         this.promise = new Promise((resolve) => {
+@@ -102,6 +105,8 @@ class Execution {
+         this.tools = options.tools;
+         this.globals = options.globals;
+         this.signal = options.signal;
++        this.maxPendingToolCalls = options.maxPendingToolCalls;
++        this.maxQueuedToolCalls = options.maxQueuedToolCalls;
+         if (Number.isFinite(options.timeoutMs)) {
+             this.timer = setTimeout(() => {
+                 this.finish({ kind: "timeout", message: `Execution timed out after ${options.timeoutMs} ms` });
+@@ -139,6 +144,7 @@ class Execution {
+             })),
+             wasm,
+             memoryLimitBytes: options.memoryLimitBytes,
++            computeTimeoutMs: options.computeTimeoutMs,
+             store: options.store,
+             interrupt: this.interrupt,
+         };
+@@ -193,13 +199,24 @@ class Execution {
+                 this.output.push(message.item);
+                 break;
+             case "call":
+-                if (this.pending.has(message.id))
++                if (this.pending.has(message.id) || this.queued.some((call) => call.id === message.id))
+                     throw new BridgeError(`duplicate call id ${message.id}`);
+-                void this.handleCall(message);
++                if (this.pending.size >= this.maxPendingToolCalls) {
++                    if (this.queued.length >= this.maxQueuedToolCalls) {
++                        this.finish({ kind: "sandbox", message: "Too many queued tool calls. Inspect any completed actions and use smaller batches." });
++                        return;
++                    }
++                    this.queued.push(message);
++                } else {
++                    void this.handleCall(message);
++                }
+                 break;
+             case "done":
+                 this.handleDone(message);
+                 break;
++            case "timeout":
++                this.finish({ kind: "timeout", message: message.message });
++                break;
+             case "crash":
+                 this.finish({ kind: "sandbox", message: message.message });
+                 break;
+@@ -220,7 +237,8 @@ class Execution {
+         const record = isTool ? { name, status: "cancelled", durationMs: 0 } : undefined;
+         if (record)
+             this.calls.push(record);
+-        const pending = { record, startedAt: performance.now(), controller: new AbortController() };
++        const completion = Promise.withResolvers();
++        const pending = { record, startedAt: performance.now(), controller: new AbortController(), settled: completion.promise };
+         this.pending.set(id, pending);
+         let status;
+         let reply;
+@@ -237,6 +255,9 @@ class Execution {
+             reply = { type: "result", id, ok: false, payload: errorMessage(error) };
+             status = "error";
+         }
++        finally {
++            completion.resolve();
++        }
+         // Already cancelled by finish(): the record keeps "cancelled" and the
+         // worker is gone or going.
+         if (!this.pending.delete(id))
+@@ -246,6 +267,8 @@ class Execution {
+             record.durationMs = performance.now() - pending.startedAt;
+         }
+         this.post(reply);
++        while (!this.finished && this.pending.size < this.maxPendingToolCalls && this.queued.length > 0)
++            void this.handleCall(this.queued.shift());
+     }
+     finish(error, value, writes) {
+         if (this.finished)
+@@ -253,6 +276,7 @@ class Execution {
+         this.finished = true;
+         clearTimeout(this.timer);
+         this.signal?.removeEventListener("abort", this.onAbort);
++        const settled = [...this.pending.values()].map((pending) => pending.settled);
+         const now = performance.now();
+         for (const pending of this.pending.values()) {
+             if (pending.record)
+@@ -260,6 +284,7 @@ class Execution {
+             pending.controller.abort();
+         }
+         this.pending.clear();
++        this.queued.length = 0;
+         const result = error
+             ? { ok: false, error, output: this.output, calls: this.calls }
+             : {
+@@ -269,14 +294,8 @@ class Execution {
+                 calls: this.calls,
+                 storeWrites: writes ?? { set: {}, delete: [] },
+             };
+-        if (!this.worker) {
+-            this.resolveResult(result);
+-            return;
+-        }
+         Atomics.store(new Int32Array(this.interrupt), 0, 1);
+-        this.worker
+-            .terminate()
+-            .catch(() => undefined)
++        Promise.allSettled([...settled, this.worker?.terminate()])
+             .then(() => this.resolveResult(result));
+     }
+ }
+@@ -294,6 +313,9 @@ export class CodemodeSandbox {
+     globalsByName = new Map();
+     timeoutMs;
+     memoryLimitBytes;
++    computeTimeoutMs;
++    maxPendingToolCalls;
++    maxQueuedToolCalls;
+     wasm;
+     workerUrl;
+     running = new Set();
+@@ -301,6 +323,12 @@ export class CodemodeSandbox {
+     constructor(options = {}) {
+         this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+         this.memoryLimitBytes = options.memoryLimitBytes;
++        for (const name of ["computeTimeoutMs", "maxPendingToolCalls", "maxQueuedToolCalls"]) {
++            const value = options[name] ?? Infinity;
++            if (!(value > 0) || value !== Infinity && !Number.isSafeInteger(value))
++                throw new RangeError(`${name} must be a positive integer`);
++            this[name] = value;
++        }
+         this.wasm = options.wasm;
+         this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
+         for (const tool of options.tools ?? [])
+@@ -352,6 +380,9 @@ export class CodemodeSandbox {
+             timeoutMs: options.timeoutMs ?? this.timeoutMs,
+             signal: options.signal,
+             memoryLimitBytes: this.memoryLimitBytes,
++            computeTimeoutMs: this.computeTimeoutMs,
++            maxPendingToolCalls: this.maxPendingToolCalls,
++            maxQueuedToolCalls: this.maxQueuedToolCalls,
+             store: serializeStore(options.store),
+             wasm: this.wasm === undefined ? loadQuickJSWasm() : Promise.resolve(this.wasm),
+             workerUrl: this.workerUrl,
+diff --git a/dist/runtime/protocol.d.ts b/dist/runtime/protocol.d.ts
+index c709afd5fdccf9e0eb161edeca940c68379ad485..577432232909ef24224a21502c7bb6eee50513da 100644
+--- a/dist/runtime/protocol.d.ts
++++ b/dist/runtime/protocol.d.ts
+@@ -20,6 +20,7 @@ export interface WorkerData {
+     /** Compiled `quickjs-wasi` module. Structured clone shares the compiled code with the worker. */
+     wasm: CodemodeWasmModule;
+     memoryLimitBytes: number | undefined;
++    computeTimeoutMs: number;
+     /** Snapshot for `load()`: key to JSON text. */
+     store: Record<string, string>;
+     /**
+@@ -53,6 +54,9 @@ export type WorkerToHostMessage = {
+ }
+ /** The VM failed outside the script's control, for example a wasm trap. */
+  | {
++    type: "timeout";
++    message: string;
++} | {
+     type: "crash";
+     message: string;
+ };
+diff --git a/dist/runtime/protocol.js b/dist/runtime/protocol.js
+index e5b5c36bded8fed121f7176bff0b0a94afff2423..bd14c7b79633303d2fbdde91ad74aba4f5319a42 100644
+--- a/dist/runtime/protocol.js
++++ b/dist/runtime/protocol.js
+@@ -2,7 +2,7 @@ export function isWorkerToHostMessage(value) {
+     if (typeof value !== "object" || value === null)
+         return false;
+     const type = value.type;
+-    return type === "call" || type === "output" || type === "done" || type === "crash";
++    return type === "call" || type === "output" || type === "done" || type === "crash" || type === "timeout";
+ }
+ export function isHostToWorkerMessage(value) {
+     return typeof value === "object" && value !== null && value.type === "result";
+diff --git a/dist/runtime/worker.js b/dist/runtime/worker.js
+index 3c7edcc438fda10cd03eabbbaca932cc3410aad3..dd783fef7432df4191b11fc7b43fb06dbcc3a119 100644
+--- a/dist/runtime/worker.js
++++ b/dist/runtime/worker.js
+@@ -46,13 +46,37 @@ function describeException(error) {
+ }
+ async function main(data) {
+     const interrupt = new Int32Array(data.interrupt);
++    let remainingComputeMs = data.computeTimeoutMs ?? Infinity;
++    let computeStartedAt;
++    let timedOut = false;
++    const reportTimeout = () => {
++        if (!timedOut) {
++            timedOut = true;
++            post({ type: "timeout", message: `Script exceeded its ${data.computeTimeoutMs} ms compute budget` });
++        }
++    };
++    const compute = (operation) => {
++        computeStartedAt = performance.now();
++        try {
++            return operation();
++        } finally {
++            remainingComputeMs -= performance.now() - computeStartedAt;
++            computeStartedAt = undefined;
++            if (remainingComputeMs <= 0)
++                reportTimeout();
++        }
++    };
+     const vm = await QuickJS.create({
+         wasm: data.wasm,
+         memoryLimit: data.memoryLimitBytes,
+         // Without a guard, deep recursion overflows the wasm stack and traps instead of throwing a
+         // catchable RangeError.
+         maxStackSize: MAX_STACK_SIZE,
+-        interruptHandler: () => Atomics.load(interrupt, 0) !== 0,
++        interruptHandler: () => {
++            if (computeStartedAt !== undefined && performance.now() - computeStartedAt >= remainingComputeMs)
++                reportTimeout();
++            return timedOut || Atomics.load(interrupt, 0) !== 0;
++        },
+         wasi: discardOutput,
+     });
+     // Called from the prelude with primitives only.
+@@ -95,22 +119,24 @@ async function main(data) {
+         return vm.undefined;
+     });
+     // The VM lives until the host terminates the worker, so these handles are never disposed.
+-    const api = vm.withScope((scope) => scope.escape(vm.callFunction(vm.evalCode(PRELUDE_SOURCE, "codemode-prelude.js"), vm.undefined, bridge, vm.newString(JSON.stringify(data.tools)), vm.newString(JSON.stringify(data.globals)), vm.newString(JSON.stringify(data.store)))));
++    const api = compute(() => vm.withScope((scope) => scope.escape(vm.callFunction(vm.evalCode(PRELUDE_SOURCE, "codemode-prelude.js"), vm.undefined, bridge, vm.newString(JSON.stringify(data.tools)), vm.newString(JSON.stringify(data.globals)), vm.newString(JSON.stringify(data.store))))));
+     const settle = api.getProp("settle");
+     const run = api.getProp("run");
+     const stalled = api.getProp("stalled");
+     /** Run queued jobs, then fail a script that waits on nothing that can ever resume it. */
+     const drain = () => {
+-        vm.executePendingJobs();
+-        vm.callFunction(stalled, api).dispose();
++        compute(() => {
++            vm.executePendingJobs();
++            vm.callFunction(stalled, api).dispose();
++        });
+     };
+     parentPort?.on("message", (message) => {
+         if (!isHostToWorkerMessage(message))
+             return;
+         try {
+-            vm.withScope(() => {
++            compute(() => vm.withScope(() => {
+                 vm.callFunction(settle, api, vm.newNumber(message.id), message.ok ? vm.true : vm.false, message.payload === undefined ? vm.undefined : vm.newString(message.payload));
+-            });
++            }));
+             drain();
+         }
+         catch (error) {
+@@ -121,7 +147,7 @@ async function main(data) {
+     // match the script as written.
+     let fn;
+     try {
+-        fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
++        fn = compute(() => vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js"));
+     }
+     catch (error) {
+         if (!(error instanceof JSException))
+@@ -129,7 +155,7 @@ async function main(data) {
+         post({ type: "done", ok: false, error: describeException(error) });
+         return;
+     }
+-    vm.callFunction(run, api, fn).dispose();
++    compute(() => vm.callFunction(run, api, fn).dispose());
+     fn.dispose();
+     drain();
+ }
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index c887956f631dca84bae6045ad3471377e997eb2f..6030afdf1a415f147e18f69999e0edd9df9b3c7c 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -92,6 +92,9 @@ export type CodemodeResult = {
+     calls: CodemodeCall[];
+ };
+ export interface CodemodeSandboxOptions {
++    computeTimeoutMs?: number;
++    maxPendingToolCalls?: number;
++    maxQueuedToolCalls?: number;
+     tools?: CodemodeTool[];
+     /**
+      * Functions exposed as top-level identifiers instead of on `tools`, for host helpers such as

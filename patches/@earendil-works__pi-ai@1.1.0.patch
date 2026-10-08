@@ -1,0 +1,331 @@
+diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
+index 38571b31e143e913c2bf59dad73382982e93664a..d17363ff75e71ce26ab4d96d7548eb7bedf7b263 100644
+--- a/dist/api/anthropic-messages.js
++++ b/dist/api/anthropic-messages.js
+@@ -4,7 +4,7 @@ import { calculateCost } from "../models.js";
+ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.js";
+ import { AssistantMessageEventStream } from "../utils/event-stream.js";
+ import { headersToRecord } from "../utils/headers.js";
+-import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
++import { finalizeToolCallArguments, parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
+ import { getPiUserAgent } from "../utils/pi-user-agent.js";
+ import { getProviderEnvValue } from "../utils/provider-env.js";
+ import { retryProviderRequest } from "../utils/provider-retry.js";
+@@ -593,7 +593,7 @@ export const stream = (model, context, options) => {
+                             });
+                         }
+                         else if (block.type === "toolCall") {
+-                            block.arguments = parseStreamingJson(block.partialJson);
++                            finalizeToolCallArguments(block, block.partialJson);
+                             // Finalize in-place and strip the scratch buffer so replay only
+                             // carries parsed arguments.
+                             delete block.partialJson;
+diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
+index ca40f1b4a4e99f441503cf364822073a7a6c478a..9f52a0261af497ee9b7043d826776dfbfafbd817 100644
+--- a/dist/api/bedrock-converse-stream.js
++++ b/dist/api/bedrock-converse-stream.js
+@@ -7,7 +7,7 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.js";
+ import { normalizeProviderError } from "../utils/error-body.js";
+ import { AssistantMessageEventStream } from "../utils/event-stream.js";
+ import { providerHeadersToRecord } from "../utils/headers.js";
+-import { parseStreamingJson } from "../utils/json-parse.js";
++import { finalizeToolCallArguments, parseStreamingJson } from "../utils/json-parse.js";
+ import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.js";
+ import { getProviderEnvValue } from "../utils/provider-env.js";
+ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+@@ -558,7 +558,7 @@ function handleContentBlockStop(event, blocks, output, stream) {
+             stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
+             break;
+         case "toolCall":
+-            block.arguments = parseStreamingJson(block.partialJson);
++            finalizeToolCallArguments(block, block.partialJson);
+             // Finalize in-place and strip the scratch buffer so replay only
+             // carries parsed arguments.
+             delete block.partialJson;
+diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
+index 2fc3ad343af090a919f5b71454b29f23b009fc21..96b9dbc4501e858bd40523ceccec6b59c92a582c 100644
+--- a/dist/api/mistral-conversations.js
++++ b/dist/api/mistral-conversations.js
+@@ -2,7 +2,7 @@ import { calculateCost, clampThinkingLevel } from "../models.js";
+ import { AssistantMessageEventStream } from "../utils/event-stream.js";
+ import { shortHash } from "../utils/hash.js";
+ import { headersToRecord } from "../utils/headers.js";
+-import { parseStreamingJson } from "../utils/json-parse.js";
++import { finalizeToolCallArguments, parseStreamingJson } from "../utils/json-parse.js";
+ import { getPiUserAgent } from "../utils/pi-user-agent.js";
+ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+ import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.js";
+@@ -569,7 +569,7 @@ async function consumeChatStream(model, output, stream, mistralStream, onProvide
+         if (block.type !== "toolCall")
+             continue;
+         const toolBlock = block;
+-        toolBlock.arguments = parseStreamingJson(toolBlock.partialArgs);
++        finalizeToolCallArguments(toolBlock, toolBlock.partialArgs);
+         // Finalize in-place and strip the scratch buffer so replay only
+         // carries parsed arguments.
+         delete toolBlock.partialArgs;
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index a60f39352b776d71497e55b33b3334bacfbeb2f5..4ce592f1293a2c3aba8d4a34545bd38e45c64d09 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -4,7 +4,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
+ import { AssistantMessageEventStream } from "../utils/event-stream.js";
+ import { shortHash } from "../utils/hash.js";
+ import { headersToRecord } from "../utils/headers.js";
+-import { parseStreamingJson } from "../utils/json-parse.js";
++import { finalizeToolCallArguments, parseStreamingJson } from "../utils/json-parse.js";
+ import { getPiUserAgent } from "../utils/pi-user-agent.js";
+ import { getProviderEnvValue } from "../utils/provider-env.js";
+ import { retryProviderRequest } from "../utils/provider-retry.js";
+@@ -258,7 +258,7 @@ export const stream = (model, context, options) => {
+                         }
+                     }
+                     else {
+-                        block.arguments = parseStreamingJson(block.partialArgs);
++                        finalizeToolCallArguments(block, block.partialArgs);
+                     }
+                     // Finalize in-place and strip the scratch buffers so replay only
+                     // carries parsed arguments.
+@@ -298,7 +298,9 @@ export const stream = (model, context, options) => {
+                 const name = toolCall.function?.name ?? toolCall.custom?.name ?? "";
+                 let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
+                 if (!block && toolCall.id) {
+-                    block = toolCallBlocksById.get(toolCall.id);
++                    const byId = toolCallBlocksById.get(toolCall.id);
++                    if (streamIndex === undefined || byId?.streamIndex === undefined)
++                        block = byId;
+                 }
+                 if (!block) {
+                     // Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
+@@ -1126,6 +1128,14 @@ export function convertMessages(model, context, compat, options) {
+         }
+         lastRole = msg.role;
+     }
++    if (params.some((message) => message.role === "assistant" &&
++        typeof message.reasoning_content === "string")) {
++        for (const message of params) {
++            if (message.role === "assistant" && message.reasoning_content === undefined) {
++                message.reasoning_content = "";
++            }
++        }
++    }
+     return params;
+ }
+ function convertTools(tools, compat) {
+diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+index f413fe5f2a1abcac39c38bbd4a77b38c349a5918..a70470576174455b2dbde4001b90a06e7c6d1b5f 100644
+--- a/dist/api/openai-responses-shared.js
++++ b/dist/api/openai-responses-shared.js
+@@ -1,6 +1,6 @@
+ import { calculateCost } from "../models.js";
+ import { shortHash } from "../utils/hash.js";
+-import { parseStreamingJson } from "../utils/json-parse.js";
++import { finalizeToolCallArguments, parseStreamingJson } from "../utils/json-parse.js";
+ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+ import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.js";
+ import { resolveTranscript, resolveTranscriptTools } from "../utils/transcript.js";
+@@ -356,7 +356,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+         }
+         if (item.type === "message") {
+             applyMessagePhaseStopReason(item);
+-            const block = { type: "text", text: "" };
++            const block = {
++                type: "text",
++                text: "",
++                textSignature: encodeTextSignatureV1(item.id, item.phase ?? undefined),
++            };
+             output.content.push(block);
+             const slot = { type: "text", block, contentIndex: output.content.length - 1 };
+             outputSlots.set(outputIndex, slot);
+@@ -608,7 +612,7 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             else if (item.type === "function_call" &&
+                 slot?.type === "toolCall" &&
+                 slot.block.partialJson !== undefined) {
+-                slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
++                finalizeToolCallArguments(slot.block, item.arguments || slot.block.partialJson || "{}");
+                 if (item.namespace !== undefined)
+                     slot.block.namespace = item.namespace;
+                 // Finalize in-place and strip the scratch buffer so replay only
+diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
+index 1e7873e4948eb28051c8157aa89737070b223ad7..c87babcff0dc2f3a53132404e3c5e21c60b88ad7 100644
+--- a/dist/api/transform-messages.js
++++ b/dist/api/transform-messages.js
+@@ -126,6 +126,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
+     // This preserves thinking signatures and satisfies API requirements
+     const result = [];
+     let pendingToolCalls = [];
++    let rejectedToolCallIds = new Set();
+     let existingToolResultIds = new Set();
+     // System messages are transparent to tool-call accounting: one that lands between a tool
+     // call and its results is held back and emitted after the results (synthetic ones
+@@ -139,7 +140,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
+                         role: "toolResult",
+                         toolCallId: tc.id,
+                         toolName: tc.name,
+-                        content: [{ type: "text", text: "No result provided" }],
++                        content: [{ type: "text", text: "Tool call interrupted before a result was recorded; its outcome is unknown. Retry only if the operation is read-only or idempotent. If it may have had side effects, verify the current state first instead of repeating it." }],
+                         isError: true,
+                         timestamp: Date.now(),
+                     });
+@@ -148,6 +149,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
+             pendingToolCalls = [];
+             existingToolResultIds = new Set();
+         }
++        rejectedToolCallIds = new Set();
+         result.push(...heldSystemMessages);
+         heldSystemMessages.length = 0;
+     };
+@@ -167,13 +169,22 @@ export function transformMessages(messages, model, normalizeToolCallId) {
+             }
+             // Track tool calls from this assistant message
+             const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall");
+-            if (toolCalls.length > 0) {
+-                pendingToolCalls = toolCalls;
+-                existingToolResultIds = new Set();
++            const isValidName = (call) => typeof call.name === "string" && call.name.length > 0 && call.name.length <= 128 && !/[\s\x00-\x1f\x7f]/.test(call.name);
++            rejectedToolCallIds = new Set(toolCalls.filter((call) => !isValidName(call)).map((call) => call.id));
++            pendingToolCalls = toolCalls.filter(isValidName);
++            existingToolResultIds = new Set();
++            if (rejectedToolCallIds.size > 0) {
++                const content = assistantMsg.content.filter((block) => block.type !== "toolCall" || isValidName(block));
++                if (!content.some((block) => block.type === "toolCall" || block.type === "text" && block.text.trim()))
++                    content.push({ type: "text", text: "A tool call with an invalid name was omitted from replay. Use an available tool name." });
++                result.push({ ...assistantMsg, content });
++            } else {
++                result.push(msg);
+             }
+-            result.push(msg);
+         }
+         else if (msg.role === "toolResult") {
++            if (rejectedToolCallIds.has(msg.toolCallId))
++                continue;
+             existingToolResultIds.add(msg.toolCallId);
+             result.push(msg);
+         }
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index b01603bff2e8dbaedcd4aa9ef5b2d3d1192697f8..f930ff798c419d7e707b0af82a278f85f5a21d5f 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -284,6 +284,7 @@ export interface ToolCall {
+     id: string;
+     name: string;
+     arguments: JsonObject;
++    argumentsError?: string;
+     thoughtSignature?: string;
+     /** OpenAI Responses namespace for calls to dynamically loaded or namespaced tools. */
+     namespace?: string;
+diff --git a/dist/utils/assistant-message-frame.d.ts b/dist/utils/assistant-message-frame.d.ts
+index 08207197acab532d0f5f596363700a2d15a687d8..eb0a077d10cab8eb14c6cb45720acf39363b2394 100644
+--- a/dist/utils/assistant-message-frame.d.ts
++++ b/dist/utils/assistant-message-frame.d.ts
+@@ -51,6 +51,7 @@ export type AssistantMessageFrame = {
+     id: string;
+     name: string;
+     arguments: ToolCall["arguments"];
++    argumentsError?: string;
+     thoughtSignature?: string;
+     namespace?: string;
+ };
+diff --git a/dist/utils/assistant-message-frame.js b/dist/utils/assistant-message-frame.js
+index c0e00197b2bdd4c815106daa036d844c07aca800..96f3e1791cfc3fcd8544022fc1a57adcce0048dd 100644
+--- a/dist/utils/assistant-message-frame.js
++++ b/dist/utils/assistant-message-frame.js
+@@ -1,4 +1,4 @@
+-import { parseStreamingJson } from "./json-parse.js";
++import { finalizeToolCallArguments, parseStreamingJson } from "./json-parse.js";
+ function cloneTextContent(content) {
+     return {
+         type: "text",
+@@ -221,6 +221,7 @@ export class AssistantMessageFrameEncoder {
+                     id: event.toolCall.id,
+                     name: event.toolCall.name,
+                     arguments: structuredClone(event.toolCall.arguments),
++                    ...(event.toolCall.argumentsError === undefined ? {} : { argumentsError: event.toolCall.argumentsError }),
+                     ...(event.toolCall.thoughtSignature === undefined
+                         ? {}
+                         : { thoughtSignature: event.toolCall.thoughtSignature }),
+@@ -399,6 +400,9 @@ export function reduceAssistantMessageFrames(frames) {
+                 block.id = frame.id;
+                 block.name = frame.name;
+                 block.arguments = structuredClone(frame.arguments);
++                delete block.argumentsError;
++                if (frame.argumentsError !== undefined)
++                    block.argumentsError = frame.argumentsError;
+                 delete block.thoughtSignature;
+                 delete block.namespace;
+                 if (frame.thoughtSignature !== undefined)
+@@ -418,7 +422,7 @@ export function reduceAssistantMessageFrames(frames) {
+         const block = message.content[contentIndex];
+         if (block?.type !== "toolCall")
+             throw new Error("Unreachable tool-call frame state");
+-        block.arguments = parseStreamingJson(state.json);
++        finalizeToolCallArguments(block, state.json);
+     }
+     return message;
+ }
+diff --git a/dist/utils/json-parse.d.ts b/dist/utils/json-parse.d.ts
+index 6d7935322c2e60d425188d9c4c94809208073fe3..61205c81da359c6a7db5649a1f4170ced8c5b013 100644
+--- a/dist/utils/json-parse.d.ts
++++ b/dist/utils/json-parse.d.ts
+@@ -1,3 +1,4 @@
++import type { ToolCall } from "../types.js";
+ /**
+  * Repairs malformed JSON string literals by:
+  * - escaping raw control characters inside strings
+@@ -13,4 +14,5 @@ export declare function parseJsonWithRepair<T>(json: string): T;
+  * @returns Parsed object or empty object if parsing fails
+  */
+ export declare function parseStreamingJson<T = Record<string, unknown>>(partialJson: string | undefined): T;
++export declare function finalizeToolCallArguments(toolCall: ToolCall, json: string): void;
+ //# sourceMappingURL=json-parse.d.ts.map
+diff --git a/dist/utils/json-parse.js b/dist/utils/json-parse.js
+index 82e105cb676a2f4be16167023243aa73dd8cb2e4..b88a4806292f321e4a3707cb5863c5f1ffd06c10 100644
+--- a/dist/utils/json-parse.js
++++ b/dist/utils/json-parse.js
+@@ -80,6 +80,19 @@ export function parseJsonWithRepair(json) {
+         throw error;
+     }
+ }
++export function finalizeToolCallArguments(toolCall, json) {
++    try {
++        const args = parseJsonWithRepair(json || "{}");
++        if (typeof args !== "object" || args === null || Array.isArray(args))
++            throw new Error("Expected a JSON object");
++        toolCall.arguments = args;
++        delete toolCall.argumentsError;
++    }
++    catch {
++        toolCall.arguments = {};
++        toolCall.argumentsError = "Tool arguments are not a complete JSON object. Resend this tool call with valid JSON.";
++    }
++}
+ /**
+  * Attempts to parse potentially incomplete JSON during streaming.
+  * Always returns a valid object, even if the JSON is incomplete.
+diff --git a/dist/utils/retry.js b/dist/utils/retry.js
+index 738a6f0db0ed42d257eefa7a7eb2d355ae784f65..9672a22754887716001e751857df9cdefc39c4cd 100644
+--- a/dist/utils/retry.js
++++ b/dist/utils/retry.js
+@@ -189,6 +189,9 @@ export function isRetryableAssistantError(message) {
+     if (message.stopReason !== "error" || !message.errorMessage)
+         return false;
+     const errorMessage = message.errorMessage;
++    const status = /^\s*(?:HTTP(?:\/[\d.]+)?\s+)?(4\d{2})\b/i.exec(errorMessage)?.[1];
++    if (status && !["408", "409", "425", "429"].includes(status))
++        return false;
+     if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage))
+         return false;
+     return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+diff --git a/dist/utils/validation.js b/dist/utils/validation.js
+index 22fbd2d607914ebecaf0021c70cf250949fb4885..5cdde1ae053ccf9e484a496d2b011d8e6c73c9ab 100644
+--- a/dist/utils/validation.js
++++ b/dist/utils/validation.js
+@@ -278,6 +278,8 @@ export function validateToolCall(tools, toolCall) {
+  * @throws Error with formatted message if validation fails
+  */
+ export function validateToolArguments(tool, toolCall) {
++    if (toolCall.argumentsError)
++        throw new Error(`Invalid arguments for tool "${toolCall.name}": ${toolCall.argumentsError}`);
+     const args = structuredClone(toolCall.arguments);
+     normalizeOptionalNulls(args, tool.parameters);
+     Value.Convert(tool.parameters, args);

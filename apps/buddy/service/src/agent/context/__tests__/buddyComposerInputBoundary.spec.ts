@@ -304,10 +304,10 @@ describe('composer input at the Buddy session boundary', () => {
     let calls = 0
     const fixture = await createFixture({
       stream: model => ++calls === 1
-        ? terminalStream(model, { stopReason: 'error', errorMessage: '429 rate limit exceeded' })
+        ? terminalStream(model, { content: [], stopReason: 'error', errorMessage: '429 rate limit exceeded' })
         : terminalStream(model),
     })
-    fixture.reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: 1 })
+    fixture.reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 1 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.send(plan())
 
@@ -783,7 +783,7 @@ async function createFixture(options: {
     shutdown: created.shutdown,
   })
 
-  reusable.applyPreferences({ cacheWarming: 'off', modelRetryLimit: 0 })
+  reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
 
   async function send(input: InputPlan, runId = `run-${input.messageId}`) {
     const reference = toBuddyInputReference(input)

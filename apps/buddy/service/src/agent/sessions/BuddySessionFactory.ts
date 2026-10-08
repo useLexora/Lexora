@@ -131,6 +131,7 @@ export class BuddySessionFactory {
       const inputWorkspace = new AttachmentToolWorkspace(blueprint.scratchRoot)
       let unsubscribePreferences: (() => void) | undefined
       reusable = createReusableBuddySession({
+        setCodemodeEnabled: extensions.setCodemodeEnabled,
         skillReferences: blueprint.resources.skillReferences,
         tree,
         assertModelAccess: async (provider, model, contextWindow, maxTokens) => {

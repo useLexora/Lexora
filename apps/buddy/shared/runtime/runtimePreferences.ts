@@ -7,6 +7,7 @@ export type ModelRetryLimit = z.infer<typeof modelRetryLimitSchema>
 
 export const runtimePreferencesSchema = z.object({
   cacheWarming: z.enum(['off', 'streaming']),
+  codemode: z.boolean(),
   modelRetryLimit: modelRetryLimitSchema,
 }).strict()
 
@@ -14,6 +15,7 @@ export type RuntimePreferences = z.infer<typeof runtimePreferencesSchema>
 
 export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   cacheWarming: 'off',
+  codemode: false,
   modelRetryLimit: DEFAULT_MODEL_RETRY_LIMIT,
 }
 

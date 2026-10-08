@@ -4,6 +4,7 @@ import type {
 } from '../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { RuntimePreferences } from '../../../shared/runtime/runtimePreferences'
 import type { BuddySessionExtensionServices } from '../agent/extensions/createBuddySessionExtensions'
 import type { BuddySessionBlueprintService } from '../agent/sessions/BuddySessionBlueprintService'
 import type { BuddyContextSnapshot } from '../agent/sessions/createBuddySession'
@@ -37,6 +38,7 @@ export interface ContextUsageSnapshotInput {
 }
 
 export interface ContextUsageSnapshotServiceOptions {
+  getRuntimePreferences?: () => Promise<RuntimePreferences>
   tree: BuddyConversationTree
   drafts: Pick<ComposerDraftRepository, 'findById'>
   agentDirectory: string
@@ -132,6 +134,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
           executionProfile,
           spaceId: input.spaceId,
         })
+    const runtimePreferences = await this.#options.getRuntimePreferences?.()
     const extensions = await createBuddySessionExtensions({
       approvalPolicy: blueprint.approvalPolicy,
       canonicalRoot: blueprint.canonicalRoot,
@@ -144,6 +147,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
       spaceId: blueprint.space?.id ?? null,
       services: this.#options.sessionExtensionServices,
     })
+    extensions.setCodemodeEnabled(runtimePreferences?.codemode ?? false)
     const identity = {
       contextWindow: selected.model.contextWindow,
       createdAt: new Date().toISOString(),

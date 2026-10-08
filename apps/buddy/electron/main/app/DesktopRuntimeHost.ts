@@ -224,7 +224,7 @@ export class DesktopRuntimeHost {
     await this.#network?.apply(config.proxy)
     const previous = this.#config?.runtime
     this.#config = config
-    if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.modelRetryLimit !== config.runtime.modelRetryLimit)
+    if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.codemode !== config.runtime.codemode || previous?.modelRetryLimit !== config.runtime.modelRetryLimit)
       this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
     await Promise.all(this.#features.map(feature => feature.applyConfig(config)))
     if (app.isPackaged && this.#environment.paths.profile === 'stable')

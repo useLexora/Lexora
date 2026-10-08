@@ -24,6 +24,7 @@ import { createShellCapability } from '../../sandbox/shellCapability'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
 import { createChangeCaptureExtension } from './changeCaptureExtension'
 import { createChatQueueExtension } from './chatQueueExtension'
+import { createCodemodeCapability } from './codemodeExtension'
 import { observeSessionTools } from './discovery/observeSessionTools'
 import { SessionToolCapabilities } from './discovery/SessionToolCapabilities'
 import { createToolDiscoveryCapability } from './discovery/toolDiscoveryExtension'
@@ -57,6 +58,7 @@ export interface CreateBuddySessionExtensionsOptions {
 }
 
 export interface BuddySessionExtensions {
+  setCodemodeEnabled: (enabled: boolean) => void
   toolCapabilities: Pick<SessionToolCapabilities, 'onDidChange' | 'snapshot'>
   dispose: () => Promise<void>
   resourceRevisions: readonly BuddyCapabilityResourceRevision[]
@@ -76,6 +78,7 @@ export async function createBuddySessionExtensions(
   const grants = new SessionDirectoryGrants(options.grants)
   const sandboxDirectories = new SandboxDirectoryPermissions()
   const runContext: BuddyExtensionRunContextStore = { current: null }
+  let codemodeEnabled = false
   const inputReferences: BuddyInputReferenceStore = { pending: null }
   const executionPermissions = new ToolExecutionPermissions()
   const diagnostics = observeSessionPermissions({ grants: grants.onDidChange, sandbox: sandboxDirectories.onDidChange, tools: executionPermissions.onDidChange }, options.conversationId, services.recordPermissions)
@@ -124,7 +127,7 @@ export async function createBuddySessionExtensions(
         ? { id: options.spaceId, kind: 'space' }
         : { id: options.conversationId, kind: 'conversation' },
     })
-    capabilities.push(...await services.createCapabilities({
+    capabilities.push(createCodemodeCapability(() => codemodeEnabled), ...await services.createCapabilities({
       conversationId: options.conversationId,
       executionProfile: options.executionProfile,
       cwd: options.canonicalRoot,
@@ -183,6 +186,7 @@ export async function createBuddySessionExtensions(
     ]
 
     return {
+      setCodemodeEnabled: enabled => codemodeEnabled = enabled,
       dispose,
       resourceRevisions,
       toolCapabilities,

@@ -34,6 +34,7 @@ import { toBuddySessionStorageError } from './BuddySessionErrors'
 import { getBuddyCacheWarmingStatus } from './getBuddyCacheWarmingStatus'
 
 export interface CreateReusableBuddySessionOptions {
+  setCodemodeEnabled?: (enabled: boolean) => void
   skillReferences?: readonly SkillReference[]
   tree?: BuddyConversationTreeCursor
   assertModelAccess: (
@@ -245,6 +246,7 @@ export function createReusableBuddySession(
     async activateTurn(input) {
       input.signal.throwIfAborted()
       turnRetryLimit = preferences.modelRetryLimit
+      options.setCodemodeEnabled?.(preferences.codemode)
       options.runContext.current = {
         flushProjectedEvents: input.flushProjectedEvents,
         onToolExecutionAuthorized: input.onToolExecutionAuthorized,

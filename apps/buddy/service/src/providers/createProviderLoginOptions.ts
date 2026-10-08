@@ -7,6 +7,7 @@ const DEVICE_ID_KEY = 'buddy.providers.device-id'
 
 export function createProviderLoginOptions(settings: WorkspaceRepository): LoginOptions {
   return {
+    agentName: 'Lexora',
     getDeviceId() {
       const stored = settings.get(DEVICE_ID_KEY)
       if (stored !== null)

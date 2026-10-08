@@ -1,6 +1,8 @@
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 
+import { toPublicRunEvent } from '@buddy-shared/runs/publicRunEvent'
 import { describe, expect, it } from 'vitest'
+import { createRunEventCompactionPlan } from '../../../../../../service/src/events/RunEventCompaction'
 import {
   mergeChatRunEventBuckets,
   replaceChatRunEventBuckets,
@@ -8,6 +10,30 @@ import {
 import { createChatRunTranscriptProjector } from '../chatRunTranscriptProjector'
 
 describe('chat run transcript projector', () => {
+  it('preserves reused call IDs and denied executions through durable compaction and replay', () => {
+    const payload = { toolCallId: 'reused', toolName: 'bash', presentation: terminalPresentation(null) }
+    const events = [
+      messageEvent('run-a', 1, 'tool.preparing', payload),
+      messageEvent('run-a', 2, 'tool.started', payload),
+      messageEvent('run-a', 3, 'tool.completed', { ...payload, presentation: terminalPresentation('first'), isError: false }),
+      messageEvent('run-a', 4, 'tool.preparing', payload),
+      messageEvent('run-a', 5, 'tool.denied', { ...payload, denialCode: 'APPROVAL_DENIED' }),
+      messageEvent('run-a', 6, 'tool.completed', { ...payload, presentation: terminalPresentation('denied'), isError: true }),
+    ]
+    const project = (input: readonly LocalRunEvent[]) => createChatRunTranscriptProjector()
+      .project(replaceChatRunEventBuckets(input), [run('run-a')])[0]!
+      .turn
+    const original = project(events.map(toPublicRunEvent))
+    const replay = project(createRunEventCompactionPlan(events).retained.map(toPublicRunEvent))
+    expect(replay).toEqual(original)
+    const tools = replay.nodes.filter(node => node.kind === 'tool')
+    expect(tools).toMatchObject([
+      { status: 'completed', presentation: { output: 'first' } },
+      { status: 'denied', denialCode: 'APPROVAL_DENIED', presentation: { output: 'denied' } },
+    ])
+    expect(new Set(tools.map(node => node.id)).size).toBe(2)
+  })
+
   it('refreshes usage when another model call completes and preserves it on terminal replay', () => {
     const running = run('run-a')
     const projector = createChatRunTranscriptProjector()

@@ -165,23 +165,26 @@ export class ProviderService {
       const credentialProviderIds = new Set((await this.#credentialStatus.listOrEmpty())
         .map(credential => credential.providerId))
       for (const provider of this.#builtinTemplates.values()) {
-        if (customProviderIds.has(provider.id)
-          || (!this.#states.findByProviderId(provider.id) && !credentialProviderIds.has(provider.id))) {
-          continue
-        }
-        this.#state.commit('initialize', () => {
-          this.#ensureProviderState(provider.id, false)
-          if (!this.#builtins.findById(provider.id)) {
-            const now = new Date().toISOString()
-            this.#builtins.upsert({
-              id: provider.id,
-              builtinProviderId: provider.id,
-              displayName: null,
-              createdAt: now,
-              updatedAt: now,
-            })
+        const ids = provider.id === 'azure' ? [provider.id, 'azure-openai-responses'] : [provider.id]
+        for (const id of ids) {
+          if (customProviderIds.has(id)
+            || (!this.#states.findByProviderId(id) && !credentialProviderIds.has(id))) {
+            continue
           }
-        })
+          this.#state.commit('initialize', () => {
+            this.#ensureProviderState(id, false)
+            if (!this.#builtins.findById(id)) {
+              const now = new Date().toISOString()
+              this.#builtins.upsert({
+                id,
+                builtinProviderId: provider.id,
+                displayName: null,
+                createdAt: now,
+                updatedAt: now,
+              })
+            }
+          })
+        }
       }
       const instances = this.#builtins.list()
       for (const instance of instances) {
