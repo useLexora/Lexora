@@ -12,7 +12,7 @@ export const builtinSettings = {
     page: category === 'general' ? undefined : category,
     ...builtinSettingsCatalog[category],
     order,
-    fill: category === 'logs',
+    fill: category === 'logs' || category === 'prompts',
     title: text(`desktop.settings.category.${category}`),
     description: text(category === 'logs' ? 'applicationLogs.description' : category === 'usage' ? 'usageAnalytics.description' : category === 'skills' ? 'desktop.skills.description' : `desktop.settings.categoryDescription.${category}`),
   })),

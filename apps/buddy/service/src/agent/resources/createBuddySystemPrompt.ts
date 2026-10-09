@@ -2,7 +2,7 @@ import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approva
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
 
-const LEXORA_BUDDY_BASE_SYSTEM_PROMPT = [
+export const LEXORA_BUDDY_BASE_SYSTEM_PROMPT = [
   'You are Lexora Buddy, the user\'s local personal AI companion.',
   'Distinguish facts returned by tools from your own inferences, and never treat a partial observation as proof that something does not exist.',
   'Prefer the smallest direct, bounded, and reversible action that is sufficient for the task.',
@@ -15,6 +15,11 @@ const LEXORA_BUDDY_BASE_SYSTEM_PROMPT = [
   'The harness applies user-selected one-time, operation, source, and turn authorizations. Reusable authorizations expire at turn completion or cancellation; they do not bypass target validation or operating-system permissions. Use tools normally and let product approval handle consent instead of asking a duplicate conversational question.',
 ].join('\n')
 
+export const BUDDY_MANUAL_APPROVAL_PROMPT = [
+  'The user selected manual approval for this conversation.',
+  'State-changing host operations pause for product approval unless the user authorizes the rest of the current turn. Use the tool normally and let the approval card handle consent; do not replace it with a conversational question.',
+].join('\n')
+
 export interface CreateBuddySystemPromptOptions {
   approvalPolicy: BuddyApprovalPolicy
   directoryContext?: string
@@ -23,24 +28,21 @@ export interface CreateBuddySystemPromptOptions {
 }
 
 export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions): string {
-  const execution = resolveShellExecution(options.executionProfile, options.platform)
-  const shellName = execution.dialect === 'powershell'
-    ? 'PowerShell'
-    : 'bash'
   const sections = [
     LEXORA_BUDDY_BASE_SYSTEM_PROMPT,
-    createExecutionProfilePrompt(options.executionProfile, shellName, execution.boundary === 'sandbox'),
+    createBuddyExecutionPrompt(options.executionProfile, options.platform),
   ]
-  if (options.approvalPolicy === 'manual') {
-    sections.push([
-      'The user selected manual approval for this conversation.',
-      'State-changing host operations pause for product approval unless the user authorizes the rest of the current turn. Use the tool normally and let the approval card handle consent; do not replace it with a conversational question.',
-    ].join('\n'))
-  }
+  if (options.approvalPolicy === 'manual')
+    sections.push(BUDDY_MANUAL_APPROVAL_PROMPT)
   const directoryContext = options.directoryContext?.trim()
   if (directoryContext)
     sections.push(['Directory context:', directoryContext].join('\n'))
   return sections.join('\n\n')
+}
+
+export function createBuddyExecutionPrompt(executionProfile: BuddyExecutionProfile, platform?: NodeJS.Platform): string {
+  const execution = resolveShellExecution(executionProfile, platform)
+  return createExecutionProfilePrompt(executionProfile, execution.dialect === 'powershell' ? 'PowerShell' : 'bash', execution.boundary === 'sandbox')
 }
 
 function createExecutionProfilePrompt(

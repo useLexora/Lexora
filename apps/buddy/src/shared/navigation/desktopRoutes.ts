@@ -14,6 +14,7 @@ export const DESKTOP_ROUTE_NAMES = {
   automationsHistory: 'desktop.automations.history',
   automationsPlans: 'desktop.automations.plans',
   settingsRuntime: 'desktop.settings.runtime',
+  settingsPrompts: 'desktop.settings.prompts',
   settingsMcp: 'desktop.settings.mcp',
   settingsExtensions: 'desktop.settings.extensions',
   settingsApp: 'desktop.settings.app',

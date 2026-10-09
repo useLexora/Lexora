@@ -8,6 +8,7 @@ export const settingsPageRenderers: Record<Exclude<BuiltinSettingsCategory, 'gen
   pet: defineAsyncComponent(() => import('./DesktopPetSettingsView.vue')),
   shortcuts: defineAsyncComponent(() => import('./DesktopShortcutsSettingsView.vue')),
   models: defineAsyncComponent(() => import('./DesktopModelsSettingsView.vue')),
+  prompts: defineAsyncComponent(() => import('./DesktopPromptsSettingsView.vue')),
   runtime: defineAsyncComponent(() => import('./DesktopRuntimeSettingsView.vue')),
   mcp: defineAsyncComponent(() => import('./DesktopMcpSettingsView.vue')),
   skills: defineAsyncComponent(() => import('./DesktopSkillsSettingsView.vue')),

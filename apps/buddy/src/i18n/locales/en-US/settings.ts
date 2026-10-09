@@ -1,6 +1,26 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.settings.category.prompts': 'Prompts',
+  'desktop.settings.categoryDescription.prompts': 'Browse system instructions and task templates.',
+  'desktop.prompts.group.system': 'System instructions',
+  'desktop.prompts.group.template': 'Task templates',
+  'desktop.prompts.readonly': 'Built-in · Read-only',
+  'desktop.prompts.copy': 'Copy original',
+  'desktop.prompts.title.system': 'Base system prompt',
+  'desktop.prompts.title.execution': 'Execution mode',
+  'desktop.prompts.title.approval': 'Manual approval',
+  'desktop.prompts.title.attachments': 'Attachment handling',
+  'desktop.prompts.title.review': 'Review template',
+  'desktop.prompts.description.system': 'Defines the assistant identity, working practices and progress updates.',
+  'desktop.prompts.description.execution': 'Describes tool capabilities and access boundaries for each mode on this operating system.',
+  'desktop.prompts.description.approval': 'Explains how operations request user authorization.',
+  'desktop.prompts.description.attachments': 'Explains how to interpret and use images, documents and attachment working copies.',
+  'desktop.prompts.description.review': 'Defines review scope, evidence, severity levels and reporting requirements.',
+  'desktop.prompts.profile.read_only': 'Read-only',
+  'desktop.prompts.profile.workspace_write': 'Workspace write',
+  'desktop.prompts.profile.full_access': 'Full access',
+
   'desktop.settings.category.runtime': 'Runtime',
   'desktop.settings.categoryDescription.runtime': 'Manage permissions for new tasks, context, and model request behavior.',
   'desktop.settings.runtime.modelRequests': 'Model requests',

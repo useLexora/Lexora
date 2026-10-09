@@ -4,6 +4,7 @@ import { createAutomationsApi } from './local-chat/automations'
 import { createComposerApi } from './local-chat/composer'
 import { createConnectorsApi } from './local-chat/connectors'
 import { createConversationApi } from './local-chat/conversation'
+import { createPromptsApi } from './local-chat/prompts'
 import { createProvidersApi } from './local-chat/providers'
 import { createRuntimeApi } from './local-chat/runtime'
 import { createSkillsApi } from './local-chat/skills'
@@ -16,6 +17,7 @@ export function createLocalChatApi(): LocalChatApi {
     ...createActivityApi(),
     ...createAutomationsApi(),
     ...createRuntimeApi(),
+    ...createPromptsApi(),
     ...createProvidersApi(),
     ...createSpacesApi(),
     ...createSkillsApi(),

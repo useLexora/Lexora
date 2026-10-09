@@ -14,6 +14,7 @@ import {
   PlugConnected20Regular,
   Server20Regular,
   Settings20Regular,
+  TextDescription20Regular,
   Window20Regular,
 } from '@vicons/fluent'
 import { computed } from 'vue'
@@ -38,7 +39,7 @@ const props = defineProps<{
 const route = useRoute()
 const { registry } = useSettingsContext()
 const { t } = useBuddyI18n(() => props.language)
-const icons = { general: Settings20Regular, appearance: PaintBrush20Regular, notifications: Alert20Regular, pet: AnimalCat20Regular, shortcuts: Keyboard20Regular, models: ModelIcon, runtime: RuntimeIcon, mcp: PlugConnected20Regular, skills: SkillIcon, usage: DataUsage20Regular, web: Globe20Regular, browser: Window20Regular, proxy: Server20Regular, logs: DocumentTextClock20Regular, about: Info20Regular }
+const icons = { general: Settings20Regular, appearance: PaintBrush20Regular, notifications: Alert20Regular, pet: AnimalCat20Regular, shortcuts: Keyboard20Regular, models: ModelIcon, runtime: RuntimeIcon, prompts: TextDescription20Regular, mcp: PlugConnected20Regular, skills: SkillIcon, usage: DataUsage20Regular, web: Globe20Regular, browser: Window20Regular, proxy: Server20Regular, logs: DocumentTextClock20Regular, about: Info20Regular }
 const activeModuleId = computed(() => route.meta.settingsModule ?? route.params.moduleId)
 const visibleGroups = computed(() => settingsNavigationSections.map(section => ({
   ...section,

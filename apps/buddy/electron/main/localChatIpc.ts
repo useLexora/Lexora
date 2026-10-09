@@ -5,6 +5,7 @@ import { registerComposerIpc } from './local-chat/composer'
 import { registerConnectorsIpc } from './local-chat/connectors'
 import { registerConversationIpc } from './local-chat/conversation'
 import { registerLocalChatNotifications } from './local-chat/notifications'
+import { registerPromptsIpc } from './local-chat/prompts'
 import { registerProvidersIpc } from './local-chat/providers'
 import { createLocalChatIpcContext } from './local-chat/registrar'
 import { registerRuntimeIpc } from './local-chat/runtime'
@@ -20,6 +21,7 @@ export function registerLocalChatIpc(options: RegisterLocalChatIpcOptions): () =
   registerRuntimeIpc(context)
   registerActivityIpc(context)
   registerAutomationsIpc(context)
+  registerPromptsIpc(context)
   registerProvidersIpc(context)
   registerSpacesIpc(context)
   registerSkillsIpc(context)

@@ -1,4 +1,5 @@
 import type { DesktopAppInfo, DesktopBrowserApi } from '@buddy-electron/shared/desktopApi'
+import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyCapabilities } from '@buddy-shared/platform'
 import type { Ref } from 'vue'
 import type { ApplicationSettings, ShortcutSettings } from './contracts'
@@ -20,6 +21,8 @@ export interface SettingsContext {
   dataSettings: DesktopDataSettingsCapability
   platformCapabilities: Readonly<Ref<BuddyCapabilities | null>>
   providerSettings: ModelProvidersStore
+  prompts: LocalChatApi['prompts']
+  writeClipboardText: (text: string) => Promise<void>
   ready: Promise<void>
   openTask: (conversationId: string) => Promise<void>
   webSettings: WebSettingsCapability

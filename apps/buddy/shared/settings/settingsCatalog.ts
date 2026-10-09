@@ -6,6 +6,7 @@ export const builtinSettingsCatalog = {
   shortcuts: { section: 'personal', requiresRuntime: false },
   models: { section: 'ai', requiresRuntime: true },
   runtime: { section: 'ai', requiresRuntime: false },
+  prompts: { section: 'ai', requiresRuntime: true },
   mcp: { section: 'ai', requiresRuntime: true },
   skills: { section: 'ai', requiresRuntime: true },
   usage: { section: 'ai', requiresRuntime: true },

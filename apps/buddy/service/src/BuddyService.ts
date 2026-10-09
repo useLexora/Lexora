@@ -29,6 +29,7 @@ import { webSettingsChanged } from '../../shared/network/webApi'
 import { notificationsChanged } from '../../shared/notifications/notificationApi'
 import { ApplicationEvents as EventPublisher } from '../../shared/observability/ApplicationEvents'
 import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
+import { promptsRpc } from '../../shared/prompts/promptApi'
 import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { spaceChanged } from '../../shared/spaces/spaceApi'
@@ -114,8 +115,9 @@ import { ExtensionAgentRuntime } from './plugins/ExtensionAgentRuntime'
 import { observeExtensionAgentDiagnostics } from './plugins/observeExtensionAgentDiagnostics'
 import { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import { registerExtensionConditionRpc } from './plugins/registerExtensionConditionRpc'
-import { createProviderService } from './providers/createProviderService'
 
+import { getBuiltinPromptCatalog } from './prompts/builtinPromptCatalog'
+import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
@@ -1217,6 +1219,7 @@ export async function startBuddyService(
           usage: usageRepository,
         }),
       )
+      register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
       register(
         registerAttachmentRpc({

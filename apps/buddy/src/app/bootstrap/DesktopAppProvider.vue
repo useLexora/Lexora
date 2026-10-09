@@ -264,6 +264,8 @@ useProvideSettingsContext({
   ready,
   webSettings: capabilities.webSettings,
   mcpSettings: capabilities.mcpSettings,
+  prompts: api.localChat.prompts,
+  writeClipboardText: text => api.clipboard.writeText(text),
   openTask: navigation.openTask,
 })
 useProvideSkillsContext({
