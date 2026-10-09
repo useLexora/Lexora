@@ -30,6 +30,10 @@ interface Invalidation {
 }
 const unavailable: ExtensionConditionState = { status: 'unavailable', value: false }
 
+export class ExtensionConditionInvalidatedError extends Error {
+  constructor() { super('EXTENSION_CONDITION_STALE') }
+}
+
 export class ExtensionConditionEvaluator {
   readonly #changes = new Emitter<ExtensionConditionsChanged>(() => {})
   readonly onDidInvalidate = this.#changes.event
@@ -94,7 +98,9 @@ export class ExtensionConditionEvaluator {
       }
       return state
     }
-    catch {
+    catch (error) {
+      if (!input.cache && error instanceof ExtensionConditionInvalidatedError)
+        throw error
       return unavailable
     }
     finally {
@@ -159,7 +165,7 @@ export class ExtensionConditionEvaluator {
     for (const operation of this.#pending) {
       if (matches(operation)) {
         affected.add(operation.extensionId)
-        operation.controller.abort()
+        operation.controller.abort(new ExtensionConditionInvalidatedError())
       }
     }
     for (const [key, cached] of this.#cache) {

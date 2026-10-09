@@ -336,11 +336,12 @@ function activate(context) {
   })
 }
 
-test('background plugin actions preserve event context, protected titles and independent usage', async ({ buddy }) => {
+test('background plugin actions join their reply flow while preserving protected titles and independent usage', async ({ buddy }) => {
   test.setTimeout(180000)
   const requests = []
   const pending = []
   let hold = true
+  let fail = false
   let generated = 0
   const server = createServer(async (request, response) => {
     if (request.url !== '/v1/chat/completions') {
@@ -352,6 +353,10 @@ test('background plugin actions preserve event context, protected titles and ind
     const body = JSON.parse(Buffer.concat(chunks).toString())
     requests.push(body)
     const background = !body.tools?.length
+    if (background && fail) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Fixture title generation failed', type: 'invalid_request_error' } }))
+      return
+    }
     const content = background ? `后台标题 ${++generated}` : '任务回答已完成。'
     const finish = () => {
       const common = { id: `action-${requests.length}`, model: body.model, object: 'chat.completion.chunk', created: 1 }
@@ -425,6 +430,7 @@ test('background plugin actions preserve event context, protected titles and ind
     }
 
     const declaredActions = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.agent.actions)
+    const manualAction = declaredActions.find(action => action.triggers.includes('user'))
     const pluginSettings = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.settings.items)
     await page.locator(`[data-extension-id="${pluginId}"]`).getByRole('button', { name: '打开', exact: true }).click()
     const master = page.locator(`[data-setting-id="${pluginId}.enabled"]`).getByRole('switch')
@@ -467,48 +473,54 @@ test('background plugin actions preserve event context, protected titles and ind
     }
     const settled = () => expect.poll(() => rows(instance.home, 'SELECT id FROM extension_invocations WHERE status = \'running\'').length).toBe(0)
     const backgroundRequests = () => requests.filter(body => !body.tools?.length).length
-    async function revealActions() {
-      const group = page.locator('.buddy-chat-message-list .buddy-chat-activity-group__header').first()
-      await expect(group).toContainText('工具调用')
-      if (await group.getAttribute('aria-expanded') === 'false')
-        await group.click()
+    async function expectActionInReplyFlow(status, target = page) {
+      const invocation = rows(instance.home, `SELECT id FROM extension_invocations WHERE conversation_id = '${latest().id}' AND action_title = '重新生成标题' AND status = '${status}' ORDER BY started_at DESC LIMIT 1`)[0]
+      expect(invocation).toBeDefined()
+      const run = rows(instance.home, `SELECT id FROM runs WHERE conversation_id = '${latest().id}' ORDER BY started_at DESC LIMIT 1`)[0]
+      const flow = target.locator(`[data-chat-row-key="agent-turn:${run.id}"]`)
+      await expect(flow).toBeVisible()
+      const collapsed = flow.locator('.buddy-chat-activity-group__header[aria-expanded="false"]')
+      for (const header of await collapsed.all())
+        await header.click()
+      const tool = flow.locator(`[data-action-id="${invocation.id}"]`)
+      await expect(tool).toBeVisible()
+      await expect(tool).toHaveAttribute('data-action-status', status)
+      await expect(tool.locator('.buddy-chat-tool__title')).toHaveText('工具调用')
+      await expect(tool.locator('.buddy-chat-tool__summary')).toHaveText('重新生成标题')
+      await expect(target.locator(`[data-chat-row-key="extension-action:${invocation.id}"]`)).toHaveCount(0)
+      await expect.poll(async () => {
+        const process = await flow.boundingBox()
+        const answer = await target.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant').last().boundingBox()
+        return !!process && !!answer && process.y + process.height <= answer.y
+      }).toBe(true)
     }
     await send('整理项目发布计划')
     await expect.poll(() => pending.length).toBe(1)
-    await revealActions()
-    await expect(page.locator('[data-action-status="running"]').filter({ hasText: '重新生成标题' })).toBeVisible()
+    await expect(page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant')).toContainText('任务回答已完成。')
+    await expectActionInReplyFlow('running')
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'background-title-running.png'), animations: 'disabled' })
     expect(latest().title_source).toBe('fallback')
     expect(rows(instance.home, 'SELECT status FROM runs')).toEqual([{ status: 'completed' }])
     expect(requests.filter(body => body.tools?.length).every(body => !body.tools.some(tool => tool.function.name.startsWith('lexora_plugin_')))).toBe(true)
     pending.shift()()
     await settled()
     expect(latest()).toMatchObject({ title: '后台标题 1', title_source: 'generated' })
-    await expect(page.locator('[data-action-status="completed"]').filter({ hasText: '重新生成标题' })).toBeVisible()
+    await expectActionInReplyFlow('completed')
     const savedTimeline = await page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), latest().id)
     expect(savedTimeline.items.filter(item => item.kind === 'extension-action')).toEqual(expect.arrayContaining([expect.objectContaining({ extensionId: pluginId, title: '重新生成标题', status: 'completed', branchId: latest().active_branch_id })]))
     await page.reload()
-    await revealActions()
-    const completedAction = page.locator('[data-action-status="completed"]').filter({ hasText: '重新生成标题' })
-    await expect(completedAction).toBeVisible()
-    await expect(completedAction.locator('.buddy-chat-tool__title')).toHaveText('工具调用')
-    await expect(completedAction.locator('.buddy-chat-tool__summary')).toHaveText('重新生成标题')
+    await expect(page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant')).toContainText('任务回答已完成。')
+    await expectActionInReplyFlow('completed')
     const identities = page.locator('.buddy-chat-message-list .buddy-chat-agent-identity')
     await expect(identities).toHaveCount(1)
     const identityBounds = await identities.boundingBox()
-    const actionBounds = await completedAction.boundingBox()
     const answerBounds = await page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant').boundingBox()
-    expect(identityBounds.y + identityBounds.height).toBeLessThanOrEqual(actionBounds.y)
-    expect(actionBounds.y + actionBounds.height).toBeLessThanOrEqual(answerBounds.y)
-    if (process.env.LEXORA_TEST_ACTION_PLUGIN) {
-      await completedAction.getByRole('button', { name: /重新生成标题/ }).click()
-      const actionId = await completedAction.getAttribute('data-action-id')
-      await expect(page.locator(`[data-action-detail-id="${actionId}"]`)).toContainText('后台标题 1')
-      await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-action-details.png'), animations: 'disabled' })
-    }
+    expect(identityBounds.y + identityBounds.height).toBeLessThanOrEqual(answerBounds.y)
 
     expect(rows(instance.home, 'SELECT run_id, invocation_id, purpose FROM usage_records WHERE purpose = \'extension.action\'')).toEqual([{ run_id: null, invocation_id: expect.any(String), purpose: 'extension.action' }])
     const inputActions = declaredActions.filter(action => action.triggers.includes('task:input:committed')).map(action => action.id).sort()
     expect(rows(instance.home, 'SELECT action_id, status FROM extension_invocations WHERE trigger = \'task:input:committed\' ORDER BY action_id')).toEqual(inputActions.map(action_id => ({ action_id, status: 'completed' })))
+    await expect(page.locator('.buddy-chat-agent-turn [data-action-id]')).toHaveCount(inputActions.length)
     const status = await page.evaluate(conversationId => window.lexoraDesktop.localChat.runs.status({ conversationId }), latest().id)
     expect(status.tokens.totals).toMatchObject({ totalTokens: 60, recordCount: 2 })
     expect(status.tokens.byPurpose.find(entry => entry.purpose === 'extension.action')).toMatchObject({ totalTokens: 30, recordCount: 1 })
@@ -531,39 +543,70 @@ test('background plugin actions preserve event context, protected titles and ind
     expect(backgroundRequests()).toBe(1)
 
     hold = false
-    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
-    await page.locator('.n-dropdown-menu').getByText('重新生成标题', { exact: true }).click()
+    if (manualAction) {
+      await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+      await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
+    }
+    else {
+      await expect(page.locator('[data-workbench-menu="task.actions"]:visible')).toHaveCount(0)
+      await send('整理下一项任务的发布计划', true)
+    }
     await expect.poll(() => latest().title).toBe('后台标题 2')
     await settled()
+    await expectActionInReplyFlow('completed')
     await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { updateOnGoalChange: true }), pluginId)
     await send('把主目标调整为插件架构评审')
     await expect.poll(() => latest().title).toBe('后台标题 3')
     await settled()
+    await expectActionInReplyFlow('completed')
     await page.screenshot({ path: path.join(instance.artifactDirectory, 'generated-task-title.png'), animations: 'disabled' })
 
     hold = true
-    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
-    await page.locator('.n-dropdown-menu').getByText('重新生成标题', { exact: true }).click()
+    if (manualAction) {
+      await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+      await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
+    }
+    else {
+      await send('验证手动命名优先', true)
+    }
     await expect.poll(() => pending.length).toBe(1)
-    await page.evaluate(id => window.lexoraDesktop.localChat.conversations.rename(id, '用户最终命名'), taskId)
+    await expectActionInReplyFlow('running')
+    await page.evaluate(id => window.lexoraDesktop.localChat.conversations.rename(id, '用户最终命名'), latest().id)
     pending.shift()()
     await settled()
     expect(latest().title).toBe('用户最终命名')
 
+    hold = false
+    fail = true
+    await send('标题生成失败时保留正常回答', true)
+    await settled()
+    const failedAction = page.locator('[data-action-status="failed"]').filter({ hasText: '重新生成标题' })
+    const issue = page.locator('.buddy-chat-message-list').getByRole('button', { name: '1 项异常', exact: true })
+    await expect(failedAction.or(issue).first()).toBeVisible()
+    if (await issue.isVisible())
+      await issue.click()
+    await expect(failedAction).toBeVisible()
+    await expectActionInReplyFlow('failed')
+    expect(latest().title_source).toBe('fallback')
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-action-failure.png'), animations: 'disabled' })
+
+    hold = true
+    fail = false
     await send('停用插件时保留输入标题', true)
     await expect.poll(() => pending.length).toBe(1)
     const original = latest().title
+    const runningIds = new Set(rows(instance.home, 'SELECT id FROM extension_invocations WHERE status = \'running\'').map(action => action.id))
     await page.evaluate(id => window.lexoraDesktop.extensions.enable(id, false), pluginId)
     pending.shift()()
     await settled()
     expect(latest().title).toBe(original)
-    const stoppedActions = rows(instance.home, `SELECT action_id, status FROM extension_invocations WHERE conversation_id = '${latest().id}'`)
-    const namingActionIds = new Set(declaredActions.filter(action => action.triggers.includes('user')).map(action => action.id))
-    const stoppedNaming = stoppedActions.filter(action => namingActionIds.has(action.action_id))
+    const stoppedActions = rows(instance.home, `SELECT id, action_id, status FROM extension_invocations WHERE conversation_id = '${latest().id}'`)
+    const stoppedNaming = stoppedActions.filter(action => runningIds.has(action.id))
     expect(stoppedNaming.length).toBeGreaterThan(0)
     expect(stoppedNaming.every(action => action.status === 'cancelled')).toBe(true)
     expect(stoppedActions.every(action => ['cancelled', 'completed', 'skipped'].includes(action.status))).toBe(true)
     await expect(page.locator('[data-workbench-menu="task.actions"]:visible')).toHaveCount(0)
+    await expectActionInReplyFlow('cancelled')
     expect(rows(instance.home, 'SELECT id FROM runs WHERE status = \'failed\'')).toEqual([])
     await page.screenshot({ path: path.join(instance.artifactDirectory, 'background-actions.png'), animations: 'disabled' })
     expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
@@ -571,6 +614,8 @@ test('background plugin actions preserve event context, protected titles and ind
     const beforeRestart = await page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), persistedTaskId)
     await instance.stop()
     const restarted = await instance.launch()
+    await expect(restarted.page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant')).toContainText('任务回答已完成。')
+    await expectActionInReplyFlow('cancelled', restarted.page)
     const afterRestart = await restarted.page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), persistedTaskId)
     expect(afterRestart.items.filter(item => item.kind === 'extension-action')).toEqual(beforeRestart.items.filter(item => item.kind === 'extension-action'))
     expect(afterRestart.runs).toEqual(beforeRestart.runs)

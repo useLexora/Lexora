@@ -54,7 +54,7 @@ context.conditions.register('example.helper.available', (ctx, params) => {
 | runtime.task | id、spaceId、branchId、title、titleSource、activity、modelSelection | 需要 tasks 权限；仅原调用任务，不随用户切换焦点；设置页不隐式读取最近任务，无消息正文 |
 | workbench | panes 的 id、active、visible | 仅分屏概要，无 DOM、文件路径、输入内容或任务关联 |
 
-异步函数收到的是本次一致的只读快照，不是可变全局对象。配置、模型目录、任务状态、分屏或草稿变化后，宿主使相关结果失效；设置页自动重算，实际任务入口重新判断。`signal` 在本次结果过期、取消或宿主停止时撤销。应尽快返回，只做判断，不在条件中改设置、发通知或调用模型。
+异步函数收到的是本次一致的只读快照，不是可变全局对象。配置、模型目录、任务状态、分屏或草稿变化后，宿主使相关结果失效；设置页自动重算，实际任务入口重新判断。入口检查因上下文持续变化被撤销时按取消处理，不记为动作失败。`signal` 在本次结果过期、取消或宿主停止时撤销。应尽快返回，只做判断，不在条件中改设置、发通知或调用模型。
 
 插件自己的内存或业务状态变化后，可调用 `context.conditions.invalidate({condition?,scopeKey?})`；省略参数使本插件所有条件失效，不影响其他插件。不要在求值函数内调用 invalidate，也不要轮询刷新。
 

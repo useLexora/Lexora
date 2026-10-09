@@ -47,6 +47,90 @@ function order(projection: ReturnType<typeof projectChatTranscript>) {
 }
 
 describe('interleaved conversation segments', () => {
+  it.each([
+    { trigger: 'task:input:committed', seconds: 1 },
+    { trigger: 'task:input:committed', seconds: 6 },
+    { trigger: 'task:turn:completed', seconds: 6 },
+    { trigger: 'user', seconds: 6 },
+  ] as const)('keeps $trigger actions at $seconds in the originating reply flow during updates and replay', ({ trigger, seconds }) => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
+    const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
+    const messages = [message('initial', 'user', 0), message('reply', 'assistant', 5)]
+    const projector = createChatTranscriptProjector()
+    for (const status of ['running', 'completed', 'cancelled', 'failed', 'interrupted'] as const) {
+      const invocation = action(seconds, { trigger, status, completedAt: status === 'running' ? null : time(seconds + 1) })
+      const snapshot = input(completed, [reply], [...messages, invocation])
+      const projected = projector.project(snapshot)
+      expect(projected.rows).toEqual(projectChatTranscript(snapshot).rows)
+      expect(projected.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
+      expect(projected.rows[1]).toMatchObject({ turn: { status: 'completed', nodes: [{ kind: 'tool', invocation }] } })
+      expect(projected.rows[2]).toMatchObject({ showIdentity: false, resultRunId: run.id })
+    }
+    const skipped = input(completed, [reply], [...messages, action(seconds, { trigger, status: 'skipped' })])
+    const skippedRows = projector.project(skipped).rows
+    if (trigger === 'user')
+      expect(skippedRows[1]).toMatchObject({ kind: 'agent-turn', turn: { nodes: [{ invocation: { status: 'skipped' } }] } })
+    else
+      expect(skippedRows).toEqual(projectChatTranscript(input(completed, [reply], messages)).rows)
+  })
+
+  it('keeps an action visible when its source reply is outside the loaded page, then merges it when loaded', () => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
+    const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
+    const invocation = action(6, { trigger: 'task:turn:completed' })
+    const page = input(completed, [reply], [message('reply', 'assistant', 5), invocation])
+    const projector = createChatTranscriptProjector()
+    expect(projector.project(page).rows.at(-1)).toMatchObject({ kind: 'activity-flow', nodes: [{ invocation }] })
+    const loaded = { ...page, timelineItems: [message('initial', 'user', 0), ...page.timelineItems] }
+    expect(projector.project(loaded).rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
+    const unanchored = projectChatTranscript({ ...page, includeUnanchoredTurns: true })
+    expect(unanchored.rows.map(row => row.key)).toEqual(['agent-turn:run', 'message:reply'])
+    expect(unanchored.rows[0]).toMatchObject({ turn: { nodes: [{ invocation }] } })
+  })
+
+  it('associates a delayed action after steering with its reply, keeping later inputs in their own flow', () => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(50) }
+    const final: LocalRunEvent = { runId: run.id, sequence: 5, createdAt: time(50), type: 'message.completed', payload: { role: 'assistant', messageId: 'final', phase: 'final_answer', content: { text: 'Done' } } }
+    const followup = { ...run, id: 'followup-run', triggeringMessageId: 'followup', startedAt: time(60) }
+    const invocation = action(52, { trigger: 'task:turn:completed', sourceMessageId: 'steer-b' })
+    const first = input(completed, [...events, final], [...timelineItems, message('final', 'assistant', 50), invocation, message('followup', 'user', 60)])
+    const snapshot = { ...first, runs: [completed, followup], runProjections: [...first.runProjections, { turn: projectChatAgentTurn(followup, []), recoveryNotices: [], streamingMessages: [] }] }
+    const projector = createChatTranscriptProjector()
+    const result = projector.project(snapshot)
+    const actionRows = result.rows.filter(row => row.kind === 'agent-turn' && row.turn.nodes.some(node => node.kind === 'tool' && node.invocation))
+    expect(actionRows).toHaveLength(1)
+    expect(actionRows[0]).toMatchObject({ turn: { runId: run.id, nodes: [{ messageId: 'continuation' }, { invocation }] } })
+    expect(result.rows.indexOf(actionRows[0]!)).toBeLessThan(result.rows.findIndex(row => row.key === 'message:final'))
+    expect(order(result)).toEqual(['initial', 'before', 'steer-a', 'steer-b', 'between', 'hello', 'continuation', 'final', 'followup'])
+    const advanced = { ...snapshot, runProjections: [{ ...snapshot.runProjections[0]!, turn: { ...snapshot.runProjections[0]!.turn } }, snapshot.runProjections[1]!] }
+    expect(projector.project(advanced).rows).toEqual(projectChatTranscript(advanced).rows)
+  })
+
+  it('does not duplicate earlier actions into a retry of the same input', () => {
+    const completed = { ...run, status: 'cancelled' as const, completedAt: time(5) }
+    const retry = { ...run, id: 'retry', startedAt: time(10) }
+    const first = input(completed, [], [message('initial', 'user', 0), action(6), action(11)])
+    const result = projectChatTranscript({ ...first, runs: [completed, retry], runProjections: [...first.runProjections, { turn: projectChatAgentTurn(retry, []), recoveryNotices: [], streamingMessages: [] }] })
+    const nodes = result.rows.flatMap(row => row.kind === 'agent-turn' ? row.turn.nodes.flatMap(node => node.kind === 'tool' && node.invocation ? [{ runId: row.turn.runId, actionId: node.invocation.id }] : []) : [])
+    expect(nodes).toEqual([{ runId: run.id, actionId: 'action-6' }, { runId: retry.id, actionId: 'action-11' }])
+  })
+
+  it('preserves model tool event order when adding plugin actions despite timestamp differences', () => {
+    const completed = { ...run, status: 'completed' as const, completedAt: time(10) }
+    const presentation = { card: 'generic', argumentNames: [], description: null, output: null, truncated: false }
+    const toolEvents: LocalRunEvent[] = [
+      { runId: run.id, sequence: 1, createdAt: time(4), type: 'tool.completed', payload: { toolCallId: 'read', toolName: 'read', presentation } },
+      { runId: run.id, sequence: 2, createdAt: time(2), type: 'tool.completed', payload: { toolCallId: 'plugin', toolName: 'lexora_plugin_fixture', presentation } },
+      { runId: run.id, sequence: 3, createdAt: time(10), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } },
+    ]
+    const original = projectChatAgentTurn(completed, toolEvents)
+    const result = projectChatTranscript(input(completed, toolEvents, [message('initial', 'user', 0), message('reply', 'assistant', 10), action(3), action(11)]))
+    const nodes = result.rows.flatMap(row => row.kind === 'agent-turn' ? row.turn.nodes : [])
+    expect(nodes.map(node => node.id)).toEqual(['extension-action:action-3', 'tool:read', 'tool:plugin', 'extension-action:action-11'])
+    expect(nodes.filter(node => node.kind === 'tool' && !node.invocation)).toEqual(original.nodes)
+    expect(result.rows.at(-1)?.key).toBe('message:reply')
+  })
+
   it('keeps the avatar before leading actions while the first reply arrives and when it is cancelled', () => {
     const items = [message('initial', 'user', 0), action(1), action(2)]
     const first = input(run, [], items)
@@ -73,10 +157,10 @@ describe('interleaved conversation segments', () => {
     expect(result.rows.at(-1)).toMatchObject({ showIdentity: false, resultRunId: run.id })
   })
 
-  it('keeps later actions after the answer and does not associate another branch or input with the reply', () => {
+  it('does not associate actions from another branch or input with the reply', () => {
     const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
     const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
-    for (const invocation of [action(6), action(1, { branchId: 'another-branch' }), action(1, { sourceMessageId: 'another-input' }), action(1, { status: 'skipped' })]) {
+    for (const invocation of [action(1, { branchId: 'another-branch' }), action(6, { sourceMessageId: 'another-input' })]) {
       const result = projectChatTranscript(input(completed, [reply], [message('initial', 'user', 0), invocation, message('reply', 'assistant', 5)]))
       expect(result.rows.filter(row => row.kind === 'agent-turn')).toHaveLength(0)
       expect(result.rows.filter(row => row.kind === 'message').find(row => row.message.id === 'reply')?.showIdentity).not.toBe(false)
@@ -87,7 +171,7 @@ describe('interleaved conversation segments', () => {
 
   it('groups adjacent independent actions while preserving input boundaries and completed outcomes', () => {
     const completed = { ...run, status: 'cancelled' as const, completedAt: time(5) }
-    const result = projectChatTranscript(input(completed, [], [message('initial', 'user', 0), action(6), action(7), message('next', 'user', 8), action(9, { sourceMessageId: 'next' })]))
+    const result = projectChatTranscript(input(completed, [], [message('initial', 'user', 0), action(6, { sourceMessageId: null }), action(7, { sourceMessageId: null }), message('next', 'user', 8), action(9, { sourceMessageId: 'next' })]))
     expect(result.rows.map(row => row.kind)).toEqual(['message', 'agent-turn', 'activity-flow', 'message', 'activity-flow'])
     expect(result.rows[2]).toMatchObject({ nodes: [{ invocation: { id: 'action-6' } }, { invocation: { id: 'action-7' } }] })
     expect(result.rows[4]).toMatchObject({ nodes: [{ invocation: { sourceMessageId: 'next' } }] })

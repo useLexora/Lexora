@@ -9,7 +9,7 @@ import { projectPersistedChatTranscriptRows } from '../../../model/transcript/ch
 import { useChatRunSync } from '../useChatRunSync'
 
 describe('useChatRunSync', () => {
-  it('refreshes a running action on an older page and removes only automatic skipped actions from the transcript', async () => {
+  it.each(['skipped', 'failed'] as const)('refreshes an automatic action on an older page when it becomes %s', async (status) => {
     const action: Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> = {
       kind: 'extension-action',
       id: 'automatic',
@@ -30,7 +30,7 @@ describe('useChatRunSync', () => {
     const latest = timelineMessage('latest', 'task', 'branch', 2)
     let completed = false
     const api = createApi({ listTimeline: async input => input.cursor
-      ? timelinePage([{ ...action, status: completed ? 'skipped' : 'running' }, manual], null)
+      ? timelinePage([{ ...action, status: completed ? status : 'running' }, manual], null)
       : timelinePage([latest], 'older') })
     const sync = useChatRunSync({ activeBranchId: ref('branch'), activeConversationId: ref('task'), api, onError: (error) => {
       throw error
@@ -40,11 +40,12 @@ describe('useChatRunSync', () => {
       await sync.loadOlderMessages()
       expect(sync.timelineItems.value.find(item => item.id === action.id)).toMatchObject({ status: 'running' })
       expect(projectPersistedChatTranscriptRows(sync.timelineItems.value, [])).toHaveLength(2)
+      expect(JSON.stringify(projectPersistedChatTranscriptRows(sync.timelineItems.value, []))).toContain('"id":"automatic"')
       completed = true
       await sync.refreshActiveConversation()
-      expect(sync.timelineItems.value.find(item => item.id === action.id)).toMatchObject({ status: 'skipped' })
+      expect(sync.timelineItems.value.find(item => item.id === action.id)).toMatchObject({ status })
       const rows = projectPersistedChatTranscriptRows(sync.timelineItems.value, [])
-      expect(JSON.stringify(rows)).not.toContain('"id":"automatic"')
+      expect(JSON.stringify(rows).includes('"id":"automatic"')).toBe(status === 'failed')
       expect(JSON.stringify(rows)).toContain('"id":"manual"')
       expect(sync.messages.value).toEqual([latest])
       expect(sync.hasOlderMessages.value).toBe(false)

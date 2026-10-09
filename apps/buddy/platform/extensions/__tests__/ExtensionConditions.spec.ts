@@ -85,6 +85,74 @@ it('refreshes saved configuration and scopes runtime rechecks to the invoking ta
   }
 })
 
+it('rechecks an invalidated invocation condition once and cancels continued churn without executing stale actions', async () => {
+  const { store, root } = await createStore()
+  const pkg = definition()
+  await store.install((await reviewPackage(root, store, pkg)).token)
+  const pending: ReturnType<typeof deferred<JsonValue>>[] = []
+  let invoked = 0
+  let mode: 'wait' | 'ready' | 'fail' = 'wait'
+  const service = new ExtensionService(store, {
+    createHost: () => ({ call: async (method): Promise<JsonValue> => {
+      if (method === 'conditions.evaluate') {
+        if (mode === 'fail')
+          throw new Error('Fixture condition failed')
+        if (mode === 'ready')
+          return true
+        const result = deferred<JsonValue>()
+        pending.push(result)
+        return result.promise
+      }
+      if (method === 'agent.invoke') {
+        invoked++
+        return { status: 'completed' }
+      }
+      return null
+    }, dispose: async () => {}, devtools() {} }),
+    createView: () => { throw new Error('unused') },
+    workbench: async () => null,
+    get: async () => new Response(''),
+    readText: async () => '',
+  })
+  const invoke = async () => {
+    const [descriptor] = await service.agentContributions()
+    return service.invokeAgent({ extensionId: pkg.id, revision: descriptor!.revision, configurationRevision: descriptor!.configurationRevision, invocationId: randomUUID(), action: 'tests.reader.run', cause: { type: 'user' }, context: { taskId: 'origin-task', runId: null } }, new AbortController().signal)
+  }
+  const invalidate = () => service.conditions.invalidate({ inputs: ['runtime.task'], taskId: 'origin-task' })
+  try {
+    const first = invoke()
+    await vi.waitFor(() => expect(pending).toHaveLength(1))
+    invalidate()
+    await vi.waitFor(() => expect(pending).toHaveLength(2))
+    pending[0]!.resolve(true)
+    expect(invoked).toBe(0)
+    pending[1]!.resolve(true)
+    expect(await first).toEqual({ status: 'completed' })
+    expect(invoked).toBe(1)
+
+    const cancelled = expect(invoke()).rejects.toMatchObject({ code: 'EXTENSION_AGENT_CANCELLED' })
+    await vi.waitFor(() => expect(pending).toHaveLength(3))
+    invalidate()
+    await vi.waitFor(() => expect(pending).toHaveLength(4))
+    invalidate()
+    await cancelled
+    pending[2]!.resolve(true)
+    pending[3]!.resolve(true)
+    expect(invoked).toBe(1)
+
+    mode = 'fail'
+    await expect(invoke()).rejects.toThrow('EXTENSION_CONDITION_UNAVAILABLE')
+    expect(invoked).toBe(1)
+    mode = 'ready'
+    expect(await invoke()).toEqual({ status: 'completed' })
+    expect(invoked).toBe(2)
+  }
+  finally {
+    await service.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 function evaluationFixture() {
   const engine = new ExtensionConditionEvaluator()
   const pending: ReturnType<typeof deferred<JsonValue>>[] = []

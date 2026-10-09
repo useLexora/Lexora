@@ -11,7 +11,7 @@ import type {
   ChatTranscriptRow,
   ChatTranscriptRowPatch,
 } from './chatTranscriptTypes'
-import { shouldShowAgentTurn } from './chatPersistedTranscriptRows'
+import { isVisibleExtensionAction, shouldShowAgentTurn } from './chatPersistedTranscriptRows'
 import { selectChatStreamingMessage } from './chatRunStreamingMessages'
 import { hasChatAssistantIdentity } from './chatTranscriptSegments'
 
@@ -214,9 +214,9 @@ export function createChatTranscriptProjectionCache(
   const runProjections = input.runProjections ?? null
   const interleavedRunIds = new Set(input.runs.filter(run => input.timelineItems.some(item => (
     item.kind === 'extension-action'
-      ? item.branchId === run.branchId
+      ? isVisibleExtensionAction(item)
+      && item.branchId === run.branchId
       && item.sourceMessageId === run.triggeringMessageId
-      && (item.status !== 'skipped' || item.trigger === 'user')
       : item.kind === 'message'
         && item.role === 'user'
         && item.id !== run.triggeringMessageId
@@ -228,7 +228,7 @@ export function createChatTranscriptProjectionCache(
   for (const row of projection.rows) {
     if (row.kind !== 'agent-turn')
       continue
-    if (seenTurns.has(row.turn.runId))
+    if (seenTurns.has(row.turn.runId) || row.turn.nodes.some(node => node.kind === 'tool' && node.invocation))
       interleavedRunIds.add(row.turn.runId)
     seenTurns.add(row.turn.runId)
   }

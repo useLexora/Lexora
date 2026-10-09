@@ -42,7 +42,7 @@ describe('chat transcript projection', () => {
     expect(projector.project(updatedInput).rows[1]).toBe(initial.rows[1])
   })
 
-  it('reuses historical rows when only the active run projection advances', () => {
+  it.each([false, true])('reuses historical rows as the active run advances with a background action: %s', (backgroundAction) => {
     const historyUser = message('history-user', 'user')
     const historyAssistant = {
       ...message('history-assistant', 'assistant'),
@@ -58,7 +58,10 @@ describe('chat transcript projection', () => {
       agentTurn(activeRun, ['Inspecting']),
       streamingMessage(activeRun, 'Working'),
     )
-    const timelineItems = [historyUser, historyAssistant, activeUser]
+    const timelineItems: LocalConversationTimelineItem[] = [historyUser, historyAssistant, activeUser]
+    if (backgroundAction) {
+      timelineItems.push({ kind: 'extension-action', id: 'background', conversationId: activeRun.conversationId, branchId: activeRun.branchId, sourceMessageId: activeUser.id, extensionId: 'tests.title', extensionName: 'Title', actionId: 'tests.title.generate', title: 'Generate title', trigger: 'task:input:committed', status: 'running', message: null, createdAt: activeRun.startedAt, completedAt: null })
+    }
     const runs = [historyRun, activeRun]
     const outputs: ReadonlyArray<LocalRunOutput> = []
     const projector = createChatTranscriptProjector()
@@ -87,6 +90,7 @@ describe('chat transcript projection', () => {
     })
 
     expect(updated.rows).toEqual(rebuilt.rows)
+    expect(updated.update.kind).toBe(backgroundAction ? 'replace' : 'patch')
     expect(updated.rows.map(row => row.key)).toEqual(initial.rows.map(row => row.key))
     expect(updated.rows[0]).toBe(initial.rows[0])
     expect(updated.rows[1]).toBe(initial.rows[1])
