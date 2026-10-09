@@ -175,6 +175,7 @@ function updateCodemode(codemode: boolean) {
         </div>
         <NSwitch
           class="runtime-settings__toggle"
+          :round="false"
           :aria-labelledby="codemodeLabelId"
           :aria-describedby="codemodeDescriptionId"
           :value="config.runtime.codemode"

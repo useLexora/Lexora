@@ -1,5 +1,7 @@
 import type { LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '@buddy-shared/connectors/connectorApi'
 
+import type { McpToolExposure } from '@buddy-shared/connectors/mcpToolExposure'
+
 const ENVIRONMENT_KEY_PATTERN = /^[A-Z_]\w*$/i
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^\w`|~-]+$/
 
@@ -11,6 +13,8 @@ export interface DesktopConnectorFormValue {
   headers: string
   id: string
   name: string
+  toolNamespace?: string
+  toolExposure?: McpToolExposure
   transport: 'stdio' | 'streamable-http'
   url: string
 }
@@ -38,6 +42,8 @@ export function createConnectorSavePlan(
       enabled: !form.env.trim() && preservesEnabledStdioTarget(existing, command, args, cwd),
       id,
       name,
+      toolNamespace: existing?.toolNamespace ?? (form.toolNamespace?.trim() || undefined),
+      toolExposure: form.toolExposure ?? existing?.toolExposure ?? 'deferred',
       transport: 'stdio',
     }
     const env = parseEntries(form.env, ENVIRONMENT_KEY_PATTERN)
@@ -64,6 +70,8 @@ export function createConnectorSavePlan(
     enabled: existing?.transport === 'streamable-http' && existing.url === form.url.trim() ? existing.enabled : false,
     id,
     name,
+    toolNamespace: existing?.toolNamespace ?? (form.toolNamespace?.trim() || undefined),
+    toolExposure: form.toolExposure ?? existing?.toolExposure ?? 'deferred',
     transport: 'streamable-http',
     url: form.url.trim(),
   }
@@ -118,13 +126,33 @@ function preservesEnabledStdioTarget(
     && arraysEqual(existing.args, args)
 }
 
+function tokenizeCommandLineArgs(text: string): string[] {
+  const tokens: string[] = []
+  const pattern = /[^\s"']+|"([^"]*)"|'([^']*)'/g
+  for (const match of text.matchAll(pattern)) {
+    if (match[1] !== undefined)
+      tokens.push(match[1])
+    else if (match[2] !== undefined)
+      tokens.push(match[2])
+    else
+      tokens.push(match[0])
+  }
+  return tokens
+}
+
 function parseArguments(value: string): string[] {
-  if (!value.trim().startsWith('['))
-    return value.split(/\r?\n/).filter(line => line.length > 0)
-  const parsed: unknown = JSON.parse(value)
-  if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string'))
-    throw new Error('INVALID_ARGUMENTS')
-  return parsed
+  const trimmed = value.trim()
+  if (!trimmed)
+    return []
+  if (trimmed.startsWith('[')) {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string'))
+      throw new Error('INVALID_ARGUMENTS')
+    return parsed
+  }
+  if (trimmed.includes('\n') || trimmed.includes('\r'))
+    return trimmed.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0)
+  return tokenizeCommandLineArgs(trimmed)
 }
 
 function parseEntries(value: string, keyPattern?: RegExp): Record<string, string> {

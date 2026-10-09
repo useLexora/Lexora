@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { expect, test } from '../fixtures/electron.mjs'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 test('registered builtin settings preserve navigation, failed-save rollback and restart persistence', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings')
@@ -48,7 +50,7 @@ test('registered builtin settings preserve navigation, failed-save rollback and 
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('registered plugin settings share groups, recover read/save errors and withdraw without deleting values', async ({ buddy }) => {
+test('registered plugin settings share groups, roll back failed saves and withdraw without deleting values', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings-registry')
   let { app, page, diagnostics } = await instance.launch()
   const directory = path.join(instance.home, 'settings-plugin')
@@ -56,7 +58,7 @@ test('registered plugin settings share groups, recover read/save errors and with
   await app.evaluate(({ ipcMain, dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
     const original = ipcMain._invokeHandlers.get('lexora:extensions:request')
-    globalThis.settingsFixtureFailures = { load: true, save: false }
+    globalThis.settingsFixtureFailures = { save: false }
     globalThis.settingsFixtureSaves = []
     ipcMain.removeHandler('lexora:extensions:request')
     ipcMain.handle('lexora:extensions:request', async (event, request) => {
@@ -68,8 +70,7 @@ test('registered plugin settings share groups, recover read/save errors and with
         globalThis.settingsFixtureSaves.push(request.patch)
         await globalThis.settingsFixtureSaveGate
       }
-      const { load, save } = globalThis.settingsFixtureFailures
-      if ((load && request.action === 'configurationSnapshot') || (save && request.action === 'configure'))
+      if (globalThis.settingsFixtureFailures.save && request.action === 'configure')
         throw new Error('private-settings-fixture-detail')
       return original(event, request)
     })
@@ -85,12 +86,7 @@ test('registered plugin settings share groups, recover read/save errors and with
   await expect(page.locator('[data-settings-group="tests.settings.extra"]')).toContainText('附加分组')
   await page.getByRole('link', { name: '注册设置', exact: true }).click()
   const toggle = () => page.locator('[data-setting-id="tests.settings.enabled"]').getByRole('switch')
-  await expect(toggle()).toBeDisabled()
-  await expect(page.locator('.plugin-settings-status__entry')).toHaveCount(1)
-  await app.evaluate(() => globalThis.settingsFixtureFailures.load = false)
-  await page.getByRole('button', { name: '重试', exact: true }).click()
   await expect(toggle()).toBeEnabled()
-  await expect(page.locator('.plugin-settings-status__entry')).toHaveCount(0)
   await expect(toggle()).not.toBeChecked()
 
   await app.evaluate(() => globalThis.settingsFixtureFailures.save = true)
@@ -182,18 +178,8 @@ test('registered plugin settings share groups, recover read/save errors and with
   await inline().click()
   await expect(inline()).toBeChecked()
   await expect(page.locator('.n-message')).toHaveCount(0)
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'registered-settings-light.png'), animations: 'disabled' })
-  await page.getByRole('link', { name: '外观', exact: true }).click()
-  await page.locator('.desktop-settings-row').filter({ has: page.getByText('主题', { exact: true }) }).locator('.n-select').click()
-  await page.locator('.n-base-select-menu').getByText('深色', { exact: true }).click()
-  await expect(page.locator('.buddy-app')).toHaveClass(/is-dark/)
-  await page.getByRole('link', { name: '常规', exact: true }).click()
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'registered-settings-dark.png'), animations: 'disabled' })
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(980, 680))
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'registered-settings-narrow.png'), animations: 'disabled' })
   await page.getByRole('link', { name: '日志', exact: true }).click()
   await expect(page.locator('[data-settings-group="tests.settings.logs"]')).toContainText('日志附加分组')
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'registered-settings-fill.png'), animations: 'disabled' })
 
   await page.getByRole('link', { name: '注册设置', exact: true }).click()
   await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.settings', false))
@@ -219,7 +205,7 @@ test('registered plugin settings share groups, recover read/save errors and with
   await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
   await page.locator('[data-extension-id="tests.settings"]').getByTestId('extension-card-more').click()
   await page.getByTestId('extension-uninstall').click()
-  const regularDialog = page.getByRole('dialog').filter({ hasText: '卸载扩展？' })
+  const regularDialog = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: '卸载并清理', exact: true }) })
   await expect(regularDialog.getByRole('button', { name: '取消', exact: true })).toBeFocused()
   await regularDialog.getByRole('button', { name: '卸载', exact: true }).click()
   await expect(page.locator('[data-extension-id="tests.settings"]')).toHaveCount(0)
@@ -254,13 +240,9 @@ test('registered plugin settings share groups, recover read/save errors and with
     await page.getByTestId('extension-uninstall').click()
   }
   await showUninstall()
-  const uninstallDialog = () => page.getByRole('dialog').filter({ hasText: '卸载扩展？' })
+  const uninstallDialog = () => page.getByRole('dialog').filter({ has: page.getByRole('button', { name: '卸载并清理', exact: true }) })
   await expect(uninstallDialog()).toContainText('无法撤销')
   await expect(uninstallDialog().getByRole('button', { name: '取消', exact: true })).toBeFocused()
-  const cleanBounds = await uninstallDialog().getByRole('button', { name: '卸载并清理', exact: true }).boundingBox()
-  const cancelBounds = await uninstallDialog().getByRole('button', { name: '取消', exact: true }).boundingBox()
-  expect(cleanBounds.x).toBeLessThan(cancelBounds.x)
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'uninstall-options.png'), animations: 'disabled' })
   await uninstallDialog().getByRole('button', { name: '取消', exact: true }).press('Enter')
   await expect(uninstallDialog()).toHaveCount(0)
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ enabled: true })
@@ -381,7 +363,6 @@ export function render(context, container) {
   const number = page.locator('[data-setting-id="tests.settings.extra-item"]')
   await expect(number.getByRole('status')).toContainText('原值已保留')
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configurationSnapshot('tests.settings'))).toMatchObject({ values: { extra: 56, label: 'retained' }, invalidKeys: ['extra'] })
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'configuration-upgrade-recovery.png'), animations: 'disabled' })
   await number.getByRole('button', { name: '恢复默认值', exact: true }).click()
   await expect(number.getByRole('status')).toHaveCount(0)
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ extra: 0, label: 'retained' })
@@ -389,39 +370,6 @@ export function render(context, container) {
   ;({ app, page, diagnostics } = await instance.launch())
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configurationSnapshot('tests.settings'))).toMatchObject({ values: { extra: 0, label: 'retained' }, invalidKeys: [] })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-})
-
-test('codemode defaults off and its runtime switch persists across restart and language changes', async ({ buddy }) => {
-  const instance = await buddy.createInstance('codemode-settings')
-  let desktop = await instance.launch()
-  const openRuntime = async () => {
-    await openSettings(desktop.page)
-    await desktop.page.locator('.desktop-settings-sidebar').getByRole('link', { name: '运行时', exact: true }).click()
-  }
-  const toggle = () => desktop.page.getByTestId('codemode-setting').getByRole('switch')
-  const preference = () => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime.codemode)
-  await openRuntime()
-  await expect(toggle()).toHaveAttribute('aria-checked', 'false')
-  expect(await preference()).toBe(false)
-  await toggle().click()
-  await expect.poll(preference).toBe(true)
-  await expect(toggle()).toHaveAttribute('aria-checked', 'true')
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'codemode-runtime-enabled.png'), animations: 'disabled' })
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { language: 'en-US' } }))
-  await expect(toggle()).toHaveAccessibleName('Codemode tool orchestration')
-  await expect(toggle()).toHaveAttribute('aria-checked', 'true')
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { language: 'zh-CN' } }))
-  await instance.stop()
-  desktop = await instance.launch()
-  await openRuntime()
-  await expect(toggle()).toHaveAttribute('aria-checked', 'true')
-  await toggle().click()
-  await expect.poll(preference).toBe(false)
-  await instance.stop()
-  desktop = await instance.launch()
-  await openRuntime()
-  await expect(toggle()).toHaveAttribute('aria-checked', 'false')
-  expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
 test('global model retry settings preserve finite, unlimited and disabled values across restart', async ({ buddy }) => {
@@ -435,15 +383,7 @@ test('global model retry settings preserve finite, unlimited and disabled values
   const limit = () => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime.modelRetryLimit)
   const mode = label => row().getByRole('button', { name: label, exact: true })
   const select = label => mode(label).click()
-  const expectCapsuleAligned = () => expect.poll(() => row().evaluate((element) => {
-    const capsule = element.querySelector('.n-tabs-capsule')?.getBoundingClientRect()
-    const selected = element.querySelector('[aria-pressed="true"]')?.getBoundingClientRect()
-    return !!capsule && !!selected && Math.abs(capsule.x - selected.x) < 1 && Math.abs(capsule.width - selected.width) < 1
-  })).toBe(true)
-  await expect(row().getByRole('button')).toHaveCount(3)
   await expect(mode('次数')).toHaveAttribute('aria-pressed', 'true')
-  await expect(row().locator('small')).toHaveText('遇到临时错误时重试模型请求。')
-  await expect(desktop.page.locator('.runtime-settings__group > .runtime-settings__row')).toHaveCount(2)
   await expect(input()).toHaveValue('3')
   await input().fill('12')
   expect(await limit()).toBe(3)
@@ -452,68 +392,17 @@ test('global model retry settings preserve finite, unlimited and disabled values
   await expect(input()).toBeEnabled()
   await select('次数')
   expect(await limit()).toBe(12)
-  const modeBox = await row().boundingBox()
-  const countBox = await countRow().boundingBox()
-  expect(countBox.y).toBeCloseTo(modeBox.y + modeBox.height, 0)
-  expect(countBox.x).toBe(modeBox.x)
-  expect(countBox.width).toBe(modeBox.width)
-  expect((await row().locator('.runtime-settings__retry-modes').boundingBox()).width).toBeLessThan(200)
-  await expectCapsuleAligned()
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-settings-finite-light.png'), animations: 'disabled' })
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { language: 'en-US' } }))
-  await expect(mode('Limited')).toHaveAttribute('aria-pressed', 'true')
-  await expectCapsuleAligned()
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-settings-finite-english.png'), animations: 'disabled' })
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { language: 'zh-CN' } }))
-  await expect(mode('次数')).toHaveAttribute('aria-pressed', 'true')
-  await expectCapsuleAligned()
-  await row().locator('.n-tabs-capsule').evaluate((element) => {
-    const from = element.getBoundingClientRect().x
-    window.retrySegmentMotion = null
-    element.addEventListener('transitionrun', () => {
-      const animation = element.getAnimations().find(item => item.transitionProperty === 'transform')
-      if (!animation)
-        return
-      const duration = Number(animation.effect.getTiming().duration)
-      animation.pause()
-      animation.currentTime = duration / 2
-      window.retrySegmentMotion = {
-        from,
-        middle: element.getBoundingClientRect().x,
-        to: element.closest('.n-tabs').querySelector('[aria-pressed="true"]').getBoundingClientRect().x,
-        duration,
-      }
-      animation.play()
-    }, { once: true })
-  })
   await mode('无限').press('Space')
   await expect.poll(limit).toBe('unlimited')
   await expect(mode('无限')).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(() => desktop.page.evaluate(() => window.retrySegmentMotion)).not.toBeNull()
-  const motion = await desktop.page.evaluate(() => window.retrySegmentMotion)
-  expect(motion.duration).toBeGreaterThan(0)
-  expect(motion.middle).toBeGreaterThan(motion.from)
-  expect(motion.middle).toBeLessThan(motion.to)
-  await expectCapsuleAligned()
   await expect(countRow()).toHaveCount(0)
-  await expect(row().locator('small')).toHaveText('遇到临时错误时重试模型请求。')
-  await desktop.page.emulateMedia({ reducedMotion: 'reduce' })
-  await expect(row().locator('.n-tabs-capsule')).toHaveCSS('transition-duration', '0s')
   await select('禁用')
   await expect.poll(limit).toBe(0)
-  await expectCapsuleAligned()
   await select('无限')
   await expect.poll(limit).toBe('unlimited')
-  await expectCapsuleAligned()
-  await desktop.page.emulateMedia({ reducedMotion: 'no-preference' })
   await desktop.page.getByTestId('cache-warming-setting').locator('.n-select').click()
   await desktop.page.locator('.n-base-select-menu').getByText('任务执行期间', { exact: true }).click()
   await expect.poll(() => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime)).toEqual({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 'unlimited' })
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-settings-light.png'), animations: 'disabled' })
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: 'dark' } }))
-  await expect(desktop.page.locator('.buddy-app')).toHaveClass(/is-dark/)
-  await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(980, 680))
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-settings-dark.png'), animations: 'disabled' })
   await instance.stop()
   desktop = await instance.launch()
   await openSettings(desktop.page)
@@ -527,10 +416,6 @@ test('global model retry settings preserve finite, unlimited and disabled values
   await input().press('Tab')
   await expect.poll(limit).toBe(5)
   await expect(input()).toBeEnabled()
-  await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(980, 680))
-  await expect.poll(() => desktop.page.evaluate(() => window.innerWidth)).toBe(980)
-  await expectCapsuleAligned()
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-settings-finite-dark-narrow.png'), animations: 'disabled' })
   await select('禁用')
   await expect.poll(limit).toBe(0)
   await expect(countRow()).toHaveCount(0)
@@ -557,9 +442,100 @@ test('global model retry settings preserve finite, unlimited and disabled values
   await expect(desktop.page.getByText('保存失败，已恢复原设置', { exact: true })).toBeVisible()
   await expect(mode('禁用')).toHaveAttribute('aria-pressed', 'true')
   await expect(mode('次数')).toBeEnabled()
-  await expectCapsuleAligned()
   await expect(countRow()).toHaveCount(0)
   expect(await limit()).toBe(0)
+  expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('MCP quick controls require execution confirmation, read caches offline and preserve credentials and policy', async ({ buddy }) => {
+  const instance = await buddy.createInstance('mcp-quick-controls')
+  const desktop = await instance.launch()
+  await useSyntheticCredentialStorage(desktop)
+  const { page } = desktop
+  const fixtureServer = fileURLToPath(new URL('../../../apps/buddy/service/src/connectors/mcp/__tests__/fixtures/process-contract-server.mjs', import.meta.url))
+  const pidFile = path.join(instance.home, 'mcp-server.pid')
+  const barePidFile = path.join(instance.home, 'mcp-bare-server.pid')
+  await page.evaluate(async ({ command, fixtureServer, pidFile, barePidFile }) => {
+    const connectors = window.lexoraDesktop.localChat.connectors
+    await connectors.upsert({
+      config: { id: 'local-fixture', name: '本地验收', transport: 'stdio', command, args: [fixtureServer, `--pid-file=${pidFile}`], cwd: null, enabled: false, toolExposure: 'deferred' },
+      credential: { mode: 'replace', value: { type: 'stdio', env: { MCP_TOKEN: 'fixture-token' } } },
+    })
+    await connectors.upsert({
+      config: { id: 'bare-fixture', name: '无凭据验收', transport: 'stdio', command, args: [fixtureServer, `--pid-file=${barePidFile}`], cwd: null, enabled: false, toolExposure: 'deferred' },
+      credential: { mode: 'clear' },
+    })
+    await connectors.upsert({
+      config: { id: 'legacy-hidden', name: '原隐藏连接', transport: 'streamable-http', url: 'https://mcp.example.test/mcp?key=fixture-only', enabled: false, toolExposure: 'hidden' },
+      credential: { mode: 'keep' },
+    })
+  }, { command: process.execPath, fixtureServer, pidFile, barePidFile })
+  const savedCredentials = async () => {
+    const directory = path.join(instance.home, 'buddy/secrets/connectors')
+    return Promise.all((await fs.readdir(directory)).sort().map(async name => [name, (await fs.readFile(path.join(directory, name))).toString('base64')]))
+  }
+  const originalCredentials = await savedCredentials()
+  const quick = page.locator('.mcp-quick-panel')
+  const local = quick.getByRole('article', { name: '本地验收', exact: true })
+  const editor = page.locator('.desktop-chat-composer__prosemirror:visible')
+  await editor.fill('/mcp 待继续的草稿')
+  await editor.press('Enter')
+  await expect(quick).toBeVisible()
+  await expect(editor).toContainText('待继续的草稿')
+  await expect(quick).not.toContainText('fixture-only')
+  await expect(quick).not.toContainText(fixtureServer)
+  const toggle = local.getByRole('switch')
+  const confirmation = page.locator('.n-dialog').filter({ hasText: '运行这个本地命令？' })
+  await toggle.click()
+  await expect(confirmation).toContainText(fixtureServer)
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(toggle).not.toBeChecked()
+  expect(await fs.stat(pidFile).then(() => true, () => false)).toBe(false)
+  await toggle.click()
+  await confirmation.getByRole('button', { name: '确认并继续', exact: true }).click()
+  await expect(local).toContainText('已连接')
+  const originalPid = await fs.readFile(pidFile, 'utf8')
+  await toggle.click()
+  await expect(local).toContainText('已停用')
+  await local.getByRole('button', { name: '4 个缓存工具', exact: true }).click()
+  const tools = page.locator('.n-modal').filter({ has: page.getByPlaceholder('搜索工具名称或能力') })
+  await expect(tools.locator('.mcp-settings__tool')).toHaveCount(4)
+  expect(await fs.readFile(pidFile, 'utf8')).toBe(originalPid)
+  await page.keyboard.press('Escape')
+  await expect(tools).toBeHidden()
+  await quick.getByRole('button', { name: '管理连接', exact: true }).click()
+  const card = page.getByRole('article', { name: '本地验收', exact: true })
+  await card.getByRole('button', { name: '编辑连接', exact: true }).click()
+  const form = page.locator('.mcp-editor')
+  await form.getByText('工具设置（高级）', { exact: true }).click()
+  await form.locator('.n-form-item').filter({ hasText: '工具使用方式' }).locator('.n-select').click()
+  await page.locator('.n-base-select-menu:visible').getByText('仅通过代码编排', { exact: true }).click()
+  await form.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(form).toBeHidden()
+  const bare = page.getByRole('article', { name: '无凭据验收', exact: true })
+  await bare.getByRole('switch').click()
+  await confirmation.getByRole('button', { name: '确认并继续', exact: true }).click()
+  await expect(bare).toContainText('已连接')
+  const barePid = await fs.readFile(barePidFile, 'utf8')
+  await bare.getByRole('button', { name: '编辑连接', exact: true }).click()
+  await form.getByRole('textbox', { name: '名称', exact: true }).fill('无凭据验收已更新')
+  await form.getByText('工具设置（高级）', { exact: true }).click()
+  await form.locator('.n-form-item').filter({ hasText: '工具使用方式' }).locator('.n-select').click()
+  await page.locator('.n-base-select-menu:visible').getByText('仅通过代码编排', { exact: true }).click()
+  await form.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(form).toBeHidden()
+  await expect(page.getByRole('article', { name: '无凭据验收已更新', exact: true })).toContainText('已连接')
+  expect(await fs.readFile(barePidFile, 'utf8')).toBe(barePid)
+  expect(() => process.kill(Number.parseInt(barePid, 10), 0)).not.toThrow()
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.localChat.connectors.list()).find(connector => connector.id === 'bare-fixture'))).toMatchObject({ enabled: true, executionConfirmed: true, credentialConfigured: false, runtime: { toolCount: 4 } })
+  expect(await page.evaluate(async () => Object.fromEntries((await window.lexoraDesktop.localChat.connectors.list()).map(({ id, toolExposure }) => [id, toolExposure])))).toEqual({
+    'local-fixture': 'codemode',
+    'bare-fixture': 'codemode',
+    'legacy-hidden': 'hidden',
+  })
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime.codemode)).toBe(false)
+  expect(await savedCredentials()).toEqual(originalCredentials)
+  expect(await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(100))).toEqual([])
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 

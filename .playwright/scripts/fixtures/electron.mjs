@@ -35,3 +35,27 @@ export const test = base.extend({
 })
 
 export { expect } from '@playwright/test'
+
+export async function useSyntheticCredentialStorage({ app, page }) {
+  await app.evaluate(({ app, safeStorage }) => {
+    if (app.getName() !== 'Lexora Buddy Test')
+      throw new Error('Synthetic credentials require an isolated test instance')
+    const { Buffer } = process.getBuiltinModule('node:buffer')
+    Object.defineProperties(safeStorage, {
+      isEncryptionAvailable: { configurable: true, value: () => true },
+      getSelectedStorageBackend: { configurable: true, value: () => 'offline-fixture' },
+      encryptString: { configurable: true, value: value => Buffer.from(`offline-fixture:${value}`) },
+      decryptString: {
+        configurable: true,
+        value: (value) => {
+          const serialized = value.toString('utf8')
+          if (!serialized.startsWith('offline-fixture:'))
+            throw new Error('Unexpected credential in isolated fixture')
+          return serialized.slice('offline-fixture:'.length)
+        },
+      },
+    })
+  })
+  await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
+  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
+}

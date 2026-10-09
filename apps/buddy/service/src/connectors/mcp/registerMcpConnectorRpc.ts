@@ -63,6 +63,8 @@ function toPublicConnector(record: McpServerRecord, runtime: ConnectorRuntimeSta
     enabled: record.enabled,
     id: record.id,
     name: record.name,
+    toolNamespace: record.toolNamespace,
+    toolExposure: record.toolExposure,
     executionConfirmed: record.transport === 'stdio' && record.executionConfirmedAt !== null,
   }
   if (record.transport === 'stdio') {

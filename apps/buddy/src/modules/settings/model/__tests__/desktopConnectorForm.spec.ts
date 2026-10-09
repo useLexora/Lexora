@@ -26,6 +26,7 @@ describe('createConnectorSavePlan', () => {
         enabled: false,
         id: 'github',
         name: 'GitHub',
+        toolExposure: 'deferred',
         transport: 'stdio',
       },
       credential: {
@@ -43,10 +44,12 @@ describe('createConnectorSavePlan', () => {
 
   it('preserves enabled only while the trusted stdio execution target is unchanged', () => {
     const connector: LocalConnector = {
-      args: ['server.mjs'],
+      args: ['server.mjs', '--stdio', '/workspace with spaces'],
       command: 'node',
       runtime: { authorization: null, status: 'ready', errorCode: null, toolCount: 0, updatedAt: null },
       credentialConfigured: true,
+      toolNamespace: 'fixture',
+      toolExposure: 'deferred',
       cwd: '/workspace',
       enabled: true,
       id: 'local',
@@ -55,7 +58,7 @@ describe('createConnectorSavePlan', () => {
       executionConfirmed: true,
     }
     const base = {
-      args: 'server.mjs',
+      args: 'server.mjs --stdio "/workspace with spaces"',
       bearerToken: '',
       command: 'node',
       env: '',
@@ -67,6 +70,7 @@ describe('createConnectorSavePlan', () => {
     }
 
     const unchanged = createConnectorSavePlan(base, connector).config
+    expect(unchanged.transport === 'stdio' && unchanged.args).toEqual(connector.args)
     expect(unchanged.enabled).toBe(true)
     expect(unchanged.transport === 'stdio' && unchanged.cwd).toBe('/workspace')
     expect(createConnectorSavePlan({ ...base, command: 'bun' }, connector).config.enabled).toBe(false)
@@ -98,10 +102,12 @@ describe('createConnectorSavePlan', () => {
     })
   })
 
-  it('keeps blank credentials only while the connector target is unchanged', () => {
+  it('preserves existing HTTP settings without transferring credentials to a new target', () => {
     const connector: LocalConnector = {
       runtime: { authorization: null, status: 'ready', errorCode: null, toolCount: 0, updatedAt: null },
       credentialConfigured: true,
+      toolNamespace: 'fixture',
+      toolExposure: 'hidden',
       enabled: true,
       id: 'remote',
       name: 'Remote',
@@ -121,11 +127,14 @@ describe('createConnectorSavePlan', () => {
       url: connector.url,
     }
 
-    expect(createConnectorSavePlan(form, connector).credential).toEqual({ mode: 'keep' })
+    expect(createConnectorSavePlan(form, connector)).toMatchObject({
+      config: { toolNamespace: 'fixture', toolExposure: 'hidden', enabled: true },
+      credential: { mode: 'keep' },
+    })
     expect(createConnectorSavePlan({
       ...form,
       url: 'https://second.example.com/mcp',
-    }, connector).credential).toEqual({ mode: 'clear' })
+    }, connector)).toMatchObject({ config: { enabled: false }, credential: { mode: 'clear' } })
   })
 
   it('rejects credential names that the runtime protocol cannot accept', () => {

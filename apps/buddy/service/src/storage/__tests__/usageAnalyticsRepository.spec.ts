@@ -124,6 +124,9 @@ describe('usage analytics', () => {
         DROP TABLE run_event_checkpoints;
         DROP TABLE extension_invocations;
         DROP TABLE connector_tool_catalogs;
+        DROP INDEX idx_mcp_tool_namespace;
+        ALTER TABLE mcp_servers DROP COLUMN tool_namespace;
+        ALTER TABLE mcp_servers DROP COLUMN tool_exposure;
         DROP TABLE skill_file_cleanup;
         DROP TABLE skill_space_exclusions;
         DROP TABLE skill_installations;

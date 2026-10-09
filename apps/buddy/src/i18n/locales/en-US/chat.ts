@@ -1,6 +1,7 @@
 import type zhCN from '../zh-CN/chat'
 
 export default {
+  'desktop.chat.command.mcp': 'Check MCP status, toggle connections and reconnect.',
   'desktop.chat.attachmentImportFailed': 'Could not import the file. Retry or select the file again.',
   'desktop.chat.attachmentUnsupported': 'This file format is not supported. Choose a supported document, image, audio, or video file.',
   'desktop.chat.attachmentTooLarge': 'The file exceeds the size limit. Compress or split it and try again. Audio and video files are limited to 10 MiB.',

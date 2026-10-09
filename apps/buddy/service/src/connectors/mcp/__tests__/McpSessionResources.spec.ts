@@ -21,27 +21,33 @@ interface InstalledSession {
 }
 
 describe('mcpSessionResources', () => {
-  it('defers an effective connector update until run release and reports the versions actually installed by the next session', async () => {
+  it.each(['enable', 'exposure'] as const)('defers a connector %s update until run release and reports the versions actually installed by the next session', async (operation) => {
     const fixture = createFixture()
     const { service, sessions, consumer, applied } = fixture
     const gate = Promise.withResolvers<void>()
     let run: Promise<void> | undefined
     try {
-      await service.upsert({ ...config, enabled: false })
+      await service.upsert({ ...config, enabled: operation === 'exposure' })
+      await service.prepareForRun(new AbortController().signal)
+      const original = service.resourceRevisions()
       const first = await sessions.getOrCreate(identity, null, fixture.createSession)
       await consumer.whenIdle()
       run = sessions.withConversationRun(identity, 'run', undefined, () => gate.promise)
       await vi.waitFor(() => expect(sessions.getActiveRun(identity)?.runId).toBe('run'))
-      await service.setEnabled('fixture', true)
+      if (operation === 'enable')
+        await service.setEnabled('fixture', true)
+      else
+        await service.upsert({ ...config, toolExposure: 'codemode' })
       await service.prepareForRun(new AbortController().signal)
       await consumer.whenIdle()
       expect(sessions.snapshot()[0]?.invalidationPending).toBe(true)
       expect(first.session.closed).toBe(false)
-      expect(applied).toEqual([expect.objectContaining({ capabilityRevisions: [] })])
+      expect(applied).toEqual([expect.objectContaining({ capabilityRevisions: original })])
       gate.resolve()
       await run
       expect(first.session.closed).toBe(true)
       const installed = service.getTools().resourceRevisions!
+      expect(installed).not.toEqual(original)
       await sessions.getOrCreate(identity, null, fixture.createSession)
       await consumer.whenIdle()
       expect(sessions.snapshot()[0]?.invalidationPending).toBe(false)
@@ -55,7 +61,7 @@ describe('mcpSessionResources', () => {
     }
   })
 
-  it.each(['rename', 'failed reset', 'failed configuration write'] as const)('rebuilds a session prepared with a paused catalog after %s once its run is released', async (operation) => {
+  it.each(['target change', 'failed reset', 'failed configuration write'] as const)('rebuilds a session prepared with a paused catalog after %s once its run is released', async (operation) => {
     const fixture = createFixture()
     const { service, sessions, consumer } = fixture
     const closeEntered = Promise.withResolvers<void>()
@@ -86,7 +92,7 @@ describe('mcpSessionResources', () => {
           throw new Error('configuration write failed')
         })
       }
-      const result = service.upsert({ ...config, name: 'Renamed' }).then(
+      const result = service.upsert({ ...config, url: 'https://changed.example.test/mcp' }).then(
         () => ({ status: 'fulfilled' as const }),
         error => ({ status: 'rejected' as const, error }),
       )
@@ -103,11 +109,11 @@ describe('mcpSessionResources', () => {
       })
       await runEntered.promise
       closeReleased.resolve()
-      expect(await result).toMatchObject({ status: operation === 'rename' ? 'fulfilled' : 'rejected' })
+      expect(await result).toMatchObject({ status: operation === 'target change' ? 'fulfilled' : 'rejected' })
       await warmed.promise
       await consumer.whenIdle()
-      expect(fixture.repository.findById('fixture')?.name).toBe(operation === 'rename' ? 'Renamed' : 'Fixture')
-      expect(changes.filter(event => event.type === 'catalog')).toEqual([])
+      expect(fixture.repository.findById('fixture')?.url).toBe(operation === 'target change' ? 'https://changed.example.test/mcp' : config.url)
+      expect(changes.filter(event => event.type === 'catalog')).toMatchObject(operation === 'target change' ? [{ tools: [] }, { tools: [{ name: 'lookup' }] }] : [])
       expect(service.getTools().tools).toHaveLength(1)
       expect(sessions.snapshot()[0]?.invalidationPending).toBe(true)
       expect(sessions.getActiveRun(identity)?.runId).toBe('run')

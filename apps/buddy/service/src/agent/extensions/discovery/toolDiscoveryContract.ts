@@ -4,7 +4,7 @@ import { Type } from 'typebox'
 
 export const TOOL_SEARCH_NAME = 'lexora_tool_search'
 
-export type BuddyToolExposure = 'direct' | 'on_demand'
+export type BuddyToolExposure = 'direct' | 'on_demand' | 'codemode' | 'hidden'
 
 export interface BuddyToolSource {
   kind: 'builtin' | 'mcp' | 'plugin'
@@ -19,6 +19,7 @@ export interface BuddyToolExposureContext {
 export interface BuddyToolMetadata {
   readonly id: string
   readonly name: string
+  readonly aliases?: readonly string[]
   readonly title: string
   readonly source: Readonly<BuddyToolSource>
   readonly defaultExposure: BuddyToolExposure
@@ -30,7 +31,7 @@ export interface BuddyToolDisclosurePolicy {
   source: BuddyToolSource
   exposure: BuddyToolExposure
   keywords: string
-  tools: readonly { name: string, id?: string, title?: string }[]
+  tools: readonly { name: string, id?: string, title?: string, aliases?: readonly string[] }[]
   available?: (context: BuddyToolExposureContext, toolName: string) => boolean
 }
 
@@ -44,7 +45,7 @@ export type ToolSearchInput = Static<typeof toolSearchParameters>
 
 export interface ToolSearchResult {
   version: 1
-  tools: { name: string, id?: string, title?: string, description: string, source: string, alreadyDisclosed: boolean }[]
+  tools: { name: string, id?: string, title?: string, description: string, source: string, alreadyDisclosed: boolean, invocation?: 'codemode' }[]
   candidates: { name: string, description: string }[]
   notFound: string[]
 }

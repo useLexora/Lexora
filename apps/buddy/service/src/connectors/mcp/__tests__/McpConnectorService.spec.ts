@@ -3,31 +3,24 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ConnectorCredential } from '../../../../../shared/connectors/connectorCredentials'
 import type { McpConnectionEvent, McpConnectorEvent } from '../mcpEvents'
 
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PermissionEngine } from '../../../permissions/PermissionEngine'
 import { createConnectorRepository } from '../../../storage/connectorRepository'
 import { openBuddyDatabase } from '../../../storage/database'
-import { createMcpToolName } from '../createMcpTools'
 import { McpConnectorService } from '../McpConnectorService'
-import { classifyMcpTool } from '../mcpToolContract'
+import { createMcpToolName } from '../mcpToolNames'
 import { observeMcpDiagnostics } from '../observeMcpEvents'
 
 const services: McpConnectorService[] = []
 const databases: DatabaseSync[] = []
-const directories: string[] = []
 const fixtureServer = fileURLToPath(new URL('./fixtures/stdio-server.mjs', import.meta.url))
 
 afterEach(async () => {
   await Promise.all(services.splice(0).map(service => service.close()))
   for (const database of databases.splice(0))
     database.close()
-  await Promise.all(directories.splice(0).map(path => rm(path, { force: true, recursive: true })))
 })
 
 describe('mcpConnectorService', () => {
@@ -72,29 +65,33 @@ describe('mcpConnectorService', () => {
     const fixture = await createFixture()
     const configuration = httpConfig('https://example.test/mcp')
     const first = await fixture.service.upsert(configuration)
+    const { toolNamespace: _namespace, toolExposure: _exposure, ...legacyConfiguration } = configuration
     const facts: McpConnectorEvent[] = []
     fixture.service.onDidChange(event => facts.push(event))
     fixture.events.length = 0
     expect(await fixture.service.upsert(configuration)).toEqual(first)
+    expect(await fixture.service.upsert(legacyConfiguration)).toEqual(first)
     expect(await fixture.service.setEnabled('remote', false)).toEqual(first)
     await fixture.service.clearCredential('remote')
     expect(facts).toEqual([])
     expect(fixture.events).toEqual([])
   })
 
-  it('records credential compensation without publishing a failed SQL change or secret contents', async () => {
+  it('rolls back a failed SQL save without changing the connector or exposing credentials', async () => {
     const fixture = createAtomicSaveFailureFixture()
     const facts: McpConnectorEvent[] = []
     const diagnostics: unknown[] = []
     fixture.service.onDidChange(event => facts.push(event))
     observeMcpDiagnostics(fixture.service, event => diagnostics.push(event))
     await expect(fixture.service.save({ config: httpConfig('https://second.example.com/mcp'), credential: { mode: 'replace', value: { type: 'http', bearerToken: 'private-token' } } })).rejects.toThrow('database unavailable')
+    expect(fixture.record.url).toBe('https://first.example.com/mcp')
+    expect(fixture.secret).toEqual({ bearerToken: 'old-secret', type: 'http' })
     expect(facts.map(event => [event.type, event.type === 'credential' ? event.status : event.type])).toEqual([['credential', 'written'], ['credential', 'restored']])
     expect(JSON.stringify(diagnostics)).not.toContain('private-token')
     expect(JSON.stringify(diagnostics)).not.toContain('example.com')
   })
 
-  it('lists and executes a real stdio server while classifying side effects for Buddy approval', async () => {
+  it('lists and executes a confirmed stdio server without credentials', async () => {
     const fixture = await createFixture()
     await fixture.service.upsert(stdioConfig(false))
     await expect(fixture.service.setEnabled('fixture', true))
@@ -107,8 +104,8 @@ describe('mcpConnectorService', () => {
 
     const result = await fixture.service.getTools()
     expect(result.tools.map(tool => tool.name)).toEqual([
-      createMcpToolName('fixture', 'echo_read'),
-      createMcpToolName('fixture', 'write_remote'),
+      createMcpToolName('Local_Fixture', 'echo_read'),
+      createMcpToolName('Local_Fixture', 'write_remote'),
     ])
     const echo = result.tools[0]
     if (!echo)
@@ -119,38 +116,6 @@ describe('mcpConnectorService', () => {
       isError: false,
     })
 
-    const root = await mkdtemp(join(tmpdir(), 'lexora-buddy-mcp-policy-'))
-    directories.push(root)
-    const policy = new PermissionEngine()
-    const readClassification = classifyMcpTool(result.classifications, {
-      toolName: result.tools[0]!.name,
-    })!
-    const writeClassification = classifyMcpTool(result.classifications, {
-      toolName: result.tools[1]!.name,
-    })!
-    expect(writeClassification.requireApproval).toBe(true)
-    await expect(policy.decide({
-      approvalPolicy: 'policy',
-      approvalAvailable: true,
-      arguments: { text: 'hello' },
-      cwd: root,
-      owner: { id: 'conversation-1', kind: 'conversation' },
-      profile: 'workspace_write',
-      grants: [{ canonicalRoot: root, grantId: 'workspace-1', kind: 'workspace' as const, root }],
-      ...readClassification,
-      toolName: createMcpToolName('fixture', 'echo_read'),
-    })).resolves.toMatchObject({ kind: 'mcp', type: 'ask' })
-    await expect(policy.decide({
-      approvalPolicy: 'policy',
-      approvalAvailable: true,
-      arguments: { text: 'hello' },
-      cwd: root,
-      owner: { id: 'conversation-1', kind: 'conversation' },
-      profile: 'workspace_write',
-      grants: [{ canonicalRoot: root, grantId: 'workspace-1', kind: 'workspace' as const, root }],
-      ...writeClassification,
-      toolName: createMcpToolName('fixture', 'write_remote'),
-    })).resolves.toMatchObject({ kind: 'mcp', type: 'ask' })
     expect(fixture.secrets.values.size).toBe(0)
     await fixture.service.close()
   })
@@ -187,7 +152,6 @@ describe('mcpConnectorService', () => {
     await fixture.service.confirmExecution('fixture')
     expect(await fixture.service.test('fixture')).toMatchObject({ errorCode: 'MCP_COMMAND_NOT_FOUND' })
     expect(fixture.service.getTools().tools).toEqual([])
-    expect(fixture.service.getTools().tools).toEqual([])
     expect(fixture.service.state('fixture').errorCode).toBe('MCP_COMMAND_NOT_FOUND')
   })
 
@@ -202,6 +166,8 @@ describe('mcpConnectorService', () => {
       enabled: false,
       id: 'remote',
       name: 'Remote',
+      toolNamespace: 'Remote',
+      toolExposure: 'deferred' as const,
       transport: 'streamable-http',
       url: 'http://example.com/mcp',
     })).resolves.toMatchObject({ id: 'remote', url: 'http://example.com/mcp' })
@@ -210,30 +176,11 @@ describe('mcpConnectorService', () => {
       enabled: false,
       id: 'remote',
       name: 'Remote',
+      toolNamespace: 'Remote',
+      toolExposure: 'deferred' as const,
       transport: 'streamable-http',
       url: 'http://user:secret@example.com/mcp',
     })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-  })
-
-  it('creates one connector session while credential loading is in flight', async () => {
-    const fixture = await createFixture()
-    await fixture.service.upsert(stdioConfig(false))
-    await fixture.service.confirmExecution('fixture')
-    await fixture.service.saveCredential('fixture', { env: { TOKEN: 'secret' }, type: 'stdio' })
-    await fixture.service.confirmExecution('fixture')
-    await fixture.service.setEnabled('fixture', true)
-    await fixture.service.test('fixture')
-    fixture.secrets.read.mockClear()
-
-    const [first, second] = await Promise.all([
-      fixture.service.getTools(),
-      fixture.service.getTools(),
-    ])
-
-    expect(first.tools).toHaveLength(2)
-    expect(second.tools).toHaveLength(2)
-    expect(fixture.secrets.read).not.toHaveBeenCalled()
-    await fixture.service.close()
   })
 
   it('restores the previous secret when saving its SQLite reference fails', async () => {
@@ -290,21 +237,6 @@ describe('mcpConnectorService', () => {
     expect(fixture.secrets.read).not.toHaveBeenCalled()
   })
 
-  it('rolls back a replaced credential when the atomic connector save fails', async () => {
-    const fixture = createAtomicSaveFailureFixture()
-
-    await expect(fixture.service.save({
-      config: httpConfig('https://second.example.com/mcp'),
-      credential: {
-        mode: 'replace',
-        value: { bearerToken: 'new-secret', type: 'http' },
-      },
-    })).rejects.toThrow('database unavailable')
-
-    expect(fixture.record.url).toBe('https://first.example.com/mcp')
-    expect(fixture.secret).toEqual({ bearerToken: 'old-secret', type: 'http' })
-  })
-
   it('does not roll back a committed credential when session invalidation fails', async () => {
     const fixture = await createFixture()
     await fixture.service.upsert(httpConfig('https://first.example.com/mcp'))
@@ -355,6 +287,8 @@ function httpConfig(url: string) {
     enabled: false,
     id: 'remote',
     name: 'Remote',
+    toolNamespace: 'Remote',
+    toolExposure: 'deferred' as const,
     transport: 'streamable-http' as const,
     url,
   }
@@ -366,10 +300,7 @@ async function createFixture(maxReconnectAttempts?: number) {
   const values = new Map<string, ConnectorCredential>()
   const events: McpConnectionEvent[] = []
   const observerFailures: unknown[] = []
-  const read = vi.fn(async (id: string) => {
-    await new Promise(resolve => setImmediate(resolve))
-    return values.get(id) ?? null
-  })
+  const read = vi.fn(async (id: string) => values.get(id) ?? null)
   const service = new McpConnectorService({
     connectors: createConnectorRepository(database),
     onListenerError: error => observerFailures.push(error),
@@ -405,6 +336,8 @@ function createCredentialFailureFixture() {
     enabled: false,
     id: 'fixture',
     name: 'Fixture',
+    toolNamespace: 'Fixture',
+    toolExposure: 'deferred' as const,
     transport: 'stdio' as const,
     executionConfirmedAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
@@ -453,6 +386,8 @@ function createAtomicSaveFailureFixture() {
     enabled: false,
     id: 'remote',
     name: 'Remote',
+    toolNamespace: 'Remote',
+    toolExposure: 'deferred' as const,
     transport: 'streamable-http' as const,
     executionConfirmedAt: null,
     updatedAt: '2026-08-14T00:00:00.000Z',

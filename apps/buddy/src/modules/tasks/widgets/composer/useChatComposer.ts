@@ -9,6 +9,7 @@ import { composerReferencePath } from '@buddy-shared/conversation/composerRefere
 import { computed, onScopeDispose, watch } from 'vue'
 import { CHAT_PROMPT_DIRECTIVE_NODE_NAME, getChatComposerResourceIds, serializeChatComposerContent } from '@/modules/prompt-input'
 import { insertChatComposerResources, insertChatComposerSessionReferences, insertResolvedChatComposerResource, removeChatComposerPanelResource, removeChatComposerResource, removeChatComposerSessionReference } from '@/modules/prompt-input/ui'
+import { useConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { useConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { resolveComposerResourcePreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { resolveChatComposerModelInputIssue } from '../../model/composer/chatComposerModelCapability'
@@ -21,6 +22,7 @@ import { useComposerCommands } from './useComposerCommands'
 export function useChatComposer(options: UseChatComposerOptions) {
   const localCommands = useComposerCommands(options.draftId, chooseCommand)
   const conversationStatusPanel = useConversationStatusPanel()
+  const conversationMcpPanel = useConversationMcpPanel()
   let editingSession = 0
   watch(options.draftId, () => {
     editingSession += 1
@@ -162,12 +164,13 @@ export function useChatComposer(options: UseChatComposerOptions) {
     query.closeSuggestions()
     const definition = getBuddyChatCommandDefinition(name)
     if (definition.kind === 'action' && definition.action === 'view') {
-      if (!conversationStatusPanel)
+      const panel = name === 'mcp' ? conversationMcpPanel : conversationStatusPanel
+      if (!panel)
         return false
       const applied = editor.value?.chain().focus().deleteRange(range).run() ?? false
       if (!applied)
         return false
-      conversationStatusPanel.open()
+      panel.open()
       return true
     }
     const content: JSONContent[] = definition.kind === 'action' && definition.action === 'input'

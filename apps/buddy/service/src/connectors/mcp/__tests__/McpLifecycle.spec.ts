@@ -46,12 +46,42 @@ describe('mCP global lifecycle', () => {
     expect(service.list()[0]?.name).toBe(config.name)
   })
 
-  it('keeps aliases across renames and reloads catalogs without reading credentials or starting a server', async () => {
+  it('keeps live connections and catalogs across metadata changes while rejecting stale tool policies', async () => {
     const { service, repository } = fixture()
     await ready(service)
-    const names = service.getTools().tools.map(tool => tool.name)
-    await service.upsert({ ...config, name: 'Renamed', enabled: true })
+    const snapshot = service.getTools()
+    const names = snapshot.tools.map(tool => tool.name)
+    const runtime = snapshot.tools.find(tool => tool.label.endsWith('runtime'))!
+    const result = await runtime.execute('initial', {}, undefined, undefined, {} as never)
+    const pid = JSON.parse((result.content[0] as { text: string }).text).pid as number
+    const catalog = repository.readCatalog(config.id)
+    const revision = service.resourceRevisions()
+    await service.save({ config: { ...config, name: 'Renamed', enabled: true }, credential: { mode: 'clear' } })
+    expect(service.state(config.id).status).toBe('ready')
     expect(service.getTools().tools.map(tool => tool.name)).toEqual(names)
+    expect(repository.readCatalog(config.id)).toEqual(catalog)
+    expect(service.resourceRevisions()).not.toEqual(revision)
+    expect(() => process.kill(pid, 0)).not.toThrow()
+    for (const toolExposure of ['direct', 'codemode', 'hidden', 'deferred'] as const) {
+      await service.save({ config: { ...config, name: 'Renamed', enabled: true, toolExposure }, credential: { mode: 'clear' } })
+      expect(service.state(config.id).status).toBe('ready')
+      expect(repository.readCatalog(config.id)).toEqual(catalog)
+      expect(() => process.kill(pid, 0)).not.toThrow()
+      const current = service.getTools()
+      expect(current.tools.map(tool => tool.name)).toEqual(names)
+      expect(current.tools.every(tool => tool.exposure === (toolExposure === 'codemode' ? 'deferred' : toolExposure))).toBe(true)
+      if (toolExposure !== 'deferred') {
+        expect(snapshot.available(runtime.name)).toBe(false)
+        expect(await runtime.execute('stale', {}, undefined, undefined, {} as never)).toMatchObject({ details: { code: 'MCP_CONNECTOR_DISABLED' } })
+      }
+      if (toolExposure === 'hidden') {
+        const hidden = current.tools.find(tool => tool.name === runtime.name)!
+        expect(current.available(hidden.name)).toBe(false)
+        expect(await hidden.execute('hidden', {}, undefined, undefined, {} as never)).toMatchObject({ details: { code: 'MCP_CONNECTOR_DISABLED' } })
+      }
+    }
+    const resumed = await runtime.execute('resumed', {}, undefined, undefined, {} as never)
+    expect(JSON.parse((resumed.content[0] as { text: string }).text).pid).toBe(pid)
     await service.close()
     const read = vi.fn(async () => null)
     const preview = new McpConnectorService({ connectors: repository, secrets: { read, write: async () => {}, delete: async () => {} } })

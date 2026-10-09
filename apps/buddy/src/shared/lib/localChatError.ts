@@ -24,6 +24,8 @@ export function resolveLocalChatErrorMessage(error: unknown, language: BuddyLoca
     AUTOMATION_INVALID_SCHEDULE: 'desktop.error.automationInvalidSchedule',
     AUTOMATION_NOT_FOUND: 'desktop.error.automationNotFound',
     AUTHENTICATION_REQUIRED: 'desktop.error.authenticationRequired',
+    MCP_NAMESPACE_CONFLICT: 'desktop.mcp.error.MCP_NAMESPACE_CONFLICT',
+    MCP_NAMESPACE_IMMUTABLE: 'desktop.mcp.error.MCP_NAMESPACE_IMMUTABLE',
     CONNECTOR_UNAVAILABLE: 'desktop.error.connectorUnavailable',
     CREDENTIAL_STORE_FAILURE: 'desktop.error.credentialStoreFailure',
     CREDENTIAL_STORE_UNAVAILABLE: 'desktop.error.credentialStore',

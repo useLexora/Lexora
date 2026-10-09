@@ -14,7 +14,7 @@ export default {
   'desktop.settings.runtime.retryCountUnit': 'retries',
   'desktop.settings.runtime.toolExecution': 'Tool execution',
   'desktop.settings.runtime.codemode': 'Codemode tool orchestration',
-  'desktop.settings.runtime.codemodeDescription': 'Let the model use JavaScript to call tools in parallel and filter results. File, shell, plugin, and MCP tools still follow task permissions. Off by default. Applies to the next task run.',
+  'desktop.settings.runtime.codemodeDescription': 'Allow the model to orchestrate tools and filter results via code. Off by default; changes apply to the next run. All calls still respect task permissions.',
   'desktop.settings.runtime.taskPermissions': 'Task permissions',
   'desktop.settings.runtime.defaultPermissionMode': 'New task permissions',
   'desktop.settings.runtime.defaultPermissionModeDescription': 'New tasks start with the selected permissions. Existing tasks, including unsent drafts, keep their current settings.',

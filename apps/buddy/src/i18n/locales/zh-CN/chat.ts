@@ -1,4 +1,5 @@
 export default {
+  'desktop.chat.command.mcp': '查看 MCP 状态，快速启停和重连。',
   'desktop.chat.attachmentImportFailed': '文件导入失败，请重试或重新选择文件。',
   'desktop.chat.attachmentUnsupported': '暂不支持此文件格式，请选择支持的文档、图片或音视频文件。',
   'desktop.chat.attachmentTooLarge': '文件超过大小限制，请压缩或拆分后重试。音视频文件最大为 10 MiB。',

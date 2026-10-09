@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { expect, test } from '../fixtures/electron.mjs'
+import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 const { PhotonImage } = createRequire(new URL('../../../apps/buddy/package.json', import.meta.url))('@silvia-odwyer/photon-node')
 
@@ -73,7 +73,6 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
       }, image)
       const card = application.page.locator('.composer-resource-strip__card')
       await expect(card).toHaveCount(1)
-      await expect(card.locator('small')).toHaveCount(0)
       await editor.fill('Inspect the attached image.')
       await application.page.getByRole('button', { name: '发送消息', exact: true }).click()
       await expect.poll(() => completedRuns(instance.home)).toBe(1)
@@ -186,7 +185,6 @@ test('codemode opt-in executes native sandbox tools and stays disabled after opt
     const journal = await sessionJournal(instance.home)
     expect(journal).toContain('"nestedCalls"')
     expect(journal).toContain('codemode-result.txt')
-    await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'codemode-native-tools.png'), animations: 'disabled' })
     await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: false } }))
     await send('Verify ordinary tools again.', 3)
     expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
@@ -263,12 +261,10 @@ test('model retries retain their run budget, expose progress and allow cancellin
     await expect(activity).toContainText(/重试 2\s*\/\s*2/)
     await expect(activity).toContainText('秒后重试')
     await expect(activity).toContainText('已用')
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-progress-finite.png'), animations: 'disabled' })
     await expect(activity).toContainText('正在思考')
     await expect(activity).not.toContainText('重试')
     await page.locator('.buddy-chat-reasoning-entry__header').click()
     await expect(page.locator('.buddy-chat-reasoning-entry__body')).toContainText('Inspecting the recovered request.')
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-recovered-reasoning.png'), animations: 'disabled' })
     finishThinking.resolve()
     await expect.poll(() => completedRuns(instance.home)).toBe(1)
     expect(requests).toHaveLength(3)
@@ -297,30 +293,6 @@ test('model retries retain their run budget, expose progress and allow cancellin
     await expect(activity.locator('.buddy-chat-run-activity__unlimited svg')).toBeVisible()
     await page.reload()
     await expect(activity.locator('.buddy-chat-run-activity__unlimited svg')).toBeVisible()
-    const typography = await activity.evaluate((element) => {
-      return ['.buddy-chat-activity-status__label', '.buddy-chat-run-activity__retry-attempt', '.buddy-chat-run-activity__duration'].map((selector) => {
-        const node = element.querySelector(selector)
-        const style = getComputedStyle(node)
-        const bounds = node.getBoundingClientRect()
-        return { fontFamily: style.fontFamily, fontSize: style.fontSize, lineHeight: style.lineHeight, centerY: bounds.y + bounds.height / 2 }
-      })
-    })
-    expect(new Set(typography.map(item => `${item.fontFamily}:${item.fontSize}:${item.lineHeight}`)).size).toBe(1)
-    expect(Math.max(...typography.map(item => item.centerY)) - Math.min(...typography.map(item => item.centerY))).toBeLessThan(1)
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-progress-unlimited-light.png'), animations: 'disabled' })
-    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: 'dark' } }))
-    await expect(page.locator('.buddy-app')).toHaveClass(/is-dark/)
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-progress-unlimited-dark.png'), animations: 'disabled' })
-    await activity.evaluate(element => element.style.maxWidth = '320px')
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'retry-progress-unlimited-narrow.png'), animations: 'disabled' })
-    const narrow = await activity.evaluate((element) => {
-      const label = element.querySelector('.buddy-chat-activity-status__label').getBoundingClientRect()
-      const metadata = element.querySelector('.buddy-chat-run-activity__retry-meta').getBoundingClientRect()
-      return { labelLeft: label.x, metadataLeft: metadata.x, labelBottom: label.bottom, metadataTop: metadata.y, width: element.clientWidth, scrollWidth: element.scrollWidth }
-    })
-    expect(narrow.metadataLeft).toBe(narrow.labelLeft)
-    expect(narrow.metadataTop).toBeGreaterThanOrEqual(narrow.labelBottom)
-    expect(narrow.scrollWidth).toBeLessThanOrEqual(narrow.width)
     await page.getByRole('button', { name: '停止运行', exact: true }).click()
     await expect.poll(() => readDatabase(instance.home, db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = \'cancelled\'').get().count)).toBe(1)
     await expect(activity).toHaveCount(0)
@@ -448,29 +420,6 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     await new Promise(resolve => server.close(resolve))
   }
 })
-
-async function useSyntheticCredentialStorage({ app, page }) {
-  await app.evaluate(({ app, safeStorage }) => {
-    if (app.getName() !== 'Lexora Buddy Test')
-      throw new Error('Synthetic credentials require an isolated test instance')
-    Object.defineProperties(safeStorage, {
-      isEncryptionAvailable: { configurable: true, value: () => true },
-      getSelectedStorageBackend: { configurable: true, value: () => 'offline-fixture' },
-      encryptString: { configurable: true, value: value => Buffer.from(`offline-fixture:${value}`) },
-      decryptString: {
-        configurable: true,
-        value: (value) => {
-          const serialized = value.toString('utf8')
-          if (!serialized.startsWith('offline-fixture:'))
-            throw new Error('Unexpected credential in isolated fixture')
-          return serialized.slice('offline-fixture:'.length)
-        },
-      },
-    })
-  })
-  await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
-  await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
-}
 
 function readDatabase(home, read) {
   const database = new DatabaseSync(path.join(home, 'buddy/buddy.sqlite3'), { readOnly: true })

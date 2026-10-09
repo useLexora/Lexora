@@ -1,6 +1,7 @@
 import type { CallToolResult, OAuthClientProvider, Progress } from '@modelcontextprotocol/client'
 import type { ConnectorCredential } from '../../../../shared/connectors/connectorCredentials'
 import type { ConnectorErrorCode, ConnectorRuntimeState } from '../../../../shared/connectors/connectorState'
+import type { McpToolExposure } from '../../../../shared/connectors/mcpToolExposure'
 import type { Event, ListenerErrorHandler } from '../../../../shared/events/Emitter'
 import type { ConnectorRepository, McpServerRecord } from '../../storage/connectorRepository'
 import type { McpCatalogTool, McpConnectionDetails, McpConnectionEvent } from './mcpEvents'
@@ -23,6 +24,11 @@ interface Connection {
   generation: number
   controller: AbortController
   session: Promise<McpClientSession>
+}
+
+interface McpToolBinding {
+  generation: number
+  exposure: McpToolExposure
 }
 
 export interface McpConnectionManagerOptions {
@@ -227,14 +233,14 @@ export class McpConnectionManager {
     return this.refresh(id)
   }
 
-  async callTool(id: string, generation: number, tool: McpCatalogTool, parameters: unknown, signal?: AbortSignal, onProgress?: (progress: Progress) => void): Promise<CallToolResult> {
+  async callTool(id: string, binding: McpToolBinding, tool: McpCatalogTool, parameters: unknown, signal?: AbortSignal, onProgress?: (progress: Progress) => void): Promise<CallToolResult> {
     signal?.throwIfAborted()
-    this.#assertAvailable(id, generation, tool)
+    this.#assertAvailable(id, binding, tool)
     await waitForMcpOperation(this.refresh(id), signal)
-    this.#assertAvailable(id, generation, tool)
+    this.#assertAvailable(id, binding, tool)
     const connection = this.#connection(this.#requireRecord(id))
     const session = await connection.session
-    this.#assertAvailable(id, generation, tool)
+    this.#assertAvailable(id, binding, tool)
     signal?.throwIfAborted()
     const combinedSignal = signal ? AbortSignal.any([signal, connection.controller.signal]) : connection.controller.signal
     try {
@@ -323,8 +329,8 @@ export class McpConnectionManager {
     return connection
   }
 
-  #assertAvailable(id: string, generation: number, tool: McpCatalogTool): void {
-    if (!this.available(id, generation))
+  #assertAvailable(id: string, binding: McpToolBinding, tool: McpCatalogTool): void {
+    if (binding.exposure === 'hidden' || !this.available(id, binding.generation) || this.#options.repository.findById(id)?.toolExposure !== binding.exposure)
       throw new McpClientError('MCP_CONNECTOR_DISABLED')
     const current = this.catalog(id).find(candidate => candidate.name === tool.name)
     if (!current || mcpToolFingerprint(current) !== mcpToolFingerprint(tool))

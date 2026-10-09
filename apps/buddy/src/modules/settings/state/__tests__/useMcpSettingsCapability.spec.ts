@@ -4,7 +4,7 @@ import { effectScope, shallowRef } from 'vue'
 import { useMcpSettingsCapability } from '../useMcpSettingsCapability'
 
 const notice: ConnectorChangeNotice = { sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, generation: 1, connectorId: 'fixture', type: 'runtime' }
-const connector: LocalConnector = { id: 'fixture', name: 'Fixture', enabled: false, credentialConfigured: false, executionConfirmed: false, transport: 'streamable-http', url: 'https://example.test/mcp', runtime: { status: 'disabled', authorization: null, errorCode: null, toolCount: 0, updatedAt: null } }
+const connector: LocalConnector = { id: 'fixture', name: 'Fixture', toolNamespace: 'fixture', toolExposure: 'deferred', enabled: false, credentialConfigured: false, executionConfirmed: false, transport: 'streamable-http', url: 'https://example.test/mcp', runtime: { status: 'disabled', authorization: null, errorCode: null, toolCount: 0, updatedAt: null } }
 
 describe('mcpSettingsCapability', () => {
   it('reconciles a notice arriving during the initial snapshot and ignores late results after scope disposal', async () => {

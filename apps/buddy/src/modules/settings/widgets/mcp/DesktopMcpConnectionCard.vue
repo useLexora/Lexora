@@ -6,7 +6,7 @@ import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { maskConnectorUrl } from '../../model/desktopConnectorTarget'
 
-const props = defineProps<{ connector: LocalConnector, language: BuddyLocale, busy: boolean }>()
+const props = defineProps<{ connector: LocalConnector, language: BuddyLocale, busy: boolean, codemodeEnabled: boolean }>()
 const emit = defineEmits<{ toggle: [enabled: boolean], edit: [], test: [], tools: [], remove: [], login: [], cancelLogin: [], clearCredential: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const target = computed(() => props.connector.transport === 'stdio'
@@ -40,10 +40,14 @@ const cachedTools = computed(() => props.connector.runtime.updatedAt !== null &&
     <p class="mcp-connection__meta">
       {{ t(connector.transport === 'stdio' ? 'desktop.mcp.stdio' : 'desktop.mcp.http') }}
       <span>·</span> {{ connector.runtime.updatedAt === null ? t('desktop.mcp.noCatalog') : t(cachedTools ? 'desktop.mcp.cachedToolsCount' : 'desktop.mcp.toolsCount', { count: connector.runtime.toolCount }) }}
+      <span>·</span> {{ t(`desktop.mcp.exposure.${connector.toolExposure}`) }}
       <span v-if="connector.credentialConfigured">· {{ t('desktop.mcp.configured') }}</span>
     </p>
     <p v-if="connector.runtime.errorCode" class="mcp-connection__error">
       {{ t(`desktop.mcp.error.${connector.runtime.errorCode}`) }}
+    </p>
+    <p v-if="connector.enabled && connector.toolExposure === 'codemode' && !codemodeEnabled" class="mcp-connection__error">
+      {{ t('desktop.mcp.codemodeDisabled') }}
     </p>
     <footer>
       <div>

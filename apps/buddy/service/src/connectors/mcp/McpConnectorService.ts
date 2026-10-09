@@ -6,7 +6,7 @@ import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { BuddyCapabilityResourceRevision } from '../../agent/extensions/BuddyCapability'
 import type { BuddyToolDisclosurePolicy } from '../../agent/extensions/discovery/toolDiscoveryContract'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
-import type { ConnectorRepository, McpServerRecord } from '../../storage/connectorRepository'
+import type { ConnectorRepository, McpServerRecord, McpServerWrite } from '../../storage/connectorRepository'
 import type { McpConnectionEvent, McpConnectorDetails, McpConnectorEvent } from './mcpEvents'
 import type { McpServerConfig } from './mcpSchemas'
 import type { McpResultWriter } from './mcpToolResults'
@@ -20,6 +20,7 @@ import { McpConnectionManager } from './McpConnectionManager'
 import { McpClientError, mcpErrorCode } from './mcpErrors'
 import { loginMcpOAuth, McpOAuthProvider } from './McpOAuthProvider'
 import { mcpServerConfigSchema } from './mcpSchemas'
+import { McpToolNames } from './mcpToolNames'
 import { waitForMcpOperation } from './waitForMcpOperation'
 
 export interface ConnectorSecretStore {
@@ -60,6 +61,7 @@ export class McpConnectorService {
   readonly #options: McpConnectorServiceOptions
   readonly #secrets: ConnectorSecretStore
   readonly #manager: McpConnectionManager
+  readonly #toolNames = new McpToolNames()
   readonly #mutations = new Map<string, Promise<unknown>>()
   readonly #secretWrites = new Map<string, Promise<unknown>>()
   readonly #logins = new Map<string, { controller: AbortController, operation: Promise<void>, operationId: string }>()
@@ -122,11 +124,12 @@ export class McpConnectorService {
     return this.#mutate(parsed.data.id, async () => {
       const existing = this.#connectors.findById(parsed.data.id)
       const previousRef = existing?.credentialRef ?? null
+      const credentialChanged = changesCredential(existing, input.credential)
       if (input.credential.mode === 'keep' && previousRef && existing && !sameExecutionTarget(existing, parsed.data))
         throw new McpConnectorError('VALIDATION_FAILED')
       if (input.credential.mode === 'replace' && (!connectorCredentialSchema.safeParse(input.credential.value).success || !credentialMatchesTransport(input.credential.value, parsed.data.transport)))
         throw new McpConnectorError('VALIDATION_FAILED')
-      const previous = previousRef && input.credential.mode !== 'keep' ? await this.#secrets.read(previousRef) : null
+      const previous = previousRef && credentialChanged ? await this.#secrets.read(previousRef) : null
       const credentialRef = input.credential.mode === 'replace' ? previousRef ?? parsed.data.id : input.credential.mode === 'keep' ? previousRef : null
       let record: McpServerRecord
       try {
@@ -134,17 +137,20 @@ export class McpConnectorService {
           await this.#writeCredential(credentialRef!, input.credential.value, parsed.data.id)
         else if (input.credential.mode === 'clear' && previousRef)
           await this.#deleteCredential(previousRef, parsed.data.id)
-        record = this.#persistConfig({ ...parsed.data, credentialRef }, input.credential.mode !== 'keep')
+        record = this.#persistConfig({ ...parsed.data, credentialRef }, credentialChanged)
       }
       catch (error) {
-        if (input.credential.mode !== 'keep')
+        if (credentialChanged)
           await this.#restoreSecret(credentialRef ?? previousRef ?? parsed.data.id, previous, parsed.data.id)
         throw error
       }
-      if (!existing || !sameExecutionTarget(existing, parsed.data) || input.credential.mode !== 'keep')
+      if (!existing || !sameExecutionTarget(existing, parsed.data) || credentialChanged)
         this.#manager.clearCatalog(record.id)
       return record
-    }, () => input.credential.mode !== 'keep' || !sameConfiguration(this.#connectors.findById(parsed.data.id), parsed.data))
+    }, () => {
+      const existing = this.#connectors.findById(parsed.data.id)
+      return !existing || changesCredential(existing, input.credential) || existing.enabled !== parsed.data.enabled || !sameExecutionTarget(existing, parsed.data)
+    })
   }
 
   confirmExecution(id: string): Promise<McpServerRecord> {
@@ -321,7 +327,7 @@ export class McpConnectorService {
     return copyEventSnapshot(this.list().filter(record => this.#manager.available(record.id, this.#manager.generation(record.id))).map(record => ({
       source: 'connector' as const,
       id: record.id,
-      revision: createHash('sha256').update(JSON.stringify([this.#manager.generation(record.id), this.#manager.catalogRevision(record.id), record.name])).digest('hex'),
+      revision: createHash('sha256').update(JSON.stringify([this.#manager.generation(record.id), this.#manager.catalogRevision(record.id), record.name, record.toolNamespace, record.toolExposure])).digest('hex'),
     })))
   }
 
@@ -332,20 +338,25 @@ export class McpConnectorService {
     const disclosure: BuddyToolDisclosurePolicy[] = []
     const availability = new Map<string, () => boolean>()
     const resourceRevisions = this.resourceRevisions()
-    for (const connector of this.list().filter(record => record.enabled)) {
+    const connectors = this.list()
+    const names = this.#toolNames.assign(connectors.map(connector => ({ serverId: connector.id, namespace: connector.toolNamespace, toolNames: this.#manager.catalog(connector.id).map(tool => tool.name) })))
+    for (const connector of connectors.filter(record => record.enabled)) {
       const generation = this.#manager.generation(connector.id)
       if (!this.#manager.available(connector.id, generation))
         continue
       const result = createMcpTools({
         serverId: connector.id,
         serverName: connector.name,
+        namespace: connector.toolNamespace,
+        exposure: connector.toolExposure,
         generation,
         tools: this.#manager.catalog(connector.id),
-        callTool: (tool, parameters, signal, onProgress) => this.#manager.callTool(connector.id, generation, tool, parameters, signal, onProgress),
+        toolNames: names.get(connector.id),
+        callTool: (tool, parameters, signal, onProgress) => this.#manager.callTool(connector.id, { generation, exposure: connector.toolExposure }, tool, parameters, signal, onProgress),
         writeResult,
       })
       for (const tool of result.tools)
-        availability.set(tool.name, () => this.#manager.available(connector.id, generation))
+        availability.set(tool.name, () => connector.toolExposure !== 'hidden' && this.#manager.available(connector.id, generation) && this.#connectors.findById(connector.id)?.toolExposure === connector.toolExposure)
       tools.push(...result.tools)
       disclosure.push(result.disclosure)
       diagnostics.push(...result.diagnostics)
@@ -434,6 +445,10 @@ export class McpConnectorService {
     if (!parsed.success)
       throw new McpConnectorError('VALIDATION_FAILED')
     const existing = this.#connectors.findById(parsed.data.id)
+    if (existing && parsed.data.toolNamespace && parsed.data.toolNamespace !== existing.toolNamespace)
+      throw new McpConnectorError('MCP_NAMESPACE_IMMUTABLE')
+    parsed.data.toolNamespace ??= existing?.toolNamespace
+    parsed.data.toolExposure ??= existing?.toolExposure ?? 'deferred'
     const executionConfirmedAt = existing && sameExecutionTarget(existing, parsed.data) && !(credentialChanged && parsed.data.transport === 'stdio') ? existing.executionConfirmedAt : null
     if (parsed.data.transport === 'stdio' && parsed.data.enabled && !executionConfirmedAt)
       throw new McpConnectorError('MCP_EXECUTION_CONFIRMATION_REQUIRED')
@@ -547,7 +562,7 @@ function toRecord(
   createdAt: string,
   updatedAt: string,
   executionConfirmedAt: string | null,
-): McpServerRecord {
+): McpServerWrite {
   return config.transport === 'stdio'
     ? {
         ...config,
@@ -579,6 +594,8 @@ function toConfig(record: McpServerRecord): McpServerConfig {
       enabled: record.enabled,
       id: record.id,
       name: record.name,
+      toolNamespace: record.toolNamespace,
+      toolExposure: record.toolExposure,
       transport: record.transport,
     })
   }
@@ -589,6 +606,8 @@ function toConfig(record: McpServerRecord): McpServerConfig {
     enabled: record.enabled,
     id: record.id,
     name: record.name,
+    toolNamespace: record.toolNamespace,
+    toolExposure: record.toolExposure,
     transport: record.transport,
     url: record.url,
   })
@@ -605,6 +624,10 @@ function sameExecutionTarget(record: McpServerRecord, config: McpServerConfig): 
   return record.url === config.url
 }
 
+function changesCredential(record: McpServerRecord | null | undefined, credential: ConnectorCredentialMutation): boolean {
+  return credential.mode === 'replace' || (credential.mode === 'clear' && record?.credentialRef != null)
+}
+
 function credentialMatchesTransport(
   credential: ConnectorCredential,
   transport: McpServerRecord['transport'],
@@ -613,5 +636,7 @@ function credentialMatchesTransport(
 }
 
 function sameConfiguration(existing: McpServerRecord | null | undefined, config: McpServerConfig): boolean {
-  return !!existing && existing.name === config.name && existing.enabled === config.enabled && sameExecutionTarget(existing, config)
+  return !!existing && existing.name === config.name && existing.enabled === config.enabled
+    && existing.toolNamespace === (config.toolNamespace ?? existing.toolNamespace)
+    && existing.toolExposure === (config.toolExposure ?? existing.toolExposure) && sameExecutionTarget(existing, config)
 }

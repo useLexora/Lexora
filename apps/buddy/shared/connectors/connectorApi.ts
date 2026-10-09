@@ -6,6 +6,10 @@ import { isHttpEndpointUrl } from '../network/networkSecurity'
 import { idSchema, isAbsolutePath, validationRequestSchemas, validationResponseSchemas } from '../runtime/apiValidation'
 import { editableConnectorCredentialSchema } from './connectorCredentials'
 import { connectorRuntimeStateSchema, connectorToolSummarySchema } from './connectorState'
+import { MCP_TOOL_EXPOSURES } from './mcpToolExposure'
+
+const toolNamespaceSchema = z.string().regex(/^\w{1,32}$/)
+const toolExposureSchema = z.enum(MCP_TOOL_EXPOSURES)
 
 export const connectorBaseSchema = z.object({
   credentialConfigured: z.boolean(),
@@ -13,6 +17,8 @@ export const connectorBaseSchema = z.object({
   executionConfirmed: z.boolean(),
   id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
   name: z.string().trim().min(1).max(128),
+  toolNamespace: toolNamespaceSchema,
+  toolExposure: toolExposureSchema,
   runtime: connectorRuntimeStateSchema,
 })
 
@@ -37,12 +43,16 @@ export const connectorConfigSchema = z.discriminatedUnion('transport', [
     enabled: z.boolean(),
     id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
     name: z.string().trim().min(1).max(128),
+    toolNamespace: toolNamespaceSchema.optional(),
+    toolExposure: toolExposureSchema.optional(),
     transport: z.literal('stdio'),
   }).strict(),
   z.object({
     enabled: z.boolean(),
     id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
     name: z.string().trim().min(1).max(128),
+    toolNamespace: toolNamespaceSchema.optional(),
+    toolExposure: toolExposureSchema.optional(),
     transport: z.literal('streamable-http'),
     url: z.url().refine(isHttpEndpointUrl),
   }).strict(),

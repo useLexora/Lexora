@@ -18,6 +18,7 @@ export interface OpenBuddyDatabaseOptions {
 }
 
 const BUDDY_CURRENT_SCHEMA_COLUMNS = {
+  mcp_servers: ['tool_namespace', 'tool_exposure'],
   run_event_checkpoints: ['run_id', 'last_sequence', 'projection_version', 'file_fingerprint'],
   extension_invocations: ['id', 'extension_id', 'action_id', 'conversation_id', 'trigger', 'status', 'branch_id', 'source_message_id', 'extension_name', 'action_title', 'result_message'],
   usage_records: ['run_id', 'invocation_id'],

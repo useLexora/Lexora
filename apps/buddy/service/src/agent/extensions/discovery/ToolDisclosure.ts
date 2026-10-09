@@ -70,7 +70,7 @@ export class ToolDisclosure {
       const exposure = tool.name === TOOL_SEARCH_NAME ? 'direct' : this.#resolveExposure?.(tool, context) ?? tool.defaultExposure
       if (exposure === 'direct')
         direct.push(tool.name)
-      if (exposure === 'direct' || this.#discovered.has(tool.name))
+      if (exposure === 'direct' || (exposure === 'on_demand' && this.#discovered.has(tool.name)))
         active.push(tool.name)
       else if (tool.source.kind !== 'builtin')
         external.push({ name: tool.name, title: tool.title.slice(0, 160), source: tool.source.title.slice(0, 120), description: tool.description.slice(0, 180) })
@@ -85,8 +85,8 @@ export class ToolDisclosure {
 
   search(input: ToolSearchInput, context: BuddyToolExposureContext): ToolSearchResult {
     const available = (name: string) => this.#available(name, context)
-    const requested = [...new Set(input.toolNames ?? [])]
-    const query = input.query?.trim() ?? ''
+    const requested = [...new Set((input.toolNames ?? []).map(name => this.#canonicalName(name)))]
+    const query = this.#canonicalName(input.query?.trim() ?? '')
     const exact = available(query) ? [query] : []
     const ranked = requested.length > 0
       ? requested.filter(available)
@@ -108,6 +108,7 @@ export class ToolDisclosure {
         description: tool.description.slice(0, 240),
         source: tool.source.kind === 'builtin' ? 'buddy' : `${tool.source.kind}:${tool.source.id}`,
         alreadyDisclosed: previous.has(name),
+        ...(tool.defaultExposure === 'codemode' ? { invocation: 'codemode' as const } : {}),
       }
     })
     this.#replace(discovered, 'discovery')
@@ -115,7 +116,7 @@ export class ToolDisclosure {
       version: 1,
       tools,
       candidates: ranked.slice(matches.length, matches.length + 5).map(name => ({ name, description: this.#tools.get(name)!.description.slice(0, 120) })),
-      notFound: requested.filter(name => !available(name)),
+      notFound: (input.toolNames ?? []).filter(name => !available(this.#canonicalName(name))),
     }
   }
 
@@ -127,7 +128,7 @@ export class ToolDisclosure {
     }
     const current = getCurrentSystemMessage(messages)
     if (current) {
-      this.#replace(new Set((current.toolsAdded ?? []).map(tool => tool.name).filter(name => this.#tools.has(name))), 'restore')
+      this.#replace(new Set((current.toolsAdded ?? []).map(tool => this.#canonicalName(tool.name)).filter(name => this.#tools.has(name))), 'restore')
       return
     }
     const discovered = new Set<string>()
@@ -149,8 +150,9 @@ export class ToolDisclosure {
             const result: unknown = JSON.parse(block.text)
             if (isToolSearchResult(result)) {
               for (const tool of result.tools) {
-                if (tool.id === undefined || this.#tools.get(tool.name)?.id === tool.id)
-                  discovered.add(tool.name)
+                const name = this.#canonicalName(tool.name)
+                if (tool.id === undefined || this.#tools.get(name)?.id === tool.id)
+                  discovered.add(name)
               }
             }
           }
@@ -158,7 +160,7 @@ export class ToolDisclosure {
         }
       }
       else {
-        discovered.add(message.toolName)
+        discovered.add(this.#canonicalName(message.toolName))
       }
     }
     this.#replace(new Set([...discovered].filter(name => this.#tools.has(name))), 'restore')
@@ -177,6 +179,12 @@ export class ToolDisclosure {
 
   #available(name: string, context: BuddyToolExposureContext): boolean {
     const tool = this.#tools.get(name)
-    return !!tool && (tool.available?.(context, name) ?? true)
+    return !!tool && (this.#resolveExposure?.(tool, context) ?? tool.defaultExposure) !== 'hidden' && (tool.available?.(context, name) ?? true)
+  }
+
+  #canonicalName(name: string): string {
+    if (this.#tools.has(name))
+      return name
+    return [...this.#tools.values()].find(tool => tool.aliases?.includes(name))?.name ?? name
   }
 }

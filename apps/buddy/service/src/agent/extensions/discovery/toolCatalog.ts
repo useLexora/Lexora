@@ -33,6 +33,7 @@ export function createToolCatalog(tools: readonly ToolInfo[], baseline: readonly
       catalog.set(entry.name, copyEventSnapshot({
         id,
         name: entry.name,
+        aliases: entry.aliases,
         title: entry.title ?? entry.name,
         source: policy.source,
         defaultExposure: policy.exposure,

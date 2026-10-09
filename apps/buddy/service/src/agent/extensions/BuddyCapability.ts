@@ -27,6 +27,7 @@ export interface BuddyCapabilityContext {
   executionProfile: BuddyExecutionProfile
   cwd: string
   getRunId: () => string | undefined
+  isCodemodeEnabled?: () => boolean
   grants: readonly DirectoryGrant[]
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]
   sessionMode: BuddySessionMode

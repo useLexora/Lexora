@@ -15,10 +15,11 @@ afterEach(async () => {
     await close()
 })
 
-async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403 } = {}) {
-  const requests: Array<{ method: string, authorization?: string, version?: string }> = []
+async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403, toolNames?: string[] } = {}) {
+  const requests: Array<{ method: string, toolName?: string, authorization?: string, version?: string }> = []
   const registered: Record<string, unknown> = {}
   let annotations = { readOnlyHint: true, openWorldHint: false, destructiveHint: false }
+  let toolNames = options.toolNames ?? ['echo']
   let challenge = ''
   let base = ''
   const server = createServer((request, response) => {
@@ -64,7 +65,7 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
     if (request.method !== 'POST')
       return response.writeHead(405).end()
     const message = JSON.parse(body)
-    requests.push({ method: message.method, authorization: request.headers.authorization, version: request.headers['mcp-protocol-version'] as string | undefined })
+    requests.push({ method: message.method, toolName: message.params?.name, authorization: request.headers.authorization, version: request.headers['mcp-protocol-version'] as string | undefined })
     if (message.id === undefined)
       return response.writeHead(202).end()
     const result = message.method === 'server/discover' && options.modern
@@ -72,7 +73,7 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
       : message.method === 'initialize' && !options.modern
         ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0' } }
         : message.method === 'tools/list'
-          ? { ttlMs: 60000, cacheScope: 'private', tools: [{ name: 'echo', annotations, inputSchema: { type: 'object', properties: { value: { type: 'string' } } } }] }
+          ? { ttlMs: 60000, cacheScope: 'private', tools: toolNames.map(name => ({ name, annotations, inputSchema: { type: 'object', properties: { value: { type: 'string' } } } })) }
           : message.method === 'tools/call'
             ? { content: [{ type: 'text', text: message.params.arguments.value }] }
             : null
@@ -85,7 +86,9 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
-  return { base, requests, registered, changeAnnotations: () => {
+  return { base, requests, registered, setTools: (names: string[]) => {
+    toolNames = names
+  }, changeAnnotations: () => {
     annotations = { readOnlyHint: false, openWorldHint: true, destructiveHint: true }
   }, challenge: (value: string) => {
     challenge = value
@@ -102,6 +105,61 @@ function session(base: string, credential = { type: 'http' as const, bearerToken
 }
 
 describe('mCP HTTP and authorization', () => {
+  it('keeps global tool ownership through reconnects, catalog changes and cached restart', async () => {
+    const maps = await serverFixture({ toolNames: ['routing__search'] })
+    const routing = await serverFixture({ toolNames: ['search'] })
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const repository = createConnectorRepository(database)
+    const service = new McpConnectorService({ connectors: repository, secrets: { read: async () => null, write: async () => {}, delete: async () => {} } })
+    cleanup.push(async () => {
+      await service.close()
+      database.close()
+    })
+    await service.upsert({ id: 'maps-id', name: 'Maps', toolNamespace: 'maps', url: `${maps.base}/mcp`, transport: 'streamable-http', enabled: false, credentialRef: null })
+    await service.setEnabled('maps-id', true)
+    await service.test('maps-id')
+    const originalName = service.getTools().tools[0]!.name
+    expect(originalName).toBe('mcp__maps__routing__search')
+    await service.upsert({ id: 'routing-id', name: 'Routing', toolNamespace: 'maps__routing', url: `${routing.base}/mcp`, transport: 'streamable-http', enabled: false, credentialRef: null })
+    await service.setEnabled('routing-id', true)
+    await service.test('routing-id')
+    const snapshot = service.getTools()
+    const mapsName = snapshot.disclosure.find(policy => policy.source.id === 'maps-id')!.tools[0]!.name
+    const routingName = snapshot.disclosure.find(policy => policy.source.id === 'routing-id')!.tools[0]!.name
+    expect(mapsName).toBe(originalName)
+    expect(routingName).not.toBe(originalName)
+    expect(snapshot.tools).toHaveLength(2)
+    expect(snapshot.classifications.size).toBe(2)
+    for (const [name, id, remoteName] of [[mapsName, 'maps-id', 'routing__search'], [routingName, 'routing-id', 'search']] as const) {
+      expect(snapshot.classifications.get(name)?.approval?.reuse?.operation).toEqual([id, expect.any(Number), remoteName])
+      const tool = snapshot.tools.find(tool => tool.name === name)!
+      expect(await tool.execute('call', { value: id }, undefined, undefined, {} as never)).toMatchObject({ content: [{ type: 'text', text: id }] })
+    }
+    expect(maps.requests.filter(request => request.method === 'tools/call')).toMatchObject([{ toolName: 'routing__search' }])
+    expect(routing.requests.filter(request => request.method === 'tools/call')).toMatchObject([{ toolName: 'search' }])
+    await service.setEnabled('maps-id', false)
+    expect(service.getTools().tools.map(tool => tool.name)).toEqual([routingName])
+    await service.setEnabled('maps-id', true)
+    await service.test('maps-id')
+    maps.setTools([])
+    await service.test('maps-id')
+    expect(service.getTools().tools.map(tool => tool.name)).toEqual([routingName])
+    maps.setTools(['routing__search'])
+    await service.test('maps-id')
+    const rebuilt = service.getTools()
+    expect(rebuilt.tools.map(tool => tool.name)).toEqual(snapshot.tools.map(tool => tool.name))
+    await service.setEnabled('maps-id', false)
+    await service.close()
+    const preview = new McpConnectorService({ connectors: repository, secrets: { read: async () => null, write: async () => {}, delete: async () => {} } })
+    try {
+      expect(preview.getTools().tools.map(tool => tool.name)).toEqual([routingName])
+      expect(preview.state('routing-id').status).toBe('idle')
+    }
+    finally {
+      await preview.close()
+    }
+  })
+
   it('keeps a key-authenticated connection usable when browser sign-in is requested accidentally', async () => {
     const fixture = await serverFixture()
     const database = openBuddyDatabase({ databasePath: ':memory:' })

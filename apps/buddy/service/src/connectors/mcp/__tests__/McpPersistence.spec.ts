@@ -13,22 +13,29 @@ import { createMcpResultWriter } from '../McpResultStore'
 const record = { id: 'existing', name: 'Existing connector', transport: 'stdio' as const, command: 'node', args: ['server.mjs'], cwd: null, url: null, credentialRef: 'existing-secret-ref', enabled: true, executionConfirmedAt: '2026-08-01T00:00:00Z', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }
 
 describe('mCP persisted data', () => {
-  it('upgrades a version 17 database while retaining connector identity, execution confirmation and secret reference', async () => {
+  it('upgrades v24 while retaining identities, credentials, confirmations and stable namespaces', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buddy-mcp-upgrade-'))
     const path = join(directory, 'buddy.sqlite3')
     const previous = openMigrationFixtureDatabase(path)
     try {
-      for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 17))
+      for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 24))
         previous.exec(migration.sql)
       previous.prepare('INSERT INTO mcp_servers (id, name, transport, command, args_json, cwd, url, credential_ref, trusted_at, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.name, record.transport, record.command, JSON.stringify(record.args), record.cwd, record.url, record.credentialRef, record.executionConfirmedAt, 1, record.createdAt, record.updatedAt)
-      previous.exec('PRAGMA user_version = 17')
+      previous.exec('PRAGMA user_version = 24')
     }
     finally { previous.close() }
     const upgraded = openBuddyDatabase({ databasePath: path })
     try {
       const repository = createConnectorRepository(upgraded)
-      expect(repository.findById(record.id)).toEqual(record)
+      expect(repository.findById(record.id)).toEqual({ ...record, toolNamespace: 'Existing_connector', toolExposure: 'deferred' })
       expect(repository.readCatalog(record.id)).toBeNull()
+      const first = repository.findById(record.id)!
+      const second = repository.upsert({ ...record, id: 'another', name: record.name })
+      const third = repository.upsert({ ...record, id: 'third', name: second.toolNamespace })
+      expect(new Set([first.toolNamespace, second.toolNamespace, third.toolNamespace]).size).toBe(3)
+      expect(() => repository.upsert({ ...record, id: 'conflict', toolNamespace: first.toolNamespace })).toThrow('namespace already exists')
+      repository.upsert({ ...first, name: 'Renamed', toolExposure: 'codemode' })
+      expect(createConnectorRepository(upgraded).findById(record.id)).toEqual({ ...first, name: 'Renamed', toolExposure: 'codemode' })
       expect(upgraded.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
     }
     finally {

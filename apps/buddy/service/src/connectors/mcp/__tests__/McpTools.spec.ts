@@ -1,7 +1,8 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { Tool } from '@modelcontextprotocol/client'
 import { describe, expect, it } from 'vitest'
-import { createMcpToolName, createMcpTools } from '../createMcpTools'
+import { createMcpTools } from '../createMcpTools'
+import { createMcpToolName, McpToolNames } from '../mcpToolNames'
 import { normalizeMcpResult } from '../mcpToolResults'
 
 const tool: Tool = { name: 'lookup', inputSchema: { type: 'object', properties: {} } }
@@ -17,10 +18,46 @@ function create(annotations: Tool['annotations']) {
 
 describe('mCP adapter contracts', () => {
   it('keeps aliases bounded and distinguishes names normalized to the same slug', () => {
-    const names = ['foo-bar', 'foo_bar', 'FOO_BAR', '中文', 'a'.repeat(300)].map(name => createMcpToolName('stable-id', name))
+    const hashed = createMcpToolName('maps', 'foo-bar', name => name === 'mcp__maps__foo_bar')
+    const remoteNames = ['foo-bar', 'foo_bar', 'FOO_BAR', '中文', 'a'.repeat(300), hashed.slice('mcp__maps__'.length)]
+    const make = (names: string[]) => createMcpTools({ serverId: 'id', serverName: 'Maps', namespace: 'maps', generation: 1, tools: names.map(name => ({ ...tool, name })), callTool: async () => ({ content: [] }) }).tools.map(tool => tool.name)
+    const names = make(remoteNames)
+    expect(make([...remoteNames].reverse())).toEqual([...names].reverse())
+    expect(createMcpToolName('maps', 'route')).toBe('mcp__maps__route')
     expect(new Set(names).size).toBe(names.length)
     expect(names.every(name => /^\w{1,64}$/.test(name))).toBe(true)
     expect(createMcpToolName('one', 'foo')).not.toBe(createMcpToolName('two', 'foo'))
+  })
+
+  it('resolves collisions across namespaces independently of catalog order', () => {
+    const sources = [
+      { serverId: 'maps-id', namespace: 'maps', toolNames: ['routing__search'] },
+      { serverId: 'routing-id', namespace: 'maps__routing', toolNames: ['search'] },
+    ]
+    const names = new McpToolNames().assign(sources)
+    const reversed = new McpToolNames().assign([...sources].reverse())
+    const assigned = sources.map(source => names.get(source.serverId)!.get(source.toolNames[0]!)!)
+    expect(new Set(assigned).size).toBe(2)
+    expect(assigned.every(name => /^\w{1,64}$/.test(name))).toBe(true)
+    for (const source of sources)
+      expect(reversed.get(source.serverId)).toEqual(names.get(source.serverId))
+  })
+
+  it('preserves ownership when catalogs add, withdraw and restore conflicting tools', () => {
+    const allocator = new McpToolNames()
+    const original = { serverId: 'maps-id', namespace: 'maps', toolNames: ['foo-bar'] }
+    const name = allocator.assign([original]).get(original.serverId)!.get('foo-bar')!
+    expect(name).toBe('mcp__maps__foo_bar')
+    const expanded = { ...original, toolNames: ['foo_bar', 'foo-bar'] }
+    const names = allocator.assign([expanded]).get(original.serverId)!
+    expect(names.get('foo-bar')).toBe(name)
+    expect(names.get('foo_bar')).not.toBe(name)
+    const withdrawn = allocator.assign([{ ...original, toolNames: ['foo_bar'] }]).get(original.serverId)!
+    expect(withdrawn.get('foo_bar')).toBe(names.get('foo_bar'))
+    allocator.assign([])
+    const replacement = allocator.assign([{ ...original, serverId: 'replacement-id' }]).get('replacement-id')!
+    expect(replacement.get('foo-bar')).not.toBe(name)
+    expect(allocator.assign([expanded]).get(original.serverId)).toEqual(names)
   })
 
   it('requires approval for every tool regardless of server hints', () => {
@@ -55,6 +92,18 @@ describe('mCP adapter contracts', () => {
     expect(JSON.stringify(result.content).length).toBeLessThan(64000)
   })
 
+  it('retains the complete result when the optional artifact writer fails', async () => {
+    const remote = { content: [{ type: 'text' as const, text: 'x'.repeat(100000) }], structuredContent: { tail: 'complete' }, _meta: { private: 'host only' } }
+    const result = await normalizeMcpResult(remote, async () => {
+      throw new Error('disk full')
+    })
+    expect(result.isError).toBe(false)
+    expect(result.artifactIds).toEqual([])
+    expect(result.structuredContent).toEqual({ content: remote.content, structuredContent: remote.structuredContent })
+    expect(JSON.stringify(result.content)).not.toContain('host only')
+    expect(JSON.stringify(result.content).length).toBeLessThan(64000)
+  })
+
   it('does not hide cancellation as a tool failure', async () => {
     const controller = new AbortController()
     const reason = new Error('cancelled')
@@ -66,7 +115,9 @@ describe('mCP adapter contracts', () => {
   })
 
   it('does not materialize files for read-only conversations', async () => {
-    await expect(normalizeMcpResult({ content: [{ type: 'audio', data: 'aGVsbG8=', mimeType: 'audio/wav' }] })).rejects.toMatchObject({ code: 'MCP_RESULT_STORAGE_DENIED' })
+    const remote = { content: [{ type: 'audio' as const, data: 'aGVsbG8=', mimeType: 'audio/wav' }] }
+    const result = await normalizeMcpResult(remote)
+    expect(result).toMatchObject({ artifactIds: [], isError: false, structuredContent: remote })
   })
 })
 

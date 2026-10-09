@@ -68,7 +68,7 @@ export function createBuddyCapabilityFactory(
     const mcp = services.connectorService.getTools(context.signal, context.executionProfile === 'read_only' ? undefined : createMcpResultWriter({ ...context, artifactService: services.artifactService }))
     context.signal.throwIfAborted()
     const capabilities = [
-      createMcpCapability(mcp),
+      createMcpCapability(mcp, context.isCodemodeEnabled ?? (() => false)),
       createBrowserCapability({
         report: services.record,
         conversationId: context.conversationId,

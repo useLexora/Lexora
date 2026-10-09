@@ -1,9 +1,11 @@
 import type { DesktopConnectorSavePlan } from './desktopConnectorForm'
 import { connectorsRequestSchemas } from '@buddy-shared/connectors/connectorApi'
+import { MCP_TOOL_EXPOSURES } from '@buddy-shared/connectors/mcpToolExposure'
 import { z } from 'zod'
 
 const entrySchema = z.object({
   command: z.string().optional(),
+  exposure: z.enum(MCP_TOOL_EXPOSURES).optional(),
   args: z.array(z.string()).optional(),
   cwd: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
@@ -21,7 +23,7 @@ export function parseConnectorImport(text: string): DesktopConnectorSavePlan[] {
   if (!entries.length || entries.length > 32)
     throw new Error('INVALID_IMPORT')
   return entries.map(([name, entry]) => {
-    const common = { id: crypto.randomUUID(), name, enabled: false }
+    const common = { id: crypto.randomUUID(), name, enabled: false, toolExposure: entry.exposure ?? 'deferred' }
     if (Boolean(entry.command) === Boolean(entry.url))
       throw new Error('INVALID_IMPORT')
     if (entry.command) {

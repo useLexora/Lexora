@@ -8,6 +8,7 @@ import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTo
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { expect, it, vi } from 'vitest'
 import { createEstimatedContextUsage } from '../../../agent/context/contextUsageBreakdown'
+import { createCodemodeCapability } from '../../../agent/extensions/codemodeExtension'
 import { createToolDiscoveryCapability } from '../../../agent/extensions/discovery/toolDiscoveryExtension'
 import { createToolPolicyExtension } from '../../../agent/extensions/toolPolicyExtension'
 import { createIsolatedBuddyContextSnapshot, createIsolatedBuddySession } from '../../../agent/sessions/__tests__/isolatedBuddySession'
@@ -33,7 +34,8 @@ function reply(model: Model<Api>, call?: { name: string, arguments: JsonObject }
   return stream
 }
 
-it('advertises enabled MCP capabilities, discovers Chinese queries, and calls the original server through approval', async () => {
+it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete results and per-call approval', async (mode) => {
+  const routes = Array.from({ length: 4000 }, (_, id) => ({ id, summary: `route-${id}-${'x'.repeat(40)}` }))
   const calls: unknown[] = []
   const catalogRequested = Promise.withResolvers<void>()
   const catalogReady = Promise.withResolvers<void>()
@@ -57,9 +59,9 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     const result = message.method === 'initialize'
       ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'Maps', version: '1' } }
       : message.method === 'tools/list'
-        ? { tools: [{ name: 'maps_direction_bicycling', description: '骑行路径规划，查询起点至终点的路线。', inputSchema: { type: 'object', required: ['origin', 'destination'], properties: { origin: { type: 'string' }, destination: { type: 'string' } } } }] }
+        ? { tools: [{ name: 'maps_direction_bicycling', description: '骑行路径规划，查询起点至终点的路线。', outputSchema: { type: 'object', properties: { routes: { type: 'array', items: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string' } }, required: ['id', 'summary'] } } }, required: ['routes'] }, inputSchema: { type: 'object', required: ['origin', 'destination'], properties: { origin: { type: 'string' }, destination: { type: 'string' } } } }] }
         : message.method === 'tools/call'
-          ? { content: [{ type: 'text', text: 'Fixture route: 180 km' }] }
+          ? { content: [{ type: 'text', text: 'Fixture route: 180 km' }], structuredContent: { routes }, isError: message.params.arguments.origin === 'error' }
           : null
     if (message.method === 'tools/call')
       calls.push(message.params)
@@ -74,7 +76,7 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
   const service = new McpConnectorService({ connectors: createConnectorRepository(database), secrets: { read: async () => null, write: async () => {}, delete: async () => {} } })
   let created: Awaited<ReturnType<typeof createIsolatedBuddySession>> | undefined
   try {
-    await service.upsert({ id: 'maps', name: 'Maps', transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp?key=fixture-secret`, enabled: false, credentialRef: null })
+    await service.upsert({ id: 'maps', name: 'Maps', transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp?key=fixture-secret`, enabled: false, credentialRef: null, toolNamespace: 'maps', toolExposure: mode === 'search' ? 'deferred' : mode })
     await service.setEnabled('maps', true)
     const preparation = service.prepareForRun(new AbortController().signal)
     await catalogRequested.promise
@@ -82,8 +84,10 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     catalogReady.resolve()
     await preparation
     expect(service.state('maps').status).toBe('ready')
-    const mcp = createMcpCapability(service.getTools())
-    const discovery = createToolDiscoveryCapability(mcp.disclosure!)
+    let codemodeEnabled = true
+    const mcp = createMcpCapability(service.getTools(), () => codemodeEnabled)
+    const codemode = createCodemodeCapability(() => codemodeEnabled)
+    const discovery = createToolDiscoveryCapability([...mcp.disclosure!, ...codemode.disclosure!])
     const approvals: string[] = []
     const policy = createToolPolicyExtension({
       authorization: new ToolAuthorizationService({
@@ -95,8 +99,8 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
         getGrants: () => [],
         approvalService: { request: async (input) => {
           approvals.push(input.toolName)
-          expect(calls).toEqual([])
-          return { approvalId: 'approval-1', decision: 'approved_once' }
+          expect(calls).toHaveLength(approvals.length - 1)
+          return { approvalId: `approval-${approvals.length}`, decision: approvals.length === 3 ? 'denied' : 'approved_once' }
         } },
       }),
       getRunContext: () => ({ runId: 'run-1', signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }),
@@ -113,6 +117,10 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
         tools: getCurrentTools(context.messages).map(({ name, description, parameters }) => ({ name, description, parameters })),
         messages: context.messages.filter(message => message.role !== 'system'),
       }))
+      if (mode === 'codemode') {
+        const code = `text({ discovered: (await searchTools('maps_direction_bicycling', { namespace: 'maps' })).map(tool => tool.name) }); text(await describeNamespace('maps')); text(await describeTool('${toolName}')); const result = await tools.${toolName}({ origin: '120,30', destination: '121,31' }); text({ count: result.structuredContent.routes.length, tail: result.structuredContent.routes.at(-1).id }); const failed = await tools.${toolName}({ origin: 'error', destination: '121,31' }); text({ businessError: failed.isError }); try { await tools.${toolName}({ origin: 'denied', destination: '121,31' }); } catch (error) { text(error.message); }`
+        return reply(selected, requests.length === 1 ? { name: 'codemode', arguments: { code } } : undefined)
+      }
       return reply(selected, requests.length === 1
         ? { name: 'lexora_tool_search', arguments: { query: '骑行路线规划' } }
         : requests.length === 2 ? { name: toolName, arguments: { origin: '120,30', destination: '121,31' } } : undefined)
@@ -128,7 +136,7 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
       executionProfile: 'workspace_write' as const,
       model,
       modelRuntime: runtime,
-      inProcessExtensions: [mcp.extension, discovery.extension, policy],
+      inProcessExtensions: [mcp.extension, codemode.extension, discovery.extension, policy],
       resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
     }
     const preview = await createIsolatedBuddyContextSnapshot(options)
@@ -136,19 +144,47 @@ it('advertises enabled MCP capabilities, discovers Chinese queries, and calls th
     await created.session.prompt('规划从杭州骑行至上海的路线')
     const first = requests[0]!
     expect(first.tools?.some(tool => tool.name === toolName)).toBe(false)
-    expect(first.tools?.find(tool => tool.name === 'lexora_tool_search')?.description).toContain('骑行路径规划')
     expect(JSON.stringify(first)).not.toContain('fixture-secret')
-    expect(requests[1]?.tools?.filter(tool => tool.name === toolName)).toHaveLength(1)
-    expect(approvals).toEqual([toolName])
-    expect(calls).toMatchObject([{ name: 'maps_direction_bicycling', arguments: { origin: '120,30', destination: '121,31' } }])
-    expect(JSON.stringify(created.session.messages)).toContain('Fixture route: 180 km')
+    const output = created.session.messages.filter(message => message.role === 'toolResult').flatMap(message => message.content.filter(block => block.type === 'text').map(block => block.text)).join('\n')
+    if (mode === 'search') {
+      expect(first.tools?.find(tool => tool.name === 'lexora_tool_search')?.description).toContain('骑行路径规划')
+      expect(requests[1]?.tools?.filter(tool => tool.name === toolName)).toHaveLength(1)
+      expect(approvals).toEqual([toolName])
+      expect(calls).toMatchObject([{ name: 'maps_direction_bicycling', arguments: { origin: '120,30', destination: '121,31' } }])
+      expect(output).toContain('Fixture route: 180 km')
+    }
+    else {
+      expect(output).toContain(`\"discovered\":[\"${toolName}\"]`)
+      expect(output).toContain('CallToolResult')
+      expect(output).toContain('3999')
+      expect(output).toContain('4000')
+      expect(output).toContain('businessError')
+      expect(output).toContain('true')
+      expect(output).toContain('APPROVAL_DENIED')
+      expect(output).not.toContain('route-3998')
+      expect(calls).toHaveLength(2)
+      expect(approvals).toEqual([toolName, toolName, toolName])
+      codemodeEnabled = false
+      await created.session.prompt('关闭脚本模式')
+      expect(created.session.getCallableToolNames()).not.toContain(toolName)
+    }
+    const callCount = calls.length
     expect(preview).toEqual(createEstimatedContextUsage({ ...first, messages: [] }))
+    await service.upsert({ id: 'maps', name: 'Maps', transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp?key=fixture-secret`, enabled: true, credentialRef: null, toolNamespace: 'maps', toolExposure: 'hidden' })
+    await created.session.prompt('隐藏这组工具')
+    const hidden = requests.at(-1)!
+    expect(hidden.tools?.some(tool => tool.name === toolName)).toBe(false)
+    expect(hidden.tools?.find(tool => tool.name === 'lexora_tool_search')?.description).not.toContain('骑行路径规划')
+    expect(created.session.getCallableToolNames()).not.toContain(toolName)
+    expect(service.state('maps')).toMatchObject({ status: 'ready', toolCount: 1 })
+    expect(calls).toHaveLength(callCount)
     await service.setEnabled('maps', false)
     await created.session.prompt('继续')
     const disabled = requests.at(-1)!
     expect(disabled.tools?.some(tool => tool.name === toolName)).toBe(false)
     expect(disabled.tools?.find(tool => tool.name === 'lexora_tool_search')?.description).not.toContain('骑行路径规划')
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(callCount)
+    expect(created.session.getCallableToolNames()).not.toContain(toolName)
   }
   finally {
     catalogReady.resolve()

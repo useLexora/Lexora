@@ -82,6 +82,33 @@ describe('mcpConnectionEvents', () => {
     expect(fixture.events.filter(event => event.type === 'catalog')).toEqual([expect.objectContaining({ generation: 1 })])
   })
 
+  it('rejects a captured tool when its exposure changes during catalog refresh', async () => {
+    const fixture = createFixture()
+    await fixture.manager.refresh('fixture')
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    fixture.listTools.mockImplementationOnce(async () => {
+      entered.resolve()
+      await released.promise
+      return tools
+    })
+    vi.spyOn(McpClientSession.prototype, 'callTool').mockResolvedValue({ content: [{ type: 'text', text: 'completed' }] })
+    const call = fixture.manager.callTool('fixture', { generation: fixture.manager.generation('fixture'), exposure: 'deferred' }, tools[0]!, {})
+    const rejected = expect(call).rejects.toMatchObject({ code: 'MCP_CONNECTOR_DISABLED' })
+    try {
+      await entered.promise
+      fixture.repository.upsert({ ...fixture.repository.findById('fixture')!, toolExposure: 'hidden' })
+      released.resolve()
+      await rejected
+      expect(fixture.manager.state('fixture').status).toBe('ready')
+      expect(fixture.manager.catalog('fixture')).toEqual(tools)
+    }
+    finally {
+      released.resolve()
+      await call.catch(() => {})
+    }
+  })
+
   it('preserves the accepted catalog if persistence fails before a replacement commits', async () => {
     const fixture = createFixture()
     await fixture.manager.refresh('fixture')

@@ -19,6 +19,25 @@ function create() {
 }
 
 describe('toolDisclosure', () => {
+  it('resolves historical MCP names without granting hidden or script-only tools direct exposure', () => {
+    const name = 'mcp__calendar__events'
+    const alias = 'mcp__old_hash__events_hash'
+    const policy: BuddyToolDisclosurePolicy = { source: { kind: 'mcp', id: 'stable-id', title: 'Calendar' }, exposure: 'on_demand', keywords: '', tools: [{ name, id: 'events', aliases: [alias] }] }
+    const disclosure = new ToolDisclosure(tools, [], [policy])
+    expect(disclosure.search({ toolNames: [alias] }, { model }).tools).toMatchObject([{ name }])
+    expect(disclosure.active({ model })).toContain(name)
+    disclosure.restore([{ role: 'system', content: '', timestamp: 0, toolsAdded: [{ ...tools[0]!, name: alias }] }])
+    expect(disclosure.active({ model })).toContain(name)
+    const script = new ToolDisclosure(tools, [], [{ ...policy, exposure: 'codemode' }])
+    script.restore([], disclosure.persistedState)
+    expect(script.search({ query: alias }, { model }).tools).toMatchObject([{ name, invocation: 'codemode' }])
+    expect(script.active({ model })).not.toContain(name)
+    const hidden = new ToolDisclosure(tools, [], [{ ...policy, exposure: 'hidden' }])
+    hidden.restore([], disclosure.persistedState)
+    expect(hidden.active({ model })).not.toContain(name)
+    expect(hidden.search({ toolNames: [alias] }, { model })).toMatchObject({ tools: [], notFound: [alias] })
+  })
+
   it('indexes plugin titles and sources while preserving stable identities across renamed model tools', () => {
     const name = 'lexora_plugin_0123456789abcdef'
     const policy: BuddyToolDisclosurePolicy = { source: { kind: 'plugin', id: 'tests.naming', title: '灵感助手' }, exposure: 'on_demand', keywords: '', tools: [{ name, id: 'tests.naming.rename', title: '重新生成标题' }] }

@@ -5,6 +5,8 @@ import { NButton, NPopover } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { DesktopMcpDialog } from '@/modules/settings/ui'
+import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { useConversationStatus } from '@/modules/tasks/state/runs/useConversationStatus'
 import { useTaskContext } from '@/modules/tasks/taskContext'
@@ -36,6 +38,10 @@ const startTask = navigateDraft ?? tasks.session.startTask
 const chatSession = workspace.session
 const viewMode = shallowRef<'chat' | 'canvas'>('chat')
 const statusPanelOpen = shallowRef(false)
+const mcpPanelOpen = shallowRef(false)
+provideConversationMcpPanel({ open: () => {
+  mcpPanelOpen.value = true
+} })
 const { isLoading: statusLoading, load: loadStatus, loadFailed: statusLoadFailed, status: conversationStatus } = useConversationStatus(
   computed(() => chatSession.activeConversationId.value),
 )
@@ -61,6 +67,7 @@ useProvideChatContent({
 
 <template>
   <div class="desktop-task-editor">
+    <DesktopMcpDialog v-if="mcpPanelOpen" @close="mcpPanelOpen = false" />
     <DesktopChatWorkspaceHeader
       :task-id="activeTaskId"
       :view-mode="viewMode"

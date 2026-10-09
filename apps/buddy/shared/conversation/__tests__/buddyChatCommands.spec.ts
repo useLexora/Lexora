@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import { isExecutionProfileWithin } from '../../permissions/executionProfile'
 import {
-  BUDDY_CHAT_COMMANDS,
   isBuddyReviewCommand,
   isBuddyRunChatCommand,
   isRetiredBuddyPromptCommand,
@@ -20,6 +19,7 @@ describe('buddyChatCommands', () => {
       name: 'compact',
     })
     expect(parseBuddyChatCommand('/skills')).toEqual({ arguments: '', name: 'skills' })
+    expect(parseBuddyChatCommand('/mcp')).toEqual({ arguments: '', name: 'mcp' })
     expect(parseBuddyChatCommand('/review 只看权限边界')).toEqual({ arguments: '只看权限边界', name: 'review' })
     expect(parseBuddyChatCommand('/plan')).toBeNull()
     expect(parseBuddyChatCommand('please /compact')).toBeNull()
@@ -27,11 +27,11 @@ describe('buddyChatCommands', () => {
   })
 
   it('marks run commands so only the service decides how a run is executed', () => {
-    expect(BUDDY_CHAT_COMMANDS.map(command => command.name)).toEqual(['compact', 'review', 'skills', 'status'])
     expect(isBuddyRunChatCommand('compact')).toBe(true)
     expect(isBuddyRunChatCommand('skills')).toBe(false)
     expect(isBuddyRunChatCommand('review')).toBe(false)
     expect(isBuddyRunChatCommand('status')).toBe(false)
+    expect(isBuddyRunChatCommand('mcp')).toBe(false)
     expect(isBuddyRunChatCommand('unknown')).toBe(false)
   })
 

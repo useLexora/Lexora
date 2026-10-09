@@ -1,4 +1,4 @@
-export type BuddyChatCommandName = 'compact' | 'review' | 'skills' | 'status'
+export type BuddyChatCommandName = 'compact' | 'mcp' | 'review' | 'skills' | 'status'
 export type BuddyChatCommandDescriptionKey = `desktop.chat.command.${BuddyChatCommandName}`
 
 export type BuddyChatCommandDefinition = {
@@ -22,6 +22,13 @@ const commandsByName: Readonly<Record<BuddyChatCommandName, BuddyChatCommandDefi
     argumentHint: 'focus',
     descriptionKey: 'desktop.chat.command.compact',
     name: 'compact',
+  },
+  mcp: {
+    kind: 'action',
+    action: 'view',
+    argumentHint: null,
+    descriptionKey: 'desktop.chat.command.mcp',
+    name: 'mcp',
   },
   review: {
     kind: 'prompt',

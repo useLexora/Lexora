@@ -128,6 +128,7 @@ export async function createBuddySessionExtensions(
         : { id: options.conversationId, kind: 'conversation' },
     })
     capabilities.push(createCodemodeCapability(() => codemodeEnabled), ...await services.createCapabilities({
+      isCodemodeEnabled: () => codemodeEnabled,
       conversationId: options.conversationId,
       executionProfile: options.executionProfile,
       cwd: options.canonicalRoot,

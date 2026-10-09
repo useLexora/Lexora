@@ -1,10 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { McpToolExposure } from '../../../shared/connectors/mcpToolExposure'
+import { createHash } from 'node:crypto'
+import { mcpNamespaceBase } from '../../../shared/connectors/mcpToolExposure'
 
 export type McpTransport = 'stdio' | 'streamable-http'
 
 export interface McpServerRecord {
   id: string
   name: string
+  toolNamespace: string
+  toolExposure: McpToolExposure
   transport: McpTransport
   command: string | null
   args: string[] | null
@@ -24,12 +29,16 @@ export interface ConnectorRepository {
   findById: (id: string) => McpServerRecord | null
   list: () => McpServerRecord[]
   remove: (id: string) => boolean
-  upsert: (record: McpServerRecord) => McpServerRecord
+  upsert: (record: McpServerWrite) => McpServerRecord
 }
+
+export type McpServerWrite = Omit<McpServerRecord, 'toolNamespace' | 'toolExposure'> & Partial<Pick<McpServerRecord, 'toolNamespace' | 'toolExposure'>>
 
 interface McpServerRow {
   id: string
   name: string
+  tool_namespace: string
+  tool_exposure: McpToolExposure
   transport: McpTransport
   command: string | null
   args_json: string | null
@@ -43,6 +52,22 @@ interface McpServerRow {
 }
 
 export function createConnectorRepository(database: DatabaseSync): ConnectorRepository {
+  const namespaceOwner = database.prepare('SELECT id FROM mcp_servers WHERE tool_namespace = ?')
+  function allocateNamespace(name: string, id: string): string {
+    const base = mcpNamespaceBase(name) || 'server'
+    if (!namespaceOwner.get(base))
+      return base
+    for (let attempt = 0; ; attempt++) {
+      const suffix = createHash('sha256').update(`${id}:${attempt}`).digest('hex').slice(0, 12)
+      const candidate = `${base.slice(0, 19)}_${suffix}`
+      if (!namespaceOwner.get(candidate))
+        return candidate
+    }
+  }
+  const missing = database.prepare('SELECT id, name FROM mcp_servers WHERE tool_namespace IS NULL ORDER BY id').all() as { id: string, name: string }[]
+  const assignNamespace = database.prepare('UPDATE mcp_servers SET tool_namespace = ? WHERE id = ? AND tool_namespace IS NULL')
+  for (const record of missing)
+    assignNamespace.run(allocateNamespace(record.name, record.id), record.id)
   const readCatalog = database.prepare('SELECT tools_json, updated_at FROM connector_tool_catalogs WHERE connector_id = ?')
   const saveCatalog = database.prepare(`
     INSERT INTO connector_tool_catalogs (connector_id, tools_json, updated_at) VALUES (?, ?, ?)
@@ -55,10 +80,11 @@ export function createConnectorRepository(database: DatabaseSync): ConnectorRepo
   const upsert = database.prepare(`
     INSERT INTO mcp_servers (
       id, name, transport, command, args_json, cwd, url,
-      credential_ref, trusted_at, enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      credential_ref, trusted_at, enabled, created_at, updated_at, tool_namespace, tool_exposure
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
+      tool_exposure = excluded.tool_exposure,
       transport = excluded.transport,
       command = excluded.command,
       args_json = excluded.args_json,
@@ -91,6 +117,11 @@ export function createConnectorRepository(database: DatabaseSync): ConnectorRepo
       return Number(remove.run(id).changes) === 1
     },
     upsert(record) {
+      const existing = find.get(record.id) as McpServerRow | undefined
+      const toolNamespace = existing?.tool_namespace ?? record.toolNamespace ?? allocateNamespace(record.name, record.id)
+      const owner = namespaceOwner.get(toolNamespace) as { id: string } | undefined
+      if (owner && owner.id !== record.id)
+        throw Object.assign(new Error('MCP namespace already exists'), { code: 'MCP_NAMESPACE_CONFLICT' })
       upsert.run(
         record.id,
         record.name,
@@ -104,6 +135,8 @@ export function createConnectorRepository(database: DatabaseSync): ConnectorRepo
         Number(record.enabled),
         record.createdAt,
         record.updatedAt,
+        toolNamespace,
+        record.toolExposure ?? existing?.tool_exposure ?? 'deferred',
       )
       return requireMcpServer(find.get(record.id), record.id)
     },
@@ -121,6 +154,8 @@ function toMcpServer(row: McpServerRow): McpServerRecord {
   return {
     id: row.id,
     name: row.name,
+    toolNamespace: row.tool_namespace,
+    toolExposure: row.tool_exposure,
     transport: row.transport,
     command: row.command,
     args: parseStringArray(row.args_json, row.id),

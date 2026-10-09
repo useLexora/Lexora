@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
+import type { ImageContent, JsonObject, TextContent } from '@earendil-works/pi-ai'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import { Buffer } from 'node:buffer'
 import { McpClientError } from './mcpErrors'
@@ -18,11 +18,17 @@ export async function normalizeMcpResult(result: CallToolResult, write?: McpResu
   let imageBytes = 0
   const save = async (bytes: Uint8Array, mimeType: string) => {
     if (!write)
-      throw new McpClientError('MCP_RESULT_STORAGE_DENIED')
+      return null
     signal?.throwIfAborted()
-    const saved = await write(bytes, mimeType, signal)
-    artifactIds.push(saved.artifactId)
-    return saved
+    try {
+      const saved = await write(bytes, mimeType, signal)
+      artifactIds.push(saved.artifactId)
+      return saved
+    }
+    catch {
+      signal?.throwIfAborted()
+      return null
+    }
   }
   for (const block of result.content ?? []) {
     signal?.throwIfAborted()
@@ -40,19 +46,20 @@ export async function normalizeMcpResult(result: CallToolResult, write?: McpResu
       }
       else {
         const saved = await save(Buffer.from(resource.blob, 'base64'), resource.mimeType ?? 'application/octet-stream')
-        text.push(JSON.stringify(saved))
+        text.push(saved ? JSON.stringify(saved) : '[Binary resource retained in the complete tool result; no file saved.]')
       }
     }
     else if (block.type === 'image' || block.type === 'audio') {
       const bytes = Buffer.from(block.data, 'base64')
-      if (write)
-        text.push(JSON.stringify(await save(bytes, block.mimeType)))
+      const saved = await save(bytes, block.mimeType)
+      if (saved)
+        text.push(JSON.stringify(saved))
       if (includeImages && block.type === 'image' && /^image\/(?:png|jpeg|webp|gif)$/.test(block.mimeType) && imageBytes + bytes.length <= MAX_INLINE_IMAGE) {
         imageBytes += bytes.length
         content.push({ type: 'image', data: block.data, mimeType: block.mimeType })
       }
-      else if (!write) {
-        throw new McpClientError('MCP_RESULT_STORAGE_DENIED')
+      else if (!saved) {
+        text.push(`[${block.type} retained in the complete tool result; no file saved.]`)
       }
     }
   }
@@ -61,10 +68,15 @@ export async function normalizeMcpResult(result: CallToolResult, write?: McpResu
   const joined = text.filter(Boolean).join('\n') || 'MCP tool completed without text output'
   if (Buffer.byteLength(joined) > MAX_INLINE_TEXT) {
     const saved = await save(Buffer.from(joined), 'text/plain')
-    content.unshift({ type: 'text', text: `${Buffer.from(joined).subarray(0, MAX_INLINE_TEXT / 2).toString()}\n[Preview; complete result: ${JSON.stringify(saved)}]` })
+    content.unshift({ type: 'text', text: `${Buffer.from(joined).subarray(0, MAX_INLINE_TEXT / 2).toString()}\n[Preview; ${saved ? `complete result: ${JSON.stringify(saved)}` : 'no file saved. Use Codemode to filter the complete tool result.'}]` })
   }
   else {
     content.unshift({ type: 'text', text: joined })
   }
-  return { content, artifactIds, isError: result.isError === true }
+  const structuredContent = {
+    content: result.content,
+    ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+    ...(result.isError !== undefined ? { isError: result.isError } : {}),
+  }
+  return { content, structuredContent: JSON.parse(JSON.stringify(structuredContent)) as JsonObject, artifactIds, isError: result.isError === true }
 }
