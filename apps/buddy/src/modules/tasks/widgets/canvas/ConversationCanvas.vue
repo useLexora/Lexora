@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { ConversationCanvasDirection, ConversationCanvasNode } from '../../model/canvas/conversationCanvasLayout'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { getTeleport } from '@antv/x6-vue-shape'
 import { computed, provide, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { conversationCanvasActions } from './conversationCanvasContext'
+import { conversationCanvasActions, conversationCanvasRendering } from './conversationCanvasContext'
 import ConversationCanvasToolbar from './ConversationCanvasToolbar.vue'
+import ConversationMessageNode from './ConversationMessageNode.vue'
 import { useConversationCanvas } from './useConversationCanvas'
 
 const props = defineProps<{
@@ -30,7 +30,6 @@ const emit = defineEmits<{
 const { t } = useBuddyI18n(() => props.language)
 const container = useTemplateRef<HTMLElement>('container')
 const controls = useTemplateRef<HTMLElement>('controls')
-const TeleportContainer = getTeleport()
 const minimapContainer = useTemplateRef<HTMLElement>('minimapContainer')
 const minimapVisible = shallowRef(false)
 const direction = shallowRef<ConversationCanvasDirection>('horizontal')
@@ -44,6 +43,11 @@ const canvas = useConversationCanvas({
   minimapVisible,
   canMutate: computed(() => props.canMutate),
   conversationId: computed(() => props.conversationId),
+})
+
+provide(conversationCanvasRendering, {
+  simplified: canvas.simplified,
+  interacting: canvas.interacting,
 })
 
 provide(conversationCanvasActions, {
@@ -68,7 +72,9 @@ defineExpose({
 <template>
   <section class="conversation-canvas" data-testid="conversation-canvas" :data-direction="direction">
     <div ref="container" class="conversation-canvas__graph" />
-    <TeleportContainer />
+    <Teleport v-for="[id, host] in canvas.nodeHosts" :key="id" :to="host.container">
+      <ConversationMessageNode :node="host.node" />
+    </Teleport>
     <div ref="controls" class="conversation-canvas__controls">
       <ConversationCanvasToolbar
         v-model:direction="direction" v-model:minimap-visible="minimapVisible"

@@ -184,7 +184,7 @@ function openDetailChanges(id: string) {
           v-if="canvasVisited"
           v-show="viewMode === 'canvas'"
           ref="canvasRef"
-          :active="viewMode === 'canvas'"
+          :active="active && viewMode === 'canvas'"
           :workspace="workspace"
           :selected-node-id="selectedNodeId"
           @focus-composer="focusComposer"

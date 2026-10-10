@@ -2,15 +2,15 @@ import type { Ref } from 'vue'
 import type { ConversationCanvasDirection, ConversationCanvasNode } from '../../model/canvas/conversationCanvasLayout'
 import type { ConversationCanvasData } from './conversationCanvasContext'
 import { Graph, Snapline } from '@antv/x6'
-import { register } from '@antv/x6-vue-shape'
 import { useResizeObserver } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { conversationCanvasConnection } from '../../model/canvas/conversationCanvasConnections'
+import { createCanvasInteraction, resolveCanvasSimplifiedMode } from '../../model/canvas/conversationCanvasInteraction'
 import { conversationNodeSize, layoutConversationCanvas } from '../../model/canvas/conversationCanvasLayout'
 import { createConversationMinimap } from './conversationCanvasMinimap'
-import ConversationMessageNode from './ConversationMessageNode.vue'
+import { createConversationNodeHost } from './conversationCanvasNodeHost'
 
-register({ shape: 'buddy-conversation-message', component: ConversationMessageNode, width: 304, height: 180 })
+const VIEWPORT_MARGIN_PX = 240
 
 export function useConversationCanvas(options: {
   container: Readonly<Ref<HTMLElement | null>>
@@ -25,13 +25,18 @@ export function useConversationCanvas(options: {
 }) {
   const graph = shallowRef<Graph | null>(null)
   const zoom = shallowRef(100)
+  const simplified = shallowRef(false)
+  const interacting = shallowRef(false)
+  const nodeHost = createConversationNodeHost()
   const viewportByScope = new Map<string, { tx: number, ty: number, scale: number }>()
   const manualPositions = new Map<string, { x: number, y: number }>()
   const nodeData = new Map<string, ConversationCanvasData>()
   const messageSignatures = new WeakMap<ConversationCanvasNode, string>()
   const edgeStyles = new Map<string, string>()
-  const messagesById = computed(() => new Map(options.nodes.value.map(node => [node.id, node])))
-  const structure = computed(() => JSON.stringify(options.nodes.value.map(node => [node.id, node.parentId, node.kind])))
+  const geometry = computed(() => JSON.stringify(options.nodes.value.map((node) => {
+    const { width, height } = conversationNodeSize(node)
+    return [node.id, node.parentId, node.kind, width, height]
+  })))
   let minimap: ReturnType<typeof createConversationMinimap> | null = null
   let layoutDirty = true
   let presentationDirty = true
@@ -41,6 +46,71 @@ export function useConversationCanvas(options: {
   let needsFit = true
   let preferReadableScale = false
   let focusAfterUpdate: string | null = null
+  let zoomFrame = 0
+  let placingViewport = false
+  let inputSurface: HTMLElement | null = null
+  const pointers = new Set<number>()
+  const interaction = createCanvasInteraction({
+    onStart: () => {
+      interacting.value = true
+      minimap?.setInteractionActive(true)
+    },
+    onEnd: () => {
+      interacting.value = false
+      schedule()
+      minimap?.setInteractionActive(false)
+    },
+  })
+
+  function updateRendering(reset = false) {
+    if (graph.value)
+      simplified.value = resolveCanvasSimplifiedMode(reset ? false : simplified.value, graph.value.zoom())
+  }
+
+  function placeViewport(update: () => void) {
+    placingViewport = true
+    try {
+      update()
+    }
+    finally {
+      placingViewport = false
+    }
+  }
+
+  function interact(update: () => void) {
+    if (!graph.value || !options.active.value)
+      return
+    interaction.touch()
+    update()
+  }
+
+  function isCanvasInput(event: Event) {
+    const target = event.target
+    return target instanceof Node && (options.container.value?.contains(target) || options.minimapContainer.value?.contains(target))
+  }
+
+  function onWheel(event: WheelEvent) {
+    if (options.active.value && isCanvasInput(event))
+      interaction.touch()
+  }
+
+  function onPointerDown(event: PointerEvent) {
+    if ((event.button !== 0 && event.button !== 1) || !options.active.value || !isCanvasInput(event))
+      return
+    pointers.add(event.pointerId)
+    interaction.hold()
+  }
+
+  function onPointerEnd(event: PointerEvent) {
+    if (!pointers.delete(event.pointerId) || pointers.size)
+      return
+    interaction.release()
+  }
+
+  function finishInteraction() {
+    pointers.clear()
+    interaction.finish()
+  }
 
   function fit() {
     const value = graph.value
@@ -63,15 +133,17 @@ export function useConversationCanvas(options: {
     const scaleFor = (area: typeof areas[number]) => Math.min(area.width / bounds.width, area.height / bounds.height)
     const area = areas.reduce((best, area) => scaleFor(area) > scaleFor(best) ? area : best)
     const scale = Math.max(0.2, Math.min(maximumScale, scaleFor(area)))
-    value.zoomTo(scale)
     const center = (start: number, extent: number, size: number, preferred: number) => size > extent
       ? start + extent / 2
       : Math.min(start + extent - size / 2, Math.max(start + size / 2, preferred))
-    value.positionPoint(
-      { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 },
-      center(area.x, area.width, bounds.width * scale, container.width / 2),
-      center(area.y, area.height, bounds.height * scale, container.height / 2),
-    )
+    placeViewport(() => {
+      value.zoomTo(scale)
+      value.positionPoint(
+        { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 },
+        center(area.x, area.width, bounds.width * scale, container.width / 2),
+        center(area.y, area.height, bounds.height * scale, container.height / 2),
+      )
+    })
   }
 
   function syncSize(value: Graph) {
@@ -94,13 +166,11 @@ export function useConversationCanvas(options: {
       return
     const source = edge.getSourceNode()
     const target = edge.getTargetNode()
-    const sourceMessage = source && messagesById.value.get(source.id)
-    const targetMessage = target && messagesById.value.get(target.id)
-    if (!source || !target || !sourceMessage || !targetMessage)
+    if (!source || !target)
       return
     const connection = conversationCanvasConnection(
-      { message: sourceMessage, position: source.position() },
-      { message: targetMessage, position: target.position() },
+      source.getBBox(),
+      target.getBBox(),
       options.direction.value,
     )
     edge.setSource({ cell: source.id, anchor: { name: 'topLeft', args: { dx: connection.sourceAnchor.x, dy: connection.sourceAnchor.y } }, connectionPoint: 'anchor' })
@@ -117,7 +187,7 @@ export function useConversationCanvas(options: {
       let node = value.getCellById(message.id)
       if (!node) {
         const data = createNodeData(message)
-        node = value.addNode({ id: message.id, shape: 'buddy-conversation-message', ...position, data, attrs: { fo: { overflow: 'visible' } }, zIndex: 1 })
+        node = value.addNode({ id: message.id, shape: 'buddy-conversation-message', ...position, data, zIndex: 1 })
         nodeData.set(message.id, data)
       }
       if (node.isNode()) {
@@ -173,9 +243,12 @@ export function useConversationCanvas(options: {
   function syncPresentation(value: Graph) {
     const byId = new Map(options.nodes.value.map(node => [node.id, node]))
     for (const message of options.nodes.value) {
+      const cell = value.getCellById(message.id)
+      if (!cell)
+        continue
       const data = createNodeData(message)
       if (!sameData(nodeData.get(message.id), data))
-        value.getCellById(message.id)?.setData(data, { overwrite: true })
+        cell.setData(data, { overwrite: true })
       nodeData.set(message.id, data)
       const parent = message.parentId ? byId.get(message.parentId) : null
       if (!parent)
@@ -204,6 +277,8 @@ export function useConversationCanvas(options: {
       return
     const nextScope = `${options.conversationId.value}:${options.direction.value}`
     const switched = scope !== nextScope
+    if (switched && interaction.active)
+      return
     const changingConversation = !scope.startsWith(`${options.conversationId.value}:`)
     if (switched) {
       if (scope)
@@ -215,35 +290,31 @@ export function useConversationCanvas(options: {
     }
     applying = true
     try {
+      const updateLayout = layoutDirty && !interaction.active
       value.batchUpdate('conversation', () => {
-        if (layoutDirty)
+        if (updateLayout)
           syncLayout(value)
-        if (presentationDirty || layoutDirty) {
-          for (const message of options.nodes.value) {
-            const cell = value.getCellById(message.id)
-            const size = conversationNodeSize(message)
-            if (cell?.isNode() && (cell.size().width !== size.width || cell.size().height !== size.height)) {
-              cell.resize(size.width, size.height)
-              minimap?.refresh()
-              for (const edge of value.getConnectedEdges(cell)) updateEdge(edge.id)
-            }
-          }
+        if (presentationDirty || updateLayout)
           syncPresentation(value)
-        }
       })
-      if (layoutDirty)
+      if (updateLayout) {
         minimap?.refresh()
-      layoutDirty = false
+        layoutDirty = false
+      }
       presentationDirty = false
     }
     finally {
       applying = false
     }
+    if (interaction.active)
+      return
     if (switched) {
       const saved = viewportByScope.get(scope)
       if (saved) {
-        value.zoomTo(saved.scale)
-        value.translate(saved.tx, saved.ty)
+        placeViewport(() => {
+          value.zoomTo(saved.scale)
+          value.translate(saved.tx, saved.ty)
+        })
         needsFit = false
       }
       else {
@@ -254,7 +325,7 @@ export function useConversationCanvas(options: {
     if (needsFit) {
       fit()
       if (preferReadableScale && value.zoom() < 0.7) {
-        value.zoomTo(0.8)
+        placeViewport(() => value.zoomTo(0.8))
         const head = options.nodes.value.findLast(node => node.active)
         if (head)
           focus(head.id)
@@ -270,10 +341,11 @@ export function useConversationCanvas(options: {
         focusAfterUpdate = null
       }
     }
+    updateRendering(switched)
   }
 
   function schedule() {
-    if (!frame)
+    if (!frame && options.active.value)
       frame = requestAnimationFrame(sync)
   }
 
@@ -291,7 +363,8 @@ export function useConversationCanvas(options: {
     const value = new Graph({
       container: options.container.value!,
       autoResize: true,
-      virtual: true,
+      virtual: { enabled: true, margin: VIEWPORT_MARGIN_PX },
+      createCellView: cell => cell.isNode() ? nodeHost.view : undefined,
       background: { color: 'transparent' },
       grid: { visible: true, size: 20, args: { color: '#a2a2a226', thickness: 1 } },
       panning: { enabled: true, eventTypes: ['leftMouseDown', 'mouseWheel', 'mouseWheelDown'] },
@@ -311,9 +384,31 @@ export function useConversationCanvas(options: {
       connecting: { allowBlank: false, allowLoop: false, allowNode: false, allowEdge: false, allowPort: false },
     })
     graph.value = value
-    value.on('scale', ({ sx }) => {
-      zoom.value = Math.round(sx * 100)
+    const onViewportChange = () => {
+      if (!options.active.value)
+        return
+      if (!placingViewport && !applying)
+        interaction.touch()
+      if (!zoomFrame) {
+        zoomFrame = requestAnimationFrame(() => {
+          zoomFrame = 0
+          zoom.value = Math.round(value.zoom() * 100)
+          updateRendering()
+        })
+      }
+    }
+    value.on('scale', () => {
+      value.options.virtual = { enabled: true, margin: VIEWPORT_MARGIN_PX / value.zoom() }
+      value.enableVirtualRender()
+      onViewportChange()
     })
+    value.on('translate', onViewportChange)
+    inputSurface = options.container.value!.parentElement
+    inputSurface?.addEventListener('wheel', onWheel, { capture: true, passive: true })
+    inputSurface?.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('pointerup', onPointerEnd, true)
+    window.addEventListener('pointercancel', onPointerEnd, true)
+    window.addEventListener('blur', finishInteraction)
     value.use(new Snapline({ enabled: true, tolerance: 8 }))
     syncMinimap()
     value.on('node:change:position', ({ node }) => {
@@ -325,14 +420,20 @@ export function useConversationCanvas(options: {
     })
     sync()
   })
-  watch([structure, options.conversationId, options.direction], scheduleLayout, { flush: 'post' })
-  watch([options.nodes, options.canMutate], schedulePresentation, { flush: 'post' })
+  watch(geometry, scheduleLayout, { flush: 'post' })
+  watch([options.conversationId, options.direction], () => {
+    finishInteraction()
+    scheduleLayout()
+  }, { flush: 'sync' })
+  watch(options.nodes, schedulePresentation, { flush: 'post' })
+  watch(options.canMutate, schedulePresentation, { flush: 'sync' })
   function syncMinimap() {
     const value = graph.value
     if (!value)
       return
     if (options.active.value && options.minimapVisible.value && options.minimapContainer.value?.clientWidth && options.container.value?.clientWidth && !minimap) {
       minimap = createConversationMinimap(options.minimapContainer.value)
+      minimap.setInteractionActive(interaction.active)
       value.use(minimap)
     }
     else if ((!options.active.value || !options.minimapVisible.value) && minimap) {
@@ -341,29 +442,48 @@ export function useConversationCanvas(options: {
     }
   }
   watch([options.minimapVisible, options.active], () => {
+    if (!options.active.value) {
+      finishInteraction()
+      cancelAnimationFrame(frame)
+      frame = 0
+      cancelAnimationFrame(zoomFrame)
+      zoomFrame = 0
+    }
     if (!options.active.value || !options.minimapVisible.value)
       syncMinimap()
-    else schedule()
+    if (options.active.value)
+      schedule()
   }, { flush: 'sync' })
   useResizeObserver(options.container, () => {
     if (needsFit || !minimap)
       schedule()
   })
   onBeforeUnmount(() => {
+    inputSurface?.removeEventListener('wheel', onWheel, true)
+    inputSurface?.removeEventListener('pointerdown', onPointerDown, true)
+    window.removeEventListener('pointerup', onPointerEnd, true)
+    window.removeEventListener('pointercancel', onPointerEnd, true)
+    window.removeEventListener('blur', finishInteraction)
+    interaction.dispose()
+    interacting.value = false
     cancelAnimationFrame(frame)
-
+    cancelAnimationFrame(zoomFrame)
     graph.value?.dispose()
-
+    nodeHost.hosts.clear()
     graph.value = null
   })
 
   return {
+    nodeHosts: nodeHost.hosts,
     zoom,
-    fit,
+    simplified,
+    interacting,
+    fit: () => interact(fit),
     focus,
-    resetZoom: () => graph.value?.zoomTo(1),
-    zoomBy: (delta: number) => graph.value?.zoom(delta),
+    resetZoom: () => interact(() => graph.value?.zoomTo(1)),
+    zoomBy: (delta: number) => interact(() => graph.value?.zoom(delta)),
     resetLayout: () => {
+      finishInteraction()
       manualPositions.clear()
 
       needsFit = true

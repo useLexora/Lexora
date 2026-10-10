@@ -8,6 +8,11 @@ export interface ConversationCanvasData {
   canMutate: boolean
 }
 
+export const conversationCanvasRendering: InjectionKey<{
+  simplified: Readonly<Ref<boolean>>
+  interacting: Readonly<Ref<boolean>>
+}> = Symbol('conversationCanvasRendering')
+
 export const conversationCanvasActions: InjectionKey<{
   language: Readonly<Ref<BuddyLocale>>
   active: Readonly<Ref<boolean>>

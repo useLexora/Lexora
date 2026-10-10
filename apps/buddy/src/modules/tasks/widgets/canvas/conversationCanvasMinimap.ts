@@ -19,6 +19,8 @@ class ConversationOverviewNodeView extends NodeView {
 
 class ConversationMiniMap extends MiniMap {
   private fitFrame = 0
+  private interactionActive = false
+  private refreshPending = false
   private pointerPosition: { x: number, y: number } | null = null
   private readonly capturePointer = (event: PointerEvent) => {
     this.pointerPosition = this.targetGraph.clientToLocal(event.clientX, event.clientY)
@@ -53,10 +55,26 @@ class ConversationMiniMap extends MiniMap {
     this.refresh()
   }
 
+  setInteractionActive(active: boolean) {
+    this.interactionActive = active
+    if (active && this.fitFrame) {
+      cancelAnimationFrame(this.fitFrame)
+      this.fitFrame = 0
+      this.refreshPending = true
+    }
+    else if (!active && this.refreshPending) {
+      this.refresh()
+    }
+  }
+
   refresh() {
+    this.refreshPending = true
+    if (this.interactionActive)
+      return
     if (!this.fitFrame) {
       this.fitFrame = requestAnimationFrame(() => {
         this.fitFrame = 0
+        this.refreshPending = false
         this.targetGraph.zoomToFit({ useCellGeometry: true })
         this.syncScale()
       })

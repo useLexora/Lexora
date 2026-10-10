@@ -33,7 +33,7 @@ describe('conversation canvas layout', () => {
     expect(to.height).toBeGreaterThan(conversationNodeSize(node('q', 'a')).height)
     const first = positions.get('a')!
     const second = positions.get('q')!
-    const connection = conversationCanvasConnection({ message: source, position: first }, { message: target, position: second }, direction)
+    const connection = conversationCanvasConnection(first, second, direction)
     if (direction === 'horizontal') {
       expect(first.y + from.height / 2).toBe(second.y + to.height / 2)
       expect(connection.sourceAnchor).toEqual({ x: from.width, y: from.height / 2 })

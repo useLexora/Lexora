@@ -11,10 +11,14 @@ import { formatChatRunDuration } from '../../model/transcript/chatRunDuration'
 import BuddyArtifactCard from '../artifacts/BuddyArtifactCard.vue'
 import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
 import BuddyChatTokenUsage from '../transcript/BuddyChatTokenUsage.vue'
-import { conversationCanvasActions } from './conversationCanvasContext'
+import { conversationCanvasActions, conversationCanvasRendering } from './conversationCanvasContext'
 
 const props = defineProps<{ node: Node }>()
 const actions = inject(conversationCanvasActions)!
+const { simplified, interacting } = inject(conversationCanvasRendering, {
+  simplified: shallowRef(false),
+  interacting: shallowRef(false),
+})
 const { t } = useBuddyI18n(actions.language)
 const data = shallowRef(props.node.getData<ConversationCanvasData>())
 const textRef = useTemplateRef<HTMLElement>('textRef')
@@ -25,6 +29,7 @@ function update() {
 props.node.on('change:data', update)
 onBeforeUnmount(() => props.node.off('change:data', update))
 const message = computed(() => data.value.message)
+const summary = computed(() => message.value.text.slice(0, 240).replace(/\s+/g, ' ').trim().slice(0, 160))
 const selected = computed(() => actions.selectedNodeId.value === message.value.id)
 const busy = computed(() => message.value.status === 'running' || message.value.status === 'queued')
 const label = computed(() => t(`desktop.canvas.${message.value.kind}`))
@@ -32,7 +37,15 @@ const duration = computed(() => message.value.metadata
   ? formatChatRunDuration(message.value.metadata.startedAt, message.value.metadata.completedAt, now.value)
   : null)
 const clock = useIntervalFn(() => now.value = Date.now(), 1000, { immediate: false })
-watch(() => busy.value && actions.active.value, value => value ? clock.resume() : clock.pause(), { immediate: true })
+watch(() => busy.value && actions.active.value && !simplified.value && !interacting.value, (value) => {
+  if (value) {
+    now.value = Date.now()
+    clock.resume()
+  }
+  else {
+    clock.pause()
+  }
+}, { immediate: true })
 watch(() => message.value.text, () => {
   if (busy.value && textRef.value)
     textRef.value.scrollTop = textRef.value.scrollHeight
@@ -51,7 +64,7 @@ function open(event: MouseEvent) {
 <template>
   <article
     class="conversation-node"
-    :class="[message.kind, data.direction, { selected, busy }, message.status ? `status-${message.status}` : '']"
+    :class="[message.kind, data.direction, { selected, busy, simplified, interacting, 'active-branch': message.active }, message.status ? `status-${message.status}` : '']"
     :data-node-id="message.id" :data-kind="message.kind" :data-status="message.status"
     tabindex="0" :aria-label="label" :aria-current="selected ? 'true' : undefined"
     @keydown.enter.self.prevent="actions.open(message.id)"
@@ -66,7 +79,7 @@ function open(event: MouseEvent) {
         <div class="conversation-node__trailing">
           <span v-if="message.kind === 'draft'" class="conversation-node__status">{{ label }}</span>
           <span v-if="message.status && message.status !== 'completed'" class="conversation-node__status" :class="message.status">{{ t(`desktop.canvas.${message.status}`) }}</span>
-          <div v-if="message.kind !== 'draft' && !busy" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
+          <div v-if="!simplified && message.kind !== 'draft' && !busy" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
             <button v-if="message.kind === 'question'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.chat.editMessage')" :title="t('desktop.chat.editMessage')" data-testid="canvas-node-edit" @click.stop="actions.edit(message.id)">
               <DesktopIcon :component="Edit20Regular" />
             </button>
@@ -81,7 +94,15 @@ function open(event: MouseEvent) {
           </div>
         </div>
       </header>
-      <div v-if="message.text || message.quoteCount || message.attachmentCount || message.artifactCount || busy || message.kind === 'draft'" class="conversation-node__body" @mousedown.stop @pointerdown.stop>
+      <div v-if="simplified" class="conversation-node__summary" @mousedown.stop @pointerdown.stop>
+        <p v-if="summary" class="conversation-node__summary-text">
+          {{ summary }}
+        </p>
+        <p v-else-if="busy || message.kind === 'draft'" class="conversation-node__placeholder">
+          {{ t(message.kind === 'draft' ? 'desktop.canvas.writeInComposer' : 'desktop.canvas.generating') }}
+        </p>
+      </div>
+      <div v-else-if="message.text || message.quoteCount || message.attachmentCount || message.artifactCount || busy || message.kind === 'draft'" class="conversation-node__body" @mousedown.stop @pointerdown.stop>
         <div v-if="message.attachmentCount" class="conversation-node__attachments">
           <span v-for="attachment in message.attachments" :key="attachment.attachmentId" class="conversation-node__attachment" :title="attachment.name">
             <img v-if="attachment.kind === 'image'" :src="resolveBuddyAttachmentPreviewUrl(attachment) ?? undefined" :alt="attachment.name" loading="lazy" draggable="false">
@@ -121,7 +142,7 @@ function open(event: MouseEvent) {
           </button>
         </div>
       </div>
-      <footer v-if="message.metadata" class="conversation-node__footer" @mousedown.stop @pointerdown.stop>
+      <footer v-if="!simplified && message.metadata" class="conversation-node__footer" @mousedown.stop @pointerdown.stop>
         <span class="conversation-node__model" :title="message.metadata.modelId">{{ message.metadata.modelId }}</span>
         <BuddyChatTokenUsage v-if="message.metadata.usage" compact :language="actions.language.value" :usage="message.metadata.usage" />
         <span v-if="duration" class="conversation-node__duration">{{ duration }}</span>
@@ -253,5 +274,14 @@ function open(event: MouseEvent) {
 .conversation-node__attachment span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-node__more { flex: none; padding: 6px 2px; border: 0; border-radius: 4px; background: transparent; color: var(--buddy-accent-text); font-size: 10px; cursor: pointer; }
 .conversation-node__more:hover { background: var(--buddy-state-hover); }
+// LOD changes only card contents, never the graph's geometry or anchors.
+.conversation-node__summary { min-width: 0; padding: 0 16px 12px; overflow: hidden; }
+.conversation-node__summary-text { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 1.65; }
+.conversation-node.active-branch .conversation-node__role { color: var(--buddy-accent-text); }
+.conversation-node.simplified .conversation-node__card { box-shadow: none; transition: none; }
+.conversation-node.simplified.selected .conversation-node__card { box-shadow: none; outline: 1px solid var(--buddy-focus-ring); }
+.conversation-node.simplified .conversation-node__card::before { content: none; animation: none; }
+.conversation-node.interacting .conversation-node__card { transition: none; }
+.conversation-node.interacting .conversation-node__card::before { animation-play-state: paused; }
 @media (hover: none) { .conversation-node__actions { opacity: 1; pointer-events: auto; } }
 </style>

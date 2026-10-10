@@ -71,7 +71,6 @@
   },
   "devDependencies": {
     "@antv/x6": "^3.1.8",
-    "@antv/x6-vue-shape": "^3.0.2",
     "@dnd-kit/abstract": "^0.5.0",
     "@dnd-kit/dom": "^0.5.0",
     "@dnd-kit/vue": "^0.5.0",
