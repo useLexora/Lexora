@@ -5,6 +5,9 @@ inputs:
   packages:
     description: Space-separated workspace package selectors.
     required: true
+  cache-only:
+    description: Populate a missing pnpm store cache without preparing a workspace for checks or builds.
+    default: 'false'
 
 runs:
   using: composite
@@ -25,8 +28,19 @@ runs:
         key: node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
           node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-
+        lookup-only: ${{ inputs.cache-only == 'true' }}
+
+    - name: Restore pnpm store for cache warming
+      if: inputs.cache-only == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+        restore-keys: |
+          node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-
 
     - name: Install workspace dependencies
+      if: inputs.cache-only != 'true' || steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         WORKSPACE_PACKAGES: ${{ inputs.packages }}

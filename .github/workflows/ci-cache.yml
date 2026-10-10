@@ -1,0 +1,34 @@
+name: CI cache
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/ci.yml
+      - .github/workflows/ci-cache.yml
+      - .github/actions/install-workspace-dependencies/action.yml
+      - .github/scripts/resolve-ci-scope.mjs
+      - .github/scripts/buddy-test-runtime.mjs
+      - .cargo/**
+      - rust-toolchain*
+      - .node-version
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - apps/buddy/package.json
+      - apps/buddy/native/**
+      - apps/buddy/platform/native/**
+      - apps/buddy/platform/targets.json
+      - apps/buddy/shared/platform/**
+      - apps/buddy/resources/icons/app-icon.png
+      - packages/assets/buddy/pets/default/**
+      - packaging/buddy/release/native-host.mjs
+      - packaging/buddy/release/targets.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  warm-caches:
+    name: Warm caches
+    uses: ./.github/workflows/ci.yml
