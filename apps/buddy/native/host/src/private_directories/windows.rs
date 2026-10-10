@@ -34,7 +34,16 @@ use super::{
 mod security;
 use security::PrivateSecurity;
 
-pub(super) fn ensure(paths: &[String]) -> Result<(), DirectoryFailure> {
+#[derive(PartialEq, Eq)]
+pub(super) enum ExistingDirectoryPolicy {
+    Preserve,
+    ValidateAcl,
+}
+
+pub(super) fn ensure(
+    paths: &[String],
+    existing: ExistingDirectoryPolicy,
+) -> Result<(), DirectoryFailure> {
     let security = PrivateSecurity::new()?;
     for (directory_index, path) in paths.iter().enumerate() {
         let (root, parts) = directory_parts(path).map_err(|code| {
@@ -47,10 +56,11 @@ pub(super) fn ensure(paths: &[String]) -> Result<(), DirectoryFailure> {
                 DirectoryFailure::new(DirectoryError::Failed, DirectoryOperation::OpenDirectory)
                     .at_directory(directory_index)
             })?;
-            let private = index + 1 == parts.len();
+            let private =
+                existing == ExistingDirectoryPolicy::ValidateAcl && index + 1 == parts.len();
             let (child, created) = open_child(parent, part, &security, private)
                 .map_err(|error| error.at_directory(directory_index))?;
-            if created && !private {
+            if existing == ExistingDirectoryPolicy::ValidateAcl && created && !private {
                 let (checked, _) = open_child(parent, part, &security, true)
                     .map_err(|error| error.at_directory(directory_index))?;
                 security

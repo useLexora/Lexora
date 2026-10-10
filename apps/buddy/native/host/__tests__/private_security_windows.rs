@@ -1,5 +1,76 @@
 use super::*;
 
+fn set_directory_acl(path: &std::path::Path, descriptor: &LocalMemory) {
+    use windows_sys::Win32::Security::{PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW};
+
+    let name: Vec<u16> = path.to_str().unwrap().encode_utf16().chain([0]).collect();
+    assert_ne!(
+        // SAFETY: The NUL-terminated path and owned security descriptor remain live for this call.
+        unsafe {
+            SetFileSecurityW(
+                name.as_ptr(),
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor.0,
+            )
+        },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+}
+
+#[test]
+fn application_storage_preserves_access_while_sandbox_storage_requires_private_permissions() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("existing");
+    std::fs::create_dir(&path).unwrap();
+    set_directory_acl(&path, &from_sddl("D:P(A;OICI;FA;;;WD)").unwrap());
+    let sentinel = path.join("preserved.txt");
+    std::fs::write(&sentinel, "existing data").unwrap();
+    let paths = [path.to_str().unwrap().to_owned()];
+    let request = serde_json::to_vec(&serde_json::json!({ "paths": paths })).unwrap();
+    let mut output = Vec::new();
+    crate::private_directories::run(request.as_slice(), &mut output).unwrap();
+    assert_eq!(output, b"{\"ok\":true}");
+    let failure = crate::private_directories::ensure(&paths).unwrap_err();
+    assert_eq!(failure.operation, DirectoryOperation::ValidateAcl);
+    assert_eq!(
+        failure.acl.unwrap().principal,
+        Some(DirectoryPrincipal::Everyone)
+    );
+    assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "existing data");
+}
+
+#[test]
+fn application_storage_does_not_require_directory_listing_or_acl_reads() {
+    let fixture = tempfile::tempdir().unwrap();
+    let parent = fixture.path().join("parent");
+    let child = parent.join("child");
+    crate::private_directories::ensure(&[child.to_str().unwrap().to_owned()]).unwrap();
+    let sentinel = child.join("preserved.txt");
+    std::fs::write(&sentinel, "existing data").unwrap();
+    let paths = [
+        parent.to_str().unwrap().to_owned(),
+        child.to_str().unwrap().to_owned(),
+    ];
+    let request = serde_json::to_vec(&serde_json::json!({ "paths": paths })).unwrap();
+    let restore = PrivateSecurity::new().unwrap();
+    let denied = from_sddl("D:P(D;;0x20000;;;OW)(D;;0x1;;;WD)(A;OICI;FA;;;WD)").unwrap();
+    set_directory_acl(&parent, &denied);
+    let mut output = Vec::new();
+    let application = crate::private_directories::run(request.as_slice(), &mut output);
+    let sandbox = crate::private_directories::ensure(&paths);
+    let preserved = std::fs::read_to_string(&sentinel);
+    set_directory_acl(&parent, &restore.descriptor);
+    application.unwrap();
+    assert_eq!(output, b"{\"ok\":true}");
+    assert_eq!(
+        sandbox.unwrap_err().operation,
+        DirectoryOperation::OpenDirectory
+    );
+    assert_eq!(preserved.unwrap(), "existing data");
+}
+
 #[test]
 fn freshly_created_policy_has_private_owner_and_inheritable_acl() {
     let security = PrivateSecurity::new().unwrap();
