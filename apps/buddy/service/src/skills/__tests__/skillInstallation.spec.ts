@@ -115,14 +115,16 @@ describe('skill installation lifecycle', () => {
     const ref = { id: installed.id, name: installed.name, revision: installed.revision }
     expect((await f.service.materializeForSpace('space-a', [ref]))[0]?.body).toBe('Version one')
 
+    await f.service.setEnabled({ spaceId: 'space-a', id: installed.id, revision: installed.revision, enabled: false })
     await f.source('writer', 'Version two')
     const preview = await f.service.preview({ spaceId: 'space-a', updateId: installed.id, source: { kind: 'directory', location: source } })
     await f.source('writer', 'Changed after preview')
     const result = await f.service.install({ previewId: preview.id, candidateIds: [preview.candidates[0]!.id] })
     const updated = result.skills[0]!
-    expect(updated.id).toBe(installed.id)
+    expect(updated).toMatchObject({ id: installed.id, enabled: false, status: 'disabled' })
     expect(updated.revision).not.toBe(installed.revision)
     expect((await f.service.get('space-a', updated.id)).body).toBe('Version two')
+    await f.service.setEnabled({ spaceId: 'space-a', id: updated.id, revision: updated.revision, enabled: true })
     await expect(f.service.materializeForSpace('space-a', [ref])).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
     await expect(stat(installed.filePath)).rejects.toMatchObject({ code: 'ENOENT' })
     await f.service.remove({ spaceId: 'space-a', id: updated.id, revision: updated.revision })

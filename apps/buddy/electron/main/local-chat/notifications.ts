@@ -12,7 +12,7 @@ import { providerNotifications } from '../../../shared/providers/providerApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runNotifications } from '../../../shared/runs/runApi'
 import { runtimeResponseSchemas } from '../../../shared/runtime/serviceState'
-import { skillChangedSchema } from '../../../shared/skills/skillApi'
+import { skillChangedSchema, skillReviewRequested } from '../../../shared/skills/skillApi'
 import { spaceChanged } from '../../../shared/spaces/spaceApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 
@@ -76,6 +76,12 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const result = skillChangedSchema.safeParse(notification.params)
       if (result.success)
         sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.skillsChanged, result.data)
+      return
+    }
+    if (notification.method === skillReviewRequested.method) {
+      const result = skillReviewRequested.params.safeParse(notification.params)
+      if (result.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.skillsReviewRequested, result.data)
       return
     }
     if (notification.method === runNotifications.event.method) {

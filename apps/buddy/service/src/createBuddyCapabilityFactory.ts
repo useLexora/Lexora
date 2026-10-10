@@ -13,6 +13,7 @@ import type { ImageGenerationServiceOptions } from './images/ImageGenerationServ
 import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
 import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
+import type { SkillAuthoringServices } from './skills/skillAuthoringCapability'
 import type { WebCapabilityService } from './web/WebCapabilityService'
 import { createOutputPresentationCapability } from './artifacts/outputPresentationExtension'
 import { createAutomationCapability } from './automations/automationExtension'
@@ -26,6 +27,7 @@ import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
 import { createImageTransformCapability } from './images/imageTransformExtension'
 import { createPetCapability } from './pet/petExtension'
 import { createPluginAuthoringCapability } from './plugins/pluginAuthoringCapability'
+import { createSkillAuthoringCapability } from './skills/skillAuthoringCapability'
 import { createSystemHost } from './system/createSystemHost'
 import { createSystemCapability } from './system/systemExtension'
 import { createWebCapability } from './web/webExtension'
@@ -35,6 +37,7 @@ export interface BuddyCapabilityServices {
   pluginCapabilities?: (context: BuddyCapabilityContext) => Promise<BuddyCapability[]>
   pluginAuthoring: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
   pluginBuilder: PluginAuthoringService
+  skillAuthoring: Omit<SkillAuthoringServices, 'conversations'>
   artifactService: ImageGenerationServiceOptions['artifactService'] & Pick<ArtifactService, 'presentOutputs'> & SessionReferenceServices['artifacts']
   attachmentService: ImageGenerationServiceOptions['attachmentService'] & SessionReferenceServices['attachments']
   automationService: CreateAutomationToolOptions['service']
@@ -94,6 +97,7 @@ export function createBuddyCapabilityFactory(
       if (context.sessionMode === 'interactive') {
         capabilities.push(...await services.pluginCapabilities?.(context) ?? [])
         capabilities.push(createPluginAuthoringCapability(context, services.pluginAuthoring, services.pluginBuilder))
+        capabilities.push(createSkillAuthoringCapability(context, { ...services.skillAuthoring, conversations: services.conversations }))
         capabilities.push(createAutomationCapability({
           service: services.automationService,
         }))

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
-import { NAlert, NSpin } from 'naive-ui'
+import { NAlert, NSpin, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { DESKTOP_ROUTE_NAMES, desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -16,6 +17,8 @@ import DesktopSkillList from './DesktopSkillList.vue'
 import DesktopSkillsToolbar from './DesktopSkillsToolbar.vue'
 
 const context = useSkillsContext()
+const message = useMessage()
+const creating = shallowRef(false)
 const { language } = useDesktopUi()
 const { t } = useBuddyI18n(language)
 const route = useRoute()
@@ -66,6 +69,21 @@ function openImport(skill: LocalSkill | null = null) {
   importOpen.value = true
 }
 
+async function create() {
+  if (!hasScope.value || creating.value)
+    return
+  creating.value = true
+  try {
+    await context.startCreation(scope.value, t('desktop.skills.creationPrompt'))
+  }
+  catch (reason) {
+    message.error(reason instanceof Error && reason.message === 'SKILL_UNAVAILABLE' ? t('desktop.skills.creatorUnavailable') : resolveLocalChatErrorMessage(reason, language.value))
+  }
+  finally {
+    creating.value = false
+  }
+}
+
 async function locate(skill: LocalSkill) {
   search.value = ''
   if (selectedSkill.value) {
@@ -95,7 +113,7 @@ async function afterDetailClosed() {
 
 <template>
   <div class="skills-manager">
-    <DesktopSkillsToolbar v-model:search="search" :language="language" :category="category" :space-id="scope" :spaces="context.spaces.value" :disabled="busy || importOpen" @category="changeCategory" @space="router.replace(desktopRouteLocations.skills($event))" @install="openImport()" />
+    <DesktopSkillsToolbar v-model:search="search" :language="language" :category="category" :space-id="scope" :spaces="context.spaces.value" :disabled="busy || importOpen || creating" @category="changeCategory" @space="router.replace(desktopRouteLocations.skills($event))" @install="openImport()" @create="create" />
     <NAlert v-if="error && !importOpen" type="error" :show-icon="false">
       {{ error }}
     </NAlert>

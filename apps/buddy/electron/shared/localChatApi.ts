@@ -198,6 +198,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   skillsRemove: 'lexora:buddy:skills:remove',
   skillsReveal: 'lexora:buddy:skills:reveal',
   skillsChanged: 'lexora:buddy:skills:changed',
+  skillsReviewRequested: 'lexora:buddy:skills:review-requested',
   usageSnapshot: 'lexora:buddy:usage:snapshot',
   usageAnalytics: 'lexora:buddy:usage:analytics',
   usageTopTasks: 'lexora:buddy:usage:top-tasks',
@@ -350,6 +351,7 @@ export interface LocalChatApi {
     remove: (input: { spaceId: string | null, id: string, revision: string }) => Promise<LocalSkillCatalog>
     reveal: (input: { spaceId: string | null, id: string }) => Promise<void>
     onChanged: (listener: (event: SkillChangeNotice) => void) => () => void
+    onReview: (listener: (preview: SkillInstallPreview) => void) => () => void
   }
   connectors: {
     onChanged: (listener: (event: ConnectorChangeNotice) => void) => () => void

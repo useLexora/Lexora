@@ -14,6 +14,7 @@ import { Emitter, filterEvent } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { isSkillAvailable, skillsRpc } from '../../../shared/skills/skillApi'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
+import { validateSkillForAuthoring } from './skillAuthoringValidation'
 import { discoverSkillFiles, readSkill, requireSkillPath, SkillError, skillIdentity } from './skillFiles'
 import { prepareSkillSource, writeSkillFiles } from './skillImport'
 import { SkillInspector } from './SkillInspector'
@@ -234,14 +235,14 @@ export class SkillService {
     })
   }
 
-  preview(input: SkillPreviewInput): Promise<SkillInstallPreview> {
+  preview(input: SkillPreviewInput, mode: 'import' | 'authoring' = 'import'): Promise<SkillInstallPreview> {
     if (this.#quiescing)
       return Promise.reject(new SkillError('SKILL_CHANGED'))
     const request = copyEventSnapshot(input)
-    return this.#track(() => this.#preview(request))
+    return this.#track(() => this.#preview(request, mode))
   }
 
-  async #preview(input: SkillPreviewInput): Promise<SkillInstallPreview> {
+  async #preview(input: SkillPreviewInput, mode: 'import' | 'authoring'): Promise<SkillInstallPreview> {
     this.#requireSpace(input.spaceId)
     for (const [id, preview] of this.#previews) {
       if (Date.now() - preview.createdAt > 30 * 60 * 1000)
@@ -260,7 +261,9 @@ export class SkillService {
     try {
       const prepared = await prepareSkillSource(input.source, directory)
       const diagnostics: Array<{ code: 'SKILL_INVALID', message: string, path: string }> = []
-      const paths = await discoverSkillFiles(prepared.root, false, path => diagnostics.push({ code: 'SKILL_INVALID', message: 'Skill source is outside the selected folder or cannot be read.', path }))
+      const paths = mode === 'authoring'
+        ? [join(prepared.root, 'SKILL.md')]
+        : await discoverSkillFiles(prepared.root, false, path => diagnostics.push({ code: 'SKILL_INVALID', message: 'Skill source is outside the selected folder or cannot be read.', path }))
       const candidates: ImportPreview['candidates'] = new Map()
       const items: Array<SkillInstallPreview['candidates'][number]> = []
       let totalBytes = 0
@@ -268,6 +271,13 @@ export class SkillService {
       for (const path of paths) {
         try {
           const loaded = await readSkill(path, prepared.root)
+          if (mode === 'authoring') {
+            const issues = validateSkillForAuthoring(loaded)
+            if (issues.length) {
+              diagnostics.push(...issues.map(message => ({ code: 'SKILL_INVALID' as const, message, path })))
+              continue
+            }
+          }
           if (!loaded.hasDeclaredName || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(loaded.name) || loaded.name.length > 64 || loaded.description.length > 1024)
             throw new SkillError('SKILL_INVALID')
           if (updating && loaded.name !== updating.name)
@@ -302,6 +312,7 @@ export class SkillService {
       const result = copyEventSnapshot({ id, spaceId: input.spaceId, updateId: updating?.id ?? null, source: prepared.source, candidates: checkedItems, diagnostics })
       if (this.#disposed)
         throw new SkillError('SKILL_CHANGED')
+      this.#requireSpace(input.spaceId)
       this.#previews.set(id, { directory, candidates, result, createdAt: Date.now() })
       return result
     }

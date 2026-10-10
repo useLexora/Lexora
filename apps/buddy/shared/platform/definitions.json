@@ -1,5 +1,5 @@
 {
-  "skills": ["plugin-creator"],
+  "skills": ["plugin-creator", "skill-creator"],
   "features": {
     "nativePet": {
       "tools": [

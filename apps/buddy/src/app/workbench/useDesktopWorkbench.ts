@@ -98,9 +98,9 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, events: Ap
   function newTask(spaceId?: string | null, paneId = center(), direction?: SplitDirection): Promise<void> {
     return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: spaceId ?? null } }, labels().newTask, { paneId, direction })
   }
-  async function startTaskWithSkill(name: string, prompt: string): Promise<void> {
+  async function startTaskWithSkill(name: string, prompt: string, spaceId: string | null = null): Promise<void> {
     const version = navigationVersion
-    const catalog = await api.localChat.skills.list(null)
+    const catalog = await api.localChat.skills.list(spaceId)
     if (version !== navigationVersion)
       return
     const skill = catalog.skills.find(skill => skill.name === name && isSkillAvailable(skill))
@@ -110,7 +110,7 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, events: Ap
       { type: 'prompt_directive', directive: 'skill', value: skill.name, skill: { id: skill.id, name: skill.name, revision: skill.revision } },
       { type: 'text', text: ` ${prompt}` },
     ] }] }
-    await activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: null } }, labels().newTask, { initialContent: content })
+    await activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId } }, labels().newTask, { initialContent: content })
   }
   async function isDraftDirty(view: WorkbenchView): Promise<boolean> {
     if (view.resource.scheme !== 'draft')

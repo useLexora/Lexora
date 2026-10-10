@@ -1,4 +1,4 @@
-import type { SkillChangeNotice } from '../../../shared/skills/skillApi'
+import type { SkillChangeNotice, SkillInstallPreview } from '../../../shared/skills/skillApi'
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
@@ -21,6 +21,11 @@ export function createSkillsApi(): Pick<LocalChatApi, 'skills'> {
       const handle = (_event: Electron.IpcRendererEvent, input: SkillChangeNotice) => listener(Object.freeze({ ...input }))
       ipcRenderer.on(LOCAL_CHAT_IPC_CHANNELS.skillsChanged, handle)
       return () => ipcRenderer.removeListener(LOCAL_CHAT_IPC_CHANNELS.skillsChanged, handle)
+    },
+    onReview(listener) {
+      const handle = (_event: Electron.IpcRendererEvent, preview: SkillInstallPreview) => listener(preview)
+      ipcRenderer.on(LOCAL_CHAT_IPC_CHANNELS.skillsReviewRequested, handle)
+      return () => ipcRenderer.removeListener(LOCAL_CHAT_IPC_CHANNELS.skillsReviewRequested, handle)
     },
   }) }
 }

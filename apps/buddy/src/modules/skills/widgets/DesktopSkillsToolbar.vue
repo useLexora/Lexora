@@ -14,7 +14,7 @@ const props = defineProps<{
   spaces: readonly LocalSpace[]
   disabled: boolean
 }>()
-const emit = defineEmits<{ category: [value: 'global' | 'space'], space: [id: string], install: [] }>()
+const emit = defineEmits<{ category: [value: 'global' | 'space'], space: [id: string], install: [], create: [] }>()
 const search = defineModel<string>('search', { required: true })
 const { t } = useBuddyI18n(() => props.language)
 const spaceOptions = computed(() => props.spaces.filter(space => !space.revokedAt).map(space => ({ value: space.id, label: space.name })))
@@ -61,8 +61,11 @@ async function closeSearch() {
           <DesktopIcon :component="Search20Regular" />
         </template>
       </NButton>
-      <NButton type="primary" :disabled="disabled || !hasScope" @click="emit('install')">
+      <NButton :disabled="disabled || !hasScope" @click="emit('install')">
         {{ t('desktop.skills.install') }}
+      </NButton>
+      <NButton type="primary" :disabled="disabled || !hasScope" @click="emit('create')">
+        {{ t('desktop.skills.create') }}
       </NButton>
     </div>
   </div>

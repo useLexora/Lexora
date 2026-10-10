@@ -17,7 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   preview: [source: SkillOrigin | 'directory']
   install: [ids: readonly string[]]
-  discard: []
+  discard: [previewId: string | null]
 }>()
 const show = defineModel<boolean>('show', { required: true })
 const { t } = useBuddyI18n(() => props.language)
@@ -39,7 +39,7 @@ watch(() => props.preview, (value, previous) => {
   selected.value = value?.candidates.filter(candidate => !candidate.blocked).map(candidate => candidate.id) ?? []
   if (previous && !value && !props.error)
     show.value = false
-})
+}, { immediate: true })
 
 function select(id: string, enabled: boolean) {
   selected.value = enabled ? [...selected.value, id] : selected.value.filter(value => value !== id)
@@ -55,7 +55,7 @@ function close() {
   if (props.busy)
     return
   show.value = false
-  emit('discard')
+  emit('discard', props.preview?.id ?? null)
 }
 </script>
 

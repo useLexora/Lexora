@@ -8,6 +8,7 @@ export interface SkillsContext {
   spaces: Readonly<Ref<readonly LocalSpace[]>>
   ready: Promise<void>
   writeClipboardText: (text: string) => Promise<void>
+  startCreation: (spaceId: string | null, prompt: string) => Promise<void>
 }
 
 const [useProvideSkillsContext, injectSkillsContext] = createInjectionState(

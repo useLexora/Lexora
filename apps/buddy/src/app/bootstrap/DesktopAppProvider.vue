@@ -11,6 +11,7 @@ import { useExtensionState, useExtensionUiContributions, useExtensionViews, useP
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
 import { usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
+import { DesktopSkillReviewHost } from '@/modules/skills/ui'
 import { sessionReferenceNavigationKey, useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
 import { useProvideDesktopUpdates } from '@/modules/updates'
 import { DesktopUpdateHost } from '@/modules/updates/ui'
@@ -269,6 +270,7 @@ useProvideSettingsContext({
   openTask: navigation.openTask,
 })
 useProvideSkillsContext({
+  startCreation: (spaceId, prompt) => workbench.startTaskWithSkill('skill-creator', prompt, spaceId),
   writeClipboardText: text => api.clipboard.writeText(text),
   api: api.localChat.skills,
   spaces: taskIndex.index.spaces,
@@ -304,6 +306,7 @@ watch(() => stores.applicationSettings.config.value?.desktop.theme, (theme) => {
   </WorkbenchSurfaceHost>
   <DesktopExtensionOverlays />
   <DesktopExtensionReviewHost />
+  <DesktopSkillReviewHost />
   <DesktopUpdateHost :language="stores.applicationSettings.language.value" />
   <slot :shell="shellBindings" />
 </template>

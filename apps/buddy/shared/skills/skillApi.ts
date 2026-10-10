@@ -81,6 +81,7 @@ const previewSchema = z.object({
   diagnostics: z.array(skillDiagnosticSchema),
 }).strict()
 export type SkillInstallPreview = DeepReadonly<z.infer<typeof previewSchema>>
+export const skillReviewRequested = { method: 'skills.reviewRequested', params: previewSchema } as const
 
 export const skillsRequestSchemas = {
   skillScope: scopeSchema.extend({ metadataOnly: z.boolean().optional() }),

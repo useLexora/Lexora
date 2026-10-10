@@ -32,6 +32,7 @@ import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycl
 import { promptsRpc } from '../../shared/prompts/promptApi'
 import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
+import { skillReviewRequested } from '../../shared/skills/skillApi'
 import { spaceChanged } from '../../shared/spaces/spaceApi'
 import { PiEventBridge } from './agent/events/PiEventBridge'
 import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
@@ -793,6 +794,7 @@ export async function startBuddyService(
         record,
         pluginAuthoring: options.rpc,
         pluginBuilder,
+        skillAuthoring: { skills: skillService, requestReview: preview => options.rpc.notify(skillReviewRequested.method, preview) },
         pluginCapabilities: context => extensionAgent.capabilities(context),
         artifactService,
         attachmentService,
