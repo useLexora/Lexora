@@ -1,0 +1,61 @@
+name: Publish Lexora Release
+run-name: Publish Lexora v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Reviewed draft version to publish (x.y.z); reruns verify an already published release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lexora-release
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    name: Verify and publish reviewed release
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: buddy-release
+    permissions:
+      attestations: read
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select immutable release source
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release version must be x.y.z" >&2
+            exit 1
+          fi
+          release_commit="$(git rev-parse --verify "refs/tags/v$VERSION^{commit}")"
+          git merge-base --is-ancestor "$release_commit" HEAD
+          git checkout --detach "$release_commit"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Validate release version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node packaging/release/version.mjs --check-tag "v$VERSION"
+
+      - name: Verify reviewed notes, provenance and assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node packaging/buddy/release/github-release.mjs --publish

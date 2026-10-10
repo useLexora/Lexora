@@ -7,20 +7,24 @@ import { writeError, writeOutput } from '../../shared/cli-output.mjs'
 import { readBuddyReleaseMetadata } from './artifacts.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 
-export { readBuddyReleaseMetadata } from './artifacts.mjs'
-
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyBuddyReleaseArtifacts({ cwd = repoRoot, checksumPath } = {}) {
+export function verifyBuddyReleaseArtifacts({ cwd = repoRoot, directory, verifyChecksum = false } = {}) {
   const metadata = readBuddyReleaseMetadata(cwd)
-  const artifacts = metadata.artifacts.map(artifact => ({
-    ...artifact,
-    hash: sha256(readFileSync(artifact.path)),
-  }))
+  const artifacts = metadata.artifacts.map((artifact) => {
+    const path = directory ? join(directory, artifact.name) : artifact.path
+    return { ...artifact, path, hash: sha256(readFileSync(path)) }
+  })
   const content = `${artifacts.map(artifact => `${artifact.hash}  ${artifact.name}`).join('\n')}\n`
-  const path = checksumPath ?? join(resolveBuddyOutputPaths(cwd).outputRoot, 'artifacts/SHA256SUMS.txt')
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, content)
+  const path = join(directory ?? join(resolveBuddyOutputPaths(cwd).outputRoot, 'artifacts'), 'SHA256SUMS.txt')
+  if (verifyChecksum) {
+    if (readFileSync(path, 'utf8') !== content)
+      throw new Error('Release checksum file does not match the downloaded packages')
+  }
+  else {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, content)
+  }
   return { ...metadata, artifacts, checksum: { name: 'SHA256SUMS.txt', path, hash: sha256(content) } }
 }
 
@@ -28,12 +32,6 @@ export function writeBuddyReleaseGithubEnv(path, metadata) {
   const entries = {
     LEXORA_BUDDY_VERSION: metadata.version,
     LEXORA_BUDDY_RELEASE_TAG: metadata.releaseTag,
-    LEXORA_BUDDY_RELEASE_REPO: metadata.releaseRepo,
-  }
-  for (const artifact of [...metadata.artifacts, { ...metadata.checksum, key: 'CHECKSUM' }]) {
-    entries[`LEXORA_BUDDY_${artifact.key}_ASSET_NAME`] = artifact.name
-    entries[`LEXORA_BUDDY_${artifact.key}_PATH`] = artifact.path
-    entries[`LEXORA_BUDDY_${artifact.key}_SHA256`] = artifact.hash
   }
   for (const [key, value] of Object.entries(entries)) {
     if (/[\r\n]/.test(value))
@@ -75,22 +73,22 @@ function sha256(content) {
   return createHash('sha256').update(content).digest('hex')
 }
 
-async function main() {
+function main() {
   const args = process.argv.slice(2)
-  const publicCheck = args.length === 1 && args[0] === '--verify-public'
-  if (!publicCheck && args.length && (args.length !== 2 || args[0] !== '--github-env' || !args[1]))
-    throw new Error('Usage: verify-release-artifacts.mjs [--github-env <path> | --verify-public]')
+  if (args.length && (args.length !== 2 || args[0] !== '--github-env' || !args[1]))
+    throw new Error('Usage: verify-release-artifacts.mjs [--github-env <path>]')
   const metadata = verifyBuddyReleaseArtifacts()
-  if (publicCheck)
-    await verifyPublicAssets(metadata)
-  else if (args.length)
+  if (args.length)
     writeBuddyReleaseGithubEnv(args[1], metadata)
   writeOutput(`Release assets verified: ${metadata.artifacts.map(artifact => artifact.name).join(', ')}`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  void main().catch((error) => {
+  try {
+    main()
+  }
+  catch (error) {
     writeError(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
-  })
+  }
 }

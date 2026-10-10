@@ -96,9 +96,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.target.outputs.artifact }}
-          path: |
-            ${{ steps.target.outputs.path }}
-            apps/buddy/.output/artifacts/macos/SHA256SUMS.txt
+          path: ${{ steps.target.outputs.path }}
           if-no-files-found: error
           include-hidden-files: true
           compression-level: 0
@@ -117,18 +115,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
-
-      - name: Install workspace dependencies
-        uses: ./.github/actions/install-workspace-dependencies
-        with:
-          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
 
       - name: Download verified macOS package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

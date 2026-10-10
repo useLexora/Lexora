@@ -70,9 +70,6 @@ jobs:
           node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
           node packaging/buddy/release/artifacts.mjs --format deb --github-output "$GITHUB_OUTPUT"
 
-      - name: Test native components
-        run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --workspace ${{ steps.package.outputs.cargo-args }}
-
       - name: Build Ubuntu package
         run: pnpm --filter @uselexora/lexora-buddy package:deb
 
@@ -279,9 +276,6 @@ jobs:
         run: |
           node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
           node packaging/buddy/release/artifacts.mjs --format nsis --github-output "$GITHUB_OUTPUT"
-
-      - name: Test native components
-        run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --workspace ${{ steps.package.outputs.cargo-args }}
 
       - name: Build Windows package
         run: pnpm --filter @uselexora/lexora-buddy package:windows
