@@ -73,7 +73,7 @@ async function copyCodeBlock(event: MouseEvent) {
 }
 
 function handleLinkClick(event: MouseEvent) {
-  if (!(event.target instanceof Element))
+  if (event.defaultPrevented || !(event.target instanceof Element))
     return
 
   const anchor = event.target.closest<HTMLAnchorElement>('a')
@@ -93,14 +93,6 @@ function handleLinkClick(event: MouseEvent) {
   }
 
   emit('openLink', href)
-}
-
-function handleClick(event: MouseEvent) {
-  void copyCodeBlock(event)
-  if (event.defaultPrevented)
-    return
-
-  handleLinkClick(event)
 }
 
 function showCopiedState(button: HTMLButtonElement) {
@@ -137,7 +129,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="buddy-chat-markdown-host" @click.capture="handleClick">
+  <div class="buddy-chat-markdown-host" @click="handleLinkClick" @click.capture="copyCodeBlock">
     <MarkdownRender
       class="buddy-chat-markdown"
       :batch-rendering="animateStreaming"

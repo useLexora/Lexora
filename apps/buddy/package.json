@@ -94,7 +94,7 @@
     "electron-builder": "^26.16.1",
     "electron-vite": "^5.0.0",
     "marked": "^18.0.13",
-    "markstream-vue": "^2.0.11",
+    "markstream-vue": "^2.0.17",
     "monaco-editor": "^0.56.0",
     "naive-ui": "^2.45.3",
     "sass-embedded": "^1.103.1",
