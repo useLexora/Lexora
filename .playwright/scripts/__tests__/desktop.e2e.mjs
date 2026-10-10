@@ -6,6 +6,75 @@ import process from 'node:process'
 import { inspectWindowsPrivateDirectory as inspect } from '../../../apps/buddy/platform/filesystem/__tests__/windowsPrivateDirectoryFixture.ts'
 import { expect, test } from '../fixtures/electron.mjs'
 
+for (const firstResult of ['ready', 'cancelled']) {
+  test(`sandbox setup keeps one active operation and settles its ${firstResult} result without a loading gap`, async ({ buddy }) => {
+    const instance = await buddy.createInstance('sandbox-setup')
+    const { app, page, diagnostics } = await instance.launch()
+    await app.evaluate(({ ipcMain }) => {
+      globalThis.sandboxSetupProbe = { status: 'needs_setup', setups: 0, check: null, install: null }
+      ipcMain.removeHandler('lexora:app:get-sandbox-status')
+      ipcMain.handle('lexora:app:get-sandbox-status', async () => {
+        const probe = globalThis.sandboxSetupProbe
+        await probe.check?.promise
+        return probe.status
+      })
+      ipcMain.removeHandler('lexora:app:setup-sandbox')
+      ipcMain.handle('lexora:app:setup-sandbox', () => {
+        const probe = globalThis.sandboxSetupProbe
+        probe.setups++
+        probe.install = Promise.withResolvers()
+        return probe.install.promise
+      })
+    })
+    await page.reload()
+    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
+    await page.getByRole('button', { name: '启用 Windows 沙盒', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: '继续', exact: true }).click()
+    await expect.poll(() => app.evaluate(() => globalThis.sandboxSetupProbe.setups)).toBe(1)
+    const waiting = dialog.locator('button').filter({ hasText: '等待 Windows 完成…' })
+    await expect(waiting).toHaveClass(/n-button--loading/)
+    await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+    await waiting.evaluate(button => button.click())
+    expect(await app.evaluate(() => globalThis.sandboxSetupProbe.setups)).toBe(1)
+
+    await app.evaluate((_electron, result) => {
+      const probe = globalThis.sandboxSetupProbe
+      probe.check = Promise.withResolvers()
+      probe.status = result === 'ready' ? 'available' : 'needs_setup'
+      probe.install.resolve(result)
+    }, firstResult)
+
+    if (firstResult === 'cancelled') {
+      await expect(dialog.getByRole('status')).toContainText('已取消管理员确认')
+      await expect(waiting).toHaveClass(/n-button--loading/)
+      await waiting.evaluate(button => button.click())
+      expect(await app.evaluate(() => globalThis.sandboxSetupProbe.setups)).toBe(1)
+      await app.evaluate(() => {
+        globalThis.sandboxSetupProbe.check.resolve()
+        globalThis.sandboxSetupProbe.check = null
+      })
+      await dialog.getByRole('button', { name: '继续', exact: true }).click()
+      await expect.poll(() => app.evaluate(() => globalThis.sandboxSetupProbe.setups)).toBe(2)
+      await app.evaluate(() => {
+        const probe = globalThis.sandboxSetupProbe
+        probe.check = Promise.withResolvers()
+        probe.status = 'available'
+        probe.install.resolve('ready')
+      })
+    }
+
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('.desktop-permission-mode-selector__warning')).toHaveCount(0)
+    await app.evaluate(() => {
+      globalThis.sandboxSetupProbe.check.resolve()
+      globalThis.sandboxSetupProbe.check = null
+    })
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'sandbox-ready.png'), animations: 'disabled' })
+    expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  })
+}
+
 test('three concurrent instances isolate their data and survive another instance crashing', async ({ buddy }) => {
   const instances = await Promise.all(['first', 'second', 'third'].map(label => buddy.createInstance(label)))
   const applications = await Promise.all(instances.map(instance => instance.launch()))

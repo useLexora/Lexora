@@ -44,25 +44,34 @@ export function useShellSandboxStatus(open: Ref<boolean>) {
   }
 
   async function setup() {
-    if (isSettingUp.value || !availability.value.action)
+    if (disposed || isSettingUp.value || !availability.value.action)
       return
     isSettingUp.value = true
     setupResult.value = undefined
     revision++
+    isChecking.value = false
     try {
       const result = sandboxSetupResultSchema.parse(await window.lexoraDesktop?.app.setupSandbox())
-      if (!disposed)
-        setupResult.value = result
+      if (disposed)
+        return
+      setupResult.value = result
+      if (result === 'ready')
+        status.value = 'available'
+      else if (result === 'incompatible')
+        status.value = 'incompatible'
+      else
+        await refresh()
+      return disposed ? undefined : result
     }
     catch {
-      if (!disposed)
-        setupResult.value = 'failed'
-    }
-    finally {
       if (!disposed) {
-        isSettingUp.value = false
+        setupResult.value = 'failed'
         await refresh()
       }
+    }
+    finally {
+      if (!disposed)
+        isSettingUp.value = false
     }
   }
 

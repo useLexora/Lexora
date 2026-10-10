@@ -1,7 +1,5 @@
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { z } from 'zod'
@@ -13,6 +11,7 @@ import { probeWindowsSandbox } from './probeWindowsSandbox'
 
 const execute = promisify(execFile)
 const statusSchema = z.object({ installed: z.boolean(), healthy: z.boolean(), path: z.string().min(1).max(4096), protocol: z.literal(1) }).strict()
+const versionSchema = z.object({ protocol: z.literal(1), version: z.number().int().positive() }).strict()
 
 async function inspect(executable: string) {
   const { stdout } = await execute(executable, ['status'], {
@@ -24,15 +23,23 @@ async function inspect(executable: string) {
   return statusSchema.parse(JSON.parse(stdout))
 }
 
-async function matchesBundled(executable: string, installed: string): Promise<boolean> {
-  const hashes = await Promise.all([executable, installed].map(async path => createHash('sha256').update(await readFile(path)).digest('hex')))
-  return hashes[0] === hashes[1]
+async function componentVersion(executable: string): Promise<number> {
+  const { stdout } = await execute(executable, ['version'], {
+    env: createWindowsHostEnvironment(executable, process.env),
+    windowsHide: true,
+    timeout: 10_000,
+    maxBuffer: 16 * 1024,
+  })
+  return versionSchema.parse(JSON.parse(stdout)).version
 }
 
 async function healthy(executable: string, status: z.infer<typeof statusSchema>): Promise<boolean> {
-  if (!status.healthy || !await matchesBundled(executable, status.path))
+  if (!status.healthy)
     return false
   try {
+    const [bundledVersion, installedVersion] = await Promise.all([executable, status.path].map(componentVersion))
+    if (bundledVersion !== installedVersion)
+      return false
     await execute(status.path, ['health'], { env: createWindowsHostEnvironment(status.path, process.env), windowsHide: true, timeout: 15_000, maxBuffer: 16 * 1024 })
     return true
   }

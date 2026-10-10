@@ -103,8 +103,8 @@ function confirmFullAccess() {
 }
 
 async function confirmSetup() {
-  await setup()
-  if (setupResult.value === 'ready' || setupResult.value === 'incompatible') {
+  const result = await setup()
+  if (result === 'ready' || result === 'incompatible') {
     setupOpen.value = false
     popoverOpen.value = true
   }
