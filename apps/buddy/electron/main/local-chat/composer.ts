@@ -8,6 +8,7 @@ export function registerComposerIpc(context: LocalChatIpcContext): void {
   const { handle, request, options } = context
 
   handle(LOCAL_CHAT_IPC_CHANNELS.composerResourcesAccept, (_event, input) => request(composerResourcesRpc.accept, composerRequestSchemas.composerResourceAccept.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.composerResourcesReadText, (_event, input) => request(composerResourcesRpc.readText, composerRequestSchemas.composerResourceTarget.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsFind, (_event, input) => request(composerDraftsRpc.find, composerRequestSchemas.composerDraftTarget.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsList, () => request(composerDraftsRpc.list, {}))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsDiscard, (_event, input) => request(composerDraftsRpc.discard, composerDraftsRpc.discard.input.parse(input)))

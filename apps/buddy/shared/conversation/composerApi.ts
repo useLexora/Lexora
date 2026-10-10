@@ -3,7 +3,7 @@ import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { sessionIdentitySchema } from '../runtime/apiValidation'
 import { attachmentsResponseSchemas } from './attachmentApi'
-import { BUDDY_ATTACHMENT_COUNT_LIMIT } from './attachmentPolicy'
+import { BUDDY_ATTACHMENT_COUNT_LIMIT, BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT } from './attachmentPolicy'
 import { buddyComposerDraftDiscardSchema, buddyComposerDraftOpenSchema, buddyComposerDraftSaveSchema, buddyComposerDraftSchema, buddyComposerDraftTargetSchema } from './composerDraft'
 import { buddyComposerResourceAcceptSchema, buddyComposerResourceCompleteSchema, buddyComposerResourceSchema, buddyComposerResourceTargetSchema, buddyComposerSourceListResponseSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from './composerResource'
 
@@ -46,6 +46,7 @@ export const composerResponseSchemas = {
 } as const
 
 export const composerResourcesRpc = {
+  readText: { method: 'composerResources.readText', input: buddyComposerResourceTargetSchema, response: z.string().max(BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT) },
   resolvePreview: { method: 'composerResources.resolvePreview', input: buddyComposerResourceTargetSchema, response: attachmentsResponseSchemas.attachmentPreview },
   accept: { method: 'composerResources.accept', input: composerRequestSchemas.composerResourceAccept, response: composerResponseSchemas.composerResources },
   complete: { method: 'composerResources.complete', input: composerRequestSchemas.composerResourceComplete, response: composerResponseSchemas.composerResource },

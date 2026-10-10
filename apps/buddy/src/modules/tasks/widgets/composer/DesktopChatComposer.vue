@@ -28,6 +28,7 @@ import ChatSessionReferenceStrip from '../references/ChatSessionReferenceStrip.v
 import ChatComposerSourceMenu from './ChatComposerSourceMenu.vue'
 import ChatComposerSourcePicker from './ChatComposerSourcePicker.vue'
 import ComposerResourceStrip from './ComposerResourceStrip.vue'
+import ComposerTextPreview from './ComposerTextPreview.vue'
 
 const props = defineProps<DesktopChatComposerProps>()
 
@@ -68,6 +69,7 @@ const {
   loadContextOptions,
   modelInputIssue,
   resourceStripResources,
+  pastedText,
   quotes,
   sessionReferences,
   addQuote,
@@ -80,6 +82,7 @@ const {
   sourceOptions,
   suggestions,
 } = useChatComposer({
+  pasteTextAsAttachment: toRef(props, 'pasteTextAsAttachment'),
   canSend: toRef(props, 'canSend'),
   composerContent: toRef(props, 'composerContent'),
   draft: toRef(props, 'draft'),
@@ -94,6 +97,8 @@ const {
   language: toRef(props, 'language'),
   loadContextOptions: (query, deepSearch, scope) => props.loadContextOptions(query, deepSearch, scope),
   beginImport: (files, origin) => props.beginImport(files, origin),
+  importPastedText: text => props.importPastedText(text),
+  readResourceText: id => props.readResourceText(id),
   selectSource: source => props.selectSource(source),
   onSend: payload => emit('send', payload),
   onUpdateContent: (content, value) => emit('updateContent', content, value),
@@ -193,6 +198,7 @@ function captureDraft(): WorkbenchMenuSelection {
         :disabled="isSending"
         @remove="removeResource"
         @retry="emit('retryResource', $event)"
+        @preview-text="pastedText.open"
       />
     </template>
 
@@ -376,6 +382,14 @@ function captureDraft(): WorkbenchMenuSelection {
       </WorkbenchSlot>
     </template>
   </DesktopChatComposerFrame>
+  <ComposerTextPreview
+    :preview="pastedText.preview.value"
+    :language="language"
+    :disabled="isSending"
+    @close="pastedText.close"
+    @retry="pastedText.retry"
+    @restore="pastedText.restore"
+  />
 </template>
 
 <style scoped lang="scss">

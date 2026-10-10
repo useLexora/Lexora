@@ -15,11 +15,13 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, normalize } from 'node:path'
+import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
 import { BUDDY_MEDIA_EXTENSIONS, BUDDY_MEDIA_FILE_BYTES_LIMIT, isDocumentMimeType } from '../../../shared/conversation/attachmentFormats'
 import {
   BUDDY_ATTACHMENT_COUNT_LIMIT,
   BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT,
+  BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT,
   BUDDY_TEXT_ATTACHMENT_EXTENSIONS,
   getAttachmentKind,
 } from '../../../shared/conversation/attachmentPolicy'
@@ -32,7 +34,6 @@ import { hasDocumentSignature } from './validateDocumentBytes'
 
 export const DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const { replace: rename, syncDirectory } = fileStorage
-const MAX_TEXT_PROMPT_BYTES = 1024 * 1024
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ...BUDDY_MEDIA_EXTENSIONS,
   '.csv': 'text/csv',
@@ -453,6 +454,16 @@ export class AttachmentService {
     return { mimeType: record.mimeType, path: record.storedPath }
   }
 
+  async readText(id: string, draftId: string, conversationId: string | null): Promise<string> {
+    const record = this.#requireForPrompt(id, conversationId, draftId)
+    if (getAttachmentKind(record.mimeType) !== 'text')
+      throw new AttachmentError('ATTACHMENT_UNSUPPORTED')
+    if (record.sizeBytes > BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
+      throw new AttachmentError('ATTACHMENT_TOO_LARGE')
+    const bytes = await readBoundedFile(dirname(record.storedPath), record.storedPath, BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
+    return bytes.toString('utf8')
+  }
+
   async #release(ids: readonly string[]): Promise<string[]> {
     const released: string[] = []
     for (const id of ids) {
@@ -613,7 +624,7 @@ export class AttachmentService {
             text: null,
           }
         }
-        if (!isTextAttachment(record) || record.sizeBytes > MAX_TEXT_PROMPT_BYTES)
+        if (!isTextAttachment(record) || record.sizeBytes > BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
           throw new AttachmentError('VALIDATION_FAILED')
         const text = await this.#readFile(record.storedPath, 'utf8')
         return {
@@ -944,7 +955,7 @@ export function normalizeAttachmentMetadata(input: { mimeType: string, name: str
   if (!isDocumentMimeType(mimeType) && !SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) && !isTextMimeType(mimeType))
     throw new AttachmentError('ATTACHMENT_UNSUPPORTED')
   const byteLimit = isTextMimeType(mimeType)
-    ? MAX_TEXT_PROMPT_BYTES
+    ? BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT
     : isDocumentMimeType(mimeType) && mimeType !== 'application/pdf'
       ? BUDDY_MEDIA_FILE_BYTES_LIMIT
       : BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT

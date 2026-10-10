@@ -66,6 +66,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     backgroundCloseNoticeShown: z.boolean().optional(),
     chat: z.object({
       outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),
+      pasteTextAsAttachment: z.boolean().optional(),
       permissionMode: z.enum(BUDDY_PERMISSION_MODES).optional(),
       welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).optional(),
     }).strict().optional(),

@@ -11,6 +11,7 @@ export function registerComposerResourceRpc(options: {
   service: ComposerResourceService
 }): () => void {
   const disposers = [
+    registerRuntimeRequest(options.rpc, composerResourcesRpc.readText, params => options.drafts.run(params.draftId, () => options.service.readText(params))),
     registerRuntimeRequest(options.rpc, composerResourcesRpc.resolvePreview, params => options.drafts.run(params.draftId, () => options.service.resolvePreview(params))),
     registerRuntimeRequest(options.rpc, composerResourcesRpc.listSources, params => options.service.listSources(
       params,

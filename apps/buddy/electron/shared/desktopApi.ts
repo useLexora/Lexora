@@ -152,12 +152,14 @@ export type DesktopChatOutlinePosition = typeof DESKTOP_CHAT_OUTLINE_POSITIONS[n
 
 export interface DesktopChatPreferences {
   outlinePosition: DesktopChatOutlinePosition
+  pasteTextAsAttachment: boolean
   permissionMode: import('../../shared/permissions/permissionMode').BuddyPermissionMode
   welcome: DesktopChatWelcomePreference
 }
 
 export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
   outlinePosition: 'top-right',
+  pasteTextAsAttachment: true,
   permissionMode: BUDDY_DEFAULT_PERMISSION_MODE,
   welcome: 'random',
 }

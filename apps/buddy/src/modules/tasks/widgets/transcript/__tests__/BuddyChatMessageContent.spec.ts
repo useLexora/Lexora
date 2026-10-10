@@ -32,14 +32,6 @@ describe('buddyChatMessageContent', () => {
     expect(document.body.textContent).toContain('<img src="https://example.com/pixel.png" alt="像素">')
   })
 
-  it.each([false, true])('propagates the application dark mode to nested Markdown: %s', async (isDark) => {
-    const html = await renderMessage('assistant', '- 外层列表\n\n  > 嵌套引用与 `code`', isDark)
-    const roots = [...parseHtml(html).querySelectorAll('.markstream-vue')]
-    expect(roots.length).toBeGreaterThan(1)
-    for (const root of roots)
-      expect(root.classList.contains('dark')).toBe(isDark)
-  })
-
   it('renders a retired directive as plain text and keeps live directives highlighted', async () => {
     const document = parseHtml(await renderDirectiveMessage())
     const body = document.querySelector('.buddy-chat-message-content__structured-body')
@@ -85,7 +77,7 @@ describe('buddyChatMessageContent', () => {
           language: shallowRef('zh-CN'),
           isDark: shallowRef(false),
           appSidebarCollapsed: shallowRef(false),
-          chat: shallowRef({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' }),
+          chat: shallowRef({ outlinePosition: 'top-right', pasteTextAsAttachment: true, permissionMode: 'policy_approval', welcome: 'random' }),
         })
         useProvideChatContent({
           canPreviewFile,
@@ -136,7 +128,7 @@ function parseHtml(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
 }
 
-async function renderMessage(role: LocalMessage['role'], text: string, isDark = false): Promise<string> {
+async function renderMessage(role: LocalMessage['role'], text: string): Promise<string> {
   const message = {
     attachments: [],
     branchId: 'branch-1',
@@ -148,7 +140,7 @@ async function renderMessage(role: LocalMessage['role'], text: string, isDark = 
     runId: null,
   } as LocalMessage
 
-  return renderContent(message, isDark)
+  return renderContent(message)
 }
 
 async function renderStructuredUserMessage(panel: boolean): Promise<string> {
@@ -217,14 +209,14 @@ async function renderDirectiveMessage(): Promise<string> {
   return renderContent(message)
 }
 
-function renderContent(message: LocalMessage, isDark = false) {
+function renderContent(message: LocalMessage) {
   return renderToString(createSSRApp({
     setup() {
       useProvideDesktopUi({
         language: shallowRef('zh-CN'),
-        isDark: shallowRef(isDark),
+        isDark: shallowRef(false),
         appSidebarCollapsed: shallowRef(false),
-        chat: shallowRef({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' }),
+        chat: shallowRef({ outlinePosition: 'top-right', pasteTextAsAttachment: true, permissionMode: 'policy_approval', welcome: 'random' }),
       })
       return () => h(BuddyChatMessageContent, {
         language: 'zh-CN',

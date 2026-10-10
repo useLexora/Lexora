@@ -22,6 +22,8 @@ export type ChatComposerInteraction = ChatComposerNoticeInteraction
 export interface ComposerResourcesState {
   dispose: () => void
   begin: (files: readonly File[], origin?: 'file' | 'clipboard') => readonly string[]
+  importText: (text: string) => Promise<string | null>
+  readText: (resourceId: string) => Promise<string>
   rejectedIds: ReadonlySet<string>
   resources: Readonly<Ref<readonly ComposerResourceView[]>>
   retry: (resourceId: string) => Promise<void>

@@ -5,7 +5,7 @@ import { builtinSettingsModuleIds, publicSettingsGroups } from '@buddy-shared/se
 
 export type SettingsText = string | ((language: BuddyLocale) => string)
 export type SettingsSection = 'plugins' | 'personal' | 'ai' | 'integrations' | 'system'
-export type GeneralSettingField = 'language' | 'contextPanelMode' | 'contextPanelGlobal'
+export type GeneralSettingField = 'language' | 'contextPanelMode' | 'contextPanelGlobal' | 'pasteTextAsAttachment'
 
 export interface SettingsModule {
   id: string

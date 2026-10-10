@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
-import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '../../../shared/desktopApi'
+import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS } from '../../../shared/desktopApi'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
 async function createConfigStore() {
@@ -18,6 +18,27 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('enables pasted text attachments for new and legacy profiles and preserves an opt-out across updates and restart', async () => {
+    const { configPath, store } = await createConfigStore()
+    expect((await store.read()).desktop.chat.pasteTextAsAttachment).toBe(true)
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop.chat]\nwelcome = "none"\nfuture = true\n')
+    expect((await store.read()).desktop.chat.pasteTextAsAttachment).toBe(true)
+    await store.update({ desktop: { chat: { pasteTextAsAttachment: false } } })
+    await store.update({ desktop: { chat: { outlinePosition: 'center-left' } } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat).toEqual({
+      ...DEFAULT_DESKTOP_CHAT_PREFERENCES,
+      outlinePosition: 'center-left',
+      pasteTextAsAttachment: false,
+      welcome: 'none',
+    })
+    const saved = await readFile(configPath, 'utf8')
+    expect(saved).toContain('paste_text_as_attachment = false')
+    expect(saved).toContain('future = true')
+    await writeFile(configPath, '[desktop.chat]\npaste_text_as_attachment = "false"\n')
+    await expect(store.read()).rejects.toThrow()
+  })
+
   it('enables update notifications for old profiles and preserves an opt-out across other settings and restart', async () => {
     const { store, configPath } = await createConfigStore()
     await mkdir(dirname(configPath), { recursive: true })
@@ -71,14 +92,14 @@ describe('lexoraConfigStore', () => {
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(configPath, '[desktop]\ntheme = "dark"\nwelcome_variant = "writing"\n[custom]\nkeep = true\n')
     const original = await store.read()
-    expect(original.desktop.chat).toEqual({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'random' })
+    expect(original.desktop.chat).toEqual(DEFAULT_DESKTOP_CHAT_PREFERENCES)
     await store.update({ desktop: { chat: { welcome: 'none' } } })
     for (const outlinePosition of DESKTOP_CHAT_OUTLINE_POSITIONS) {
       await store.update({ desktop: { chat: { outlinePosition } } })
       const restored = await new LexoraConfigStore({ configPath }).read()
       expect(restored).toEqual({
         ...original,
-        desktop: { ...original.desktop, chat: { outlinePosition, permissionMode: 'policy_approval', welcome: 'none' } },
+        desktop: { ...original.desktop, chat: { ...DEFAULT_DESKTOP_CHAT_PREFERENCES, outlinePosition, welcome: 'none' } },
       })
       expect(await readFile(configPath, 'utf8')).toContain('keep = true')
     }
@@ -207,7 +228,7 @@ describe('lexoraConfigStore', () => {
       keybindings: {},
       backgroundCloseNoticeShown: false,
       pluginAuthor: '',
-      chat: { outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'writing' },
+      chat: { ...DEFAULT_DESKTOP_CHAT_PREFERENCES, welcome: 'writing' },
       taskSidebarPinnedItems: [],
       taskSidebar: {
         collapsed: false,
