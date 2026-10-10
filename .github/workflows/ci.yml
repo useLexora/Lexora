@@ -131,7 +131,7 @@ jobs:
           --ignore-pattern 'packaging/buddy/**'
 
       - name: Validate reviewed release notes
-        if: startsWith(github.head_ref, 'chore/release-v')
+        if: startsWith(github.head_ref, 'chore/release-v') && github.event.pull_request.draft == false
         run: node packaging/release/notes.mjs --check
 
   workspace-checks:
