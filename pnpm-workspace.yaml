@@ -61,3 +61,6 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-mcp@1.1.0'
   - '@earendil-works/pi-telemetry@1.1.0'
   - '@earendil-works/pi-tui@1.1.0'
+  - markstream-core@2.0.17
+  - markstream-vue@2.0.17
+  - stream-markdown-parser@1.2.19
