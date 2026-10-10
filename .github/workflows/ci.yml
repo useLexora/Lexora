@@ -2,7 +2,6 @@ name: Lexora CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [master]
     paths:
@@ -129,10 +128,6 @@ jobs:
         run: >-
           pnpm exec eslint eslint.config.js .github/scripts packages/assets packaging infrastructure/scripts
           --ignore-pattern 'packaging/buddy/**'
-
-      - name: Validate reviewed release notes
-        if: startsWith(github.head_ref, 'chore/release-v') && github.event.pull_request.draft == false
-        run: node packaging/release/notes.mjs --check
 
   workspace-checks:
     name: Workspace checks
@@ -292,7 +287,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-3-dev libgtk-layer-shell-dev libxdo-dev
 
       - name: Check Rust formatting
-        if: runner.os == 'Linux'
+        if: github.event_name == 'pull_request' && matrix.target == 'linux-x64'
         run: cargo fmt --manifest-path apps/buddy/native/Cargo.toml --all -- --check
 
       - name: Lint native components
@@ -342,7 +337,7 @@ jobs:
   ci-gate:
     name: CI Gate
     needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, native-checks]
-    if: always() && github.event_name == 'pull_request'
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

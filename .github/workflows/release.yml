@@ -1,10 +1,10 @@
-name: Lexora Release
+name: Draft Lexora Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Unpublished version on master to recover, for example 0.8.0
+        description: Version on master to build into a draft; no existing tag or Release
         type: string
         required: true
   push:
@@ -67,9 +67,6 @@ jobs:
               --github-output "$GITHUB_OUTPUT"
           fi
 
-      - name: Validate reviewed release notes
-        run: node packaging/release/notes.mjs --check
-
       - name: Require unused release identity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,12 +103,11 @@ jobs:
     with:
       signing: ad-hoc
 
-  publish-release:
-    name: Publish Release
+  draft-release:
+    name: Prepare Release draft
     needs: [validate-release, packages, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: buddy-release
     permissions:
       actions: read
       attestations: write
@@ -184,7 +180,7 @@ jobs:
             exit 1
           fi
           if [[ "$(git rev-parse HEAD)" != "$EXPECTED_COMMIT" ]]; then
-            echo "Publication checkout does not match validated release commit" >&2
+            echo "Draft checkout does not match validated release commit" >&2
             exit 1
           fi
 
@@ -198,136 +194,7 @@ jobs:
             ${{ github.workspace }}/apps/buddy/.output/artifacts/macos/*.dmg
             ${{ github.workspace }}/apps/buddy/.output/artifacts/SHA256SUMS.txt
 
-      - name: Create immutable release tag
+      - name: Stage verified assets and release notes draft
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ needs.validate-release.outputs.commit }}
-          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-        run: |
-          lookup_error="$RUNNER_TEMP/lexora-tag-create.error"
-          if existing_commit="$(
-            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
-              --jq '.object.sha' 2>"$lookup_error"
-          )"; then
-            if [[ "$existing_commit" != "$RELEASE_COMMIT" ]]; then
-              echo "Release tag $RELEASE_TAG already references another object" >&2
-              exit 1
-            fi
-            echo "Release tag $RELEASE_TAG already references the validated commit"
-            exit 0
-          fi
-          if ! grep -q 'HTTP 404' "$lookup_error"; then
-            cat "$lookup_error" >&2
-            exit 1
-          fi
-
-          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$RELEASE_TAG" \
-            -f sha="$RELEASE_COMMIT"
-
-      - name: Create draft Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$LEXORA_BUDDY_RELEASE_TAG" \
-            --repo "$LEXORA_BUDDY_RELEASE_REPO" \
-            --verify-tag \
-            --title "Lexora $LEXORA_BUDDY_VERSION" \
-            --notes-file ".github/release-notes/$LEXORA_BUDDY_RELEASE_TAG.md" \
-            --draft
-
-      - name: Upload immutable release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "$LEXORA_BUDDY_RELEASE_TAG" \
-            "$LEXORA_BUDDY_DEB_PATH#$LEXORA_BUDDY_DEB_ASSET_NAME" \
-            "$LEXORA_BUDDY_DEB_ARM64_PATH#$LEXORA_BUDDY_DEB_ARM64_ASSET_NAME" \
-            "$LEXORA_BUDDY_ARCH_PATH#$LEXORA_BUDDY_ARCH_ASSET_NAME" \
-            "$LEXORA_BUDDY_WINDOWS_PATH#$LEXORA_BUDDY_WINDOWS_ASSET_NAME" \
-            "$LEXORA_BUDDY_WINDOWS_ARM64_PATH#$LEXORA_BUDDY_WINDOWS_ARM64_ASSET_NAME" \
-            "$LEXORA_BUDDY_MACOS_ARM64_PATH#$LEXORA_BUDDY_MACOS_ARM64_ASSET_NAME" \
-            "$LEXORA_BUDDY_CHECKSUM_PATH#$LEXORA_BUDDY_CHECKSUM_ASSET_NAME" \
-            --repo "$LEXORA_BUDDY_RELEASE_REPO"
-
-      - name: Publish Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "$LEXORA_BUDDY_RELEASE_TAG" \
-            --repo "$LEXORA_BUDDY_RELEASE_REPO" \
-            --draft=false
-
-  verify-public-assets:
-    name: Verify public assets
-    needs: publish-release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      attestations: read
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-
-      - name: Download verified Ubuntu package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-ubuntu
-          path: apps/buddy/.output/artifacts/desktop
-
-      - name: Download verified Ubuntu ARM64 package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-ubuntu-arm64
-          path: apps/buddy/.output/artifacts/desktop
-
-      - name: Download verified Arch package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-arch
-          path: apps/buddy/.output/artifacts/arch
-
-      - name: Download verified Windows package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-windows
-          path: apps/buddy/.output/artifacts/windows
-
-      - name: Download verified Windows ARM64 package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-windows-arm64
-          path: apps/buddy/.output/artifacts/windows
-
-      - name: Download verified macOS ARM64 package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: lexora-buddy-macos-arm64
-          path: apps/buddy/.output/artifacts/macos
-
-      - name: Reconstruct expected public asset metadata
-        run: |
-          node packaging/buddy/release/verify-release-artifacts.mjs --github-env "$GITHUB_ENV"
-
-      - name: Verify artifact attestations
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh attestation verify "$LEXORA_BUDDY_DEB_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_DEB_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_ARCH_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_WINDOWS_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_WINDOWS_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_MACOS_ARM64_PATH" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$LEXORA_BUDDY_CHECKSUM_PATH" --repo "$GITHUB_REPOSITORY"
-
-      - name: Verify public packages and checksums
-        run: node packaging/buddy/release/verify-release-artifacts.mjs --verify-public
+        run: node packaging/buddy/release/github-release.mjs --stage

@@ -1,9 +1,9 @@
 import { Buffer } from 'node:buffer'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import process from 'node:process'
 import { DatabaseSync } from 'node:sqlite'
 import { CPU_ARCHITECTURE, OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
@@ -12,7 +12,7 @@ import { desktopArtifact } from '../release/artifacts.mjs'
 import { macosSigningMode } from '../release/macos.mjs'
 import { assertNativeExecutable } from '../release/native-host.mjs'
 import { resolveBuildTarget } from '../release/targets.mjs'
-import { verifyDesktopDirectory } from '../release/verify-package.mjs'
+import { verifyDesktopResources } from '../release/verify-package.mjs'
 import { runDesktopSmoke } from './run-gui-smoke.mjs'
 
 async function main() {
@@ -40,8 +40,7 @@ async function main() {
     verifyBundleCompatibility(installed, target)
     execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', installed], { stdio: 'inherit' })
     verifyFirstLaunchPolicy(installed, signing)
-    const { executablePath, version } = verifyDesktopDirectory(installed, target.id)
-    const resources = join(installed, 'Contents/Resources')
+    const { executablePath, resources } = verifyDesktopResources(installed, target.id)
     const fixture = join(directory, '文档.txt')
     writeFileSync(fixture, 'native-reader-ready')
     const result = execFileSync(join(resources, 'native-host/lexora-buddy-file-reader'), [], {
@@ -79,9 +78,7 @@ async function main() {
       database.close()
     }
     await runDesktopSmoke(executablePath, environment, 60_000)
-    const hash = createHash('sha256').update(readFileSync(artifact.path)).digest('hex')
-    writeFileSync(join(dirname(artifact.path), 'SHA256SUMS.txt'), `${hash}  ${artifact.name}\n`)
-    writeOutput(`Installed macOS Desktop ${version}: first-launch policy, native tools, startup, database, restart and shutdown passed (${signing})`)
+    writeOutput(`Installed macOS Desktop: first-launch policy, native tools, startup, database, restart and shutdown passed (${signing})`)
   }
   finally {
     if (mounted)

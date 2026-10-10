@@ -5,7 +5,6 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { writeError, writeOutput } from '../shared/cli-output.mjs'
-import { releaseNotesPath } from './notes.mjs'
 import {
   compareLexoraVersions,
   createLexoraVersionSources,
@@ -51,7 +50,7 @@ export function validateLexoraReleaseTransition({ before, after, changedPaths })
   }
 
   const actualPaths = [...new Set(changedPaths.map(normalizePath))].sort()
-  const expectedPaths = [...lexoraReleaseTransitionPaths, releaseNotesPath(after.productVersion)].sort()
+  const expectedPaths = [...lexoraReleaseTransitionPaths].sort()
   const missingPaths = expectedPaths.filter(path => !actualPaths.includes(path))
   const unexpectedPaths = actualPaths.filter(path => !expectedPaths.includes(path))
 
@@ -94,8 +93,7 @@ export function checkLexoraReleaseTransition(before, after, cwd = repoRoot) {
   const beforeSnapshot = readVersionSnapshotAtCommit(beforeCommit, cwd)
   const afterSnapshot = readVersionSnapshotAtCommit(afterCommit, cwd)
   const changedPaths = listChangedPaths(beforeCommit, afterCommit, cwd)
-  const notesPath = releaseNotesPath(afterSnapshot.state.productVersion)
-  const structuralChanges = listStructuralChanges(beforeCommit, afterCommit, notesPath, cwd)
+  const structuralChanges = listStructuralChanges(beforeCommit, afterCommit, cwd)
   const errors = [
     ...validateLexoraReleaseTransition({
       after: afterSnapshot.state,
@@ -113,11 +111,6 @@ export function checkLexoraReleaseTransition(before, after, cwd = repoRoot) {
       `release transition contains file structure or mode changes: ${structuralChanges}`,
     )
   }
-  if (runGit(['ls-tree', beforeCommit, '--', notesPath], cwd, 'inspect previous release notes').trim())
-    errors.push('release notes for the new version must not already exist')
-  if (!runGit(['ls-tree', afterCommit, '--', notesPath], cwd, 'inspect release notes').startsWith('100644 blob '))
-    errors.push('release notes must be a regular, non-executable file')
-
   if (errors.length)
     throw new Error(errors.join('\n'))
 
@@ -153,7 +146,7 @@ function listChangedPaths(before, after, cwd) {
   ], cwd, 'list release transition paths').split('\n').filter(Boolean)
 }
 
-function listStructuralChanges(before, after, notesPath, cwd) {
+function listStructuralChanges(before, after, cwd) {
   return runGit([
     'diff',
     '--summary',
@@ -161,7 +154,6 @@ function listStructuralChanges(before, after, notesPath, cwd) {
     after,
     '--',
     '.',
-    `:(exclude)${notesPath}`,
   ], cwd, 'list release transition structure changes').trim().replaceAll('\n', '; ')
 }
 
