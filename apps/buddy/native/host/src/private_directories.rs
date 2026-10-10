@@ -219,7 +219,7 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), DirectoryFailure>
         .map_err(|code| DirectoryFailure::new(code, DirectoryOperation::Request))?;
     #[cfg(windows)]
     {
-        windows::ensure(&request.paths)?;
+        windows::ensure(&request.paths, windows::ExistingDirectoryPolicy::Preserve)?;
         let mut output = output;
         output.write_all(b"{\"ok\":true}").map_err(|_| {
             DirectoryFailure::new(DirectoryError::Failed, DirectoryOperation::Response)
@@ -237,7 +237,7 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), DirectoryFailure>
 
 #[cfg(windows)]
 pub(crate) fn ensure(paths: &[String]) -> Result<(), DirectoryFailure> {
-    windows::ensure(paths)
+    windows::ensure(paths, windows::ExistingDirectoryPolicy::ValidateAcl)
 }
 
 #[cfg(test)]

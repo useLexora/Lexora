@@ -33,9 +33,9 @@ fn creates_nested_unicode_directories_and_reuses_them_without_replacing_files() 
     let fixture = Fixture::new();
     let path = fixture.0.join("示例").join("private");
     let paths = [path.to_str().unwrap().to_owned()];
-    ensure(&paths).unwrap();
+    super::super::ensure(&paths).unwrap();
     fs::write(path.join("preserved.txt"), "fixture").unwrap();
-    ensure(&paths).unwrap();
+    super::super::ensure(&paths).unwrap();
     assert_eq!(
         fs::read_to_string(path.join("preserved.txt")).unwrap(),
         "fixture"
@@ -47,7 +47,7 @@ fn ordinary_files_cannot_be_used_as_private_directories() {
     let fixture = Fixture::new();
     let path = fixture.0.join("file");
     fs::write(&path, "fixture").unwrap();
-    let failure = ensure(&[path.to_str().unwrap().to_owned()]).unwrap_err();
+    let failure = super::super::ensure(&[path.to_str().unwrap().to_owned()]).unwrap_err();
     assert_eq!(failure.operation, DirectoryOperation::OpenDirectory);
     assert_eq!(failure.directory_index, Some(0));
     assert!(failure.system_error.is_some());

@@ -7,13 +7,12 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, it } from 'vitest'
 import { inspectWindowsPrivateDirectory as inspect } from '../../../../platform/filesystem/__tests__/windowsPrivateDirectoryFixture'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
-import { PrivateDirectoryError } from '../../../../platform/windows/privateDirectories'
 import { readDiagnosticError } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { checkDesktopDirectories, prepareDesktopPrivateStorage } from '../desktopStorage'
 
 const privateAcl = 'D:P(A;OICI;FA;;;CURRENT)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
 const additionalPrincipal = 'S-1-5-21-111111111-222222222-333333333-1001'
-const inheritedAcl = `${privateAcl}(A;OICI;0x1200a9;;;${additionalPrincipal})`
+const inheritedAcl = `${privateAcl}(A;OICI;FA;;;${additionalPrincipal})`
 
 describe.skipIf(process.platform !== 'win32')('windows desktop storage', () => {
   let helper: string
@@ -31,7 +30,7 @@ describe.skipIf(process.platform !== 'win32')('windows desktop storage', () => {
     await rm(root, { recursive: true })
   })
 
-  it('preserves inherited read-execute grants, files and ACLs across repeated startup checks', async () => {
+  it('preserves inherited access grants, files and ACLs across repeated startup checks', async () => {
     const parent = join(root, 'inherited-parent')
     await mkdir(parent)
     const parentSecurity = inspect(parent, inheritedAcl)
@@ -98,44 +97,7 @@ describe.skipIf(process.platform !== 'win32')('windows desktop storage', () => {
     }
   }, 60_000)
 
-  it('accepts read-execute grants added to existing product storage without ACL repair', async () => {
-    const home = join(root, 'private-product-home')
-    prepareDesktopPrivateStorage(home, helper)
-    const sentinel = join(home, 'preserved.txt')
-    await writeFile(sentinel, 'existing product data')
-    const before = inspect(home, inheritedAcl)
-    for (let launch = 0; launch < 2; launch++) {
-      prepareDesktopPrivateStorage(home, helper)
-      await checkDesktopDirectories({ lexora_home: home }, helper)
-    }
-    assert.equal(inspect(home).sddl, before.sddl)
-    assert.equal(await readFile(sentinel, 'utf8'), 'existing product data')
-  }, 60_000)
-
-  it('rejects read-execute plus write before loading without ACL repair or diagnostic identity disclosure', async () => {
-    const home = join(root, 'private-product-home')
-    prepareDesktopPrivateStorage(home, helper)
-    const sentinel = join(home, 'preserved.txt')
-    await writeFile(sentinel, 'existing product data')
-    const before = inspect(home, `${privateAcl}(A;OICI;0x1200ab;;;${additionalPrincipal})`)
-    const isPrivateFailure = (error: unknown) => {
-      assert.ok(error instanceof PrivateDirectoryError)
-      assert.equal(error.code, 'PRIVATE_DIRECTORIES_UNSAFE')
-      assert.equal(error.failure.directoryRole, 'lexora_home')
-      assert.equal(error.failure.acl?.accessMask, 0x1200AB)
-      const diagnostic = JSON.stringify(readDiagnosticError(error))
-      assert.ok(!diagnostic.includes(additionalPrincipal))
-      assert.ok(!diagnostic.includes(root))
-      return true
-    }
-    assert.throws(() => prepareDesktopPrivateStorage(home, helper), isPrivateFailure)
-    await assert.rejects(checkDesktopDirectories({ lexora_home: home, user_data: join(root, 'not-created') }, helper), isPrivateFailure)
-    assert.ok(!(await readdir(root)).includes('not-created'))
-    assert.equal(inspect(home).sddl, before.sddl)
-    assert.equal(await readFile(sentinel, 'utf8'), 'existing product data')
-  }, 60_000)
-
-  it('reports actual file-creation denial without overwriting existing runtime data', async () => {
+  it.each(['lexora_home', 'user_data'] as const)('reports actual file-creation denial in %s without overwriting existing data', async (role) => {
     const userData = join(root, 'electron')
     await mkdir(userData)
     const sentinel = join(userData, 'preserved.txt')
@@ -143,14 +105,14 @@ describe.skipIf(process.platform !== 'win32')('windows desktop storage', () => {
     const before = inspect(userData)
     const denied = inspect(userData, 'D:P(D;;0x2;;;CURRENT)(A;OICI;FA;;;CURRENT)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
     try {
-      await assert.rejects(checkDesktopDirectories({ user_data: userData }), (error: unknown) => {
+      await assert.rejects(checkDesktopDirectories({ [role]: userData }, helper), (error: unknown) => {
         const diagnostic = readDiagnosticError(error)
         assert.equal(diagnostic.errorCode, 'DESKTOP_BOOTSTRAP_FAILED')
         assert.equal(diagnostic.failure?.kind, 'desktop_bootstrap')
         if (diagnostic.failure?.kind !== 'desktop_bootstrap')
           return false
         assert.equal(diagnostic.failure.operation, 'probe_directory')
-        assert.equal(diagnostic.failure.directoryRole, 'user_data')
+        assert.equal(diagnostic.failure.directoryRole, role)
         assert.ok(['EACCES', 'EPERM'].includes(diagnostic.failure.systemCode ?? ''))
         return true
       })

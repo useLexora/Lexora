@@ -21,7 +21,7 @@ export class PrivateDirectoryError extends Error {
     failure: PrivateDirectoryFailure,
     options?: ErrorOptions,
   ) {
-    super('Buddy private storage must prevent other users from reading or changing application data', options)
+    super('Buddy application data directories could not be prepared', options)
     this.name = 'PrivateDirectoryError'
     this.code = code
     this.failure = failure

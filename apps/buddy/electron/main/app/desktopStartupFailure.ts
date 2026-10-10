@@ -22,24 +22,20 @@ export function resolveStartupFailureDirectory(error: unknown, paths: BuddyRunti
 
 export function describeDesktopStartupFailure(error: unknown, language: LexoraConfig['desktop']['language'], launchId?: string, directory?: string, logsAvailable = true, logsPath?: string): RecoveryPresentation {
   const { errorCode: code = 'OPERATION_FAILED', failure } = readDiagnosticError(error)
-  const unconfirmedPermissions = error instanceof PrivateDirectoryError && (error.failure.acl?.reason === 'unsupported_ace' || error.failure.acl?.principal === 'other')
   const reason = error instanceof PowerShellUnavailableError
     ? 'powerShellUnavailable'
     : code === 'NETWORK_START_FAILED'
       ? 'networkStartupFailed'
-      : unconfirmedPermissions
-        ? 'privateDirectoriesUnconfirmed'
-        : code === 'PRIVATE_DIRECTORIES_UNSAFE'
-          ? 'privateDirectoriesUnsafe'
-          : code.startsWith('PRIVATE_DIRECTORIES_')
-            ? 'privateDirectoriesFailed'
-            : 'startupFailureHelp'
+      : code === 'PRIVATE_DIRECTORIES_UNSAFE'
+        ? 'privateDirectoriesUnsafe'
+        : code.startsWith('PRIVATE_DIRECTORIES_')
+          ? 'privateDirectoriesFailed'
+          : 'startupFailureHelp'
   const t = (key: Parameters<typeof translateDesktopNative>[1]) => translateDesktopNative(language, key)
   const fields: RecoveryPresentation['recovery']['fields'] = [
     { label: t('startupErrorCode'), value: code },
     ...(launchId ? [{ label: t('diagnosticReference'), value: launchId }] : []),
     ...(failure ? [{ label: t('startupFailureStage'), value: [failure.operation, failure.kind === 'network_startup' ? undefined : failure.directoryRole, failure.kind === 'private_directories' ? undefined : failure.systemCode].filter(Boolean).join(' / ') }] : []),
-    ...(failure?.kind === 'private_directories' && failure.acl ? [{ label: t('startupPermissionCheck'), value: [failure.acl.reason, failure.acl.principal, failure.acl.accessMask === undefined ? undefined : `mask=0x${failure.acl.accessMask.toString(16)}`, failure.acl.aceFlags === undefined ? undefined : `flags=0x${failure.acl.aceFlags.toString(16)}`].filter(Boolean).join(' / ') }] : []),
     ...(directory ? [{ label: t('affectedDirectory'), value: directory, localOnly: true }] : []),
     ...(logsPath ? [{ label: t('startupLogsPath'), value: logsPath, localOnly: true }] : []),
   ]
