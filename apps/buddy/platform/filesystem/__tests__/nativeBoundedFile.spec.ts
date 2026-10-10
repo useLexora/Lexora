@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { EventEmitter } from 'node:events'
+import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import { readNativeBoundedFile, readNativeBoundedFiles } from '../nativeBoundedFile'
@@ -7,12 +8,16 @@ import { readNativeBoundedFile, readNativeBoundedFiles } from '../nativeBoundedF
 const execute = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execute }))
 
+const fixtureRoot = resolve('fixture')
+const fixturePath = resolve(fixtureRoot, 'file')
+const fixtureExecutable = resolve(fixtureRoot, 'reader')
+
 describe('native bounded read lifecycle', () => {
   it.each(['ABORT_ERR', 'ENOENT'] as const)('waits for process closure after %s', async (code) => {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough() })
     execute.mockReturnValue(child)
     let settled = false
-    const pending = readNativeBoundedFile('/fixture', '/fixture/file', 1024, undefined, '/fixture/reader').finally(() => settled = true)
+    const pending = readNativeBoundedFile(fixtureRoot, fixturePath, 1024, undefined, fixtureExecutable).finally(() => settled = true)
     const error = Object.assign(new Error('fixture failure'), { code })
     execute.mock.calls[0]![3](error, Buffer.alloc(0), Buffer.alloc(0))
     await Promise.resolve()
@@ -32,7 +37,7 @@ describe('native bounded read lifecycle', () => {
   ])('rejects malformed or over-limit frames: %j', async (...bytes) => {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough() })
     execute.mockReturnValue(child)
-    const pending = readNativeBoundedFiles([{ root: '/fixture', path: '/fixture/file', maxBytes: 1 }], undefined, '/fixture/reader')
+    const pending = readNativeBoundedFiles([{ root: fixtureRoot, path: fixturePath, maxBytes: 1 }], undefined, fixtureExecutable)
     execute.mock.calls[0]![3](null, Buffer.from(bytes), Buffer.alloc(0))
     child.emit('close', 0, null)
     await expect(pending).rejects.toMatchObject({ code: 'BOUNDED_FILE_READ_FAILED' })
