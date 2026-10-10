@@ -5,7 +5,7 @@ import { computed } from 'vue'
 
 export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
   const editorKey = computed(() => props.composer.editorKey.value)
-  const bindings = computed<DesktopChatComposerProps>(() => {
+  const bindings = computed<Omit<DesktopChatComposerProps, 'pasteTextAsAttachment'>>(() => {
     const composer = props.composer
     const execution = props.execution
     return {
@@ -18,6 +18,8 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
       resources: composer.resources.value,
       rejectedResourceIds: composer.rejectedResourceIds,
       beginImport: composer.beginImport,
+      importPastedText: composer.importPastedText,
+      readResourceText: composer.readResourceText,
       selectSource: composer.selectSource,
       isRunning: Boolean(execution.activeRun.value || execution.stoppingRunId.value),
       isStopping: Boolean(execution.stoppingRunId.value),

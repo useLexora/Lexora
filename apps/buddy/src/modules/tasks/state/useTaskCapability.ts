@@ -480,6 +480,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       resources: composerResources.resources,
       rejectedResourceIds: composerResources.rejectedIds,
       beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => !isClosing.value && lifecycle.hasCompletedInitialLoad.value ? composerResources.begin(files, origin) : [],
+      importPastedText: (text: string) => !isClosing.value && lifecycle.hasCompletedInitialLoad.value ? composerResources.importText(text) : Promise.resolve(null),
+      readResourceText: composerResources.readText,
       selectSource: composerResources.selectSource,
       retryResource: composerResources.retry,
       canUpdatePermissionSettings: readonly(canUpdatePermissionSettings),

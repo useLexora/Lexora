@@ -42,6 +42,7 @@ function sourceOption(name: string): ChatPromptContextOption {
 
 async function mountComposer() {
   const props = shallowReactive<DesktopChatComposerProps>({
+    pasteTextAsAttachment: true,
     canUpdatePermissionSettings: true,
     canSend: true,
     composerContent: createChatComposerContentFromText(''),
@@ -51,6 +52,8 @@ async function mountComposer() {
     resources: [resource('old-resource'), resource('new-resource'), resource('selected-resource')],
     rejectedResourceIds: new Set(),
     beginImport: () => ['old-resource'],
+    importPastedText: async () => null,
+    readResourceText: async () => '',
     selectSource: async () => null,
     isRunning: false,
     isStopping: false,

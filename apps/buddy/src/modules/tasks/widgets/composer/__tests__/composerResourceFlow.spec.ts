@@ -2,12 +2,13 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyComposerResource } from '@buddy-shared/conversation/composerResource'
 import type { JSONContent } from '@tiptap/core'
-import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '@buddy-shared/conversation/attachmentPolicy'
+import { File as NodeFile } from 'node:buffer'
+import { BUDDY_ATTACHMENT_COUNT_LIMIT, getAttachmentKind } from '@buddy-shared/conversation/attachmentPolicy'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { deferred } from '@buddy-tests/deferred'
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { EditorContent } from '@tiptap/vue-3'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, getChatComposerResourceIds, pruneChatComposerResources, userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
@@ -23,8 +24,10 @@ async function mountFlow() {
   const uploading = deferred<void>()
   const records = new Map<string, BuddyComposerResource>()
   const storedFiles = new Set<string>()
+  const storedText = new Map<string, string>()
   const changes = new Emitter<{ revision: number, draftIds: string[] }>(() => {})
   const api: LocalChatApi['composerResources'] = {
+    async readText({ resourceId }) { return storedText.get(resourceId)! },
     onChanged: (listener) => {
       const subscription = changes.event(listener)
       return () => subscription.dispose()
@@ -32,7 +35,7 @@ async function mountFlow() {
     async accept(input) {
       await accepting.promise
       return input.resources.map((metadata) => {
-        const resource: BuddyComposerResource = { ...metadata, draftId: input.draftId, kind: 'image', state: 'importing' }
+        const resource: BuddyComposerResource = { ...metadata, draftId: input.draftId, kind: getAttachmentKind(metadata.mimeType), state: 'importing' }
         records.set(resource.resourceId, resource)
         return resource
       })
@@ -43,6 +46,7 @@ async function mountFlow() {
       const resource: BuddyComposerResource = { ...existing, state: 'ready', attachmentId: `bytes-${input.resourceId}`, previewUrl: null }
       records.set(input.resourceId, resource)
       storedFiles.add(input.resourceId)
+      storedText.set(input.resourceId, new TextDecoder().decode(input.bytes))
       return resource
     },
     async fail(input) {
@@ -90,6 +94,7 @@ async function mountFlow() {
     },
   }
   const draftId = shallowRef('draft-1')
+  const pasteTextAsAttachment = shallowRef(true)
   const content = shallowRef<JSONContent>({
     attrs: { panelResourceIds: [] },
     content: [{ content: [], type: 'paragraph' }],
@@ -118,6 +123,7 @@ async function mountFlow() {
         composerContent: content,
         draft,
         draftId,
+        pasteTextAsAttachment,
         resources: resources.resources,
         selectedModel: shallowRef(null),
         selectedEffort: shallowRef(null),
@@ -128,6 +134,8 @@ async function mountFlow() {
         language: shallowRef('zh-CN'),
         loadContextOptions: async () => ({ files: [], skills: [] }),
         beginImport: resources.begin,
+        importPastedText: resources.importText,
+        readResourceText: resources.readText,
         selectSource: resources.selectSource,
         onSend: () => {},
         onUpdateContent: (text, value) => {
@@ -137,7 +145,7 @@ async function mountFlow() {
       })
       return () => h('div', [
         h(EditorContent, { editor: composer.editor.value }),
-        h(ComposerResourceStrip, { disabled: false, language: 'zh-CN', resources: composer.resourceStripResources.value, onRemove: composer.removeResource, onRetry: resources.retry }),
+        h(ComposerResourceStrip, { disabled: false, language: 'zh-CN', resources: composer.resourceStripResources.value, onRemove: composer.removeResource, onRetry: resources.retry, onPreviewText: composer.pastedText.open }),
       ])
     },
   }))
@@ -151,6 +159,7 @@ async function mountFlow() {
     root.remove()
   })
   const editor = composer.editor.value!
+  editor.view.setProps({ handleScrollToSelection: () => true })
   function pasteImages(names = ['red.png', 'blue.png']) {
     const files = names.map((name) => {
       const file = new File(['image-bytes'], name, { type: 'image/png' })
@@ -161,8 +170,151 @@ async function mountFlow() {
     Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => '' } })
     editor.view.dom.dispatchEvent(event)
   }
-  return { api, changes, accepting, uploading, records, storedFiles, content, draftId, resources, root, composer, editor, pasteImages, errors }
+  function pasteText(text: string) {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { files: [], getData: (type: string) => type === 'text/plain' ? text : '' } })
+    editor.view.dom.dispatchEvent(event)
+  }
+  return { api, changes, accepting, uploading, records, storedFiles, storedText, content, draftId, pasteTextAsAttachment, resources, root, composer, editor, pasteImages, pasteText, errors }
 }
+
+describe('pasted text attachments', () => {
+  beforeEach(() => {
+    vi.stubGlobal('File', NodeFile)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('stores the exact original, tracks the insertion position and restores in one undoable edit', async () => {
+    const flow = await mountFlow()
+    const text = `  heading\t中文\r\n\r\n${'x'.repeat(1501)}\r\n`
+    flow.editor.commands.insertContent('before after')
+    flow.editor.commands.setTextSelection(8)
+    flow.pasteText(text)
+    expect(flow.editor.getText()).toBe(`before ${text.replaceAll('\r\n', '\n')}after`)
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+    flow.editor.commands.setTextSelection(flow.editor.state.doc.content.size - 1)
+    flow.editor.commands.insertContent('!')
+    flow.accepting.resolve()
+    flow.uploading.resolve()
+    await vi.waitFor(() => expect(getChatComposerResourceIds(flow.content.value)).toHaveLength(1))
+    const id = getChatComposerResourceIds(flow.content.value)[0]!
+    expect(flow.storedText.get(id)).toBe(text)
+    expect(chatComposerDocumentToUserContent(flow.content.value).body[0]!.content).toEqual([
+      { type: 'text', text: 'before ' },
+      { type: 'resource_ref', resourceId: id },
+      { type: 'text', text: 'after!' },
+    ])
+    flow.pasteTextAsAttachment.value = false
+    expect(flow.composer.pastedText.open(id)).toBe(true)
+    expect(flow.composer.pastedText.preview.value?.text).toBe(text)
+    flow.composer.pastedText.restore()
+    expect(flow.editor.getText()).toBe(`before ${text.replaceAll('\r\n', '\n')}after!`)
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+    flow.editor.commands.undo()
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([id])
+  })
+
+  it.each(['accept', 'complete'] as const)('keeps the full editable text when %s fails', async (operation) => {
+    const flow = await mountFlow()
+    vi.spyOn(flow.api, operation).mockRejectedValueOnce(new Error('import interrupted'))
+    const text = `${' '.repeat(1501)}\nend`
+    flow.pasteText(text)
+    flow.accepting.resolve()
+    flow.uploading.resolve()
+    await flow.resources.whenAccepted()
+    expect(flow.errors).toHaveLength(1)
+    expect(flow.editor.getText()).toBe(text)
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+  })
+
+  it('only converts text above the thresholds when the current preference is enabled', async () => {
+    const flow = await mountFlow()
+    flow.accepting.resolve()
+    flow.uploading.resolve()
+    for (const text of ['a'.repeat(1500), 'line\n'.repeat(19)]) {
+      flow.editor.commands.clearContent()
+      flow.pasteText(text)
+      await flow.resources.whenAccepted()
+      expect(flow.records.size).toBe(0)
+      expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+    }
+
+    const text = '中'.repeat(1501)
+    flow.pasteTextAsAttachment.value = false
+    flow.editor.commands.clearContent()
+    flow.pasteText(text)
+    await flow.resources.whenAccepted()
+    expect(flow.editor.getText()).toBe(text)
+    expect(flow.records.size).toBe(0)
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+
+    flow.pasteTextAsAttachment.value = true
+    flow.editor.commands.clearContent()
+    flow.pasteText(text)
+    await vi.waitFor(() => expect(getChatComposerResourceIds(flow.content.value)).toHaveLength(1))
+    expect([...flow.storedText.values()]).toEqual([text])
+  })
+
+  it.each(['edit', 'undo', 'draft', 'preference'] as const)('ignores a late import after %s invalidates the paste', async (action) => {
+    const flow = await mountFlow()
+    const text = 'original'.repeat(220)
+    flow.pasteText(text)
+    if (action === 'edit') {
+      flow.editor.commands.insertContentAt(2, 'changed')
+    }
+    else if (action === 'undo') {
+      flow.editor.commands.undo()
+    }
+    else if (action === 'draft') {
+      flow.draftId.value = 'draft-2'
+    }
+    else {
+      flow.pasteTextAsAttachment.value = false
+      flow.pasteTextAsAttachment.value = true
+    }
+    const expected = flow.editor.getText()
+    flow.accepting.resolve()
+    flow.uploading.resolve()
+    await flow.resources.whenAccepted()
+    await nextTick()
+    expect(flow.editor.getText()).toBe(expected)
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([])
+  })
+
+  it('keeps consecutive pastes distinct and undoes folding back to the original text', async () => {
+    const flow = await mountFlow()
+    const first = 'first\n'.repeat(20)
+    const second = 'second\n'.repeat(20)
+    flow.pasteText(first)
+    flow.pasteText(second)
+    flow.accepting.resolve()
+    flow.uploading.resolve()
+    await vi.waitFor(() => expect(getChatComposerResourceIds(flow.content.value)).toHaveLength(2))
+    const ids = getChatComposerResourceIds(flow.content.value)
+    expect(ids.map(id => flow.storedText.get(id))).toEqual([first, second])
+    flow.editor.commands.undo()
+    expect(getChatComposerResourceIds(flow.content.value)).toEqual([ids[0]])
+    flow.editor.commands.undo()
+    expect(flow.editor.getText()).toBe(first + second)
+  })
+
+  it('does not expose an old preview after switching drafts while its read is pending', async () => {
+    const flow = await mountFlow()
+    const reading = deferred<string>()
+    vi.spyOn(flow.api, 'readText').mockReturnValueOnce(reading.promise)
+    flow.records.set('restored', { resourceId: 'restored', draftId: 'draft-1', name: 'pasted.txt', nameSource: 'clipboard', kind: 'text', mimeType: 'text/plain', sizeBytes: 100, state: 'ready', attachmentId: 'text', previewUrl: null })
+    await flow.resources.restore('draft-1')
+    flow.content.value = userContentToChatComposerDocument({ version: 1, body: [{ type: 'paragraph', content: [{ type: 'resource_ref', resourceId: 'restored' }] }], panelResourceIds: [] })
+    await nextTick()
+    flow.composer.pastedText.open('restored')
+    flow.draftId.value = 'draft-2'
+    reading.resolve('private draft one')
+    await nextTick()
+    expect(flow.composer.pastedText.preview.value).toBeNull()
+  })
+})
 
 describe('composer resource flow', () => {
   it('reconciles owner notifications while fencing older reads and post-disposal delivery', async () => {

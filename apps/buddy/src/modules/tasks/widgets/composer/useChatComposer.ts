@@ -18,6 +18,7 @@ import { addChatQuote, removeChatQuote } from './chatQuoteEditing'
 import { useChatComposerEditor } from './useChatComposerEditor'
 import { useChatComposerSuggestions } from './useChatComposerSuggestions'
 import { useComposerCommands } from './useComposerCommands'
+import { useComposerPastedText } from './useComposerPastedText'
 
 export function useChatComposer(options: UseChatComposerOptions) {
   const localCommands = useComposerCommands(options.draftId, chooseCommand)
@@ -34,6 +35,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
   const resourceById = computed(() => new Map(options.resources.value.map(entry => [entry.resource.resourceId, entry])))
   const query = useChatComposerSuggestions(options, selectSuggestion, getImageLabel)
   const { editor, contentJSON, imageLabels, serializedContent } = useChatComposerEditor({
+    pasteTextAsAttachment: options.pasteTextAsAttachment,
     composerContent: options.composerContent,
     draft: options.draft,
     draftId: options.draftId,
@@ -61,6 +63,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
       return query.handleKeydown(event)
     },
     onPasteFiles: files => attachFiles(files, 'both', 'clipboard'),
+    onPasteText: pasteText,
     onPasteSessionReferences: (references, text) => {
       const current = editor.value
       if (!current?.isEditable)
@@ -70,9 +73,19 @@ export function useChatComposer(options: UseChatComposerOptions) {
         current.chain().focus().insertContent({ type: 'text', text }).run()
     },
     onSubmit: submit,
-    onLocateResource: options.onLocateResource,
+    onLocateResource: locateResource,
   })
   const resourceIds = computed(() => getChatComposerResourceIds(contentJSON.value))
+  const pastedText = useComposerPastedText(options, editor, resourceIds)
+
+  function pasteText(text: string) {
+    pastedText.paste(text)
+  }
+
+  function locateResource(id: string) {
+    if (!pastedText.open(id))
+      options.onLocateResource?.(id)
+  }
   const quotes = computed(() => serializedContent.value.userContent?.quotes ?? [])
   const sessionReferences = computed(() => serializedContent.value.userContent?.sessionReferences ?? [])
   const modelInputIssue = computed(() => resolveChatComposerModelInputIssue({
@@ -101,6 +114,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
         ? [{
             ...entry,
             imageLabel: imageLabels.value.get(id),
+            textLineCount: pastedText.lineCount(id),
             previewUrl: resolveComposerResourcePreviewUrl(entry.resource),
           }]
         : []
@@ -361,6 +375,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     removeResource,
     removePanelResource: (id: string) => editor.value && removeChatComposerPanelResource(editor.value, id),
     resourceStripResources,
+    pastedText,
     selectPanelSource,
     selectSuggestion,
     submit,

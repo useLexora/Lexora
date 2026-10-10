@@ -6,6 +6,7 @@ import { subscribe } from '../subscribe'
 export function createComposerApi(): Pick<LocalChatApi, 'composerResources' | 'composerDrafts'> {
   return {
     composerResources: Object.freeze({
+      readText: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesReadText, input),
       onChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.composerResourcesChanged, listener),
       accept: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesAccept, input),
       complete: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerResourcesComplete, input),

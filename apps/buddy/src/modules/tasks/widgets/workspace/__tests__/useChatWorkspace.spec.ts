@@ -57,6 +57,8 @@ function createOwner(name: string) {
       selectedServiceTier: shallowRef(null),
       permissionMode: shallowRef('manual_approval' as const),
       beginImport: () => [name],
+      importPastedText: async () => null,
+      readResourceText: async () => '',
       dismissInteraction: () => {},
       listContextOptions: async () => ({ files: [], skills: [] }),
       retryResource: async () => {},

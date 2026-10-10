@@ -86,6 +86,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   composerResourcesComplete: 'lexora:buddy:composer-resources:complete',
   composerResourcesFail: 'lexora:buddy:composer-resources:fail',
   composerResourcesList: 'lexora:buddy:composer-resources:list',
+  composerResourcesReadText: 'lexora:buddy:composer-resources:read-text',
   composerResourcesListSources: 'lexora:buddy:composer-resources:list-sources',
   composerResourcesRetry: 'lexora:buddy:composer-resources:retry',
   composerResourcesSelectFiles: 'lexora:buddy:composer-resources:select-files',
@@ -455,6 +456,7 @@ export interface LocalChatApi {
     deny: (approvalId: string) => Promise<LocalApproval>
   }
   composerResources: {
+    readText: (input: BuddyComposerResourceTarget) => Promise<string>
     onChanged: (listener: (change: ComposerResourcesChanged) => void) => () => void
     accept: (input: BuddyComposerResourceAccept) => Promise<readonly BuddyComposerResource[]>
     complete: (input: BuddyComposerResourceComplete) => Promise<BuddyComposerResource>

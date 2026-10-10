@@ -5,6 +5,7 @@ import type { ChatComposerSubmitPayload } from '@/modules/prompt-input'
 import { useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
+import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import ChatMessageQueue from '../composer/ChatMessageQueue.vue'
 import DesktopChatComposer from '../composer/DesktopChatComposer.vue'
 import { useComposerSubmissionFocus } from './useComposerSubmissionFocus'
@@ -13,6 +14,7 @@ import { useTaskComposer } from './useTaskComposer'
 const props = defineProps<TaskComposerHostProps>()
 defineSlots<{ leadingContext?: () => unknown }>()
 const router = useRouter()
+const { chat } = useDesktopUi()
 const composerRef = useTemplateRef<InstanceType<typeof DesktopChatComposer>>('composerRef')
 defineExpose({
   focus: () => composerRef.value?.focus(),
@@ -45,6 +47,7 @@ async function handleSend(payload: ChatComposerSubmitPayload) {
     ref="composerRef"
     :key="editorKey"
     v-bind="bindings"
+    :paste-text-as-attachment="chat.pasteTextAsAttachment"
     :manage-skills="() => { void router.push(desktopRouteLocations.skills(skillScopeId ?? null)) }"
     :has-queued-messages="execution.queuedMessages.value.length > 0"
     @attach="composer.selectAttachments"

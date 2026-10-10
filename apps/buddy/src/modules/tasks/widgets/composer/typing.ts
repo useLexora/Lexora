@@ -12,10 +12,12 @@ import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposer
 
 export interface ComposerResourceCard extends ComposerResourceView {
   imageLabel?: string
+  textLineCount?: number
   previewUrl: string | null
 }
 
 export interface UseChatComposerOptions {
+  pasteTextAsAttachment: Readonly<Ref<boolean>>
   canSend: Readonly<Ref<boolean>>
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
@@ -30,6 +32,8 @@ export interface UseChatComposerOptions {
   selectedServiceTier: Readonly<Ref<BuddyServiceTier | null>>
   loadContextOptions: (fileQuery: string | null, deepSearch?: boolean, sessionScope?: ChatComposerSessionScope) => Promise<ChatComposerContextOptions>
   beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => readonly string[]
+  importPastedText: (text: string) => Promise<string | null>
+  readResourceText: (resourceId: string) => Promise<string>
   selectSource: (source: BuddyComposerSource) => Promise<string | null>
   onSend: (payload: ChatComposerSubmitPayload) => void
   onUpdateContent: (content: string, value: JSONContent) => void
@@ -37,6 +41,7 @@ export interface UseChatComposerOptions {
 }
 
 export interface ChatComposerEditorOptions {
+  pasteTextAsAttachment: Readonly<Ref<boolean>>
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
   draftId: Readonly<Ref<string>>
@@ -48,12 +53,14 @@ export interface ChatComposerEditorOptions {
   onTrigger: (trigger: ChatComposerTrigger | null) => void
   onSuggestionKeydown: (event: KeyboardEvent) => boolean
   onPasteFiles: (files: readonly File[]) => void
+  onPasteText: (text: string) => void
   onPasteSessionReferences: (references: readonly BuddySessionReference[], text: string) => void
   onSubmit: () => void
   onLocateResource?: (resourceId: string) => void
 }
 
 export interface DesktopChatComposerProps {
+  pasteTextAsAttachment: boolean
   manageSkills?: () => void
   hasQueuedMessages?: boolean
   canUpdatePermissionSettings: boolean
@@ -65,6 +72,8 @@ export interface DesktopChatComposerProps {
   resources: readonly ComposerResourceView[]
   rejectedResourceIds: ReadonlySet<string>
   beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => readonly string[]
+  importPastedText: (text: string) => Promise<string | null>
+  readResourceText: (resourceId: string) => Promise<string>
   selectSource: (source: BuddyComposerSource) => Promise<string | null>
   isRunning: boolean
   isStopping: boolean

@@ -9,6 +9,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
+import { isPastedTextResource } from '../../model/composer/pastedText'
 import { useResourceHighlight } from '../attachments/useResourceHighlight'
 
 const props = defineProps<{
@@ -19,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   remove: [resourceId: string]
   retry: [resourceId: string]
+  previewText: [resourceId: string]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const resourceTrack = useTemplateRef<HTMLDivElement>('resourceTrack')
@@ -29,6 +31,7 @@ const previewIndex = shallowRef(0)
 const cards = computed(() => props.resources.map(entry => ({
   ...entry,
   previewUrl: entry.previewUrl && !failedPreviewUrls.value.has(entry.previewUrl) ? entry.previewUrl : null,
+  textPreview: entry.resource.state === 'ready' && isPastedTextResource(entry.resource),
 })))
 const previewSources = computed(() => cards.value.flatMap(({ previewUrl }) => previewUrl ? [previewUrl] : []))
 function openPreview(source: string) {
@@ -54,36 +57,36 @@ defineExpose({ highlightResource })
     >
       <div ref="resourceTrack" class="composer-resource-strip">
         <div
-          v-for="{ resource, canRetry, imageLabel, previewUrl } in cards"
+          v-for="{ resource, canRetry, imageLabel, previewUrl, textPreview, textLineCount } in cards"
           :key="resource.resourceId"
           class="composer-resource-strip__card"
-          :class="{ 'is-failed': resource.state === 'failed', 'is-highlighted': highlightedResourceId === resource.resourceId, 'is-previewable': previewUrl }"
+          :class="{ 'is-failed': resource.state === 'failed', 'is-highlighted': highlightedResourceId === resource.resourceId }"
           :data-resource-card="resource.resourceId"
-          :title="resource.localReference?.path"
-          @click="previewUrl && openPreview(previewUrl)"
         >
-          <NSpin v-if="resource.state === 'importing'" :size="20" />
-          <button
-            v-else-if="previewUrl"
-            class="composer-resource-strip__preview"
-            type="button"
-            :aria-label="t('desktop.imagePreview.open', { name: resource.name })"
-            @click.stop="openPreview(previewUrl)"
+          <component
+            :is="previewUrl || textPreview ? 'button' : 'div'"
+            class="composer-resource-strip__content"
+            :class="{ 'is-previewable': previewUrl || textPreview, 'is-image': previewUrl }"
+            :type="previewUrl || textPreview ? 'button' : undefined"
+            :aria-label="previewUrl ? t('desktop.imagePreview.open', { name: resource.name }) : textPreview ? t('desktop.chat.pastedTextPreview', { name: resource.name }) : undefined"
+            :title="textPreview && textLineCount !== undefined ? `${resource.name}\n${t('desktop.chat.pastedTextLines', { count: textLineCount })}` : resource.localReference?.path ?? resource.name"
+            @click="previewUrl ? openPreview(previewUrl) : textPreview && emit('previewText', resource.resourceId)"
           >
-            <img :src="previewUrl" :alt="resource.name" width="36" height="36" @error="markPreviewFailed(previewUrl)">
-          </button>
-          <FolderIcon v-else-if="resource.kind === 'directory'" class="composer-resource-strip__folder" />
-          <FileIcon v-else :name="resource.name" size="medium" />
-          <span class="composer-resource-strip__details">
-            <span>{{ imageLabel ?? resource.name }}</span>
-            <small v-if="resource.state !== 'ready'">
-              {{ t(resource.state === 'importing'
-                ? 'desktop.chat.importingAttachment'
-                : canRetry
-                  ? 'desktop.chat.failedAttachment'
-                  : 'desktop.chat.attachmentSourceUnavailable') }}
-            </small>
-          </span>
+            <NSpin v-if="resource.state === 'importing'" :size="20" />
+            <img v-else-if="previewUrl" :src="previewUrl" :alt="resource.name" width="36" height="36" @error="markPreviewFailed(previewUrl)">
+            <FolderIcon v-else-if="resource.kind === 'directory'" class="composer-resource-strip__folder" />
+            <FileIcon v-else :name="resource.name" size="medium" />
+            <span class="composer-resource-strip__details">
+              <span>{{ imageLabel ?? resource.name }}</span>
+              <small v-if="resource.state !== 'ready'">
+                {{ t(resource.state === 'importing'
+                  ? 'desktop.chat.importingAttachment'
+                  : canRetry
+                    ? 'desktop.chat.failedAttachment'
+                    : 'desktop.chat.attachmentSourceUnavailable') }}
+              </small>
+            </span>
+          </component>
           <NButton v-if="resource.state === 'failed' && canRetry" text :disabled="disabled" size="tiny" @click.stop="emit('retry', resource.resourceId)">
             {{ t('desktop.chat.retryAttachment') }}
           </NButton>
@@ -138,10 +141,6 @@ defineExpose({ highlightResource })
     background: var(--buddy-surface-raised);
     padding: 0.4rem;
     font-size: 0.75rem;
-
-    &.is-previewable {
-      cursor: zoom-in;
-    }
   }
 
   &__details {
@@ -160,16 +159,23 @@ defineExpose({ highlightResource })
     }
   }
 
-  &__preview {
+  &__content {
     display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
     border: 0;
     border-radius: var(--buddy-radius-micro);
-    overflow: hidden;
     background: transparent;
-    cursor: pointer;
     padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: start;
 
-    img { object-fit: cover; }
+    img { flex: none; border-radius: var(--buddy-radius-micro); object-fit: cover; }
+    &.is-previewable { cursor: pointer; }
+    &.is-image { cursor: zoom-in; }
+    &:focus-visible { outline: 2px solid var(--buddy-focus-ring); }
   }
 }
 

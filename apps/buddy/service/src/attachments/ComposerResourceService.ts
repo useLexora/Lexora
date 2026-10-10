@@ -53,7 +53,7 @@ import { validateResourceBytes } from './validateResourceBytes'
 
 export interface ComposerResourceServiceOptions {
   artifacts?: Pick<ArtifactService, 'listConversationArtifacts' | 'resolveConversationArtifactLocation'>
-  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'prepareUploads' | 'release' | 'releaseDraft' | 'resolvePreview'>
+  attachments: Pick<AttachmentService, 'cleanupDrafts' | 'listForConversation' | 'registerFiles' | 'prepareUploads' | 'release' | 'releaseDraft' | 'resolvePreview' | 'readText'>
   conversationGrants?: Pick<ConversationDirectoryGrantRepository, 'listActive'>
   conversations?: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
   drafts?: Pick<ComposerDraftRepository, 'findById'>
@@ -136,6 +136,21 @@ export class ComposerResourceService {
 
   list(draftId: string): BuddyComposerResource[] {
     return this.#repository.listForDraft(draftId).map(toPublicResource)
+  }
+
+  async readText(target: BuddyComposerResourceTarget): Promise<string> {
+    const resource = this.#requireOwned(target)
+    const draft = this.#drafts?.findById(target.draftId)
+    if (!draft || resource.state !== 'ready' || getAttachmentKind(resource.mimeType) !== 'text')
+      throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+    const conversationId = 'conversationId' in draft.scope ? draft.scope.conversationId : null
+    if (!resource.source && resource.attachmentId)
+      return this.#attachments.readText(resource.attachmentId, target.draftId, conversationId)
+    const source = resource.source
+    if (!source || !('messageId' in source) || source.conversationId !== conversationId || !('branchId' in draft.scope) || source.branchId !== draft.scope.branchId)
+      throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+    const attachment = this.#resolveMessageInput(source)
+    return this.#attachments.readText(attachment.id, target.draftId, conversationId)
   }
 
   async resolvePreview(target: BuddyComposerResourceTarget): Promise<{ mimeType: string, path: string }> {

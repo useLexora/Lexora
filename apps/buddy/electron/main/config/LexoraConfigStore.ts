@@ -44,6 +44,7 @@ const desktopConfigSchema = z.object({
   background_close_notice_shown: z.boolean().default(false),
   chat: z.object({
     outline_position: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition),
+    paste_text_as_attachment: z.boolean().default(DEFAULT_DESKTOP_CHAT_PREFERENCES.pasteTextAsAttachment),
     permission_mode: z.enum(BUDDY_PERMISSION_MODES).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode),
     welcome: z.enum(['none', 'random', ...DESKTOP_CHAT_WELCOME_VARIANT_IDS]).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome),
   }).passthrough().prefault({}),
@@ -77,6 +78,7 @@ const desktopConfigSchema = z.object({
   plugin_author: '',
   chat: {
     outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
+    paste_text_as_attachment: DEFAULT_DESKTOP_CHAT_PREFERENCES.pasteTextAsAttachment,
     permission_mode: DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode,
     welcome: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome,
   },
@@ -295,6 +297,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       pluginAuthor: config.desktop.plugin_author,
       chat: {
         outlinePosition: config.desktop.chat.outline_position,
+        pasteTextAsAttachment: config.desktop.chat.paste_text_as_attachment,
         permissionMode: config.desktop.chat.permission_mode,
         welcome: config.desktop.chat.welcome,
       },
@@ -346,6 +349,7 @@ function encodeConfig(config: LexoraConfig) {
       plugin_author: config.desktop.pluginAuthor,
       chat: {
         outline_position: config.desktop.chat.outlinePosition,
+        paste_text_as_attachment: config.desktop.chat.pasteTextAsAttachment,
         permission_mode: config.desktop.chat.permissionMode,
         welcome: config.desktop.chat.welcome,
       },

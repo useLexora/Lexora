@@ -45,6 +45,30 @@ const databases: DatabaseSync[] = []
 const directories: string[] = []
 
 describe('attachment validation errors', () => {
+  it('reads a persisted text snapshot only through its owning draft and preserves the original bytes', async () => {
+    const { service, drafts, attachmentRepository } = await setup()
+    const draftId = 'pasted-text'
+    drafts.open({ draftId, initialContent: createBuddyUserContent(), initialExecutionConfig: { executionProfile: 'read_only', approvalPolicy: 'manual' }, initialModelSelection: null, now: '2026-10-10T00:00:00.000Z', scope: { kind: 'global' } })
+    const text = `  中文\t  \r\n\r\n${'content\n'.repeat(220)}\n`
+    const bytes = Buffer.from(text)
+    await service.accept({ draftId, resources: [{ resourceId: 'pasted-resource', name: 'pasted.txt', nameSource: 'clipboard', mimeType: 'text/plain', sizeBytes: bytes.length }] })
+    await expect(service.readText({ draftId, resourceId: 'pasted-resource' })).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    const ready = await service.complete({ draftId, resourceId: 'pasted-resource', bytes })
+    expect(ready).toMatchObject({ state: 'ready', nameSource: 'clipboard', kind: 'text' })
+    await expect(service.readText({ draftId, resourceId: 'pasted-resource' })).resolves.toBe(text)
+    await expect(service.readText({ draftId: 'other-draft', resourceId: 'pasted-resource' })).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    const attachment = attachmentRepository.findById('attachmentId' in ready ? ready.attachmentId : '')!
+    expect(await readFile(attachment.storedPath)).toEqual(bytes)
+    await truncate(attachment.storedPath, 1024 * 1024 + 1)
+    await expect(service.readText({ draftId, resourceId: 'pasted-resource' })).rejects.toBeDefined()
+  })
+
+  it('rejects oversized pasted text before creating a resource', async () => {
+    const { service, repository } = await setup()
+    await expect(service.accept({ draftId: 'oversized-text', resources: [{ resourceId: 'oversized-resource', name: 'pasted.txt', nameSource: 'clipboard', mimeType: 'text/plain', sizeBytes: 1024 * 1024 + 1 }] })).rejects.toMatchObject({ code: 'ATTACHMENT_TOO_LARGE' })
+    expect(repository.listForDraft('oversized-text')).toEqual([])
+  })
+
   it.each([
     [{ name: 'archive.zip', mimeType: 'application/zip', sizeBytes: 10 }, 'ATTACHMENT_UNSUPPORTED'],
     [{ name: 'audio.m4a', mimeType: 'audio/x-m4a', sizeBytes: 10 * 1024 * 1024 + 1 }, 'ATTACHMENT_TOO_LARGE'],

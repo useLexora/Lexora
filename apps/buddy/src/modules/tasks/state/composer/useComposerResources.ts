@@ -22,6 +22,7 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
   const sources = new Map<string, File>()
   const localReferenceIds = new Set<string>()
   const accepting = new Set<Promise<void>>()
+  const pendingResourceIds = new Set<string>()
   const rejectedIds = shallowReactive(new Set<string>())
   const resources = computed(() => [...entries.values()].filter(entry => entry.resource.draftId === options.draftId.value))
 
@@ -116,7 +117,7 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
     }
   }
 
-  async function accept(draftId: string, incoming: readonly BuddyComposerResource[]) {
+  async function accept(draftId: string, incoming: readonly BuddyComposerResource[], waitForCompletion = false) {
     let accepted: readonly BuddyComposerResource[]
     try {
       accepted = await options.api.accept({
@@ -138,28 +139,35 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
         throw error
       }
     }
+    const completing: Promise<void>[] = []
     for (const resource of accepted) {
       update(resource)
       if (resource.state === 'importing')
-        void complete(resource)
+        completing.push(complete(resource))
     }
+    if (waitForCompletion)
+      await Promise.all(completing)
   }
 
-  function begin(files: readonly File[], origin: 'file' | 'clipboard' = 'file'): readonly string[] {
-    const currentIds = new Set(options.getReferencedIds(options.draftId.value))
+  function startImport(files: readonly File[], origin: 'file' | 'clipboard', waitForCompletion = false) {
+    const currentIds = new Set([
+      ...options.getReferencedIds(options.draftId.value),
+      ...[...pendingResourceIds].filter(id => entries.get(id)?.resource.draftId === options.draftId.value),
+    ])
     const currentBytes = totalBytes(currentIds)
     if (!files.length)
-      return []
+      return { ids: [], pending: Promise.resolve() }
     if (
       currentIds.size + files.length > BUDDY_ATTACHMENT_COUNT_LIMIT
       || currentBytes + files.reduce((total, file) => total + (window.lexoraDesktop?.clipboard.getFilePath(file) ? 0 : file.size), 0) > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT
     ) {
       options.onLimitExceeded()
-      return []
+      return { ids: [], pending: Promise.resolve() }
     }
     const draftId = options.draftId.value
     const incoming = files.map((file): BuddyComposerResource => {
       const resourceId = crypto.randomUUID()
+      pendingResourceIds.add(resourceId)
       sources.set(resourceId, file)
       const sourcePath = window.lexoraDesktop?.clipboard.getFilePath(file) || undefined
       if (sourcePath)
@@ -169,7 +177,7 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
         kind: getAttachmentKind(file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : BUDDY_MEDIA_EXTENSIONS[`.${file.name.split('.').at(-1)?.toLowerCase()}` as keyof typeof BUDDY_MEDIA_EXTENSIONS] ?? file.type),
         mimeType: file.type,
         name: file.name,
-        nameSource: origin === 'clipboard' && file.type.startsWith('image/') && !sourcePath ? 'clipboard' : 'file',
+        nameSource: origin === 'clipboard' && !sourcePath ? 'clipboard' : 'file',
         sourcePath,
         resourceId,
         sizeBytes: file.size,
@@ -178,16 +186,18 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
       update(resource, false)
       return resource
     })
-    const pending = accept(draftId, incoming)
-    accepting.add(pending)
-    void pending.catch((error) => {
+    const pending = accept(draftId, incoming, waitForCompletion).catch((error) => {
       for (const resource of incoming) {
         if (entries.get(resource.resourceId)?.accepted === false)
           update({ ...metadata(resource), errorCode: 'IMPORT_INTERRUPTED', state: 'failed' }, false)
       }
       options.onError(error)
-    }).finally(() => accepting.delete(pending))
-    return incoming.map(resource => resource.resourceId)
+    }).finally(() => {
+      accepting.delete(pending)
+      for (const resource of incoming) pendingResourceIds.delete(resource.resourceId)
+    })
+    accepting.add(pending)
+    return { ids: incoming.map(resource => resource.resourceId), pending }
   }
 
   async function retry(resourceId: string) {
@@ -251,7 +261,20 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
         return null
       }
     },
-    begin,
+    begin: (files, origin = 'file') => startImport(files, origin).ids,
+    async importText(text) {
+      const file = new File([text], `pasted-text-${crypto.randomUUID().slice(0, 8)}.txt`, { type: 'text/plain' })
+      const { ids, pending } = startImport([file], 'clipboard', true)
+      await pending
+      const id = ids[0]
+      return !disposed && id && entries.get(id)?.resource.state === 'ready' ? id : null
+    },
+    readText(resourceId) {
+      const resource = entries.get(resourceId)?.resource
+      if (!resource || resource.draftId !== options.draftId.value)
+        return Promise.reject(new Error('Resource does not belong to the current draft'))
+      return options.api.readText({ draftId: resource.draftId, resourceId })
+    },
     rejectedIds,
     resources,
     retry,

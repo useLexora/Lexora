@@ -15,7 +15,7 @@ import {
 } from '../model/chatComposerDocument'
 
 const RESOURCE_EDIT_META = 'buddy-composer-resource-edit'
-const CLIPBOARD_TYPE = 'application/x-lexora-composer'
+export const CHAT_COMPOSER_CLIPBOARD_TYPE = 'application/x-lexora-composer'
 let copiedSlice: { draftId: string, editorSessionId: string, slice: Slice, token: string } | null = null
 
 export const ChatComposerResourceClipboard = Extension.create<{
@@ -48,7 +48,7 @@ export const ChatComposerResourceClipboard = Extension.create<{
           cut: (view, event) => copy(view, event, true),
         },
         handlePaste(view, event) {
-          const token = event.clipboardData?.getData(CLIPBOARD_TYPE)
+          const token = event.clipboardData?.getData(CHAT_COMPOSER_CLIPBOARD_TYPE)
           if (!copiedSlice || copiedSlice.token !== token || copiedSlice.draftId !== options.draftId() || copiedSlice.editorSessionId !== editorSessionId)
             return false
           event.preventDefault()
@@ -66,7 +66,7 @@ export const ChatComposerResourceClipboard = Extension.create<{
       copiedSlice = { draftId: options.draftId(), editorSessionId, slice, token }
       const holder = document.createElement('div')
       holder.append(DOMSerializer.fromSchema(view.state.schema).serializeFragment(slice.content))
-      event.clipboardData.setData(CLIPBOARD_TYPE, token)
+      event.clipboardData.setData(CHAT_COMPOSER_CLIPBOARD_TYPE, token)
       event.clipboardData.setData('text/html', holder.innerHTML)
       event.clipboardData.setData('text/plain', slice.content.textBetween(0, slice.content.size, '\n', node => DOMSerializer.fromSchema(view.state.schema).serializeNode(node).textContent ?? ''))
       event.preventDefault()
@@ -230,6 +230,7 @@ export async function insertResolvedChatComposerResource(
   editor: Editor,
   range: { from: number, to: number },
   resolveResource: () => Promise<string | null>,
+  trailingSpace = true,
 ): Promise<boolean> {
   const original = editor.state.doc.slice(range.from, range.to)
   let currentRange = range
@@ -252,7 +253,7 @@ export async function insertResolvedChatComposerResource(
     const transaction = closeHistory(editor.state.tr)
       .replaceWith(currentRange.from, currentRange.to, [
         editor.schema.nodes[CHAT_RESOURCE_REFERENCE_NODE_NAME]!.create({ resourceId }),
-        editor.schema.text(' '),
+        ...(trailingSpace ? [editor.schema.text(' ')] : []),
       ])
       .setMeta(RESOURCE_EDIT_META, true)
     editor.view.dispatch(transaction)
@@ -261,6 +262,44 @@ export async function insertResolvedChatComposerResource(
   finally {
     editor.off('transaction', track)
   }
+}
+
+export function pasteChatComposerText(editor: Editor, text: string, resolveResource: () => Promise<string | null>): Promise<boolean> {
+  if (editor.isDestroyed || !editor.isEditable)
+    return Promise.resolve(false)
+  const fragment = plainTextFragment(editor, text)
+  const transaction = editor.state.tr.replaceSelection(new Slice(fragment, 0, 0))
+  const to = transaction.selection.from
+  dispatchComposerEdit(editor, transaction)
+  return insertResolvedChatComposerResource(editor, { from: to - fragment.size, to }, resolveResource, false)
+}
+
+export function restoreChatComposerResourceText(editor: Editor, resourceId: string, text: string): boolean {
+  if (editor.isDestroyed || !editor.isEditable)
+    return false
+  const ranges: { from: number, to: number }[] = []
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === CHAT_RESOURCE_REFERENCE_NODE_NAME && node.attrs.resourceId === resourceId)
+      ranges.push({ from: pos, to: pos + node.nodeSize })
+  })
+  const panel: string[] = editor.state.doc.attrs.panelResourceIds
+  if (!ranges.length && !panel.includes(resourceId))
+    return false
+  const transaction = editor.state.tr
+  const fragment = plainTextFragment(editor, text)
+  for (const range of ranges.toReversed())
+    transaction.replaceWith(range.from, range.to, fragment)
+  if (!ranges.length)
+    transaction.replaceSelection(new Slice(fragment, 0, 0))
+  transaction.setDocAttribute('panelResourceIds', panel.filter(id => id !== resourceId))
+  return dispatchComposerEdit(editor, transaction)
+}
+
+function plainTextFragment(editor: Editor, text: string): Fragment {
+  return Fragment.fromArray(text.split(/\r\n|\r|\n/u).flatMap((line, index) => [
+    ...(index ? [editor.schema.nodes.hardBreak!.create()] : []),
+    ...(line ? [editor.schema.text(line)] : []),
+  ]))
 }
 
 export function removeChatComposerPanelResource(editor: Editor, resourceId: string): boolean {

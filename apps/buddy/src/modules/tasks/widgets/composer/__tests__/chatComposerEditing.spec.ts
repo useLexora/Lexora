@@ -66,6 +66,7 @@ async function mountComposer(options: {
   const component = defineComponent({
     setup() {
       composer = useChatComposer({
+        pasteTextAsAttachment: shallowRef(true),
         canSend,
         composerContent: content,
         draft,
@@ -80,6 +81,8 @@ async function mountComposer(options: {
         selectedServiceTier,
         loadContextOptions: options.loadContextOptions ?? (async () => ({ files: [], skills: [] })),
         beginImport: () => [],
+        importPastedText: async () => null,
+        readResourceText: async () => '',
         selectSource: options.selectSource ?? (async () => null),
         onSend: (payload) => {
           sent.push(payload.content)
