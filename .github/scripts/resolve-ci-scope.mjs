@@ -8,6 +8,7 @@ const repoRoot = resolve(import.meta.dirname, '../..')
 const ciInputs = new Set([
   '.github/actions/install-workspace-dependencies/action.yml',
   '.github/workflows/ci.yml',
+  '.github/workflows/ci-cache.yml',
   '.github/scripts/resolve-ci-scope.mjs',
 ])
 const rustInputs = new Set([

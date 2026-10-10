@@ -2,28 +2,7 @@ name: Lexora CI
 
 on:
   pull_request:
-  push:
-    branches: [master]
-    paths:
-      - .github/workflows/ci.yml
-      - .github/actions/install-workspace-dependencies/action.yml
-      - .github/scripts/resolve-ci-scope.mjs
-      - .github/scripts/buddy-test-runtime.mjs
-      - .cargo/**
-      - rust-toolchain*
-      - .node-version
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - apps/buddy/package.json
-      - apps/buddy/native/**
-      - apps/buddy/platform/native/**
-      - apps/buddy/platform/targets.json
-      - apps/buddy/shared/platform/**
-      - apps/buddy/resources/icons/app-icon.png
-      - packages/assets/buddy/pets/default/**
-      - packaging/buddy/release/native-host.mjs
-      - packaging/buddy/release/targets.mjs
+  workflow_call:
 
 permissions:
   contents: read
@@ -180,7 +159,7 @@ jobs:
         run: pnpm test
 
   native-test-runtime:
-    name: Native test runtime
+    name: ${{ github.event_name == 'pull_request' && 'Native test runtime' || 'Native runtime cache' }}
     needs: scope
     if: needs.scope.outputs.workspace == 'true'
     runs-on: ubuntu-24.04
@@ -191,18 +170,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
-
       - name: Cache Rust runtime
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -211,12 +181,52 @@ jobs:
           key: buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/platform/native/nativeHost.json', 'apps/buddy/platform/targets.json', 'packaging/buddy/release/native-host.mjs', 'packaging/buddy/release/targets.mjs') }}
           restore-keys: |
             buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
+          lookup-only: ${{ github.event_name != 'pull_request' }}
+
+      - name: Restore Rust runtime for cache warming
+        if: github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/buddy/.output/build/native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+          restore-keys: |
+            buddy-runtime-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
+
+      - name: Setup Node
+        if: github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Setup Rust
+        if: github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
 
       - name: Prepare native test programs
+        if: github.event_name == 'pull_request'
         run: |
           sudo apt-get update
           sudo apt-get install -y libcap-dev meson ninja-build
           node .github/scripts/buddy-test-runtime.mjs "$RUNNER_TEMP/buddy-test-runtime.tar"
+
+      - name: Compile native programs for cache
+        if: github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'
+        run: node packaging/buddy/release/native-host.mjs
+
+      - name: Save Rust runtime cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/buddy/.output/build/native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Upload native test runtime
         if: github.event_name == 'pull_request'
@@ -228,7 +238,7 @@ jobs:
           retention-days: 1
 
   native-checks:
-    name: Native checks (${{ matrix.target }})
+    name: ${{ github.event_name == 'pull_request' && 'Native checks' || 'Native cache' }} (${{ matrix.target }})
     needs: scope
     if: needs.scope.outputs.native == 'true'
     strategy:
@@ -255,24 +265,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
-          components: clippy, rustfmt
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-
-      - name: Resolve native target
-        id: target
-        shell: bash
-        run: node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
-
       - name: Cache Rust tests
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -281,9 +276,41 @@ jobs:
           key: native-checks-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-${{ hashFiles('.cargo/**', 'rust-toolchain*', 'apps/buddy/native/**', 'apps/buddy/resources/icons/app-icon.png', 'packages/assets/buddy/pets/default/**') }}
           restore-keys: |
             native-checks-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
+          lookup-only: ${{ github.event_name != 'pull_request' }}
+
+      - name: Restore Rust tests for cache warming
+        if: github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/buddy/.output/build/native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+          restore-keys: |
+            native-checks-${{ runner.os }}-${{ runner.arch }}-${{ env.BUDDY_RUST_TOOLCHAIN }}-${{ hashFiles('apps/buddy/native/Cargo.lock') }}-
+
+      - name: Setup Rust
+        if: github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - name: Setup Node
+        if: github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Resolve native target
+        if: github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true'
+        id: target
+        shell: bash
+        run: node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
 
       - name: Install Linux native dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true')
         run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-3-dev libgtk-layer-shell-dev libxdo-dev
 
       - name: Check Rust formatting
@@ -291,23 +318,39 @@ jobs:
         run: cargo fmt --manifest-path apps/buddy/native/Cargo.toml --all -- --check
 
       - name: Lint native components
+        if: github.event_name == 'pull_request'
         run: cargo clippy --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ steps.target.outputs.cargo-args }} --all-targets -- -D warnings
 
       - name: Test native components
+        if: github.event_name == 'pull_request'
         run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ steps.target.outputs.cargo-args }}
 
+      - name: Compile native tests for cache
+        if: github.event_name != 'pull_request' && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --locked --no-run --manifest-path apps/buddy/native/Cargo.toml --workspace ${{ steps.target.outputs.cargo-args }}
+
       - name: Build Windows sandbox acceptance runtime
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && (github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true')
         run: cargo build --locked --release --manifest-path apps/buddy/native/Cargo.toml --package lexora-buddy-host --bin lexora-buddy-sandbox --example sandbox-adversary --target ${{ steps.target.outputs.rust-target }}
 
       - name: Verify Windows sandbox with a non-administrator token
-        if: runner.os == 'Windows'
+        if: github.event_name == 'pull_request' && runner.os == 'Windows'
         shell: pwsh
         run: >-
           ./packaging/buddy/release/verify-windows-sandbox.ps1
           -SandboxExecutable ./apps/buddy/.output/build/native/${{ steps.target.outputs.rust-target }}/release/lexora-buddy-sandbox.exe
           -AdversaryExecutable ./apps/buddy/.output/build/native/${{ steps.target.outputs.rust-target }}/release/examples/sandbox-adversary.exe
           -InstallComponent
+
+      - name: Save Rust test cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/buddy/.output/build/native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
   workspace-dependency-cache:
     name: Workspace dependency cache
@@ -333,6 +376,7 @@ jobs:
         uses: ./.github/actions/install-workspace-dependencies
         with:
           packages: '@uselexora/lexora @uselexora/lexora-buddy...'
+          cache-only: 'true'
 
   ci-gate:
     name: CI Gate
