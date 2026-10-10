@@ -5,6 +5,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { writeError, writeOutput } from '../shared/cli-output.mjs'
+import { releaseNotesPath } from './notes.mjs'
 import {
   compareLexoraVersions,
   createLexoraVersionSources,
@@ -50,16 +51,16 @@ export function validateLexoraReleaseTransition({ before, after, changedPaths })
   }
 
   const actualPaths = [...new Set(changedPaths.map(normalizePath))].sort()
-  const expectedPaths = [...lexoraReleaseTransitionPaths].sort()
+  const expectedPaths = [...lexoraReleaseTransitionPaths, releaseNotesPath(after.productVersion)].sort()
   const missingPaths = expectedPaths.filter(path => !actualPaths.includes(path))
   const unexpectedPaths = actualPaths.filter(path => !expectedPaths.includes(path))
 
   if (actualPaths.length !== changedPaths.length)
     errors.push('release transition contains duplicate changed paths')
   if (missingPaths.length)
-    errors.push(`release transition is missing version files: ${missingPaths.join(', ')}`)
+    errors.push(`release transition is missing required files: ${missingPaths.join(', ')}`)
   if (unexpectedPaths.length)
-    errors.push(`release transition contains non-version files: ${unexpectedPaths.join(', ')}`)
+    errors.push(`release transition contains unrelated files: ${unexpectedPaths.join(', ')}`)
 
   return errors
 }
@@ -93,7 +94,8 @@ export function checkLexoraReleaseTransition(before, after, cwd = repoRoot) {
   const beforeSnapshot = readVersionSnapshotAtCommit(beforeCommit, cwd)
   const afterSnapshot = readVersionSnapshotAtCommit(afterCommit, cwd)
   const changedPaths = listChangedPaths(beforeCommit, afterCommit, cwd)
-  const structuralChanges = listStructuralChanges(beforeCommit, afterCommit, cwd)
+  const notesPath = releaseNotesPath(afterSnapshot.state.productVersion)
+  const structuralChanges = listStructuralChanges(beforeCommit, afterCommit, notesPath, cwd)
   const errors = [
     ...validateLexoraReleaseTransition({
       after: afterSnapshot.state,
@@ -111,6 +113,10 @@ export function checkLexoraReleaseTransition(before, after, cwd = repoRoot) {
       `release transition contains file structure or mode changes: ${structuralChanges}`,
     )
   }
+  if (runGit(['ls-tree', beforeCommit, '--', notesPath], cwd, 'inspect previous release notes').trim())
+    errors.push('release notes for the new version must not already exist')
+  if (!runGit(['ls-tree', afterCommit, '--', notesPath], cwd, 'inspect release notes').startsWith('100644 blob '))
+    errors.push('release notes must be a regular, non-executable file')
 
   if (errors.length)
     throw new Error(errors.join('\n'))
@@ -147,13 +153,15 @@ function listChangedPaths(before, after, cwd) {
   ], cwd, 'list release transition paths').split('\n').filter(Boolean)
 }
 
-function listStructuralChanges(before, after, cwd) {
+function listStructuralChanges(before, after, notesPath, cwd) {
   return runGit([
     'diff',
     '--summary',
     before,
     after,
     '--',
+    '.',
+    `:(exclude)${notesPath}`,
   ], cwd, 'list release transition structure changes').trim().replaceAll('\n', '; ')
 }
 

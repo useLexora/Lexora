@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SmoothMarkdownStreamOptions } from 'markstream-vue'
+import type { NodeRendererProps, SmoothMarkdownStreamOptions } from 'markstream-vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import MarkdownRender from 'markstream-vue'
@@ -10,11 +10,13 @@ import 'markstream-vue/index.css'
 
 const props = withDefaults(defineProps<{
   content: string
+  allowImages?: boolean
   codeOverflow?: 'wrap' | 'scroll'
   final?: boolean
   language: BuddyLocale
   writeClipboardText: (text: string) => Promise<void>
 }>(), {
+  allowImages: true,
   final: true,
 })
 
@@ -29,6 +31,7 @@ interface CopyButtonState {
 
 const { t } = useBuddyI18n(() => props.language)
 const { isDark } = useDesktopUi()
+const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
 const copyButtonStates = new Map<HTMLButtonElement, CopyButtonState>()
 
 const smoothStreamingOptions = {
@@ -139,6 +142,7 @@ onBeforeUnmount(() => {
       class="buddy-chat-markdown"
       :batch-rendering="animateStreaming"
       :content="content"
+      :custom-markdown-it="allowImages ? undefined : disableImages"
       :code-block-options="codeOverflow ? { overflow: codeOverflow } : undefined"
       :fade="false"
       :final="final"

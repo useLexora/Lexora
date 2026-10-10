@@ -67,6 +67,9 @@ jobs:
               --github-output "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate reviewed release notes
+        run: node packaging/release/notes.mjs --check
+
       - name: Require unused release identity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +233,7 @@ jobs:
             --repo "$LEXORA_BUDDY_RELEASE_REPO" \
             --verify-tag \
             --title "Lexora $LEXORA_BUDDY_VERSION" \
-            --generate-notes \
+            --notes-file ".github/release-notes/$LEXORA_BUDDY_RELEASE_TAG.md" \
             --draft
 
       - name: Upload immutable release assets

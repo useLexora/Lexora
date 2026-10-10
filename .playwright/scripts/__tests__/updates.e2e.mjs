@@ -8,7 +8,7 @@ const result = {
   latestVersion: version,
   status: 'update_available',
   releaseUrl: `https://github.com/useLexora/Lexora/releases/tag/v${version}`,
-  releaseNotes: '## 更新亮点\n- feat(buddy): 改善任务恢复 by @contributor in https://github.com/useLexora/Lexora/pull/301\n- 修复文件操作\n- 优化资源使用\n![external](https://example.invalid/image.png)',
+  releaseNotes: '## 中文\n\n### 改进\n- **改善任务恢复**\n- 修复文件操作\n- 优化资源使用\n- 完整展示第四条更新\n\n[变更详情](https://github.com/useLexora/Lexora/pull/301)\n\n![external](https://example.invalid/image.png)\n\n<script>window.releaseNotesExecuted = true</script>\n\n## English\n\n### Improvements\n- **Restore tasks safely**\n- Fix file operations\n- Reduce resource usage\n- Show the fourth release note',
 }
 
 async function seedUpdate(instance, enabled = true) {
@@ -69,10 +69,10 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
   await desktop.page.locator('.desktop-notification-item').filter({ hasText: `Lexora ${version}` }).click()
   const dialog = () => desktop.page.locator('.desktop-update-dialog')
   await expect(dialog()).toBeVisible()
-  await expect(dialog()).toContainText('改善任务恢复')
-  await expect(dialog()).not.toContainText('@contributor')
-  await expect(dialog()).not.toContainText('/pull/301')
+  await expect(dialog()).toContainText('完整展示第四条更新')
+  await expect(dialog()).toContainText('Show the fourth release note')
   await expect(dialog().locator('img')).toHaveCount(0)
+  expect(await desktop.page.evaluate(() => window.releaseNotesExecuted)).toBeUndefined()
   await expect.poll(() => decisions(instance)).toMatchObject({ seenVersion: version })
   await desktop.app.evaluate(({ shell }) => {
     globalThis.updateOpenedUrls = []
@@ -80,8 +80,10 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
       globalThis.updateOpenedUrls.push(url)
     }
   })
+  await dialog().getByRole('link').filter({ hasText: '变更详情' }).click()
+  await expect.poll(() => desktop.app.evaluate(() => globalThis.updateOpenedUrls)).toEqual(['https://github.com/useLexora/Lexora/pull/301'])
   await dialog().getByRole('button', { name: '前往下载', exact: true }).click()
-  await expect.poll(() => desktop.app.evaluate(() => globalThis.updateOpenedUrls)).toEqual([result.releaseUrl])
+  await expect.poll(() => desktop.app.evaluate(() => globalThis.updateOpenedUrls)).toEqual(['https://github.com/useLexora/Lexora/pull/301', result.releaseUrl])
   await dialog().getByRole('button', { name: '忽略此版本', exact: true }).click()
   await expect(dialog()).toHaveCount(0)
   await expect.poll(() => decisions(instance)).toMatchObject({ ignoredVersion: version })
@@ -106,7 +108,6 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
   await checkFromApplicationMenu(desktop.page)
   await expect(dialog()).toContainText(version)
   await expect(reminder()).toHaveCount(0)
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'update-available.png'), animations: 'disabled' })
   await dialog().getByRole('button', { name: '关闭', exact: true }).click()
   await expect(dialog()).toHaveCount(0)
   await desktop.app.evaluate(({ ipcMain, app }) => {
@@ -124,7 +125,6 @@ test('updates stay discoverable after dismissal, persist skips and opt-out, and 
   await expect(dialog()).toContainText('已是最新版本')
   await expect(dialog().getByRole('button', { name: '忽略此版本', exact: true })).toHaveCount(0)
   await expect(dialog().getByRole('button', { name: '前往下载', exact: true })).toHaveCount(0)
-  await desktop.page.screenshot({ path: path.join(instance.artifactDirectory, 'up-to-date.png'), animations: 'disabled' })
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 

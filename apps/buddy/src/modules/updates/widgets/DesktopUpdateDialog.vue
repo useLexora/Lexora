@@ -2,17 +2,18 @@
 import type { DesktopUpdateCheckResult } from '@buddy-electron/shared/desktopUpdates'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ArrowDownload20Regular, ArrowUpRight20Regular, CheckmarkCircle20Regular } from '@vicons/fluent'
-import { NButton, NModal } from 'naive-ui'
+import { NButton, NModal, NScrollbar } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { updateReleaseHighlights } from '../model/updateReleaseNotes'
+import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 
 const props = defineProps<{
   language: BuddyLocale
   result: DesktopUpdateCheckResult | null
   show: boolean
   pending: boolean
+  writeClipboardText: (text: string) => Promise<void>
 }>()
 const emit = defineEmits<{
   'openRelease': [url: string]
@@ -21,7 +22,6 @@ const emit = defineEmits<{
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const updateAvailable = computed(() => props.result?.status === 'update_available')
-const highlights = computed(() => updateReleaseHighlights(props.result?.releaseNotes ?? ''))
 </script>
 
 <template>
@@ -29,7 +29,7 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
     :show="show"
     preset="card"
     class="desktop-update-dialog"
-    :style="{ width: 'min(32rem, calc(100vw - 2rem))' }"
+    :style="{ width: 'min(42rem, calc(100vw - 2rem))' }"
     :title="t('desktop.update.title')"
     :auto-focus="false"
     @update:show="emit('update:show', $event)"
@@ -57,7 +57,7 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
         <section class="desktop-update-dialog__card">
           <div class="desktop-update-dialog__card-header">
             <h3 class="desktop-update-dialog__card-title">
-              {{ t('desktop.update.highlights') }}
+              {{ t('desktop.update.releaseNotes') }}
             </h3>
             <NButton
               text
@@ -74,11 +74,25 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
             </NButton>
           </div>
 
-          <ul v-if="highlights.length" class="desktop-update-dialog__list">
-            <li v-for="(line, index) in highlights" :key="`${index}:${line}`">
-              {{ line }}
-            </li>
-          </ul>
+          <NScrollbar
+            v-if="result.releaseNotes.trim()"
+            :key="result.latestVersion"
+            style="max-height: min(50vh, 30rem)"
+          >
+            <section
+              class="desktop-update-dialog__notes"
+              :aria-label="t('desktop.update.releaseNotes')"
+              tabindex="0"
+            >
+              <DesktopMarkdownContent
+                :content="result.releaseNotes"
+                :allow-images="false"
+                :language="language"
+                :write-clipboard-text="writeClipboardText"
+                code-overflow="scroll"
+              />
+            </section>
+          </NScrollbar>
           <p v-else class="desktop-update-dialog__notes-empty">
             {{ t('desktop.update.notesUnavailable') }}
           </p>
@@ -226,24 +240,12 @@ const highlights = computed(() => updateReleaseHighlights(props.result?.releaseN
   font-size: 12px;
 }
 
-.desktop-update-dialog__list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding-left: 18px;
+.desktop-update-dialog__notes {
   color: var(--buddy-text-primary);
-  font-size: 13px;
-  line-height: 1.6;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.desktop-update-dialog__list li {
+  padding-right: 12px;
   overflow-wrap: anywhere;
-}
-
-.desktop-update-dialog__list li::marker {
-  color: var(--buddy-accent-text);
+  --buddy-chat-final-font-size: 13px;
+  --buddy-chat-final-line-height: 1.7;
 }
 
 .desktop-update-dialog__notes-empty {

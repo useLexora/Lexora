@@ -34,7 +34,7 @@ export class DesktopUpdateStore {
   async read(): Promise<DesktopUpdateRecord> {
     const path = join(this.#directory, 'updates.json')
     try {
-      if ((await stat(path)).size > 128 * 1024)
+      if ((await stat(path)).size > 8 * 1024 * 1024)
         throw new Error('UPDATE_STATE_TOO_LARGE')
       return updateRecordSchema.parse(JSON.parse(await readFile(path, 'utf8')))
     }

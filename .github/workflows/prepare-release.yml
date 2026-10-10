@@ -82,6 +82,7 @@ jobs:
       - name: Create validated version commit
         id: version
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           BASE_SHA="$(git rev-parse HEAD)"
@@ -89,6 +90,19 @@ jobs:
 
           node packaging/release/version.mjs --set "$VERSION"
           node packaging/release/version.mjs --check
+
+          previous_tag="$(
+            gh release list --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts --exclude-pre-releases --limit 1 \
+              --json tagName --jq '.[0].tagName // ""'
+          )"
+          notes_args=(-f "tag_name=v$VERSION" -f "target_commitish=$BASE_SHA")
+          if [[ -n "$previous_tag" ]]; then
+            notes_args+=(-f "previous_tag_name=$previous_tag")
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            "${notes_args[@]}" --jq '.body' > "$RUNNER_TEMP/release-notes.md"
+          node packaging/release/notes.mjs --prepare "$RUNNER_TEMP/release-notes.md"
 
           git switch --create "$release_branch"
           git config user.name 'github-actions[bot]'
@@ -98,7 +112,8 @@ jobs:
             apps/buddy/package.json \
             apps/buddy/buddy.version.json \
             apps/buddy/native/pet/Cargo.toml \
-            apps/buddy/native/Cargo.lock
+            apps/buddy/native/Cargo.lock \
+            ".github/release-notes/v$VERSION.md"
 
           if git diff --cached --quiet; then
             echo "Version $VERSION must be greater than the current product version" >&2
@@ -136,7 +151,8 @@ jobs:
               --head "$RELEASE_BRANCH" \
               --title "chore(release): 准备 $RELEASE_TAG" \
               --label "skip-changelog" \
-              --body "此 PR 仅同步 Lexora 产品族版本。合并后，发布流程会重新验证版本迁移、构建并验证 Buddy 安装包，再等待发布环境审批后创建 tag 与 GitHub Release。"
+              --draft \
+              --body ""
           )"; then
             echo "Created $pull_request_url"
             exit 0

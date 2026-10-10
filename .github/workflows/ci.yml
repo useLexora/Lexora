@@ -130,6 +130,10 @@ jobs:
           pnpm exec eslint eslint.config.js .github/scripts packages/assets packaging infrastructure/scripts
           --ignore-pattern 'packaging/buddy/**'
 
+      - name: Validate reviewed release notes
+        if: startsWith(github.head_ref, 'chore/release-v')
+        run: node packaging/release/notes.mjs --check
+
   workspace-checks:
     name: Workspace checks
     needs: [scope, native-test-runtime]

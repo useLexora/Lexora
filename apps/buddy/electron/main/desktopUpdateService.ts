@@ -50,7 +50,7 @@ export async function checkForDesktopUpdate(
       currentVersion: current,
       latestVersion: release.version,
       releaseUrl: release.metadata.html_url,
-      releaseNotes: typeof release.metadata.body === 'string' ? release.metadata.body.trim().slice(0, 8_000) : '',
+      releaseNotes: typeof release.metadata.body === 'string' ? release.metadata.body.trim() : '',
       status: compareDesktopVersions(release.version, current) > 0
         ? 'update_available'
         : 'up_to_date',

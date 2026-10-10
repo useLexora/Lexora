@@ -53,6 +53,7 @@ async function action(operation: () => Promise<unknown>) {
     :result="details"
     :language="language"
     :pending="pending"
+    :write-clipboard-text="api.clipboard.writeText"
     @update:show="!$event && updates.closeDetails()"
     @open-release="url => action(() => api.app.openReleasePage(url))"
     @ignore="version => action(() => updates.ignore(version))"

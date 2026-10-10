@@ -8,7 +8,7 @@ export const desktopUpdateResultSchema = z.object({
   currentVersion: desktopVersionSchema,
   latestVersion: desktopVersionSchema,
   releaseUrl: z.url().refine(isLexoraReleaseUrl),
-  releaseNotes: z.string().max(8_000),
+  releaseNotes: z.string().max(1024 * 1024),
   status: z.enum(['up_to_date', 'update_available']),
 }).strict()
 

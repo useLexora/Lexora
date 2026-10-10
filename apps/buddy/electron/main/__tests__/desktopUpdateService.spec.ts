@@ -2,34 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
 
 describe('checkForDesktopUpdate', () => {
-  it('reports a newer stable Lexora release without installing it', async () => {
-    const fetchRelease = async () => new Response(JSON.stringify([
-      {
-        draft: false,
-        html_url: 'https://github.com/useLexora/Lexora/releases/tag/web-v1.0.0',
-        prerelease: false,
-        tag_name: 'web-v1.0.0',
-      },
-      {
-        draft: false,
-        html_url: 'https://github.com/useLexora/Lexora/releases/tag/v0.2.0',
-        prerelease: false,
-        tag_name: 'v0.2.0',
-      },
-    ]), { status: 200 })
-
-    await expect(checkForDesktopUpdate({
-      currentVersion: '0.1.0',
-      fetchRelease,
-    })).resolves.toEqual({
-      currentVersion: '0.1.0',
-      latestVersion: '0.2.0',
-      releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v0.2.0',
-      releaseNotes: '',
-      status: 'update_available',
-    })
-  })
-
   it('reports the current version only after a valid release response', async () => {
     const fetchRelease = async () => new Response(JSON.stringify([{
       draft: false,
@@ -41,27 +13,36 @@ describe('checkForDesktopUpdate', () => {
     await expect(checkForDesktopUpdate({
       currentVersion: '0.1.0',
       fetchRelease,
-    })).resolves.toMatchObject({
+    })).resolves.toEqual({
+      currentVersion: '0.1.0',
       latestVersion: '0.1.0',
+      releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v0.1.0',
+      releaseNotes: '',
       status: 'up_to_date',
     })
   })
 
-  it('selects the highest trusted stable version and bounds the untrusted release notes', async () => {
+  it('selects the highest trusted stable version and preserves the complete release notes', async () => {
     const release = (version: string, fields = {}) => ({ draft: false, prerelease: false, tag_name: `v${version}`, html_url: `https://github.com/useLexora/Lexora/releases/tag/v${version}`, ...fields })
     const result = await checkForDesktopUpdate({
       currentVersion: '1.2.0',
       fetchRelease: async () => new Response(JSON.stringify([
         release('1.9.0'),
         release('1.10.0', { body: 'x'.repeat(20_000) }),
+        release('2.0.0', { tag_name: 'web-v2.0.0', html_url: 'https://github.com/useLexora/Lexora/releases/tag/web-v2.0.0' }),
         release('9.0.0', { html_url: 'https://example.invalid/download' }),
         release('8.0.0', { draft: true }),
         release('7.0.0', { prerelease: true }),
         release('6.0.0-beta'),
       ])),
     })
-    expect(result).toMatchObject({ latestVersion: '1.10.0', status: 'update_available' })
-    expect(result.releaseNotes).toHaveLength(8_000)
+    expect(result).toEqual({
+      currentVersion: '1.2.0',
+      latestVersion: '1.10.0',
+      releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.10.0',
+      releaseNotes: 'x'.repeat(20_000),
+      status: 'update_available',
+    })
   })
 
   it('returns a stable failure for an oversized response or an aborted request', async () => {
