@@ -165,7 +165,6 @@ describe('codemode runtime preference', () => {
     expect(fixture.lastResult()).toContain('stop-script')
     expect(fixture.controller.signal.aborted).toBe(false)
     expect(fixture.session.isStreaming).toBe(false)
-    expect(fixture.events.filter(event => event.type === 'tool_execution_end').map(event => event.toolName)).toEqual(['lexora_gate', 'lexora_wait', 'codemode'])
     await fixture.turn()
     expect(fixture.session.messages.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Done' }] })
   })
@@ -189,8 +188,9 @@ describe('codemode runtime preference', () => {
     await task
     expect(fixture.lastResult()).toContain('timed out')
     expect(approval.signal.aborted).toBe(true)
-    expect(approval.runSignal).toBe(fixture.controller.signal)
     expect(approval.runSignal?.aborted).toBe(false)
+    fixture.controller.abort()
+    expect(approval.runSignal?.aborted).toBe(true)
     expect(fixture.authorized.map(call => call.toolName)).toEqual(['codemode'])
     expect(fixture.events).toContainEqual(expect.objectContaining({ type: 'tool_execution_end', toolName: 'write', parentToolCallId: 'call-1', isError: true }))
   })

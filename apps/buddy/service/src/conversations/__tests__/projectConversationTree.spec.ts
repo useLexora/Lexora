@@ -6,6 +6,17 @@ import { CONVERSATION_QUOTE_PREVIEW_LENGTH, conversationTreeSchema } from '../..
 import { projectConversationTree } from '../projectConversationTree'
 
 describe('conversation tree projection', () => {
+  it('displays the actual answer model and retains the run model fallback for older answers', () => {
+    const input = {
+      conversationId: 'conversation',
+      activeBranchId: 'main',
+      branches: [],
+      messages: [message('q1', 'main', 'user', null, '1'), { ...message('a1', 'main', 'assistant', 'r1', '3'), content: { text: 'Answer', modelId: 'replacement-model', providerId: 'replacement-provider' } }],
+      runs: [run('r1', 'main', 'q1', '2')],
+    }
+    expect(projectConversationTree(input).nodes.find(node => node.kind === 'answer')?.metadata?.modelId).toBe('replacement-model')
+    expect(projectConversationTree({ ...input, messages: [input.messages[0]!, message('a1', 'main', 'assistant', 'r1', '3')] }).nodes.find(node => node.kind === 'answer')?.metadata?.modelId).toBe('test')
+  })
   it('projects bounded quote cards separately from question text, retaining full snapshots in message content', () => {
     const quotes = Array.from({ length: 4 }, (_, index) => ({
       id: `quote-${index}`,

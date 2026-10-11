@@ -49,18 +49,10 @@ describe('buddy permission settings persistence', () => {
       executionProfile: 'workspace_write',
       id: 'conversation-1',
       updatedAt: '2026-08-23T00:00:01.000Z',
-    })).toBeNull()
+    })).toMatchObject({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    expect(runs.findById('run-1')).toMatchObject({ approvalPolicy: 'manual', executionProfile: 'full_access' })
 
     runs.reconcileTerminal('run-1', 'completed', '2026-08-23T00:00:02.000Z', null)
-    expect(conversations.setPermissionSettings({
-      approvalPolicy: 'policy',
-      executionProfile: 'workspace_write',
-      id: 'conversation-1',
-      updatedAt: '2026-08-23T00:00:03.000Z',
-    })).toMatchObject({
-      approvalPolicy: 'policy',
-      executionProfile: 'workspace_write',
-    })
 
     prepareTestTurnRequest(database, {
       approvalPolicy: 'policy',

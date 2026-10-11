@@ -60,6 +60,10 @@ export class SandboxDirectoryPermissions {
     this.#changes.dispose()
   }
 
+  clear(run: BuddyExtensionRunContext): void {
+    this.#releases.get(run)?.()
+  }
+
   get(run: BuddyExtensionRunContext | null): readonly Readonly<SandboxDirectoryGrant>[] {
     return Object.freeze(run && !run.signal.aborted ? [...this.#runs.get(run)?.values() ?? []] : [])
   }

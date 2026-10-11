@@ -13,6 +13,7 @@ export interface BuddyExtensionRunContext {
     toolName: string
   }) => Promise<void>
   runId: string
+  retryModelChanged?: boolean
   serviceTier?: BuddyServiceTier | null
   signal: AbortSignal
 }

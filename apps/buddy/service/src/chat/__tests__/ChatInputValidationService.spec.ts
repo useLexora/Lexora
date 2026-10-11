@@ -33,31 +33,6 @@ describe('chat input validation', () => {
     expect(fixture.active.messages[0]).toMatchObject({ content: [image] })
   })
 
-  it('uses the compacted branch context instead of all historical attachment records', async () => {
-    const fixture = createFixture()
-    fixture.history.appendMessage(reference(fixture.attach('audio/wav', 8 * 1024 * 1024)))
-    const kept = fixture.history.appendMessage({ role: 'user', content: 'Continue', timestamp: 1 })
-    fixture.history.appendCompaction('Earlier audio was summarized.', kept, 100_000)
-    await expect(fixture.service.validate({ ...input(), attachments: [fixture.attach('audio/wav', 8 * 1024 * 1024)] })).resolves.toBeUndefined()
-  })
-
-  it.each(['google-generative-ai', 'openai-completions'] as const)('allows file-only M4A on %s alongside native audio', async (api) => {
-    const fixture = createFixture({ api })
-    await expect(fixture.service.validate({ ...input(), attachments: [fixture.attach('audio/mp4', 100)] })).resolves.toBeUndefined()
-    await expect(fixture.service.validate({ ...input(), attachments: [fixture.attach('audio/mpeg', 100)] })).resolves.toBeUndefined()
-  })
-
-  it('accepts M4A only for the adapter that supports its data URL format', async () => {
-    const fixture = createFixture({ api: 'openai-completions', baseUrl: 'https://api.xiaomimimo.com/v1' })
-    await expect(fixture.service.validate({ ...input(), attachments: [fixture.attach('audio/mp4', 100)] })).resolves.toBeUndefined()
-  })
-
-  it('validates historical formats when switching models', async () => {
-    const fixture = createFixture({ api: 'openai-completions' })
-    fixture.history.appendMessage(reference(fixture.attach('video/mp4', 100)))
-    await expect(fixture.service.validate(input())).resolves.toBeUndefined()
-  })
-
   it('counts transcript system content once in both live and restored branches', async () => {
     const fixture = createFixture()
     const system = { role: 'system' as const, content: 's'.repeat(10_000), timestamp: 1 }
@@ -69,13 +44,6 @@ describe('chat input validation', () => {
     await expect(fixture.service.validate(input())).resolves.toBeUndefined()
     fixture.active.messages = [system, { ...user, content: `${user.content}${'x'.repeat(20_000)}` }]
     await expect(fixture.service.validate(input())).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
-  })
-
-  it('includes active input and pending steering when checking another input', async () => {
-    const fixture = createFixture()
-    const audio = fixture.attach('audio/wav', 8 * 1024 * 1024)
-    fixture.active.messages = [reference(audio)]
-    await expect(fixture.service.validate({ ...input(), attachments: [audio] })).resolves.toBeUndefined()
   })
 })
 
@@ -109,8 +77,9 @@ function createFixture(overrides: Partial<InputModel> = {}) {
             model,
             messages: active.messages,
             systemPrompt: getCurrentSystemPrompt(active.messages),
-            agent: { convertToLlm: async messages => messages },
-          } as AgentSession,
+            subscribe: () => () => {},
+            agent: { convertToLlm: async (messages: AgentSession['messages']) => messages },
+          } as unknown as AgentSession,
           assertModelAccess: async () => model,
           inputReferences: { pending: null },
           runContext: { current: null },

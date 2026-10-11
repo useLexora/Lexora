@@ -59,21 +59,6 @@ describe('turnRequestRepository', () => {
     service.dispose()
   })
 
-  it('publishes only a new run for interrupted request retry without consuming its previous draft again', () => {
-    const database = createDatabase()
-    const service = new TurnRequestService(createTurnRequestRepository(database))
-    const events: TurnRequestCommit[] = []
-    service.onDidCommit(event => events.push(event))
-    service.prepare(createInput())
-    database.prepare('UPDATE runs SET status = \'failed\', error_code = \'RUNTIME_RESTARTED\', completed_at = ? WHERE id = ?').run('2026-08-14T00:00:01.000Z', 'run-1')
-    service.retryInterrupted({ requestId: 'request-1', runId: 'run-2', createdAt: '2026-08-14T00:00:02.000Z' })
-    service.retryInterrupted({ requestId: 'request-1', runId: 'unused', createdAt: '2026-08-14T00:00:03.000Z' })
-    expect(events.map(event => event.commitId)).toEqual(['run-1', 'run-2'])
-    expect(events[1]!.facts).toEqual([{ kind: 'request.retried', previousRunId: 'run-1' }, { kind: 'run.queued' }])
-    expect(database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 1 })
-    service.dispose()
-  })
-
   it('narrows only the run profile and rejects wider overrides without consuming the draft', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
@@ -148,6 +133,12 @@ describe('turnRequestRepository', () => {
       requestId: 'retry',
       runId: 'run-retry',
       sourceRunId: 'run-1',
+      model: createInput().model,
+      provider: createInput().provider,
+      modelParameters: createInput().modelParameters,
+      reasoning: createInput().runInput.reasoning,
+      serviceTier: null,
+      expectedModelSelection: createConversationRepository(database).findById('conversation-1')!.modelSelection,
     }
     expect(repository.regenerate(input)).toMatchObject({ created: true, branchId: 'branch-retry' })
     expect(database.prepare('SELECT COUNT(*) AS count FROM conversation_branches').get()).toEqual({ count: 2 })
@@ -256,48 +247,31 @@ describe('turnRequestRepository', () => {
     expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 1 })
   })
 
-  it('persists an explicit conversation model choice before the next turn', () => {
-    const database = createDatabase()
-    createTurnRequestRepository(database).prepare(createInput())
-    const conversations = createConversationRepository(database)
-
-    expect(conversations.setModelSelection({
-      id: 'conversation-1',
-      modelSelection: {
-        modelId: 'gpt-5.6',
-        providerId: 'openai-codex',
-        reasoning: 'max',
-        serviceTier: 'priority',
-      },
-      updatedAt: '2026-08-14T00:00:01.000Z',
-    })?.modelSelection).toEqual({
-      modelId: 'gpt-5.6',
-      providerId: 'openai-codex',
-      reasoning: 'max',
-      serviceTier: 'priority',
-    })
-  })
-
   it('atomically replaces an interrupted run without duplicating the user message', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
-    repository.prepare(createInput())
+    const service = new TurnRequestService(repository)
+    const events: TurnRequestCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    service.prepare(createInput())
     database.prepare(`
       UPDATE runs
       SET status = 'failed', error_code = 'RUNTIME_RESTARTED', completed_at = ?
       WHERE id = 'run-1'
     `).run('2026-08-14T00:00:01.000Z')
 
-    expect(repository.retryInterrupted({
+    expect(service.retryInterrupted({
       createdAt: '2026-08-14T00:00:02.000Z',
       requestId: 'request-1',
       runId: 'run-2',
     })).toMatchObject({ created: true, runId: 'run-2' })
-    expect(repository.retryInterrupted({
+    expect(service.retryInterrupted({
       createdAt: '2026-08-14T00:00:03.000Z',
       requestId: 'request-1',
       runId: 'run-3',
     })).toMatchObject({ created: false, runId: 'run-2' })
+    expect(events.map(event => event.commitId)).toEqual(['run-1', 'run-2'])
+    expect(events[1]!.facts).toEqual([{ kind: 'request.retried', previousRunId: 'run-1' }, { kind: 'run.queued' }])
     expect(database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 1 })
     expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 2 })
     expect(database.prepare(`
@@ -321,6 +295,7 @@ describe('turnRequestRepository', () => {
         service_tier: null,
       },
     ])
+    service.dispose()
   })
 
   it('rejects retrying an interrupted request while another run is incomplete', () => {
@@ -379,7 +354,7 @@ describe('turnRequestRepository', () => {
     })).toThrow(TurnRequestConflictError)
   })
 
-  it('atomically regenerates from the original user input without duplicating its message', () => {
+  it('regenerates with the current selection while preserving the original input, model and history', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
     repository.prepare(createInput())
@@ -407,7 +382,15 @@ describe('turnRequestRepository', () => {
       requestId: 'regenerate-request-1',
       runId: 'run-2',
       sourceRunId: 'run-1',
+      model: 'replacement-model',
+      provider: 'replacement-provider',
+      modelParameters: { contextWindow: 128_000, maxTokens: 16_000 },
+      reasoning: 'low' as const,
+      serviceTier: 'priority' as const,
+      expectedModelSelection: { modelId: 'replacement-model', providerId: 'replacement-provider', reasoning: 'low' as const, serviceTier: 'priority' as const },
     }
+    const conversations = createConversationRepository(database)
+    conversations.setModelSelection({ id: 'conversation-1', modelSelection: regeneration.expectedModelSelection, updatedAt: regeneration.createdAt })
 
     expect(repository.regenerate(regeneration)).toMatchObject({
       branchId: 'branch-2',
@@ -422,6 +405,11 @@ describe('turnRequestRepository', () => {
     expect(database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 2 })
     expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 2 })
     expect(database.prepare('SELECT COUNT(*) AS count FROM run_inputs').get()).toEqual({ count: 2 })
+    expect(database.prepare('SELECT model, provider, context_window, max_tokens FROM runs WHERE id = ?').get('run-2'))
+      .toEqual({ model: regeneration.model, provider: regeneration.provider, context_window: 128_000, max_tokens: 16_000 })
+    expect(database.prepare('SELECT model, provider FROM runs WHERE id = ?').get('run-1')).toEqual({ model: createInput().model, provider: createInput().provider })
+    expect(conversations.findById('conversation-1')?.modelSelection).toEqual(regeneration.expectedModelSelection)
+    expect(database.prepare('SELECT reasoning, service_tier FROM run_inputs WHERE run_id = ?').get('run-2')).toEqual({ reasoning: 'low', service_tier: 'priority' })
     expect(createConversationRepository(database)
       .listBranchMessages('conversation-1', 'branch-2')
       .map(message => message.id)).toEqual(['message-1'])

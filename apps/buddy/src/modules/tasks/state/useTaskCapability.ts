@@ -278,7 +278,16 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     resources: composerResources.resources.value,
   }))
   const composerInteractions = useChatComposerInteractions({ runs })
+  const { selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection } = useTaskModelPersistence({
+    activeConversationId,
+    api: api.localChat.conversations,
+    applyConversation,
+    drafts,
+    onError: setError,
+    selection: taskModels,
+  })
   const execution = useChatExecution({
+    flushModelSelection,
     activeRun,
     approvalPolicy: permissionSettingsState.approvalPolicy,
     api: api.localChat,
@@ -326,14 +335,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     && !isSending.value
     && !isMutatingBranch.value
   ))
-  const { selectChatModel, setChatEffort, setChatServiceTier } = useTaskModelPersistence({
-    activeConversationId,
-    api: api.localChat.conversations,
-    applyConversation,
-    drafts,
-    onError: setError,
-    selection: taskModels,
-  })
 
   async function setPermissionMode(value: BuddyPermissionMode): Promise<boolean> {
     if (!canUpdatePermissionSettings.value)

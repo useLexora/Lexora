@@ -3,6 +3,7 @@ import type {
   AgentSession,
   SessionEntry,
 } from '@earendil-works/pi-coding-agent'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { AttachmentFileInput } from '../../attachments/AttachmentDocumentReference'
@@ -14,7 +15,7 @@ import type {
   BuddyInputReferenceV1,
 } from '../context/BuddyInputReference'
 import type { BuddyExtensionRunContextStore } from '../extensions/BuddyExtensionRunContext'
-import type { BuddySessionShutdownReason, BuddySessionTurnContext, ReusableBuddySession } from './ReusableBuddySession'
+import type { BuddySessionModelSelection, BuddySessionShutdownReason, ReusableBuddySession } from './ReusableBuddySession'
 import type { BuddyConversationTreeCursor } from './tree/BuddyConversationTree'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
@@ -34,6 +35,9 @@ import { toBuddySessionStorageError } from './BuddySessionErrors'
 import { getBuddyCacheWarmingStatus } from './getBuddyCacheWarmingStatus'
 
 export interface CreateReusableBuddySessionOptions {
+  getModelSelection?: () => Promise<BuddySessionModelSelection | null>
+  getPermissionSettings?: (runId: string) => BuddyPermissionSettings
+  updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
   setCodemodeEnabled?: (enabled: boolean) => void
   skillReferences?: readonly SkillReference[]
   tree?: BuddyConversationTreeCursor
@@ -59,6 +63,26 @@ export function createReusableBuddySession(
   const { session } = options
   let preferences = DEFAULT_RUNTIME_PREFERENCES
   let turnRetryLimit: RuntimePreferences['modelRetryLimit'] | undefined
+  let retryOffset = 0
+  let pendingRetryOffset: number | null = null
+  const prepareRequest = session.agent.prepareRequest
+  session.agent.prepareRequest = async (request, signal) => {
+    const run = options.runContext.current
+    if (pendingRetryOffset !== null) {
+      retryOffset = pendingRetryOffset
+      pendingRetryOffset = null
+      applySessionSettings(preferences.cacheWarming)
+    }
+    if (run && !run.signal.aborted && options.getModelSelection) {
+      const selected = await options.getModelSelection()
+      signal?.throwIfAborted()
+      if (selected && options.runContext.current === run && !run.signal.aborted) {
+        await applyModelSelection(session, options.assertModelAccess, selected)
+        run.serviceTier = selected.serviceTier ?? null
+      }
+    }
+    return await prepareRequest?.(request, signal) ?? undefined
+  }
   function applySessionSettings(mode: RuntimePreferences['cacheWarming']) {
     if (session.settingsManager.getCacheWarmingMode() !== mode)
       session.setCacheWarmingMode(mode)
@@ -66,11 +90,20 @@ export function createReusableBuddySession(
       session.settingsManager.applyOverrides({
         retry: {
           enabled: turnRetryLimit !== 0,
-          maxRetries: turnRetryLimit === 'unlimited' ? Number.POSITIVE_INFINITY : turnRetryLimit,
+          maxRetries: turnRetryLimit === 'unlimited' ? Number.POSITIVE_INFINITY : Math.max(0, turnRetryLimit - retryOffset),
         },
       })
     }
   }
+  const stopRetryTracking = session.subscribe((event) => {
+    if (event.type !== 'turn_end' || event.message.role !== 'assistant' || event.message.stopReason === 'error' || event.message.stopReason === 'aborted')
+      return
+    if (retryOffset === 0 && pendingRetryOffset === null)
+      return
+    retryOffset = 0
+    pendingRetryOffset = null
+    applySessionSettings(preferences.cacheWarming)
+  })
   const convertToLlm = session.agent.convertToLlm
   const streamFunction = session.agent.streamFunction
   let latestContext: Context | null = null
@@ -208,6 +241,15 @@ export function createReusableBuddySession(
     })
   }
   return {
+    updatePermissionSettings: options.updatePermissionSettings,
+    refreshModelSelection: () => {
+      const run = options.runContext.current
+      if (options.getModelSelection && run && !run.signal.aborted && session.isRetrying) {
+        run.retryModelChanged = true
+        pendingRetryOffset = retryOffset + session.retryAttempt
+        session.abortRetry()
+      }
+    },
     getCacheWarmingStatus: () => getBuddyCacheWarmingStatus({
       mode: preferences.cacheWarming,
       model: session.model,
@@ -246,6 +288,8 @@ export function createReusableBuddySession(
     async activateTurn(input) {
       input.signal.throwIfAborted()
       turnRetryLimit = preferences.modelRetryLimit
+      retryOffset = 0
+      pendingRetryOffset = null
       options.setCodemodeEnabled?.(preferences.codemode)
       options.runContext.current = {
         flushProjectedEvents: input.flushProjectedEvents,
@@ -260,7 +304,12 @@ export function createReusableBuddySession(
           session,
           async () => {
             await options.tree?.begin(session, input.runId)
-            await applyModelSelection(session, options.assertModelAccess, input)
+            if (options.getPermissionSettings)
+              options.updatePermissionSettings?.(options.getPermissionSettings(input.runId))
+            const selected = await options.getModelSelection?.()
+            await applyModelSelection(session, options.assertModelAccess, selected ?? input)
+            if (options.runContext.current)
+              options.runContext.current.serviceTier = selected ? selected.serviceTier ?? null : input.serviceTier ?? null
             input.signal.throwIfAborted()
             applySessionSettings(preferences.cacheWarming)
           },
@@ -279,7 +328,10 @@ export function createReusableBuddySession(
         }
       }
     },
-    shutdown: options.shutdown,
+    shutdown: (reason) => {
+      stopRetryTracking()
+      return options.shutdown(reason)
+    },
     compact: instructions => withPiSessionStorageBoundary(
       session,
       async () => {
@@ -319,7 +371,17 @@ export function createReusableBuddySession(
           options.inputReferences.pending = null
       })
     },
-    subscribe: listener => session.subscribe(listener),
+    subscribe: listener => session.subscribe((event) => {
+      if (event.type === 'auto_retry_start') {
+        listener({ ...event, attempt: event.attempt + retryOffset, maxAttempts: turnRetryLimit === 'unlimited' ? Number.POSITIVE_INFINITY : turnRetryLimit ?? event.maxAttempts })
+      }
+      else if (event.type === 'auto_retry_end') {
+        listener({ ...event, attempt: event.attempt + retryOffset })
+      }
+      else {
+        listener(event)
+      }
+    }),
     waitForIdle: () => session.waitForIdle(),
   }
 }
@@ -372,7 +434,7 @@ async function withPiSessionStorageBoundary<TResult>(
 async function applyModelSelection(
   session: AgentSession,
   assertModelAccess: CreateReusableBuddySessionOptions['assertModelAccess'],
-  input: BuddySessionTurnContext,
+  input: BuddySessionModelSelection,
 ): Promise<void> {
   const model = await assertModelAccess(
     input.provider,
@@ -380,7 +442,7 @@ async function applyModelSelection(
     input.contextWindow,
     input.maxTokens,
   )
-  if (session.model !== model)
+  if (JSON.stringify(session.model) !== JSON.stringify(model))
     await session.setModel(model)
   session.setThinkingLevel(input.thinkingLevel ?? BUDDY_DEFAULT_THINKING_LEVEL)
 }

@@ -30,13 +30,11 @@ interface UseChatPermissionSettingsOptions {
 export function useChatPermissionSettings(options: UseChatPermissionSettingsOptions) {
   const isUpdating = shallowRef(false)
   const approvalPolicy = computed<BuddyApprovalPolicy>(() => (
-    options.activeRun.value?.approvalPolicy
-    ?? options.activeConversation.value?.approvalPolicy
+    options.activeConversation.value?.approvalPolicy
     ?? options.drafts.approvalPolicy.value
   ))
   const executionProfile = computed<BuddyExecutionProfile>(() => (
-    options.activeRun.value?.executionProfile
-    ?? options.activeConversation.value?.executionProfile
+    options.activeConversation.value?.executionProfile
     ?? options.drafts.executionProfile.value
   ))
   const permissionMode = computed(() => resolveBuddyPermissionMode({
@@ -44,8 +42,7 @@ export function useChatPermissionSettings(options: UseChatPermissionSettingsOpti
     executionProfile: executionProfile.value,
   }))
   const canUpdate = computed(() => (
-    !options.activeRun.value
-    && !isUpdating.value
+    !isUpdating.value
     && (
       options.activeConversationId.value === null
       || options.activeConversation.value !== null

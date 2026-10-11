@@ -13,10 +13,12 @@ import { toPublicRun } from '../../runs/publicRun'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
 import { createChatQueueRepository } from '../../storage/chatQueueRepository'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
+import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createRunRepository } from '../../storage/runRepository'
 import { createTurnRequestRepository } from '../../storage/turnRequestRepository'
+import { isReviewUserMessage } from '../buddyReviewPrompt'
 import { ChatQueueService } from '../ChatQueueService'
 import { QueueContinuation } from '../QueueContinuation'
 import { TurnRequestService } from '../TurnRequestService'
@@ -198,13 +200,20 @@ describe('persistent chat queue scheduling', () => {
     await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
   })
 
-  it('retains cleanup degradation when its settlement notification was missed', async () => {
+  it.each(['settlement', 'reconciliation'] as const)('keeps completed work paused after degraded cleanup through %s', async (wake) => {
     const f = fixture()
     f.queue.enqueue(f.input('A'))
     f.database.exec('UPDATE runs SET status = \'completed\'')
-    f.releaseSlot('degraded')
-    f.continuation.reconcile()
+    if (wake === 'settlement') {
+      f.settle('run-initial', 'degraded')
+    }
+    else {
+      f.releaseSlot('degraded')
+      f.continuation.reconcile()
+    }
     await vi.waitFor(() => expect(f.queue.list(f.scope)[0]?.state).toBe('paused'))
+    f.continuation.reconcile()
+    await new Promise(resolve => setTimeout(resolve, 15))
     expect(f.launched).toEqual([])
   })
 
@@ -217,8 +226,7 @@ describe('persistent chat queue scheduling', () => {
       throw new Error('Storage unavailable')
     })
     f.continuation.reconcile()
-    await vi.waitFor(() => expect(unavailable).toHaveBeenCalledTimes(3))
-    expect(f.continuation.state).toBe('degraded')
+    await vi.waitFor(() => expect(f.continuation.state).toBe('degraded'))
     expect(f.launched).toEqual([])
     unavailable.mockRestore()
     expect(f.queue.list(f.scope)[0]?.state).toBe('paused')
@@ -227,17 +235,6 @@ describe('persistent chat queue scheduling', () => {
     expect(f.launched).toEqual([])
     expect(await f.service.steer(f.target('A'))).toBe(true)
     expect(f.launched).toEqual(['run-A'])
-  })
-
-  it('keeps a completed run paused when its execution cleanup degraded', async () => {
-    const f = fixture()
-    f.queue.enqueue(f.input('A'))
-    f.database.exec('UPDATE runs SET status = \'completed\'')
-    f.settle('run-initial', 'degraded')
-    await vi.waitFor(() => expect(f.queue.list(f.scope)[0]?.state).toBe('paused'))
-    f.continuation.reconcile()
-    await new Promise(resolve => setTimeout(resolve, 15))
-    expect(f.launched).toEqual([])
   })
 
   it('does not start a new run when disposed during continuation validation', async () => {
@@ -378,8 +375,14 @@ describe('persistent chat queue scheduling', () => {
     },
   )
 
-  it.each(['followUp', 'steer'] as const)('keeps a review out of a writable run during %s and starts it read-only afterward', async (mode) => {
+  it.each([
+    { mode: 'followUp', executionProfile: 'workspace_write' },
+    { mode: 'steer', executionProfile: 'workspace_write' },
+    { mode: 'followUp', executionProfile: 'read_only' },
+    { mode: 'steer', executionProfile: 'read_only' },
+  ] as const)('keeps a review out of an ordinary $executionProfile run during $mode and starts it read-only afterward', async ({ mode, executionProfile }) => {
     const f = fixture()
+    f.database.prepare('UPDATE runs SET execution_profile = ?').run(executionProfile)
     f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
     const accepted = mode === 'followUp'
       ? await f.service.followUp('run-initial', f.controller.signal)
@@ -397,6 +400,7 @@ describe('persistent chat queue scheduling', () => {
   it('continues reviews in a read-only run but keeps ordinary writable input for a new run', async () => {
     const f = fixture()
     f.database.exec('UPDATE runs SET execution_profile = \'read_only\'')
+    f.database.prepare('UPDATE messages SET content_json = ? WHERE id = ?').run(JSON.stringify({ userContent: createBuddyUserContent('/review inspect'), resourceSnapshots: [] }), 'initial')
     f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
     f.queue.enqueue(f.input('ordinary'))
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
@@ -465,6 +469,7 @@ function fixture(queuedOnStartup = false) {
   const queue = createChatQueueRepository(database)
   const runInputs = createRunInputRepository(database)
   const runs = createRunRepository(database)
+  const conversations = createConversationRepository(database)
   if (queuedOnStartup)
     queue.enqueue(input('A'))
   const delivered: string[] = []
@@ -488,6 +493,10 @@ function fixture(queuedOnStartup = false) {
     validatePreparedInput: validate,
   }
   const service = new ChatQueueService({
+    getRunPermissionCeiling: (runId) => {
+      const run = runs.findById(runId)
+      return run?.triggeringMessageId && isReviewUserMessage(conversations.findMessageById(run.triggeringMessageId)?.content) ? 'read_only' : undefined
+    },
     queue,
     eventLog,
     requests,

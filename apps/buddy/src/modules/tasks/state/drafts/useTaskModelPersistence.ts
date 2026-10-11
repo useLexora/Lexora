@@ -56,8 +56,7 @@ export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
     }
     const modelSelection = options.selection.currentSelection()
     options.drafts.setModelSelection(modelSelection)
-    await persistDefault
-    await persistConversationModelSelection(conversationId, modelSelection)
+    await Promise.all([persistDefault, persistConversationModelSelection(conversationId, modelSelection)])
   }
 
   async function setChatEffort(value: Parameters<TaskModelSelection['setSelectedEffort']>[0]) {
@@ -65,8 +64,7 @@ export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
     const persistDefault = options.selection.setSelectedEffort(value)
     const modelSelection = options.selection.currentSelection()
     options.drafts.setModelSelection(modelSelection)
-    await persistDefault
-    await persistConversationModelSelection(conversationId, modelSelection)
+    await Promise.all([persistDefault, persistConversationModelSelection(conversationId, modelSelection)])
   }
 
   async function setChatServiceTier(
@@ -78,5 +76,5 @@ export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
     await persistConversationModelSelection(conversationId, options.selection.currentSelection())
   }
 
-  return { selectChatModel, setChatEffort, setChatServiceTier }
+  return { selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection: () => conversationModelPersistenceQueue }
 }

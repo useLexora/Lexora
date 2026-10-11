@@ -95,22 +95,6 @@ describe('harness tool authorization', () => {
     expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
   })
 
-  it('isolates temporary tool grants and clears them at the run boundary', async () => {
-    const f = fixture()
-    const events: unknown[] = []
-    f.executionPermissions.onDidChange(event => events.push(event))
-    await f.executionPermissions.authorize(f.run, 'tool', { cwd: workspace, grants: f.grants, paths: [{ path: outside, mode: 'existing' }] })
-    const snapshot = f.executionPermissions.get(f.run, 'tool')
-    expect(snapshot).toHaveLength(1)
-    expect(Reflect.set(snapshot[0]!, 'canonicalRoot', root)).toBe(false)
-    expect(Reflect.set(snapshot, '0', { canonicalRoot: root })).toBe(false)
-    expect(f.executionPermissions.get(f.run, 'other-tool')).toEqual([])
-    f.controller.abort()
-    expect(f.executionPermissions.get(f.run, 'tool')).toEqual([])
-    expect(events).toMatchObject([{ kind: 'granted', count: 1 }, { kind: 'cleared', count: 1 }])
-    expect(JSON.stringify(events)).not.toContain(outside)
-  })
-
   it('queues concurrent network requests, reuses the destination across commands, and clears at run end', async () => {
     const f = fixture()
     const command = new AbortController()
@@ -132,6 +116,31 @@ describe('harness tool authorization', () => {
     const afterClear = f.authorization.authorize(f.call('bash', { command: 'pnpm build' }), f.run, { access: 'network', requireApproval: true }, { network: resource.network })
     await f.approve('denied')
     await expect(afterClear).resolves.toBe('APPROVAL_DENIED')
+  })
+
+  it('rechecks a pending write under read-only mode and revokes its old approval', async () => {
+    const f = fixture()
+    f.authorization.updatePermissionSettings({ approvalPolicy: 'manual', executionProfile: 'workspace_write' })
+    const pending = f.authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'fixture' }), f.run)
+    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
+    const previous = f.repository.listPending()[0]!
+    f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
+    expect(await pending).toBe('READ_ONLY_PROFILE')
+    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(0))
+    expect(f.repository.findById(previous.id)?.status).toBe('cancelled')
+    await expect(f.approvals.resolve({ id: previous.id, decision: 'approved' })).rejects.toMatchObject({ code: 'APPROVAL_NOT_PENDING' })
+  })
+
+  it('continues a pending workspace write when the new policy allows it', async () => {
+    const f = fixture()
+    f.authorization.updatePermissionSettings({ approvalPolicy: 'manual', executionProfile: 'workspace_write' })
+    const pending = f.authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'fixture' }), f.run)
+    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
+    const previous = f.repository.listPending()[0]!
+    f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    expect(await pending).toBeNull()
+    await vi.waitFor(() => expect(f.repository.findById(previous.id)?.status).toBe('cancelled'))
+    expect(f.repository.listPending()).toHaveLength(0)
   })
 
   it('keeps one-time approvals single-use and cancels queued requests independently', async () => {
@@ -234,12 +243,17 @@ describe('harness tool authorization', () => {
 
   it('passes temporary grants to the approved execution only without changing saved grants', async () => {
     const f = fixture()
+    const events: unknown[] = []
+    f.executionPermissions.onDidChange(event => events.push(event))
     const output = join(outside, 'image.png')
     const event = f.call('lexora_image_generate', { outputPath: output })
     const pending = f.authorization.authorize(event, f.run, { access: 'write', paths: [{ path: output, mode: 'create' }] })
     await f.approve('approved_for_turn')
     await expect(pending).resolves.toBeNull()
-    const executionGrants = [...f.grants, ...f.executionPermissions.get(f.run, event.toolCallId)]
+    const snapshot = f.executionPermissions.get(f.run, event.toolCallId)
+    expect(Reflect.set(snapshot[0]!, 'canonicalRoot', root)).toBe(false)
+    expect(Reflect.set(snapshot, '0', { canonicalRoot: root })).toBe(false)
+    const executionGrants = [...f.grants, ...snapshot]
     const resolved = await resolveGrantedPath(executionGrants, output, 'create')
     await writeFile(resolved.canonicalPath, 'synthetic image bytes')
     expect(await readFile(output, 'utf8')).toBe('synthetic image bytes')
@@ -249,5 +263,7 @@ describe('harness tool authorization', () => {
     expect(f.executionPermissions.get({ ...f.run, runId: 'run-2' }, event.toolCallId)).toEqual([])
     f.controller.abort()
     expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+    expect(events).toMatchObject([{ kind: 'granted', count: 1 }, { kind: 'cleared', count: 1 }])
+    expect(JSON.stringify(events)).not.toContain(outside)
   })
 })

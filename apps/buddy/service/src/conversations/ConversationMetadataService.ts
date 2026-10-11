@@ -17,7 +17,11 @@ export type ConversationMetadataCommit = EventSnapshot<{
 export interface ConversationMetadataServiceOptions {
   repository: Pick<ConversationRepository, 'findById' | 'rename' | 'renameGenerated' | 'getTitleState' | 'setPermissionSettings' | 'setModelSelection' | 'activateBranch'>
   resolveModelSelection: (selection: ConversationModelSelection) => Promise<ConversationModelSelection>
-  sessions: { invalidateConversation: (conversationId: string) => Promise<{ pending: number, degraded: number }> }
+  sessions: {
+    invalidateConversation: (conversationId: string) => Promise<{ pending: number, degraded: number }>
+    applyPermissionSettings?: (conversation: ConversationRecord) => Promise<{ pending: number, degraded: number }>
+    refreshModelSelection?: (conversationId: string) => void
+  }
   onObserverError?: (error: unknown) => void
 }
 
@@ -96,6 +100,7 @@ export class ConversationMetadataService {
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
     this.#publish('model', conversation)
+    this.#options.sessions.refreshModelSelection?.(id)
     return conversation
   }
 
@@ -140,7 +145,9 @@ export class ConversationMetadataService {
     const pending = this.#pendingPermissions.get(id)
     if (!pending)
       return
-    const result = await this.#options.sessions.invalidateConversation(id)
+    const result = this.#options.sessions.applyPermissionSettings
+      ? await this.#options.sessions.applyPermissionSettings(this.#requireActive(id))
+      : await this.#options.sessions.invalidateConversation(id)
     if (result.pending || result.degraded)
       throw new ConversationSettingsApplicationError(result.degraded ? 'CONVERSATION_SETTINGS_FAILED' : 'CONVERSATION_SETTINGS_PENDING')
     if (this.#pendingPermissions.get(id) === pending)

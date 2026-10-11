@@ -182,9 +182,6 @@ async function confirmSetup() {
           </span>
         </button>
       </div>
-      <small v-if="!canUpdate && !isUpdating" class="block border-t-1 border-t-solid border-t-border mt-[0.3rem] pt-[0.4rem] pr-1 pb-[0.05rem] pl-1 text-muted text-[0.68rem]">
-        {{ t('desktop.chat.executionProfileRunLocked') }}
-      </small>
       <footer v-if="boundaryWarning" class="grid gap-1 mt-[0.45rem] border-t-1 border-t-solid border-t-border pt-[0.55rem] pr-1 pb-[0.1rem] pl-1 text-warning text-[0.7rem] leading-[1.5]" role="status">
         <strong>{{ t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) }}</strong>
         <span>{{ t(`desktop.chat.shellSandboxHint.${sandboxStatus}`) }}</span>

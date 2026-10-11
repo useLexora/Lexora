@@ -68,7 +68,14 @@ export function createBuddyCapabilityFactory(
   const supported = platform.features.map(id => platformFactories[id]())
   return async (context) => {
     context.signal.throwIfAborted()
-    const mcp = services.connectorService.getTools(context.signal, context.executionProfile === 'read_only' ? undefined : createMcpResultWriter({ ...context, artifactService: services.artifactService }))
+    const writeMcpResult = createMcpResultWriter({
+      ...context,
+      get grants() { return context.grants },
+      artifactService: services.artifactService,
+    })
+    const mcp = services.connectorService.getTools(context.signal, (bytes, mimeType, signal) => context.executionProfile === 'read_only'
+      ? Promise.reject(new Error('EXECUTION_PROFILE_READ_ONLY'))
+      : writeMcpResult(bytes, mimeType, signal))
     context.signal.throwIfAborted()
     const capabilities = [
       createMcpCapability(mcp, context.isCodemodeEnabled ?? (() => false)),

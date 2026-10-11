@@ -220,7 +220,6 @@ export default {
   'desktop.chat.executionProfileFullConfirmDescription': 'Full access lets commands use your local permissions for files, credentials, and network. Some tools still require confirmation, but arbitrary commands cannot be constrained. Enable it only for a trusted task if you accept these risks.',
   'desktop.chat.executionProfileFullConfirmTitle': 'Allow full access?',
   'desktop.chat.executionProfileOpen': 'View execution permissions',
-  'desktop.chat.executionProfileRunLocked': 'You can switch after the current run finishes',
   'desktop.chat.permissionModeFullDescription': 'Run commands with local permissions.',
   'desktop.chat.permissionModeManual': 'Manual approval',
   'desktop.chat.permissionModeManualDescription': 'Ask before changes, commands, and external interactions.',

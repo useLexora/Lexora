@@ -1,6 +1,7 @@
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalSkill } from '../../../../shared/skills/skillApi'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
@@ -18,9 +19,10 @@ import { CODEMODE_EXTENSION, CODEMODE_TOOL_NAME } from '../extensions/codemodeEx
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
 import { createSystemSectionsExtension } from '../extensions/systemSectionsExtension'
-import { createBuddySystemPrompt } from './createBuddySystemPrompt'
+import { BUDDY_MANUAL_APPROVAL_PROMPT, createBuddyExecutionPrompt, createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
+  getPermissionSettings?: () => BuddyPermissionSettings
   getPendingInput?: () => BuddyInputReferenceV1 | null
   approvedSkills: readonly LocalSkill[]
   agentDir: string
@@ -63,6 +65,7 @@ export async function createBuddyResourceLoader(
     directoryContext: options.directoryContext,
     executionProfile: options.executionProfile,
     platform: options.platform,
+    includePermissions: !options.getPermissionSettings,
   })
   const loader = new DefaultResourceLoader({
     additionalExtensionPaths: [],
@@ -73,7 +76,7 @@ export async function createBuddyResourceLoader(
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
     appendSystemPromptOverride: () => [],
     cwd: options.cwd,
-    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput)],
+    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, options.getPermissionSettings ? () => createPermissionPrompt(options.getPermissionSettings!(), options.platform) : undefined)],
     noContextFiles: true,
     noExtensions: true,
     noPromptTemplates: true,
@@ -102,6 +105,10 @@ export async function createBuddyResourceLoader(
   await loader.reload()
   validateLoadedExtensions(loader)
   return loader
+}
+
+export function createPermissionPrompt(settings: BuddyPermissionSettings, platform?: NodeJS.Platform): string {
+  return [createBuddyExecutionPrompt(settings.executionProfile, platform), ...settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
 }
 
 export class BuddyResourceLoadError extends Error {

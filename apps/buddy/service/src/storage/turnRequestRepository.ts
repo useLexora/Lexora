@@ -3,6 +3,7 @@ import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conve
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { ComposerDraftCommitReceipt } from './commitComposerDraft'
+import type { ConversationModelSelection } from './conversationRecord'
 import type { RunInputContextItem } from './runInputRepository'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { createComposerDraftCommitter } from './commitComposerDraft'
@@ -98,6 +99,12 @@ export interface RegenerateTurnRequestInput {
   conversationId: string
   createdAt: string
   executionProfile: BuddyExecutionProfile
+  model: string
+  provider: string
+  modelParameters?: { contextWindow: number, maxTokens: number }
+  reasoning: BuddyThinkingLevel | null
+  serviceTier: BuddyServiceTier | null
+  expectedModelSelection: ConversationModelSelection | null
   runExecutionProfile?: BuddyExecutionProfile
   forkedFromMessageId: string
   parentBranchId: string
@@ -286,6 +293,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
       reasoning, service_tier, ?
     FROM run_inputs WHERE run_id = ?
   `)
+  const updateRunSelection = database.prepare('UPDATE run_inputs SET reasoning = ?, service_tier = ? WHERE run_id = ?')
   const findRunModelSelection = database.prepare(`
     SELECT json_object(
       'providerId', runs.provider,
@@ -569,6 +577,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         if (
           !conversation
           || sourceRun?.branch_id !== input.parentBranchId
+          || !sameModelSelection(conversation.model_selection_json, input.expectedModelSelection ? JSON.stringify(input.expectedModelSelection) : null)
           || conversation.approval_policy !== input.approvalPolicy
           || conversation.execution_profile !== input.executionProfile
           || conversation.deleted_at !== null
@@ -594,10 +603,10 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.conversationId,
           input.branchId,
           input.forkedFromMessageId,
-          sourceRun.provider,
-          sourceRun.model,
-          sourceRun.context_window,
-          sourceRun.max_tokens,
+          input.provider,
+          input.model,
+          input.modelParameters?.contextWindow ?? null,
+          input.modelParameters?.maxTokens ?? null,
           null,
           input.createdAt,
           input.approvalPolicy,
@@ -605,6 +614,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         )
         if (Number(cloneRunInput.run(input.runId, input.createdAt, input.sourceRunId).changes) !== 1)
           throw new TurnRequestConflictError()
+        updateRunSelection.run(input.reasoning, input.serviceTier, input.runId)
         insertTreeSource.run(input.runId, input.sourceRunId, 'before')
         const modelSelection = findRunModelSelection.get(input.runId) as
           | RunModelSelectionRow
@@ -732,9 +742,9 @@ function stringifyModelSelection(input: Omit<PrepareTurnRequestInput, 'draft'>):
   })
 }
 
-function sameModelSelection(left: string | null, right: string): boolean {
-  if (!left)
-    return false
+function sameModelSelection(left: string | null, right: string | null): boolean {
+  if (!left || !right)
+    return left === right
   const previous = JSON.parse(left)
   const next = JSON.parse(right)
   return ['providerId', 'modelId', 'reasoning', 'serviceTier'].every(key => previous[key] === next[key])

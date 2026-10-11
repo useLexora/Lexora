@@ -25,6 +25,7 @@ describe('oversized input recovery', () => {
     })
     const session = {
       model,
+      subscribe: () => () => {},
       agent: {
         convertToLlm: async (messages: AgentSession['messages']) => messages,
         streamFunction: transport,
@@ -64,8 +65,9 @@ describe('oversized input recovery', () => {
     const session = {
       model,
       systemPrompt: system.content,
+      subscribe: () => () => {},
       agent: { convertToLlm: async (messages: AgentSession['messages']) => messages },
-    } as AgentSession
+    } as unknown as AgentSession
     const projected: string[][] = []
     createReusableBuddySession({
       session,
@@ -101,7 +103,7 @@ describe('oversized input recovery', () => {
 
   it('budgets prepared images instead of originals and prefers recent input to old tool images', async () => {
     const model: InputModel = { api: 'openai-completions', baseUrl: 'https://example.test', provider: 'fixture', id: 'vision', name: 'Fixture', contextWindow: 128_000, maxTokens: 1024, input: ['text', 'image'], reasoning: false, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, inputLimits: { maxRequestBytes: 10_000, images: { maxPerRequest: 1, maxPerMessage: 1 } } }
-    const session = { model, agent: { convertToLlm: async (messages: AgentSession['messages']) => messages } } as AgentSession
+    const session = { model, subscribe: () => () => {}, agent: { convertToLlm: async (messages: AgentSession['messages']) => messages } } as unknown as AgentSession
     const projected: string[][] = []
     createReusableBuddySession({
       session,
@@ -144,6 +146,7 @@ describe('oversized input recovery', () => {
     const payloads: Array<{ messages?: unknown[], input?: unknown[] }> = []
     const session = {
       model,
+      subscribe: () => () => {},
       agent: {
         convertToLlm: async (messages: AgentSession['messages']) => convertToLlm(messages),
         streamFunction: ((target, context, options) => streamProvider(target, context, {

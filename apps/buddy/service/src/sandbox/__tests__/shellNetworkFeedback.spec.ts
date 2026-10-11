@@ -1,6 +1,8 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { SandboxNetworkTarget } from '../../../../shared/permissions/shellSandbox'
 import { Buffer } from 'node:buffer'
+import process from 'node:process'
 import { describe, expect, it } from 'vitest'
 import { createBuddyToolPresentation } from '../../agent/events/toolPresentation'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../../approvals/ApprovalService'
@@ -13,6 +15,7 @@ const target = { host: 'registry.example.test', port: 443 }
 
 async function fixture(options: {
   dialect?: 'bash' | 'powershell'
+  profile?: BuddyExecutionProfile
   decision?: 'denied' | 'approved_once' | Error
   exitCode?: number
   background?: boolean
@@ -21,13 +24,15 @@ async function fixture(options: {
 } = {}) {
   const controller = new AbortController()
   const decisions: boolean[] = []
+  const sandboxReadOnly: boolean[] = []
+  let execution = resolveShellExecution(options.profile ?? 'workspace_write', options.dialect === 'powershell' ? 'win32' : 'linux')
   const targets = options.targets ?? [target]
   const run = { runId: 'run-1', signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
   const authorization = new ToolAuthorizationService({
     approvalAvailable: !options.background,
     approvalPolicy: 'policy',
     executionProfile: 'workspace_write',
-    cwd: '/workspace',
+    cwd: process.cwd(),
     owner: { kind: 'conversation', id: 'conversation-1' },
     getGrants: () => [],
     approvalService: {
@@ -43,14 +48,16 @@ async function fixture(options: {
     },
   })
   const capability = createShellCapability({
-    cwd: '/workspace',
-    execution: resolveShellExecution('workspace_write', options.dialect === 'powershell' ? 'win32' : 'linux'),
+    cwd: process.cwd(),
+    execution,
+    getExecution: () => execution,
     getGrants: () => [],
     getRunContext: () => run,
     authorization,
     directoryPermissions: new SandboxDirectoryPermissions(),
     sandbox: {
-      exec: async (_input, execOptions, approveNetwork) => {
+      exec: async (input, execOptions, approveNetwork) => {
+        sandboxReadOnly.push(input.readOnly)
         for (const destination of targets)
           decisions.push(await approveNetwork(destination).catch(() => false))
         execOptions.signal?.throwIfAborted()
@@ -64,8 +71,10 @@ async function fixture(options: {
   const tool = tools.find(tool => tool.name === (options.dialect ?? 'bash'))!
   return {
     decisions,
+    sandboxReadOnly,
     targets,
-    invoke: () => tool.execute('tool-call-1', { command: 'fixture' }, controller.signal, undefined, {} as never),
+    selectProfile: (profile: BuddyExecutionProfile) => { execution = resolveShellExecution(profile, options.dialect === 'powershell' ? 'win32' : 'linux') },
+    invoke: (command = 'fixture') => tool.execute('tool-call-1', { command }, controller.signal, undefined, {} as never),
   }
 }
 
@@ -97,6 +106,8 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
     expect(JSON.stringify(result)).toContain('APPROVAL_DENIED')
     expect(createBuddyToolPresentation({ toolName: dialect, arguments: { command: 'fixture' }, isError: false, result })).toMatchObject({ card: 'terminal', exitCode: 0 })
     expect(check.decisions).toEqual([false])
+    check.targets.length = 0
+    expect((await check.invoke()).content).toEqual([{ type: 'text', text: 'original-command-output' }])
   })
 
   it('keeps an ordinary failure free of network or sandbox advice', async () => {
@@ -114,13 +125,6 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
     expect(check.decisions).toEqual([false])
   })
 
-  it('does not carry a previous command refusal into the next command', async () => {
-    const check = await fixture({ dialect, exitCode: 0 })
-    expect(JSON.stringify(await check.invoke())).toContain('[Network authorization]')
-    check.targets.length = 0
-    expect((await check.invoke()).content).toEqual([{ type: 'text', text: 'original-command-output' }])
-  })
-
   it('does not reclassify stopping the run as a declined network request', async () => {
     const check = await fixture({ dialect, stop: true })
     const error = await check.invoke().catch(error => error as Error)
@@ -130,6 +134,20 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
     expect(error.message).not.toContain('[Network authorization]')
     expect(error.message).not.toContain('APPROVAL_DENIED')
   })
+})
+
+it.skipIf(process.platform === 'win32')('uses the newly selected execution boundary for subsequent commands in the same session', async () => {
+  const check = await fixture({ profile: 'read_only', targets: [], exitCode: 0 })
+  expect((await check.invoke()).content).toEqual([{ type: 'text', text: 'original-command-output' }])
+  check.selectProfile('workspace_write')
+  await check.invoke()
+  expect(check.sandboxReadOnly).toEqual([true, false])
+  check.selectProfile('full_access')
+  expect((await check.invoke('printf host-output')).content).toEqual([{ type: 'text', text: 'host-output' }])
+  expect(check.sandboxReadOnly).toEqual([true, false])
+  check.selectProfile('read_only')
+  expect((await check.invoke()).content).toEqual([{ type: 'text', text: 'original-command-output' }])
+  expect(check.sandboxReadOnly).toEqual([true, false, true])
 })
 
 it('bounds feedback without changing any network authorization decision', async () => {

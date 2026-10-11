@@ -2,6 +2,7 @@ import type { BuddyServiceTier } from '../../../../shared/conversation/modelSele
 import type { ApplicationDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
 import type { ApprovalService } from '../../approvals/ApprovalService'
 import type { AttachmentService } from '../../attachments/AttachmentService'
@@ -29,12 +30,13 @@ import { observeSessionTools } from './discovery/observeSessionTools'
 import { SessionToolCapabilities } from './discovery/SessionToolCapabilities'
 import { createToolDiscoveryCapability } from './discovery/toolDiscoveryExtension'
 import { createInputReferenceExtension } from './inputReferenceExtension'
+import { createModelSwitchExtension } from './modelSwitchExtension'
 import { createToolPolicyExtension } from './toolPolicyExtension'
 
 export interface BuddySessionExtensionServices {
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
-  approvalService: Pick<ApprovalService, 'request'>
+  approvalService: Pick<ApprovalService, 'request'> & Partial<Pick<ApprovalService, 'clearRunAuthorizations'>>
   attachmentService: Pick<AttachmentService, 'prepareInputImages' | 'materializeDocumentInputs' | 'materializeInputResources' | 'getInputMetadata'>
   changeCaptureService: Pick<ChangeCaptureService, 'beginFileTool' | 'beginWorkspaceTool' | 'finalizeRun' | 'finishFileTool' | 'finishWorkspaceTool' | 'markPartial'>
   createCapabilities: BuddyCapabilityFactory
@@ -58,6 +60,8 @@ export interface CreateBuddySessionExtensionsOptions {
 }
 
 export interface BuddySessionExtensions {
+  getPermissionSettings: () => BuddyPermissionSettings
+  updatePermissionSettings: (settings: BuddyPermissionSettings) => void
   setCodemodeEnabled: (enabled: boolean) => void
   toolCapabilities: Pick<SessionToolCapabilities, 'onDidChange' | 'snapshot'>
   dispose: () => Promise<void>
@@ -78,6 +82,7 @@ export async function createBuddySessionExtensions(
   const grants = new SessionDirectoryGrants(options.grants)
   const sandboxDirectories = new SandboxDirectoryPermissions()
   const runContext: BuddyExtensionRunContextStore = { current: null }
+  let permissionSettings: BuddyPermissionSettings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
   let codemodeEnabled = false
   const inputReferences: BuddyInputReferenceStore = { pending: null }
   const executionPermissions = new ToolExecutionPermissions()
@@ -121,7 +126,7 @@ export async function createBuddySessionExtensions(
       approvalService: services.approvalService,
       cwd: options.canonicalRoot,
       executionPermissions,
-      executionProfile: options.executionProfile,
+      get executionProfile() { return permissionSettings.executionProfile },
       getGrants: () => grants.snapshot,
       owner: options.spaceId
         ? { id: options.spaceId, kind: 'space' }
@@ -130,7 +135,7 @@ export async function createBuddySessionExtensions(
     capabilities.push(createCodemodeCapability(() => codemodeEnabled), ...await services.createCapabilities({
       isCodemodeEnabled: () => codemodeEnabled,
       conversationId: options.conversationId,
-      executionProfile: options.executionProfile,
+      get executionProfile() { return permissionSettings.executionProfile },
       cwd: options.canonicalRoot,
       getRunId: () => runContext.current?.runId,
       getExecutionGrants: toolCallId => [...grants.snapshot, ...executionPermissions.get(runContext.current, toolCallId)],
@@ -138,19 +143,17 @@ export async function createBuddySessionExtensions(
       sessionMode: options.sessionMode,
       signal: lifetime.signal,
     }))
-    const execution = resolveShellExecution(options.executionProfile)
-    if (execution.boundary === 'sandbox') {
-      capabilities.push(createShellCapability({
-        cwd: options.canonicalRoot,
-        execution,
-        getGrants: () => grants.snapshot,
-        resourceReadRoots: options.skillReadRoots ?? [],
-        getRunContext: () => runContext.current,
-        authorization,
-        sandbox: services.shellSandbox,
-        directoryPermissions: sandboxDirectories,
-      }))
-    }
+    capabilities.push(createShellCapability({
+      cwd: options.canonicalRoot,
+      execution: resolveShellExecution(options.executionProfile),
+      getExecution: () => resolveShellExecution(permissionSettings.executionProfile),
+      getGrants: () => grants.snapshot,
+      resourceReadRoots: options.skillReadRoots ?? [],
+      getRunContext: () => runContext.current,
+      authorization,
+      sandbox: services.shellSandbox,
+      directoryPermissions: sandboxDirectories,
+    }))
     creationSignal.throwIfAborted()
     const resourceRevisions = copyEventSnapshot(capabilities.flatMap(capability => capability.resourceRevisions ?? []))
     toolCapabilities = new SessionToolCapabilities(resourceRevisions, services.resolveToolExposure)
@@ -158,6 +161,7 @@ export async function createBuddySessionExtensions(
     const discovery = createToolDiscoveryCapability(capabilities.flatMap(capability => capability.disclosure ?? []), toolCapabilities)
     const sessionCapabilities = [...capabilities, discovery]
     const inProcessExtensions: BuddyInProcessExtension[] = [
+      createModelSwitchExtension(runContext),
       createInputReferenceExtension(inputReferences),
       ...options.sessionMode === 'interactive' && services.followUp
         ? [createChatQueueExtension({ getRunContext: () => runContext.current, followUp: services.followUp })]
@@ -187,6 +191,17 @@ export async function createBuddySessionExtensions(
     ]
 
     return {
+      getPermissionSettings: () => permissionSettings,
+      updatePermissionSettings: (settings) => {
+        if (settings.approvalPolicy === permissionSettings.approvalPolicy && settings.executionProfile === permissionSettings.executionProfile)
+          return
+        permissionSettings = { ...settings }
+        if (runContext.current) {
+          services.approvalService.clearRunAuthorizations?.(runContext.current.runId, 'permissions_changed')
+          sandboxDirectories.clear(runContext.current)
+        }
+        authorization.updatePermissionSettings(settings)
+      },
       setCodemodeEnabled: enabled => codemodeEnabled = enabled,
       dispose,
       resourceRevisions,

@@ -93,10 +93,6 @@ export function createConversationRepository(database: DatabaseSync): Conversati
     UPDATE conversations
     SET approval_policy = ?, execution_profile = ?, updated_at = ?
     WHERE id = ?
-      AND NOT EXISTS (
-        SELECT 1 FROM runs
-        WHERE conversation_id = conversations.id AND status IN ('queued', 'running')
-      )
       AND deleted_at IS NULL
   `)
   const setModelSelection = database.prepare(`

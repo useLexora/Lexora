@@ -8,6 +8,7 @@ import type {
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BuddySessionResources } from '../resources/BuddySessionResources'
@@ -36,6 +37,7 @@ import {
 import {
   createBuddyResourceLoader,
   createBuddySettingsManager,
+  createPermissionPrompt,
 } from '../resources/createBuddyResourceLoader'
 import {
   BuddySessionCreationError,
@@ -45,6 +47,7 @@ import { installBuddySystemSections } from './installBuddySystemSections'
 const sessionIdentityPattern = /^[A-Z0-9][\w-]{0,127}$/i
 
 export interface CreateBuddySessionOptions {
+  getPermissionSettings?: () => BuddyPermissionSettings
   getInputMessages?: () => AgentSession['messages']
   getPendingInput?: () => BuddyInputReferenceV1 | null
   sessionManager: SessionManager
@@ -226,6 +229,7 @@ async function createConfiguredBuddySession(
     approvedSkills: [...options.resources.approvedSkills],
     agentDir: runtime.agentDir,
     approvalPolicy: options.approvalPolicy,
+    getPermissionSettings: options.getPermissionSettings,
     boundedContextFiles: context.agentsFiles,
     cwd: runtime.cwd,
     directoryContext: options.resources.directoryContext,
@@ -258,7 +262,7 @@ async function createConfiguredBuddySession(
     throw error
   }
   const previousPayloadTransform = result.session.agent.onPayload
-  installBuddySystemSections(result.session, options.getInputMessages)
+  installBuddySystemSections(result.session, options.getInputMessages, options.getPermissionSettings ? () => createPermissionPrompt(options.getPermissionSettings!(), options.platform) : undefined)
   result.session.agent.onPayload = async (payload, model) => {
     const previousPayload = await previousPayloadTransform?.(payload, model)
     return applyBuddyOpenAiRequestOptions(

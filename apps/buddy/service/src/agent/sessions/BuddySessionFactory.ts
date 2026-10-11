@@ -1,4 +1,6 @@
 import type { BuddyThinkingLevel } from '../../../../shared/conversation/modelSelection'
+import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { ProviderExecutionModelResolver } from '../../providers/ProviderExecutionModelResolver'
 import type { ConversationRepository } from '../../storage/conversationRepository'
@@ -15,6 +17,7 @@ import { createBuddySession } from './createBuddySession'
 import { createReusableBuddySession } from './createReusableBuddySession'
 
 export interface BuddySessionFactoryOptions {
+  getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
   bindPreferences?: (apply: (preferences: RuntimePreferences) => void) => Promise<() => void>
   tree: BuddyConversationTree
   events?: ApplicationEvents
@@ -120,6 +123,7 @@ export class BuddySessionFactory {
         cwd: blueprint.canonicalRoot,
         executionProfile: blueprint.executionProfile,
         getServiceTier: extensions.getServiceTier,
+        getPermissionSettings: extensions.getPermissionSettings,
         getPendingInput: () => extensions.inputReferences.pending,
         inProcessExtensions: extensions.inProcessExtensions,
         model: selected.model,
@@ -130,7 +134,43 @@ export class BuddySessionFactory {
 
       const inputWorkspace = new AttachmentToolWorkspace(blueprint.scratchRoot)
       let unsubscribePreferences: (() => void) | undefined
+      let runPermissionCeiling: BuddyExecutionProfile | undefined
+      const restrictPermissions = (settings: BuddyPermissionSettings): BuddyPermissionSettings => ({
+        ...settings,
+        executionProfile: runPermissionCeiling === 'read_only'
+          ? 'read_only'
+          : settings.executionProfile,
+      })
       reusable = createReusableBuddySession({
+        getModelSelection: blueprint.sessionMode === 'interactive'
+          ? async () => {
+            while (true) {
+              const current = this.#options.conversations.findById(blueprint.conversationId)
+              if (!current?.modelSelection)
+                return null
+              const selection = current.modelSelection
+              const model = await this.#options.models.resolveAvailable({ providerId: selection.providerId, modelId: selection.modelId, contextWindow: null, maxTokens: null })
+              if (JSON.stringify(this.#options.conversations.findById(blueprint.conversationId)?.modelSelection) !== JSON.stringify(selection))
+                continue
+              return {
+                provider: selection.providerId,
+                model: selection.modelId,
+                contextWindow: model.contextWindow,
+                maxTokens: model.maxTokens,
+                thinkingLevel: selection.reasoning ?? undefined,
+                serviceTier: selection.serviceTier,
+              }
+            }
+          }
+          : undefined,
+        getPermissionSettings: (runId) => {
+          runPermissionCeiling = this.#options.getRunPermissionCeiling(runId)
+          const current = this.#options.conversations.findById(blueprint.conversationId)
+          return restrictPermissions(current && (current.approvalPolicy !== conversation.approvalPolicy || current.executionProfile !== conversation.executionProfile)
+            ? current
+            : { approvalPolicy: blueprint.approvalPolicy, executionProfile: blueprint.executionProfile })
+        },
+        updatePermissionSettings: settings => extensions.updatePermissionSettings(restrictPermissions(settings)),
         setCodemodeEnabled: extensions.setCodemodeEnabled,
         skillReferences: blueprint.resources.skillReferences,
         tree,

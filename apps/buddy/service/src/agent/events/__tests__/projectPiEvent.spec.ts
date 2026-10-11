@@ -375,7 +375,7 @@ describe('projectPiEvent product messages', () => {
         },
         {
           payload: {
-            content: { text: 'The process is running normally.' },
+            content: { text: 'The process is running normally.', modelId: message.model, providerId: message.provider },
             messageId,
             phase: 'final_answer',
             role: 'assistant',
@@ -422,7 +422,7 @@ describe('projectPiEvent product messages', () => {
     expect(projectPiEvent({ message, type: 'message_end' }, state)).toEqual({
       events: [{
         payload: {
-          content: { text: 'CI is green. I will verify the merge state next.' },
+          content: { text: 'CI is green. I will verify the merge state next.', modelId: message.model, providerId: message.provider },
           messageId,
           phase: 'commentary',
           role: 'assistant',

@@ -55,6 +55,8 @@ const usageEventPayloadSchema = z.object({
 const completedMessagePayloadSchema = z.object({
   content: z.object({
     attachmentIds: z.array(messageIdSchema).max(BUDDY_ATTACHMENT_COUNT_LIMIT).optional(),
+    modelId: z.string().min(1).optional(),
+    providerId: z.string().min(1).optional(),
     text: z.string().max(MAX_BUDDY_MESSAGE_TEXT_LENGTH),
   }).strict(),
   messageId: messageIdSchema,

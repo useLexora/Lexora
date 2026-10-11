@@ -5,7 +5,7 @@ import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { createBuddyInputReferenceMessage } from '../context/BuddyInputReference'
 import { buildBuddySystemSections } from '../context/buddySystemSections'
 
-export function createSystemSectionsExtension(getPendingInput?: () => BuddyInputReferenceV1 | null): BuddyInProcessExtension {
+export function createSystemSectionsExtension(getPendingInput?: () => BuddyInputReferenceV1 | null, getPermissionPrompt?: () => string): BuddyInProcessExtension {
   return {
     name: 'lexora-system-sections',
     factory(pi) {
@@ -17,6 +17,8 @@ export function createSystemSectionsExtension(getPendingInput?: () => BuddyInput
           : { role: 'user', content: [{ type: 'text', text: event.prompt }, ...event.images ?? []], timestamp: Date.now() })
         const active = new Set(pi.getActiveTools())
         Object.assign(event.systemPromptOptions.sections, buildBuddySystemSections(messages, context.model && supportsModelToolCalls(context.model) ? pi.getAllTools().filter(tool => active.has(tool.name)) : []))
+        if (getPermissionPrompt)
+          event.systemPromptOptions.sections.buddy_permissions = getPermissionPrompt()
       })
     },
   }

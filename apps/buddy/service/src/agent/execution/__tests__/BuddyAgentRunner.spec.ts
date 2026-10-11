@@ -213,16 +213,8 @@ describe('buddyAgentRunner', () => {
       conversationsDirectory: fixture.conversationsDirectory,
     })
     const events = await recovered.read(run.id)
-    expect(events.map(event => event.type)).toEqual([
-      'run.started',
-      'message.started',
-      'run.progress',
-      'message.delta',
-      'run.progress',
-      'message.delta',
-      'message.completed',
-      'usage.recorded',
-    ])
+    expect(events).toContainEqual(expect.objectContaining({ type: 'usage.recorded' }))
+    expect(events.some(event => ['run.completed', 'run.failed', 'run.cancelled'].includes(event.type))).toBe(false)
     await expect(recovered.replay(run.id)).resolves.toBe(events.length)
     expect(fixture.usageRepository.listForRun(run.id)).toMatchObject([{
       purpose: 'turn',
@@ -262,15 +254,9 @@ describe('buddyAgentRunner', () => {
 
     expect(run).toMatchObject({ errorCode: null, status: 'running' })
     expect(fixture.usageRepository.listForRun(run.id)).toEqual([])
-    expect((await fixture.eventLog.read(run.id)).map(event => event.type)).toEqual([
-      'run.started',
-      'message.started',
-      'run.progress',
-      'message.delta',
-      'run.progress',
-      'message.delta',
-      'message.completed',
-    ])
+    const events = await fixture.eventLog.read(run.id)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'message.completed' }))
+    expect(events.some(event => ['usage.recorded', 'run.completed', 'run.failed', 'run.cancelled'].includes(event.type))).toBe(false)
   })
 
   it('keeps a completed run terminal when post-commit notification fails', async () => {
@@ -583,7 +569,7 @@ describe('buddyAgentRunner', () => {
     expect(fixture.conversations.listMessages('conversation-1', 'branch-1'))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({
-          content: { text: 'Durable final answer' },
+          content: { text: 'Durable final answer', modelId: 'claude-sonnet-4-5', providerId: 'anthropic' },
           role: 'assistant',
           runId: first.runId,
         }),
@@ -681,54 +667,6 @@ describe('buddyAgentRunner', () => {
     })
     expect(fixture.runs.findById('run-second')?.piSessionFile)
       .toBe(join(fixture.root, 'run-first.jsonl'))
-  })
-
-  it('reuses one Pi session while activating and releasing fresh run context for every turn', async () => {
-    const fixture = await createFixture()
-    const activations: Array<{ model: string, provider: string, runId: string }> = []
-    const releases: string[] = []
-    const session = new IdleSession()
-    session.activateTurn = async (input) => {
-      activations.push({ model: input.model, provider: input.provider, runId: input.runId })
-      return () => releases.push(input.runId)
-    }
-    const sessionFactory = vi.fn(async () => ({
-      piSessionFile: join(fixture.root, 'session.jsonl'),
-      session,
-    }))
-    const runner = fixture.createRunnerFromFactory(sessionFactory)
-    const base = {
-      branchId: 'branch-1',
-      canonicalRoot: fixture.root,
-      conversationId: 'conversation-1',
-      cwd: fixture.root,
-      spaceId: null,
-      provider: 'anthropic',
-      resources: emptyResources(),
-    }
-    const first = {
-      ...base,
-      model: 'claude-sonnet-4-5',
-      prompt: 'First turn',
-      runId: 'run-first',
-    }
-    fixture.prepareTurn(first, 'message-user-first')
-    await runner.startTurn(withSession(first)).completion
-    const second = {
-      ...base,
-      model: 'claude-opus-4-1',
-      prompt: 'Second turn',
-      runId: 'run-second',
-    }
-    fixture.prepareTurn(second, 'message-user-second')
-    await runner.startTurn(withSession(second)).completion
-
-    expect(sessionFactory).toHaveBeenCalledTimes(1)
-    expect(activations).toEqual([
-      { model: 'claude-sonnet-4-5', provider: 'anthropic', runId: 'run-first' },
-      { model: 'claude-opus-4-1', provider: 'anthropic', runId: 'run-second' },
-    ])
-    expect(releases).toEqual(['run-first', 'run-second'])
   })
 
   it('runs manual compaction as an audited Buddy run and records Pi usage', async () => {

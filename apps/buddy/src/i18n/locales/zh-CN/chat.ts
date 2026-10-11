@@ -218,7 +218,6 @@ export default {
   'desktop.chat.executionProfileFullConfirmDescription': '完全访问会让命令使用你的本机权限访问文件、凭据和网络。部分工具仍需确认，但无法限制任意命令的实际行为。仅在信任当前任务并接受风险时开启。',
   'desktop.chat.executionProfileFullConfirmTitle': '确认允许完全访问？',
   'desktop.chat.executionProfileOpen': '查看执行权限',
-  'desktop.chat.executionProfileRunLocked': '当前运行结束后可切换',
   'desktop.chat.permissionModeFullDescription': '命令使用本机权限执行。',
   'desktop.chat.permissionModeManual': '人工审批',
   'desktop.chat.permissionModeManualDescription': '修改、命令与外部交互均需批准。',

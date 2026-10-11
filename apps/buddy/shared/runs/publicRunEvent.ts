@@ -249,6 +249,7 @@ function publicCompletedMessage(source: Record<string, unknown>): Record<string,
       : []
     payload.content = {
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...selectScalars(content, ['modelId', 'providerId']),
       text: content.text.slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH),
     }
   }

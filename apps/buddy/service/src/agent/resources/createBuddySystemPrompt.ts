@@ -21,6 +21,7 @@ export const BUDDY_MANUAL_APPROVAL_PROMPT = [
 ].join('\n')
 
 export interface CreateBuddySystemPromptOptions {
+  includePermissions?: boolean
   approvalPolicy: BuddyApprovalPolicy
   directoryContext?: string
   executionProfile: BuddyExecutionProfile
@@ -30,9 +31,9 @@ export interface CreateBuddySystemPromptOptions {
 export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions): string {
   const sections = [
     LEXORA_BUDDY_BASE_SYSTEM_PROMPT,
-    createBuddyExecutionPrompt(options.executionProfile, options.platform),
+    ...options.includePermissions === false ? [] : [createBuddyExecutionPrompt(options.executionProfile, options.platform)],
   ]
-  if (options.approvalPolicy === 'manual')
+  if (options.includePermissions !== false && options.approvalPolicy === 'manual')
     sections.push(BUDDY_MANUAL_APPROVAL_PROMPT)
   const directoryContext = options.directoryContext?.trim()
   if (directoryContext)

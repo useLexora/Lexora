@@ -1,4 +1,7 @@
 // 审查方法参考（按 Buddy 的通用审查与权限契约独立表述）：
+import { isBuddyReviewCommand, parseBuddyChatCommand } from '../../../shared/conversation/buddyChatCommands'
+import { buddyUserContentToText, buddyUserMessageContentV1Schema } from '../../../shared/conversation/buddyUserContent'
+
 export const BUDDY_REVIEW_PROMPT = [
   '以只读方式审查用户指定的当前工作，找出有证据、值得修复的缺陷；本轮不是修复任务。',
   '',
@@ -35,4 +38,15 @@ export const BUDDY_REVIEW_PROMPT = [
 
 export function buildBuddyReviewPrompt(focus: string): string {
   return focus ? `${BUDDY_REVIEW_PROMPT}\n\n用户补充：${focus}` : BUDDY_REVIEW_PROMPT
+}
+
+export function isReviewUserMessage(content: unknown): boolean {
+  const structured = buddyUserMessageContentV1Schema.safeParse(content)
+  if (structured.success) {
+    const userContent = structured.data.userContent
+    return parseBuddyChatCommand(buddyUserContentToText(userContent))?.name === 'review'
+      || userContent.body.some(paragraph => paragraph.content.some(node => node.type === 'prompt_directive' && node.directive === 'slash_command' && isBuddyReviewCommand(node.value)))
+  }
+  const text = typeof content === 'object' && content !== null && 'text' in content ? content.text : content
+  return typeof text === 'string' && parseBuddyChatCommand(text)?.name === 'review'
 }

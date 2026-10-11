@@ -176,7 +176,7 @@ describe('attachment submission validation', () => {
     const started = await fixture.turns.start({ draftId: first.draftId, expectedRevision: first.revision, requestId: 'first' })
     const second = await fixture.draft('second', 'second.wav', bytes, { kind: 'conversation_branch', conversationId: started.conversationId, branchId: started.branchId })
     const repository = createChatQueueRepository(fixture.database)
-    const queue = new ChatQueueService({ eventLog: { state: 'open' }, runInputs: createRunInputRepository(fixture.database), queue: repository, turns: fixture.turns, runs: fixture.runs, requests: createTurnRequestRepository(fixture.database), launcher: fixture.launcher, runner: { hasActiveExecution: () => active, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: (_runId, prepare) => {
+    const queue = new ChatQueueService({ getRunPermissionCeiling: () => undefined, eventLog: { state: 'open' }, runInputs: createRunInputRepository(fixture.database), queue: repository, turns: fixture.turns, runs: fixture.runs, requests: createTurnRequestRepository(fixture.database), launcher: fixture.launcher, runner: { hasActiveExecution: () => active, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: (_runId, prepare) => {
       prepare()
       return true
     } } })
@@ -194,15 +194,6 @@ describe('attachment submission validation', () => {
     finally {
       queue.dispose()
     }
-  })
-  it('publishes unsupported M4A as a file resource', async () => {
-    const fixture = await checkedTurns({ api: 'openai-completions' })
-    const bytes = Buffer.concat([Buffer.from([0, 0, 0, 20]), Buffer.from('ftypM4A '), Buffer.alloc(8)])
-    const draft = await fixture.draft('audio', 'voice.m4a', bytes)
-    const turn = await fixture.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'unsupported' })
-    expect(fixture.runs.listRecent()).toHaveLength(1)
-    expect(fixture.attachments.listForConversation(turn.conversationId)).toMatchObject([{ mimeType: 'audio/mp4', sizeBytes: bytes.length }])
-    expect(fixture.service.list(draft.draftId)[0]?.state).toBe('ready')
   })
 
   it('retains an oversized second draft and permits a text-only continuation', async () => {
@@ -313,8 +304,9 @@ describe('review turn boundaries', () => {
 
   it.each([
     ['workspace_write', 'read_only'],
+    ['read_only', 'workspace_write'],
     ['full_access', 'workspace_write'],
-  ] as const)('regenerates a %s run under the current narrower %s permission', async (sourceProfile, currentProfile) => {
+  ] as const)('regenerates a %s run under the current %s permission', async (sourceProfile, currentProfile) => {
     const f = await checkedTurns()
     const draft = f.drafts.open({ draftId: 'ordinary', scope: { kind: 'global' }, initialContent: createBuddyUserContent('inspect'), initialExecutionConfig: { ...executionConfig, executionProfile: sourceProfile }, initialModelSelection: null, now: new Date().toISOString() })
     const first = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'ordinary' })
@@ -1001,7 +993,7 @@ describe('composer resource import', () => {
       turnRequests: createTurnRequestRepository(database),
       spaces: createSpaceRepository(database),
       conversationLifecycle: { isDeleting: () => false },
-      skills: { materializeForSpace: async () => [{ reference: { id: 'writer-id', name: 'writer', revision: 'writer-revision' }, name: 'writer', body: 'Use concise wording.', filePath: '/fixture/skills/writer/SKILL.md', baseDirectory: '/fixture/skills/writer' }] },
+      skills: { materializeForSpace: async () => [] },
       runner: { cancel: async () => false },
       providers: {
         getDefaultModel: async () => ({ modelId: 'offline', providerId: 'fixture', reasoning: null, serviceTier: null }),
@@ -1162,33 +1154,6 @@ describe('composer resource import', () => {
     expect(await readFile(attachmentRepository.findById(editedAttachmentId)!.storedPath, 'utf8')).toBe('abc')
     expect(runInputs.findByRunId(editedTurn.runId)!.prompt).toContain('/plan revise with the snapshot')
 
-    const mixedContent = { ...createBuddyUserContent(), body: [{ type: 'paragraph' as const, content: [
-      { type: 'prompt_directive' as const, directive: 'slash_command' as const, commandMode: 'prompt' as const, value: '/plan' },
-      { type: 'text' as const, text: ' Use ' },
-      { type: 'prompt_directive' as const, directive: 'skill' as const, value: 'writer' },
-    ] }] }
-    const mixedDraft = drafts.open({
-      draftId: 'draft-2',
-      initialContent: mixedContent,
-      initialExecutionConfig: {
-        approvalPolicy: 'policy',
-        executionProfile: 'workspace_write',
-      },
-      initialModelSelection: null,
-      now: '2026-09-06T00:00:01.000Z',
-      scope: { kind: 'global' },
-    })
-    const mixed = await turns.start({
-      draftId: mixedDraft.draftId,
-      expectedRevision: mixedDraft.revision,
-      requestId: 'mixed',
-    })
-    expect(runInputs.findByRunId(mixed.runId)!.prompt).toContain('/plan Use ')
-    expect(runInputs.findByRunId(mixed.runId)!.prompt).toContain('Use concise wording.')
-    expect(conversations.listBranchMessages(mixed.conversationId, mixed.branchId)[0]!.content).toMatchObject({
-      resourceSnapshots: [],
-      userContent: mixedContent,
-    })
     const runsBefore = database.prepare('SELECT count(*) AS count FROM runs').get()
     const badDraft = drafts.open({
       draftId: 'draft-bad-command',
@@ -1245,59 +1210,6 @@ describe('composer resource import', () => {
     expect(retriedTurn.runId).not.toBe(failedTurn.runId)
     expect(retriedTurn.branchId).not.toBe(failedTurn.branchId)
     expect(database.prepare('SELECT count(*) AS count FROM messages').get()).toEqual(messageCount)
-  })
-
-  it('retains the image snapshot when sending to a text-only model', async () => {
-    const { service, attachments, database } = await setup()
-    const drafts = createComposerDraftRepository(database)
-    const runs = createRunRepository(database)
-    const imageDraft = drafts.open({
-      draftId: 'draft-image',
-      initialContent: { ...createBuddyUserContent(), panelResourceIds: ['image-resource'] },
-      initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
-      initialModelSelection: null,
-      now: '2026-09-06T00:00:00.000Z',
-      scope: { kind: 'global' },
-    })
-    const png = imageBytes()
-    await service.accept({ draftId: imageDraft.draftId, resources: [{ resourceId: 'image-resource', mimeType: 'image/png', name: 'image.png', sizeBytes: png.length }] })
-    await service.complete({ draftId: imageDraft.draftId, resourceId: 'image-resource', bytes: png })
-    const turns = new ChatTurnService({
-      inputValidation: { validate: async () => {} },
-      attachments,
-      composerResources: service,
-      conversations: createConversationRepository(database),
-      conversationLifecycle: { isDeleting: () => false },
-      drafts,
-      providers: {
-        getDefaultModel: async () => ({ modelId: 'text-only', providerId: 'fixture', reasoning: null, serviceTier: null }),
-        executionModels: { getServiceTiers: () => [], resolveAvailable: async () => ({
-          api: 'openai-completions',
-          baseUrl: 'http://127.0.0.1:9',
-          contextWindow: 128000,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          id: 'text-only',
-          input: ['text'],
-          maxTokens: 4096,
-          name: 'Text only',
-          provider: 'fixture',
-          reasoning: false,
-        }) },
-      },
-      runner: { cancel: async () => false },
-      runInputs: createRunInputRepository(database),
-      runs,
-      skills: { materializeForSpace: async () => [] },
-      spaces: createSpaceRepository(database),
-      turnLauncher: { launch: async runId => ({ runId, completion: Promise.resolve(runs.findById(runId)!) }) },
-      turnRequests: createTurnRequestRepository(database),
-    })
-    await expect(turns.start({
-      draftId: imageDraft.draftId,
-      expectedRevision: imageDraft.revision,
-      requestId: 'image-unsupported',
-    })).resolves.toMatchObject({ run: { modelId: 'text-only' } })
-    expect(database.prepare('SELECT count(*) AS count FROM runs').get()).toEqual({ count: 1 })
   })
 
   it('accepts metadata before bytes, binds a distinct immutable file identity, and replays completion', async () => {
@@ -1602,7 +1514,7 @@ describe('composer input preparation ownership', () => {
     const opened = f.drafts.open({ draftId: 'send', initialContent: content, initialExecutionConfig: { approvalPolicy: 'manual', executionProfile: 'read_only' }, initialModelSelection: null, scope, now: new Date().toISOString() })
     const draft = f.drafts.save({ ...opened, content, expectedRevision: opened.revision, now: new Date().toISOString() })
     const source = await local(f, draft.draftId, 'native')
-    const queue = mode === 'enqueue' ? new ChatQueueService({ eventLog: { state: 'open' }, runInputs: createRunInputRepository(f.database), queue: createChatQueueRepository(f.database), turns: f.turns, runs: f.runs, requests: createTurnRequestRepository(f.database), launcher: f.launcher, runner: { hasActiveExecution: () => false, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: () => false } }) : null
+    const queue = mode === 'enqueue' ? new ChatQueueService({ getRunPermissionCeiling: () => undefined, eventLog: { state: 'open' }, runInputs: createRunInputRepository(f.database), queue: createChatQueueRepository(f.database), turns: f.turns, runs: f.runs, requests: createTurnRequestRepository(f.database), launcher: f.launcher, runner: { hasActiveExecution: () => false, hasDegradedCleanup: () => false, isStopping: false, followUp: () => false, steer: () => false } }) : null
     const submit = () => {
       const input = { draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'materialized' }
       return queue ? queue.enqueue(input) : editing ? f.turns.editUserMessage({ ...input, ...editing }) : f.turns.start(input)

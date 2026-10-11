@@ -40,6 +40,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     unavailableCommandMessage: options.unavailableCommandMessage,
   })
   const branchMutations = useChatBranchMutations({
+    flushModelSelection: options.flushModelSelection,
     composerTarget,
     activeRun: options.activeRun,
     api: options.api,

@@ -72,7 +72,7 @@ export type ApprovalLifecycleFact = Readonly<
   | { kind: 'waiter.started', approvalId: string, runId: string, toolCallId: string }
   | { kind: 'waiter.released', approvalId: string, runId: string, toolCallId: string, reason: ApprovalCancellationReason | 'approved' | 'denied' | 'request_failed', persistence: 'committed' | 'failed', durationMs: number }
   | { kind: 'authorization.established', approvalId: string, runId: string, scope: ApprovalReuseScope }
-  | { kind: 'authorization.cleared', runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown', count: number }
+  | { kind: 'authorization.cleared', runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown' | 'permissions_changed', count: number }
   | { kind: 'cancellation.failed', approvalId: string, runId: string, toolCallId: string, reason: ApprovalCancellationReason, errorCode: string }
 >
 
@@ -247,7 +247,7 @@ export class ApprovalService {
     return this.#trackResolution(input.id, this.#resolvePending(input))
   }
 
-  clearRunAuthorizations(runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown' = 'run_settled'): void {
+  clearRunAuthorizations(runId: string, reason: 'run_cancelled' | 'run_settled' | 'shutdown' | 'permissions_changed' = 'run_settled'): void {
     this.#runLifetimes.get(runId)?.()
     this.#runLifetimes.delete(runId)
     let count = 0

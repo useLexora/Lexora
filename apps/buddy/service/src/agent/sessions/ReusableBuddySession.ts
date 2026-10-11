@@ -1,9 +1,19 @@
 import type { AgentSession, AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../../shared/conversation/modelSelection'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalCacheWarmingStatus } from '../../../../shared/runs/conversationStatusApi'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyContextUsageBreakdown } from '../context/contextUsageBreakdown'
+
+export interface BuddySessionModelSelection {
+  provider: string
+  model: string
+  contextWindow: number | null
+  maxTokens: number | null
+  thinkingLevel?: BuddyThinkingLevel
+  serviceTier?: BuddyServiceTier | null
+}
 
 export type BuddySessionShutdownReason = 'evict' | 'invalidate' | 'quit' | 'resource-change'
 
@@ -16,6 +26,8 @@ export interface BuddySessionEventSource {
 }
 
 export interface ReusableBuddySession extends BuddySessionEventSource {
+  refreshModelSelection?: () => void
+  updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
   getModelUsage?: () => { providerId: string, modelId: string } | null
   getCacheWarmingStatus?: () => LocalCacheWarmingStatus
   getInputContext?: () => { messages: AgentSession['messages'] }
@@ -35,11 +47,8 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
   waitForIdle: () => Promise<void>
 }
 
-export interface BuddySessionTurnContext {
-  contextWindow: number | null
+export interface BuddySessionTurnContext extends BuddySessionModelSelection {
   flushProjectedEvents: () => Promise<void>
-  maxTokens: number | null
-  model: string
   onToolExecutionAuthorized: (event: {
     arguments: unknown
     toolCallId: string
@@ -50,9 +59,6 @@ export interface BuddySessionTurnContext {
     toolCallId: string
     toolName: string
   }) => Promise<void>
-  provider: string
   runId: string
-  serviceTier?: BuddyServiceTier | null
   signal: AbortSignal
-  thinkingLevel?: BuddyThinkingLevel
 }

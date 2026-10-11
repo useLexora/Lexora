@@ -1,6 +1,7 @@
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { PathApprovalReviewInput } from '../../../shared/permissions/approvalReviewPayload'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../shared/permissions/permissionMode'
 import type { SandboxDirectoryGrant, SandboxNetworkTarget } from '../../../shared/permissions/shellSandbox'
 import type { BuddyExtensionRunContext } from '../agent/extensions/BuddyExtensionRunContext'
 import type { ApprovalService } from '../approvals/ApprovalService'
@@ -34,10 +35,22 @@ export interface ToolAuthorizationCall {
 export class ToolAuthorizationService {
   readonly #options: ToolAuthorizationOptions
   readonly #engine: PermissionEngine
+  #settings: BuddyPermissionSettings
+  #settingsLifetime = new AbortController()
 
   constructor(options: ToolAuthorizationOptions) {
     this.#options = options
     this.#engine = options.engine ?? new PermissionEngine()
+    this.#settings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
+  }
+
+  updatePermissionSettings(settings: BuddyPermissionSettings): void {
+    if (settings.approvalPolicy === this.#settings.approvalPolicy && settings.executionProfile === this.#settings.executionProfile)
+      return
+    const previous = this.#settingsLifetime
+    this.#settings = { ...settings }
+    this.#settingsLifetime = new AbortController()
+    previous.abort()
   }
 
   async authorize(
@@ -46,17 +59,37 @@ export class ToolAuthorizationService {
     declared: BuddyToolClassification = {},
     resource: { network?: SandboxNetworkTarget, signal?: AbortSignal } = {},
   ): Promise<string | null> {
+    while (true) {
+      const lifetime = this.#settingsLifetime.signal
+      try {
+        return await this.#authorize(event, run, declared, resource, this.#settings, lifetime)
+      }
+      catch (error) {
+        if (!lifetime.aborted || run.signal.aborted || resource.signal?.aborted)
+          throw error
+      }
+    }
+  }
+
+  async #authorize(
+    event: ToolAuthorizationCall,
+    run: BuddyExtensionRunContext,
+    declared: BuddyToolClassification,
+    resource: { network?: SandboxNetworkTarget, signal?: AbortSignal },
+    settings: BuddyPermissionSettings,
+    lifetime: AbortSignal,
+  ): Promise<string | null> {
     const options = this.#options
     let authorized = false
     options.executionPermissions?.release(run, event.toolCallId)
     try {
-      const signal = resource.signal ? AbortSignal.any([resource.signal, run.signal]) : run.signal
+      const signal = AbortSignal.any([lifetime, run.signal, ...resource.signal ? [resource.signal] : []])
       signal.throwIfAborted()
       await run.flushProjectedEvents()
       const decision = await this.#engine.decide({
         access: declared.access,
         approvalAvailable: options.approvalAvailable,
-        approvalPolicy: options.approvalPolicy,
+        approvalPolicy: settings.approvalPolicy,
         approval: declared.approval,
         arguments: event.input,
         cwd: options.cwd,
@@ -66,9 +99,10 @@ export class ToolAuthorizationService {
         grants: options.getGrants(),
         owner: options.owner,
         paths: declared.paths,
-        profile: options.executionProfile,
+        profile: settings.executionProfile,
         toolName: event.toolName,
       })
+      signal.throwIfAborted()
       if (decision.type === 'deny')
         return decision.code
 
@@ -84,7 +118,7 @@ export class ToolAuthorizationService {
           paths: declared.approval?.paths ?? toPathReview(decision),
           reuse: declared.approval?.reuse,
           runId: run.runId,
-          runSignal: run.signal,
+          runSignal: AbortSignal.any([run.signal, lifetime]),
           signal,
           shell: decision.shell,
           sandboxDirectory: decision.sandboxDirectory
@@ -95,12 +129,14 @@ export class ToolAuthorizationService {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
         })
+        signal.throwIfAborted()
         if (approval.decision === 'denied')
           return 'APPROVAL_DENIED'
         approvedOnce = approval.decision === 'approved_once'
       }
       signal.throwIfAborted()
       const validation = await declared.validateBeforeExecution?.()
+      signal.throwIfAborted()
       if (validation)
         return validation.reason
       if (!resource.network && declared.paths?.length) {

@@ -613,6 +613,8 @@ function projectAssistantMessageEnd(
         payload: {
           content: {
             text,
+            modelId: message.model,
+            providerId: message.provider,
           },
           messageId,
           ...(phase ? { phase } : {}),

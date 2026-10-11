@@ -27,6 +27,7 @@ interface ValueRef<T> {
 }
 
 export interface UseChatBranchMutationsOptions {
+  flushModelSelection?: () => Promise<boolean>
   activeRun: ValueRef<LocalRun | null>
   api: {
     chat: Pick<LocalChatApi['chat'], 'editUserMessage' | 'regenerateAssistant'>
@@ -330,6 +331,10 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     isMutatingBranch.value = true
     options.setErrorMessage(null)
     try {
+      if (options.flushModelSelection && !await options.flushModelSelection())
+        return false
+      if (!isSourceViewCurrent())
+        return false
       const turn = await options.api.chat.regenerateAssistant({
         conversationId,
         requestId,

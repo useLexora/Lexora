@@ -57,7 +57,6 @@ import {
   getResourceAttachmentIds,
 } from '../../../shared/conversation/buddyUserContent'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
-import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
 import { resolveInteractiveModelSelection } from '../providers/resolveInteractiveModelSelection'
@@ -68,7 +67,7 @@ import {
   formatBuddySkillPrompt,
 } from '../skills/SkillService'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
-import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt } from './buddyReviewPrompt'
+import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt, isReviewUserMessage } from './buddyReviewPrompt'
 import { createConversationTitle } from './conversationTitle'
 import { combinePreparedAttachments, persistPreparedTurn } from './persistPreparedTurn'
 import { resolveAuthorizedSessionReferences } from './sessionReferenceAuthorization'
@@ -501,16 +500,17 @@ export class ChatTurnService {
       throw new BuddyServiceError('VALIDATION_FAILED')
 
     const storedInput = this.#requireRunInput(requireValue(replay?.run ?? sourceRun).id)
+    const selectedModel = await this.#resolveSelection(replay?.run ?? null, replay ? storedInput : null, conversation.modelSelection)
     await this.#validateSkillItems(conversation.spaceId, storedInput.contextItems)
     assertPromptSize(storedInput.prompt)
     await this.#options.inputValidation.validate({
       conversationId: conversation.id,
       branchId: parentBranchId,
       point: { kind: 'before_message', messageId: sourceRun.triggeringMessageId },
-      modelId: sourceRun.model,
-      providerId: sourceRun.provider,
-      contextWindow: sourceRun.contextWindow,
-      maxTokens: sourceRun.maxTokens,
+      modelId: selectedModel.modelId,
+      providerId: selectedModel.providerId,
+      contextWindow: selectedModel.contextWindow,
+      maxTokens: selectedModel.maxTokens,
       prompt: storedInput.prompt,
       attachments: this.#options.attachments.getInputMetadata(storedInput.attachmentIds, conversation.id),
     })
@@ -528,9 +528,13 @@ export class ChatTurnService {
           conversationId: conversation.id,
           createdAt: new Date().toISOString(),
           executionProfile: conversation.executionProfile,
-          runExecutionProfile: isExecutionProfileWithin(sourceRun.executionProfile, conversation.executionProfile)
-            ? sourceRun.executionProfile
-            : conversation.executionProfile,
+          model: selectedModel.modelId,
+          provider: selectedModel.providerId,
+          modelParameters: toModelParameters(selectedModel),
+          reasoning: normalizeThinkingLevel(selectedModel.reasoning) ?? null,
+          serviceTier: selectedModel.serviceTier,
+          expectedModelSelection: conversation.modelSelection,
+          runExecutionProfile: isReviewUserMessage(history[triggerIndex]!.content) ? 'read_only' : undefined,
           forkedFromMessageId: requireValue(sourceRun).triggeringMessageId,
           parentBranchId,
           requestFingerprint: createRegenerationFingerprint(input),

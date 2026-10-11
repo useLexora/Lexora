@@ -37,44 +37,7 @@ describe('useChatPermissionSettings', () => {
     expect(drafts.approvalPolicy.value).toBe('manual')
   })
 
-  it('changes draft permission settings atomically through an explicit user mutation', async () => {
-    const draftApprovalPolicy = ref<'manual' | 'policy'>('policy')
-    const draftProfile = ref<'read_only' | 'workspace_write' | 'full_access'>('workspace_write')
-    const setDraftPermissionSettings = vi.fn((value: {
-      approvalPolicy: 'manual' | 'policy'
-      executionProfile: 'read_only' | 'workspace_write' | 'full_access'
-    }) => {
-      draftApprovalPolicy.value = value.approvalPolicy
-      draftProfile.value = value.executionProfile
-    })
-    const persistWorkspaceState = vi.fn(async () => true)
-    const permission = useChatPermissionSettings({
-      activeConversation: ref(null),
-      activeConversationId: ref(null),
-      activeRun: ref(null),
-      api: { setPermissionSettings: vi.fn() } as never,
-      applyConversation: vi.fn(),
-      drafts: {
-        approvalPolicy: draftApprovalPolicy,
-        executionProfile: draftProfile,
-        setPermissionSettings: setDraftPermissionSettings,
-        targetKey: ref('global'),
-      } as never,
-      onError: vi.fn(),
-      persistWorkspaceState,
-    })
-
-    expect(permission.permissionMode.value).toBe('policy_approval')
-    await expect(permission.setPermissionMode('manual_approval')).resolves.toBe(true)
-    expect(setDraftPermissionSettings).toHaveBeenCalledWith({
-      approvalPolicy: 'manual',
-      executionProfile: 'workspace_write',
-    })
-    expect(persistWorkspaceState).toHaveBeenCalledOnce()
-    expect(permission.permissionMode.value).toBe('manual_approval')
-  })
-
-  it('keeps the active run permission snapshot immutable and blocks changes', async () => {
+  it('updates live conversation permissions while retaining the original run snapshot', async () => {
     const conversation = ref<LocalConversationSummary>({
       activeBranchId: 'branch-1',
       activity: 'running',
@@ -105,13 +68,13 @@ describe('useChatPermissionSettings', () => {
       status: 'running',
       triggeringMessageId: 'message-1',
     })
-    const setConversationPermissionSettings = vi.fn()
+    const setConversationPermissionSettings = vi.fn(async (_id, settings) => ({ ...conversation.value!, ...settings }))
     const permission = useChatPermissionSettings({
       activeConversation: conversation,
       activeConversationId: ref('conversation-1'),
       activeRun,
       api: { setPermissionSettings: setConversationPermissionSettings } as never,
-      applyConversation: vi.fn(),
+      applyConversation: updated => conversation.value = { ...conversation.value!, ...updated },
       drafts: {
         approvalPolicy: ref('policy'),
         executionProfile: ref('workspace_write'),
@@ -120,9 +83,10 @@ describe('useChatPermissionSettings', () => {
       persistWorkspaceState: vi.fn(async () => true),
     })
 
-    expect(permission.permissionMode.value).toBe('policy_approval')
-    expect(permission.canUpdate.value).toBe(false)
-    await expect(permission.setPermissionMode('full_access')).resolves.toBe(false)
-    expect(setConversationPermissionSettings).not.toHaveBeenCalled()
+    expect(permission.permissionMode.value).toBe('full_access')
+    expect(permission.canUpdate.value).toBe(true)
+    await expect(permission.setPermissionMode('manual_approval')).resolves.toBe(true)
+    expect(permission.permissionMode.value).toBe('manual_approval')
+    expect(activeRun.value.executionProfile).toBe('workspace_write')
   })
 })

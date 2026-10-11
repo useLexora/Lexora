@@ -17,6 +17,7 @@ export const SHELL_SANDBOX_EXTENSION = 'lexora-shell-sandbox'
 export function createShellCapability(options: {
   cwd: string
   execution: ShellExecution
+  getExecution?: () => ShellExecution
   getGrants: () => readonly DirectoryGrant[]
   resourceReadRoots?: readonly string[]
   getRunContext: () => BuddyExtensionRunContext | null
@@ -34,12 +35,12 @@ export function createShellCapability(options: {
   return {
     disclosure: [
       { source: { kind: 'builtin', id: 'sandbox', title: 'Directory authorization' }, exposure: 'direct', keywords: '授权 目录 authorize directory', tools: [{ name: 'lexora_authorize_directory' }] },
-      { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: options.execution.readOnly ? [] : [{ name: 'lexora_host_shell' }] },
+      { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: [{ name: 'lexora_host_shell' }] },
     ],
     workspaceMutationTools: ['lexora_host_shell'],
     async classify(event) {
       if (event.toolName === shellName)
-        return { access: 'execute', shellBoundary: 'sandbox' }
+        return { access: 'execute', get shellBoundary() { return (options.getExecution?.() ?? options.execution).boundary === 'sandbox' ? 'sandbox' as const : undefined } }
       if (event.toolName === 'lexora_host_shell')
         return { access: 'execute', forceAsk: true }
       if (event.toolName !== 'lexora_authorize_directory')
@@ -52,14 +53,19 @@ export function createShellCapability(options: {
         const native = createShell(options.cwd, { exposeSessionEnvironment: false })
         pi.registerTool({
           ...native,
-          description: `${native.description}\nRuns in an OS sandbox. Only authorized directories and installed toolchains are readable; credentials and host IPC are hidden. Writes are limited by the conversation profile. Network destinations pause for explicit approval. No automatic host fallback.`,
+          description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Sandbox reads, writes and network destinations require the corresponding authorization. No automatic host fallback.`,
           promptGuidelines: [
-            `Use ${shellName} for ordinary commands, pipelines, scripts and project builds inside the sandbox. Read failures outside granted directories require a directory authorization; do not disguise paths or use another interpreter to evade a denial.`,
-            'The sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
+            `Use ${shellName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. In isolated modes, read failures outside granted directories require a directory authorization; do not disguise paths or use another interpreter to evade a denial.`,
+            'In isolated modes, the sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
           ],
           async execute(toolCallId, parameters, signal, onUpdate, context) {
             const run = options.getRunContext()
-            if (!run || !options.sandbox)
+            const execution = options.getExecution?.() ?? options.execution
+            if (!run)
+              throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+            if (execution.boundary === 'host')
+              return native.execute(toolCallId, parameters, AbortSignal.any([run.signal, ...signal ? [signal] : []]), onUpdate, context)
+            if (!options.sandbox)
               throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
             const lifetime = new AbortController()
             const executionSignal = AbortSignal.any([lifetime.signal, run.signal, ...signal ? [signal] : []])
@@ -79,7 +85,7 @@ export function createShellCapability(options: {
                     return await options.sandbox!.exec({
                       command,
                       cwd,
-                      readOnly: options.execution.readOnly,
+                      readOnly: execution.readOnly,
                       roots: [...new Set(options.getGrants().map(grant => grant.canonicalRoot))],
                       workspaceRoots: options.getGrants().filter(grant => grant.kind === 'workspace').map(grant => grant.canonicalRoot),
                       additionalDirectories: [...options.directoryPermissions.get(run)],
@@ -118,16 +124,14 @@ export function createShellCapability(options: {
             finally { lifetime.abort() }
           },
         })
-        if (!options.execution.readOnly) {
-          pi.registerTool({
-            ...native,
-            name: 'lexora_host_shell',
-            label: 'Host shell',
-            description: 'Run a command OUTSIDE the sandbox with the desktop service user permissions, including host files, credentials, network and desktop IPC. Requires user authorization; reusable grants expire with the current run. Use only when isolation prevents an operation required by the user, never to evade a declined request. Supply command and optional timeout in seconds.',
-            promptSnippet: 'Run an authorized host command outside the sandbox',
-            promptGuidelines: [],
-          })
-        }
+        pi.registerTool({
+          ...native,
+          name: 'lexora_host_shell',
+          label: 'Host shell',
+          description: 'Run a command OUTSIDE the sandbox with the desktop service user permissions, including host files, credentials, network and desktop IPC. Requires user authorization; reusable grants expire with the current run. Use only when isolation prevents an operation required by the user, never to evade a declined request. Supply command and optional timeout in seconds.',
+          promptSnippet: 'Run an authorized host command outside the sandbox',
+          promptGuidelines: [],
+        })
         pi.registerTool(defineTool({
           name: 'lexora_authorize_directory',
           label: 'Authorize a directory',

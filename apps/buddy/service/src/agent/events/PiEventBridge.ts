@@ -261,6 +261,10 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
       this.#failureMessage = undefined
     }
     if (event.type === 'message_end' && event.message.role === 'assistant') {
+      if (event.message.stopReason !== 'error' && event.message.stopReason !== 'aborted') {
+        this.#failureCode = undefined
+        this.#failureMessage = undefined
+      }
       this.#finalAssistantAnswerProjected = event.message.stopReason === 'stop'
         && projected.events.some(candidate => candidate.type === 'message.completed')
     }

@@ -31,6 +31,7 @@ describe('native attachment request guidance', () => {
     const captured: Array<{ context: Context, payload: unknown }> = []
     const session = {
       model,
+      subscribe: () => () => {},
       agent: {
         convertToLlm: async (messages: AgentSession['messages']) => messages,
         streamFunction: ((target, context, options) => streamSimple(target, context, {

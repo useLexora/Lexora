@@ -1,5 +1,6 @@
 import type { LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../../shared/conversation/chatQueueApi'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { LocalRun } from '../../../shared/runs/runApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
@@ -21,6 +22,7 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { resolveTurnExecutionProfile } from '../storage/turnRequestRepository'
 
 export interface ChatQueueServiceOptions {
+  getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
   queue: ChatQueueRepository
   turns: Pick<ChatTurnService, 'cancel' | 'prepareStart' | 'validatePreparedInput'>
   requests: Pick<TurnRequestRepository, 'prepare'>
@@ -179,7 +181,7 @@ export class ChatQueueService {
       if (active.purpose !== 'chat' || active.model !== input.model || active.provider !== input.provider)
         throw new BuddyServiceError('VALIDATION_FAILED')
       const run = this.#options.runs.findById(active.id)
-      if (!run || run.approvalPolicy !== input.approvalPolicy || run.executionProfile !== resolveTurnExecutionProfile(input))
+      if (!run || !this.#hasCompatiblePermissions(run, input))
         return false
       await this.#options.turns.validatePreparedInput(input, false)
       if (this.#disposed || this.#isCancelling(target) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || this.#options.queue.activeRun(target)?.id !== active.id)
@@ -225,10 +227,16 @@ export class ChatQueueService {
     const current = this.#options.runInputs.findByRunId(run.id)
     return run.status === 'running' && run.branchId === input.branchId
       && run.model === input.model && run.provider === input.provider
-      && run.approvalPolicy === input.approvalPolicy && run.executionProfile === resolveTurnExecutionProfile(input)
+      && this.#hasCompatiblePermissions(run, input)
       && run.contextWindow === (input.modelParameters?.contextWindow ?? null)
       && run.maxTokens === (input.modelParameters?.maxTokens ?? null)
       && current?.reasoning === input.runInput.reasoning && current.serviceTier === input.runInput.serviceTier
+  }
+
+  #hasCompatiblePermissions(run: RunRecord, input: PrepareTurnRequestInput): boolean {
+    return run.approvalPolicy === input.approvalPolicy
+      && run.executionProfile === resolveTurnExecutionProfile(input)
+      && this.#options.getRunPermissionCeiling(run.id) === input.runExecutionProfile
   }
 
   #deliver(input: PrepareTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {

@@ -1,4 +1,5 @@
 import type { Event, ListenerErrorHandler } from '../../../../shared/events/Emitter'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddyCapabilityResourceRevision } from '../extensions/BuddyCapability'
 import type { BuddySessionIdentity } from './BuddySessionBlueprint'
 import type { BuddySessionShutdownReason } from './ReusableBuddySession'
@@ -18,6 +19,8 @@ export interface BuddySessionBinding<TSession> {
 }
 
 export interface DisposableBuddySession {
+  refreshModelSelection?: () => void
+  updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
   getModelUsage?: () => { readonly providerId: string, readonly modelId: string } | null
   shutdown: (reason: BuddySessionShutdownReason) => Promise<void>
 }
@@ -74,6 +77,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   readonly #conversationRoots = new Map<string, string>()
   readonly #identities = new Map<string, BuddySessionIdentity>()
   readonly #pendingInvalidations = new Set<string>()
+  readonly #permissionUpdates = new Map<string, symbol>()
   readonly #runTails = new Map<string, Promise<void>>()
   readonly #sessions = new Map<string, BuddySessionEntry<TSession>>()
   readonly #lastUsed = new Map<string, number>()
@@ -213,6 +217,40 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
 
   invalidateConversationWithResult(conversationId: string): Promise<BuddySessionInvalidationResult> {
     return this.invalidateMatching(identity => identity.conversationId === conversationId)
+  }
+
+  refreshConversationModel(conversationId: string): void {
+    for (const entry of this.#sessions.values()) {
+      if (entry.identity.conversationId === conversationId)
+        entry.binding?.session.refreshModelSelection?.()
+    }
+  }
+
+  async applyConversationPermissions(conversationId: string, settings: BuddyPermissionSettings): Promise<BuddySessionInvalidationResult> {
+    const update = Symbol('permissions')
+    this.#permissionUpdates.set(conversationId, update)
+    let pending = false
+    try {
+      for (const entry of [...this.#sessions.values()]) {
+        if (entry.identity.conversationId !== conversationId)
+          continue
+        const binding = entry.binding ?? await entry.promise
+        if (this.#permissionUpdates.get(conversationId) !== update)
+          return { matched: 0, pending: 0, degraded: 0 }
+        if (this.#sessions.get(createSessionKey(entry.identity)) === entry) {
+          if (binding.session.updatePermissionSettings)
+            binding.session.updatePermissionSettings(settings)
+          else
+            pending = true
+        }
+      }
+      const result = await this.invalidateConversationWithResult(conversationId)
+      return { ...result, pending: pending ? result.pending : 0 }
+    }
+    finally {
+      if (this.#permissionUpdates.get(conversationId) === update)
+        this.#permissionUpdates.delete(conversationId)
+    }
   }
 
   invalidateSession(identity: BuddySessionIdentity): Promise<number> {
