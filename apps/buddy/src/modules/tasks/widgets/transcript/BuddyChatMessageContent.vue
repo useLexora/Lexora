@@ -133,7 +133,7 @@ function handleMarkdownLink(href: string) {
 
 <template>
   <div
-    class="buddy-chat-message-content"
+    class="buddy-chat-message-content grid w-fit max-w-[min(42rem,_92%)] min-w-0 gap-[0.45rem] bg-transparent p-0"
     :class="`is-${message.role}`"
     :data-quote-source="message.role === 'user' || message.role === 'assistant' ? JSON.stringify({ conversationId: message.conversationId, branchId: message.branchId, messageId: message.id, runId: message.runId, role: message.role }) : undefined"
   >
@@ -156,20 +156,20 @@ function handleMarkdownLink(href: string) {
     >
       <div
         ref="attachmentTrack"
-        class="buddy-chat-message-content__attachments"
+        class="buddy-chat-message-content__attachments flex flex-nowrap gap-[0.45rem] pb-2"
       >
         <figure
           v-for="view in attachmentViews"
           :id="`buddy-resource-${view.resourceId}`"
           :key="view.resourceId"
-          class="buddy-chat-message-content__attachment"
+          class="buddy-chat-message-content__attachment relative grid box-border w-44 min-w-0 grid-cols-[minmax(0,_1fr)] m-0 border-1 border-solid border-border rounded-micro bg-raised p-1"
           :class="{ 'is-highlighted': highlightedResourceId === view.resourceId }"
           :data-resource-card="view.resourceId"
           @click="openPreview(view.attachmentId)"
         >
           <button
             v-if="view.previewUrl && view.attachmentId && !failedAttachmentIds.has(view.attachmentId)"
-            class="buddy-chat-message-content__preview-trigger"
+            class="buddy-chat-message-content__preview-trigger block overflow-hidden border-0 p-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
             type="button"
             :aria-label="t('desktop.imagePreview.open', { name: view.attachment.name })"
             @click.stop="openPreview(view.attachmentId)"
@@ -183,20 +183,20 @@ function handleMarkdownLink(href: string) {
               @error="markPreviewFailed(view.attachmentId)"
             >
           </button>
-          <div v-else class="buddy-chat-message-content__file">
+          <div v-else class="buddy-chat-message-content__file grid place-items-center text-muted p-[0.65rem]">
             <FolderIcon v-if="view.attachment.kind === 'directory'" class="buddy-chat-message-content__folder" />
             <FileIcon v-else :name="view.attachment.name" size="preview" />
           </div>
-          <figcaption class="buddy-chat-message-content__attachment-details">
+          <figcaption class="flex min-w-0 items-baseline gap-[0.4rem] pt-[0.45rem] pr-[0.35rem] pb-[0.3rem] pl-[0.35rem] text-fg text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)] text-left">
             <NTooltip :delay="300" :style="{ maxWidth: '24rem', overflowWrap: 'anywhere' }">
               <template #trigger>
-                <span class="buddy-chat-message-content__attachment-name">
+                <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
                   {{ imageLabels.get(view.resourceId) ?? view.attachment.name }}
                 </span>
               </template>
               {{ 'path' in view.attachment ? view.attachment.path : view.attachment.name }}
             </NTooltip>
-            <span v-if="view.attachment.kind !== 'directory'" class="buddy-chat-message-content__attachment-size">{{ formatFileSize(view.attachment.sizeBytes) }}</span>
+            <span v-if="view.attachment.kind !== 'directory'" class="flex-none text-muted whitespace-nowrap">{{ formatFileSize(view.attachment.sizeBytes) }}</span>
           </figcaption>
         </figure>
       </div>
@@ -221,7 +221,7 @@ function handleMarkdownLink(href: string) {
           >{{ directiveText(node) }}</span>
           <span
             v-else-if="node.type === 'session_ref'"
-            class="buddy-chat-message-content__session-reference"
+            class="buddy-chat-message-content__session-reference inline-block max-w-[min(24rem,_100%)] overflow-hidden text-ellipsis"
             :title="sessionReferenceTitle(node.sessionId)"
           >@{{ sessionReferenceTitle(node.sessionId) }}</span>
           <BuddyChatResourceReference
@@ -258,13 +258,6 @@ function handleMarkdownLink(href: string) {
 
 .buddy-chat-message-content {
   &__folder { width: 3rem; height: 3rem; }
-  display: grid;
-  width: fit-content;
-  max-width: min(42rem, 92%);
-  min-width: 0;
-  gap: 0.45rem;
-  background: transparent;
-  padding: 0;
 
   &.is-user {
     justify-items: end;
@@ -289,26 +282,8 @@ function handleMarkdownLink(href: string) {
   overscroll-behavior-inline: contain;
 }
 
-.buddy-chat-message-content__attachments {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.45rem;
-  padding-bottom: 0.5rem;
-}
-
 .buddy-chat-message-content__attachment {
-  position: relative;
-  display: grid;
-  box-sizing: border-box;
-  width: 11rem;
-  min-width: 0;
   flex: 0 0 11rem;
-  grid-template-columns: minmax(0, 1fr);
-  margin: 0;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  padding: 0.25rem;
 
   > .resource-reference-badge {
     position: absolute;
@@ -338,42 +313,12 @@ function handleMarkdownLink(href: string) {
   }
 }
 
-.buddy-chat-message-content__attachment-details {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 0.4rem;
-  padding: 0.45rem 0.35rem 0.3rem;
-  color: var(--buddy-text-primary);
-  font-size: var(--buddy-chat-caption-font-size);
-  line-height: var(--buddy-chat-caption-line-height);
-  text-align: left;
-}
-
-.buddy-chat-message-content__attachment-name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.buddy-chat-message-content__attachment-size {
-  flex: none;
-  color: var(--buddy-text-muted);
-  white-space: nowrap;
-}
-
 .buddy-chat-message-content.is-user .buddy-chat-message-content__attachment:first-child {
   margin-inline-start: auto;
 }
 
 .buddy-chat-message-content__preview-trigger {
-  display: block;
-  overflow: hidden;
-  border: 0;
   cursor: zoom-in;
-  padding: 0;
 
   img {
     display: block;
@@ -386,18 +331,6 @@ function handleMarkdownLink(href: string) {
   &:hover img {
     transform: scale(1.025);
   }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
-  }
-}
-
-.buddy-chat-message-content__file {
-  display: grid;
-  place-items: center;
-  color: var(--buddy-text-secondary);
-  padding: 0.65rem;
 }
 
 .buddy-chat-message-content__text {
@@ -459,11 +392,6 @@ function handleMarkdownLink(href: string) {
 
 .buddy-chat-message-content__session-reference {
   @include highlight.inline-highlight-token;
-
-  display: inline-block;
-  max-width: min(24rem, 100%);
-  overflow: hidden;
-  text-overflow: ellipsis;
   vertical-align: bottom;
 }
 

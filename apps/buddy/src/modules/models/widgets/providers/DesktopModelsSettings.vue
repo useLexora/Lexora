@@ -41,9 +41,9 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
 </script>
 
 <template>
-  <div class="desktop-models-settings">
+  <div class="desktop-models-settings gap-[1.8rem]">
     <section class="desktop-models-settings__section">
-      <div class="desktop-models-settings__heading">
+      <div class="desktop-models-settings__heading flex items-start justify-between gap-4">
         <div>
           <h2>{{ t('desktop.providers.addedServices') }}</h2>
           <p>{{ t('desktop.providers.addedServicesDescription') }}</p>
@@ -60,21 +60,21 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
         <article
           v-for="provider in addedProviders"
           :key="provider.id"
-          class="desktop-models-settings__provider-row"
+          class="desktop-models-settings__provider-row flex min-h-[4.2rem] items-center gap-3 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0"
         >
-          <div class="desktop-models-settings__provider-copy">
-            <div class="desktop-models-settings__provider-title">
-              <strong class="desktop-models-settings__provider-name">
+          <div class="grid min-w-0 flex-1 gap-1">
+            <div class="flex min-w-0 items-baseline gap-[0.45rem]">
+              <strong class="overflow-hidden min-w-0 text-[0.78rem] text-ellipsis whitespace-nowrap">
                 {{ provider.displayName }}
               </strong>
               <span
                 v-if="provider.storedCredentialType"
-                class="desktop-models-settings__provider-auth"
+                class="flex-none text-accent-text text-[0.66rem] font-600"
               >
                 {{ providerAuthenticationLabel(provider.storedCredentialType) }}
               </span>
             </div>
-            <div class="desktop-models-settings__provider-summary">
+            <div class="flex overflow-hidden min-w-0 items-center text-muted text-[0.68rem]">
               <span class="desktop-models-settings__provider-models">
                 {{ provider.modelCount
                   ? t('desktop.providers.enabledModelSummary', {
@@ -84,8 +84,8 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
                   : t('desktop.providers.noModels') }}
               </span>
               <template v-if="provider.description">
-                <span class="desktop-models-settings__provider-separator">|</span>
-                <span class="desktop-models-settings__provider-description">
+                <span class="desktop-models-settings__provider-separator my-0 mx-[0.35rem] text-muted">|</span>
+                <span class="overflow-hidden min-w-0 text-ellipsis whitespace-nowrap">
                   {{ provider.description }}
                 </span>
               </template>
@@ -112,7 +112,7 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
             <NTooltip v-if="provider.enabledModelCount === 0">
               <template #trigger>
                 <span
-                  class="desktop-models-settings__provider-availability"
+                  class="desktop-models-settings__provider-availability grid w-6 h-6 flex-none place-items-center text-warning"
                   role="img"
                   :aria-label="t('desktop.providers.noEnabledAvailableModelsHint')"
                 >
@@ -133,7 +133,7 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
           </template>
         </article>
       </div>
-      <div v-else class="desktop-models-settings__empty">
+      <div v-else class="desktop-models-settings__empty p-[0.9rem] py-[2.6rem] px-4">
         <NEmpty :description="t('desktop.providers.noAddedServices')">
           <template #extra>
             <NButton type="primary" @click="openAddDialog()">
@@ -172,22 +172,11 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-models-settings,
 .desktop-models-settings__section {
   display: grid;
   gap: 0.8rem;
-}
-
-.desktop-models-settings {
-  gap: 1.8rem;
-}
-
-.desktop-models-settings__heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
 }
 
 .desktop-models-settings__heading h2,
@@ -217,88 +206,8 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
   background: var(--buddy-surface-base);
 }
 
-.desktop-models-settings__empty {
-  padding: 0.9rem;
-}
-
-.desktop-models-settings__empty {
-  padding: 2.6rem 1rem;
-}
-
-.desktop-models-settings__provider-row {
-  display: flex;
-  min-height: 4.2rem;
-  align-items: center;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0.7rem 0.9rem;
-}
-
-.desktop-models-settings__provider-row:last-child {
-  border-bottom: 0;
-}
-
-.desktop-models-settings__provider-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 0.25rem;
-}
-
-.desktop-models-settings__provider-title {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 0.45rem;
-}
-
-.desktop-models-settings__provider-name {
-  overflow: hidden;
-  min-width: 0;
-  font-size: 0.78rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-models-settings__provider-auth {
-  flex: none;
-  color: var(--buddy-accent-text);
-  font-size: 0.66rem;
-  font-weight: 600;
-}
-
-.desktop-models-settings__provider-summary {
-  display: flex;
-  overflow: hidden;
-  min-width: 0;
-  align-items: center;
-  color: var(--buddy-text-secondary);
-  font-size: 0.68rem;
-}
-
 .desktop-models-settings__provider-models,
 .desktop-models-settings__provider-separator {
   flex: none;
-}
-
-.desktop-models-settings__provider-separator {
-  margin: 0 0.35rem;
-  color: var(--buddy-text-muted);
-}
-
-.desktop-models-settings__provider-description {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-models-settings__provider-availability {
-  display: grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex: none;
-  place-items: center;
-  color: var(--buddy-status-warning-text);
 }
 </style>

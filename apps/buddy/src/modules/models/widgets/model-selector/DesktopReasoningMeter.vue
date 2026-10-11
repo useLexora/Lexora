@@ -70,20 +70,20 @@ function readSliderIndex(event: Event): number {
 
 <template>
   <div
-    class="desktop-reasoning-meter"
+    class="desktop-reasoning-meter relative h-8 isolate select-none"
     :class="{ 'is-dragging': isDragging }"
   >
-    <div class="desktop-reasoning-meter__stage" aria-hidden="true">
-      <span class="desktop-reasoning-meter__track">
+    <div class="desktop-reasoning-meter__stage absolute" aria-hidden="true">
+      <span class="desktop-reasoning-meter__track absolute top-[50%] right-0 left-0 h-7 overflow-hidden rounded-[999px] isolate">
         <DesktopReasoningFieldCanvas
           :dragging="isDragging"
           :progress="progressRatio"
         />
-        <span class="desktop-reasoning-meter__nodes">
+        <span class="desktop-reasoning-meter__nodes absolute top-[50%] right-[var(--reasoning-track-inset)] left-[var(--reasoning-track-inset)] z-5 flex items-center justify-between pointer-events-none">
           <i
             v-for="(option, index) in options"
             :key="option.value"
-            class="desktop-reasoning-meter__node"
+            class="desktop-reasoning-meter__node block w-[0.27rem] h-[0.27rem] rounded-[0.07rem]"
             :class="{
               'is-active': index <= visualIndex,
               'is-selected': index === visualIndex,
@@ -93,7 +93,7 @@ function readSliderIndex(event: Event): number {
       </span>
     </div>
     <input
-      class="desktop-reasoning-meter__control"
+      class="desktop-reasoning-meter__control absolute z-7 w-[calc(100%_-_0.1rem)] h-7 m-0 bg-transparent cursor-grab opacity-0 active:cursor-grabbing"
       type="range"
       min="0"
       :max="Math.max(0, options.length - 1)"
@@ -110,7 +110,7 @@ function readSliderIndex(event: Event): number {
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-reasoning-meter {
   --reasoning-node-active-background: #fffaf0;
   --reasoning-node-active-border: rgb(214 176 109 / 62%);
@@ -135,11 +135,6 @@ function readSliderIndex(event: Event): number {
     inset 0 1px 0 rgb(255 255 255 / 94%),
     inset 0 -1px 0 rgb(91 104 127 / 12%),
     0 0.12rem 0.3rem rgb(40 49 65 / 9%);
-
-  position: relative;
-  height: 2rem;
-  isolation: isolate;
-  user-select: none;
 }
 
 :global(:root[data-buddy-theme='dark'] .desktop-reasoning-meter) {
@@ -167,22 +162,13 @@ function readSliderIndex(event: Event): number {
 }
 
 .desktop-reasoning-meter__stage {
-  position: absolute;
   inset: 0.125rem 0.05rem;
 }
 
 .desktop-reasoning-meter__track {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  left: 0;
-  height: 1.75rem;
-  overflow: hidden;
   border: 1px solid var(--reasoning-track-border);
-  border-radius: 999px;
   background: var(--reasoning-track-background);
   box-shadow: var(--reasoning-track-shadow);
-  isolation: isolate;
   transform: translateY(-50%);
   transition:
     border-color 140ms ease,
@@ -201,24 +187,11 @@ function readSliderIndex(event: Event): number {
 }
 
 .desktop-reasoning-meter__nodes {
-  position: absolute;
-  top: 50%;
-  right: var(--reasoning-track-inset);
-  left: var(--reasoning-track-inset);
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  pointer-events: none;
   transform: translateY(-50%);
 }
 
 .desktop-reasoning-meter__node {
-  display: block;
-  width: 0.27rem;
-  height: 0.27rem;
   border: 1px solid var(--reasoning-node-border);
-  border-radius: 0.07rem;
   background: var(--reasoning-node-background);
   transform: rotate(45deg);
   transition:
@@ -236,16 +209,8 @@ function readSliderIndex(event: Event): number {
 }
 
 .desktop-reasoning-meter__control {
-  position: absolute;
   inset: 0.125rem 0.05rem;
-  z-index: 7;
-  width: calc(100% - 0.1rem);
-  height: 1.75rem;
-  margin: 0;
   appearance: none;
-  background: transparent;
-  cursor: grab;
-  opacity: 0;
   touch-action: none;
 }
 
@@ -262,10 +227,6 @@ function readSliderIndex(event: Event): number {
   appearance: none;
   border: 0;
   background: transparent;
-}
-
-.desktop-reasoning-meter__control:active {
-  cursor: grabbing;
 }
 
 .desktop-reasoning-meter:hover .desktop-reasoning-meter__track {

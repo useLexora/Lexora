@@ -3,7 +3,6 @@ import type { WorkbenchController } from '@/workbench/services/WorkbenchControll
 import type { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
 import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCatalog } from '@buddy-shared/workbench/workbenchUi'
 import { computed } from 'vue'
-import { buddyColorThemes, createBuddyColorVariables } from '@/theme/buddyTheme'
 import { panes } from '@/workbench/common/workbench'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
 import DesktopFileContribution from './DesktopFileContribution.vue'
@@ -25,8 +24,6 @@ export function registerDesktopContributions(controller: WorkbenchController, re
   controller.registry.register('lexora.workbench', (scope) => {
     for (const target of workbenchUiTargetCatalog)
       scope.configuration({ id: workbenchUiSelectionKey(target), defaultValue: '', validate: value => parseWorkbenchUiSelection(value, target.selection === 'multiple') !== null })
-    for (const theme of Object.values(buddyColorThemes))
-      scope.theme({ id: theme.colorScheme, colorScheme: theme.colorScheme, tokens: createBuddyColorVariables(theme) })
     scope.command({ id: 'editor.wordWrap', label: () => language() === 'en-US' ? 'Toggle word wrap' : '切换自动换行', enabled: context => context.values['resource.scheme'] === 'file', execute: (context) => {
       const view = context.view!
       controller.updateView(view.id, { state: { ...view.state, wrap: !(view.state.wrap ?? controller.configuration.get('workbench.wordWrap')) } })

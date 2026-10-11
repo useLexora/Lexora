@@ -19,7 +19,7 @@ const variant = computed(() => entry.value.variants.find(variant => variant.id =
 </script>
 
 <template>
-  <section class="prompt-settings">
+  <section class="prompt-settings flex flex-1 min-w-0 min-h-0">
     <DesktopPromptCatalog
       :entries="entries"
       :selected-id="entry.id"
@@ -36,8 +36,7 @@ const variant = computed(() => entry.value.variants.find(variant => variant.id =
   </section>
 </template>
 
-<style scoped>
-.prompt-settings { display: flex; flex: 1; min-width: 0; min-height: 0; }
+<style scoped lang="scss">
 @container (max-width: 720px) {
   .prompt-settings { flex-direction: column; }
 }

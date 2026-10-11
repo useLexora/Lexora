@@ -93,7 +93,7 @@ function formatTokens(value: number): string {
   >
     <template #trigger>
       <button
-        class="desktop-context-usage__trigger"
+        class="desktop-context-usage__trigger grid w-control flex-none place-items-center border-0 rounded-control bg-transparent cursor-pointer p-0 h-control hover:bg-accent-subtle focus-visible:bg-accent-subtle ui-focus-ring"
         type="button"
         :aria-label="t('desktop.chat.contextUsageOpen')"
         aria-haspopup="dialog"
@@ -113,8 +113,8 @@ function formatTokens(value: number): string {
       </button>
     </template>
 
-    <section class="desktop-context-usage__panel">
-      <header class="desktop-context-usage__header">
+    <section class="desktop-context-usage__panel w-[min(18rem,_calc(100vw_-_2rem))] overflow-hidden border-1 border-solid border-border rounded-[0.8rem] shadow-overlay text-strong isolate p-4">
+      <header class="desktop-context-usage__header gap-4">
         <div>
           <strong>{{ t('desktop.chat.contextUsageTitle') }}</strong>
           <small>{{ t('desktop.chat.contextUsageDescription', { model: usage.modelName }) }}</small>
@@ -132,13 +132,13 @@ function formatTokens(value: number): string {
         </NButton>
       </header>
 
-      <div class="desktop-context-usage__summary">
+      <div class="desktop-context-usage__summary justify-start gap-[0.55rem] mt-4">
         <strong>{{ percentLabel }}</strong>
         <span>{{ usageSummary }}</span>
       </div>
 
-      <div v-if="usage.status === 'ready'" class="desktop-context-usage__track">
-        <div class="desktop-context-usage__track-used" :style="trackUsageStyle">
+      <div v-if="usage.status === 'ready'" class="h-[0.42rem] mt-[0.85rem] overflow-hidden rounded-[999px] bg-subtle">
+        <div class="desktop-context-usage__track-used flex max-w-full h-full overflow-hidden" :style="trackUsageStyle">
           <span
             v-for="segment in trackSegments"
             :key="segment.kind"
@@ -148,7 +148,7 @@ function formatTokens(value: number): string {
         </div>
       </div>
 
-      <dl v-if="usage.status === 'ready'" class="desktop-context-usage__breakdown">
+      <dl v-if="usage.status === 'ready'" class="desktop-context-usage__breakdown grid gap-[0.7rem] mt-4 mr-0 mb-0 ml-0">
         <div v-for="segment in segmentRows" :key="segment.kind">
           <dt>
             <span :class="`is-${segment.kind}`" />
@@ -165,29 +165,9 @@ function formatTokens(value: number): string {
 
 <style scoped lang="scss">
 .desktop-context-usage__trigger {
-  display: grid;
-  width: var(--buddy-composer-control-height);
-  height: var(--buddy-composer-control-height);
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: var(--buddy-composer-control-radius);
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
   transition:
     background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  &:hover,
-  &:focus-visible {
-    background: var(--buddy-accent-surface-subtle);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
 
   &[aria-expanded='true'] {
     background: var(--buddy-accent-surface);
@@ -204,16 +184,8 @@ function formatTokens(value: number): string {
 }
 
 .desktop-context-usage__panel {
-  width: min(18rem, calc(100vw - 2rem));
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.8rem;
   background: var(--buddy-surface-raised);
   background-clip: padding-box;
-  box-shadow: var(--buddy-shadow-overlay);
-  color: var(--buddy-text-strong);
-  isolation: isolate;
-  padding: 1rem;
 }
 
 .desktop-context-usage__header,
@@ -225,8 +197,6 @@ function formatTokens(value: number): string {
 }
 
 .desktop-context-usage__header {
-  gap: 1rem;
-
   > div {
     display: grid;
     min-width: 0;
@@ -248,10 +218,6 @@ function formatTokens(value: number): string {
 }
 
 .desktop-context-usage__summary {
-  justify-content: flex-start;
-  gap: 0.55rem;
-  margin-top: 1rem;
-
   strong {
     font-size: 1.45rem;
     font-weight: 720;
@@ -265,19 +231,7 @@ function formatTokens(value: number): string {
   }
 }
 
-.desktop-context-usage__track {
-  height: 0.42rem;
-  margin-top: 0.85rem;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--buddy-surface-subtle);
-}
-
 .desktop-context-usage__track-used {
-  display: flex;
-  max-width: 100%;
-  height: 100%;
-  overflow: hidden;
   border-radius: inherit;
 
   > span {
@@ -287,10 +241,6 @@ function formatTokens(value: number): string {
 }
 
 .desktop-context-usage__breakdown {
-  display: grid;
-  gap: 0.7rem;
-  margin: 1rem 0 0;
-
   > div {
     gap: 1rem;
   }

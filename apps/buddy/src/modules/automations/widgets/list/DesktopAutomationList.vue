@@ -91,33 +91,33 @@ function isPending(automation: LocalAutomationListItem): boolean {
 </script>
 
 <template>
-  <div v-if="automations.length" class="desktop-automation-plan-list">
+  <div v-if="automations.length" class="desktop-automation-plan-list grid gap-[2px]">
     <article
       v-for="automation in automations"
       :key="automation.id"
-      class="desktop-automation-plan"
+      class="desktop-automation-plan grid min-h-[46px] grid-cols-[minmax(0,_1fr)_minmax(150px,_auto)] items-center gap-[18px] rounded-micro py-0 px-[12px] hover:bg-hover focus-within:bg-hover"
       :class="`is-${automation.status}`"
     >
       <button
-        class="desktop-automation-plan__body"
+        class="desktop-automation-plan__body grid min-w-0 gap-[3px] border-0 bg-transparent text-inherit cursor-pointer py-[6px] px-0 text-left focus-visible:rounded-[var(--n-border-radius,_3px)] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
         type="button"
         @click="emit('edit', automation)"
       >
-        <span class="desktop-automation-plan__summary">
-          <strong class="desktop-automation-plan__name">{{ automation.name }}</strong>
+        <span class="flex min-w-0 items-baseline gap-[10px]">
+          <strong class="overflow-hidden flex-none text-strong text-[14px] font-650 text-ellipsis whitespace-nowrap">{{ automation.name }}</strong>
           <span class="desktop-automation-plan__schedule">
             {{ formatAutomationSchedule(automation, language, t) }}
           </span>
         </span>
         <span
           v-if="automation.status === 'blocked'"
-          class="desktop-automation-plan__blocked"
+          class="desktop-automation-plan__blocked text-warning"
         >
           {{ t(automationBlockedDescriptionKey(automation)) }}
         </span>
       </button>
 
-      <div class="desktop-automation-plan__trailing">
+      <div class="desktop-automation-plan__trailing relative flex min-w-[150px] min-h-[34px] items-center justify-end">
         <span class="desktop-automation-plan__timing">
           {{ automation.nextRunAt
             ? t('desktop.automations.meta.nextRun', {
@@ -125,7 +125,7 @@ function isPending(automation: LocalAutomationListItem): boolean {
             })
             : t('desktop.automations.meta.noNextRun') }}
         </span>
-        <div class="desktop-automation-plan__actions">
+        <div class="desktop-automation-plan__actions absolute right-0 flex items-center gap-[2px] opacity-0 pointer-events-none">
           <NButton
             quaternary
             circle
@@ -190,61 +190,6 @@ function isPending(automation: LocalAutomationListItem): boolean {
 </template>
 
 <style scoped lang="scss">
-.desktop-automation-plan-list {
-  display: grid;
-  gap: 2px;
-}
-
-.desktop-automation-plan {
-  display: grid;
-  min-height: 46px;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, auto);
-  align-items: center;
-  gap: 18px;
-  border-radius: var(--buddy-radius-micro);
-  padding: 0 12px;
-
-  &:hover,
-  &:focus-within {
-    background: var(--buddy-surface-subtle);
-  }
-}
-
-.desktop-automation-plan__body {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 6px 0;
-  text-align: left;
-
-  &:focus-visible {
-    border-radius: var(--n-border-radius, 3px);
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
-  }
-}
-
-.desktop-automation-plan__summary {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.desktop-automation-plan__name {
-  overflow: hidden;
-  flex: none;
-  color: var(--buddy-text-strong);
-  font-size: 14px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .desktop-automation-plan__schedule,
 .desktop-automation-plan__timing,
 .desktop-automation-plan__blocked {
@@ -256,31 +201,11 @@ function isPending(automation: LocalAutomationListItem): boolean {
   white-space: nowrap;
 }
 
-.desktop-automation-plan__blocked {
-  color: var(--buddy-status-warning-text);
-}
-
-.desktop-automation-plan__trailing {
-  position: relative;
-  display: flex;
-  min-width: 150px;
-  min-height: 34px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
 .desktop-automation-plan__timing {
   transition: opacity 120ms ease;
 }
 
 .desktop-automation-plan__actions {
-  position: absolute;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0;
-  pointer-events: none;
   transition: opacity 120ms ease;
 }
 

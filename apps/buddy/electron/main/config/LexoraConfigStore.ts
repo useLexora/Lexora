@@ -15,6 +15,7 @@ import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/net
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
+import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
@@ -72,7 +73,8 @@ const desktopConfigSchema = z.object({
   update_notifications_enabled: z.boolean().default(true),
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
-  theme: z.enum(['system', 'light', 'dark']).default('system'),
+  theme: z.union([themePreferenceSchema, legacyThemePreferenceSchema, z.enum(['system', 'light', 'dark'])]).default('system'),
+  accent_color: z.enum(DESKTOP_ACCENT_COLORS).default('default'),
 }).passthrough().default({
   background_close_notice_shown: false,
   plugin_author: '',
@@ -96,6 +98,7 @@ const desktopConfigSchema = z.object({
   notify_when_focused: false,
   sidebar_collapsed: false,
   theme: 'system',
+  accent_color: 'default',
 })
 
 const petConfigSchema = z.object({
@@ -164,11 +167,12 @@ export class LexoraConfigStore {
 
   get snapshot() { return copyEventSnapshot({ revision: this.#revision, persisted: this.#persisted, applied: this.#applied }) }
 
-  update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void): Promise<LexoraConfig> {
+  update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void, assertCurrent: () => void = () => {}): Promise<LexoraConfig> {
     if (this.#disposing)
       return Promise.reject(new Error('CONFIG_STORE_STOPPED'))
     const input = structuredClone(patch)
     const operation = this.#writeQueue.then(async () => {
+      assertCurrent()
       const file = await this.#readFile()
       const current = decodeConfig(file)
       const next = mergeConfig(current, input)
@@ -189,7 +193,7 @@ export class LexoraConfigStore {
           committed = true
           this.#persisted = structuredClone(next)
           this.#changes.fire(copyEventSnapshot({ kind: 'committed', revision: ++this.#revision, operationId, groups, config: next }))
-        })
+        }, assertCurrent)
       }
       catch (error) {
         if (committed) {
@@ -245,7 +249,7 @@ export class LexoraConfigStore {
     }
   }
 
-  async #write(config: Record<string, unknown>, committed: () => void): Promise<void> {
+  async #write(config: Record<string, unknown>, committed: () => void, assertCurrent: () => void): Promise<void> {
     const parent = dirname(this.#configPath)
     const temporaryPath = `${this.#configPath}.${process.pid}.${randomUUID()}.tmp`
     const content = stringify(config)
@@ -263,6 +267,7 @@ export class LexoraConfigStore {
       }
 
       await chmod(temporaryPath, 0o600)
+      assertCurrent()
       await rename(temporaryPath, this.#configPath)
       committed()
     }
@@ -323,7 +328,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       updateNotificationsEnabled: config.desktop.update_notifications_enabled,
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
-      theme: config.desktop.theme,
+      theme: migrateThemePreference(config.desktop.theme, config.desktop.accent_color),
     },
     pet: {
       alwaysOnTop: config.pet.always_on_top,
@@ -393,6 +398,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
       pluginAuthor: extensionAuthorSchema.parse(patch.desktop?.pluginAuthor ?? current.desktop.pluginAuthor),
       chat: {
         ...current.desktop.chat,
@@ -439,6 +445,7 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
       ...asRecord(encoded.desktop.profile),
     },
   }
+  delete nextDesktop.accent_color
   delete nextDesktop.chat_sidebar_section_order
   delete nextDesktop.chat_sidebar_pinned_items
   const next: Record<string, unknown> = {

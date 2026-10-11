@@ -112,21 +112,21 @@ async function afterDetailClosed() {
 </script>
 
 <template>
-  <div class="skills-manager">
+  <div class="skills-manager grid gap-4">
     <DesktopSkillsToolbar v-model:search="search" :language="language" :category="category" :space-id="scope" :spaces="context.spaces.value" :disabled="busy || importOpen || creating" :refreshing="loading" @category="changeCategory" @space="router.replace(desktopRouteLocations.skills($event))" @install="openImport()" @create="create" @refresh="manager.load(true)" />
     <NAlert v-if="error && !importOpen" type="error" :show-icon="false">
       {{ error }}
     </NAlert>
-    <div v-if="!hasScope" class="skills-manager__empty">
+    <div v-if="!hasScope" class="skills-manager__empty grid min-h-40 gap-[0.65rem] py-8 px-4 text-muted text-center">
       <DesktopIcon :component="SkillIcon" :size="30" />
       <p>{{ t('desktop.skills.chooseSpace') }}</p>
     </div>
     <template v-else>
       <NSpin :show="loading && !catalog">
         <DesktopSkillList v-if="catalog" ref="list" v-model:source="source" :skills="visibleSkills" :catalog="catalog.skills" :language="language" :in-space="category === 'space'" :filtered="filtered" :busy="busy" @inspect="inspect" @locate="locate" @enable="setEnabled" />
-        <div v-else class="skills-manager__empty" />
+        <div v-else class="skills-manager__empty grid min-h-40 gap-[0.65rem] py-8 px-4 text-muted text-center" />
       </NSpin>
-      <details v-if="diagnostics.length" class="skills-manager__diagnostics">
+      <details v-if="diagnostics.length" class="skills-manager__diagnostics text-[0.75rem] text-muted [overflow-wrap:anywhere]">
         <summary>{{ t('desktop.skills.diagnostics', { count: diagnostics.length }) }}</summary>
         <p v-for="(item, index) in diagnostics" :key="index">
           {{ t('desktop.skills.invalidHint') }}<br><code>{{ item.path }}</code>
@@ -138,10 +138,8 @@ async function afterDetailClosed() {
   </div>
 </template>
 
-<style scoped>
-.skills-manager { display: grid; gap: 1rem; }
-.skills-manager__empty { display: grid; min-height: 10rem; justify-items: center; place-content: center; gap: 0.65rem; padding: 2rem 1rem; color: var(--buddy-text-secondary); text-align: center; }
+<style scoped lang="scss">
+.skills-manager__empty { justify-items: center; place-content: center; }
 .skills-manager__empty p { margin: 0; font-size: 0.8rem; }
-.skills-manager__diagnostics { font-size: 0.75rem; color: var(--buddy-text-secondary); overflow-wrap: anywhere; }
 .skills-manager__diagnostics summary { cursor: pointer; }
 </style>

@@ -17,8 +17,8 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <section class="buddy-chat-turn-outputs" data-testid="chat-turn-outputs">
-    <header class="buddy-chat-turn-outputs__heading">
+  <section class="buddy-chat-turn-outputs grid w-full min-w-0 gap-[var(--buddy-chat-gap-tight)]" data-testid="chat-turn-outputs">
+    <header class="buddy-chat-turn-outputs__heading flex items-center gap-[0.4rem]">
       <strong>{{ t('desktop.chat.turnOutputs') }}</strong>
       <small>{{ artifacts.length }}</small>
     </header>
@@ -31,18 +31,7 @@ const { t } = useBuddyI18n(() => props.language)
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-turn-outputs {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  gap: var(--buddy-chat-gap-tight);
-}
-
 .buddy-chat-turn-outputs__heading {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-
   strong {
     color: var(--buddy-text-strong);
     font-size: var(--buddy-chat-meta-font-size);

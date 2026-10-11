@@ -29,7 +29,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
 </script>
 
 <template>
-  <section class="desktop-artifact-context-surface">
+  <section class="desktop-artifact-context-surface flex min-w-0 min-h-0 flex-1 flex-col bg-surface">
     <DesktopArtifactToolbar v-model:view-mode="viewMode" :artifact="artifact" :language="language" :text-available="!!textPreview" />
     <BuddyImagePreview
       v-model:current="previewIndex"
@@ -38,10 +38,10 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
       :sources="previewSources"
     />
 
-    <div class="desktop-artifact-context-surface__viewport" :class="{ 'desktop-artifact-context-surface__viewport--document': textPreview }">
+    <div class="desktop-artifact-context-surface__viewport grid min-w-0 min-h-0 flex-1 overflow-auto bg-subtle p-4 place-items-center" :class="{ 'desktop-artifact-context-surface__viewport--document': textPreview }">
       <button
         v-if="previewUrl"
-        class="desktop-artifact-context-surface__preview-trigger"
+        class="desktop-artifact-context-surface__preview-trigger grid max-w-full max-h-full place-items-center border-0 bg-transparent p-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[3px]"
         type="button"
         :aria-label="t('desktop.imagePreview.open', { name: artifact.name })"
         @click="openPreview"
@@ -53,12 +53,12 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
           @error="failImage"
         >
       </button>
-      <div v-else-if="textPreviewLoading" class="desktop-artifact-context-surface__fallback">
+      <div v-else-if="textPreviewLoading" class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">
         <NSpin size="small" />
         <span>{{ t('common.loading') }}</span>
       </div>
       <DesktopDocumentContent v-else-if="textPreview" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :language="language" :write-clipboard-text="writeClipboardText" />
-      <div v-else class="desktop-artifact-context-surface__fallback">
+      <div v-else class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">
         <FolderIcon
           v-if="artifact.kind === 'directory'"
           class="desktop-artifact-context-surface__folder-icon"
@@ -74,27 +74,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
   </section>
 </template>
 
-<style scoped>
-.desktop-artifact-context-surface {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-artifact-context-surface__viewport {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  background: var(--buddy-surface-subtle);
-  padding: 1rem;
-  place-items: center;
-}
-
+<style scoped lang="scss">
 .desktop-artifact-context-surface__viewport--document {
   display: flex;
   align-items: stretch;
@@ -104,19 +84,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
 }
 
 .desktop-artifact-context-surface__preview-trigger {
-  display: grid;
-  max-width: 100%;
-  max-height: 100%;
-  place-items: center;
-  border: 0;
-  background: transparent;
   cursor: zoom-in;
-  padding: 0;
-}
-
-.desktop-artifact-context-surface__preview-trigger:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 3px;
 }
 
 .desktop-artifact-context-surface__folder-icon {
@@ -133,12 +101,7 @@ const { failImage, openPreview, previewIndex, previewOpen, previewSources, previ
 }
 
 .desktop-artifact-context-surface__fallback {
-  display: grid;
-  max-width: 24rem;
   justify-items: center;
-  gap: 0.5rem;
-  color: var(--buddy-text-muted);
-  text-align: center;
 }
 
 .desktop-artifact-context-surface__fallback strong {

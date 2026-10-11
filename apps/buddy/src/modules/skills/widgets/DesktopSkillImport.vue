@@ -61,29 +61,29 @@ function close() {
 
 <template>
   <NModal :show="show" preset="card" class="skill-import" :style="{ width: 'min(38rem, calc(100vw - 3rem))' }" :title="updateName ? t('desktop.skills.updateTitle', { name: updateName }) : t('desktop.skills.install')" :mask-closable="!busy" :close-on-esc="!busy" :closable="!busy" @close="close" @update:show="value => !value && close()">
-    <div class="skill-import__body">
-      <p class="skill-import__scope">
+    <div class="skill-import__body grid gap-4 max-h-[65vh] overflow-y-auto">
+      <p class="text-fg font-600">
         {{ t('desktop.skills.installScope', { name: scopeLabel }) }}
       </p>
       <NAlert v-if="error" type="error" :show-icon="false">
         {{ error }}
       </NAlert>
       <template v-if="!preview">
-        <label class="skill-import__field">
+        <label class="skill-import__field grid gap-[0.4rem]">
           <span>{{ t('desktop.skills.source') }}</span>
           <NSelect v-model:value="kind" :options="sourceOptions" :disabled="busy" :aria-label="t('desktop.skills.source')" />
         </label>
         <template v-if="kind === 'github'">
-          <label class="skill-import__field">
+          <label class="skill-import__field grid gap-[0.4rem]">
             <span>{{ t('desktop.skills.repository') }}</span>
             <NInput v-model:value="location" placeholder="owner/repository" :disabled="busy" :input-props="{ 'aria-label': t('desktop.skills.repository') }" />
           </label>
-          <div class="skill-import__columns">
-            <label class="skill-import__field">
+          <div class="grid grid-cols-[1fr_1fr] gap-[0.8rem]">
+            <label class="skill-import__field grid gap-[0.4rem]">
               <span>{{ t('desktop.skills.ref') }}</span>
               <NInput v-model:value="ref" :disabled="busy" placeholder="HEAD" :input-props="{ 'aria-label': t('desktop.skills.ref') }" />
             </label>
-            <label class="skill-import__field">
+            <label class="skill-import__field grid gap-[0.4rem]">
               <span>{{ t('desktop.skills.subdirectory') }}</span>
               <NInput v-model:value="subdirectory" :disabled="busy" placeholder="skills/example" :input-props="{ 'aria-label': t('desktop.skills.subdirectory') }" />
             </label>
@@ -94,20 +94,20 @@ function close() {
         </p>
       </template>
       <template v-else>
-        <p class="skill-import__location">
+        <p class="skill-import__location [overflow-wrap:anywhere] text-[0.8rem]">
           {{ preview.source.location }}
         </p>
         <p v-if="preview.source.commit" class="skill-import__hint">
           {{ t('desktop.skills.commit') }} · {{ preview.source.commit.slice(0, 12) }}
         </p>
-        <div v-for="candidate in preview.candidates" :key="candidate.id" class="skill-import__candidate">
+        <div v-for="candidate in preview.candidates" :key="candidate.id" class="skill-import__candidate grid gap-[0.35rem] py-[0.8rem] px-0 border-b-1 border-b-solid border-b-border">
           <NCheckbox :checked="selected.includes(candidate.id)" :disabled="busy || candidate.blocked" @update:checked="select(candidate.id, $event)">
             <strong>{{ candidate.name }}</strong>
           </NCheckbox>
           <p>{{ candidate.description }}</p>
           <small>{{ t('desktop.skills.packageSize', { count: candidate.fileCount, size: Math.ceil(candidate.bytes / 1024) }) }}</small>
-          <span v-if="candidate.blocked" class="skill-import__warning">{{ t('desktop.skills.nameBlocked') }}</span>
-          <span v-else-if="candidate.replacesId" class="skill-import__warning">{{ t('desktop.skills.replaces') }}</span>
+          <span v-if="candidate.blocked" class="text-[0.75rem] text-fg">{{ t('desktop.skills.nameBlocked') }}</span>
+          <span v-else-if="candidate.replacesId" class="text-[0.75rem] text-fg">{{ t('desktop.skills.replaces') }}</span>
         </div>
         <NAlert v-if="!preview.candidates.length" type="warning" :show-icon="false">
           {{ t('desktop.skills.noCandidates') }}
@@ -118,7 +118,7 @@ function close() {
       </template>
     </div>
     <template #footer>
-      <div class="skill-import__actions">
+      <div class="flex justify-end gap-[0.6rem]">
         <NButton :disabled="busy" @click="close">
           {{ t('common.cancel') }}
         </NButton>
@@ -133,16 +133,8 @@ function close() {
   </NModal>
 </template>
 
-<style scoped>
-.skill-import__body { display: grid; gap: 1rem; max-height: 65vh; overflow-y: auto; }
+<style scoped lang="scss">
 .skill-import__body p { margin: 0; }
-.skill-import__scope { color: var(--buddy-text-primary); font-weight: 600; }
-.skill-import__field { display: grid; gap: 0.4rem; }
 .skill-import__field > span, .skill-import__hint, .skill-import__candidate small { color: var(--buddy-text-secondary); font-size: 0.78rem; }
-.skill-import__columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
-.skill-import__candidate { display: grid; gap: 0.35rem; padding: 0.8rem 0; border-bottom: 1px solid var(--buddy-border-subtle); }
 .skill-import__candidate p { color: var(--buddy-text-secondary); line-height: 1.6; }
-.skill-import__location { overflow-wrap: anywhere; font-size: 0.8rem; }
-.skill-import__warning { font-size: 0.75rem; color: var(--buddy-text-primary); }
-.skill-import__actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
 </style>

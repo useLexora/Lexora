@@ -14,12 +14,12 @@ const buttonTheme = { fontSizeSmall: '12px', iconSizeSmall: '16px', paddingSmall
 </script>
 
 <template>
-  <div class="log-actions">
-    <div class="log-actions__live">
+  <div class="log-actions flex items-center gap-[4px]">
+    <div class="flex items-center gap-[8px] mr-[8px] whitespace-nowrap text-muted text-[12px]">
       <span :id="labelId">{{ t('applicationLogs.live') }}</span>
       <NSwitch size="small" :round="false" :value="live" :aria-labelledby="labelId" @update:value="emit('update:live', $event)" />
     </div>
-    <span class="log-actions__divider" aria-hidden="true" />
+    <span class="w-[1px] h-[16px] mr-[4px] bg-border" aria-hidden="true" />
     <NButton class="log-actions__button" size="small" quaternary :theme-overrides="buttonTheme" @click="emit('performance')">
       <template #icon>
         <DesktopIcon :component="Pulse20Regular" :size="16" />
@@ -34,9 +34,3 @@ const buttonTheme = { fontSizeSmall: '12px', iconSizeSmall: '16px', paddingSmall
     </NButton>
   </div>
 </template>
-
-<style scoped>
-.log-actions { display: flex; align-items: center; gap: 4px; }
-.log-actions__live { display: flex; align-items: center; gap: 8px; margin-right: 8px; white-space: nowrap; color: var(--buddy-text-secondary); font-size: 12px; }
-.log-actions__divider { width: 1px; height: 16px; margin-right: 4px; background: var(--buddy-border-subtle); }
-</style>

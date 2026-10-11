@@ -128,7 +128,7 @@ function requireTrustedWindow(
   return window as BrowserWindow
 }
 
-export function assertTrustedSender(event: IpcMainInvokeEvent, window: BrowserWindow | null): void {
+export function assertTrustedSender(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>, window: BrowserWindow | null): void {
   if (!window
     || event.sender !== window.webContents
     || event.senderFrame !== window.webContents.mainFrame) {

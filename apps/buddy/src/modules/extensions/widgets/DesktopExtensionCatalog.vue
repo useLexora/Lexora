@@ -55,8 +55,8 @@ onScopeDispose(() => {
 </script>
 
 <template>
-  <section class="extension-catalog" data-testid="extension-catalog">
-    <div class="extension-catalog__search">
+  <section class="extension-catalog grid gap-[18px]" data-testid="extension-catalog">
+    <div class="extension-catalog__search flex gap-[10px] items-center">
       <NInput v-model:value="query" clearable :placeholder="en ? 'Search plugins' : '搜索插件名称、描述或标签'" :aria-label="en ? 'Search plugins' : '搜索插件'" />
       <NSelect v-if="categories.length" v-model:value="category" clearable :options="categories" :placeholder="en ? 'Category' : '分类'" :aria-label="en ? 'Category' : '分类'" />
       <NButton :loading="loading" @click="refresh(true)">
@@ -68,14 +68,14 @@ onScopeDispose(() => {
     </NAlert>
     <NSpin :show="loading && !snapshot">
       <NEmpty v-if="!plugins.length" class="extension-catalog__empty" :description="en ? 'No plugins to display' : '暂无可展示的插件'" />
-      <div v-else class="extension-catalog__grid">
-        <article v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card">
+      <div v-else class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] gap-[12px]">
+        <article v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card flex flex-col min-w-0 gap-[10px] p-[18px] border-1 border-solid border-border rounded-micro">
           <header><DesktopPluginIcon :src="item.iconUrl" :size="28" /><h2>{{ item.manifest.name }}</h2><span>{{ item.manifest.version }}</span></header>
           <NEllipsis class="extension-catalog__author">
             {{ item.manifest.author || (en ? 'Unsigned' : '未署名') }}
           </NEllipsis>
           <p>{{ item.manifest.description }}</p>
-          <div class="extension-catalog__tags">
+          <div class="flex flex-wrap gap-[6px]">
             <NTag v-for="tag in item.manifest.tags" :key="tag" size="small" :bordered="false">
               {{ tag }}
             </NTag>
@@ -91,17 +91,13 @@ onScopeDispose(() => {
   </section>
 </template>
 
-<style scoped>
-.extension-catalog { display: grid; gap: 18px; }
-.extension-catalog__search { display: flex; gap: 10px; align-items: center; }
+<style scoped lang="scss">
 .extension-catalog__search :deep(.n-select) { width: 130px; flex: none; }
 .extension-catalog__empty { padding: 100px 0; }
-.extension-catalog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
-.extension-catalog__card { display: flex; flex-direction: column; min-width: 0; gap: 10px; padding: 18px; border: 1px solid var(--buddy-border-subtle); border-radius: var(--buddy-radius-micro); }
 .extension-catalog__card header { display: flex; gap: 10px; justify-content: space-between; align-items: center; }
 .extension-catalog__card h2 { flex: 1; min-width: 0; font-size: 14px; color: var(--buddy-text-strong); font-weight: 600; margin: 0; overflow-wrap: anywhere; }
 .extension-catalog__author, .extension-catalog__card header span { color: var(--buddy-text-secondary); font-size: 11px; }
 .extension-catalog__card p { margin: 0; font-size: 13px; color: var(--buddy-text-secondary); line-height: 1.7; }
-.extension-catalog__tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
 .extension-catalog__card footer { margin-top: auto; padding-top: 8px; }
 </style>

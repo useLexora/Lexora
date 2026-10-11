@@ -57,7 +57,7 @@ async function save() {
 </script>
 
 <template>
-  <section class="desktop-manual-model-info-panel">
+  <section class="desktop-manual-model-info-panel overflow-hidden border border-solid border-border rounded-[0.65rem] bg-surface">
     <DesktopModelSectionHeader
       :label="t('desktop.providers.modelInformation')"
       :language="language"
@@ -85,14 +85,7 @@ async function save() {
   </section>
 </template>
 
-<style scoped>
-.desktop-manual-model-info-panel {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-}
-
+<style scoped lang="scss">
 .desktop-manual-model-info-panel__values,
 .desktop-manual-model-info-panel__form {
   display: grid;

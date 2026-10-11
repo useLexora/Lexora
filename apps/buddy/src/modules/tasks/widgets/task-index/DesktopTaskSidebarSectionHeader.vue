@@ -15,20 +15,20 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="desktop-task-sidebar__section-heading">
+  <div class="desktop-task-sidebar__section-heading flex h-[var(--buddy-task-sidebar-section-header-size,_2rem)] min-w-0 flex-none items-center rounded-[4px] text-muted my-0 mx-[var(--buddy-task-sidebar-scrollbar-gutter,_0.5rem)] hover:bg-nav-hover hover:text-nav-foreground focus-within:text-nav-foreground">
     <button
-      class="desktop-task-sidebar__section-toggle"
+      class="desktop-task-sidebar__section-toggle flex min-w-0 flex-1 items-center gap-1 py-0 px-[0.375rem] text-left focus-visible:outline-solid focus-visible:outline-1 focus-visible:outline-focus focus-visible:outline-offset-[-1px]"
       type="button"
       :aria-expanded="expanded"
       @click="emit('toggle')"
     >
       <DesktopIcon :component="expanded ? ChevronDown20Regular : ChevronRight20Regular" />
-      <span class="desktop-task-sidebar__section-label-text">{{ label }}</span>
+      <span class="overflow-hidden text-[length:var(--buddy-task-sidebar-section-font-size,_var(--buddy-sidebar-section-font-size))] [font-weight:var(--buddy-sidebar-section-font-weight)] leading-[20px] text-ellipsis whitespace-nowrap">{{ label }}</span>
     </button>
-    <div class="desktop-task-sidebar__section-actions">
+    <div class="desktop-task-sidebar__section-actions flex flex-none items-center gap-[var(--buddy-task-sidebar-action-gap,_0.125rem)] opacity-0 pr-[0.125rem] pointer-events-none">
       <button
         v-if="showAdd"
-        class="desktop-task-sidebar__section-add"
+        class="desktop-task-sidebar__section-add grid w-[var(--buddy-task-sidebar-action-size,_1.75rem)] h-[var(--buddy-task-sidebar-action-size,_1.75rem)] place-items-center p-0 rounded-icon text-muted leading-[1] hover:bg-nav-hover hover:text-strong ui-focus-ring"
         type="button"
         @click="emit('add')"
       >
@@ -40,26 +40,9 @@ const emit = defineEmits<{
 
 <style scoped lang="scss">
 .desktop-task-sidebar__section-heading {
-  display: flex;
-  height: var(--buddy-task-sidebar-section-header-size, 2rem);
-  min-width: 0;
-  flex: none;
-  align-items: center;
-  border-radius: 4px;
-  color: var(--buddy-text-secondary);
-  margin: 0 var(--buddy-task-sidebar-scrollbar-gutter, 0.5rem);
   transition:
     background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  &:hover {
-    background: var(--buddy-nav-hover);
-  }
-
-  &:hover,
-  &:focus-within {
-    color: var(--buddy-nav-foreground);
-  }
+    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing)
 }
 
 button {
@@ -70,42 +53,10 @@ button {
 }
 
 .desktop-task-sidebar__section-toggle {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0 0.375rem;
-  text-align: left;
-
   .n-icon {
     flex: none;
     font-size: 14px;
   }
-
-  &:focus-visible {
-    outline: 1px solid var(--buddy-focus-ring);
-    outline-offset: -1px;
-  }
-}
-
-.desktop-task-sidebar__section-label-text {
-  overflow: hidden;
-  font-size: var(--buddy-task-sidebar-section-font-size, var(--buddy-sidebar-section-font-size));
-  font-weight: var(--buddy-sidebar-section-font-weight);
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-task-sidebar__section-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--buddy-task-sidebar-action-gap, 0.125rem);
-  opacity: 0;
-  padding-right: 0.125rem;
-  pointer-events: none;
 }
 
 .desktop-task-sidebar__section-heading:hover .desktop-task-sidebar__section-actions,
@@ -115,28 +66,9 @@ button {
 }
 
 .desktop-task-sidebar__section-add {
-  display: grid;
-  width: var(--buddy-task-sidebar-action-size, 1.75rem);
-  height: var(--buddy-task-sidebar-action-size, 1.75rem);
-  place-items: center;
-  padding: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  color: var(--buddy-text-secondary);
-  line-height: 1;
-
   .n-icon {
     display: flex;
     font-size: 16px;
-  }
-
-  &:hover {
-    background: var(--buddy-nav-hover);
-    color: var(--buddy-text-strong);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
   }
 }
 </style>

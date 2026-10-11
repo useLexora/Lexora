@@ -37,7 +37,7 @@ function update(index: number, field: keyof ProviderRequestHeader, value: string
 
 <template>
   <div class="desktop-provider-headers-editor">
-    <div class="desktop-provider-headers-editor__heading">
+    <div class="flex items-center justify-between gap-[0.6rem] mb-[0.65rem]">
       <span>{{ t('desktop.providers.requestHeaders') }}</span>
       <NButton size="small" :disabled="disabled || headers.length >= 32" @click="headers = [...headers, { name: '', value: '' }]">
         <template #icon>
@@ -46,7 +46,7 @@ function update(index: number, field: keyof ProviderRequestHeader, value: string
         {{ t('desktop.providers.addHeader') }}
       </NButton>
     </div>
-    <div v-for="(header, index) in headers" :key="index" class="desktop-provider-headers-editor__row">
+    <div v-for="(header, index) in headers" :key="index" class="desktop-provider-headers-editor__row grid grid-cols-[minmax(7rem,_1fr)_minmax(9rem,_2fr)_auto] gap-2 items-start">
       <NFormItem :path="`requestHeaders.${index}.name`" :rule="nameRule(index)" :show-label="false">
         <NInput :value="header.name" :disabled="disabled" :placeholder="t('desktop.providers.headerName')" @update:value="update(index, 'name', $event)" />
       </NFormItem>
@@ -62,20 +62,7 @@ function update(index: number, field: keyof ProviderRequestHeader, value: string
   </div>
 </template>
 
-<style scoped>
-.desktop-provider-headers-editor__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  margin-bottom: 0.65rem;
-}
-.desktop-provider-headers-editor__row {
-  display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(9rem, 2fr) auto;
-  gap: 0.5rem;
-  align-items: start;
-}
+<style scoped lang="scss">
 @media (max-width: 600px) {
   .desktop-provider-headers-editor__row { grid-template-columns: minmax(0, 1fr) auto; }
   .desktop-provider-headers-editor__row > :first-child { grid-column: 1 / -1; }

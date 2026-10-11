@@ -47,8 +47,8 @@ defineExpose({ reveal })
 </script>
 
 <template>
-  <div ref="root" class="skills-list">
-    <div v-if="inSpace" class="skills-list__tabs" role="tablist" :aria-label="t('desktop.skills.source')">
+  <div ref="root" class="skills-list grid gap-2">
+    <div v-if="inSpace" class="skills-list__tabs flex gap-6 overflow-x-auto border-b-1 border-b-solid border-b-border" role="tablist" :aria-label="t('desktop.skills.source')">
       <button v-for="(group, index) in groups" :id="`${panelId}-${group.source}`" :key="group.source" type="button" role="tab" :data-source="group.source" :aria-selected="source === group.source" :aria-controls="panelId" :tabindex="source === group.source ? 0 : -1" @click="source = group.source" @keydown="navigate($event, index)">
         {{ t(`desktop.skills.group.${group.source}`) }}
         <span class="skills-list__count">{{ group.skills.length }}</span>
@@ -59,7 +59,7 @@ defineExpose({ reveal })
     </div>
     <div :id="panelId" :role="inSpace ? 'tabpanel' : undefined" :aria-labelledby="inSpace ? `${panelId}-${source}` : undefined">
       <DesktopSkillRow v-for="skill in visible" :key="skill.id" :skill="skill" :overridden-by="byId.get(skill.shadowedBy ?? '')" :language="language" :in-space="inSpace" :busy="busy" @inspect="$emit('inspect', $event)" @locate="$emit('locate', $event)" @enable="(skill, value) => $emit('enable', skill, value)" />
-      <div v-if="!visible.length" class="skills-list__empty">
+      <div v-if="!visible.length" class="skills-list__empty grid min-h-40 gap-[0.65rem] py-8 px-4 text-muted text-center">
         <DesktopIcon :component="SkillIcon" :size="30" />
         <p>{{ t(filtered ? 'desktop.skills.noMatches' : inSpace ? `desktop.skills.groupEmpty.${source}` : 'desktop.skills.empty') }}</p>
         <p v-if="!filtered && !inSpace">
@@ -70,14 +70,12 @@ defineExpose({ reveal })
   </div>
 </template>
 
-<style scoped>
-.skills-list { display: grid; gap: 0.5rem; }
-.skills-list__tabs { display: flex; gap: 1.5rem; overflow-x: auto; border-bottom: 1px solid var(--buddy-border-subtle); }
+<style scoped lang="scss">
 .skills-list__tabs button { position: relative; display: inline-flex; flex: none; align-items: center; gap: 0.4rem; border: 0; padding: 0.75rem 0; background: transparent; color: var(--buddy-text-secondary); font: inherit; font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
 .skills-list__tabs button:hover, .skills-list__tabs button[aria-selected="true"] { color: var(--buddy-accent-text); }
 .skills-list__tabs button[aria-selected="true"]::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: currentColor; content: ''; }
 .skills-list__tabs button:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; border-radius: 3px; }
 .skills-list__count, .skills-list__summary { color: var(--buddy-text-muted); font-size: 0.75rem; }
-.skills-list__empty { display: grid; min-height: 10rem; justify-items: center; place-content: center; gap: 0.65rem; padding: 2rem 1rem; color: var(--buddy-text-secondary); text-align: center; }
+.skills-list__empty { justify-items: center; place-content: center; }
 .skills-list__empty p { margin: 0; font-size: 0.8rem; }
 </style>

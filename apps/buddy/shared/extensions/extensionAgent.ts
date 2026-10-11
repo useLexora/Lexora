@@ -1,9 +1,9 @@
 import type { EventSnapshot } from '../events/eventTypes'
 import { z } from 'zod'
-import { taskActionEventSchema } from '../conversation/taskEvents'
-import { extensionAgentMethodSchema } from './extensionAgentCapabilities'
-import { extensionConditionReferenceSchema } from './extensionConditions'
-import { extensionSettingIdSchema, extensionSettingKeySchema } from './extensionSettings'
+import { taskActionEventSchema } from '../conversation/taskEvents.ts'
+import { extensionAgentMethodSchema } from './extensionAgentCapabilities.ts'
+import { extensionConditionReferenceSchema } from './extensionConditions.ts'
+import { extensionSettingIdSchema, extensionSettingKeySchema } from './extensionSettings.ts'
 
 export const extensionAgentRpc = {
   list: 'extensions.agent.list',

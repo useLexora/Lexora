@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { BrowserWindow, session } from 'electron'
 import { z } from 'zod'
-import { EXTENSION_IPC, extensionError, extensionJsonSchema } from '../../../shared/extensions/extensionApi'
+import { EXTENSION_IPC, extensionError, extensionJsonSchema, parseExtensionRequestParams } from '../../../shared/extensions/extensionApi'
 
 interface Pending { resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer: ReturnType<typeof setTimeout> }
 const replySchema = z.object({ id: z.string().uuid(), ok: z.boolean(), value: extensionJsonSchema }).strict()
@@ -81,7 +81,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       }
       if (!this.#started || typeof method !== 'string' || method.length > 80)
         throw new Error('EXTENSION_METHOD_DENIED')
-      return await this.#broker(method, extensionJsonSchema.parse(params))
+      return await this.#broker(method, parseExtensionRequestParams(method, params))
     }
     catch (error) {
       throw new Error(extensionError(error))

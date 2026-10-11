@@ -34,7 +34,7 @@ watch(() => props.show, (show) => {
     :title="t('desktop.feedback.title')"
     @update:show="emit('update:show', $event)"
   >
-    <div class="desktop-feedback-dialog__channels">
+    <div class="desktop-feedback-dialog__channels flex items-center justify-between gap-4 mb-[0.9rem] border-b-1 border-b-solid border-b-border pb-[0.55rem]">
       <span aria-current="page">{{ t('desktop.feedback.write') }}</span>
       <NButton text type="primary" @click="emit('openGithubIssue', '')">
         {{ t('desktop.feedback.githubIssue') }}
@@ -51,7 +51,7 @@ watch(() => props.show, (show) => {
       :placeholder="t('desktop.feedback.placeholder')"
     />
     <template #footer>
-      <div class="desktop-feedback-dialog__actions">
+      <div class="flex justify-end gap-[0.6rem]">
         <NButton @click="emit('update:show', false)">
           {{ t('common.cancel') }}
         </NButton>
@@ -63,17 +63,7 @@ watch(() => props.show, (show) => {
   </NModal>
 </template>
 
-<style scoped>
-.desktop-feedback-dialog__channels {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.9rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding-bottom: 0.55rem;
-}
-
+<style scoped lang="scss">
 .desktop-feedback-dialog__channels > span {
   color: var(--buddy-text-strong);
   font-size: 0.78rem;
@@ -85,11 +75,5 @@ watch(() => props.show, (show) => {
   color: var(--buddy-text-secondary);
   font-size: 0.82rem;
   line-height: 1.6;
-}
-
-.desktop-feedback-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
 }
 </style>

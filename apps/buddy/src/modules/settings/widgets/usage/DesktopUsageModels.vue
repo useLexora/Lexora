@@ -99,30 +99,25 @@ function navigate(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="usage-models">
-    <header class="usage-models__heading">
+  <section class="usage-models relative flex min-w-0 flex-col gap-[12px] border border-solid border-border rounded-[8px] p-[18px]">
+    <header class="usage-models__heading flex items-center justify-between gap-[12px]">
       <h3 :id="headingId">
         {{ t('usageAnalytics.models') }}
       </h3>
       <span>{{ t('usageAnalytics.modelsCount', { count: models.length }) }}</span>
     </header>
     <div
-      ref="chart" class="usage-models__chart" role="group" tabindex="0" :aria-labelledby="headingId" :aria-describedby="helpId"
+      ref="chart" class="usage-models__chart relative w-full h-[300px] min-h-[280px] flex-1 overflow-hidden rounded-[4px] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]" role="group" tabindex="0" :aria-labelledby="headingId" :aria-describedby="helpId"
       @focus="inspect(0)" @blur="dismiss" @keydown="navigate" @pointerleave="dismiss"
     />
-    <span :id="helpId" class="usage-models__accessible">{{ t('usageAnalytics.modelsKeyboard') }}</span>
-    <span class="usage-models__accessible" aria-live="polite">{{ activeIndex === null ? '' : rows[activeIndex]?.detail }}</span>
-    <span v-if="!rows.length" class="usage-models__zero">0 tokens</span>
+    <span :id="helpId" class="usage-models__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap">{{ t('usageAnalytics.modelsKeyboard') }}</span>
+    <span class="usage-models__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap" aria-live="polite">{{ activeIndex === null ? '' : rows[activeIndex]?.detail }}</span>
+    <span v-if="!rows.length" class="absolute inset-[calc(50%_+_16px)_0_auto] text-muted text-[13px] text-center pointer-events-none">0 tokens</span>
   </section>
 </template>
 
-<style scoped>
-.usage-models { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid var(--buddy-border-subtle); border-radius: 8px; padding: 18px; }
-.usage-models__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+<style scoped lang="scss">
 .usage-models__heading h3 { margin: 0; color: var(--buddy-text-strong); font-size: 14px; font-weight: 600; }
 .usage-models__heading > span { color: var(--buddy-text-secondary); font-size: 11px; }
-.usage-models__chart { position: relative; width: 100%; height: 300px; min-height: 280px; flex: 1; overflow: hidden; border-radius: 4px; }
-.usage-models__chart:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-.usage-models__zero { position: absolute; inset: calc(50% + 16px) 0 auto; color: var(--buddy-text-secondary); font-size: 13px; text-align: center; pointer-events: none; }
-.usage-models__accessible { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.usage-models__accessible { clip-path: inset(50%); }
 </style>

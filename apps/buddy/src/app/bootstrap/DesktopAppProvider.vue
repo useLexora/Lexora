@@ -3,7 +3,7 @@ import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
 import { useMessage } from 'naive-ui'
-import { computed, nextTick, onMounted, onScopeDispose, provide, ref, toRef, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onScopeDispose, provide, ref, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
@@ -23,6 +23,7 @@ import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { useDesktopTheme } from '@/theme/useDesktopTheme'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
 import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
 import WorkbenchSurfaceHost from '@/workbench/browser/surfaces/WorkbenchSurfaceHost.vue'
@@ -39,13 +40,11 @@ import { useDesktopAppState } from './useDesktopAppState'
 import { useDesktopLifecycle } from './useDesktopLifecycle'
 import { useDesktopNavigation } from './useDesktopNavigation'
 
-const props = defineProps<{ isDark: boolean }>()
 const emit = defineEmits<{
   languageChange: [language: 'zh-CN' | 'en-US']
-  themeChange: [theme: 'system' | 'light' | 'dark']
 }>()
 defineSlots<{ default: (props: { shell: DesktopShellBindings }) => unknown }>()
-
+const desktopTheme = useDesktopTheme()
 const api = requireDesktopApi()
 const router = useRouter()
 const message = useMessage()
@@ -102,7 +101,7 @@ onScopeDispose(() => anchors.dispose())
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
 useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized })
-useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocation, authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: toRef(() => props.isDark), startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
+useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocation, authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, themeColors: desktopTheme.extensionColors, themeRevision: desktopTheme.revision, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: desktopTheme.isDark, startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)
 } })
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))
@@ -240,7 +239,7 @@ const shellBindings: DesktopShellBindings = {
   },
 }
 useProvideDesktopUi({
-  isDark: toRef(() => props.isDark),
+  isDark: desktopTheme.isDark,
   chat: computed(() => stores.applicationSettings.config.value?.desktop.chat ?? DEFAULT_DESKTOP_CHAT_PREFERENCES),
   language: stores.applicationSettings.language,
   appSidebarCollapsed: shell.appSidebarCollapsed,
@@ -292,10 +291,6 @@ useProvideAutomationContext({
 watch(() => stores.applicationSettings.config.value?.desktop.language, (language) => {
   if (language)
     emit('languageChange', resolveBuddyLocale(language))
-}, { immediate: true })
-watch(() => stores.applicationSettings.config.value?.desktop.theme, (theme) => {
-  if (theme)
-    emit('themeChange', theme)
 }, { immediate: true })
 </script>
 

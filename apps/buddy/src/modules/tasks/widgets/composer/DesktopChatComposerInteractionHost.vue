@@ -46,15 +46,15 @@ function resetDismissTimer() {
 <template>
   <div
     v-if="chooserVisible || interaction"
-    class="desktop-chat-composer-interaction-host"
+    class="desktop-chat-composer-interaction-host absolute right-0 bottom-[calc(100%_+_0.65rem)] left-0 z-20 grid"
   >
-    <div v-if="chooserVisible" class="desktop-chat-composer-interaction-host__chooser">
+    <div v-if="chooserVisible" class="min-w-0 rounded-[0.55rem] bg-raised shadow-raised">
       <slot name="chooser" />
     </div>
 
     <article
       v-else-if="interaction"
-      class="desktop-chat-composer-notice"
+      class="desktop-chat-composer-notice grid max-w-[min(30rem,_100%)] grid-cols-[auto_minmax(0,_1fr)_auto] items-center justify-self-center gap-[0.55rem] border-1 border-solid border-border rounded-micro bg-raised shadow-raised text-fg text-[0.76rem] leading-[1.4] pt-[0.38rem] pr-[0.42rem] pb-[0.38rem] pl-[0.6rem]"
       :class="`is-${interaction.tone}`"
       role="status"
       @mouseenter="stopDismissTimer"
@@ -82,39 +82,6 @@ function resetDismissTimer() {
 </template>
 
 <style scoped lang="scss">
-.desktop-chat-composer-interaction-host {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 0.65rem);
-  left: 0;
-  z-index: 20;
-  display: grid;
-}
-
-.desktop-chat-composer-interaction-host__chooser {
-  min-width: 0;
-  border-radius: 0.55rem;
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-raised);
-}
-
-.desktop-chat-composer-notice {
-  display: grid;
-  max-width: min(30rem, 100%);
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  justify-self: center;
-  gap: 0.55rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-raised);
-  color: var(--buddy-text-primary);
-  font-size: 0.76rem;
-  line-height: 1.4;
-  padding: 0.38rem 0.42rem 0.38rem 0.6rem;
-}
-
 .desktop-chat-composer-notice__icon {
   color: var(--buddy-accent-text);
   font-size: 1rem;

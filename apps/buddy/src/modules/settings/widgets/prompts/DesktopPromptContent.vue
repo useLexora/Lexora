@@ -38,13 +38,12 @@ watch(() => props.content, content => editor.value?.commands.setContent(createPr
 </script>
 
 <template>
-  <div class="prompt-content">
+  <div class="prompt-content min-w-0">
     <EditorContent :editor="editor" class="prompt-content__body" />
   </div>
 </template>
 
-<style scoped>
-.prompt-content { min-width: 0; }
+<style scoped lang="scss">
 .prompt-content__body { width: 100%; min-width: 0; color: var(--buddy-text-primary); font-size: 13px; line-height: 1.9; }
 .prompt-content__body :deep(.tiptap) { outline: none; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
 .prompt-content__body :deep(p) { min-height: 1.9em; margin: 0; }

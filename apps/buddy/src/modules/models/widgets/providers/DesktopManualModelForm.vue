@@ -48,13 +48,13 @@ function save() {
 </script>
 
 <template>
-  <div class="desktop-manual-model-form">
-    <div class="desktop-manual-model-form__grid">
-      <label class="desktop-manual-model-form__field">
+  <div class="desktop-manual-model-form grid gap-4">
+    <div class="desktop-manual-model-form__grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0.8rem]">
+      <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
         <span>{{ t('desktop.providers.modelId') }}</span>
         <NInput v-model:value="form.id" placeholder="model-id" />
       </label>
-      <label class="desktop-manual-model-form__field">
+      <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
         <span>{{ t('desktop.providers.modelName') }}</span>
         <NInput v-model:value="form.name" :placeholder="t('desktop.providers.modelNameOptional')" />
       </label>
@@ -71,8 +71,8 @@ function save() {
 
     <NCollapse arrow-placement="right">
       <NCollapseItem :title="t('desktop.providers.advancedModelSettings')" name="advanced">
-        <div class="desktop-manual-model-form__grid">
-          <label class="desktop-manual-model-form__field">
+        <div class="desktop-manual-model-form__grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0.8rem]">
+          <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
             <span>{{ t('desktop.providers.contextWindow') }}</span>
             <NInputNumber
               v-model:value="form.contextWindow"
@@ -80,7 +80,7 @@ function save() {
               :placeholder="t('desktop.providers.contextWindowDefault')"
             />
           </label>
-          <label class="desktop-manual-model-form__field">
+          <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
             <span>{{ t('desktop.providers.maxTokens') }}</span>
             <NInputNumber
               v-model:value="form.maxTokens"
@@ -92,7 +92,7 @@ function save() {
       </NCollapseItem>
     </NCollapse>
 
-    <div class="desktop-manual-model-form__actions">
+    <div class="desktop-manual-model-form__actions justify-end">
       <NButton type="primary" :disabled="!valid" :loading="saving" @click="save">
         {{ t('desktop.providers.addModel') }}
       </NButton>
@@ -100,23 +100,7 @@ function save() {
   </div>
 </template>
 
-<style scoped>
-.desktop-manual-model-form {
-  display: grid;
-  gap: 1rem;
-}
-
-.desktop-manual-model-form__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-}
-
-.desktop-manual-model-form__field {
-  display: grid;
-  gap: 0.35rem;
-}
-
+<style scoped lang="scss">
 .desktop-manual-model-form__field > span {
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
@@ -140,10 +124,6 @@ function save() {
   display: flex;
   align-items: center;
   gap: 1rem;
-}
-
-.desktop-manual-model-form__actions {
-  justify-content: flex-end;
 }
 
 @media (max-width: 700px) {

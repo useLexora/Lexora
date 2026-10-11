@@ -33,7 +33,7 @@ const thinkingLevels = computed(() => {
 </script>
 
 <template>
-  <section class="desktop-model-thinking-panel">
+  <section class="desktop-model-thinking-panel overflow-hidden border border-solid border-border rounded-[0.65rem] bg-surface">
     <DesktopModelSectionHeader
       :label="t('desktop.providers.thinking')"
       :language="language"
@@ -49,28 +49,21 @@ const thinkingLevels = computed(() => {
     />
     <div v-if="editing" class="desktop-model-thinking-panel__form">
       <NCheckboxGroup :value="form.levels" :disabled="locked" @update:value="updateLevels">
-        <div class="desktop-model-thinking-panel__levels">
+        <div class="desktop-model-thinking-panel__levels flex flex-wrap">
           <NCheckbox v-for="level in BUDDY_THINKING_LEVELS" :key="level" size="small" :value="level" :label="level" />
         </div>
       </NCheckboxGroup>
-      <p v-if="!valid" class="desktop-model-thinking-panel__validation">
+      <p v-if="!valid" class="m-0 text-warning text-[0.66rem]">
         {{ t('desktop.providers.selectThinkingLevel') }}
       </p>
     </div>
-    <div v-else class="desktop-model-thinking-panel__summary">
+    <div v-else class="desktop-model-thinking-panel__summary text-muted text-[0.68rem] [overflow-wrap:anywhere]">
       {{ thinkingLevels.join(' / ') }}
     </div>
   </section>
 </template>
 
-<style scoped>
-.desktop-model-thinking-panel {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-}
-
+<style scoped lang="scss">
 .desktop-model-thinking-panel__form,
 .desktop-model-thinking-panel__summary {
   display: grid;
@@ -79,21 +72,7 @@ const thinkingLevels = computed(() => {
   padding: 0.85rem 1rem;
 }
 
-.desktop-model-thinking-panel__summary {
-  color: var(--buddy-text-secondary);
-  font-size: 0.68rem;
-  overflow-wrap: anywhere;
-}
-
 .desktop-model-thinking-panel__levels {
-  display: flex;
-  flex-wrap: wrap;
   gap: 0.45rem 1rem;
-}
-
-.desktop-model-thinking-panel__validation {
-  margin: 0;
-  color: var(--buddy-status-warning-text);
-  font-size: 0.66rem;
 }
 </style>

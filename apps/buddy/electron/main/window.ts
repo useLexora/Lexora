@@ -15,6 +15,7 @@ export interface CreateDesktopWindowOptions {
   onPlacementChanged?: (placement: DesktopWindowPlacement) => void
   placement?: DesktopWindowPlacement | null
   rendererUrl: string | null
+  backgroundColor?: string
   showOnReady?: boolean
 }
 
@@ -35,7 +36,7 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
     minWidth: 980,
     minHeight: 640,
     autoHideMenuBar: true,
-    backgroundColor: LIGHT_WINDOW_BACKGROUND,
+    backgroundColor: options.backgroundColor ?? LIGHT_WINDOW_BACKGROUND,
     frame: false,
     icon: options.iconPath,
     show: false,

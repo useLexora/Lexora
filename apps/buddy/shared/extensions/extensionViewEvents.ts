@@ -5,6 +5,7 @@ import type { AnchorGeometry, MountGeometry } from '../workbench/workbenchUi'
 export interface ViewEnvironment {
   readonly language: string
   readonly colorScheme: 'light' | 'dark'
+  readonly themeRevision?: number
   readonly colors: Readonly<Record<string, string>>
 }
 export interface ViewStateEvents {

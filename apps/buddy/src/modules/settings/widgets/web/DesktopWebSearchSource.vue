@@ -18,11 +18,11 @@ useSortable({ id: () => props.source.provider, index: () => props.index, disable
 </script>
 
 <template>
-  <li ref="element" class="desktop-web-search__row" :data-provider="source.provider">
+  <li ref="element" class="desktop-web-search__row relative flex items-center gap-[0.8rem] min-h-13 pt-[0.65rem] pr-4 pb-[0.65rem] pl-[0.65rem] border-b-1 border-b-solid border-b-border last:border-b-0" :data-provider="source.provider">
     <NButton ref="handle" class="desktop-web-search__handle" quaternary :aria-label="t('desktop.web.reorderSource', { name: t(`desktop.web.${source.provider}`) })" aria-describedby="web-search-order-help" :aria-disabled="disabled">
       <DesktopIcon :component="ReOrderDotsVertical20Regular" />
     </NButton>
-    <div class="desktop-web-search__name">
+    <div class="desktop-web-search__name flex items-center gap-1 min-w-0 flex-1">
       <strong :id="`web-search-${source.provider}`">{{ t(`desktop.web.${source.provider}`) }}</strong>
       <NTooltip :delay="200" style="max-width: 18rem">
         <template #trigger>
@@ -39,8 +39,6 @@ useSortable({ id: () => props.source.provider, index: () => props.index, disable
 
 <style scoped lang="scss">
 .desktop-web-search__row {
-  position: relative; display: flex; align-items: center; gap: 0.8rem; min-height: 3.25rem; padding: 0.65rem 1rem 0.65rem 0.65rem; border-bottom: 1px solid var(--buddy-border-subtle);
-  &:last-child { border-bottom: 0; }
   &[data-dnd-dragging] {
     background: var(--buddy-surface-raised);
     border-radius: 0.5rem;
@@ -56,7 +54,6 @@ useSortable({ id: () => props.source.provider, index: () => props.index, disable
 }
 .desktop-web-search__handle { width: 1.8rem; height: 1.8rem; flex: none; padding: 0; color: var(--buddy-text-secondary); cursor: grab; border-radius: 6px; touch-action: none; }
 .desktop-web-search__handle[aria-disabled='true'] { opacity: 0.5; cursor: default; }
-.desktop-web-search__name { display: flex; align-items: center; gap: 0.25rem; min-width: 0; flex: 1; }
 .desktop-web-search__name strong { font-size: 0.8rem; font-weight: 500; }
 .desktop-web-search__info { width: 1.5rem; height: 1.5rem; flex: none; padding: 0; color: var(--buddy-text-secondary); border-radius: 6px; }
 </style>

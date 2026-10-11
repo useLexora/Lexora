@@ -27,18 +27,18 @@ const referenceLabel = computed(() => {
 </script>
 
 <template>
-  <div class="buddy-chat-image-tool-details">
-    <section v-if="presentation.prompt" class="buddy-chat-image-tool-details__section">
+  <div class="buddy-chat-image-tool-details grid gap-[var(--buddy-chat-gap-block)]">
+    <section v-if="presentation.prompt" class="buddy-chat-image-tool-details__section min-w-0 overflow-hidden border-1 border-solid border-border rounded-micro bg-raised">
       <header>{{ t('desktop.chat.processToolInput') }}</header>
       <p>{{ presentation.prompt }}</p>
       <small v-if="referenceLabel">{{ referenceLabel }}</small>
     </section>
-    <section v-if="outputs.length" class="buddy-chat-image-tool-details__section is-output">
+    <section v-if="outputs.length" class="buddy-chat-image-tool-details__section is-output min-w-0 overflow-hidden border-1 border-solid border-border rounded-micro bg-raised">
       <header>{{ t('desktop.chat.processToolOutput') }}</header>
       <figure
         v-for="output in outputs"
         :key="output.artifactId"
-        class="buddy-chat-image-tool-details__output"
+        class="buddy-chat-image-tool-details__output grid min-w-0 grid-cols-[5rem_minmax(0,_1fr)] items-center gap-3 m-0 py-[0.625rem] px-3"
       >
         <img
           :alt="t('desktop.chat.processToolImageOutput')"
@@ -57,18 +57,7 @@ const referenceLabel = computed(() => {
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-image-tool-details {
-  display: grid;
-  gap: var(--buddy-chat-gap-block);
-}
-
 .buddy-chat-image-tool-details__section {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-
   > header {
     min-height: 1.7rem;
     border-bottom: 1px solid var(--buddy-border-subtle);
@@ -102,14 +91,6 @@ const referenceLabel = computed(() => {
 }
 
 .buddy-chat-image-tool-details__output {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 5rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0;
-  padding: 0.625rem 0.75rem;
-
   & + & {
     border-top: 1px solid var(--buddy-border-subtle);
   }

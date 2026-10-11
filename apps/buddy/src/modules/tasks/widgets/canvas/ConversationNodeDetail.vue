@@ -29,11 +29,11 @@ const { writeClipboardText } = useChatContent()
 </script>
 
 <template>
-  <section class="conversation-node-detail" data-testid="canvas-node-detail" :data-kind="target.kind" :data-target-id="target.kind === 'question' ? target.messageId : target.runId">
-    <header class="conversation-node-detail__header">
+  <section class="conversation-node-detail flex h-full min-w-0 min-h-0 flex-col bg-surface" data-testid="canvas-node-detail" :data-kind="target.kind" :data-target-id="target.kind === 'question' ? target.messageId : target.runId">
+    <header class="conversation-node-detail__header flex flex-none h-[52px] items-center gap-[8px] py-0 px-[16px] border-b-1 border-b-solid border-b-border text-muted text-[13px]">
       <DesktopIcon :component="target.kind === 'question' ? Keyboard20Regular : Wand20Regular" />
       <span>{{ t(`desktop.canvas.${target.kind}`) }}</span>
-      <div class="conversation-node-detail__actions">
+      <div class="flex ml-auto gap-[4px]">
         <button v-if="target.kind === 'question' && !editing" type="button" :disabled="!canEdit" :aria-label="t('desktop.chat.editMessage')" :title="t('desktop.chat.editMessage')" data-testid="canvas-detail-edit" @click="emit('edit')">
           <DesktopIcon :component="Edit20Regular" />
         </button>
@@ -42,15 +42,15 @@ const { writeClipboardText } = useChatContent()
         </button>
       </div>
     </header>
-    <div :key="target.kind === 'question' ? target.messageId : target.runId" class="conversation-node-detail__content">
-      <p v-if="loading || error" class="conversation-node-detail__notice" role="status">
+    <div :key="target.kind === 'question' ? target.messageId : target.runId" class="conversation-node-detail__content flex flex-1 min-h-0 flex-col gap-[16px] pt-[20px] pr-[18px] pb-[32px] pl-[18px] overflow-auto">
+      <p v-if="loading || error" class="text-muted text-[12px]" role="status">
         {{ error ?? t('desktop.canvas.loadingDetail') }}
         <button v-if="error" type="button" @click="emit('reload')">
           {{ t('desktop.canvas.reload') }}
         </button>
       </p>
       <template v-for="row in rows" :key="row.key">
-        <div v-if="row.kind === 'message'" class="conversation-node-detail__message" :data-message-id="row.message.id">
+        <div v-if="row.kind === 'message'" class="grid flex-none gap-[var(--buddy-chat-gap-block)] min-w-0" :data-message-id="row.message.id">
           <BuddyChatMessageBody
             :message="row.message" :language="language" :final="!row.streaming" :result-run-id="row.resultRunId"
             :turn-outputs="row.turnOutputs" :turn-changes="row.turnChanges" :write-clipboard-text="writeClipboardText"
@@ -65,7 +65,7 @@ const { writeClipboardText } = useChatContent()
         <BuddyChatRunActivity v-else-if="row.kind === 'activity'" :turn="row.turn" :language="language" :stopping="stoppingRunId === row.turn.runId" />
         <BuddyChatAgentTurnFlow v-else-if="row.kind === 'activity-flow'" :nodes="row.nodes" :failure-detail-text="null" :language="language" />
         <BuddyChatCompactionRow v-else-if="row.kind === 'compaction'" :node="row.compaction" :language="language" />
-        <p v-else-if="row.kind === 'recovery-notice'" class="conversation-node-detail__notice" role="status">
+        <p v-else-if="row.kind === 'recovery-notice'" class="text-muted text-[12px]" role="status">
           {{ t('desktop.chat.recoveryAttachmentsMissing', { count: row.notice.missingAttachmentCount }) }}
         </p>
       </template>
@@ -73,17 +73,13 @@ const { writeClipboardText } = useChatContent()
   </section>
 </template>
 
-<style scoped>
-.conversation-node-detail { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; background: var(--buddy-surface-base); }
-.conversation-node-detail__header { display: flex; flex: none; height: 52px; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--buddy-border-subtle); color: var(--buddy-text-secondary); font-size: 13px; }
-.conversation-node-detail__actions { display: flex; margin-left: auto; gap: 4px; }
+<style scoped lang="scss">
 .conversation-node-detail__header button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .conversation-node-detail__header button:hover { background: var(--buddy-state-hover); }
 .conversation-node-detail__header button:disabled { opacity: 0.35; cursor: default; }
 .conversation-node-detail__header button:focus-visible { outline: 2px solid var(--buddy-focus-ring); }
-.conversation-node-detail__content { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 16px; padding: 20px 18px 32px; overflow: auto; overscroll-behavior: contain; }
-.conversation-node-detail__message { display: grid; flex: none; gap: var(--buddy-chat-gap-block); min-width: 0; }
-.conversation-node-detail__notice { color: var(--buddy-text-muted); font-size: 12px; }
+.conversation-node-detail__content { overscroll-behavior: contain; }
+
 .conversation-node-detail__content :deep(.buddy-chat-message-content.is-user) { width: 100%; max-width: 100%; justify-items: start; }
 .conversation-node-detail__content :deep(.buddy-chat-message-content.is-user .buddy-chat-message-content__text) { width: 100%; justify-self: stretch; }
 .conversation-node-detail__content :deep(.buddy-chat-message-content.is-user .buddy-chat-message-content__attachment:first-child) { margin-inline-start: 0; }

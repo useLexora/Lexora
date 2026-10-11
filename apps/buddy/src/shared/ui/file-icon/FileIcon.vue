@@ -17,7 +17,7 @@ const iconUrl = computed(() => getFileIconUrl(iconName.value))
 <template>
   <img
     alt=""
-    class="buddy-file-icon"
+    class="buddy-file-icon block flex-none"
     :class="`is-${size}`"
     :data-file-icon="iconName"
     draggable="false"
@@ -25,10 +25,8 @@ const iconUrl = computed(() => getFileIconUrl(iconName.value))
   >
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .buddy-file-icon {
-  display: block;
-  flex: none;
   object-fit: contain;
 }
 

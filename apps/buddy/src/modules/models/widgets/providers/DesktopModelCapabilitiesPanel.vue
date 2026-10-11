@@ -29,7 +29,7 @@ const locked = computed(() => props.disabled || props.saving || submitting.value
 </script>
 
 <template>
-  <section class="desktop-model-capabilities-panel">
+  <section class="desktop-model-capabilities-panel overflow-hidden border border-solid border-border rounded-[0.65rem] bg-surface">
     <DesktopModelSectionHeader
       :label="t('desktop.providers.modelCapabilities')"
       :language="language"
@@ -62,14 +62,7 @@ const locked = computed(() => props.disabled || props.saving || submitting.value
   </section>
 </template>
 
-<style scoped>
-.desktop-model-capabilities-panel {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-}
-
+<style scoped lang="scss">
 .desktop-model-capabilities-panel__form,
 .desktop-model-capabilities-panel__summary {
   display: flex;

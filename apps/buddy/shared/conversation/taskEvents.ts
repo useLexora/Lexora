@@ -1,6 +1,6 @@
 import type { EventMessage, EventSnapshot } from '../events/eventTypes'
 import { z } from 'zod'
-import { idSchema, timestampSchema } from '../runtime/apiValidation'
+import { idSchema, timestampSchema } from '../runtime/apiValidation.ts'
 
 const taskRun = { conversationId: idSchema, branchId: idSchema, runId: idSchema }
 export const taskActionEventSchema = z.discriminatedUnion('type', [

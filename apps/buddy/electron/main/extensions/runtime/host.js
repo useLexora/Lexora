@@ -1,4 +1,5 @@
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
+import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionHostEvents } from './ExtensionHostEvents'
 
 const bridge = window.lexoraExtensionHost
@@ -11,6 +12,7 @@ const agentInvocations = new Map()
 const source = new ExtensionHostEvents()
 const events = source.events
 const subscriptions = new Set()
+const themeListeners = new Set()
 let entry
 let manifest
 let context
@@ -41,6 +43,10 @@ bridge.subscribe(async ({ id, method, params }) => {
       context = Object.freeze({
         extension: Object.freeze({ id: manifest.id, version: manifest.version, apiVersion: manifest.apiVersion }),
         events,
+        themes: createThemeClient(input => request('themes.request', input), (listener) => {
+          themeListeners.add(listener)
+          return disposable(() => themeListeners.delete(listener))
+        }),
         subscriptions: { add: (value) => {
           subscriptions.add(value)
           return value
@@ -138,6 +144,9 @@ bridge.subscribe(async ({ id, method, params }) => {
       if (manifest.contributes.conditions?.some(condition => !conditions.has(condition.id)))
         throw new Error('EXTENSION_CONDITION_MISSING')
       activated = true
+    }
+    else if (method === 'themes.changed') {
+      for (const listener of themeListeners) listener()
     }
     else if (method === 'configuration.changed') {
       if (!activated)

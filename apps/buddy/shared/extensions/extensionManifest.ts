@@ -1,12 +1,14 @@
 import { satisfies, valid, validRange } from 'semver'
 import { z } from 'zod'
-import { workbenchSlashSchema } from '../workbench/workbenchCommand'
-import { workbenchConditionSchema } from '../workbench/workbenchContext'
-import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi'
-import { extensionAgentSchema } from './extensionAgent'
-import { extensionConditionDefinitionSchema } from './extensionConditions'
-import { extensionAuthorSchema } from './extensionIdentity'
-import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings'
+import { themeContributionSchema } from '../theme/themeDocument.ts'
+import { workbenchSlashSchema } from '../workbench/workbenchCommand.ts'
+import { workbenchConditionSchema } from '../workbench/workbenchContext.ts'
+import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi.ts'
+import { extensionAgentSchema } from './extensionAgent.ts'
+import { extensionConditionDefinitionSchema } from './extensionConditions.ts'
+import { extensionAuthorSchema } from './extensionIdentity.ts'
+import { extensionPathSchema } from './extensionPath.ts'
+import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings.ts'
 
 export const EXTENSION_API_VERSION = 3
 export const EXTENSION_PROTOCOL = 'lexora-extension'
@@ -14,10 +16,8 @@ export const EXTENSION_ICON_LIMIT = 64 * 1024
 export const extensionIconUrlSchema = z.string().max(Math.ceil(EXTENSION_ICON_LIMIT / 3) * 4 + 40).regex(/^data:image\/(?:svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/)
 export const extensionIdSchema = z.string().max(120).regex(/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/)
 export const extensionVersionSchema = z.string().max(80).refine(value => valid(value) === value, 'Invalid semantic version')
-export const extensionPathSchema = z.string().min(1).max(256).refine((value) => {
-  const parts = value.split('/')
-  return /^[\w./-]+$/.test(value) && !value.startsWith('__') && parts.every(part => part && part !== '.' && part !== '..' && !part.endsWith('.') && !/^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(part))
-}, 'Invalid package path')
+export { extensionPathSchema } from './extensionPath.ts'
+
 const contributionId = z.string().min(1).max(180).regex(/^[a-z][a-z0-9.-]+$/)
 const placementBase = { id: contributionId, view: contributionId, when: workbenchConditionSchema.optional() }
 export const extensionPlacementSchema = z.discriminatedUnion('kind', [
@@ -68,6 +68,7 @@ export const extensionPermissionsSchema = z.object({
   selectedContent: z.boolean().default(false),
   localResources: z.boolean().default(false),
   resourceExport: z.boolean().default(false),
+  themeManagement: z.boolean().default(false),
   network: z.array(z.string().url().max(512).refine((value) => {
     const url = new URL(value)
     return url.protocol === 'https:' && url.origin === value && !url.username && !url.password
@@ -87,10 +88,15 @@ export const extensionManifestSchema = z.object({
   apiVersion: z.union([z.literal(1), z.literal(2), z.literal(EXTENSION_API_VERSION)]),
   engines: z.object({ lexora: z.string().max(100).refine(value => validRange(value) !== null) }).strict(),
   entry: extensionPathSchema.optional(),
+  styles: z.object({
+    uno: z.literal(true),
+    safelist: z.array(z.string().min(1).max(256)).max(512).optional(),
+  }).strict().optional(),
   dataVersion: z.number().int().min(1).max(10000).default(1),
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
   permissions: extensionPermissionsSchema.prefault({}),
   contributes: z.object({
+    themes: z.array(themeContributionSchema).max(64).default([]),
     conditions: z.array(extensionConditionDefinitionSchema).max(32).default([]),
     agent: extensionAgentSchema.optional(),
     settings: extensionSettingsSchema.prefault({}),
@@ -104,12 +110,14 @@ export const extensionManifestSchema = z.object({
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
-  for (const contribution of [...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
+  for (const contribution of [...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
   }
   const issue = (message: string) => context.addIssue({ code: 'custom', message })
+  if (manifest.apiVersion < 3 && (manifest.contributes.themes.length || manifest.permissions.themeManagement))
+    issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
   if (agent && (!manifest.entry || !manifest.permissions.agent))
@@ -198,6 +206,7 @@ export function extensionCompatible(manifest: ExtensionManifest, version: string
 
 export function addedExtensionPermissions(previous: ExtensionPermissions | undefined, next: ExtensionPermissions): string[] {
   return [
+    ...(next.themeManagement && !previous?.themeManagement ? ['themeManagement'] : []),
     ...(next.taskMessages && !previous?.taskMessages ? ['taskMessages'] : []),
     ...(next.agent && !previous?.agent ? ['agent'] : []),
     ...(next.models && !previous?.models ? ['models'] : []),

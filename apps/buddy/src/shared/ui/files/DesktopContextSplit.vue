@@ -67,24 +67,21 @@ onBeforeUnmount(stop)
 </script>
 
 <template>
-  <div ref="root" class="desktop-context-split" :class="{ 'is-dragging': dragging }">
-    <main class="desktop-context-split__content">
+  <div ref="root" class="desktop-context-split flex w-full min-w-0 min-h-0 flex-1" :class="{ 'is-dragging': dragging }">
+    <main class="desktop-context-split__content flex flex-1 min-w-0 min-h-0 overflow-hidden">
       <slot />
     </main>
     <template v-if="treeVisible">
-      <div class="desktop-context-split__separator" role="separator" tabindex="0" aria-orientation="vertical" :aria-valuenow="Math.round(renderedWidth)" :aria-valuemin="120" :aria-valuemax="Math.round(maximum)" @pointerdown="start" @keydown="resize" />
-      <aside class="desktop-context-split__tree" :style="{ width: `${renderedWidth}px` }">
+      <div class="desktop-context-split__separator relative z-1 w-[1px] flex-none bg-border cursor-col-resize" role="separator" tabindex="0" aria-orientation="vertical" :aria-valuenow="Math.round(renderedWidth)" :aria-valuemin="120" :aria-valuemax="Math.round(maximum)" @pointerdown="start" @keydown="resize" />
+      <aside class="flex flex-none min-w-0 min-h-0 flex-col overflow-hidden" :style="{ width: `${renderedWidth}px` }">
         <slot name="tree" />
       </aside>
     </template>
   </div>
 </template>
 
-<style scoped>
-.desktop-context-split { display: flex; width: 100%; min-width: 0; min-height: 0; flex: 1; }
-.desktop-context-split__content { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.desktop-context-split__tree { display: flex; flex: none; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
-.desktop-context-split__separator { position: relative; z-index: 1; width: 1px; flex: none; background: var(--buddy-border-subtle); cursor: col-resize; touch-action: none; }
+<style scoped lang="scss">
+.desktop-context-split__separator { touch-action: none; }
 .desktop-context-split__separator::after { position: absolute; content: ''; inset: 0 -3px; }
 .desktop-context-split__separator:hover, .desktop-context-split__separator:focus-visible, .is-dragging .desktop-context-split__separator { background: var(--buddy-focus-ring); outline: none; }
 .is-dragging { user-select: none; cursor: col-resize; }

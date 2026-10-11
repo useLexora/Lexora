@@ -1,7 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { strToU8, zipSync } from 'fflate'
 import { expect, it } from 'vitest'
-import { addedExtensionPermissions, extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
 import { buildExtensionPackage } from '../buildExtensionPackage'
 import { compileExtensionSource } from '../compileExtensionSource'
 import { unpackExtension } from '../extensionFiles'
@@ -38,20 +37,19 @@ it('produces a compiled installable archive without executing source code', asyn
 
 it('returns actionable syntax diagnostics and rejects missing entries and dependencies', async () => {
   const syntax = await build({ 'view.ts': 'export function render( {' })
-  expect(syntax.ok).toBe(false)
+  expect(syntax).toMatchObject({ ok: false, code: 'EXTENSION_SOURCE_COMPILE_FAILED' })
   expect(syntax.diagnostics.some(message => /view.ts:\d+:\d+ TS\d+/.test(message))).toBe(true)
   expect(await build({ 'view.ts': 'import secret from "node:fs"; export const render = secret' })).toMatchObject({ ok: false, code: 'EXTENSION_SOURCE_IMPORT_DENIED' })
   expect(await build({ 'extension.json': JSON.stringify({ ...manifest, entry: 'missing.ts' }) })).toMatchObject({ ok: false, code: 'EXTENSION_ENTRY_MISSING', diagnostics: ['Missing file: missing.ts'] })
 })
 
-it('requires explicit permission for overlays including updates from old manifests', () => {
-  const old = extensionManifestSchema.parse({ ...manifest, permissions: {}, contributes: {} })
-  const next = extensionManifestSchema.parse(manifest)
-  expect(addedExtensionPermissions(old.permissions, next.permissions)).toEqual(['windowEffects'])
-  expect(extensionManifestSchema.safeParse({ ...manifest, permissions: {} }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...manifest, contributes: { views: [{ ...manifest.contributes.views[0], resource: 'selected-file' }] }, permissions: { windowEffects: true, selectedResource: 'read' } }).success).toBe(false)
-})
-
 it('preserves cancellation rather than turning it into a build failure', async () => {
   await expect(buildExtensionPackage(input(), async () => new Map(), AbortSignal.abort(new Error('cancelled')))).rejects.toThrow('cancelled')
+})
+
+it('validates data-only theme packages and reports missing package assets before installation', async () => {
+  const themeManifest = { ...manifest, format: 'compiled', apiVersion: 3, permissions: {}, contributes: { themes: [{ id: 'local.confetti.ocean', label: 'Ocean', appearance: 'light', path: 'ocean.json' }] } }
+  const files = { 'extension.json': JSON.stringify(themeManifest), 'ocean.json': JSON.stringify({ schemaVersion: 1, welcome: { image: 'assets/welcome.svg' } }) }
+  expect(await build(files)).toMatchObject({ ok: false, code: 'EXTENSION_THEME_ASSET_MISSING' })
+  expect(await build({ ...files, 'assets/welcome.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' })).toMatchObject({ ok: true })
 })

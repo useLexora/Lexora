@@ -68,7 +68,7 @@ const messageText = computed(() => getChatMessageDisplayText(
 
 <template>
   <article
-    class="buddy-chat-message"
+    class="buddy-chat-message relative grid gap-[var(--buddy-chat-gap-block)] pb-[var(--buddy-chat-gap-turn)]"
     :class="[
       `is-${message.role}`,
       {
@@ -86,11 +86,11 @@ const messageText = computed(() => getChatMessageDisplayText(
     />
     <span
       v-else-if="message.role !== 'user' && message.role !== 'assistant'"
-      class="buddy-chat-message__role"
+      class="grid w-[var(--buddy-chat-avatar-size)] min-h-[var(--buddy-chat-avatar-size)] place-items-center text-muted text-[0.65rem] font-650"
     >
       {{ roleLabel }}
     </span>
-    <div v-if="editing" class="buddy-chat-message__editing-state" role="status">
+    <div v-if="editing" class="buddy-chat-message__editing-state inline-flex items-center justify-self-end gap-[0.3rem] text-accent-text text-[0.68rem] font-600 leading-[1.35]" role="status">
       <DesktopIcon name="messageEdit" />
       <span>{{ t('desktop.chat.editingMessage') }}</span>
     </div>
@@ -129,11 +129,6 @@ const messageText = computed(() => getChatMessageDisplayText(
 }
 
 .buddy-chat-message {
-  position: relative;
-  display: grid;
-  gap: var(--buddy-chat-gap-block);
-  padding-bottom: var(--buddy-chat-gap-turn);
-
   &.is-user {
     justify-items: end;
   }
@@ -148,26 +143,7 @@ const messageText = computed(() => getChatMessageDisplayText(
   }
 }
 
-.buddy-chat-message__role {
-  display: grid;
-  width: var(--buddy-chat-avatar-size);
-  min-height: var(--buddy-chat-avatar-size);
-  place-items: center;
-  color: var(--buddy-text-muted);
-  font-size: 0.65rem;
-  font-weight: 650;
-}
-
 .buddy-chat-message__editing-state {
-  display: inline-flex;
-  align-items: center;
-  justify-self: end;
-  gap: 0.3rem;
-  color: var(--buddy-accent-text);
-  font-size: 0.68rem;
-  font-weight: 600;
-  line-height: 1.35;
-
   .desktop-icon {
     font-size: 0.9rem;
   }

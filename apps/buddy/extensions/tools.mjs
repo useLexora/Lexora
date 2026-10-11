@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
 import { build } from 'vite'
 import { compileExtensionSource } from '../platform/extensions/compileExtensionSource.ts'
+import { validateThemeFiles } from '../platform/themes/themeAssets.ts'
 import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../shared/extensions/extensionManifest.ts'
+import { themeAssetPaths, themeDocumentSchema } from '../shared/theme/themeDocument.ts'
 
 async function run() {
   const buddy = fileURLToPath(new URL('../', import.meta.url))
@@ -18,7 +20,7 @@ async function run() {
   assert(input && ['export-sdk', 'check', 'build', 'pack', 'dev'].includes(command), 'Usage: node extensions/tools.mjs export-sdk|check|build|pack|dev <folder> [output]')
   if (command === 'export-sdk') {
     const destination = path.resolve(input)
-    await build({ configFile: false, publicDir: false, build: { outDir: destination, emptyOutDir: false, minify: false, lib: { entry: path.join(buddy, 'extensions/sdk/authoring.ts'), formats: ['es'], fileName: () => 'authoring.mjs' }, rollupOptions: { external: ['node:path', 'node:buffer', 'typescript', 'zod', 'semver'] } } })
+    await build({ configFile: false, publicDir: false, build: { outDir: destination, emptyOutDir: false, minify: false, lib: { entry: path.join(buddy, 'extensions/sdk/authoring.ts'), formats: ['es'], fileName: () => 'authoring.mjs' }, rolldownOptions: { external: ['node:path', 'node:buffer', 'typescript', 'zod', 'semver'] } } })
     await fs.copyFile(path.join(buddy, 'service/resources/skills/plugin-creator/references/api.d.ts'), path.join(destination, 'index.d.ts'))
     await fs.copyFile(path.join(buddy, 'extensions/sdk/plugin.mjs'), path.join(destination, 'plugin.mjs'))
     return
@@ -28,6 +30,14 @@ async function run() {
   assert(extensionCompatible(manifest, version), `Extension requires Lexora ${manifest.engines.lexora} / API ${manifest.apiVersion}`)
   const entries = [manifest.entry, ...manifest.contributes.views.map(view => view.entry)].filter(Boolean)
   for (const entry of entries) assert((await fs.stat(path.join(source, entry))).isFile(), `Missing entry: ${entry}`)
+  const themeFiles = new Map()
+  for (const theme of manifest.contributes.themes) {
+    const bytes = await fs.readFile(path.join(source, theme.path))
+    themeFiles.set(theme.path, bytes)
+    for (const asset of themeAssetPaths(themeDocumentSchema.parse(JSON.parse(bytes.toString('utf8')))))
+      themeFiles.set(asset, await fs.readFile(path.join(source, asset)))
+  }
+  validateThemeFiles(themeFiles, manifest.contributes.themes)
   if (command === 'check') {
     process.stdout.write(`${manifest.id}@${manifest.version}: compatible with Lexora ${version}, API ${manifest.apiVersion}` + '\n')
   }
@@ -89,7 +99,7 @@ async function run() {
         }
       }
       await collect(source)
-      const compiled = compileExtensionSource(files, manifest, message => process.stdout.write(`${message}\n`))
+      const compiled = await compileExtensionSource(files, manifest, message => process.stdout.write(`${message}\n`))
       await fs.rm(destination, { recursive: true, force: true })
       for (const [name, bytes] of compiled) {
         await fs.mkdir(path.dirname(path.join(destination, name)), { recursive: true })
@@ -97,9 +107,17 @@ async function run() {
       }
     }
     else {
-      await build({ configFile: false, root: source, build: { outDir: destination, emptyOutDir: true, minify: false, lib: { entry: Object.fromEntries(entries.map(entry => [entry.replace(/\.[^.]+$/, ''), path.join(source, entry)])), formats: ['es'] }, rollupOptions: { output: { entryFileNames: '[name].js', chunkFileNames: 'chunks/[name]-[hash].js', assetFileNames: 'assets/[name][extname]' } } } })
+      if (entries.length)
+        await build({ configFile: false, root: source, build: { outDir: destination, emptyOutDir: true, minify: false, lib: { entry: Object.fromEntries(entries.map(entry => [entry.replace(/\.[^.]+$/, ''), path.join(source, entry)])), formats: ['es'] }, rollupOptions: { output: { entryFileNames: '[name].js', chunkFileNames: 'chunks/[name]-[hash].js', assetFileNames: 'assets/[name][extname]' } } } })
+      else
+        await fs.rm(destination, { recursive: true, force: true })
+      await fs.mkdir(destination, { recursive: true })
       const compiledManifest = { ...manifest, entry: manifest.entry?.replace(/\.[^.]+$/, '.js'), contributes: { ...manifest.contributes, views: manifest.contributes.views.map(view => ({ ...view, entry: view.entry.replace(/\.[^.]+$/, '.js') })) } }
       await fs.writeFile(path.join(destination, 'extension.json'), JSON.stringify(compiledManifest, null, 2))
+    }
+    for (const [name, bytes] of themeFiles) {
+      await fs.mkdir(path.dirname(path.join(destination, name)), { recursive: true })
+      await fs.writeFile(path.join(destination, name), bytes)
     }
     for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.txt']) {
       await fs.copyFile(path.join(source, name), path.join(destination, name)).catch((error) => {

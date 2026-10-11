@@ -12,7 +12,9 @@ import { z } from 'zod'
 import { extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { addedExtensionPermissions, extensionCompatible, extensionIdSchema, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
+import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
+import { validateThemeFiles } from '../themes/themeAssets'
 import { EXTENSION_PACKAGE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
@@ -104,6 +106,9 @@ export class ExtensionPackageStore {
       if (entry && (!files.has(entry) || !(manifest.format === 'source' ? /\.m?[jt]s$/.test(entry) : /\.m?js$/.test(entry))))
         throw new Error('EXTENSION_ENTRY_MISSING')
     }
+    if (manifest.format === 'compiled' && manifest.styles?.uno && !files.has(EXTENSION_UNO_STYLESHEET))
+      throw new Error('EXTENSION_STYLES_MISSING')
+    validateThemeFiles(files, manifest.contributes.themes)
     const current = this.installed[manifest.id]
     if (current && !development && !gt(manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
@@ -137,6 +142,8 @@ export class ExtensionPackageStore {
     if (!isDeepStrictEqual(manifest, expected))
       throw new Error('EXTENSION_COMPILE_OUTPUT_INVALID')
     extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
+    if (manifest.styles?.uno && !files.has(EXTENSION_UNO_STYLESHEET))
+      throw new Error('EXTENSION_STYLES_MISSING')
     for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)]) {
       if (entry && (!files.has(entry) || !/\.m?js$/.test(entry)))
         throw new Error('EXTENSION_ENTRY_MISSING')

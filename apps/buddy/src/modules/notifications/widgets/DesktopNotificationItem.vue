@@ -54,7 +54,7 @@ const icon = computed(() => {
 
 <template>
   <button
-    class="desktop-notification-item"
+    class="desktop-notification-item relative grid box-border w-[calc(100%_-_16px)] h-[66px] grid-cols-[auto_minmax(0,_1fr)] items-start gap-[9px] my-[3px] mx-[8px] border-0 rounded-micro bg-transparent text-inherit cursor-pointer pt-[9px] pr-[22px] pb-[9px] pl-[10px] text-left hover:bg-hover focus-visible:bg-hover ui-focus-ring"
     :class="{
       'is-failed': notification.kind === 'automation.run.failed',
       'is-unseen': notification.attention === 'unseen',
@@ -62,10 +62,10 @@ const icon = computed(() => {
     type="button"
     @click="emit('open', notification)"
   >
-    <span class="desktop-notification-item__icon" aria-hidden="true">
+    <span class="desktop-notification-item__icon grid w-[28px] h-[28px] place-items-center rounded-[6px] bg-accent-surface text-accent-text text-[16px]" aria-hidden="true">
       <DesktopIcon :component="icon" />
     </span>
-    <span class="desktop-notification-item__copy">
+    <span class="desktop-notification-item__copy grid min-w-0">
       <strong>{{ title }}</strong>
       <span>{{ description }}</span>
       <small>
@@ -77,55 +77,10 @@ const icon = computed(() => {
   </button>
 </template>
 
-<style scoped>
-.desktop-notification-item {
-  position: relative;
-  display: grid;
-  box-sizing: border-box;
-  width: calc(100% - 16px);
-  height: 66px;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 9px;
-  margin: 3px 8px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 9px 22px 9px 10px;
-  text-align: left;
-}
-
-.desktop-notification-item:hover,
-.desktop-notification-item:focus-visible {
-  background: var(--buddy-surface-subtle);
-}
-
-.desktop-notification-item:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
-.desktop-notification-item__icon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--buddy-accent-surface);
-  color: var(--buddy-accent-text);
-  font-size: 16px;
-}
-
+<style scoped lang="scss">
 .desktop-notification-item.is-failed .desktop-notification-item__icon {
   background: var(--buddy-status-danger-surface);
   color: var(--buddy-status-danger-text);
-}
-
-.desktop-notification-item__copy {
-  display: grid;
-  min-width: 0;
 }
 
 .desktop-notification-item__copy strong {

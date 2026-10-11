@@ -75,8 +75,8 @@ function summarizePayload(payload: unknown) {
 </script>
 
 <template>
-  <section class="desktop-run-log-section">
-    <div class="desktop-run-log-section__body">
+  <section class="desktop-run-log-section grid gap-4">
+    <div class="desktop-run-log-section__body grid min-h-88 grid-cols-[minmax(14rem,_18rem)_minmax(0,_1fr)] overflow-hidden border-1 border-solid border-border rounded-[0.85rem] bg-raised">
       <aside>
         <NSpin v-if="isLoading && !runs.length" size="small" />
         <NEmpty
@@ -101,10 +101,10 @@ function summarizePayload(payload: unknown) {
         </button>
       </aside>
 
-      <div class="desktop-run-log-section__detail">
+      <div class="desktop-run-log-section__detail min-w-0 max-h-112 overflow-y-auto p-[0.8rem]">
         <NEmpty v-if="!selectedRun" :description="t('log.detailEmpty')" />
         <template v-else>
-          <div class="desktop-run-log-section__meta">
+          <div class="desktop-run-log-section__meta grid gap-[0.35rem] mb-[0.8rem]">
             <div><span>{{ t('desktop.logs.provider') }}</span><code>{{ selectedRun.providerId }}</code></div>
             <div><span>{{ t('desktop.logs.model') }}</span><code>{{ selectedRun.modelId }}</code></div>
           </div>
@@ -125,20 +125,7 @@ function summarizePayload(payload: unknown) {
 </template>
 
 <style scoped lang="scss">
-.desktop-run-log-section {
-  display: grid;
-  gap: 1rem;
-}
-
 .desktop-run-log-section__body {
-  display: grid;
-  min-height: 22rem;
-  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.85rem;
-  background: var(--buddy-surface-raised);
-
   > aside {
     display: grid;
     align-content: start;
@@ -191,11 +178,6 @@ function summarizePayload(payload: unknown) {
 }
 
 .desktop-run-log-section__detail {
-  min-width: 0;
-  max-height: 28rem;
-  overflow-y: auto;
-  padding: 0.8rem;
-
   ol {
     display: grid;
     gap: 0.5rem;
@@ -234,10 +216,6 @@ function summarizePayload(payload: unknown) {
 }
 
 .desktop-run-log-section__meta {
-  display: grid;
-  gap: 0.35rem;
-  margin-bottom: 0.8rem;
-
   > div {
     display: grid;
     grid-template-columns: 5rem minmax(0, 1fr);

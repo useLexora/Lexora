@@ -84,31 +84,31 @@ function collapseFromBottom() {
 
 <template>
   <section
-    class="buddy-chat-activity-group"
+    class="buddy-chat-activity-group min-w-0"
     :data-activity-id="group.id"
     :class="{ 'is-open': open, 'is-active': active, 'is-grouped': !singleTool && !singleReasoning }"
     :data-status="group.status"
   >
-    <div v-if="!singleTool && !singleReasoning" class="buddy-chat-activity-group__heading">
-      <button ref="header" class="buddy-chat-activity-group__header buddy-chat-activity-row" type="button" :aria-expanded="open" :aria-controls="bodyId" :aria-label="[fullSummary, stateLabel].filter(Boolean).join(' · ')" @click="open = !open">
+    <div v-if="!singleTool && !singleReasoning" class="flex items-center gap-[6px]">
+      <button ref="header" class="buddy-chat-activity-group__header buddy-chat-activity-row min-w-0" type="button" :aria-expanded="open" :aria-controls="bodyId" :aria-label="[fullSummary, stateLabel].filter(Boolean).join(' · ')" @click="open = !open">
         <BuddyChatToolIcon v-if="summary.icon !== 'reasoning'" :icon="summary.icon" class="buddy-chat-activity-row__icon" aria-hidden="true" />
         <DesktopIcon v-else :component="Thinking20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
         <BuddyChatShimmerText class="buddy-chat-activity-row__label" :mode="active ? 'continuous' : 'static'">
           {{ open ? fullSummary : summary.label }}
         </BuddyChatShimmerText>
         <span v-if="group.status === 'interrupted'" class="buddy-chat-activity-group__status">{{ stateLabel }}</span>
-        <span class="buddy-chat-activity-group__toggle" :class="{ 'is-loading': active && !open }" aria-hidden="true">
+        <span class="buddy-chat-activity-group__toggle grid w-[var(--buddy-chat-activity-icon-size)] h-[var(--buddy-chat-activity-icon-size)] flex-none place-items-center" :class="{ 'is-loading': active && !open }" aria-hidden="true">
           <BuddyChatActivitySpinner v-if="active && !open" />
           <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open }" />
         </span>
       </button>
-      <span v-if="group.approvalCount" class="buddy-chat-activity-group__approval">{{ t('desktop.chat.activityApprovalCount', { count: group.approvalCount }) }}</span>
-      <button v-if="group.issueCount" class="buddy-chat-activity-group__issues" type="button" @click="revealNextIssue">
+      <span v-if="group.approvalCount" class="buddy-chat-activity-group__approval text-warning">{{ t('desktop.chat.activityApprovalCount', { count: group.approvalCount }) }}</span>
+      <button v-if="group.issueCount" class="buddy-chat-activity-group__issues flex-none py-[4px] px-[6px] border-0 rounded-micro bg-transparent text-warning text-[11.5px] whitespace-nowrap cursor-pointer hover:bg-warning-surface focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]" type="button" @click="revealNextIssue">
         {{ t('desktop.chat.activityIssueCount', { count: group.issueCount }) }}
       </button>
     </div>
     <BuddyChatDisclosure>
-      <div v-if="open || singleTool || singleReasoning" :id="bodyId" ref="content" class="buddy-chat-activity-group__content">
+      <div v-if="open || singleTool || singleReasoning" :id="bodyId" ref="content" class="buddy-chat-activity-group__content min-w-0">
         <template v-for="entry in layout.entries" :key="entry.id">
           <BuddyChatToolRow
             v-if="entry.kind === 'tool'"
@@ -137,7 +137,7 @@ function collapseFromBottom() {
             @toggle="toggleEntry(entry.id)"
           />
         </template>
-        <button v-if="showBottomCollapse" class="buddy-chat-activity-group__collapse buddy-chat-activity-row" type="button" @click="collapseFromBottom">
+        <button v-if="showBottomCollapse" class="buddy-chat-activity-group__collapse buddy-chat-activity-row flex mt-[4px] text-muted text-[length:var(--buddy-chat-caption-font-size)]" type="button" @click="collapseFromBottom">
           <DesktopIcon :component="ChevronUp20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
           {{ t('desktop.chat.activityCollapse') }}
         </button>
@@ -154,23 +154,6 @@ function collapseFromBottom() {
 .buddy-chat-activity-group {
   --buddy-shimmer-base: var(--buddy-text-secondary);
   --buddy-shimmer-duration: 3s;
-  min-width: 0;
-}
-
-.buddy-chat-activity-group__heading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.buddy-chat-activity-group__header { min-width: 0; }
-
-.buddy-chat-activity-group__toggle {
-  display: grid;
-  width: var(--buddy-chat-activity-icon-size);
-  height: var(--buddy-chat-activity-icon-size);
-  flex: none;
-  place-items: center;
 }
 
 .buddy-chat-activity-group__toggle > * { grid-area: 1 / 1; }
@@ -195,35 +178,6 @@ function collapseFromBottom() {
   color: var(--buddy-text-muted);
   font-size: var(--buddy-chat-tool-font-size);
   white-space: nowrap;
-}
-
-.buddy-chat-activity-group__approval { color: var(--buddy-status-warning-text); }
-
-.buddy-chat-activity-group__issues {
-  flex: none;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  font: inherit;
-  color: var(--buddy-status-warning-text);
-  font-size: 11.5px;
-  white-space: nowrap;
-  cursor: pointer;
-
-  &:hover { background: var(--buddy-status-warning-surface); }
-  &:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-}
-
-.buddy-chat-activity-group__content {
-  min-width: 0;
-}
-
-.buddy-chat-activity-group__collapse {
-  display: flex;
-  margin-top: 4px;
-  color: var(--buddy-text-muted);
-  font-size: var(--buddy-chat-caption-font-size);
 }
 
 .is-grouped > .buddy-chat-activity-group__content {

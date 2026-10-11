@@ -16,19 +16,19 @@ const parent = computed(() => composerParentDirectory(props.directory))
 </script>
 
 <template>
-  <div class="chat-composer-directory-header" @mousedown.prevent>
+  <div class="chat-composer-directory-header flex items-center gap-[0.3rem] min-w-0 pt-[0.35rem] pr-[0.4rem] pb-[0.15rem] pl-[0.4rem] text-muted text-[0.62rem]" @mousedown.prevent>
     <NTooltip v-if="directory.workingDirectory" :delay="400" to=".buddy-app">
       <template #trigger>
-        <button class="chat-composer-directory-header__root" type="button" tabindex="-1" @click="emit('navigate', directory.workingDirectory)">
+        <button class="chat-composer-directory-header__root flex-none" type="button" tabindex="-1" @click="emit('navigate', directory.workingDirectory)">
           {{ t(external ? 'desktop.chat.sourcePickerExternal' : 'desktop.chat.sourcePickerWorkspace') }}
         </button>
       </template>
       {{ directory.workingDirectory }}
     </NTooltip>
-    <span v-else class="chat-composer-directory-header__root">{{ t('desktop.chat.sourcePickerDirectory') }}</span>
-    <span v-if="external" class="chat-composer-directory-header__external">{{ directory.path }}</span>
+    <span v-else class="chat-composer-directory-header__root flex-none">{{ t('desktop.chat.sourcePickerDirectory') }}</span>
+    <span v-if="external" class="overflow-hidden text-ellipsis whitespace-nowrap">{{ directory.path }}</span>
     <template v-for="crumb in breadcrumbs" :key="crumb.path">
-      <span class="chat-composer-directory-header__separator">›</span>
+      <span class="flex-none">›</span>
       <NTooltip :delay="400" to=".buddy-app">
         <template #trigger>
           <button type="button" tabindex="-1" @click="emit('navigate', crumb.path)">
@@ -38,7 +38,7 @@ const parent = computed(() => composerParentDirectory(props.directory))
         {{ crumb.path }}
       </NTooltip>
     </template>
-    <button v-if="parent" class="chat-composer-directory-header__back" type="button" tabindex="-1" @click="emit('navigate', parent)">
+    <button v-if="parent" class="flex-none ml-auto" type="button" tabindex="-1" @click="emit('navigate', parent)">
       {{ t('desktop.chat.sourcePickerParent') }}
     </button>
   </div>
@@ -46,14 +46,6 @@ const parent = computed(() => composerParentDirectory(props.directory))
 
 <style scoped lang="scss">
 .chat-composer-directory-header {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  min-width: 0;
-  padding: 0.35rem 0.4rem 0.15rem;
-  color: var(--buddy-text-muted);
-  font-size: 0.62rem;
-
   button {
     min-width: 0;
     overflow: hidden;
@@ -70,24 +62,7 @@ const parent = computed(() => composerParentDirectory(props.directory))
   }
 }
 
-.chat-composer-directory-header__root {
-  flex: none;
-}
-
 .chat-composer-directory-header .chat-composer-directory-header__root {
   font-weight: 600;
-}
-
-.chat-composer-directory-header__separator { flex: none; }
-
-.chat-composer-directory-header__external {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-composer-directory-header__back {
-  flex: none;
-  margin-left: auto;
 }
 </style>

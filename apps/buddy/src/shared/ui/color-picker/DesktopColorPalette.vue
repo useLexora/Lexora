@@ -10,11 +10,11 @@ const value = defineModel<T>({ required: true })
 </script>
 
 <template>
-  <div class="desktop-color-palette">
+  <div class="desktop-color-palette grid grid-cols-[repeat(9,_24px)] grid-rows-[repeat(3,_24px)] justify-between gap-y-[5px]">
     <button
       v-for="option in options"
       :key="option.value"
-      class="desktop-color-palette__swatch"
+      class="desktop-color-palette__swatch grid w-[24px] h-[24px] place-items-center p-0 border-1 border-solid border-transparent rounded-[6px] cursor-pointer disabled:cursor-default focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
       :class="{ 'is-selected': value === option.value, 'is-reset': option.reset }"
       :style="{ '--swatch-color': option.color }"
       type="button"
@@ -29,26 +29,13 @@ const value = defineModel<T>({ required: true })
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-color-palette {
-  display: grid;
   grid-auto-flow: column;
-  grid-template-columns: repeat(9, 24px);
-  grid-template-rows: repeat(3, 24px);
-  justify-content: space-between;
-  row-gap: 5px;
 }
 
 .desktop-color-palette__swatch {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
   background: var(--swatch-color);
-  cursor: pointer;
 }
 
 .desktop-color-palette__swatch.is-reset {
@@ -61,18 +48,9 @@ const value = defineModel<T>({ required: true })
   box-shadow: 0 0 0 1px var(--buddy-surface-raised), 0 0 0 2px var(--swatch-color);
 }
 
-.desktop-color-palette__swatch:disabled {
-  cursor: default;
-}
-
 .desktop-color-palette__check {
   border-radius: 3px;
   background: var(--buddy-surface-raised);
   color: var(--buddy-text-strong);
-}
-
-.desktop-color-palette__swatch:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 2px;
 }
 </style>

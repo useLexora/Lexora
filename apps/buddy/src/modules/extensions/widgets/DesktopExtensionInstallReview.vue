@@ -25,6 +25,7 @@ const permissions = computed(() => {
     ...(permissions.selectedResource === 'read' ? [{ key: 'selectedResource:read', icon: Document20Regular, title: labels.value.selected, description: english.value ? 'Read the content of files you select for this plugin.' : '读取你为此插件选中的文件内容。' }] : []),
     ...(permissions.selectedContent ? [{ key: 'selectedContent', icon: Document20Regular, title: english.value ? 'Read content you select' : '读取你选择的内容', description: english.value ? 'Receive the current draft or message when you invoke its action.' : '当你主动执行操作时，获取当前草稿或该条消息。' }] : []),
     ...(permissions.localResources ? [{ key: 'localResources', icon: Document20Regular, title: english.value ? 'Read files and folders you select' : '读取你选择的文件和目录', description: english.value ? 'Choose files or folders in a system dialog. The plugin can read selected files and scan selected folders until you revoke access.' : '通过系统窗口选择文件或目录；插件可读取所选文件、扫描所选目录，授权保留到你撤销。' }] : []),
+    ...(permissions.themeManagement ? [{ key: 'themeManagement', icon: Document20Regular, title: english.value ? 'Manage your themes' : '管理你的主题', description: english.value ? 'Save, preview and select themes. Package themes remain read-only.' : '保存、预览和切换主题；插件包内主题保持只读。' }] : []),
     ...(permissions.resourceExport ? [{ key: 'resourceExport', icon: Document20Regular, title: english.value ? 'Save files to a location you choose' : '保存文件到你选择的位置', description: english.value ? 'Each export opens a system save dialog. Reading a file does not grant permission to overwrite it.' : '每次导出都由你通过系统保存窗口选择目标；读取文件不会自动授予覆写权限。' }] : []),
     ...permissions.network.map(origin => ({ key: `network:${origin}`, icon: Globe20Regular, title: `${labels.value.network} ${origin}`, description: english.value ? 'Send requests to this website and read its responses.' : '向此网站发送请求并读取响应。' })),
   ]
@@ -50,35 +51,35 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
     data-testid="extension-install-review"
     @update:show="value => { if (!value) emit('cancel') }"
   >
-    <div class="extension-install-review__identity">
-      <span class="extension-install-review__icon" aria-hidden="true">
+    <div class="flex items-center gap-[14px]">
+      <span class="extension-install-review__icon grid w-[44px] h-[44px] place-items-center rounded-[10px] text-nav-foreground bg-nav-selected" aria-hidden="true">
         <DesktopPluginIcon :src="review.iconUrl" :size="28" />
       </span>
-      <div class="extension-install-review__heading">
+      <div class="extension-install-review__heading min-w-0">
         <h2>{{ review.manifest.name }}</h2>
-        <p class="extension-install-review__meta">
-          <span class="extension-install-review__version">
+        <p class="flex flex-wrap items-center gap-[8px] mt-[5px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
+          <span class="extension-install-review__version py-0 px-[6px] border-1 border-solid border-border rounded-[4px]">
             <template v-if="review.currentVersion">{{ review.currentVersion }} → </template>{{ review.manifest.version }}
           </span>
           <NEllipsis>{{ review.manifest.author || (english ? 'Unsigned' : '未署名') }}</NEllipsis>
         </p>
-        <p class="extension-install-review__meta">
+        <p class="flex flex-wrap items-center gap-[8px] mt-[5px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
           {{ source }}
         </p>
       </div>
     </div>
-    <p v-if="review.manifest.description" class="extension-install-review__description">
+    <p v-if="review.manifest.description" class="mt-[16px] mr-0 mb-0 ml-0 text-muted text-[13px] leading-[1.7] [overflow-wrap:anywhere]">
       {{ review.manifest.description }}
     </p>
-    <section class="extension-install-review__permissions">
+    <section class="extension-install-review__permissions mt-[24px]">
       <h3>{{ labels.permissions }}</h3>
       <ul v-if="permissions.length">
         <li v-for="permission in permissions" :key="permission.key">
           <DesktopIcon class="extension-install-review__permission-icon" :component="permission.icon" :size="18" aria-hidden="true" />
           <div>
-            <div class="extension-install-review__permission-title">
+            <div class="flex flex-wrap items-center gap-[8px] text-fg text-[13px] leading-[1.6] [overflow-wrap:anywhere]">
               <span>{{ permission.title }}</span>
-              <span v-if="review.currentVersion && isNewPermission(permission.key)" class="extension-install-review__new">{{ english ? 'New' : '新增' }}</span>
+              <span v-if="review.currentVersion && isNewPermission(permission.key)" class="py-0 px-[5px] rounded-[4px] text-nav-foreground bg-nav-selected text-[11px]">{{ english ? 'New' : '新增' }}</span>
             </div>
             <p>{{ permission.description }}</p>
           </div>
@@ -91,20 +92,20 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
         {{ labels.noAdded }}
       </p>
     </section>
-    <section v-if="Object.keys(review.manifest.dependencies).length" class="extension-install-review__dependencies">
+    <section v-if="Object.keys(review.manifest.dependencies).length" class="extension-install-review__dependencies mt-[24px]">
       <h3>{{ labels.dependencies }}</h3>
       <p v-for="(range, id) in review.manifest.dependencies" :key="id">
         {{ id }} <span>{{ range }}</span>
       </p>
     </section>
-    <p class="extension-install-review__trust">
+    <p class="mt-[24px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.6]">
       {{ english ? 'Only install plugins from sources you trust.' : '请确认你信任此插件的来源。' }}
       <template v-if="sharesContent">
         {{ english ? 'This plugin can send authorized content to the listed websites.' : '此插件可以向上述网站发送已授权读取的内容。' }}
       </template>
     </p>
     <template #footer>
-      <div class="extension-install-review__actions">
+      <div class="flex justify-end gap-[8px]">
         <NButton :disabled="busy" @click="emit('cancel')">
           {{ labels.cancel }}
         </NButton>
@@ -128,26 +129,19 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
   :deep(.n-card__content) { overflow-y: auto; padding: 24px; }
   :deep(.n-card__footer) { padding: 16px 24px; border-top: 1px solid var(--buddy-border-subtle); }
 }
-.extension-install-review__identity { display: flex; align-items: center; gap: 14px; }
-.extension-install-review__icon { display: grid; flex: 0 0 44px; width: 44px; height: 44px; place-items: center; border-radius: 10px; color: var(--buddy-nav-foreground); background: var(--buddy-nav-selected); }
-.extension-install-review__heading { min-width: 0; }
+
+.extension-install-review__icon { flex: 0 0 44px; }
 .extension-install-review__heading h2 { margin: 0; color: var(--buddy-text-strong); font-size: 18px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
-.extension-install-review__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 5px 0 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.5; }
-.extension-install-review__version { padding: 0 6px; border: 1px solid var(--buddy-border-subtle); border-radius: 4px; font-variant-numeric: tabular-nums; }
-.extension-install-review__description { margin: 16px 0 0; color: var(--buddy-text-secondary); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
-.extension-install-review__permissions { margin-top: 24px; }
+.extension-install-review__version { font-variant-numeric: tabular-nums; }
 .extension-install-review h3 { margin: 0 0 12px; color: var(--buddy-text-strong); font-size: 13px; font-weight: 600; line-height: 1.5; }
 .extension-install-review__permissions ul { display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }
 .extension-install-review__permissions li { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; }
 .extension-install-review__permission-icon { margin-top: 2px; color: var(--buddy-text-secondary); }
-.extension-install-review__permission-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--buddy-text-primary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+
 .extension-install-review__permissions li p { margin: 2px 0 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
-.extension-install-review__new { padding: 0 5px; border-radius: 4px; color: var(--buddy-nav-foreground); background: var(--buddy-nav-selected); font-size: 11px; }
+
 .extension-install-review__muted { margin: 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
 .extension-install-review__unchanged { margin-top: 12px; }
-.extension-install-review__dependencies { margin-top: 24px; }
 .extension-install-review__dependencies p { margin: 4px 0 0; color: var(--buddy-text-primary); font-size: 12px; overflow-wrap: anywhere; }
 .extension-install-review__dependencies span { color: var(--buddy-text-secondary); }
-.extension-install-review__trust { margin: 24px 0 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
-.extension-install-review__actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

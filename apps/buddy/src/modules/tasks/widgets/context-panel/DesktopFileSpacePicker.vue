@@ -29,73 +29,23 @@ function select(spaceId: string) {
     <template #header>
       {{ t('desktop.context.selectFileSpace') }}
     </template>
-    <div class="desktop-file-space-picker" data-testid="file-space-picker">
+    <div class="desktop-file-space-picker grid max-h-[min(24rem,_60vh)] gap-1 overflow-y-auto" data-testid="file-space-picker">
       <button
         v-for="space in spaces"
         :key="space.id"
-        class="desktop-file-space-picker__space"
+        class="desktop-file-space-picker__space flex min-w-0 items-center gap-3 border-0 rounded-icon bg-transparent py-[0.625rem] px-3 text-fg text-left cursor-pointer hover:bg-hover ui-focus-ring"
         type="button"
         @click="select(space.id)"
       >
         <DesktopSpaceIcon :icon="space.icon" :icon-color="space.iconColor" :size="20" />
-        <span class="desktop-file-space-picker__copy">
+        <span class="grid min-w-0 gap-[0.2rem] [overflow-wrap:anywhere]">
           <span>{{ space.name }}</span>
-          <span class="desktop-file-space-picker__directory">{{ space.primaryDirectory?.root }}</span>
+          <span class="text-muted text-[0.75rem]">{{ space.primaryDirectory?.root }}</span>
         </span>
       </button>
-      <div v-if="!spaces.length" class="desktop-file-space-picker__empty">
+      <div v-if="!spaces.length" class="py-4 px-3 text-muted">
         {{ t('desktop.context.noFileSpaces') }}
       </div>
     </div>
   </NModal>
 </template>
-
-<style scoped>
-.desktop-file-space-picker {
-  display: grid;
-  max-height: min(24rem, 60vh);
-  gap: 0.25rem;
-  overflow-y: auto;
-}
-
-.desktop-file-space-picker__space {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.75rem;
-  border: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  background: transparent;
-  padding: 0.625rem 0.75rem;
-  color: var(--buddy-text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.desktop-file-space-picker__space:hover {
-  background: var(--buddy-state-hover);
-}
-
-.desktop-file-space-picker__space:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
-.desktop-file-space-picker__copy {
-  display: grid;
-  min-width: 0;
-  gap: 0.2rem;
-  overflow-wrap: anywhere;
-}
-
-.desktop-file-space-picker__directory {
-  color: var(--buddy-text-secondary);
-  font-size: 0.75rem;
-}
-
-.desktop-file-space-picker__empty {
-  padding: 1rem 0.75rem;
-  color: var(--buddy-text-secondary);
-}
-</style>

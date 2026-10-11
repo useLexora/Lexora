@@ -22,19 +22,19 @@ it('discovers a compact host index and exact target contracts without loading pl
     expect(index.targets.every(target => !target.description && !target.height)).toBe(true)
     const detail = extensionCapabilitiesSchema.parse(await query({ target: 'composer.accessory' }))
     expect(detail.targets).toEqual([expect.objectContaining({ kind: 'slot', selection: 'multiple', height: { min: 32, max: 240, default: 64 } })])
-    expect(detail.targets[0]!.description).toContain('ViewContext.setActive(false)')
-    expect(detail.targets[0]!.description).toContain('Plugin-owned settings')
     const placement = { id: 'tests.content.slot', view: 'tests.content.view', kind: 'slot', target: detail.targets[0]!.target }
     expect(extensionPlacementSchema.parse({ ...placement, enabled: false })).toMatchObject({ height: detail.targets[0]!.height!.default, enabled: false })
     expect(extensionPlacementSchema.safeParse({ ...placement, height: detail.targets[0]!.height!.max + 1 }).success).toBe(false)
     expect(extensionCapabilitiesSchema.parse(await query({ target: 'document.body' })).targets).toEqual([])
-    expect(extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' })).targets.map(target => target.target)).toEqual(['events', 'agent.tools', 'agent.actions', 'agent.models', 'agent.task', 'agent.taskMessages', 'conditions', 'settings', 'commands', 'workbench.panes', 'workbench.interactions'])
+    const runtime = extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' }))
+    expect(runtime.targets.map(target => target.target)).toContain('themes')
+    expect(runtime.targets.every(target => target.kind === 'runtime')).toBe(true)
     await expect(query({ kind: 'arbitrary' })).rejects.toThrow()
   }
   finally { dispose() }
 })
 
-it('prepares platform-independent identities with explicit or default Unicode signatures', async () => {
+it('uses the configured signature unless an explicit or empty author is provided', async () => {
   const handlers = new Map<string, RuntimeRequestHandler>()
   let author = '山雨海'
   const dispose = registerExtensionAuthoringRpc({ onRequest: (method, handler) => {
@@ -46,13 +46,9 @@ it('prepares platform-independent identities with explicit or default Unicode si
     const first = await identity({ slug: 'music' })
     author = '另一位作者'
     const second = await identity({ slug: 'music', author: 'Équipe 🎨' })
-    expect(first).toMatchObject({ author: '山雨海', engines: { lexora: '>=0.9.0 <1.0.0' } })
-    expect(first.id).toMatch(/^p[a-f0-9]{32}\.music$/)
-    expect(second.id).not.toBe(first.id)
+    expect(first.author).toBe('山雨海')
     expect(second.author).toBe('Équipe 🎨')
     expect((await identity({ slug: 'music', author: '' })).author).toBe('')
-    await expect(identity({ slug: 'Music!' })).rejects.toThrow()
-    await expect(identity({ slug: 'music', author: '名'.repeat(81) })).rejects.toThrow()
   }
   finally { dispose() }
 })

@@ -51,7 +51,7 @@ function select(keys: Array<string | number>) {
 </script>
 
 <template>
-  <div class="desktop-context-file-tree" data-testid="context-file-tree">
+  <div class="desktop-context-file-tree min-h-0 flex-1 overflow-auto py-[8px] px-[6px]" data-testid="context-file-tree">
     <NTree
       v-model:expanded-keys="expandedKeys" block-line :cancelable="false" :data="data" :on-load="load"
       :override-default-node-click-behavior="clickBehavior" :render-prefix="prefix" :render-suffix="suffix"
@@ -60,8 +60,7 @@ function select(keys: Array<string | number>) {
   </div>
 </template>
 
-<style scoped>
-.desktop-context-file-tree { min-height: 0; flex: 1; overflow: auto; padding: 8px 6px; }
+<style scoped lang="scss">
 .desktop-context-file-tree :deep(.n-tree-node) { min-height: 30px; border-radius: var(--buddy-icon-button-radius); }
 .desktop-context-file-tree :deep(.n-tree-node-content) { min-width: 0; }
 .desktop-context-file-tree :deep(.n-tree-node-content__text) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

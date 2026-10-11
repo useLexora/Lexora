@@ -96,7 +96,7 @@ async function submit() {
       </NForm>
 
       <template #footer>
-        <div class="desktop-provider-connection-dialog__actions">
+        <div class="flex justify-end gap-[0.6rem]">
           <NButton :disabled="saving" @click="close">
             {{ t('common.cancel') }}
           </NButton>
@@ -109,7 +109,7 @@ async function submit() {
   </NModal>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-provider-connection-dialog :deep(.n-card__content) {
   display: grid;
   column-gap: 0.9rem;
@@ -132,12 +132,6 @@ async function submit() {
 .desktop-provider-connection-dialog__form :deep(.n-input),
 .desktop-provider-connection-dialog__form :deep(.n-base-selection) {
   width: 100%;
-}
-
-.desktop-provider-connection-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
 }
 
 @media (max-width: 700px) {

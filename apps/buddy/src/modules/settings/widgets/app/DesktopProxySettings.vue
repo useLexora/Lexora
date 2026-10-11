@@ -6,13 +6,20 @@ import { NButton, NInput, useMessage } from 'naive-ui'
 import { computed, shallowRef, useId, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
+import { useSettingMutation } from '../../state/useSettingMutation'
+import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
+
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const groupId = useId()
 const mode = shallowRef<ProxySettings['mode']>('system')
 const server = shallowRef('')
-const pending = shallowRef(false)
+const { pending: pendingFields, save: updateSetting } = useSettingMutation<'proxy'>(
+  patch => props.updateSettings(patch),
+  () => message.error(t('desktop.settings.saveFailed')),
+)
+const pending = computed(() => pendingFields.value.has('proxy'))
 const invalid = shallowRef(false)
 const modes = computed(() => [
   { value: 'system' as const, label: t('desktop.settings.proxy.system') },
@@ -36,17 +43,8 @@ async function save() {
   invalid.value = !parsed.success
   if (!parsed.success)
     return
-  pending.value = true
-  try {
-    if (!await props.updateSettings({ proxy: parsed.data })) {
-      message.error(t('desktop.settings.saveFailed'))
-      if (props.config)
-        mode.value = props.config.proxy.mode
-    }
-  }
-  finally {
-    pending.value = false
-  }
+  if (!await updateSetting('proxy', { proxy: parsed.data }) && props.config)
+    mode.value = props.config.proxy.mode
 }
 
 async function select(next: ProxySettings['mode']) {
@@ -60,18 +58,17 @@ async function select(next: ProxySettings['mode']) {
 </script>
 
 <template>
-  <section v-if="config" class="desktop-proxy-settings">
-    <h2>{{ t('desktop.settings.proxy.title') }}</h2>
-    <div class="desktop-proxy-settings__group">
-      <div class="desktop-proxy-settings__row">
-        <div class="desktop-proxy-settings__label">
-          <strong :id="`${groupId}-label`">{{ t('desktop.settings.proxy.mode') }}</strong>
-          <small>{{ t('desktop.settings.proxy.description') }}</small>
-        </div>
-        <div class="desktop-proxy-settings__modes" role="radiogroup" :aria-labelledby="`${groupId}-label`" :aria-busy="pending" :style="{ '--selected-index': selectedIndex }">
-          <span class="desktop-proxy-settings__slider" aria-hidden="true" />
-          <label v-for="option in modes" :key="option.value" :class="{ 'is-selected': mode === option.value }">
+  <section v-if="config" class="desktop-proxy-settings grid gap-[0.8rem] [container-type:inline-size]">
+    <h2 class="m-0 text-[0.92rem]">
+      {{ t('desktop.settings.proxy.title') }}
+    </h2>
+    <div class="border border-solid border-border rounded-[0.65rem] bg-surface p-[0.9rem]">
+      <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.proxy.mode')" :description="t('desktop.settings.proxy.description')" toggle class="[--setting-row-height:0px] [--setting-row-px:0px] [--setting-row-py:0px] [--setting-control-min:0px] [--setting-control-max:max-content]">
+        <div class="desktop-proxy-settings__modes relative grid grid-cols-[repeat(3,_minmax(0,_1fr))] w-60 max-w-full rounded-[0.65rem] bg-subtle p-[0.2rem]" v-bind="controlAttrs" role="radiogroup" :aria-busy="pending" :style="{ '--selected-index': selectedIndex }">
+          <span class="desktop-proxy-settings__slider absolute top-[0.2rem] bottom-[0.2rem] left-[0.2rem] w-[calc((100%_-_0.4rem)_/_3)] rounded-[0.45rem] bg-surface shadow-soft" aria-hidden="true" />
+          <label v-for="option in modes" :key="option.value" class="relative grid min-h-[1.7rem] place-items-center rounded-[0.45rem] text-[0.75rem] font-400 whitespace-nowrap cursor-pointer transition-colors duration-160" :class="mode === option.value ? 'text-fg' : 'text-muted'">
             <input
+              class="absolute inset-0 opacity-0 cursor-inherit m-0"
               type="radio"
               :name="groupId"
               :value="option.value"
@@ -82,9 +79,9 @@ async function select(next: ProxySettings['mode']) {
             <span>{{ option.label }}</span>
           </label>
         </div>
-      </div>
-      <form v-if="mode === 'custom'" class="desktop-proxy-settings__custom" @submit.prevent="save">
-        <label :for="`${groupId}-server`">{{ t('desktop.settings.proxy.server') }}</label>
+      </DesktopSettingRow>
+      <form v-if="mode === 'custom'" class="grid gap-2 mt-4 border-t-1 border-t-solid border-t-border pt-4" @submit.prevent="save">
+        <label :for="`${groupId}-server`" class="text-[0.8rem] font-600">{{ t('desktop.settings.proxy.server') }}</label>
         <NInput
           v-model:value="server"
           :input-props="{ 'id': `${groupId}-server`, 'aria-describedby': `${groupId}-help` }"
@@ -92,9 +89,9 @@ async function select(next: ProxySettings['mode']) {
           :status="invalid ? 'error' : undefined"
           @update:value="invalid = false"
         />
-        <small :id="`${groupId}-help`">{{ t('desktop.settings.proxy.serverHelp') }}</small>
-        <small v-if="invalid" class="is-error" role="alert">{{ t('desktop.settings.proxy.invalidServer') }}</small>
-        <div class="desktop-proxy-settings__actions">
+        <small :id="`${groupId}-help`" class="text-muted text-[0.7rem] leading-[1.5]">{{ t('desktop.settings.proxy.serverHelp') }}</small>
+        <small v-if="invalid" class="text-danger text-[0.7rem] leading-[1.5]" role="alert">{{ t('desktop.settings.proxy.invalidServer') }}</small>
+        <div class="flex justify-end">
           <NButton attr-type="submit" size="small" :loading="pending" :disabled="!dirty" type="primary">
             {{ t('desktop.settings.proxy.save') }}
           </NButton>
@@ -105,90 +102,23 @@ async function select(next: ProxySettings['mode']) {
 </template>
 
 <style scoped lang="scss">
-.desktop-proxy-settings {
-  display: grid;
-  gap: 0.8rem;
-
-  h2 { margin: 0; font-size: 0.92rem; }
-  strong, label { font-size: 0.8rem; font-weight: 600; }
-  small { color: var(--buddy-text-secondary); font-size: 0.7rem; line-height: 1.5; }
-  .is-error { color: var(--buddy-status-danger-text); }
-}
-
-.desktop-proxy-settings__group {
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-  padding: 0.9rem;
-}
-
-.desktop-proxy-settings__row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
-}
-
-.desktop-proxy-settings__label { display: grid; gap: 0.25rem; }
-
 .desktop-proxy-settings__modes {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 15rem;
-  max-width: 100%;
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-subtle);
-  padding: 0.2rem;
-
-  label {
-    position: relative;
-    display: grid;
-    min-height: 1.7rem;
-    place-items: center;
-    border-radius: 0.45rem;
-    font-size: 0.75rem;
-    font-weight: 400;
-    white-space: nowrap;
-    color: var(--buddy-text-secondary);
-    cursor: pointer;
-    transition: color 160ms ease;
+  label:has(input:focus-visible) {
+    outline: 2px solid var(--buddy-focus-ring);
+    outline-offset: 2px;
   }
 
-  label.is-selected { color: var(--buddy-text-primary); }
-  label:has(input:focus-visible) { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-  label:has(input:disabled) { cursor: wait; }
-  input { position: absolute; inset: 0; opacity: 0; cursor: inherit; margin: 0; }
+  label:has(input:disabled) {
+    cursor: wait;
+  }
 }
 
 .desktop-proxy-settings__slider {
-  position: absolute;
-  top: 0.2rem;
-  bottom: 0.2rem;
-  left: 0.2rem;
-  width: calc((100% - 0.4rem) / 3);
-  border-radius: 0.45rem;
-  background: var(--buddy-surface-base);
-  box-shadow: var(--buddy-shadow-soft);
   transform: translateX(calc(var(--selected-index) * 100%));
   transition: transform 180ms ease;
-}
 
-.desktop-proxy-settings__custom {
-  display: grid;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding-top: 1rem;
-}
-
-.desktop-proxy-settings__actions { display: flex; justify-content: flex-end; }
-
-@media (max-width: 760px) {
-  .desktop-proxy-settings__row { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desktop-proxy-settings__slider { transition: none; }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
 }
 </style>

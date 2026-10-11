@@ -56,8 +56,8 @@ async function showTools(connector: LocalConnector) {
 
 <template>
   <div class="mcp-manager">
-    <div class="mcp-settings__actions">
-      <div class="mcp-settings__split-actions">
+    <div class="flex justify-end gap-2 mb-4">
+      <div class="mcp-settings__split-actions inline-flex items-stretch">
         <NButton size="small" type="primary" :disabled="!!busyId" @click="importing = true">
           {{ t('desktop.mcp.import') }}
         </NButton>
@@ -90,7 +90,7 @@ async function showTools(connector: LocalConnector) {
         </NDropdown>
       </div>
     </div>
-    <section class="mcp-settings" :aria-busy="!loaded">
+    <section class="mcp-settings grid gap-4" :aria-busy="!loaded">
       <NAlert v-if="error" type="error" :show-icon="false">
         {{ error }}
       </NAlert>
@@ -115,15 +115,12 @@ async function showTools(connector: LocalConnector) {
   </div>
 </template>
 
-<style scoped>
-.mcp-settings__actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-bottom: 1rem; }
-.mcp-settings__split-actions { display: inline-flex; align-items: stretch; }
+<style scoped lang="scss">
 .mcp-settings__split-actions > :deep(.n-button:first-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .mcp-settings__split-arrow { width: 28px; margin-left: 1px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .mcp-settings__split-chevron { transition: transform 140ms ease; }
 .mcp-settings__split-chevron.is-open { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .mcp-settings__split-chevron { transition: none; } }
-.mcp-settings { display: grid; gap: 1rem; }
 .mcp-settings__empty { padding: 4rem 1rem; }
 .mcp-settings__empty p { color: var(--buddy-text-secondary); font-size: 0.85rem; }
 </style>

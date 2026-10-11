@@ -33,10 +33,10 @@ function formatDate(value: string | null | undefined) {
 </script>
 
 <template>
-  <div class="desktop-model-snapshot-status">
-    <div class="desktop-model-snapshot-status__copy">
+  <div class="desktop-model-snapshot-status flex min-h-[4.2rem] items-center gap-4 border border-solid border-border rounded-[0.65rem] bg-surface py-3 px-[0.9rem]">
+    <div class="desktop-model-snapshot-status__copy grid min-w-0 flex-1 gap-[0.24rem]">
       <span v-if="snapshot">
-        <a class="desktop-model-snapshot-status__source" href="https://models.dev" target="_blank" rel="noopener noreferrer">Models.dev</a>
+        <a class="desktop-model-snapshot-status__source text-inherit underline hover:text-accent-text focus-visible:rounded-micro focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]" href="https://models.dev" target="_blank" rel="noopener noreferrer">Models.dev</a>
         ·
         {{ t('desktop.providers.snapshotSummary', {
           models: snapshot.modelCount,
@@ -54,7 +54,7 @@ function formatDate(value: string | null | undefined) {
         {{ t('desktop.providers.snapshotRefreshPartial', { count: snapshot.errorCount }) }}
       </span>
     </div>
-    <div class="desktop-model-snapshot-status__actions">
+    <div class="flex flex-none items-center gap-2">
       <NButton size="small" @click="emit('openDirectory')">
         <template #icon>
           <DesktopIcon :component="FolderOpen20Regular" />
@@ -71,32 +71,7 @@ function formatDate(value: string | null | undefined) {
   </div>
 </template>
 
-<style scoped>
-.desktop-model-snapshot-status {
-  display: flex;
-  min-height: 4.2rem;
-  align-items: center;
-  gap: 1rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-  padding: 0.75rem 0.9rem;
-}
-
-.desktop-model-snapshot-status__copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 0.24rem;
-}
-
-.desktop-model-snapshot-status__actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.5rem;
-}
-
+<style scoped lang="scss">
 .desktop-model-snapshot-status__copy > span {
   color: var(--buddy-text-secondary);
   font-size: 0.68rem;
@@ -108,18 +83,6 @@ function formatDate(value: string | null | undefined) {
 }
 
 .desktop-model-snapshot-status__source {
-  color: inherit;
-  text-decoration: underline;
   text-underline-offset: 0.16em;
-}
-
-.desktop-model-snapshot-status__source:hover {
-  color: var(--buddy-accent-text);
-}
-
-.desktop-model-snapshot-status__source:focus-visible {
-  border-radius: var(--buddy-radius-micro);
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 2px;
 }
 </style>

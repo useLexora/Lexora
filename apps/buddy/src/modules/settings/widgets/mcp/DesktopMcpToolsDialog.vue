@@ -18,13 +18,13 @@ const filtered = computed(() => {
 
 <template>
   <NModal show preset="card" :title="connector.name" :style="{ width: 'min(680px, calc(100vw - 48px))' }" @close="emit('close')" @update:show="value => !value && emit('close')">
-    <p class="mcp-tools__notice">
+    <p class="text-muted text-[0.83rem] leading-[1.65] mt-0 mr-0 mb-4 ml-0">
       {{ t(connector.runtime.status === 'ready' ? 'desktop.mcp.toolNotice' : 'desktop.mcp.cachedToolNotice') }}
     </p>
     <NInput v-model:value="query" clearable :placeholder="t('desktop.mcp.searchTools')" :input-props="{ 'aria-label': t('desktop.mcp.searchTools') }" />
     <NScrollbar style="max-height: min(440px, 55vh)">
       <NEmpty v-if="!filtered.length" :description="t('desktop.mcp.noMatchingTools')" class="mcp-tools__empty" />
-      <article v-for="tool in filtered" :key="tool.name" class="mcp-settings__tool">
+      <article v-for="tool in filtered" :key="tool.name" class="mcp-settings__tool py-4 px-0 border-b-1 border-b-solid border-b-border">
         <strong>{{ tool.title }}</strong>
         <NTag v-if="tool.readOnly" size="small" :bordered="false">
           {{ t('desktop.mcp.readOnly') }}
@@ -36,10 +36,8 @@ const filtered = computed(() => {
   </NModal>
 </template>
 
-<style scoped>
-.mcp-tools__notice { color: var(--buddy-text-secondary); font-size: 0.83rem; line-height: 1.65; margin: 0 0 1rem; }
+<style scoped lang="scss">
 .mcp-tools__empty { padding: 2rem; }
-.mcp-settings__tool { padding: 1rem 0; border-bottom: 1px solid var(--buddy-border-subtle); }
 .mcp-settings__tool strong { overflow-wrap: anywhere; }
 .mcp-settings__tool code { display: block; margin-top: 0.4rem; font-size: 0.78rem; color: var(--buddy-text-secondary); overflow-wrap: anywhere; }
 .mcp-settings__tool p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.83rem; line-height: 1.6; margin: 0.4rem 0 0; }

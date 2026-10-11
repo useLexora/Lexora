@@ -8,6 +8,7 @@ import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
+import type { ThemeService } from '../themes/ThemeService'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
 import type { ExtensionConfigurationApplication, ExtensionServiceChange, ExtensionServiceFact, ExtensionServiceSnapshot } from './ExtensionServiceEvents'
@@ -25,6 +26,8 @@ import { extensionCompatible, extensionManifestSchema } from '../../shared/exten
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
 import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, validateExtensionSetting } from '../../shared/extensions/extensionSettings'
+import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
+import { themeRequestSchema, themeTransportSchema } from '../../shared/theme/themeApi'
 import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
@@ -43,6 +46,7 @@ export interface ExtensionHost {
   devtools: () => void
 }
 export interface ExtensionServicePorts {
+  themes?: ThemeService
   createHost: (pkg: ExtensionPackage, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: () => void) => ExtensionHost
   createView: (pkg: ExtensionPackage) => { token: string, url: string, dispose: () => void }
   workbench: (event: ExtensionWorkbenchEvent, signal: AbortSignal) => Promise<string | null>
@@ -174,6 +178,13 @@ export class ExtensionService {
       contributions: this.#agentDescriptors,
       views: [...this.#views.values()].map(view => ({ viewId: view.input.viewId, extensionId: view.input.extensionId, generation: view.running.generation, ready: view.ready, errorCode: view.error })),
     })
+  }
+
+  notifyThemeChanged(revision: number): void {
+    for (const running of this.#running.values()) {
+      if (running.active && running.package.manifest.apiVersion >= 3)
+        void running.host.call('themes.changed', { revision }).catch(() => {})
+    }
   }
 
   async initialize(): Promise<void> {
@@ -702,7 +713,14 @@ export class ExtensionService {
     const placement = view.running.package.manifest.contributes.placements.find(placement => placement.id === view.input.placementId)
     let result: JsonValue
     if (method === 'bootstrap') {
-      result = { apiVersion: view.running.package.manifest.apiVersion, instanceId: view.input.instanceId ?? null, interactionId: view.input.interactionId ?? null, interactionMode: placement?.kind === 'view' ? placement.interaction ?? null : null, entry: contribution.entry, location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
+      result = { apiVersion: view.running.package.manifest.apiVersion, instanceId: view.input.instanceId ?? null, interactionId: view.input.interactionId ?? null, interactionMode: placement?.kind === 'view' ? placement.interaction ?? null : null, entry: contribution.entry, styles: view.running.package.manifest.styles?.uno ? [EXTENSION_UNO_STYLESHEET] : [], location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
+    }
+    else if (method === 'themes.request') {
+      result = await this.#themeRequest(view.running, `${view.running.package.manifest.id}:${generation}:${id}`, params, () => {
+        this.#assertCurrent(view.running)
+        if (view.abort.signal.aborted || this.#views.get(id) !== view)
+          throw new Error('EXTENSION_VIEW_EXPIRED')
+      })
     }
     else if (method === 'view.setActive') {
       if (placement?.kind !== 'slot' && placement?.kind !== 'control')
@@ -1006,6 +1024,15 @@ export class ExtensionService {
       throw new Error('EXTENSION_HOST_STOPPED')
   }
 
+  async #themeRequest(running: RunningExtension, owner: string, params: unknown, assertCurrent: () => void): Promise<JsonValue> {
+    if (!this.#ports.themes || running.package.manifest.apiVersion < 3)
+      throw new Error('EXTENSION_METHOD_DENIED')
+    const input = themeRequestSchema.parse(params)
+    if (!['list', 'get', 'active', 'describe', 'validate', 'resolve', 'export'].includes(input.action) && !running.package.manifest.permissions.themeManagement)
+      throw new Error('EXTENSION_PERMISSION_DENIED')
+    return themeTransportSchema.parse(await this.#ports.themes.request(owner, input, assertCurrent))
+  }
+
   async #brokerByGeneration(id: string, generation: string, method: string, params: unknown): Promise<JsonValue> {
     const running = this.#running.get(id)
     if (!running || running.generation !== generation)
@@ -1022,7 +1049,10 @@ export class ExtensionService {
     const { id, dataVersion } = running.package.manifest
     try {
       let result: JsonValue
-      if (method === 'configuration.get') {
+      if (method === 'themes.request') {
+        result = await this.#themeRequest(running, `${id}:${running.generation}`, params, () => this.#assertCurrent(running))
+      }
+      else if (method === 'configuration.get') {
         result = await this.store.configuration(id)
       }
       else if (method === 'conditions.invalidate') {
@@ -1228,6 +1258,7 @@ export class ExtensionService {
     if (!running)
       return
     this.#running.delete(id)
+    this.#ports.themes?.releaseOwner(`${id}:${running.generation}`)
     if (running.inFlight)
       this.#retired.add(running)
     running.abort.abort()
@@ -1301,6 +1332,7 @@ export class ExtensionService {
     if (this.#views.get(view.input.viewId) !== view)
       return
     this.#views.delete(view.input.viewId)
+    this.#ports.themes?.releaseOwner(`${view.running.package.manifest.id}:${view.running.generation}:${view.input.viewId}`)
     view.abort.abort()
     const cleanups: Promise<void>[] = []
     try {

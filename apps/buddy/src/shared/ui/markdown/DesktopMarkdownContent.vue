@@ -6,6 +6,8 @@ import MarkdownRender from 'markstream-vue'
 import { computed, onBeforeUnmount } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
+import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
+import { markdownThemeVariables } from '@/theme/markdownTheme'
 import 'markstream-vue/index.css'
 
 const props = withDefaults(defineProps<{
@@ -31,6 +33,7 @@ interface CopyButtonState {
 
 const { t } = useBuddyI18n(() => props.language)
 const { isDark } = useDesktopUi()
+const themeVariables = computed(() => markdownThemeVariables(desktopThemeSnapshot.value.active.colors))
 const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
 const copyButtonStates = new Map<HTMLButtonElement, CopyButtonState>()
 
@@ -129,8 +132,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="buddy-chat-markdown-host" @click="handleLinkClick" @click.capture="copyCodeBlock">
+  <div class="buddy-chat-markdown-host w-full min-w-0" @click="handleLinkClick" @click.capture="copyCodeBlock">
     <MarkdownRender
+      :style="themeVariables"
       class="buddy-chat-markdown"
       :batch-rendering="animateStreaming"
       :content="content"
@@ -155,11 +159,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-markdown-host {
-  width: 100%;
-  min-width: 0;
-}
-
 .buddy-chat-markdown {
   width: 100%;
   min-width: 0;

@@ -151,17 +151,17 @@ provide(workbenchKey, { panels, resize, controller: props.controller, copies: pr
 
 <template>
   <DragDropProvider :sensors="sensors" :plugins="plugins" @drag-start="dragStart" @drag-end="dragEnd">
-    <main class="workbench" :class="{ 'is-dragging': dragging, 'is-resizing': resize.active.value.length > 0 }" :style="{ '--workbench-resize-cursor': resize.cursor.value }" data-testid="workbench">
-      <div v-if="backupError" class="workbench__error" role="alert">
+    <main class="workbench relative flex flex-1 min-w-0 min-h-0 flex-col" :class="{ 'is-dragging': dragging, 'is-resizing': resize.active.value.length > 0 }" :style="{ '--workbench-resize-cursor': resize.cursor.value }" data-testid="workbench">
+      <div v-if="backupError" class="py-[6px] px-[12px] text-fg bg-hover" role="alert">
         {{ labels.backupFailed }} <button type="button" @click="emit('retryBackup')">
           {{ labels.retry }}
         </button>
       </div>
-      <div v-if="commandFailed" class="workbench__error" role="alert" @click="commandFailed = false">
+      <div v-if="commandFailed" class="py-[6px] px-[12px] text-fg bg-hover" role="alert" @click="commandFailed = false">
         {{ labels.commandFailed }}
       </div>
       <slot />
-      <div v-if="resize.active.value.length" class="workbench__resize-shield" />
+      <div v-if="resize.active.value.length" class="workbench__resize-shield fixed inset-0 z-9999" />
       <WorkbenchInteractionControls :entries="interactions" :language="language" @end="controller.interactions.end($event)" />
       <WorkbenchMountPortals />
       <WorkbenchViewPortals>
@@ -171,7 +171,7 @@ provide(workbenchKey, { panels, resize, controller: props.controller, copies: pr
       </WorkbenchViewPortals>
       <NModal v-model:show="palette" preset="card" :title="labels.commands" style="width: min(580px, 90vw); margin-top: 12vh" :bordered="false">
         <NInput v-model:value="query" :placeholder="labels.searchCommands" autofocus @keydown.enter.prevent.stop="commands[0] && execute(commands[0].id)" />
-        <div class="workbench__commands">
+        <div class="workbench__commands flex flex-col max-h-[50vh] overflow-auto mt-[10px]">
           <button v-for="command in commands" :key="command.id" type="button" @click="execute(command.id)">
             <span>{{ command.label }}</span><kbd v-if="keybindings[command.id]?.[0]">{{ formatKeybinding(keybindings[command.id]![0]!, platform) }}</kbd>
           </button>
@@ -180,7 +180,7 @@ provide(workbenchKey, { panels, resize, controller: props.controller, copies: pr
     </main>
     <DragOverlay :drop-animation="null">
       <template #default="{ source }">
-        <div class="workbench__drag-preview">
+        <div class="py-[8px] px-[12px] text-fg bg-raised border border-solid border-accent rounded-[4px] text-[12px]">
           {{ source.data.title }}
         </div>
       </template>
@@ -188,14 +188,10 @@ provide(workbenchKey, { panels, resize, controller: props.controller, copies: pr
   </DragDropProvider>
 </template>
 
-<style scoped>
-.workbench { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.workbench__drag-preview { padding: 8px 12px; color: var(--buddy-text-primary); background: var(--buddy-surface-raised); border: 1px solid var(--buddy-accent-solid); border-radius: 4px; font-size: 12px; }
-.workbench__error { padding: 6px 12px; color: var(--buddy-text-primary); background: var(--buddy-state-hover); }
-.workbench__commands { display: flex; flex-direction: column; max-height: 50vh; overflow: auto; margin-top: 10px; }
+<style scoped lang="scss">
 .workbench__commands button { display: flex; justify-content: space-between; border: none; background: none; color: inherit; padding: 10px 8px; cursor: pointer; }
 .workbench__commands button:hover, .workbench__commands button:focus-visible { background: var(--buddy-state-hover); }
-.workbench__resize-shield { position: fixed; inset: 0; z-index: 9999; cursor: var(--workbench-resize-cursor); }
+.workbench__resize-shield { cursor: var(--workbench-resize-cursor); }
 .workbench.is-resizing { user-select: none; }
 .workbench.is-dragging { user-select: none; }
 .workbench.is-dragging :deep(.workbench__view) { pointer-events: none; }

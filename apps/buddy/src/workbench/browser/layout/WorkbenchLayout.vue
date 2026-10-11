@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { computed, nextTick, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
+import { computed, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { DESKTOP_WORKBENCH_WIDTH_LIMITS } from '../../common/workbenchPanelLayout'
 import { useWorkbenchPanelResize } from './useWorkbenchPanelResize'
+import { useWorkbenchSidebarToggle } from './useWorkbenchSidebarToggle'
 
 const props = withDefaults(defineProps<{
   language: BuddyLocale
@@ -46,11 +47,7 @@ function sidebarVisible() {
   const collapsed = sidebarCollapsed.value
   return Boolean(slots.sidebar) && (!collapsible || !collapsed)
 }
-const sidebarTransitioning = shallowRef(false)
-const sidebarToggleTop = shallowRef<string | null>(null)
-const sidebarToggleStyle = computed(() => sidebarToggleTop.value
-  ? { top: sidebarToggleTop.value }
-  : undefined)
+const { sidebarTransitioning, sidebarToggleStyle, toggleSidebar, finishSidebarTransition, updateSidebarTogglePosition } = useWorkbenchSidebarToggle({ container, sidebar, collapsed: sidebarCollapsed })
 const {
   activePanel,
   beginResize,
@@ -75,50 +72,12 @@ const {
   sidebarResizable: () => props.sidebarResizable,
   sidebarVisible,
 })
-
-let sidebarTransitionTimer: number | null = null
-
-async function toggleSidebar(): Promise<void> {
-  if (sidebarTransitioning.value)
-    return
-
-  sidebarTransitioning.value = true
-  await nextTick()
-  requestAnimationFrame(() => {
-    sidebarCollapsed.value = !sidebarCollapsed.value
-    sidebarTransitionTimer = window.setTimeout(finishSidebarTransition, 280)
-  })
-}
-
-function finishSidebarTransition(event?: TransitionEvent): void {
-  if (event && (event.target !== sidebar.value || event.propertyName !== 'width'))
-    return
-  if (sidebarTransitionTimer !== null)
-    window.clearTimeout(sidebarTransitionTimer)
-  sidebarTransitionTimer = null
-  sidebarTransitioning.value = false
-}
-
-function updateSidebarTogglePosition(event: PointerEvent): void {
-  const bounds = container.value?.getBoundingClientRect()
-  if (!bounds)
-    return
-  const halfToggleHeight = 16
-  const maximum = Math.max(halfToggleHeight, bounds.height - halfToggleHeight)
-  const offset = Math.min(maximum, Math.max(halfToggleHeight, event.clientY - bounds.top))
-  sidebarToggleTop.value = `${offset}px`
-}
-
-onBeforeUnmount(() => {
-  if (sidebarTransitionTimer !== null)
-    window.clearTimeout(sidebarTransitionTimer)
-})
 </script>
 
 <template>
   <section
     ref="container"
-    class="desktop-workbench-layout"
+    class="desktop-workbench-layout relative flex w-full h-full min-w-0 min-h-0 flex-1 bg-surface"
     :class="{
       'is-resizing': activePanel !== null,
       'is-sidebar-transitioning': sidebarTransitioning,
@@ -130,8 +89,8 @@ onBeforeUnmount(() => {
     <div
       v-if="$slots.sidebar"
       ref="sidebar"
-      class="desktop-workbench-layout__sidebar"
-      :class="{ 'is-collapsed': !sidebarVisible() }"
+      class="desktop-workbench-layout__sidebar flex min-w-0 min-h-0 flex-none overflow-hidden"
+      :class="sidebarVisible() ? 'w-workspace-sidebar opacity-100' : 'is-collapsed w-0 opacity-0 pointer-events-none invisible'"
       :aria-hidden="!sidebarVisible()"
       :inert="!sidebarVisible()"
       @transitionend="finishSidebarTransition"
@@ -140,8 +99,8 @@ onBeforeUnmount(() => {
     </div>
     <div
       v-if="sidebarResizable && sidebarVisible()"
-      class="desktop-workbench-layout__resizer desktop-workbench-layout__sidebar-resizer"
-      :class="{ 'is-active': activePanel === 'sidebar' }"
+      class="desktop-workbench-layout__resizer desktop-workbench-layout__sidebar-resizer relative z-11 w-[1px] h-full cursor-col-resize mr-[-1px] flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
+      :class="{ 'is-active after:bg-accent': activePanel === 'sidebar' }"
       data-testid="workbench-sidebar-resizer"
       role="separator"
       :aria-label="t('desktop.layout.resizeTaskSidebar')"
@@ -157,13 +116,13 @@ onBeforeUnmount(() => {
     />
     <div
       v-else-if="sidebarResizable && sidebarCollapsible"
-      class="desktop-workbench-layout__sidebar-collapsed-boundary"
+      class="desktop-workbench-layout__sidebar-collapsed-boundary relative z-12 w-[1px] h-full mr-[-1px]"
       @pointerenter="updateSidebarTogglePosition"
       @pointermove="updateSidebarTogglePosition"
     />
     <button
       v-if="sidebarResizable && sidebarCollapsible"
-      class="desktop-workbench-layout__sidebar-toggle"
+      class="desktop-workbench-layout__sidebar-toggle absolute z-12 top-[50%] left-[calc(var(--buddy-workspace-sidebar-width)_+_0.25rem)] grid w-6 h-8 place-items-center border-0 bg-transparent text-accent cursor-pointer opacity-0 outline-0 p-0 pointer-events-none hover:text-accent-hover focus-visible:(text-accent-hover outline-solid outline-2 outline-focus outline-offset-1)"
       :class="{ 'is-collapsed': !sidebarVisible() }"
       :style="sidebarToggleStyle"
       data-testid="workbench-sidebar-toggle"
@@ -177,21 +136,22 @@ onBeforeUnmount(() => {
     </button>
     <template v-for="(region, index) in regions" :key="region">
       <main
-        v-if="region === 'workspace'" v-show="!maximized" class="desktop-workbench-layout__workspace"
+        v-if="region === 'workspace'" v-show="!maximized" class="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden"
         :inert="maximized" :aria-hidden="maximized"
       >
         <slot name="workspace" />
       </main>
       <aside
-        v-else-if="$slots.context" v-show="contextVisible" :ref="setContextElement" class="desktop-workbench-layout__context"
+        v-else-if="$slots.context" v-show="contextVisible" :ref="setContextElement" class="desktop-workbench-layout__context flex w-[var(--buddy-context-panel-width)] min-w-0 min-h-0"
+        :class="maximized ? 'flex-1 border-0' : ['flex-none', contextOnLeft ? 'border-r border-r-solid border-r-border border-l-0' : 'border-l border-l-solid border-l-border']"
         :style="contextStyle" :inert="!contextVisible" :aria-hidden="!contextVisible"
       >
         <slot name="context" />
       </aside>
       <div
         v-if="index === 0 && $slots.context && contextVisible && !maximized"
-        class="desktop-workbench-layout__resizer"
-        :class="{ 'is-active': activePanel === 'context' }"
+        class="desktop-workbench-layout__resizer relative z-11 w-[1px] h-full cursor-col-resize mr-[-1px] flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
+        :class="{ 'is-active after:bg-accent': activePanel === 'context' }"
         data-testid="workbench-context-resizer"
         role="separator"
         :aria-label="t('desktop.layout.resizeContext')"
@@ -204,83 +164,21 @@ onBeforeUnmount(() => {
         @pointerdown="beginResize('context', $event)"
       />
     </template>
-    <div v-if="activePanel" class="desktop-workbench-layout__resize-shield" />
+    <div v-if="activePanel" class="absolute z-10 inset-0 cursor-col-resize" />
   </section>
 </template>
 
-<style scoped>
-.desktop-workbench-layout {
-  position: relative;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  background: var(--buddy-surface-base);
-}
-
+<style scoped lang="scss">
 .desktop-workbench-layout__sidebar {
-  display: flex;
-  width: var(--buddy-workspace-sidebar-width);
-  min-width: 0;
-  min-height: 0;
-  flex: none;
-  overflow: hidden;
-  opacity: 1;
   transition:
     width 240ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 100ms ease,
     visibility 0s linear;
   will-change: width, opacity;
-}
 
-.desktop-workbench-layout__sidebar.is-collapsed {
-  width: 0;
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-  transition-delay: 0ms, 0ms, 240ms;
-}
-
-.desktop-workbench-layout__workspace {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.desktop-workbench-layout__context {
-  display: flex;
-  width: var(--buddy-context-panel-width);
-  min-width: 0;
-  min-height: 0;
-  flex: none;
-  border-left: 1px solid var(--buddy-border-subtle);
-}
-
-.desktop-workbench-layout.is-context-on-left > .desktop-workbench-layout__context {
-  border-right: 1px solid var(--buddy-border-subtle);
-  border-left: 0;
-}
-
-.desktop-workbench-layout.is-context-maximized > .desktop-workbench-layout__context {
-  flex: 1;
-  border: 0;
-}
-
-.desktop-workbench-layout__resizer {
-  position: relative;
-  z-index: 11;
-  width: 1px;
-  height: 100%;
-  flex: 0 0 1px;
-  cursor: col-resize;
-  margin-right: -1px;
-  outline: 0;
-  touch-action: none;
+  &.is-collapsed {
+    transition-delay: 0ms, 0ms, 240ms;
+  }
 }
 
 .desktop-workbench-layout__resizer::before,
@@ -298,12 +196,7 @@ onBeforeUnmount(() => {
 }
 
 .desktop-workbench-layout__sidebar-collapsed-boundary {
-  position: relative;
-  z-index: 12;
-  width: 1px;
-  height: 100%;
   flex: 0 0 1px;
-  margin-right: -1px;
 }
 
 .desktop-workbench-layout__sidebar-collapsed-boundary::before {
@@ -312,40 +205,24 @@ onBeforeUnmount(() => {
 }
 
 .desktop-workbench-layout__sidebar-toggle {
-  position: absolute;
-  z-index: 12;
-  top: 50%;
-  left: calc(var(--buddy-workspace-sidebar-width) + 0.25rem);
-  display: grid;
-  width: 1.5rem;
-  height: 2rem;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--buddy-accent-solid);
-  cursor: pointer;
-  opacity: 0;
-  outline: 0;
-  padding: 0;
-  pointer-events: none;
   transform: translate(-0.125rem, -50%);
   transition:
     opacity 220ms ease-out 80ms,
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1) 80ms,
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-}
 
-.desktop-workbench-layout__sidebar-toggle::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  content: '';
-}
+  &::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    content: '';
+  }
 
-.desktop-workbench-layout__sidebar-toggle.is-collapsed {
-  left: 0.25rem;
+  &.is-collapsed {
+    left: 0.25rem;
+  }
 }
 
 .desktop-workbench-layout__sidebar-resizer:hover + .desktop-workbench-layout__sidebar-toggle,
@@ -356,16 +233,6 @@ onBeforeUnmount(() => {
   pointer-events: auto;
   transform: translate(0, -50%);
   transition-delay: 0ms;
-}
-
-.desktop-workbench-layout__sidebar-toggle:hover,
-.desktop-workbench-layout__sidebar-toggle:focus-visible {
-  color: var(--buddy-accent-solid-hover);
-}
-
-.desktop-workbench-layout__sidebar-toggle:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 1px;
 }
 
 .desktop-workbench-layout.is-sidebar-transitioning .desktop-workbench-layout__sidebar-toggle {
@@ -397,29 +264,17 @@ onBeforeUnmount(() => {
   transition: none;
 }
 
-.desktop-workbench-layout__resizer::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 2px;
-  background: transparent;
-  content: '';
-  transform: translateX(-0.5px);
-  transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-}
-
-.desktop-workbench-layout__resizer:hover::after,
-.desktop-workbench-layout__resizer:focus-visible::after,
-.desktop-workbench-layout__resizer.is-active::after {
-  background: var(--buddy-accent-solid);
-}
-
-.desktop-workbench-layout__resize-shield {
-  position: absolute;
-  z-index: 10;
-  inset: 0;
-  cursor: col-resize;
+.desktop-workbench-layout__resizer {
+  &::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    content: '';
+    transform: translateX(-0.5px);
+    transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
+  }
 }
 
 .desktop-workbench-layout.is-resizing,

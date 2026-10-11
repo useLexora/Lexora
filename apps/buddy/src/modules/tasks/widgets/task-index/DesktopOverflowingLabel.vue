@@ -62,43 +62,23 @@ watch(
 <template>
   <span
     ref="viewport"
-    class="desktop-overflow-label"
+    class="desktop-overflow-label block min-w-0 overflow-hidden relative whitespace-nowrap"
     :class="{ 'is-overflowing': overflowDistance > 0, 'is-scrolling': scrolling }"
     :style="style"
     @mouseenter="startScrolling"
     @mouseleave="stopScrolling"
   >
-    <span class="desktop-overflow-label__ellipsis">{{ text }}</span>
+    <span class="desktop-overflow-label__ellipsis block overflow-hidden text-ellipsis whitespace-nowrap">{{ text }}</span>
     <span
       ref="content"
       aria-hidden="true"
-      class="desktop-overflow-label__content"
+      class="desktop-overflow-label__content block w-max min-w-full opacity-0 absolute"
     >{{ text }}</span>
   </span>
 </template>
 
-<style scoped>
-.desktop-overflow-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  position: relative;
-  white-space: nowrap;
-}
-
-.desktop-overflow-label__ellipsis {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+<style scoped lang="scss">
 .desktop-overflow-label__content {
-  display: block;
-  width: max-content;
-  min-width: 100%;
-  opacity: 0;
-  position: absolute;
   inset: 0 auto auto 0;
   transform: translateX(0);
   transition: transform 160ms ease-out;

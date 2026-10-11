@@ -13,14 +13,9 @@ watch([element, () => props.target, () => props.instanceId], ([element, target, 
 </script>
 
 <template>
-  <div ref="element" class="workbench-mount-point" :data-mount-point="target" :data-mount-instance="instanceId">
-    <div class="workbench-mount-point__content">
+  <div ref="element" class="workbench-mount-point relative flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden" :data-mount-point="target" :data-mount-instance="instanceId">
+    <div class="relative flex flex-1 flex-col min-w-0 min-h-0">
       <slot />
     </div>
   </div>
 </template>
-
-<style scoped>
-.workbench-mount-point { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.workbench-mount-point__content { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
-</style>

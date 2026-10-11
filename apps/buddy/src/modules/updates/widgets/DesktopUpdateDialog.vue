@@ -37,26 +37,26 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
     <template v-if="result">
       <!-- 发现新版本视图 -->
       <template v-if="updateAvailable">
-        <header class="desktop-update-dialog__header">
-          <div class="desktop-update-dialog__icon-wrap is-update">
+        <header class="flex items-center gap-[14px] pt-[2px] pr-0 pb-[14px] pl-0">
+          <div class="desktop-update-dialog__icon-wrap is-update flex items-center justify-center flex-none w-[44px] h-[44px] rounded-[12px]">
             <DesktopIcon :component="ArrowDownload20Regular" :size="22" aria-hidden="true" />
           </div>
-          <div class="desktop-update-dialog__header-copy">
-            <div class="desktop-update-dialog__title-row">
-              <h2 class="desktop-update-dialog__version-title">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-[8px]">
+              <h2 class="m-0 text-strong text-[16px] font-600 leading-[1.35]">
                 Lexora Buddy {{ result.latestVersion }}
               </h2>
-              <span class="desktop-update-dialog__badge">{{ t('desktop.update.newTag') }}</span>
+              <span class="inline-flex items-center py-[2px] px-[7px] rounded-[9999px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t('desktop.update.newTag') }}</span>
             </div>
-            <p class="desktop-update-dialog__meta">
+            <p class="mt-[3px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
               {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
             </p>
           </div>
         </header>
 
-        <section class="desktop-update-dialog__card">
-          <div class="desktop-update-dialog__card-header">
-            <h3 class="desktop-update-dialog__card-title">
+        <section class="rounded-[8px] border border-solid border-border bg-raised py-[12px] px-[14px]">
+          <div class="flex items-center justify-between gap-[12px] mb-[8px]">
+            <h3 class="desktop-update-dialog__card-title m-0 text-strong text-[12px] font-600">
               {{ t('desktop.update.releaseNotes') }}
             </h3>
             <NButton
@@ -80,7 +80,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
             style="max-height: min(50vh, 30rem)"
           >
             <section
-              class="desktop-update-dialog__notes"
+              class="desktop-update-dialog__notes text-fg pr-[12px] [overflow-wrap:anywhere]"
               :aria-label="t('desktop.update.releaseNotes')"
               tabindex="0"
             >
@@ -93,7 +93,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
               />
             </section>
           </NScrollbar>
-          <p v-else class="desktop-update-dialog__notes-empty">
+          <p v-else class="m-0 text-muted text-[12px] leading-[1.6]">
             {{ t('desktop.update.notesUnavailable') }}
           </p>
         </section>
@@ -101,14 +101,14 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
 
       <!-- 已是最新版本视图 -->
       <template v-else>
-        <div class="desktop-update-dialog__latest-state">
-          <div class="desktop-update-dialog__icon-wrap is-latest">
+        <div class="flex flex-col items-center justify-center text-center pt-[16px] pr-0 pb-[12px] pl-0">
+          <div class="desktop-update-dialog__icon-wrap is-latest flex items-center justify-center flex-none w-[44px] h-[44px] rounded-[12px]">
             <DesktopIcon :component="CheckmarkCircle20Regular" :size="24" aria-hidden="true" />
           </div>
-          <h2 class="desktop-update-dialog__latest-title">
+          <h2 class="mt-[12px] mr-0 mb-[4px] ml-0 text-strong text-[16px] font-600 leading-[1.35]">
             {{ t('desktop.update.latest') }}
           </h2>
-          <p class="desktop-update-dialog__latest-desc">
+          <p class="m-0 text-muted text-[13px] leading-[1.5]">
             {{ t('desktop.update.latestDescription') }} (v{{ result.currentVersion }})
           </p>
         </div>
@@ -116,7 +116,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
     </template>
 
     <template #footer>
-      <div class="desktop-update-dialog__actions">
+      <div class="flex items-center justify-between gap-[12px] w-full">
         <NButton
           v-if="updateAvailable"
           quaternary
@@ -125,9 +125,9 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
         >
           {{ t('desktop.update.ignore') }}
         </NButton>
-        <div v-else class="desktop-update-dialog__spacer" />
+        <div v-else class="flex-1" />
 
-        <div class="desktop-update-dialog__primary-group">
+        <div class="flex items-center gap-[8px]">
           <NButton @click="emit('update:show', false)">
             {{ t('common.close') }}
           </NButton>
@@ -145,24 +145,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
   </NModal>
 </template>
 
-<style scoped>
-.desktop-update-dialog__header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 2px 0 14px;
-}
-
-.desktop-update-dialog__icon-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-}
-
+<style scoped lang="scss">
 .desktop-update-dialog__icon-wrap.is-update {
   background: var(--buddy-accent-surface);
   color: var(--buddy-accent-text);
@@ -175,64 +158,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
   border: 1px solid var(--buddy-status-success-border, transparent);
 }
 
-.desktop-update-dialog__header-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.desktop-update-dialog__title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.desktop-update-dialog__version-title {
-  margin: 0;
-  color: var(--buddy-text-strong);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.desktop-update-dialog__badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 9999px;
-  background: var(--buddy-accent-surface);
-  color: var(--buddy-accent-text);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.desktop-update-dialog__meta {
-  margin: 3px 0 0;
-  color: var(--buddy-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.desktop-update-dialog__card {
-  border-radius: 8px;
-  border: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-raised);
-  padding: 12px 14px;
-}
-
-.desktop-update-dialog__card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
 .desktop-update-dialog__card-title {
-  margin: 0;
-  color: var(--buddy-text-strong);
-  font-size: 12px;
-  font-weight: 600;
   letter-spacing: 0.02em;
 }
 
@@ -241,59 +167,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
 }
 
 .desktop-update-dialog__notes {
-  color: var(--buddy-text-primary);
-  padding-right: 12px;
-  overflow-wrap: anywhere;
   --buddy-chat-final-font-size: 13px;
   --buddy-chat-final-line-height: 1.7;
-}
-
-.desktop-update-dialog__notes-empty {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.desktop-update-dialog__latest-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 16px 0 12px;
-}
-
-.desktop-update-dialog__latest-title {
-  margin: 12px 0 4px;
-  color: var(--buddy-text-strong);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.desktop-update-dialog__latest-desc {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.desktop-update-dialog__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-}
-
-.desktop-update-dialog__spacer {
-  flex: 1;
-}
-
-.desktop-update-dialog__primary-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 </style>

@@ -34,7 +34,7 @@ function collapse() {
 </script>
 
 <template>
-  <div class="buddy-chat-reasoning-entry">
+  <div class="buddy-chat-reasoning-entry min-w-0">
     <button ref="header" class="buddy-chat-reasoning-entry__header buddy-chat-activity-row" type="button" :disabled="!hasContent" :aria-expanded="hasContent ? open : undefined" :aria-controls="hasContent ? bodyId : undefined" @click="emit('toggle')">
       <DesktopIcon :component="Thinking20Regular" class="buddy-chat-activity-row__icon" aria-hidden="true" />
       <BuddyChatShimmerText class="buddy-chat-reasoning-entry__label buddy-chat-activity-row__label" :mode="active && shimmer !== false ? 'continuous' : 'static'">
@@ -46,7 +46,7 @@ function collapse() {
     <BuddyChatDisclosure>
       <div v-if="open && hasContent" :id="bodyId" class="buddy-chat-reasoning-entry__content">
         <BuddyChatReasoningBody :text="node.text" />
-        <button class="buddy-chat-reasoning-entry__collapse buddy-chat-activity-row" type="button" @click="collapse">
+        <button class="buddy-chat-reasoning-entry__collapse buddy-chat-activity-row text-[length:var(--buddy-chat-caption-font-size)]" type="button" @click="collapse">
           {{ t('desktop.chat.activityCollapse') }}
         </button>
       </div>
@@ -61,11 +61,8 @@ function collapse() {
 
 .buddy-chat-reasoning-entry {
   --buddy-shimmer-base: var(--buddy-text-secondary);
-  min-width: 0;
 }
 
 .buddy-chat-reasoning-entry__content { padding-inline-start: var(--buddy-chat-activity-indent); }
 .buddy-chat-reasoning-entry__label { flex: none; }
-
-.buddy-chat-reasoning-entry__collapse { font-size: var(--buddy-chat-caption-font-size); }
 </style>

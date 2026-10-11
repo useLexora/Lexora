@@ -11,9 +11,9 @@ const failed = computed(() => [...new Set(props.groups.flatMap(group => group.it
 </script>
 
 <template>
-  <div v-if="failed.length" class="plugin-settings-status">
+  <div v-if="failed.length" class="plugin-settings-status grid gap-[0.8rem]">
     <NAlert v-for="id in failed" :key="id" type="warning" :show-icon="false">
-      <div class="plugin-settings-status__entry" role="status">
+      <div class="flex items-center justify-between gap-4" role="status">
         <span>{{ english ? `Could not load settings for ${id}.` : `无法读取 ${id} 的插件设置。` }}</span>
         <NButton size="small" :loading="pluginSettings.loading.value.has(id)" :disabled="pluginSettings.loading.value.has(id)" @click="pluginSettings.reload(id)">
           {{ english ? 'Retry' : '重试' }}
@@ -22,8 +22,3 @@ const failed = computed(() => [...new Set(props.groups.flatMap(group => group.it
     </NAlert>
   </div>
 </template>
-
-<style scoped>
-.plugin-settings-status { display: grid; gap: 0.8rem; }
-.plugin-settings-status__entry { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-</style>

@@ -108,16 +108,16 @@ async function connect(authType: 'api_key' | 'oauth') {
 
       <div
         :key="step"
-        class="desktop-provider-add-dialog__scroll"
+        class="desktop-provider-add-dialog__scroll min-h-0 overflow-auto"
         :class="{ 'is-model-step': step === 3 }"
       >
         <div v-if="step === 1" class="desktop-provider-add-dialog__body">
           <NTabs v-model:value="sourceTab" type="line" animated>
             <NTabPane name="builtin" :tab="t('desktop.providers.builtinTab')">
-              <div class="desktop-provider-add-dialog__catalog">
+              <div class="desktop-provider-add-dialog__catalog box-border p-[2px]">
                 <NInput v-model:value="providerQuery" :placeholder="t('desktop.providers.searchPlaceholder')" clearable />
-                <div v-if="filteredProviders.length" class="desktop-provider-add-dialog__provider-list-frame">
-                  <div class="desktop-provider-add-dialog__provider-list">
+                <div v-if="filteredProviders.length" class="desktop-provider-add-dialog__provider-list-frame overflow-hidden">
+                  <div class="max-h-96 overflow-auto">
                     <div v-for="provider in filteredProviders" :key="provider.id" class="desktop-provider-add-dialog__provider-row">
                       <div>
                         <strong>{{ provider.displayName }}</strong>
@@ -151,7 +151,7 @@ async function connect(authType: 'api_key' | 'oauth') {
 
         <div v-else-if="step === 2" class="desktop-provider-add-dialog__step">
           <h3>{{ t('desktop.providers.configureConnection') }}</h3>
-          <label v-if="selectedProvider && !selectedProvider.custom" class="desktop-provider-add-dialog__service-name">
+          <label v-if="selectedProvider && !selectedProvider.custom" class="desktop-provider-add-dialog__service-name grid gap-[0.35rem] max-w-112">
             <span>{{ t('desktop.providers.displayName') }}</span>
             <NInput v-model:value="builtinDisplayName" :maxlength="100" :placeholder="t('desktop.providers.displayNamePlaceholder')" />
           </label>
@@ -219,8 +219,8 @@ async function connect(authType: 'api_key' | 'oauth') {
             </div>
           </div>
 
-          <div class="desktop-provider-add-dialog__models">
-            <div class="desktop-provider-add-dialog__model-header">
+          <div class="desktop-provider-add-dialog__models min-h-0 overflow-auto">
+            <div class="sticky z-1 top-0 flex min-h-10 items-center justify-between border-b-1 border-b-solid border-b-border bg-surface text-muted text-[0.7rem] font-600 py-[0.55rem] px-[0.8rem]">
               <span>{{ t('desktop.providers.modelColumn') }}</span>
               <span>{{ t('desktop.providers.enabledColumn') }}</span>
             </div>
@@ -241,7 +241,7 @@ async function connect(authType: 'api_key' | 'oauth') {
         </div>
       </div>
 
-      <div v-if="step > 1" class="desktop-provider-add-dialog__footer">
+      <div v-if="step > 1" class="desktop-provider-add-dialog__footer flex items-center justify-between border-t-1 border-t-solid border-t-border mt-[0.8rem] pt-[0.8rem]">
         <NButton @click="goToPreviousStep">
           {{ t('desktop.providers.previous') }}
         </NButton>
@@ -265,13 +265,7 @@ async function connect(authType: 'api_key' | 'oauth') {
   />
 </template>
 
-<style scoped>
-.desktop-provider-add-dialog__service-name {
-  display: grid;
-  gap: 0.35rem;
-  max-width: 28rem;
-}
-
+<style scoped lang="scss">
 .desktop-provider-add-dialog__service-name > span {
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
@@ -306,8 +300,6 @@ async function connect(authType: 'api_key' | 'oauth') {
 
 .desktop-provider-add-dialog__scroll {
   flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
   overscroll-behavior: contain;
 }
 
@@ -317,13 +309,7 @@ async function connect(authType: 'api_key' | 'oauth') {
 }
 
 .desktop-provider-add-dialog__footer {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid var(--buddy-border-subtle);
-  margin-top: 0.8rem;
-  padding-top: 0.8rem;
 }
 
 .desktop-provider-add-dialog__title,
@@ -360,40 +346,10 @@ async function connect(authType: 'api_key' | 'oauth') {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.desktop-provider-add-dialog__provider-list {
-  max-height: 24rem;
-  overflow: auto;
-}
-
 .desktop-provider-add-dialog__provider-list-frame,
 .desktop-provider-add-dialog__models {
   border: 1px solid var(--buddy-border-subtle);
   border-radius: 0.65rem;
-}
-
-.desktop-provider-add-dialog__provider-list-frame {
-  overflow: hidden;
-}
-
-.desktop-provider-add-dialog__models {
-  min-height: 0;
-  overflow: auto;
-}
-
-.desktop-provider-add-dialog__model-header {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: flex;
-  min-height: 2.5rem;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-secondary);
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.55rem 0.8rem;
 }
 
 .desktop-provider-add-dialog__provider-row,
@@ -413,11 +369,6 @@ async function connect(authType: 'api_key' | 'oauth') {
   display: grid;
   min-width: 0;
   gap: 0.15rem;
-}
-
-.desktop-provider-add-dialog__catalog {
-  box-sizing: border-box;
-  padding: 2px;
 }
 
 .desktop-provider-add-dialog__step h3,

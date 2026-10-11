@@ -28,15 +28,15 @@ const fileName = computed(() => props.file.path.slice(parentPath.value.length))
 </script>
 
 <template>
-  <article ref="root" class="desktop-change-file-block" :data-change-id="file.id">
-    <button class="desktop-change-file-block__header" type="button" :aria-expanded="!collapsed" @click="$emit('toggle')">
+  <article ref="root" class="desktop-change-file-block min-w-0 flex-none overflow-hidden border border-solid border-border-strong rounded-[8px] bg-surface" :data-change-id="file.id">
+    <button class="desktop-change-file-block__header flex w-full min-w-0 min-h-[42px] items-center gap-[8px] py-[8px] px-[12px] border-0 bg-subtle text-fg cursor-pointer text-left hover:bg-hover ui-focus-ring" type="button" :aria-expanded="!collapsed" @click="$emit('toggle')">
       <DesktopIcon :component="collapsed ? ChevronRight16Regular : ChevronDown16Regular" />
       <FileIcon :name="file.path" />
-      <span class="desktop-change-file-block__path" :title="file.path">
-        <span v-if="parentPath" class="desktop-change-file-block__directory">{{ parentPath }}</span>
-        <span class="desktop-change-file-block__filename">{{ fileName }}</span>
+      <span class="flex min-w-0 flex-1 font-mono text-[12px] whitespace-nowrap" :title="file.path">
+        <span v-if="parentPath" class="min-w-0 overflow-hidden text-muted text-ellipsis">{{ parentPath }}</span>
+        <span class="desktop-change-file-block__filename min-w-0 max-w-full overflow-hidden font-500 text-ellipsis">{{ fileName }}</span>
       </span>
-      <span v-if="counts" class="desktop-change-file-block__counts"><span class="is-added">+{{ counts.added }}</span><span class="is-deleted">-{{ counts.deleted }}</span></span>
+      <span v-if="counts" class="flex flex-none gap-[5px] font-mono text-[11px] font-500"><span class="is-added text-success">+{{ counts.added }}</span><span class="is-deleted text-danger">-{{ counts.deleted }}</span></span>
     </button>
     <template v-if="!collapsed">
       <DesktopMonacoDiff v-if="file.preview === 'text' && visible" :before="file.beforeText ?? ''" :after="file.afterText ?? ''" :language="file.language" :path="file.path" :wrap="wrap" :side-by-side="sideBySide" :initial-height="contentHeight" :view-state="viewState" fit-content @height="contentHeight = $event" @view-state="viewState = $event">
@@ -47,30 +47,21 @@ const fileName = computed(() => props.file.path.slice(parentPath.value.length))
           {{ t('desktop.context.editorLoadFailed') }}
         </template>
       </DesktopMonacoDiff>
-      <div v-else-if="file.preview === 'text'" class="desktop-change-file-block__placeholder" :style="{ height: `${contentHeight}px` }" />
-      <div v-else class="desktop-change-file-block__unavailable">
+      <div v-else-if="file.preview === 'text'" class="bg-surface" :style="{ height: `${contentHeight}px` }" />
+      <div v-else class="desktop-change-file-block__unavailable grid min-h-[100px] p-[16px] text-muted text-[12px]">
         {{ t(`desktop.context.changePreview.${file.preview}`) }}
       </div>
-      <div v-if="file.redacted" class="desktop-change-file-block__redacted">
+      <div v-if="file.redacted" class="py-[6px] px-[12px] text-muted text-[11px]">
         {{ t('desktop.context.changeRedacted') }}
       </div>
     </template>
   </article>
 </template>
 
-<style scoped>
-.desktop-change-file-block { min-width: 0; flex: none; overflow: hidden; border: 1px solid var(--buddy-border-strong); border-radius: 8px; background: var(--buddy-surface-base); }
-.desktop-change-file-block__header { display: flex; width: 100%; min-width: 0; min-height: 42px; align-items: center; gap: 8px; padding: 8px 12px; border: 0; background: var(--buddy-surface-subtle); color: var(--buddy-text-primary); cursor: pointer; text-align: left; }
+<style scoped lang="scss">
 .desktop-change-file-block__header[aria-expanded='true'] { border-bottom: 1px solid var(--buddy-border-subtle); }
-.desktop-change-file-block__header:hover { background: var(--buddy-state-hover); }
-.desktop-change-file-block__header:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; }
-.desktop-change-file-block__path { display: flex; min-width: 0; flex: 1; font-family: var(--buddy-font-mono); font-size: 12px; white-space: nowrap; }
-.desktop-change-file-block__directory { min-width: 0; overflow: hidden; color: var(--buddy-text-muted); text-overflow: ellipsis; }
-.desktop-change-file-block__filename { min-width: 0; flex: 0 0 auto; max-width: 100%; overflow: hidden; font-weight: 500; text-overflow: ellipsis; }
-.desktop-change-file-block__counts { display: flex; flex: none; gap: 5px; font-family: var(--buddy-font-mono); font-size: 11px; font-weight: 500; }
-.is-added { color: var(--buddy-status-success-text); }
-.is-deleted { color: var(--buddy-status-danger-text); }
-.desktop-change-file-block__placeholder { background: var(--buddy-surface-base); }
-.desktop-change-file-block__unavailable { display: grid; min-height: 100px; padding: 16px; place-content: center; color: var(--buddy-text-muted); font-size: 12px; }
-.desktop-change-file-block__redacted { padding: 6px 12px; color: var(--buddy-text-muted); font-size: 11px; }
+
+.desktop-change-file-block__filename { flex: 0 0 auto; }
+
+.desktop-change-file-block__unavailable { place-content: center; }
 </style>

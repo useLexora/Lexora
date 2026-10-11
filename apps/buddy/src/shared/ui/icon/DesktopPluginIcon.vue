@@ -12,13 +12,12 @@ watch(() => props.src, () => {
 </script>
 
 <template>
-  <span class="desktop-plugin-icon" :style="{ width: length, height: length }" aria-hidden="true">
+  <span class="desktop-plugin-icon inline-flex flex-none items-center justify-center" :style="{ width: length, height: length }" aria-hidden="true">
     <img v-if="src && !failed" :src="src" alt="" draggable="false" @error="failed = true">
     <DesktopIcon v-else :component="PuzzlePiece20Regular" :size="size" />
   </span>
 </template>
 
-<style scoped>
-.desktop-plugin-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; }
+<style scoped lang="scss">
 .desktop-plugin-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
 </style>

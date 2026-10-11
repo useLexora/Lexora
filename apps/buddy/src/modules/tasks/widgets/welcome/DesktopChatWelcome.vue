@@ -1,31 +1,50 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopChatWelcomeVariant } from '@/shared/branding/welcome/desktopChatWelcomeVariants'
+import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useDesktopTheme } from '@/theme/useDesktopTheme'
 import DesktopChatWelcomeDecoration from './DesktopChatWelcomeDecoration.vue'
 
 const props = defineProps<{
   language: BuddyLocale
-  variant: DesktopChatWelcomeVariant
+  variant: DesktopChatWelcomeVariant | null
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
+const { resolved } = useDesktopTheme()
+const failedImage = shallowRef<string | null>(null)
+const welcome = computed(() => resolved.value.document.welcome)
+const custom = computed(() => welcome.value !== undefined)
+const heading = computed(() => custom.value
+  ? welcome.value?.text?.[props.language] ?? ''
+  : props.variant ? t(props.variant.titleKey) : '')
+const illustration = computed(() => {
+  const image = welcome.value?.image
+  const url = custom.value
+    ? image ? resolved.value.assets[image] : null
+    : props.variant?.illustrationUrl
+  return url && url !== failedImage.value ? url : null
+})
 </script>
 
 <template>
-  <section class="desktop-chat-welcome" :data-variant="variant.id">
+  <section v-if="heading || illustration" class="desktop-chat-welcome grid w-[min(calc(100%_-_2.5rem),_44rem)] gap-[0.55rem] my-0 mx-auto text-center" :data-variant="custom ? 'theme' : variant?.id">
     <img
-      class="desktop-chat-welcome__illustration"
-      :src="variant.illustrationUrl"
+      v-if="illustration"
+      class="desktop-chat-welcome__illustration w-[clamp(5rem,_min(26cqh,_54cqw),_16rem)] max-w-full mb-[var(--desktop-chat-welcome-illustration-offset-bottom)] select-none"
+      :src="illustration"
       alt=""
       draggable="false"
+      @error="failedImage = illustration"
     >
     <div
-      class="desktop-chat-welcome__heading"
-      :data-decoration="variant.decoration"
+      v-if="heading"
+      class="desktop-chat-welcome__heading relative max-w-[calc(100%_-_2.5rem)]"
+      :data-decoration="custom ? undefined : variant?.decoration"
     >
-      <h1>{{ t(variant.titleKey) }}</h1>
-      <DesktopChatWelcomeDecoration :type="variant.decoration" />
+      <h1>{{ heading }}</h1>
+      <DesktopChatWelcomeDecoration v-if="!custom && variant" :type="variant.decoration" />
     </div>
   </section>
 </template>
@@ -34,13 +53,7 @@ const { t } = useBuddyI18n(() => props.language)
 .desktop-chat-welcome {
   --desktop-chat-welcome-illustration-offset-x: 0%;
   --desktop-chat-welcome-illustration-offset-bottom: 0rem;
-
-  display: grid;
-  width: min(calc(100% - 2.5rem), 44rem);
   justify-items: center;
-  gap: 0.55rem;
-  margin: 0 auto;
-  text-align: center;
 }
 
 .desktop-chat-welcome[data-variant='orchestrating'] {
@@ -59,19 +72,13 @@ const { t } = useBuddyI18n(() => props.language)
 }
 
 .desktop-chat-welcome__illustration {
-  width: clamp(5rem, min(26cqh, 54cqw), 16rem);
-  max-width: 100%;
   aspect-ratio: 1;
-  margin-bottom: var(--desktop-chat-welcome-illustration-offset-bottom);
   object-fit: contain;
   transform: translateX(var(--desktop-chat-welcome-illustration-offset-x));
-  user-select: none;
 }
 
 .desktop-chat-welcome__heading {
-  position: relative;
   display: inline-grid;
-  max-width: calc(100% - 2.5rem);
   justify-items: center;
 
   h1 {

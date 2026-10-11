@@ -7,7 +7,7 @@ const emit = defineEmits<{ end: [id: string] }>()
 
 <template>
   <Teleport to="body">
-    <div v-if="entries.length" class="workbench-interactions" data-testid="workbench-interactions">
+    <div v-if="entries.length" class="workbench-interactions fixed top-[48px] right-[16px] z-2147483647 flex flex-wrap gap-[8px] max-w-[calc(100vw_-_32px)]" data-testid="workbench-interactions">
       <button v-for="entry in entries" :key="entry.id" type="button" @click="emit('end', entry.id)">
         <span>{{ language === 'zh-CN' ? '结束' : 'End' }} {{ entry.title }}</span><kbd>Esc</kbd>
       </button>
@@ -15,8 +15,7 @@ const emit = defineEmits<{ end: [id: string] }>()
   </Teleport>
 </template>
 
-<style scoped>
-.workbench-interactions { position: fixed; top: 48px; right: 16px; z-index: 2147483647; display: flex; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); }
+<style scoped lang="scss">
 .workbench-interactions button { display: flex; gap: 12px; align-items: center; border: 1px solid var(--buddy-border-subtle); border-radius: 6px; padding: 8px 12px; background: var(--buddy-surface-raised); color: var(--buddy-text-primary); font: inherit; cursor: pointer; }
 .workbench-interactions button:focus-visible { outline: 2px solid var(--buddy-accent-solid); }
 .workbench-interactions kbd { font-size: 11px; color: var(--buddy-text-secondary); }

@@ -4,7 +4,7 @@ defineProps<{ title: string }>()
 
 <template>
   <section class="conversation-status__section">
-    <h3 class="conversation-status__section-title">
+    <h3 class="mt-0 mr-0 mb-[4px] ml-0 text-fg py-0 px-[2px] text-[12px] font-500 leading-[1.5]">
       {{ title }}
     </h3>
     <slot />
@@ -18,14 +18,5 @@ defineProps<{ title: string }>()
     border-top: 1px solid var(--buddy-border-subtle);
     padding-top: 8px;
   }
-}
-
-.conversation-status__section-title {
-  margin: 0 0 4px;
-  color: var(--buddy-text-primary);
-  padding: 0 2px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
 }
 </style>

@@ -26,8 +26,8 @@ function count(value: number | null | undefined): string {
 </script>
 
 <template>
-  <div class="buddy-chat-usage-details">
-    <dl class="buddy-chat-usage-details__rows">
+  <div class="buddy-chat-usage-details w-max max-w-[calc(100vw_-_48px)] text-[12px] leading-[1.6]">
+    <dl class="buddy-chat-usage-details__rows m-0">
       <div v-for="row in rows" :key="row.key" :data-usage-detail="row.key">
         <dt>{{ t(`desktop.chat.usage.${row.key}`) }}</dt>
         <dd>{{ row.value }}</dd>
@@ -37,16 +37,7 @@ function count(value: number | null | undefined): string {
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-usage-details {
-  width: max-content;
-  max-width: calc(100vw - 48px);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .buddy-chat-usage-details__rows {
-  margin: 0;
-
   > div {
     display: flex;
     justify-content: space-between;

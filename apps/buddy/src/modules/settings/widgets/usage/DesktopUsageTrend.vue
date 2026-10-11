@@ -103,21 +103,21 @@ function navigate(event: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="usage-trend" :data-view="trend.view.value">
-    <header class="usage-trend__heading">
+  <section class="usage-trend relative min-w-0 border border-solid border-border rounded-[8px] p-[18px]" :data-view="trend.view.value">
+    <header class="usage-trend__heading flex flex-wrap items-center justify-between gap-[12px] mb-[20px]">
       <div>
         <h3 :id="headingId">
           {{ t('usageAnalytics.trend') }}
         </h3>
-        <p class="usage-trend__range">
+        <p class="usage-trend__range mt-[5px] mr-0 mb-0 ml-0 text-muted">
           {{ trend.request.value.startDate }}<template v-if="trend.request.value.startDate !== trend.request.value.endDate">
             — {{ trend.request.value.endDate }}
           </template>
         </p>
       </div>
-      <div class="usage-trend__controls">
-        <label v-if="trend.view.value !== 'year'" class="usage-trend__date">
-          <span class="usage-trend__accessible">{{ t('usageAnalytics.trendDate') }}</span>
+      <div class="flex flex-wrap items-center gap-[12px]">
+        <label v-if="trend.view.value !== 'year'" class="w-[132px]">
+          <span class="usage-trend__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap">{{ t('usageAnalytics.trendDate') }}</span>
           <NDatePicker
             :formatted-value="trend.date.value" type="date" size="small" value-format="yyyy-MM-dd"
             :is-date-disabled="isDateDisabled" @update:formatted-value="trend.setDate"
@@ -131,32 +131,26 @@ function navigate(event: KeyboardEvent) {
       </div>
     </header>
     <DesktopPaneBoundary :loading="trend.loading.value" :error="trend.error.value" :label="t('desktop.loading.pane')" :retry-label="t('desktop.loading.retry')" @retry="trend.retry">
-      <div class="usage-trend__plot">
+      <div class="relative min-w-0">
         <div
-          ref="chart" class="usage-trend__chart" role="group" tabindex="0" :aria-labelledby="headingId" :aria-describedby="helpId"
+          ref="chart" class="usage-trend__chart relative w-full h-[242px] overflow-hidden rounded-[4px] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]" role="group" tabindex="0" :aria-labelledby="headingId" :aria-describedby="helpId"
           @focus="inspect(buckets.length - 1)" @blur="dismiss" @keydown="navigate" @pointerleave="dismiss"
         />
-        <p v-if="!hasRecords" class="usage-trend__empty">
+        <p v-if="!hasRecords" class="usage-trend__empty absolute grid m-0 place-items-center bg-surface text-muted text-[12px] pointer-events-none">
           {{ t('usageAnalytics.empty') }}
         </p>
-        <span :id="helpId" class="usage-trend__accessible">{{ t('usageAnalytics.trendKeyboard') }}</span>
-        <span class="usage-trend__accessible" aria-live="polite">{{ activeIndex === null ? '' : labels[activeIndex] }}</span>
+        <span :id="helpId" class="usage-trend__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap">{{ t('usageAnalytics.trendKeyboard') }}</span>
+        <span class="usage-trend__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap" aria-live="polite">{{ activeIndex === null ? '' : labels[activeIndex] }}</span>
       </div>
     </DesktopPaneBoundary>
   </section>
 </template>
 
-<style scoped>
-.usage-trend { position: relative; min-width: 0; border: 1px solid var(--buddy-border-subtle); border-radius: 8px; padding: 18px; }
-.usage-trend__heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+<style scoped lang="scss">
 .usage-trend__heading h3 { margin: 0; color: var(--buddy-text-strong); font-size: 14px; font-weight: 600; }
-.usage-trend__range { margin: 5px 0 0; color: var(--buddy-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
-.usage-trend__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.usage-trend__date { width: 132px; }
+.usage-trend__range { font-size: 11px; font-variant-numeric: tabular-nums; }
+
 .usage-trend__views { flex: none; }
-.usage-trend__plot { position: relative; min-width: 0; }
-.usage-trend__chart { position: relative; width: 100%; height: 242px; overflow: hidden; border-radius: 4px; }
-.usage-trend__chart:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 2px; }
-.usage-trend__empty { position: absolute; inset: 60px 20px 60px 52px; display: grid; margin: 0; place-items: center; background: var(--buddy-surface-base); color: var(--buddy-text-secondary); font-size: 12px; pointer-events: none; }
-.usage-trend__accessible { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.usage-trend__empty { inset: 60px 20px 60px 52px; }
+.usage-trend__accessible { clip-path: inset(50%); }
 </style>

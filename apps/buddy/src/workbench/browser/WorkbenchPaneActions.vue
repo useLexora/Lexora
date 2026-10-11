@@ -37,14 +37,8 @@ function select(key: string) {
 
 <template>
   <NDropdown trigger="click" :options="options" @select="select">
-    <button class="workbench-pane-actions" type="button" :aria-label="labels.layout" data-testid="pane-layout-menu">
+    <button class="workbench-pane-actions grid place-items-center w-8 h-8 border-0 rounded-icon text-fg bg-transparent cursor-pointer hover:bg-hover ui-focus-ring" type="button" :aria-label="labels.layout" data-testid="pane-layout-menu">
       <DesktopIcon :component="MoreHorizontal20Regular" />
     </button>
   </NDropdown>
 </template>
-
-<style scoped>
-.workbench-pane-actions { display: grid; place-items: center; width: 2rem; height: 2rem; border: 0; border-radius: var(--buddy-icon-button-radius); color: var(--buddy-text-primary); background: transparent; cursor: pointer; }
-.workbench-pane-actions:hover { background: var(--buddy-state-hover); }
-.workbench-pane-actions:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; }
-</style>

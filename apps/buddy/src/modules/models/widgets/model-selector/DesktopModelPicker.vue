@@ -25,8 +25,8 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
 </script>
 
 <template>
-  <section class="desktop-model-picker">
-    <div class="desktop-model-picker__search">
+  <section class="desktop-model-picker grid overflow-hidden w-[min(29rem,_calc(100vw_-_18rem))] min-w-88 max-h-[min(25rem,_62vh)] border-1 border-solid border-border rounded-menu bg-raised shadow-overlay">
+    <div class="desktop-model-picker__search border-b-1 border-b-solid border-b-border p-[0.55rem]">
       <NInput
         v-model:value="query"
         clearable
@@ -39,35 +39,35 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
       </NInput>
     </div>
 
-    <div v-if="visibleGroups.length" class="desktop-model-picker__body">
-      <div class="desktop-model-picker__providers">
+    <div v-if="visibleGroups.length" class="grid h-[min(17.75rem,_calc(62vh_-_6.5rem))] min-h-0 grid-cols-[minmax(8.5rem,_0.8fr)_minmax(12rem,_1.35fr)] overflow-hidden">
+      <div class="desktop-model-picker__providers border-r-1 border-r-solid border-r-border bg-subtle grid content-start gap-[0.15rem] overflow-x-hidden overflow-y-auto p-[0.45rem]">
         <button
           v-for="group in visibleGroups"
           :key="group.providerId"
-          class="desktop-model-picker__provider"
-          :class="{ 'is-active': activeGroup?.providerId === group.providerId }"
+          class="desktop-model-picker__provider min-h-[2.2rem] ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
+          :class="{ 'is-active font-650': activeGroup?.providerId === group.providerId }"
           type="button"
           :aria-pressed="activeGroup?.providerId === group.providerId"
           @click="activeProviderId = group.providerId"
         >
-          <span>{{ group.providerName }}</span>
-          <small>{{ group.models.length }}</small>
+          <span class="min-w-0 truncate text-[0.76rem]">{{ group.providerName }}</span>
+          <small class="text-muted text-[0.66rem]">{{ group.models.length }}</small>
         </button>
       </div>
 
-      <div class="desktop-model-picker__models" role="menu">
+      <div class="desktop-model-picker__models grid content-start gap-[0.15rem] overflow-x-hidden overflow-y-auto p-[0.45rem]" role="menu">
         <button
           v-for="model in activeGroup?.models ?? []"
           :key="modelKey(model)"
-          class="desktop-model-picker__model"
+          class="desktop-model-picker__model h-13 min-h-13 ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
           type="button"
           role="menuitemradio"
           :aria-checked="selectedModelId === modelKey(model)"
           @click="emit('select', modelKey(model))"
         >
-          <span class="desktop-model-picker__model-copy">
-            <strong>{{ model.displayName }}</strong>
-            <small>{{ model.modelId }}</small>
+          <span class="desktop-model-picker__model-copy grid min-w-0 flex-1 gap-[0.08rem]">
+            <strong class="min-w-0 truncate text-[0.78rem] font-650">{{ model.displayName }}</strong>
+            <small class="min-w-0 truncate text-muted text-[0.66rem]">{{ model.modelId }}</small>
           </span>
           <DesktopIcon
             v-if="selectedModelId === modelKey(model)"
@@ -77,142 +77,15 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
       </div>
     </div>
 
-    <span v-else class="desktop-model-picker__empty">
+    <span v-else class="min-h-32 text-muted text-[0.72rem] py-10 px-4 text-center">
       {{ t('desktop.chat.noMatchingModels') }}
     </span>
   </section>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-model-picker {
-  display: grid;
-  overflow: hidden;
-  width: min(29rem, calc(100vw - 18rem));
-  min-width: 22rem;
-  max-height: min(25rem, 62vh);
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--desktop-model-popover-radius, 3px);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-overlay);
-}
-
-.desktop-model-picker__search {
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0.55rem;
-}
-
-.desktop-model-picker__body {
-  display: grid;
-  height: min(17.75rem, calc(62vh - 6.5rem));
-  min-height: 0;
-  grid-template-columns: minmax(8.5rem, 0.8fr) minmax(12rem, 1.35fr);
-  overflow: hidden;
-}
-
-.desktop-model-picker__providers,
-.desktop-model-picker__models {
-  display: grid;
-  align-content: start;
-  gap: 0.15rem;
-  overflow: hidden auto;
-  padding: 0.45rem;
-}
-
-.desktop-model-picker__providers {
-  border-right: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-subtle);
-}
-
-.desktop-model-picker__provider,
-.desktop-model-picker__model {
-  border: 0;
-  border-radius: var(--buddy-menu-item-radius);
-  background: transparent;
-  color: var(--buddy-text-strong);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.desktop-model-picker__provider,
-.desktop-model-picker__model {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.42rem 0.55rem;
-}
-
-.desktop-model-picker__provider {
-  min-height: 2.2rem;
-}
-
-.desktop-model-picker__model {
-  height: 3.25rem;
-  min-height: 3.25rem;
-}
-
-.desktop-model-picker__provider:hover,
-.desktop-model-picker__provider:focus-visible,
-.desktop-model-picker__provider.is-active,
-.desktop-model-picker__model:hover,
-.desktop-model-picker__model:focus-visible {
-  background: var(--buddy-state-hover);
-  outline: 0;
-}
-
-.desktop-model-picker__provider.is-active {
-  background: var(--buddy-accent-surface);
-  color: var(--buddy-accent-on-surface);
-  font-weight: 650;
-}
-
-.desktop-model-picker__provider span,
-.desktop-model-picker__model-copy strong,
-.desktop-model-picker__model-copy small {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-model-picker__provider span {
-  font-size: 0.76rem;
-}
-
-.desktop-model-picker__provider small {
-  color: var(--buddy-text-muted);
-  font-size: 0.66rem;
-}
-
-.desktop-model-picker__model-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 0.08rem;
-}
-
-.desktop-model-picker__model-copy strong {
-  font-size: 0.78rem;
-  font-weight: 650;
-}
-
-.desktop-model-picker__model-copy small {
-  color: var(--buddy-text-muted);
-  font-size: 0.66rem;
-}
-
-.desktop-model-picker__empty {
-  min-height: 8rem;
-  color: var(--buddy-text-muted);
-  font-size: 0.72rem;
-  padding: 2.5rem 1rem;
-  text-align: center;
-}
-
-@media (max-width: 760px) {
-  .desktop-model-picker {
+  @media (max-width: 760px) {
     width: min(24rem, calc(100vw - 2rem));
     min-width: 20rem;
   }

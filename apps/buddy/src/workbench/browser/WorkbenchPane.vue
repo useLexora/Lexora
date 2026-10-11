@@ -38,11 +38,11 @@ const drop = computed(() => dropPosition.value?.paneId === props.pane.id ? dropP
 </script>
 
 <template>
-  <section ref="element" class="workbench-pane" :class="{ 'is-focused': focused }" :data-pane-id="pane.id" tabindex="-1" @focusin="controller.activate(pane.id)" @pointerdown="controller.activate(pane.id)">
+  <section ref="element" class="workbench-pane relative flex flex-col min-w-0 min-h-0 h-full overflow-hidden bg-canvas" :class="{ 'is-focused': focused }" :data-pane-id="pane.id" tabindex="-1" @focusin="controller.activate(pane.id)" @pointerdown="controller.activate(pane.id)">
     <WorkbenchMountPoint target="workbench.pane" :instance-id="pane.id">
       <WorkbenchSurface v-for="id in viewIds" :key="id" :view-id="id" :preparing="id !== pane.view" />
       <WorkbenchSlot v-if="!pane.view" target="workbench.pane.empty" class="workbench-pane__empty-slot">
-        <div class="workbench-pane__empty">
+        <div class="workbench-pane__empty m-auto p-[24px] text-center text-[12px] text-muted">
           <p>{{ labels.empty }}</p>
           <button type="button" @click="controller.commands.execute('task.new', { source: 'menu' })">
             {{ labels.newTask }}
@@ -51,17 +51,15 @@ const drop = computed(() => dropPosition.value?.paneId === props.pane.id ? dropP
       </WorkbenchSlot>
     </WorkbenchMountPoint>
     <WorkbenchNavigationStatus v-if="pending" :key="pending.view.id" :entry="pending" />
-    <div v-if="drop" class="workbench-pane__drop" :class="drop" :data-drop-position="drop" />
+    <div v-if="drop" class="workbench-pane__drop absolute inset-0 z-10 border-2 border-solid border-accent pointer-events-none" :class="drop" :data-drop-position="drop" />
   </section>
 </template>
 
-<style scoped>
-.workbench-pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--buddy-surface-canvas); }
+<style scoped lang="scss">
 .workbench-pane.is-focused { box-shadow: inset 0 2px var(--buddy-accent-solid); }
-.workbench-pane__empty { margin: auto; padding: 24px; text-align: center; font-size: 12px; color: var(--buddy-text-secondary); }
 .workbench-pane__empty-slot { width: 100%; margin: auto; }
 .workbench-pane__empty button { background: var(--buddy-state-hover); color: var(--buddy-text-primary); border: 1px solid var(--buddy-border-subtle); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-.workbench-pane__drop { position: absolute; inset: 0; z-index: 10; background: color-mix(in srgb, var(--buddy-accent-solid) 16%, transparent); border: 2px solid var(--buddy-accent-solid); pointer-events: none; }
+.workbench-pane__drop { background: color-mix(in srgb, var(--buddy-accent-solid) 16%, transparent); }
 .workbench-pane__drop.left { right: 50%; }
 .workbench-pane__drop.right { left: 50%; }
 .workbench-pane__drop.up { bottom: 50%; }

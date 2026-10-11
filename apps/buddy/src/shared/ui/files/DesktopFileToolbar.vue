@@ -15,16 +15,16 @@ const segments = computed(() => [props.rootName, ...props.path.split('/').filter
 </script>
 
 <template>
-  <div class="desktop-file-toolbar">
+  <div class="desktop-file-toolbar flex w-full min-w-0 items-center gap-[8px] pt-0 pr-[10px] pb-0 pl-[14px]">
     <slot>
-      <div class="desktop-file-toolbar__path">
+      <div class="desktop-file-toolbar__path flex flex-1 min-w-0 items-center gap-[5px] overflow-hidden text-[12px] text-muted">
         <template v-for="(segment, index) in segments" :key="index">
           <DesktopIcon v-if="index" :component="ChevronRight16Regular" />
           <span :class="{ 'is-current': index === segments.length - 1 }">{{ segment }}</span>
         </template>
       </div>
     </slot>
-    <div class="desktop-file-toolbar__actions">
+    <div class="flex flex-none gap-[4px]">
       <DesktopContextAction :icon="ArrowClockwise20Regular" :label="t('desktop.context.refreshFiles')" @click="$emit('refresh')" />
       <DesktopContextAction :icon="ArrowWrap20Regular" :label="t('desktop.context.wrap')" :active="wrap" @click="$emit('toggleWrap')" />
       <DesktopContextAction :icon="treeVisible ? DirectoryTreeExpandedIcon : DirectoryTreeCollapsedIcon" :label="t(treeVisible ? 'desktop.context.hideTree' : 'desktop.context.showTree')" :active="treeVisible" @click="$emit('toggleTree')" />
@@ -32,11 +32,8 @@ const segments = computed(() => [props.rootName, ...props.path.split('/').filter
   </div>
 </template>
 
-<style scoped>
-.desktop-file-toolbar { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 0 10px 0 14px; }
-.desktop-file-toolbar__path { display: flex; flex: 1; min-width: 0; align-items: center; gap: 5px; overflow: hidden; font-size: 12px; color: var(--buddy-text-muted); }
+<style scoped lang="scss">
 .desktop-file-toolbar__path > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-file-toolbar__path > .is-current { flex: 0 0 auto; max-width: 70%; color: var(--buddy-text-primary); }
 .desktop-file-toolbar__path :deep(.n-icon) { flex: none; font-size: 12px; }
-.desktop-file-toolbar__actions { display: flex; flex: none; gap: 4px; }
 </style>

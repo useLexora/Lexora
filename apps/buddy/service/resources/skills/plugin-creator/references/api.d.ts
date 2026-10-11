@@ -110,6 +110,7 @@ export interface ConditionApi {
   invalidate: (input?: { condition?: string, scopeKey?: string }) => Promise<void>
 }
 export interface ExtensionContext {
+  readonly themes: ThemeApi
   readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 }
   readonly events: EventSubscriber<ExtensionEvents>
   readonly configuration: {
@@ -174,6 +175,7 @@ export interface WorkbenchContextSnapshot {
   readonly pages: readonly { readonly id: string, readonly title: string }[]
 }
 export interface ViewContext {
+  readonly themes: ThemeApi
   readonly events: EventSubscriber<ViewEvents>
   readonly interaction: {
     readonly id: string
@@ -214,6 +216,7 @@ export interface ViewContext {
 export interface ViewEnvironment {
   readonly language: string
   readonly colorScheme: 'light' | 'dark'
+  readonly themeRevision?: number
   readonly colors: Readonly<Record<string, string>>
 }
 export interface ViewStateEvents {
@@ -246,3 +249,49 @@ export interface ExtensionModule {
   migrate?: (previous: Json, from: number, to: number) => Json | Promise<Json>
 }
 export interface ViewModule { render: (context: ViewContext, container: HTMLElement) => void | Promise<void> }
+
+export type ThemeColor = 'app-sidebar-fg' | 'workspace-sidebar-fg' | 'reading' | 'reading-fg' | 'composer' | 'composer-fg' | 'hover-fg' | 'selected-fg' | 'pressed-fg' | 'link' | 'quote' | 'quote-border' | 'inline-code' | 'inline-code-fg' | 'code' | 'code-fg' | 'table-header' | 'table-border' | 'diff-added' | 'diff-removed' | 'editor' | 'editor-fg' | 'editor-line' | 'editor-gutter' | 'editor-cursor' | 'syntax-comment' | 'syntax-keyword' | 'syntax-string' | 'syntax-number' | 'syntax-function' | 'syntax-type' | 'syntax-variable' | 'syntax-operator' | 'terminal-background' | 'terminal-foreground' | 'terminal-muted' | 'terminal-scrollbar' | 'terminal-mauve' | 'terminal-blue' | 'terminal-green' | 'terminal-yellow' | 'terminal-peach' | 'terminal-maroon' | 'terminal-sky' | 'terminal-rosewater' | 'canvas' | 'app-sidebar' | 'workspace-sidebar' | 'surface' | 'raised' | 'subtle' | 'user-message' | 'hover' | 'pressed' | 'selected' | 'selected-hover' | 'nav-hover' | 'nav-selected' | 'nav-selected-hover' | 'nav-pressed' | 'nav-foreground' | 'border' | 'border-strong' | 'strong' | 'fg' | 'muted' | 'disabled' | 'on-accent' | 'accent' | 'accent-hover' | 'accent-pressed' | 'accent-text' | 'focus' | 'text-selection' | 'text-selection-inactive' | 'text-selection-match' | 'accent-subtle' | 'accent-surface' | 'accent-surface-hover' | 'accent-surface-pressed' | 'accent-border' | 'accent-border-hover' | 'accent-on-surface' | 'success' | 'success-solid' | 'success-surface' | 'success-surface-hover' | 'success-border' | 'warning' | 'warning-solid' | 'warning-surface' | 'warning-surface-hover' | 'warning-border' | 'danger' | 'danger-solid' | 'danger-surface' | 'danger-surface-hover' | 'danger-border' | 'gold' | 'gold-surface' | 'avatar' | 'avatar-foreground' | 'data-violet' | 'data-cyan' | 'data-blue'
+export type ThemeAppearance = 'light' | 'dark'
+export interface ThemePreference { id: string }
+export interface ThemeDescriptor { id: string, label: string, appearance: ThemeAppearance, source: 'plugin' | 'user' | 'fallback', extensionId: string | null, packageName: string, swatch: string }
+export interface ThemeMaterial {
+  anchor: 'app.sidebar' | 'workbench.sidebar' | 'workbench.pane' | 'composer.input'
+  image?: string
+  color?: string
+  gradient?: { angle: number, stops: { color: string, at: number }[] }
+  opacity?: number
+  imageOpacity?: number
+  scale?: number
+  blur?: number
+  position?: [number, number]
+  size?: 'cover' | 'contain'
+}
+export interface ThemeDocument {
+  schemaVersion: 1
+  colors?: Partial<Record<ThemeColor, string>>
+  shadows?: Partial<Record<'soft' | 'raised' | 'overlay' | 'window' | 'illustration', { x: number, y: number, blur: number, spread?: number, color: string }[]>>
+  materials?: ThemeMaterial[]
+  welcome?: { text?: { 'zh-CN': string, 'en-US': string } | null, image?: string | null }
+}
+export interface ThemeArchive { schemaVersion: 1, label: string, appearance: ThemeAppearance, document: ThemeDocument, assets?: Record<string, string> }
+export interface ResolvedTheme { descriptor: ThemeDescriptor, colors: Record<ThemeColor, string>, variables: Record<string, string>, document: ThemeDocument, assets: Record<string, string> }
+export interface ThemeSnapshot { revision: number, preference: ThemePreference, active: ResolvedTheme, themes: ThemeDescriptor[], unavailable: string | null, preview: boolean }
+export interface ThemePreview { token: string, revision: number }
+export interface ThemeApi {
+  list: () => Promise<ThemeDescriptor[]>
+  get: (id: string) => Promise<{ descriptor: ThemeDescriptor, document: ThemeDocument }>
+  getActive: () => Promise<ThemeSnapshot>
+  describe: () => Promise<{ schema: Json, colors: ThemeColor[], anchors: ThemeMaterial['anchor'][], precedence: string[] }>
+  validate: (document: unknown) => Promise<{ valid: boolean, diagnostics: { path: string, message: string }[] }>
+  resolve: (appearance: ThemeAppearance, document: ThemeDocument, overrides?: Partial<Record<ThemeColor, string>>) => Promise<ResolvedTheme>
+  save: (archive: ThemeArchive, id?: string) => Promise<ThemeDescriptor>
+  remove: (id: string) => Promise<void>
+  setPreference: (preference: ThemePreference) => Promise<ThemeSnapshot>
+  beginPreview: (archive: ThemeArchive) => Promise<ThemePreview>
+  updatePreview: (preview: ThemePreview, archive: ThemeArchive) => Promise<ThemePreview>
+  commitPreview: (preview: ThemePreview) => Promise<ThemeDescriptor>
+  cancelPreview: (token: string) => Promise<void>
+  import: (content: string) => Promise<ThemeDescriptor>
+  export: (id: string) => Promise<string>
+  onDidChange: (listener: (snapshot: ThemeSnapshot) => void) => Disposable
+}

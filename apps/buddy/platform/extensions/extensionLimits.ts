@@ -1,0 +1,2 @@
+export const EXTENSION_FILE_LIMIT = 4 * 1024 * 1024
+export const EXTENSION_PACKAGE_LIMIT = 16 * 1024 * 1024

@@ -31,7 +31,7 @@ it('delivers each broadcast once per frame only within the matching extension an
   const app = createApp({
     setup() {
       views = useExtensionViews(api as ExtensionApi, installed, shallowRef({}))
-      useProvideExtensionContext({ settingsLocation: () => null, state: { installed, api } as ExtensionContext['state'], views, ui: useExtensionUiContributions(installed, controller.configuration), anchors: new SemanticAnchorRegistry(), workbench: shallowRef({ values: {}, pages: [] }), language: shallowRef('en-US'), isDark: shallowRef(false), endInteraction: () => {}, focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
+      useProvideExtensionContext({ settingsLocation: () => null, state: { installed, api } as ExtensionContext['state'], views, ui: useExtensionUiContributions(installed, controller.configuration), anchors: new SemanticAnchorRegistry(), workbench: shallowRef({ values: {}, pages: [] }), language: shallowRef('en-US'), themeColors: shallowRef({}), isDark: shallowRef(false), endInteraction: () => {}, focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
       return () => h(DesktopExtensionFrameHost, { layout })
     },
   })

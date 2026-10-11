@@ -28,6 +28,8 @@ node extensions/tools.mjs pack .output/extensions/my-plugin .output/extensions/m
 
 `icon` 可指定包内 SVG、PNG、JPEG 或 WebP 图标（最多 64 KiB），用于导航、插件卡片与安装弹窗。未提供图标时显示默认线框图标。
 
+API 3 支持一个插件提供多个完整主题、可选欢迎文字与图片，以及主题编辑器接口；见 [主题开发](../service/resources/skills/plugin-creator/references/themes.md)。主题包可仅包含 JSON 和图片。
+
 API 3 还支持原生设置模块、分组和单项，以及带权限的 Agent 指令、工具、模型请求和当前任务标题更新。先通过能力目录确认宿主支持，再声明最低应用版本；接口与示例见 [Agent 与设置](../service/resources/skills/plugin-creator/references/agent-settings.md)。
 
 `format: "source"` 支持自包含 TS/JS 源码。Lexora 使用固定编译器，不执行 npm 安装、脚本或第三方构建配置。只能导入包内相对路径；含运行时 npm 依赖的插件需要作者预先打包为 `format: "compiled"`。已编译包直接安装，源码包确认权限后编译，失败不会替换已安装版本。
@@ -35,6 +37,8 @@ API 3 还支持原生设置模块、分组和单项，以及带权限的 Agent �
 宿主入口导出 `activate(context)`，可选 `deactivate()`。通过 `context.commands.register` 注册清单中声明的命令；订阅资源使用 `context.subscriptions` 清理。`permissions.notifications` 开放系统通知，`permissions.schedules` 开放 Lexora 运行期间的定时命令。定时配置跨重启保存，休眠或退出期间错过的提醒不会补发，卸载会删除定时任务。
 
 视图入口导出 `render(context, container)`，在隔离页面中运行。`location: "context"` 用于上下文标签；`location: "page"` 配合 `contributes.navigation` 可在自动化下方添加入口。通过 `context.commands.execute` 调用自己的宿主命令；使用 `context.environment` 的语言、主题与颜色适配外观，通过 `context.onEnvironmentChange` 响应变化。事件和定时器随 `context.signal` 取消。
+
+源码包在清单中添加 `"styles": { "uno": true }` 后，可直接使用 UnoCSS 和跟随宿主品牌色的语义类，例如 `flex gap-2 bg-accent text-on-accent p-3`。编译器生成并打包 `lexora-uno.css`，视图自动加载；动态类使用完整字符串或 `styles.safelist`。详见[主题与样式](../service/resources/skills/plugin-creator/references/protocol.md#主题与样式)。
 
 `location: "window-overlay"` 提供独立挂载的透明窗口效果，需要 `permissions.windowEffects`。通过 `context.onActivity` 接收不包含输入文字或按键的对话输入活动；视图不会拦截鼠标或焦点，禁用时立即移除。
 

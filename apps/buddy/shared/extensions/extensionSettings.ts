@@ -1,7 +1,7 @@
 import type { EventSnapshot } from '../events/eventTypes'
 import { z } from 'zod'
-import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog'
-import { extensionConditionReferenceSchema } from './extensionConditions'
+import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog.ts'
+import { extensionConditionReferenceSchema } from './extensionConditions.ts'
 
 export const extensionSettingIdSchema = z.string().max(180).regex(/^[a-z][a-z0-9.-]+$/)
 export const extensionSettingKeySchema = z.string().max(80).regex(/^[a-z][a-zA-Z0-9]*$/)

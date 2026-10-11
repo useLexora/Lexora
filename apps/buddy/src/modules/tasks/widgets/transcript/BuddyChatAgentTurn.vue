@@ -79,12 +79,12 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 
 <template>
   <section
-    class="buddy-chat-agent-turn"
+    class="buddy-chat-agent-turn grid min-w-0 items-start"
     :class="`is-${turn.status}`"
   >
-    <div v-if="showIdentity !== false" class="buddy-chat-agent-turn__heading">
+    <div v-if="showIdentity !== false" class="flex min-w-0 items-center justify-between gap-[12px]">
       <BuddyChatAgentIdentity :language="language" />
-      <div v-if="!isActive" class="buddy-chat-agent-turn__status">
+      <div v-if="!isActive" class="buddy-chat-agent-turn__status inline-flex flex-none items-baseline gap-[6px] text-muted text-[length:var(--buddy-chat-tool-font-size)] leading-[20px]">
         <span class="buddy-chat-agent-turn__status-label">{{ statusLabel }}</span>
         <span class="buddy-chat-agent-turn__duration">{{ duration }}</span>
       </div>
@@ -97,7 +97,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     />
     <p
       v-if="resultNoticeText"
-      class="buddy-chat-agent-turn__result"
+      class="buddy-chat-agent-turn__result mt-[var(--buddy-chat-gap-section)] mr-0 mb-0 ml-0 text-[14px] leading-[1.6] whitespace-pre-wrap"
       :data-task-result-run-id="!isActive ? turn.runId : undefined"
       :class="{ 'is-failure': notice?.kind === 'failure' }"
     >
@@ -122,28 +122,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 
 <style scoped lang="scss">
 .buddy-chat-agent-turn {
-  display: grid;
-  min-width: 0;
-  align-items: start;
   color: var(--buddy-chat-process-color);
-}
-
-.buddy-chat-agent-turn__heading {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.buddy-chat-agent-turn__status {
-  display: inline-flex;
-  flex: none;
-  align-items: baseline;
-  gap: 6px;
-  color: var(--buddy-text-muted);
-  font-size: var(--buddy-chat-tool-font-size);
-  line-height: 20px;
 }
 
 .buddy-chat-agent-turn__duration {
@@ -155,11 +134,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 }
 
 .buddy-chat-agent-turn__result {
-  margin: var(--buddy-chat-gap-section) 0 0;
   color: var(--buddy-chat-tool-body-color);
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
 
   &.is-failure {
     color: var(--buddy-chat-danger-color);

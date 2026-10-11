@@ -24,7 +24,7 @@ const summary = computed(() => t('desktop.chat.turnChanges', {
 
 <template>
   <button
-    class="buddy-chat-turn-changes"
+    class="buddy-chat-turn-changes flex w-fit max-w-full items-center gap-[0.45rem] border-0 rounded-micro bg-transparent text-muted cursor-pointer py-1 px-[0.125rem] text-left hover:bg-accent-subtle hover:text-accent-text focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
     data-testid="chat-turn-changes"
     type="button"
     @click="emit('openChanges', changeSet.changeSetId)"
@@ -35,33 +35,7 @@ const summary = computed(() => t('desktop.chat.turnChanges', {
   </button>
 </template>
 
-<style scoped>
-.buddy-chat-turn-changes {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  gap: 0.45rem;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-muted);
-  cursor: pointer;
-  font: inherit;
-  padding: 0.25rem 0.125rem;
-  text-align: left;
-}
-
-.buddy-chat-turn-changes:hover {
-  background: var(--buddy-accent-surface-subtle);
-  color: var(--buddy-accent-text);
-}
-
-.buddy-chat-turn-changes:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 2px;
-}
-
+<style scoped lang="scss">
 .buddy-chat-turn-changes > :deep(.n-icon) {
   width: 1rem;
   height: 1rem;

@@ -70,20 +70,20 @@ defineExpose({
 </script>
 
 <template>
-  <section class="conversation-canvas" data-testid="conversation-canvas" :data-direction="direction">
-    <div ref="container" class="conversation-canvas__graph" />
+  <section class="conversation-canvas relative flex-1 min-h-0 overflow-hidden bg-surface" data-testid="conversation-canvas" :data-direction="direction">
+    <div ref="container" class="conversation-canvas__graph absolute inset-0" />
     <Teleport v-for="[id, host] in canvas.nodeHosts" :key="id" :to="host.container">
       <ConversationMessageNode :node="host.node" />
     </Teleport>
-    <div ref="controls" class="conversation-canvas__controls">
+    <div ref="controls" class="absolute top-[16px] left-[16px] grid w-[280px] gap-[8px]">
       <ConversationCanvasToolbar
         v-model:direction="direction" v-model:minimap-visible="minimapVisible"
         :zoom="canvas.zoom.value" :language="language"
         @arrange="canvas.resetLayout" @fit="canvas.fit" @zoom-by="canvas.zoomBy" @reset-zoom="canvas.resetZoom"
       />
-      <div v-show="minimapVisible" ref="minimapContainer" class="conversation-canvas__minimap" data-testid="canvas-minimap" />
+      <div v-show="minimapVisible" ref="minimapContainer" class="conversation-canvas__minimap w-full h-[176px] overflow-hidden border-1 border-solid border-border rounded-[10px] bg-raised" data-testid="canvas-minimap" />
     </div>
-    <div v-if="loading || error" class="conversation-canvas__notice" role="status">
+    <div v-if="loading || error" class="conversation-canvas__notice absolute top-[18px] left-[50%] py-[10px] px-[16px] bg-raised border-1 border-solid border-border rounded-[8px] text-muted text-[12px]" role="status">
       {{ error || t('desktop.canvas.loading') }}
       <button v-if="error" type="button" @click="emit('refresh')">
         {{ t('desktop.canvas.reload') }}
@@ -93,12 +93,9 @@ defineExpose({
 </template>
 
 <style scoped lang="scss">
-.conversation-canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--buddy-surface-base); }
-.conversation-canvas__graph { position: absolute; inset: 0; }
-.conversation-canvas__controls { position: absolute; top: 16px; left: 16px; display: grid; width: 280px; gap: 8px; }
-.conversation-canvas__notice { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); padding: 10px 16px; background: var(--buddy-surface-raised); border: 1px solid var(--buddy-border-subtle); border-radius: 8px; color: var(--buddy-text-secondary); font-size: 12px; }
+.conversation-canvas__notice { transform: translateX(-50%); }
 .conversation-canvas__notice button { margin-left: 8px; border: 0; background: transparent; color: var(--buddy-accent-text); font-size: 12px; cursor: pointer; }
-.conversation-canvas__minimap { width: 100%; height: 176px; overflow: hidden; border: 1px solid var(--buddy-border-subtle); border-radius: 10px; background: var(--buddy-surface-raised); box-shadow: 0 3px 12px rgb(0 0 0 / 3%); }
+.conversation-canvas__minimap { box-shadow: 0 3px 12px rgb(0 0 0 / 3%); }
 .conversation-canvas__minimap :deep(.x6-widget-minimap-viewport) { border-color: var(--buddy-accent-text); background: color-mix(in srgb, var(--buddy-accent-text) 8%, transparent); }
 .conversation-canvas :deep(.x6-node foreignObject) { overflow: visible; }
 .conversation-canvas :deep(.x6-widget-snapline-horizontal), .conversation-canvas :deep(.x6-widget-snapline-vertical) { stroke: var(--buddy-accent-text); }

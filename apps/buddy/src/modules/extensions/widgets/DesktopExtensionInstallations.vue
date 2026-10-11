@@ -23,15 +23,15 @@ const errors = computed((): Record<string, string> => en.value
 </script>
 
 <template>
-  <div class="installation-list" data-testid="extension-installation-log">
+  <div class="installation-list grid gap-[16px]" data-testid="extension-installation-log">
     <NEmpty v-if="!jobs.length" :description="en ? 'No installation records' : '暂无安装记录'" />
-    <article v-for="job in jobs" :key="job.id" class="installation-record" :data-installation-id="job.id" :data-status="job.status">
+    <article v-for="job in jobs" :key="job.id" class="installation-record border-b-1 border-b-solid border-b-border pb-[16px] text-[13px] [overflow-wrap:anywhere]" :data-installation-id="job.id" :data-status="job.status">
       <header>
         <strong>{{ job.name }}</strong><NTag size="small" :bordered="false" :type="job.status === 'failed' ? 'error' : 'default'">
           {{ statuses[job.status] }}
         </NTag>
       </header>
-      <p class="installation-record__meta">
+      <p class="text-muted text-[12px]">
         {{ new Date(job.startedAt).toLocaleString(language) }} · {{ stages[job.stage] }}
       </p>
       <p v-if="job.error" role="status">
@@ -52,11 +52,9 @@ const errors = computed((): Record<string, string> => en.value
   </div>
 </template>
 
-<style scoped>
-.installation-list { display: grid; gap: 16px; }
-.installation-record { border-bottom: 1px solid var(--buddy-border-subtle); padding-bottom: 16px; font-size: 13px; overflow-wrap: anywhere; }
+<style scoped lang="scss">
 .installation-record header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.installation-record__meta { color: var(--buddy-text-secondary); font-size: 12px; }
+
 .installation-record details { margin: 12px 0; }
 .installation-record summary { cursor: pointer; }
 .installation-record ol { list-style: none; padding: 0; line-height: 1.8; font-family: monospace; font-size: 11px; }

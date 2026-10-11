@@ -136,7 +136,7 @@ function selectAddress(event: FocusEvent): void {
 
 <template>
   <form
-    class="desktop-browser-toolbar"
+    class="desktop-browser-toolbar relative z-2 flex min-w-0 w-full h-13 flex-none items-center gap-[0.375rem] bg-surface p-2"
     :class="{ 'desktop-browser-toolbar--incognito': isIncognito }"
     :aria-label="t('desktop.context.browserToolbar')"
     novalidate
@@ -145,7 +145,7 @@ function selectAddress(event: FocusEvent): void {
     <NTooltip placement="bottom">
       <template #trigger>
         <button
-          class="desktop-browser-toolbar__action"
+          class="desktop-browser-toolbar__action grid w-9 h-9 flex-none place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer ui-focus-ring disabled:cursor-default disabled:opacity-40"
           data-testid="browser-back"
           type="button"
           :aria-label="t('desktop.context.browserBack')"
@@ -160,7 +160,7 @@ function selectAddress(event: FocusEvent): void {
     <NTooltip placement="bottom">
       <template #trigger>
         <button
-          class="desktop-browser-toolbar__action"
+          class="desktop-browser-toolbar__action grid w-9 h-9 flex-none place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer ui-focus-ring disabled:cursor-default disabled:opacity-40"
           data-testid="browser-forward"
           type="button"
           :aria-label="t('desktop.context.browserForward')"
@@ -172,17 +172,17 @@ function selectAddress(event: FocusEvent): void {
       </template>
       <span role="tooltip">{{ t('desktop.context.browserForward') }}</span>
     </NTooltip>
-    <label class="desktop-browser-toolbar__label" :for="addressId">
+    <label class="desktop-browser-toolbar__label absolute w-[1px] h-[1px] overflow-hidden whitespace-nowrap" :for="addressId">
       {{ t('desktop.context.browserAddressLabel') }}
     </label>
     <div
-      class="desktop-browser-toolbar__address-shell"
+      class="desktop-browser-toolbar__address-shell flex min-w-0 h-9 flex-1 items-center border-1 border-solid border-transparent rounded-[0.625rem] bg-subtle focus-within:outline-solid focus-within:outline-2 focus-within:outline-focus focus-within:outline-offset-[-2px] hover:border-border focus-within:border-transparent focus-within:bg-surface"
       :data-security-kind="state?.security.kind ?? 'blank'"
     >
       <NTooltip placement="bottom">
         <template #trigger>
           <span
-            class="desktop-browser-toolbar__security"
+            class="desktop-browser-toolbar__security grid w-8 h-full flex-none place-items-center text-muted"
             data-testid="browser-security"
           >
             <DesktopIcon aria-hidden="true" :component="securityIcon" />
@@ -194,7 +194,7 @@ function selectAddress(event: FocusEvent): void {
         :id="addressId"
         v-model="address"
         :disabled="!state"
-        class="desktop-browser-toolbar__address"
+        class="desktop-browser-toolbar__address min-w-0 h-full flex-1 border-0 bg-transparent text-strong text-[0.78rem] pt-0 pr-[0.625rem] pb-0 pl-0"
         data-testid="browser-address"
         autocomplete="off"
         inputmode="url"
@@ -208,7 +208,7 @@ function selectAddress(event: FocusEvent): void {
     <NTooltip v-if="isIncognito" placement="bottom">
       <template #trigger>
         <span
-          class="desktop-browser-toolbar__incognito"
+          class="desktop-browser-toolbar__incognito flex h-8 flex-none items-center gap-[0.3rem] rounded-[0.375rem] text-fg text-[0.72rem] font-600 py-0 px-[0.375rem] whitespace-nowrap"
           data-testid="browser-incognito-indicator"
         >
           <DesktopIcon aria-hidden="true" :component="TabInPrivate20Regular" />
@@ -220,7 +220,7 @@ function selectAddress(event: FocusEvent): void {
     <NTooltip placement="bottom">
       <template #trigger>
         <button
-          class="desktop-browser-toolbar__action"
+          class="desktop-browser-toolbar__action grid w-9 h-9 flex-none place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer ui-focus-ring disabled:cursor-default disabled:opacity-40"
           data-testid="browser-reload-stop"
           type="button"
           :aria-label="t(isLoading ? 'desktop.context.browserStop' : 'desktop.context.browserReload')"
@@ -245,7 +245,7 @@ function selectAddress(event: FocusEvent): void {
       @select="handleMenuAction"
     >
       <button
-        class="desktop-browser-toolbar__action"
+        class="desktop-browser-toolbar__action grid w-9 h-9 flex-none place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer ui-focus-ring disabled:cursor-default disabled:opacity-40"
         data-testid="browser-more"
         type="button"
         :aria-label="t('desktop.context.browserMoreActions')"
@@ -257,91 +257,19 @@ function selectAddress(event: FocusEvent): void {
   </form>
 </template>
 
-<style scoped>
-.desktop-browser-toolbar {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  height: 3.25rem;
-  flex: none;
-  align-items: center;
-  gap: 0.375rem;
-  background: var(--buddy-surface-base);
-  padding: 0.5rem;
-}
-
+<style scoped lang="scss">
 .desktop-browser-toolbar--incognito {
-  background: color-mix(in srgb, var(--buddy-surface-muted) 82%, #4d4267 18%);
+  background: color-mix(in srgb, var(--buddy-surface-subtle) 82%, #4d4267 18%);
 }
 
 .desktop-browser-toolbar__label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
   clip: rect(0 0 0 0);
   clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.desktop-browser-toolbar__action {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  cursor: pointer;
 }
 
 .desktop-browser-toolbar__action:not(:disabled):hover {
   background: var(--buddy-state-hover);
   color: var(--buddy-text-strong);
-}
-
-.desktop-browser-toolbar__action:focus-visible,
-.desktop-browser-toolbar__address-shell:focus-within {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
-.desktop-browser-toolbar__action:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.desktop-browser-toolbar__address-shell {
-  display: flex;
-  min-width: 0;
-  height: 2.25rem;
-  flex: 1;
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 0.625rem;
-  background: var(--buddy-surface-muted);
-}
-
-.desktop-browser-toolbar__address-shell:hover {
-  border-color: var(--buddy-border-subtle);
-}
-
-.desktop-browser-toolbar__address-shell:focus-within {
-  border-color: transparent;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-browser-toolbar__security {
-  display: grid;
-  width: 2rem;
-  height: 100%;
-  flex: none;
-  place-items: center;
-  color: var(--buddy-text-muted);
 }
 
 .desktop-browser-toolbar__address-shell[data-security-kind='certificate-error']
@@ -352,30 +280,7 @@ function selectAddress(event: FocusEvent): void {
 }
 
 .desktop-browser-toolbar__address {
-  min-width: 0;
-  height: 100%;
-  flex: 1;
-  border: 0;
   outline: 0;
-  background: transparent;
-  color: var(--buddy-text-strong);
-  font: inherit;
-  font-size: 0.78rem;
-  padding: 0 0.625rem 0 0;
-}
-
-.desktop-browser-toolbar__incognito {
-  display: flex;
-  height: 2rem;
-  flex: none;
-  align-items: center;
-  gap: 0.3rem;
-  border-radius: 0.375rem;
-  color: var(--buddy-text-primary);
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0 0.375rem;
-  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {

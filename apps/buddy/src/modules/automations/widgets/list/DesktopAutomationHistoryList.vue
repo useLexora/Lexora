@@ -144,15 +144,15 @@ function confirmDelete(): void {
 </script>
 
 <template>
-  <div v-if="groups.length" class="desktop-automation-history-list">
+  <div v-if="groups.length" class="desktop-automation-history-list grid gap-[14px]">
     <section
       v-for="group in groups"
       :key="group.key"
-      class="desktop-automation-history-group"
+      class="desktop-automation-history-group grid gap-[2px]"
     >
-      <h2 class="desktop-automation-history-group__heading">
+      <h2 class="m-0">
         <button
-          class="desktop-automation-history-group__toggle"
+          class="desktop-automation-history-group__toggle flex w-full min-h-[28px] items-center gap-[4px] border-0 rounded-micro bg-transparent text-muted cursor-pointer text-[12px] font-600 py-[4px] px-[12px] text-left hover:text-muted ui-focus-ring"
           type="button"
           :aria-controls="`automation-history-group-${group.key}`"
           :aria-expanded="!isGroupCollapsed(group.key)"
@@ -168,12 +168,12 @@ function confirmDelete(): void {
       <div
         v-show="!isGroupCollapsed(group.key)"
         :id="`automation-history-group-${group.key}`"
-        class="desktop-automation-history-group__items"
+        class="grid gap-[2px]"
       >
         <article
           v-for="occurrence in group.items"
           :key="occurrence.id"
-          class="desktop-automation-history-item"
+          class="desktop-automation-history-item grid w-full min-h-[46px] box-border grid-cols-[minmax(0,_1fr)_auto] items-center border-0 rounded-micro bg-transparent text-inherit hover:bg-hover focus-within:bg-hover"
         >
           <component
             :is="occurrence.conversationId ? 'button' : 'div'"
@@ -182,12 +182,12 @@ function confirmDelete(): void {
             :type="occurrence.conversationId ? 'button' : undefined"
             @click="openOccurrence(occurrence)"
           >
-            <span class="desktop-automation-history-item__content">
+            <span class="desktop-automation-history-item__content flex min-w-0 items-baseline gap-[9px]">
               <strong>{{ occurrence.automationName }}</strong>
               <span>{{ t(automationEffectiveStatusKey(occurrence)) }}</span>
             </span>
           </component>
-          <div class="desktop-automation-history-item__trailing">
+          <div class="desktop-automation-history-item__trailing relative grid min-w-[82px] min-h-[34px] grid-cols-[auto_18px] items-center gap-[10px] pr-[12px]">
             <time :datetime="occurrenceTime(occurrence).toISOString()">
               {{ formatTime(occurrence) }}
             </time>
@@ -197,7 +197,7 @@ function confirmDelete(): void {
               :class="`is-${automationHistoryStatusIcon(occurrence.effectiveStatus)}`"
               :component="statusIconComponent(occurrence.effectiveStatus)"
             />
-            <div class="desktop-automation-history-item__actions">
+            <div class="desktop-automation-history-item__actions absolute right-[8px] opacity-0 pointer-events-none">
               <NDropdown
                 trigger="click"
                 :options="actionOptions"
@@ -249,71 +249,9 @@ function confirmDelete(): void {
 </template>
 
 <style scoped lang="scss">
-.desktop-automation-history-list {
-  display: grid;
-  gap: 14px;
-}
-
-.desktop-automation-history-group {
-  display: grid;
-  gap: 2px;
-}
-
-.desktop-automation-history-group__heading {
-  margin: 0;
-}
-
 .desktop-automation-history-group__toggle {
-  display: flex;
-  width: 100%;
-  min-height: 28px;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 12px;
-  text-align: left;
-
-  &:hover {
-    color: var(--buddy-text-secondary);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
   .n-icon {
     font-size: 14px;
-  }
-}
-
-.desktop-automation-history-group__items {
-  display: grid;
-  gap: 2px;
-}
-
-.desktop-automation-history-item {
-  display: grid;
-  width: 100%;
-  min-height: 46px;
-  box-sizing: border-box;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: inherit;
-
-  &:hover,
-  &:focus-within {
-    background: var(--buddy-surface-subtle);
   }
 }
 
@@ -340,11 +278,6 @@ function confirmDelete(): void {
 }
 
 .desktop-automation-history-item__content {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 9px;
-
   strong {
     overflow: hidden;
     color: var(--buddy-text-strong);
@@ -366,27 +299,9 @@ function confirmDelete(): void {
   color: var(--buddy-text-muted);
 }
 
-.desktop-automation-history-item__trailing {
-  position: relative;
-  display: grid;
-  min-width: 82px;
-  min-height: 34px;
-  grid-template-columns: auto 18px;
-  align-items: center;
-  gap: 10px;
-  padding-right: 12px;
-}
-
 .desktop-automation-history-item__trailing time {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-}
-
-.desktop-automation-history-item__actions {
-  position: absolute;
-  right: 8px;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .desktop-automation-history-item:hover .desktop-automation-history-item__result-icon,

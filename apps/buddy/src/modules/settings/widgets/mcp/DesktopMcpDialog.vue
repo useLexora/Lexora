@@ -67,8 +67,8 @@ async function openSettings(category: 'mcp' | 'runtime') {
     @update:show="value => !value && emit('close')"
   >
     <template #header>
-      <div class="mcp-quick-panel__header">
-        <span class="mcp-quick-panel__title">{{ t('desktop.settings.category.mcp') }}</span>
+      <div class="flex items-center gap-3">
+        <span class="font-600 text-[0.95rem]">{{ t('desktop.settings.category.mcp') }}</span>
         <NButton text size="tiny" class="mcp-quick-panel__manage-btn" :disabled="!!busyId" @click="openSettings('mcp')">
           {{ t('desktop.mcp.manageConnections') }}
         </NButton>
@@ -94,9 +94,7 @@ async function openSettings(category: 'mcp' | 'runtime') {
   <DesktopMcpToolsDialog v-if="toolList && toolConnector" :connector="toolConnector" :tools="toolList.tools" :language="language" @close="toolList = null" />
 </template>
 
-<style scoped>
-.mcp-quick-panel__header { display: flex; align-items: center; gap: 0.75rem; }
-.mcp-quick-panel__title { font-weight: 600; font-size: 0.95rem; }
+<style scoped lang="scss">
 .mcp-quick-panel__manage-btn { color: var(--buddy-text-secondary); font-size: 0.78rem; transition: color 0.15s ease; }
 .mcp-quick-panel__manage-btn:hover { color: var(--buddy-text-primary); }
 .mcp-quick-panel__loading, .mcp-quick-panel__empty { display: flex; justify-content: center; padding: 2rem 0; }

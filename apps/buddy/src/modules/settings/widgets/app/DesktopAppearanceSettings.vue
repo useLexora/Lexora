@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type {
   DesktopChatWelcomePreference,
-  LexoraConfigPatch,
 } from '@buddy-electron/shared/desktopApi'
 import type { ApplicationSettingsProps } from './typing'
 import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '@buddy-electron/shared/desktopApi'
@@ -9,20 +8,22 @@ import { NSelect, NSpin, useMessage } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopWelcomePreferencePicker from '@/modules/settings/widgets/app/DesktopWelcomePreferencePicker.vue'
+import { useSettingMutation } from '../../state/useSettingMutation'
+import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
+import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
+import DesktopThemeSettings from './DesktopThemeSettings.vue'
 
-type AppearanceSettingField = 'theme' | 'welcome' | 'outlinePosition'
+type AppearanceSettingField = 'welcome' | 'outlinePosition'
 
 const props = defineProps<ApplicationSettingsProps>()
 
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
-const pendingFields = shallowRef<ReadonlySet<AppearanceSettingField>>(new Set())
+const { pending: pendingFields, save: updateSetting } = useSettingMutation<AppearanceSettingField>(
+  patch => props.updateSettings(patch),
+  () => message.error(t('desktop.settings.saveFailed')),
+)
 const pendingWelcomePreference = shallowRef<DesktopChatWelcomePreference | null>(null)
-const themeOptions = computed(() => [
-  { label: t('desktop.settings.themeSystem'), value: 'system' },
-  { label: t('desktop.settings.themeLight'), value: 'light' },
-  { label: t('desktop.settings.themeDark'), value: 'dark' },
-])
 const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map(position => ({
   label: t(`desktop.settings.outlinePosition.${position}`),
   value: position,
@@ -33,19 +34,6 @@ const activeWelcomePreference = computed(() => (
   ?? 'random'
 ))
 
-async function updateSetting(field: AppearanceSettingField, patch: LexoraConfigPatch) {
-  if (pendingFields.value.has(field))
-    return
-  pendingFields.value = new Set([...pendingFields.value, field])
-  try {
-    if (!await props.updateSettings(patch))
-      message.error(t('desktop.settings.saveFailed'))
-  }
-  finally {
-    pendingFields.value = new Set([...pendingFields.value].filter(item => item !== field))
-  }
-}
-
 async function updateWelcomePreference(preference: DesktopChatWelcomePreference) {
   pendingWelcomePreference.value = preference
   await updateSetting('welcome', { desktop: { chat: { welcome: preference } } })
@@ -54,129 +42,38 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
 </script>
 
 <template>
-  <section v-if="config" class="desktop-appearance-settings">
-    <section class="desktop-appearance-settings__section">
-      <h2>{{ t('desktop.settings.applicationAppearance') }}</h2>
-      <div class="desktop-appearance-settings__group">
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('desktop.settings.theme') }}</strong>
-          </div>
-          <div class="desktop-settings-row__control">
-            <NSelect
-              :options="themeOptions"
-              :value="config.desktop.theme"
-              @update:value="updateSetting('theme', { desktop: { theme: $event } })"
-            />
-            <NSpin v-if="pendingFields.has('theme')" size="small" />
-          </div>
-        </div>
-      </div>
+  <section v-if="config" class="desktop-appearance-settings grid gap-[1.8rem] [container-type:inline-size]">
+    <section class="grid gap-[0.8rem]">
+      <h2 class="m-0 text-[0.92rem]">
+        {{ t('desktop.settings.applicationAppearance') }}
+      </h2>
+      <DesktopThemeSettings :language="language" />
     </section>
-    <section class="desktop-appearance-settings__section">
-      <h2>{{ t('desktop.settings.conversationAppearance') }}</h2>
-      <div class="desktop-appearance-settings__group">
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('desktop.settings.outlinePosition') }}</strong>
-            <small>{{ t('desktop.settings.outlinePositionDescription') }}</small>
-          </div>
-          <div class="desktop-settings-row__control">
-            <NSelect
-              :options="outlinePositionOptions"
-              :value="config.desktop.chat.outlinePosition"
-              :disabled="pendingFields.has('outlinePosition')"
-              @update:value="updateSetting('outlinePosition', { desktop: { chat: { outlinePosition: $event } } })"
-            />
-            <NSpin v-if="pendingFields.has('outlinePosition')" size="small" />
-          </div>
-        </div>
-        <div class="desktop-settings-row">
-          <div>
-            <strong>{{ t('desktop.settings.welcome') }}</strong>
-          </div>
-          <div class="desktop-settings-row__control">
-            <DesktopWelcomePreferencePicker
-              :language="language"
-              :pending="pendingFields.has('welcome')"
-              :value="activeWelcomePreference"
-              @select="updateWelcomePreference"
-            />
-            <NSpin v-if="pendingFields.has('welcome')" size="small" />
-          </div>
-        </div>
-      </div>
+    <section class="grid gap-[0.8rem]">
+      <h2 class="m-0 text-[0.92rem]">
+        {{ t('desktop.settings.conversationAppearance') }}
+      </h2>
+      <DesktopSettingsGroup>
+        <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.outlinePosition')" :description="t('desktop.settings.outlinePositionDescription')">
+          <NSelect
+            v-bind="controlAttrs"
+            :options="outlinePositionOptions"
+            :value="config.desktop.chat.outlinePosition"
+            :disabled="pendingFields.has('outlinePosition')"
+            @update:value="updateSetting('outlinePosition', { desktop: { chat: { outlinePosition: $event } } })"
+          />
+          <NSpin v-if="pendingFields.has('outlinePosition')" size="small" />
+        </DesktopSettingRow>
+        <DesktopSettingRow :label="t('desktop.settings.welcome')">
+          <DesktopWelcomePreferencePicker
+            :language="language"
+            :pending="pendingFields.has('welcome')"
+            :value="activeWelcomePreference"
+            @select="updateWelcomePreference"
+          />
+          <NSpin v-if="pendingFields.has('welcome')" size="small" />
+        </DesktopSettingRow>
+      </DesktopSettingsGroup>
     </section>
   </section>
 </template>
-
-<style scoped lang="scss">
-.desktop-appearance-settings {
-  display: grid;
-  gap: 1.8rem;
-  container-type: inline-size;
-}
-
-.desktop-appearance-settings__section {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.desktop-appearance-settings__section h2 {
-  margin: 0;
-  font-size: 0.92rem;
-}
-
-.desktop-appearance-settings__group {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-settings-row {
-  display: grid;
-  min-height: 4rem;
-  grid-template-columns: minmax(0, 1fr) minmax(10rem, 19rem);
-  align-items: center;
-  gap: 2rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0.75rem 0.9rem;
-}
-
-.desktop-settings-row:last-child {
-  border-bottom: 0;
-}
-
-.desktop-settings-row > div:first-child {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.desktop-settings-row strong {
-  color: var(--buddy-text-primary);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.desktop-settings-row small {
-  color: var(--buddy-text-secondary);
-  font-size: 0.7rem;
-  line-height: 1.5;
-}
-
-.desktop-settings-row__control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-@container (max-width: 560px) {
-  .desktop-settings-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.7rem;
-  }
-
-}
-</style>

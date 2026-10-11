@@ -3,18 +3,12 @@ defineSlots<{ default: () => unknown, toolbar?: () => unknown }>()
 </script>
 
 <template>
-  <div class="workbench-panel-content">
-    <div v-if="$slots.toolbar" class="workbench-panel-content__toolbar">
+  <div class="workbench-panel-content flex flex-1 min-w-0 min-h-0 flex-col">
+    <div v-if="$slots.toolbar" class="flex min-w-0 flex-none min-h-[var(--buddy-context-toolbar-height)] items-center border-b-1 border-b-solid border-b-border">
       <slot name="toolbar" />
     </div>
-    <div class="workbench-panel-content__body">
+    <div class="flex flex-1 min-w-0 min-h-0 overflow-hidden">
       <slot />
     </div>
   </div>
 </template>
-
-<style scoped>
-.workbench-panel-content { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.workbench-panel-content__toolbar { display: flex; min-width: 0; flex: none; min-height: var(--buddy-context-toolbar-height); align-items: center; border-bottom: 1px solid var(--buddy-border-subtle); }
-.workbench-panel-content__body { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-</style>

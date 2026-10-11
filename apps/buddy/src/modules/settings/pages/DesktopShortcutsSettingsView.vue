@@ -118,15 +118,15 @@ function confirmReset() {
         {{ t('desktop.shortcuts.resetAll') }}
       </NButton>
     </template>
-    <div class="shortcut-settings" data-testid="shortcut-settings">
+    <div class="shortcut-settings grid min-w-0 gap-4" data-testid="shortcut-settings">
       <NInput v-model:value="query" clearable :placeholder="t('desktop.shortcuts.search')" />
-      <div class="shortcut-settings__scroll">
+      <div class="overflow-x-auto">
         <table>
           <thead><tr><th>{{ t('desktop.shortcuts.command') }}</th><th>{{ t('desktop.shortcuts.binding') }}</th><th>{{ t('desktop.shortcuts.scope') }}</th><th>{{ t('desktop.shortcuts.actions') }}</th></tr></thead>
           <tbody>
             <tr v-for="entry in entries" :key="entry.id" :data-command-id="entry.id">
               <td>
-                <div class="shortcut-settings__command">
+                <div class="shortcut-settings__command flex flex-wrap items-center gap-[0.45rem]">
                   <strong>{{ entry.label }}</strong>
                   <NTag v-if="entry.modified" size="small" type="info" :bordered="false">
                     {{ t('desktop.shortcuts.custom') }}
@@ -134,15 +134,15 @@ function confirmReset() {
                 </div>
               </td>
               <td>
-                <div class="shortcut-settings__bindings">
+                <div class="flex flex-wrap items-center gap-[0.35rem]">
                   <kbd v-for="binding in [entry.binding, ...entry.alternatives].filter(Boolean)" :key="binding">{{ format(binding) }}</kbd><span v-if="!entry.binding">{{ t('desktop.shortcuts.unassigned') }}</span>
                 </div>
               </td>
-              <td class="shortcut-settings__scope">
+              <td class="text-muted whitespace-nowrap">
                 {{ t(`desktop.shortcuts.scope.${entry.scope}`) }}
               </td>
-              <td class="shortcut-settings__action">
-                <div class="shortcut-settings__action-buttons">
+              <td class="w-20">
+                <div class="flex items-center gap-1">
                   <NTooltip>
                     <template #trigger>
                       <NButton class="buddy-icon-button" size="small" quaternary :disabled="saving" :aria-label="t('desktop.shortcuts.edit')" @click="edit(entry)">
@@ -169,12 +169,12 @@ function confirmReset() {
           </tbody>
         </table>
       </div>
-      <p v-if="!entries.length" class="shortcut-settings__note">
+      <p v-if="!entries.length" class="m-0 text-muted text-[0.75rem] leading-[1.65]">
         {{ t('desktop.shortcuts.noResults') }}
       </p>
     </div>
     <NModal v-model:show="resetConfirming" preset="dialog" type="warning" class="shortcut-reset-dialog" :title="t('desktop.shortcuts.resetAll')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
-      <p class="shortcut-dialog__description">
+      <p class="m-0 text-muted text-[0.82rem] leading-[1.6]">
         {{ t('desktop.shortcuts.resetConfirm') }}
       </p>
       <template #action>
@@ -187,11 +187,11 @@ function confirmReset() {
       </template>
     </NModal>
     <NModal v-model:show="showRestore" preset="dialog" class="shortcut-restore-dialog" :title="t('desktop.shortcuts.restoreShortcut')" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
-      <div v-if="restoring" class="shortcut-dialog__body">
-        <p class="shortcut-dialog__description">
+      <div v-if="restoring" class="grid gap-4">
+        <p class="m-0 text-muted text-[0.82rem] leading-[1.6]">
           {{ t('desktop.shortcuts.restoreShortcutConfirm', { name: restoring.label }) }}
         </p>
-        <div class="shortcut-dialog__default">
+        <div class="flex items-center justify-between gap-4 border border-solid border-border rounded-2 p-3 text-muted text-[0.75rem]">
           <span>{{ t('desktop.shortcuts.default') }}</span>
           <kbd v-if="restoring.defaultBinding">{{ format(restoring.defaultBinding) }}</kbd>
           <span v-else>{{ t('desktop.shortcuts.unassigned') }}</span>
@@ -207,20 +207,20 @@ function confirmReset() {
       </template>
     </NModal>
     <NModal v-model:show="showEditor" preset="card" :title="editing?.label" class="shortcut-editor" :style="{ width: 'min(31rem, calc(100vw - 2rem))' }" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
-      <div class="shortcut-editor__body">
-        <p class="shortcut-dialog__description">
+      <div class="grid gap-4">
+        <p class="m-0 text-muted text-[0.82rem] leading-[1.6]">
           {{ t('desktop.shortcuts.recordHint') }}
         </p>
         <NInput ref="recorder" :value="format(candidate)" readonly clearable :placeholder="t('desktop.shortcuts.pressKeys')" data-testid="shortcut-recorder" @keydown="capture" @update:value="updateCandidate" />
-        <p v-if="invalid" class="shortcut-settings__error" role="alert">
+        <p v-if="invalid" class="text-danger text-[0.8rem]" role="alert">
           {{ t('desktop.shortcuts.invalid') }}
         </p>
-        <p v-if="conflicts.length" class="shortcut-settings__error" role="alert">
+        <p v-if="conflicts.length" class="text-danger text-[0.8rem]" role="alert">
           {{ t('desktop.shortcuts.conflict', { names: conflicts.map(entry => entry.label).join('、') }) }}
         </p>
       </div>
       <template #footer>
-        <div class="shortcut-dialog__actions">
+        <div class="flex justify-end gap-[0.6rem]">
           <NButton :disabled="saving" @click="editing = null">
             {{ t('desktop.shortcuts.cancel') }}
           </NButton>
@@ -233,26 +233,13 @@ function confirmReset() {
   </DesktopSettingsModuleLayout>
 </template>
 
-<style scoped>
-.shortcut-settings { display: grid; min-width: 0; gap: 1rem; }
-.shortcut-settings__scroll { overflow-x: auto; }
+<style scoped lang="scss">
 table { border-collapse: collapse; width: 100%; text-align: left; font-size: 0.8rem; }
 th { color: var(--buddy-text-secondary); font-size: 0.75rem; font-weight: 500; }
 th, td { border-bottom: 1px solid var(--buddy-border-subtle); padding: 0.8rem 0.5rem; }
 th:first-child, td:first-child { padding-left: 0; }
 td strong { display: block; font-weight: 500; }
-.shortcut-settings__command { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
 .shortcut-settings__command strong { display: inline; }
-.shortcut-settings__bindings { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+
 kbd { padding: 0.2rem 0.4rem; border: 1px solid var(--buddy-border-subtle); border-radius: 4px; font-family: inherit; font-size: 0.75rem; white-space: nowrap; }
-.shortcut-settings__scope { color: var(--buddy-text-secondary); white-space: nowrap; }
-.shortcut-settings__action { width: 5rem; }
-.shortcut-settings__action-buttons { display: flex; align-items: center; gap: 0.25rem; }
-.shortcut-settings__note { margin: 0; color: var(--buddy-text-secondary); font-size: 0.75rem; line-height: 1.65; }
-.shortcut-settings__error { color: var(--buddy-status-danger-text); font-size: 0.8rem; }
-.shortcut-dialog__description { margin: 0; color: var(--buddy-text-secondary); font-size: 0.82rem; line-height: 1.6; }
-.shortcut-dialog__actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
-.shortcut-dialog__body { display: grid; gap: 1rem; }
-.shortcut-dialog__default { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border: 1px solid var(--buddy-border-subtle); border-radius: 0.5rem; padding: 0.75rem; color: var(--buddy-text-secondary); font-size: 0.75rem; }
-.shortcut-editor__body { display: grid; gap: 1rem; }
 </style>

@@ -3,12 +3,12 @@ import { compileExtensionSource } from '../../../platform/extensions/compileExte
 import { validateExtensionFiles } from '../../../platform/extensions/extensionFiles'
 import { extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
 
-process.parentPort.once('message', (event) => {
+process.parentPort.once('message', async (event) => {
   try {
     const files = new Map<string, Uint8Array>(event.data.files)
     validateExtensionFiles(files)
     const manifest = extensionManifestSchema.parse(event.data.manifest)
-    const result = compileExtensionSource(files, manifest, message => process.parentPort.postMessage({ kind: 'log', message }))
+    const result = await compileExtensionSource(files, manifest, message => process.parentPort.postMessage({ kind: 'log', message }))
     validateExtensionFiles(result)
     process.parentPort.postMessage({ kind: 'result', files: [...result] })
   }

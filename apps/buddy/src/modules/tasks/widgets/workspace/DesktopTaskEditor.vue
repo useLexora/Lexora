@@ -66,7 +66,7 @@ useProvideChatContent({
 </script>
 
 <template>
-  <div class="desktop-task-editor">
+  <div class="desktop-task-editor flex flex-1 min-w-0 min-h-0 flex-col">
     <DesktopMcpDialog v-if="mcpPanelOpen" @close="mcpPanelOpen = false" />
     <DesktopChatWorkspaceHeader
       :task-id="activeTaskId"
@@ -93,13 +93,12 @@ useProvideChatContent({
               class="buddy-icon-button"
               quaternary
               :theme-overrides="{ heightMedium: '2rem' }"
-              :type="statusPanelOpen ? 'primary' : 'default'"
               :aria-expanded="statusPanelOpen"
               :aria-label="t('desktop.chat.status.title')"
               data-testid="conversation-status-toggle"
             >
               <template #icon>
-                <DesktopIcon :component="Pulse20Regular" :size="18" />
+                <DesktopIcon :class="{ 'text-accent-on-surface': statusPanelOpen }" :component="Pulse20Regular" :size="18" />
               </template>
             </NButton>
           </template>
@@ -145,6 +144,6 @@ useProvideChatContent({
   </div>
 </template>
 
-<style scoped>
-.desktop-task-editor { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; container: task-pane / size; }
+<style scoped lang="scss">
+.desktop-task-editor { container: task-pane / size; }
 </style>

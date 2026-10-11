@@ -41,9 +41,9 @@ const {
 </script>
 
 <template>
-  <div v-if="provider" class="desktop-provider-detail">
-    <section v-if="!provider.setupComplete" class="desktop-provider-detail__notice">
-      <div>
+  <div v-if="provider" class="desktop-provider-detail grid gap-[1.8rem]">
+    <section v-if="!provider.setupComplete" class="desktop-provider-detail__notice flex items-center gap-[0.8rem] justify-between border-1 border-solid border-border-strong rounded-[0.65rem] bg-subtle py-[0.8rem] px-[0.9rem]">
+      <div class="grid min-w-0 flex-1 gap-[0.2rem]">
         <strong>{{ t('desktop.providers.setupIncomplete') }}</strong>
         <span>{{ t('desktop.providers.setupIncompleteDescription') }}</span>
       </div>
@@ -54,9 +54,9 @@ const {
 
     <section class="desktop-provider-detail__section">
       <h3>{{ t('desktop.providers.connectionStep') }}</h3>
-      <div class="desktop-provider-detail__group">
-        <div class="desktop-provider-detail__row">
-          <div class="desktop-provider-detail__row-copy">
+      <div class="overflow-hidden border border-solid border-border rounded-[0.65rem]">
+        <div class="desktop-provider-detail__row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0">
+          <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ t('desktop.providers.authenticationStatus') }}</strong>
             <small>{{ provider.storedCredentialType
               ? (provider.storedCredentialType === 'api_key' ? 'API Key' : 'OAuth')
@@ -88,8 +88,8 @@ const {
             {{ t('desktop.providers.clearAuthenticationConfirmation') }}
           </NPopconfirm>
         </div>
-        <div class="desktop-provider-detail__row">
-          <div class="desktop-provider-detail__row-copy">
+        <div class="desktop-provider-detail__row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0">
+          <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ t('desktop.providers.connectionSettings') }}</strong>
             <small>{{ connectionSummary }}</small>
           </div>
@@ -101,12 +101,12 @@ const {
     </section>
 
     <section class="desktop-provider-detail__section">
-      <div class="desktop-provider-detail__section-heading">
-        <div class="desktop-provider-detail__section-copy">
+      <div class="desktop-provider-detail__section-heading flex items-start gap-[0.8rem] justify-between">
+        <div class="grid min-w-0 flex-1 gap-[0.2rem]">
           <h3>{{ t('desktop.providers.models') }}</h3>
           <p>{{ t('desktop.providers.modelsDescription') }}</p>
         </div>
-        <div v-if="provider.custom || provider.syncUnavailableReason !== 'unsupported_api'" class="desktop-provider-detail__section-actions">
+        <div v-if="provider.custom || provider.syncUnavailableReason !== 'unsupported_api'" class="flex flex-none items-center gap-2">
           <NTooltip :disabled="provider.canSyncModels">
             <template #trigger>
               <span>
@@ -136,13 +136,13 @@ const {
           </NButton>
         </div>
       </div>
-      <div class="desktop-provider-detail__group">
+      <div class="overflow-hidden border border-solid border-border rounded-[0.65rem]">
         <div
           v-for="model in models"
           :key="model.modelId"
-          class="desktop-provider-detail__row desktop-provider-detail__model-row"
+          class="desktop-provider-detail__row desktop-provider-detail__model-row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0"
         >
-          <div class="desktop-provider-detail__row-copy">
+          <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ model.displayName }}</strong>
             <small>{{ model.modelId }}</small>
             <small class="desktop-provider-detail__model-parameters">
@@ -153,7 +153,7 @@ const {
             </small>
             <DesktopModelCapabilityTags :language="language" :model="model" />
           </div>
-          <div class="desktop-provider-detail__model-actions">
+          <div class="flex flex-none items-center ml-auto gap-[0.4rem]">
             <template v-if="model.available">
               <NButton size="small" @click="openModelDetail(model.modelId)">
                 {{ t('desktop.providers.manage') }}
@@ -169,7 +169,7 @@ const {
               <NTooltip>
                 <template #trigger>
                   <span
-                    class="desktop-provider-detail__model-availability"
+                    class="desktop-provider-detail__model-availability grid w-6 h-6 flex-none place-items-center text-warning"
                     role="img"
                     :aria-label="t('desktop.providers.notFoundInLastSync')"
                   >
@@ -227,60 +227,20 @@ const {
   />
 </template>
 
-<style scoped>
-.desktop-provider-detail,
+<style scoped lang="scss">
 .desktop-provider-detail__section {
   display: grid;
   gap: 0.8rem;
 }
 
-.desktop-provider-detail {
-  gap: 1.8rem;
-}
-
-.desktop-provider-detail__notice,
-.desktop-provider-detail__row,
-.desktop-provider-detail__section-heading {
+.desktop-provider-detail__row {
   display: flex;
   align-items: center;
   gap: 0.8rem;
 }
 
-.desktop-provider-detail__row-copy,
-.desktop-provider-detail__notice > div,
-.desktop-provider-detail__section-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 0.2rem;
-}
-
-.desktop-provider-detail__model-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  margin-left: auto;
-  gap: 0.4rem;
-}
-
-.desktop-provider-detail__model-availability {
-  display: grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex: none;
-  place-items: center;
-  color: var(--buddy-status-warning-text);
-}
-
 .desktop-provider-detail__model-parameters {
   font-variant-numeric: tabular-nums;
-}
-
-.desktop-provider-detail__section-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 0.5rem;
 }
 
 .desktop-provider-detail__section h3,
@@ -297,34 +257,5 @@ const {
 .desktop-provider-detail__section-heading p {
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
-}
-
-.desktop-provider-detail__notice {
-  justify-content: space-between;
-  border: 1px solid var(--buddy-border-strong);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-subtle);
-  padding: 0.8rem 0.9rem;
-}
-
-.desktop-provider-detail__group {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-}
-
-.desktop-provider-detail__row {
-  min-height: 4rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0.7rem 0.9rem;
-}
-
-.desktop-provider-detail__row:last-child {
-  border-bottom: 0;
-}
-
-.desktop-provider-detail__section-heading {
-  align-items: flex-start;
-  justify-content: space-between;
 }
 </style>

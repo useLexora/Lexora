@@ -136,8 +136,8 @@ function openSearchSpace(spaceId: string) {
 </script>
 
 <template>
-  <aside class="desktop-task-sidebar">
-    <header class="desktop-task-sidebar__header">
+  <aside class="desktop-task-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar text-workspace-sidebar-fg">
+    <header class="flex flex-none items-center justify-between gap-1 border-b-1 border-b-solid border-b-border pt-0 pr-2 pb-0 pl-3 h-region-header">
       <DesktopWorkspaceSidebarIdentity
         :label="t('desktop.navigation.tasks')"
         :visible="appSidebarCollapsed"
@@ -174,7 +174,7 @@ function openSearchSpace(spaceId: string) {
         {{ t('desktop.marks.retry') }}
       </NButton>
     </NAlert>
-    <div class="desktop-task-sidebar__content">
+    <div class="min-h-0 flex-1 overflow-hidden py-2 px-0">
       <nav :style="sidebarLayoutStyle">
         <DesktopTaskSidebarSection
           v-if="visiblePinnedItems.length > 0"
@@ -189,7 +189,7 @@ function openSearchSpace(spaceId: string) {
           @update:expanded="value => setSectionExpanded('pinned', value)"
         >
           <template #default="{ item }">
-            <div v-if="item.kind === 'space'" class="desktop-task-sidebar__space-item">
+            <div v-if="item.kind === 'space'" class="h-[var(--buddy-task-sidebar-row-size)] pr-[var(--buddy-task-sidebar-scrollbar-gutter)] pb-[calc(var(--buddy-task-sidebar-row-size)_-_var(--buddy-task-sidebar-row-height))] pl-[var(--buddy-task-sidebar-scrollbar-gutter)]">
               <DesktopTaskSpaceRow
                 :dragging="draggedPinnedItemKey === item.pinKey"
                 :drop-position="item.pinnedTopLevel ? getPinnedDropPosition(item.pinKey) : undefined"
@@ -251,7 +251,7 @@ function openSearchSpace(spaceId: string) {
           @update:expanded="value => setSectionExpanded('spaces', value)"
         >
           <template #default="{ item }">
-            <div v-if="item.kind === 'space'" class="desktop-task-sidebar__space-item">
+            <div v-if="item.kind === 'space'" class="h-[var(--buddy-task-sidebar-row-size)] pr-[var(--buddy-task-sidebar-scrollbar-gutter)] pb-[calc(var(--buddy-task-sidebar-row-size)_-_var(--buddy-task-sidebar-row-height))] pl-[var(--buddy-task-sidebar-scrollbar-gutter)]">
               <DesktopTaskSpaceRow
                 :expanded="isSpaceExpanded(item.space.id)"
                 :language="language"
@@ -339,7 +339,7 @@ function openSearchSpace(spaceId: string) {
       :title="t('desktop.tasks.deleteSpaceTitle')"
       @update:show="!$event && (spaceDeleteTarget = null)"
     >
-      <div class="desktop-task-sidebar__delete-space-content">
+      <div class="desktop-task-sidebar__delete-space-content grid gap-[0.85rem]">
         <p>
           {{ t('desktop.tasks.deleteSpaceMessage', { name: spaceDeleteTarget?.name ?? '' }) }}
         </p>
@@ -350,7 +350,7 @@ function openSearchSpace(spaceId: string) {
         >
           {{ t('desktop.tasks.deleteSpaceActiveRunWarning', { count: spaceDeleteTarget.activeRunCount }) }}
         </NAlert>
-        <p v-else class="desktop-task-sidebar__delete-space-retention">
+        <p v-else class="text-muted text-[0.75rem]">
           {{ t('desktop.tasks.deleteSpaceRetention') }}
         </p>
       </div>
@@ -374,7 +374,7 @@ function openSearchSpace(spaceId: string) {
       :title="t('desktop.tasks.renameTask')"
       @update:show="!$event && (taskRenameTarget = null)"
     >
-      <div class="desktop-task-sidebar__rename-content">
+      <div class="mt-3">
         <NInput
           v-model:value="taskTitleDraft"
           maxlength="80"
@@ -418,28 +418,6 @@ function openSearchSpace(spaceId: string) {
 </template>
 
 <style scoped lang="scss">
-.desktop-task-sidebar {
-  display: flex;
-  width: var(--buddy-workspace-sidebar-width);
-  height: 100%;
-  min-height: 0;
-  flex: none;
-  flex-direction: column;
-  border-right: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-workspace-sidebar);
-}
-
-.desktop-task-sidebar__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.5rem 0 0.75rem;
-}
-
 .desktop-task-sidebar__new-trigger,
 .desktop-task-sidebar__search-trigger,
 .desktop-task-sidebar__marks-trigger {
@@ -469,13 +447,6 @@ function openSearchSpace(spaceId: string) {
   }
 }
 
-.desktop-task-sidebar__content {
-  min-height: 0;
-  flex: 1;
-  overflow: hidden;
-  padding: 0.5rem 0;
-}
-
 .desktop-task-sidebar nav {
   --buddy-task-sidebar-section-gap: 0.25rem;
   --buddy-task-sidebar-section-font-size: 13px;
@@ -494,29 +465,8 @@ function openSearchSpace(spaceId: string) {
   overflow: hidden;
 }
 
-.desktop-task-sidebar__space-item {
-  height: var(--buddy-task-sidebar-row-size);
-  padding-right: var(--buddy-task-sidebar-scrollbar-gutter);
-  padding-bottom: calc(var(--buddy-task-sidebar-row-size) - var(--buddy-task-sidebar-row-height));
-  padding-left: var(--buddy-task-sidebar-scrollbar-gutter);
-}
-
-.desktop-task-sidebar__rename-content {
-  margin-top: 0.75rem;
-}
-
-.desktop-task-sidebar__delete-space-content {
-  display: grid;
-  gap: 0.85rem;
-}
-
 .desktop-task-sidebar__delete-space-content p {
   margin: 0;
   line-height: 1.65;
-}
-
-.desktop-task-sidebar__delete-space-retention {
-  color: var(--buddy-text-secondary);
-  font-size: 0.75rem;
 }
 </style>

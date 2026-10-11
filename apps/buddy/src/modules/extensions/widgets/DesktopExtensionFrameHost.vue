@@ -4,7 +4,7 @@ import type { ViewEnvironment } from '@buddy-shared/extensions/extensionViewEven
 import type { AnchorGeometry, MountGeometry } from '@buddy-shared/workbench/workbenchUi'
 import type { ExtensionSurface } from './useExtensionViews'
 import type { SurfaceLayout, SurfaceLayoutLease } from '@/shared/ui/surfaces/surfaceLayout'
-import { extensionJsonSchema } from '@buddy-shared/extensions/extensionApi'
+import { parseExtensionRequestParams } from '@buddy-shared/extensions/extensionApi'
 import { onMounted, onScopeDispose, useTemplateRef, watch } from 'vue'
 import { SurfaceHitRegions } from '@/workbench/browser/surfaces/SurfaceHitRegions'
 import { useExtensionContext } from '../extensionContext'
@@ -26,7 +26,7 @@ interface Frame {
 }
 const props = defineProps<{ layout: SurfaceLayout }>()
 const context = useExtensionContext()
-const { state, views, endInteraction, focusView, language, isDark, workbench } = context
+const { state, views, endInteraction, focusView, language, isDark, themeColors, workbench } = context
 const root = useTemplateRef<HTMLElement>('root')
 const frames = new Map<string, Frame>()
 function isOverlay(surface: ExtensionSurface) {
@@ -40,9 +40,7 @@ function notify(_token: string, frame: Frame, event: ExtensionViewNotification) 
   frame.projection.publish(event)
 }
 function environment(): ViewEnvironment {
-  const style = root.value ? getComputedStyle(root.value) : null
-  const colors = Object.fromEntries(Object.entries({ 'background': '--buddy-surface-canvas', 'text': '--buddy-text-primary', 'muted': '--buddy-text-secondary', 'border': '--buddy-border-subtle', 'accent': '--buddy-nav-foreground', 'accent-solid': '--buddy-accent-solid' }).map(([key, name]) => [key, style?.getPropertyValue(name).trim() || '']))
-  return { language: language.value, colorScheme: isDark.value ? 'dark' : 'light', colors }
+  return { language: language.value, colorScheme: isDark.value ? 'dark' : 'light', colors: themeColors.value, themeRevision: context.themeRevision?.value ?? 0 }
 }
 const projections = useExtensionFrameEvents({ context, frames, environment, isOverlay })
 function visibilityChanged() {
@@ -169,7 +167,7 @@ async function receive(event: MessageEvent) {
       value = frame.projection.synchronization
     }
     else {
-      value = await state.api.viewRequest(session.id, session.generation, session.token, data.method, extensionJsonSchema.parse(data.params))
+      value = await state.api.viewRequest(session.id, session.generation, session.token, data.method, parseExtensionRequestParams(data.method, data.params))
     }
     if (frames.get(data.token) !== frame || frame.surface.session !== session)
       return
@@ -260,9 +258,5 @@ onScopeDispose(() => {
 </script>
 
 <template>
-  <div ref="root" class="extension-frames" data-testid="extension-frames" />
+  <div ref="root" class="extension-frames contents" data-testid="extension-frames" />
 </template>
-
-<style scoped>
-.extension-frames { display: contents; }
-</style>

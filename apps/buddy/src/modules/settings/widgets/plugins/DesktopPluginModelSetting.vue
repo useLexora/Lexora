@@ -2,7 +2,7 @@
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronDown16Regular, Dismiss16Regular } from '@vicons/fluent'
-import { NButton, NPopover } from 'naive-ui'
+import { NButton, NPopover, NTooltip } from 'naive-ui'
 import { computed, shallowRef, useId, watch } from 'vue'
 import { modelKey } from '@/modules/models'
 import { DesktopModelPicker } from '@/modules/models/ui'
@@ -16,6 +16,7 @@ const props = defineProps<{
   language: BuddyLocale
   disabled: boolean
   labelId: string
+  descriptionId?: string
 }>()
 const emit = defineEmits<{ change: [value: ModelReference | null] }>()
 const valueId = useId()
@@ -43,27 +44,35 @@ function select(id: string) {
 </script>
 
 <template>
-  <div class="plugin-model-setting">
+  <div class="plugin-model-setting flex min-w-0 gap-1">
     <NPopover v-model:show="show" trigger="click" placement="bottom-end" raw :show-arrow="false" :disabled="disabled" to=".buddy-app">
       <template #trigger>
-        <NButton class="plugin-model-setting__select" :disabled="disabled" :aria-labelledby="`${labelId} ${valueId}`" :title="label" aria-haspopup="menu" :aria-expanded="show">
-          <span :id="valueId">{{ label }}</span>
+        <NButton class="plugin-model-setting__select flex-1 min-w-0" :disabled="disabled" :aria-labelledby="`${labelId} ${valueId}`" :aria-describedby="descriptionId" aria-haspopup="menu" :aria-expanded="show">
+          <span :id="valueId" class="overflow-hidden text-ellipsis">{{ label }}</span>
           <DesktopIcon :component="ChevronDown16Regular" />
         </NButton>
       </template>
       <DesktopModelPicker :language="language" :models="models" :providers="providers" :selected-model-id="selectedId" @select="select" />
     </NPopover>
-    <NButton v-if="value" quaternary :disabled="disabled" :aria-label="inheritLabel" :title="inheritLabel" @click="emit('change', null)">
-      <template #icon>
-        <DesktopIcon :component="Dismiss16Regular" />
+    <NTooltip v-if="value">
+      <template #trigger>
+        <NButton quaternary :disabled="disabled" :aria-label="inheritLabel" @click="emit('change', null)">
+          <template #icon>
+            <DesktopIcon :component="Dismiss16Regular" />
+          </template>
+        </NButton>
       </template>
-    </NButton>
+      {{ inheritLabel }}
+    </NTooltip>
   </div>
 </template>
 
-<style scoped>
-.plugin-model-setting { display: flex; min-width: 0; gap: 0.25rem; }
-.plugin-model-setting__select { flex: 1; min-width: 0; }
-.plugin-model-setting__select :deep(.n-button__content) { width: 100%; gap: 0.5rem; justify-content: space-between; }
-.plugin-model-setting__select span { overflow: hidden; text-overflow: ellipsis; }
+<style scoped lang="scss">
+.plugin-model-setting__select {
+  :deep(.n-button__content) {
+    width: 100%;
+    gap: 0.5rem;
+    justify-content: space-between;
+  }
+}
 </style>

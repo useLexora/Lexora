@@ -188,20 +188,20 @@ function renderScopeLabel(option: DropdownOption) {
 
 <template>
   <article
-    class="desktop-approval-card"
+    class="desktop-approval-card grid gap-[0.7rem] border-1 border-solid border-border rounded-[0.65rem] bg-raised py-[0.8rem] px-[0.85rem]"
     :aria-busy="isResolving"
     :aria-labelledby="headingId"
   >
-    <header class="desktop-approval-card__header">
+    <header class="grid grid-cols-[auto_minmax(0,_1fr)] items-center gap-[0.6rem]">
       <DesktopIcon class="desktop-approval-card__pending-icon" :component="Warning20Regular" />
-      <div class="desktop-approval-card__heading">
-        <strong :id="headingId" class="desktop-approval-card__title">
+      <div class="grid gap-[0.12rem]">
+        <strong :id="headingId" class="text-strong text-[0.84rem] font-600 leading-[1.4] [overflow-wrap:anywhere]">
           {{ approvalTitle }}
         </strong>
-        <span class="desktop-approval-card__description">
+        <span class="text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">
           {{ approvalDescription }}
         </span>
-        <span v-if="reuseScopes.length" class="desktop-approval-card__description">
+        <span v-if="reuseScopes.length" class="text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">
           {{ t('approvalAction.reuse.lifetime') }}
         </span>
       </div>
@@ -355,7 +355,7 @@ function renderScopeLabel(option: DropdownOption) {
         </NDescriptionsItem>
       </NDescriptions>
     </section>
-    <div v-else-if="review?.card === 'paths'" class="desktop-approval-card__review">
+    <div v-else-if="review?.card === 'paths'" class="border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
       <ul class="desktop-approval-card__paths">
         <li v-for="target in review.targets" :key="target.path">
           <code>{{ target.path }}</code>
@@ -381,7 +381,7 @@ function renderScopeLabel(option: DropdownOption) {
             <template #label>
               <code>{{ parameter.name }}</code>
             </template>
-            <span class="desktop-approval-card__parameter-value">{{ parameter.value }}</span>
+            <span class="flex text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)] [overflow-wrap:anywhere] whitespace-pre-wrap">{{ parameter.value }}</span>
           </NDescriptionsItem>
         </template>
         <NDescriptionsItem v-else :label="t('desktop.approval.argumentNames')">
@@ -389,11 +389,11 @@ function renderScopeLabel(option: DropdownOption) {
         </NDescriptionsItem>
       </NDescriptions>
     </section>
-    <p v-else class="desktop-approval-card__review">
+    <p v-else class="border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
       {{ t('desktop.approval.unsupported') }}
     </p>
-    <footer class="desktop-approval-card__footer">
-      <div class="desktop-approval-card__actions">
+    <footer class="flex items-center justify-end gap-[0.6rem]">
+      <div class="flex items-center justify-end gap-2">
         <NButton
           size="small"
           type="error"
@@ -403,7 +403,7 @@ function renderScopeLabel(option: DropdownOption) {
         >
           {{ t('approvalAction.deny') }}
         </NButton>
-        <div class="desktop-approval-card__approve-split">
+        <div class="flex items-stretch">
           <NButton
             class="desktop-approval-card__approve-button"
             size="small"
@@ -447,54 +447,12 @@ function renderScopeLabel(option: DropdownOption) {
   </article>
 </template>
 
-<style scoped>
-.desktop-approval-card {
-  display: grid;
-  gap: 0.7rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-raised);
-  padding: 0.8rem 0.85rem;
-}
-
-.desktop-approval-card__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.6rem;
-}
-
+<style scoped lang="scss">
 .desktop-approval-card__pending-icon {
   align-self: start;
   color: var(--buddy-status-warning-text);
   font-size: 1.05rem;
   margin-top: 0.05rem;
-}
-
-.desktop-approval-card__heading {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.desktop-approval-card__title {
-  color: var(--buddy-text-strong);
-  font-size: 0.84rem;
-  font-weight: 600;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.desktop-approval-card__description {
-  color: var(--buddy-text-secondary);
-  font-size: var(--buddy-chat-caption-font-size);
-  line-height: var(--buddy-chat-caption-line-height);
-}
-
-.desktop-approval-card__review {
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.5rem;
-  background: var(--buddy-surface-subtle);
-  padding: 0.65rem 0.7rem;
 }
 
 .desktop-approval-card pre {
@@ -521,34 +479,6 @@ function renderScopeLabel(option: DropdownOption) {
   color: var(--buddy-chat-code-color);
   font-family: var(--buddy-font-mono);
   font-size: var(--buddy-chat-code-font-size);
-}
-
-.desktop-approval-card__parameter-value {
-  display: flex;
-  color: var(--buddy-text-secondary);
-  font-size: var(--buddy-chat-caption-font-size);
-  line-height: var(--buddy-chat-caption-line-height);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.desktop-approval-card__footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.6rem;
-}
-
-.desktop-approval-card__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.desktop-approval-card__approve-split {
-  display: flex;
-  align-items: stretch;
 }
 
 .desktop-approval-card__approve-button {

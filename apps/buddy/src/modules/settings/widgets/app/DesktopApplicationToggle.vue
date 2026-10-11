@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import type { ApplicationSettingsProps } from './typing'
 import { NSwitch, useMessage } from 'naive-ui'
-import { shallowRef, useId } from 'vue'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+
+import { useSettingMutation } from '../../state/useSettingMutation'
+import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
+import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 
 const props = defineProps<ApplicationSettingsProps & {
   field: 'launchAtLogin' | 'developerToolsEnabled' | 'updateNotificationsEnabled'
@@ -11,60 +15,21 @@ const props = defineProps<ApplicationSettingsProps & {
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
-const labelId = useId()
-const pending = shallowRef(false)
+const { pending: pendingFields, save } = useSettingMutation<typeof props.field>(
+  patch => props.updateSettings(patch),
+  () => message.error(t('desktop.settings.saveFailed')),
+)
+const pending = computed(() => pendingFields.value.has(props.field))
 
-async function update(value: boolean) {
-  if (pending.value)
-    return
-  pending.value = true
-  try {
-    if (!await props.updateSettings({ desktop: { [props.field]: value } }))
-      message.error(t('desktop.settings.saveFailed'))
-  }
-  finally {
-    pending.value = false
-  }
+function update(value: boolean) {
+  return save(props.field, { desktop: { [props.field]: value } })
 }
 </script>
 
 <template>
-  <div v-if="config" class="desktop-application-toggle">
-    <div class="desktop-application-toggle__copy">
-      <strong :id="labelId">{{ label }}</strong>
-      <small>{{ description }}</small>
-    </div>
-    <NSwitch :aria-labelledby="labelId" :round="false" :value="config.desktop[field]" :loading="pending" :disabled="pending" @update:value="update" />
-  </div>
+  <DesktopSettingsGroup v-if="config" class="desktop-application-toggle [container-type:inline-size] [--setting-row-py:0.9rem] [--setting-control-min:0px] [--setting-control-max:max-content]">
+    <DesktopSettingRow v-slot="{ controlAttrs }" :label="label" :description="description" toggle>
+      <NSwitch v-bind="controlAttrs" :round="false" :value="config.desktop[field]" :loading="pending" :disabled="pending" :aria-disabled="pending" @update:value="update" />
+    </DesktopSettingRow>
+  </DesktopSettingsGroup>
 </template>
-
-<style scoped>
-.desktop-application-toggle {
-  display: grid;
-  min-height: 4rem;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.55rem 2rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  padding: 0.9rem;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-application-toggle__copy {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.desktop-application-toggle strong {
-  color: var(--buddy-text-primary);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.desktop-application-toggle small {
-  color: var(--buddy-text-secondary);
-  font-size: 0.7rem;
-  line-height: 1.5;
-}
-</style>

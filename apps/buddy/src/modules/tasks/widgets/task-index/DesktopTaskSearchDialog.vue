@@ -98,23 +98,23 @@ function taskContext(conversation: LocalConversationSummary) {
       </template>
     </NInput>
 
-    <div v-if="!normalizedQuery" class="desktop-task-search-dialog__initial">
+    <div v-if="!normalizedQuery" class="desktop-task-search-dialog__initial flex flex-col items-center justify-center p-8 text-center">
       <span aria-hidden="true">
         <DesktopIcon name="toolSearch" :size="18" />
       </span>
       <p>{{ t('desktop.search.description') }}</p>
     </div>
 
-    <div v-else class="desktop-task-search-dialog__results">
+    <div v-else class="desktop-task-search-dialog__results grid content-start gap-4 overflow-y-auto pr-[0.2rem]">
       <template v-if="hasResults">
-        <section v-if="matchingConversations.length" class="desktop-task-search-dialog__section">
-          <h3 class="desktop-task-search-dialog__section-title">
+        <section v-if="matchingConversations.length" class="grid gap-1">
+          <h3 class="m-0 text-muted text-sidebar-section [font-weight:var(--buddy-sidebar-section-font-weight)] py-1 px-[0.4rem]">
             {{ t('desktop.search.taskCount', { count: matchingConversations.length }) }}
           </h3>
           <button
             v-for="conversation in matchingConversations"
             :key="conversation.id"
-            class="desktop-task-search-dialog__result"
+            class="desktop-task-search-dialog__result flex w-full min-w-0 items-center gap-3 border-0 rounded-[8px] bg-transparent text-muted cursor-pointer py-[0.65rem] px-3 text-left hover:bg-selected ui-focus-ring"
             type="button"
             @click="emit('openTask', conversation.id)"
           >
@@ -126,14 +126,14 @@ function taskContext(conversation: LocalConversationSummary) {
           </button>
         </section>
 
-        <section v-if="matchingSpaces.length" class="desktop-task-search-dialog__section">
-          <h3 class="desktop-task-search-dialog__section-title">
+        <section v-if="matchingSpaces.length" class="grid gap-1">
+          <h3 class="m-0 text-muted text-sidebar-section [font-weight:var(--buddy-sidebar-section-font-weight)] py-1 px-[0.4rem]">
             {{ t('desktop.search.spaceCount', { count: matchingSpaces.length }) }}
           </h3>
           <button
             v-for="space in matchingSpaces"
             :key="space.id"
-            class="desktop-task-search-dialog__result"
+            class="desktop-task-search-dialog__result flex w-full min-w-0 items-center gap-3 border-0 rounded-[8px] bg-transparent text-muted cursor-pointer py-[0.65rem] px-3 text-left hover:bg-selected ui-focus-ring"
             type="button"
             @click="emit('openSpace', space.id)"
           >
@@ -146,7 +146,7 @@ function taskContext(conversation: LocalConversationSummary) {
         </section>
       </template>
 
-      <div v-else class="desktop-task-search-dialog__no-results">
+      <div v-else class="desktop-task-search-dialog__no-results grid h-full place-items-center content-center gap-3 text-muted text-center">
         <DesktopIcon name="toolSearch" :size="18" />
         <p>{{ t('desktop.search.noResults') }}</p>
       </div>
@@ -163,13 +163,6 @@ function taskContext(conversation: LocalConversationSummary) {
 }
 
 .desktop-task-search-dialog__initial {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  text-align: center;
-
   > span {
     display: grid;
     width: 3rem;
@@ -188,41 +181,7 @@ function taskContext(conversation: LocalConversationSummary) {
   }
 }
 
-.desktop-task-search-dialog__results {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-  overflow-y: auto;
-  padding-right: 0.2rem;
-}
-
-.desktop-task-search-dialog__section {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.desktop-task-search-dialog__section-title {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: var(--buddy-sidebar-section-font-size);
-  font-weight: var(--buddy-sidebar-section-font-weight);
-  padding: 0.25rem 0.4rem;
-}
-
 .desktop-task-search-dialog__result {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 0.75rem;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  cursor: pointer;
-  padding: 0.65rem 0.75rem;
-  text-align: left;
-
   > .n-icon {
     flex: none;
     font-size: 1rem;
@@ -251,26 +210,9 @@ function taskContext(conversation: LocalConversationSummary) {
     color: var(--buddy-text-secondary);
     font-size: 0.72rem;
   }
-
-  &:hover {
-    background: var(--buddy-state-selected);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
 }
 
 .desktop-task-search-dialog__no-results {
-  display: grid;
-  height: 100%;
-  place-items: center;
-  align-content: center;
-  gap: 0.75rem;
-  color: var(--buddy-text-secondary);
-  text-align: center;
-
   > .n-icon {
     font-size: 1.5rem;
   }

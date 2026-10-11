@@ -87,21 +87,21 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
     <template #toolbar>
       <DesktopBrowserToolbar :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" />
     </template>
-    <div v-if="browserView.failed.value" class="context-resource-state" role="alert">
+    <div v-if="browserView.failed.value" class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted" role="alert">
       {{ t('desktop.context.browserLoadFailed') }}
     </div>
-    <section v-else class="desktop-browser-context-surface" data-testid="browser-context-surface">
+    <section v-else class="desktop-browser-context-surface flex min-w-0 min-h-0 flex-1 flex-col bg-surface" data-testid="browser-context-surface">
       <div
         v-if="browserState?.controller === 'agent'"
-        class="desktop-browser-context-surface__control"
+        class="relative z-2 flex min-w-0 min-h-[2.375rem] flex-none items-center justify-between gap-3 border-b-1 border-b-solid border-b-accent-border bg-accent-subtle text-accent-on-surface pt-1 pr-2 pb-1 pl-3"
         data-testid="browser-agent-control"
       >
-        <span class="desktop-browser-context-surface__control-state">
-          <span class="desktop-browser-context-surface__control-indicator" aria-hidden="true" />
+        <span class="flex min-w-0 items-center gap-2 text-[0.75rem] font-600 whitespace-nowrap">
+          <span class="w-2 h-2 flex-none rounded-full bg-accent" aria-hidden="true" />
           {{ t('desktop.context.browserAgentControlling') }}
         </span>
         <button
-          class="desktop-browser-context-surface__take-control"
+          class="desktop-browser-context-surface__take-control flex min-h-[1.875rem] flex-none items-center gap-[0.375rem] border-0 rounded-[0.375rem] bg-accent text-on-accent cursor-pointer text-[0.75rem] font-600 py-1 px-[0.625rem] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
           data-testid="browser-take-control"
           type="button"
           :aria-label="t(browserView.isTakingControl.value
@@ -120,7 +120,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
         </button>
       </div>
       <span
-        class="desktop-browser-context-surface__announcement"
+        class="desktop-browser-context-surface__announcement absolute w-[1px] h-[1px] overflow-hidden whitespace-nowrap"
         data-testid="browser-control-announcement"
         aria-atomic="true"
         aria-live="polite"
@@ -130,12 +130,12 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
       </span>
       <div
         ref="surfaceElement"
-        class="desktop-browser-context-surface__viewport"
+        class="relative min-w-0 min-h-0 flex-1 bg-surface"
         data-testid="browser-guest-surface"
         role="group"
         :aria-label="t('desktop.context.browserViewport')"
       >
-        <div v-if="browserBlank" class="desktop-browser-context-surface__empty">
+        <div v-if="browserBlank" class="desktop-browser-context-surface__empty absolute z-2 inset-0 grid place-items-center bg-surface text-muted p-[24px] pointer-events-none text-[13px] text-center">
           <p>{{ t('desktop.context.browserStartBrowsing') }}</p>
         </div>
       </div>
@@ -143,67 +143,8 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
   </WorkbenchPanelContent>
 </template>
 
-<style scoped>
-.context-resource-state { display: grid; flex: 1; min-width: 0; min-height: 0; place-content: center; padding: 20px; font-size: 12px; color: var(--buddy-text-muted); }
-.desktop-browser-context-surface {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-browser-context-surface__control {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  min-width: 0;
-  min-height: 2.375rem;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--buddy-accent-border);
-  background: var(--buddy-accent-surface-subtle);
-  color: var(--buddy-accent-on-surface);
-  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
-}
-
-.desktop-browser-context-surface__control-state {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.desktop-browser-context-surface__control-indicator {
-  width: 0.5rem;
-  height: 0.5rem;
-  flex: none;
-  border-radius: 50%;
-  background: var(--buddy-accent-solid);
-}
-
-.desktop-browser-context-surface__take-control {
-  display: flex;
-  min-height: 1.875rem;
-  flex: none;
-  align-items: center;
-  gap: 0.375rem;
-  border: 0;
-  border-radius: 0.375rem;
-  background: var(--buddy-accent-solid);
-  color: var(--buddy-text-on-accent);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.25rem 0.625rem;
-}
+<style scoped lang="scss">
+.context-resource-state { place-content: center; }
 
 .desktop-browser-context-surface__take-control:not(:disabled):hover {
   background: var(--buddy-accent-solid-hover);
@@ -213,46 +154,14 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
   background: var(--buddy-accent-solid-pressed);
 }
 
-.desktop-browser-context-surface__take-control:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 2px;
-}
-
 .desktop-browser-context-surface__take-control:disabled {
   cursor: wait;
   opacity: 0.72;
 }
 
 .desktop-browser-context-surface__announcement {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
   clip: rect(0 0 0 0);
   clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.desktop-browser-context-surface__viewport {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-browser-context-surface__empty {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-muted);
-  padding: 24px;
-  pointer-events: none;
-  font-size: 13px;
-  text-align: center;
 }
 
 .desktop-browser-context-surface__empty p {

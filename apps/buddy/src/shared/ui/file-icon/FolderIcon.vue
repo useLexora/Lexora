@@ -9,15 +9,14 @@ defineProps<{
 <template>
   <img
     alt=""
-    class="buddy-folder-icon"
+    class="buddy-folder-icon flex-none"
     draggable="false"
     :src="getFolderIconUrl(expanded)"
   >
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .buddy-folder-icon {
-  flex: none;
   object-fit: contain;
 }
 </style>

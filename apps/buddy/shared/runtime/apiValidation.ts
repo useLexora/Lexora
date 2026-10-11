@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { BUDDY_APPROVAL_POLICIES } from '../permissions/approvalPolicy'
-import { BUDDY_EXECUTION_PROFILES } from '../permissions/executionProfile'
+import { BUDDY_APPROVAL_POLICIES } from '../permissions/approvalPolicy.ts'
+import { BUDDY_EXECUTION_PROFILES } from '../permissions/executionProfile.ts'
 
 export const idSchema = z.string().trim().min(1).max(256)
 

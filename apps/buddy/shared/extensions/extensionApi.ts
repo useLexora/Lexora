@@ -9,6 +9,7 @@ import type { ExtensionManifest } from './extensionManifest'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from './extensionSettings'
 import { z } from 'zod'
 import { spaceFileTargetSchema } from '../spaces/spaceFileApi'
+import { themeTransportSchema } from '../theme/themeApi.ts'
 import { workbenchPanesSchema } from '../workbench/workbenchInteraction'
 import { workbenchMenuSchema } from '../workbench/workbenchUi'
 import { extensionActionRpc } from './extensionActionApi'
@@ -27,6 +28,10 @@ export const EXTENSION_IPC = {
   hostReply: 'lexora:extensions:host-reply',
 } as const
 export const extensionJsonSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 262144, 'Extension data is too large')
+export function parseExtensionRequestParams(method: string, params: unknown): JsonValue {
+  return (method === 'themes.request' ? themeTransportSchema : extensionJsonSchema).parse(params)
+}
+
 export const extensionResourceSchema = z.object({ id: z.string().uuid(), name: z.string().max(512) }).strict()
 export const extensionViewInputSchema = z.object({
   viewId: z.string().uuid(),
@@ -127,7 +132,10 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('endInteraction'), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal('openView'), view: extensionViewInputSchema }).strict(),
   z.object({ action: z.literal('closeView'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid() }).strict(),
-  z.object({ action: z.literal('viewRequest'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid(), method: z.string().max(80), params: extensionJsonSchema }).strict(),
+  z.object({ action: z.literal('viewRequest'), viewId: z.string().uuid(), generation: z.string().uuid(), token: z.string().uuid(), method: z.string().max(80), params: themeTransportSchema }).strict().superRefine((input, context) => {
+    if (input.method !== 'themes.request' && !extensionJsonSchema.safeParse(input.params).success)
+      context.addIssue({ code: 'custom', path: ['params'], message: 'Extension data is too large' })
+  }),
 ])
 export type ExtensionManagementRequest = z.infer<typeof extensionManagementSchema>
 export interface ExtensionApi {

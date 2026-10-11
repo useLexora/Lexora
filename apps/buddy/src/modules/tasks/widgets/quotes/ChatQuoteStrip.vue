@@ -20,7 +20,7 @@ const locate = inject(chatQuoteNavigationKey, null)
 </script>
 
 <template>
-  <div v-if="quotes.length" class="chat-quote-strip" data-quote-exclude>
+  <div v-if="quotes.length" class="chat-quote-strip flex min-w-0 max-w-full gap-[8px] overflow-x-auto pb-[6px]" data-quote-exclude>
     <ChatReferenceCard
       v-for="quote in quotes" :key="quote.id" class="chat-quote-card" :data-quote-id="quote.id"
       :icon="TextQuote20Regular" :label="t(quote.source.role === 'assistant' ? 'desktop.chat.quoteFromAssistant' : 'desktop.chat.quoteFromUser')"
@@ -30,6 +30,6 @@ const locate = inject(chatQuoteNavigationKey, null)
   </div>
 </template>
 
-<style scoped>
-.chat-quote-strip { display: flex; min-width: 0; max-width: 100%; gap: 8px; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: 6px; }
+<style scoped lang="scss">
+.chat-quote-strip { overscroll-behavior-inline: contain; }
 </style>

@@ -7,11 +7,6 @@ import type { DesktopChatComposerProps } from './typing'
 import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import type { WorkbenchMenuSelection } from '@/shared/ui/contributions/workbenchUiContext'
 import { EditorContent } from '@tiptap/vue-3'
-import {
-  ArrowUp20Regular,
-  Stop20Filled,
-} from '@vicons/fluent'
-import { NButton, NTooltip } from 'naive-ui'
 import { computed, shallowRef, toRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopModelSelector } from '@/modules/models/ui'
@@ -22,13 +17,13 @@ import DesktopChatComposerInteractionHost from '@/modules/tasks/widgets/composer
 import { useChatComposer } from '@/modules/tasks/widgets/composer/useChatComposer'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
-import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
 import ChatSessionReferenceStrip from '../references/ChatSessionReferenceStrip.vue'
 import ChatComposerSourceMenu from './ChatComposerSourceMenu.vue'
-import ChatComposerSourcePicker from './ChatComposerSourcePicker.vue'
 import ComposerResourceStrip from './ComposerResourceStrip.vue'
 import ComposerTextPreview from './ComposerTextPreview.vue'
+import DesktopComposerSubmitActions from './DesktopComposerSubmitActions.vue'
+import DesktopComposerSuggestions from './DesktopComposerSuggestions.vue'
 
 const props = defineProps<DesktopChatComposerProps>()
 
@@ -124,16 +119,6 @@ const suggestionOptions = computed(() => suggestions.value.map(({ option }) => o
 const chooserVisible = computed(() => !sourceMenuOpen.value && Boolean(
   activeTrigger.value && (activeTrigger.value.kind === 'mention' || activeTrigger.value.kind === 'skill' || suggestions.value.length || isLoadingContext.value),
 ))
-const suggestionEmptyLabel = computed(() => {
-  if (contextLoadFailed.value)
-    return t('desktop.chat.sourcePickerLoadFailed')
-  const trigger = activeTrigger.value
-  if (trigger?.kind === 'mention')
-    return t(trigger.query ? 'desktop.chat.sourcePickerNoMatches' : 'desktop.chat.sourcePickerNoReferences')
-  if (trigger?.kind === 'skill')
-    return t(trigger.query ? 'desktop.chat.sourcePickerNoMatches' : 'desktop.chat.sourcePickerNoSkills')
-  return t('desktop.chat.sourcePickerNoMatches')
-})
 const modelInputIssueMessage = computed(() => {
   if (modelInputIssue.value === 'reasoning_unsupported')
     return t('desktop.chat.modelReasoningUnsupported', { value: props.selectedEffort ?? '' })
@@ -188,7 +173,7 @@ function captureDraft(): WorkbenchMenuSelection {
     @drop="handleFileDrop"
   >
     <template #attachments>
-      <WorkbenchSlot target="composer.accessory" class="desktop-chat-composer__accessory" />
+      <WorkbenchSlot target="composer.accessory" class="desktop-chat-composer__accessory max-h-[min(240px,30vh)] overflow-auto" />
       <ChatSessionReferenceStrip :references="sessionReferences" :language="language" :disabled="isSending" removable @remove="removeSessionReference" />
       <ChatQuoteStrip :quotes="quotes" :language="language" :disabled="isSending" removable @remove="removeQuote" />
       <ComposerResourceStrip
@@ -210,39 +195,13 @@ function captureDraft(): WorkbenchMenuSelection {
         @dismiss="emit('dismissInteraction', $event)"
       >
         <template #chooser>
-          <ChatComposerSourcePicker
-            :active-index="activeSuggestionIndex"
-            keyboard-navigation
-            :accessible-label="t('desktop.chat.sourcePickerSuggestions')"
-            :empty-label="suggestionEmptyLabel"
-            :language="language"
-            :loading="isLoadingContext"
-            :loading-label="t('desktop.chat.loadingContext')"
-            :options="suggestionOptions"
-            :directory="activeTrigger?.kind === 'mention' ? contextOptions.directory : undefined"
-            :deep-search="deepSearch"
-            :session-scope="sessionScope"
-            :has-more-sessions="contextOptions.hasMoreSessions"
-            @leave-sessions="leaveSessions"
-            @deep-search-change="setDeepSearch"
-            @navigate="navigateDirectory"
-            @highlight="activeSuggestionIndex = $event"
-            @enter-directory="selectSuggestion($event, 'complete')"
-            @select="selectSuggestion"
-          >
-            <template #extra>
-              <NButton
-                v-if="activeTrigger?.kind === 'skill' && manageSkills"
-                class="desktop-chat-composer__manage-skills"
-                quaternary
-                size="tiny"
-                @mousedown.prevent
-                @click="manageSkills"
-              >
-                {{ t('desktop.skills.manage') }}
-              </NButton>
-            </template>
-          </ChatComposerSourcePicker>
+          <DesktopComposerSuggestions
+            v-model:active-index="activeSuggestionIndex" :language="language" :trigger="activeTrigger"
+            :context-options="contextOptions" :suggestion-options="suggestionOptions" :loading="isLoadingContext"
+            :context-load-failed="contextLoadFailed" :deep-search="deepSearch" :session-scope="sessionScope" :can-manage-skills="Boolean(manageSkills)"
+            @leave-sessions="leaveSessions" @deep-search-change="setDeepSearch" @navigate="navigateDirectory"
+            @select="selectSuggestion" @manage-skills="manageSkills?.()"
+          />
         </template>
       </DesktopChatComposerInteractionHost>
     </template>
@@ -268,7 +227,7 @@ function captureDraft(): WorkbenchMenuSelection {
       <slot name="leadingContext" />
 
       <div
-        class="desktop-chat-composer__permission-mode"
+        class="desktop-chat-composer__permission-mode inline-flex min-w-0 flex-none items-center"
         data-testid="composer-permission-mode"
       >
         <DesktopPermissionModeSelector
@@ -283,7 +242,7 @@ function captureDraft(): WorkbenchMenuSelection {
 
     <template #actions>
       <div
-        class="desktop-chat-composer__context-usage"
+        class="desktop-chat-composer__context-usage inline-flex min-w-0 flex-none items-center empty:hidden"
         data-testid="composer-context-usage"
       >
         <ChatContextUsage
@@ -294,7 +253,7 @@ function captureDraft(): WorkbenchMenuSelection {
       </div>
 
       <div
-        class="desktop-chat-composer__model-selector"
+        class="desktop-chat-composer__model-selector inline-flex min-w-0 flex-none items-center"
         data-testid="composer-model-selector"
       >
         <DesktopModelSelector
@@ -313,70 +272,23 @@ function captureDraft(): WorkbenchMenuSelection {
         />
       </div>
 
-      <NTooltip v-if="queuesSubmission">
-        <template #trigger>
-          <span class="desktop-chat-composer__send-trigger">
-            <NButton
-              class="buddy-icon-button desktop-chat-composer__queue-action"
-              quaternary
-              :aria-label="t('desktop.chat.queueAdd')"
-              :disabled="!canSubmit"
-              :loading="isSending"
-              @click="submit"
-            >
-              <template #icon>
-                <DesktopIcon name="messageQueue" />
-              </template>
-            </NButton>
-          </span>
-        </template>
-        {{ modelInputIssueMessage || t('desktop.chat.queueAdd') }}
-      </NTooltip>
-      <NTooltip v-if="isRunning">
-        <template #trigger>
-          <span class="desktop-chat-composer__send-trigger">
-            <NButton
-              class="buddy-icon-button desktop-chat-composer__send-action"
-              secondary
-              type="error"
-              :aria-label="isStopping ? t('desktop.chat.progressStopping') : t('desktop.chat.stop')"
-              :aria-busy="isStopping"
-              :disabled="isStopping"
-              :loading="isStopping"
-              @click="emit('stop')"
-            >
-              <template #icon>
-                <DesktopIcon :component="Stop20Filled" />
-              </template>
-            </NButton>
-          </span>
-        </template>
-        {{ isStopping ? t('desktop.chat.progressStopping') : t('desktop.chat.stop') }}
-      </NTooltip>
-      <NTooltip v-if="!queuesSubmission">
-        <template #trigger>
-          <span class="desktop-chat-composer__send-trigger">
-            <NButton
-              class="buddy-icon-button desktop-chat-composer__send-action"
-              type="primary"
-              :aria-label="isLocalCommand ? t('desktop.command.run') : t('desktop.chat.send')"
-              :disabled="!canSubmit"
-              :loading="isSending"
-              @click="submit"
-            >
-              <template #icon>
-                <DesktopIcon :component="ArrowUp20Regular" />
-              </template>
-            </NButton>
-          </span>
-        </template>
-        {{ isLocalCommand ? t('desktop.command.run') : modelInputIssueMessage || t('desktop.chat.send') }}
-      </NTooltip>
+      <DesktopComposerSubmitActions
+        :language="language"
+        :can-submit="canSubmit"
+        :queues-submission="queuesSubmission"
+        :is-running="isRunning"
+        :is-stopping="isStopping"
+        :is-sending="isSending"
+        :is-local-command="isLocalCommand"
+        :issue-message="modelInputIssueMessage"
+        @submit="submit"
+        @stop="emit('stop')"
+      />
     </template>
 
     <template #footer>
-      <WorkbenchSlot target="composer.footer" class="desktop-chat-composer__footer">
-        <p class="desktop-chat-composer__disclaimer">
+      <WorkbenchSlot target="composer.footer" class="desktop-chat-composer__footer mt-[0.45rem]">
+        <p class="desktop-chat-composer__disclaimer m-0 text-[0.68rem] text-muted text-center">
           {{ t('desktop.chat.disclaimer') }}
         </p>
       </WorkbenchSlot>
@@ -394,20 +306,7 @@ function captureDraft(): WorkbenchMenuSelection {
 
 <style scoped lang="scss">
 .desktop-chat-composer {
-  &__context-usage,
-  &__permission-mode,
-  &__model-selector {
-    display: inline-flex;
-    min-width: 0;
-    flex: none;
-    align-items: center;
-  }
-
   &__context-usage {
-    &:empty {
-      display: none;
-    }
-
     @container desktop-chat-composer (max-width: 36rem) {
       display: none;
     }
@@ -474,52 +373,5 @@ function captureDraft(): WorkbenchMenuSelection {
     }
   }
 
-  &__send-trigger {
-    display: inline-flex;
-    flex: none;
-  }
-
-  &__send-action,
-  &__queue-action {
-    --n-height: var(--buddy-composer-control-height);
-
-    width: var(--buddy-composer-control-height);
-    min-width: var(--buddy-composer-control-height);
-    height: var(--buddy-composer-control-height);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    &__send-action :deep(.n-base-loading__container) {
-      box-sizing: border-box;
-      width: 1em;
-      height: 1em;
-      border: 2px solid currentColor;
-      border-right-color: transparent;
-      border-radius: 50%;
-      animation: none;
-    }
-
-    &__send-action :deep(.n-base-loading__icon) { display: none; }
-  }
-
-  &__manage-skills {
-    font-size: 0.6rem;
-    color: var(--buddy-text-muted);
-
-    &:hover {
-      color: var(--buddy-accent-text);
-    }
-  }
-
-  &__accessory { max-height: min(240px, 30vh); overflow: auto; }
-
-  &__footer { margin-top: 0.45rem; }
-
-  &__disclaimer {
-    margin: 0;
-    color: var(--buddy-text-muted);
-    font-size: 0.68rem;
-    text-align: center;
-  }
 }
 </style>

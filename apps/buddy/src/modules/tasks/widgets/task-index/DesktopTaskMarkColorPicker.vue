@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { TASK_MARK_COLORS } from '@buddy-shared/conversation/taskMarkApi'
+import { buddyColorThemes } from '@buddy-shared/theme/buddyTheme'
 import { ChevronDown16Regular, Color20Regular } from '@vicons/fluent'
 import { NButton, NColorPicker, NPopover } from 'naive-ui'
 import { nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopColorPalette from '@/shared/ui/color-picker/DesktopColorPalette.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { buddyColorThemes } from '@/theme/buddyTheme'
 
 const props = defineProps<{ disabled?: boolean, readonly?: boolean, language: BuddyLocale }>()
 const color = defineModel<string>({ required: true })
@@ -53,16 +53,16 @@ function handleCustomEnter(event: KeyboardEvent) {
 </script>
 
 <template>
-  <span v-if="readonly" class="desktop-task-mark-color-picker__readonly" :style="{ backgroundColor: color }" />
+  <span v-if="readonly" class="inline-block w-[20px] h-[20px] border border-solid border-border rounded-[6px]" :style="{ backgroundColor: color }" />
   <NPopover v-else v-model:show="open" :disabled="disabled" :show-arrow="false" placement="bottom-start" trigger="click" :to="false">
     <template #trigger>
       <NButton ref="trigger" class="desktop-task-mark-color-picker__trigger" :disabled="disabled" :aria-expanded="open" aria-haspopup="dialog" @keydown.esc.stop.prevent="close">
-        <span class="desktop-task-mark-color-picker__preview" :style="{ backgroundColor: color }" />
-        <span class="desktop-task-mark-color-picker__value">{{ color }}</span>
+        <span class="desktop-task-mark-color-picker__preview inline-block h-[20px] w-[20px] border border-solid border-border-subtle rounded-[6px]" :style="{ backgroundColor: color }" />
+        <span class="font-mono text-[12px]">{{ color }}</span>
         <DesktopIcon :component="ChevronDown16Regular" :size="14" />
       </NButton>
     </template>
-    <section ref="panel" class="desktop-task-mark-color-picker" role="dialog" @keydown.esc.stop.prevent="close">
+    <section ref="panel" class="desktop-task-mark-color-picker w-[246px]" role="dialog" @keydown.esc.stop.prevent="close">
       <DesktopColorPalette :model-value="color" :options="options" :disabled="disabled" @update:model-value="select" />
       <div class="desktop-task-mark-color-picker__footer" @keydown.enter="handleCustomEnter">
         <NColorPicker :value="color" :modes="['hex']" :show-alpha="false" :actions="['confirm']" :disabled="disabled" :to="false" @update:value="updateCustom" @confirm="close">
@@ -80,31 +80,13 @@ function handleCustomEnter(event: KeyboardEvent) {
   </NPopover>
 </template>
 
-<style scoped>
-.desktop-task-mark-color-picker {
-  width: 246px;
-}
-
+<style scoped lang="scss">
 .desktop-task-mark-color-picker__trigger {
   gap: 8px;
 }
 
 .desktop-task-mark-color-picker__trigger :deep(.n-button__content) {
   gap: 8px;
-}
-
-.desktop-task-mark-color-picker__preview,
-.desktop-task-mark-color-picker__readonly {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 6px;
-}
-
-.desktop-task-mark-color-picker__value {
-  font-family: var(--buddy-font-mono);
-  font-size: 12px;
 }
 
 .desktop-task-mark-color-picker__footer {

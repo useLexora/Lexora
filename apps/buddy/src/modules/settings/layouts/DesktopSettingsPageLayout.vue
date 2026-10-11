@@ -12,29 +12,29 @@ defineSlots<{
 </script>
 
 <template>
-  <section class="desktop-settings-page">
-    <header class="desktop-settings-page__header">
-      <div class="desktop-settings-page__header-copy">
-        <h1 class="desktop-settings-page__title">
+  <section class="desktop-settings-page flex w-full h-full min-w-0 min-h-0 flex-col bg-surface">
+    <header class="desktop-settings-page__header flex flex-none items-center justify-between gap-4 border-b-1 border-b-solid border-b-border py-0 px-4 h-region-header">
+      <div class="flex min-w-0 flex-1 items-center gap-[12px]">
+        <h1 class="desktop-settings-page__title overflow-hidden min-w-0 max-w-full flex-none m-0 text-[14px] font-600 text-ellipsis whitespace-nowrap">
           <slot name="title" />
         </h1>
-        <p v-if="$slots.description" class="desktop-settings-page__description">
+        <p v-if="$slots.description" class="desktop-settings-page__description overflow-hidden min-w-0 m-0 text-muted text-[11px] leading-[16px] text-ellipsis whitespace-nowrap">
           <slot name="description" />
         </p>
       </div>
-      <div v-if="$slots.actions" class="desktop-settings-page__header-actions">
+      <div v-if="$slots.actions" class="flex flex-none items-center gap-[8px]">
         <slot name="actions" />
       </div>
     </header>
 
     <DesktopRuntimePane :enabled="requiresRuntime" :loading="loading">
-      <div v-if="fill" class="desktop-settings-page__fill">
-        <div class="desktop-settings-page__fill-content">
+      <div v-if="fill" class="flex w-full h-full min-h-0 flex-col overflow-hidden">
+        <div class="flex min-w-0 min-h-0 flex-1">
           <slot />
         </div>
       </div>
       <NScrollbar v-else class="desktop-settings-page__scroll">
-        <div class="desktop-settings-page__content">
+        <div class="grid w-[min(100%,_64rem)] gap-[1.8rem] my-0 mx-auto pt-[clamp(20px,_3cqw,_24px)] pr-[clamp(1rem,_3cqw,_2.8rem)] pb-12 pl-[clamp(1rem,_3cqw,_2.8rem)]">
           <slot />
         </div>
       </NScrollbar>
@@ -42,94 +42,17 @@ defineSlots<{
   </section>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-settings-page {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
   container-type: inline-size;
 }
 
-.desktop-settings-page__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 1rem;
-}
-
-.desktop-settings-page__header-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 12px;
-}
-
-.desktop-settings-page__title {
-  overflow: hidden;
-  min-width: 0;
-  max-width: 100%;
-  flex: none;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .desktop-settings-page__description {
-  overflow: hidden;
-  min-width: 0;
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   transform: translateY(1px);
-}
-
-.desktop-settings-page__header-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
 }
 
 .desktop-settings-page__scroll {
   min-height: 0;
   flex: 1;
-}
-
-.desktop-settings-page__fill {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.desktop-settings-page__fill-content {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-}
-
-.desktop-settings-page__content {
-  display: grid;
-  width: min(100%, 64rem);
-  gap: 1.8rem;
-  margin: 0 auto;
-  padding: clamp(20px, 3cqw, 24px) clamp(1rem, 3cqw, 2.8rem) 3rem;
 }
 </style>

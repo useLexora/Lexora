@@ -6,28 +6,17 @@ defineProps<{
 </script>
 
 <template>
-  <div class="desktop-workspace-sidebar-identity">
+  <div class="desktop-workspace-sidebar-identity flex min-w-0 flex-1 items-center">
     <Transition name="desktop-workspace-sidebar-identity">
-      <div v-if="visible" class="desktop-workspace-sidebar-identity__content">
-        <strong class="desktop-workspace-sidebar-identity__label">{{ label }}</strong>
+      <div v-if="visible" class="desktop-workspace-sidebar-identity__content flex min-w-0 items-center text-nav-foreground">
+        <strong class="desktop-workspace-sidebar-identity__label overflow-hidden text-sidebar-header [font-weight:var(--buddy-sidebar-header-font-weight)] text-ellipsis whitespace-nowrap">{{ label }}</strong>
       </div>
     </Transition>
   </div>
 </template>
 
-<style scoped>
-.desktop-workspace-sidebar-identity {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-}
-
+<style scoped lang="scss">
 .desktop-workspace-sidebar-identity__content {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  color: var(--buddy-nav-foreground);
   transition:
     opacity 220ms ease-out,
     transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -35,15 +24,10 @@ defineProps<{
 }
 
 .desktop-workspace-sidebar-identity__label {
-  overflow: hidden;
-  font-size: var(--buddy-sidebar-header-font-size);
-  font-weight: var(--buddy-sidebar-header-font-weight);
-  text-overflow: ellipsis;
   transition:
     opacity 180ms ease-out,
     transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
   transition-delay: 150ms;
-  white-space: nowrap;
 }
 
 .desktop-workspace-sidebar-identity-enter-active {

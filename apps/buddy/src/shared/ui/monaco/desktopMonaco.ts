@@ -1,5 +1,7 @@
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
+import { watch } from 'vue'
+import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 
 interface MonacoEnvironmentGlobal {
   MonacoEnvironment?: {
@@ -8,6 +10,8 @@ interface MonacoEnvironmentGlobal {
 }
 
 let monacoPromise: Promise<typeof Monaco> | null = null
+let stopTheme: (() => void) | null = null
+let themeSubscribers = 0
 
 export function loadDesktopMonaco(): Promise<typeof Monaco> {
   if (!monacoPromise) {
@@ -43,17 +47,47 @@ export function loadDesktopMonaco(): Promise<typeof Monaco> {
 }
 
 export function observeDesktopMonacoTheme(monaco: typeof Monaco): () => void {
-  syncDesktopMonacoTheme(monaco)
-  const observer = new MutationObserver(() => syncDesktopMonacoTheme(monaco))
-  observer.observe(document.documentElement, {
-    attributeFilter: ['data-buddy-theme'],
-    attributes: true,
-  })
-  return () => observer.disconnect()
+  if (!themeSubscribers++) {
+    stopTheme = watch(() => desktopThemeSnapshot.value.active, () => syncDesktopMonacoTheme(monaco), { immediate: true })
+  }
+  let disposed = false
+  return () => {
+    if (disposed)
+      return
+    disposed = true
+    if (!--themeSubscribers) {
+      stopTheme?.()
+      stopTheme = null
+    }
+  }
 }
 
 function syncDesktopMonacoTheme(monaco: typeof Monaco): void {
-  monaco.editor.setTheme(
-    document.documentElement.dataset.buddyTheme === 'dark' ? 'vs-dark' : 'vs',
-  )
+  const { colors: c, descriptor } = desktopThemeSnapshot.value.active
+  monaco.editor.defineTheme('buddy', {
+    base: descriptor.appearance === 'dark' ? 'vs-dark' : 'vs',
+    inherit: true,
+    rules: ['comment', 'keyword', 'string', 'number', 'function', 'type', 'variable', 'operator'].map(token => ({ token, foreground: c[`syntax-${token}` as keyof typeof c].slice(1, 7) })),
+    colors: {
+      'focusBorder': c.focus,
+      'editor.background': c.editor,
+      'editor.foreground': c['editor-fg'],
+      'editorLineNumber.foreground': c['editor-gutter'],
+      'editor.lineHighlightBackground': c['editor-line'],
+      'editorCursor.foreground': c['editor-cursor'],
+      'editor.selectionBackground': c['text-selection'],
+      'editor.inactiveSelectionBackground': c['text-selection-inactive'],
+      'editor.selectionHighlightBackground': c['text-selection-match'],
+      'diffEditor.insertedTextBackground': c['diff-added'],
+      'diffEditor.removedTextBackground': c['diff-removed'],
+      'list.hoverBackground': c.hover,
+      'list.activeSelectionBackground': c.selected,
+      'list.activeSelectionForeground': c['selected-fg'],
+      'list.inactiveSelectionBackground': c['text-selection-inactive'],
+      'list.inactiveSelectionForeground': c['selected-fg'],
+      'list.focusBackground': c.selected,
+      'list.focusForeground': c['selected-fg'],
+    },
+  })
+  monaco.editor.setTheme('buddy')
 }

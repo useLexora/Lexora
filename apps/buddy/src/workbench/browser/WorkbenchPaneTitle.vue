@@ -9,18 +9,12 @@ const { isDragging } = useDraggable({ id: () => props.view.id, type: 'workbench-
 </script>
 
 <template>
-  <strong ref="element" class="workbench-pane-title" :class="{ 'is-dragging': isDragging }">{{ view.title }}</strong>
+  <strong ref="element" class="workbench-pane-title block overflow-hidden text-ellipsis whitespace-nowrap cursor-grab select-none" :class="{ 'is-dragging': isDragging }">{{ view.title }}</strong>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .workbench-pane-title {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: grab;
   touch-action: none;
-  user-select: none;
   -webkit-user-select: none;
 }
 

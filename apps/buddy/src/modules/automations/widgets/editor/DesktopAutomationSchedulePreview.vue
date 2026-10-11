@@ -14,8 +14,8 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <section class="desktop-automation-editor__preview">
-    <div class="desktop-automation-editor__section-heading">
+  <section class="desktop-automation-editor__preview grid gap-[14px] border-t-1 border-t-solid border-t-border mt-[6px] pt-[22px]">
+    <div class="desktop-automation-editor__section-heading grid gap-[3px]">
       <h2>{{ t('desktop.automations.editor.preview') }}</h2>
     </div>
     <NAlert v-if="state.status === 'loading'" type="info" :bordered="false">
@@ -39,12 +39,6 @@ const { t } = useBuddyI18n(() => props.language)
 
 <style scoped lang="scss">
 .desktop-automation-editor__preview {
-  display: grid;
-  gap: 14px;
-  border-top: 1px solid var(--buddy-border-subtle);
-  margin-top: 6px;
-  padding-top: 22px;
-
   ul {
     display: grid;
     margin: 8px 0 0;
@@ -54,9 +48,6 @@ const { t } = useBuddyI18n(() => props.language)
 }
 
 .desktop-automation-editor__section-heading {
-  display: grid;
-  gap: 3px;
-
   h2 {
     margin: 0;
     color: var(--buddy-text-strong);

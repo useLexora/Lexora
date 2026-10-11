@@ -38,7 +38,7 @@ const checkboxThemeOverrides = computed<CheckboxProps['themeOverrides']>(() => (
 </script>
 
 <template>
-  <div class="desktop-model-capability-tags" :class="{ 'desktop-model-capability-tags--compact': compact }">
+  <div class="desktop-model-capability-tags flex min-w-0 flex-wrap items-center text-muted" :class="{ 'desktop-model-capability-tags--compact': compact }">
     <NCheckbox
       v-for="capability in capabilities"
       :key="capability.label"
@@ -53,14 +53,9 @@ const checkboxThemeOverrides = computed<CheckboxProps['themeOverrides']>(() => (
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-model-capability-tags {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 0.45rem 1rem;
-  color: var(--buddy-text-secondary);
 }
 
 .desktop-model-capability-tags--compact {

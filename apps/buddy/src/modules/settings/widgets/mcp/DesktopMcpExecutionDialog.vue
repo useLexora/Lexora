@@ -16,7 +16,7 @@ const target = computed(() => props.connector.transport === 'stdio'
 <template>
   <NModal show preset="dialog" type="warning" :title="t('desktop.mcp.confirmExecutionTitle')" :closable="!busy" :mask-closable="!busy" @close="emit('close')" @update:show="value => !value && emit('close')">
     <p>{{ t('desktop.mcp.confirmExecutionDescription') }}</p>
-    <pre class="mcp-execution__target">{{ target }}</pre>
+    <pre class="[overflow-wrap:anywhere] whitespace-pre-wrap p-[0.8rem] bg-subtle rounded-2">{{ target }}</pre>
     <template #action>
       <NButton :disabled="busy" @click="emit('close')">
         {{ t('common.cancel') }}
@@ -27,7 +27,3 @@ const target = computed(() => props.connector.transport === 'stdio'
     </template>
   </NModal>
 </template>
-
-<style scoped>
-.mcp-execution__target { overflow-wrap: anywhere; white-space: pre-wrap; padding: 0.8rem; background: var(--buddy-surface-subtle); border-radius: 0.5rem; }
-</style>

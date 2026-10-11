@@ -12,8 +12,8 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <div class="browser-zoom" role="group" :aria-label="t('desktop.browser.zoom')">
-    <span class="browser-zoom__label">{{ t('desktop.browser.zoom') }}</span>
+  <div class="browser-zoom flex items-center gap-[0.1rem] pt-[0.2rem] pr-[0.55rem] pb-[0.2rem] pl-[0.9rem]" role="group" :aria-label="t('desktop.browser.zoom')">
+    <span class="mr-auto pr-4 text-[0.78rem] text-fg">{{ t('desktop.browser.zoom') }}</span>
     <NButton quaternary size="small" class="buddy-icon-button" :disabled="disabled || zoomFactor <= 0.5" :aria-label="t('desktop.browser.zoomOut')" @click="emit('zoom', stepBrowserZoom(zoomFactor, 'out'))">
       <DesktopIcon :component="Subtract16Regular" />
     </NButton>
@@ -31,8 +31,6 @@ const { t } = useBuddyI18n(() => props.language)
   </div>
 </template>
 
-<style scoped>
-.browser-zoom { display: flex; align-items: center; gap: 0.1rem; padding: 0.2rem 0.55rem 0.2rem 0.9rem; }
-.browser-zoom__label { margin-right: auto; padding-right: 1rem; font-size: 0.78rem; color: var(--buddy-text-primary); }
+<style scoped lang="scss">
 .browser-zoom__value { min-width: 3.5rem; font-variant-numeric: tabular-nums; }
 </style>

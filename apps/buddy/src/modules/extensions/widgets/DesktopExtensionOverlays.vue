@@ -47,12 +47,11 @@ onScopeDispose(() => {
 </script>
 
 <template>
-  <div class="extension-overlays" aria-hidden="true">
+  <div class="extension-overlays fixed inset-0 pointer-events-none" aria-hidden="true">
     <DesktopExtensionSurface v-for="input in inputs" :key="input.viewId" :input="input" visible silent class="extension-overlays__surface" />
   </div>
 </template>
 
-<style scoped>
-.extension-overlays { position: fixed; inset: 0; pointer-events: none; }
+<style scoped lang="scss">
 .extension-overlays__surface { position: absolute; inset: 0; }
 </style>

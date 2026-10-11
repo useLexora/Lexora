@@ -1,23 +1,18 @@
 <template>
   <span
     aria-hidden="true"
-    class="buddy-chat-activity-loader"
+    class="buddy-chat-activity-loader relative isolate w-[var(--buddy-chat-activity-icon-size)] h-[var(--buddy-chat-activity-icon-size)] rounded-full"
   >
     <span class="buddy-chat-activity-loader__orbit buddy-chat-activity-loader__orbit--one" />
     <span class="buddy-chat-activity-loader__orbit buddy-chat-activity-loader__orbit--two" />
     <span class="buddy-chat-activity-loader__orbit buddy-chat-activity-loader__orbit--three" />
-    <span class="buddy-chat-activity-loader__core" />
+    <span class="buddy-chat-activity-loader__core absolute top-[50%] left-[50%] w-[2px] h-[2px] rounded-full bg-accent-text" />
   </span>
 </template>
 
 <style scoped lang="scss">
 .buddy-chat-activity-loader {
-  position: relative;
-  isolation: isolate;
-  width: var(--buddy-chat-activity-icon-size);
-  height: var(--buddy-chat-activity-icon-size);
   flex: 0 0 auto;
-  border-radius: 50%;
   perspective: 64px;
   transform-style: preserve-3d;
 
@@ -84,14 +79,7 @@
 }
 
 .buddy-chat-activity-loader__core {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
   animation: buddy-chat-activity-loader-core 2.8s ease-in-out infinite;
-  background: var(--buddy-accent-text);
   box-shadow:
     0 0 2px color-mix(in srgb, var(--buddy-accent-text) 72%, transparent),
     0 0 5px color-mix(in srgb, var(--buddy-accent-text) 56%, transparent);

@@ -56,28 +56,28 @@ function openNotification(notification: DesktopNotification) {
 </script>
 
 <template>
-  <aside id="desktop-app-sidebar" ref="sidebar" class="desktop-app-sidebar">
+  <aside id="desktop-app-sidebar" ref="sidebar" class="desktop-app-sidebar flex w-app-sidebar h-full min-h-0 flex-none flex-col overflow-hidden border-r-1 border-r-solid border-r-border bg-app-sidebar text-app-sidebar-fg">
     <WorkbenchMountPoint target="app.sidebar">
-      <header class="desktop-app-sidebar__header">
-        <div class="desktop-app-sidebar__identity">
-          <strong>Lexora Buddy</strong>
-          <span>{{ versionLabel }}</span>
+      <header class="flex flex-none items-center justify-between gap-[0.65rem] border-b-1 border-b-solid border-b-border py-0 px-3 h-region-header">
+        <div class="flex min-w-0 items-baseline gap-2">
+          <strong class="truncate text-strong text-sidebar-header [font-weight:var(--buddy-sidebar-header-font-weight)]">Lexora Buddy</strong>
+          <span class="flex-none truncate text-muted text-[11px]">{{ versionLabel }}</span>
         </div>
       </header>
 
-      <nav class="desktop-app-sidebar__primary">
-        <button v-for="item in navigation" :key="item.id" class="desktop-app-sidebar__nav-item" :class="{ 'is-active': item.active }" :aria-current="item.active ? 'page' : undefined" :data-extension-navigation="item.extensionId" type="button" @click="emit('navigate', item.id)">
+      <nav class="grid min-h-0 flex-1 content-start gap-[0.125rem] p-2 overflow-y-auto">
+        <button v-for="item in navigation" :key="item.id" class="desktop-app-sidebar__nav-item flex w-full min-h-9 items-center gap-[0.625rem] border-0 rounded-icon cursor-pointer text-sidebar-item [font-weight:var(--buddy-sidebar-item-font-weight)] leading-[20px] py-2 px-[0.625rem] text-left ui-focus-ring transition-state-colors" :class="item.active ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'bg-transparent text-app-sidebar-fg hover:(bg-hover text-strong) active:bg-nav-pressed'" :aria-current="item.active ? 'page' : undefined" :data-extension-navigation="item.extensionId" type="button" @click="emit('navigate', item.id)">
           <DesktopPluginIcon v-if="item.icon.kind === 'plugin'" :src="item.icon.url" />
           <DesktopIcon v-else-if="item.icon.kind === 'named'" :name="item.icon.name" />
-          <DesktopIcon v-else class="desktop-app-sidebar__extension-icon" :component="item.icon.component" />
+          <DesktopIcon v-else class="desktop-app-sidebar__extension-icon flex-none origin-center [transform:translateY(-0.025em)_scale(1.12)]" :component="item.icon.component" />
           <span>{{ item.title }}</span>
         </button>
       </nav>
 
-      <footer class="desktop-app-sidebar__footer">
-        <div class="desktop-app-sidebar__account">
+      <footer class="flex h-12 flex-none items-center border-t-1 border-t-solid border-t-border py-0 px-2">
+        <div class="flex w-full min-w-0 min-h-8 items-center justify-between gap-2">
           <button
-            class="desktop-app-sidebar__profile"
+            class="desktop-app-sidebar__profile flex min-w-0 min-h-[32px] flex-1 items-center gap-[8px] overflow-hidden border-0 rounded-icon bg-transparent cursor-pointer py-[2px] px-[4px] text-left ui-focus-ring transition-state-colors hover:bg-hover"
             type="button"
             :title="resolvedProfile.userName"
             @click="showAccountDialog = true"
@@ -88,7 +88,7 @@ function openNotification(notification: DesktopNotification) {
               :name="resolvedProfile.userName"
               :initials="resolvedProfile.initials"
             />
-            <strong>{{ resolvedProfile.userName }}</strong>
+            <strong class="truncate text-app-sidebar-fg text-sidebar-account [font-weight:var(--buddy-sidebar-account-font-weight)]">{{ resolvedProfile.userName }}</strong>
           </button>
           <NPopover
             class="desktop-notification-popover"
@@ -148,205 +148,37 @@ function openNotification(notification: DesktopNotification) {
 
 <style scoped lang="scss">
 .desktop-app-sidebar {
-  display: flex;
-  width: var(--buddy-app-sidebar-width);
-  height: 100%;
-  min-height: 0;
-  flex: none;
-  flex-direction: column;
-  overflow: hidden;
-  border-right: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-app-sidebar);
-}
-
-.desktop-app-sidebar__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.75rem;
-}
-
-.desktop-app-sidebar__identity {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 0.5rem;
-
-  strong,
-  span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  strong {
-    color: var(--buddy-text-strong);
-    font-size: var(--buddy-sidebar-header-font-size);
-    font-weight: var(--buddy-sidebar-header-font-weight);
-  }
-
-  span {
-    flex: none;
-    color: var(--buddy-text-muted);
-    font-size: 11px;
-  }
-}
-
-.desktop-app-sidebar__primary {
-  display: grid;
-  min-height: 0;
-  flex: 1;
-  align-content: start;
-  gap: 0.125rem;
-  padding: 0.5rem;
-  overflow-y: auto;
-}
-
-.desktop-app-sidebar__nav-item {
-  display: flex;
-  width: 100%;
-  min-height: 2.25rem;
-  align-items: center;
-  gap: 0.625rem;
-  border: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  background: transparent;
-  color: var(--buddy-text-primary);
-  cursor: pointer;
-  font-size: var(--buddy-sidebar-item-font-size);
-  font-weight: var(--buddy-sidebar-item-font-weight);
-  line-height: 20px;
-  padding: 0.5rem 0.625rem;
-  text-align: left;
-  transition:
-    background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  &:hover {
-    background: var(--buddy-state-hover);
-    color: var(--buddy-text-strong);
-  }
-
-  &:active {
-    background: var(--buddy-nav-selected);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
-  &.is-active {
-    background: var(--buddy-nav-hover);
-    color: var(--buddy-nav-foreground);
-  }
-
-  &.is-active:hover {
-    background: var(--buddy-nav-selected);
-  }
-
-  &.is-active:active {
-    background: var(--buddy-nav-pressed);
-  }
-}
-
-.desktop-app-sidebar__extension-icon {
-  flex: none;
-  transform: translateY(-0.025em) scale(1.12);
-  transform-origin: center;
-}
-
-.desktop-app-sidebar__footer {
-  display: flex;
-  height: 3rem;
-  flex: none;
-  align-items: center;
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.5rem;
-}
-
-.desktop-app-sidebar__account {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: 2rem;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.desktop-app-sidebar__profile {
-  display: flex;
-  min-width: 0;
-  min-height: 32px;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  background: transparent;
-  cursor: pointer;
-  padding: 2px 4px;
-  text-align: left;
-  transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  &:hover {
-    background: var(--buddy-state-hover);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
-  strong {
-    overflow: hidden;
+  :deep(.desktop-app-sidebar__notification-trigger.n-button) {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    border: 0;
+    background: transparent;
     color: var(--buddy-text-primary);
-    font-size: var(--buddy-sidebar-account-font-size);
-    font-weight: var(--buddy-sidebar-account-font-weight);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    transition:
+      background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
+      border-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
+      color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
+
+    &:hover {
+      border-color: var(--buddy-border-strong);
+      background: var(--buddy-state-hover);
+      color: var(--buddy-text-strong);
+    }
+
+    &.is-open {
+      border-color: var(--buddy-accent-border);
+      background: var(--buddy-accent-surface-subtle);
+      color: var(--buddy-nav-foreground);
+    }
   }
-}
 
-.desktop-app-sidebar :deep(.buddy-icon-button.n-button:hover) {
-  background: var(--buddy-state-hover);
-}
-
-.desktop-app-sidebar :deep(.desktop-app-sidebar__notification-trigger.n-button) {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  border: 0;
-  background: transparent;
-  color: var(--buddy-text-primary);
-  transition:
-    background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    border-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-}
-
-.desktop-app-sidebar :deep(.desktop-app-sidebar__notification-trigger.n-button:hover) {
-  border-color: var(--buddy-border-strong);
-  color: var(--buddy-text-strong);
-}
-
-.desktop-app-sidebar :deep(.desktop-app-sidebar__notification-trigger.n-button.is-open) {
-  border-color: var(--buddy-accent-border);
-  background: var(--buddy-accent-surface-subtle);
-  color: var(--buddy-nav-foreground);
-}
-
-.desktop-app-sidebar :deep(.n-badge-sup) {
-  min-width: 18px;
-  padding: 0 5px;
-  font-size: 11px;
-  font-weight: 500;
+  :deep(.n-badge-sup) {
+    min-width: 18px;
+    padding: 0 5px;
+    font-size: 11px;
+    font-weight: 500;
+  }
 }
 
 :global(.desktop-notification-popover.n-popover) {

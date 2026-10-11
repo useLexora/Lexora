@@ -511,6 +511,9 @@ importers:
       '@types/turndown':
         specifier: ^5.0.6
         version: 5.0.6
+      '@unocss/core':
+        specifier: 66.7.0
+        version: 66.7.0
       '@vicons/fluent':
         specifier: ^0.13.0
         version: 0.13.0

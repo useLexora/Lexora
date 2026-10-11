@@ -5,9 +5,9 @@ import { dirname, join, relative } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate/browser'
 import { extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { fileStorage } from '../filesystem/fileStorage'
+import { EXTENSION_FILE_LIMIT, EXTENSION_PACKAGE_LIMIT } from './extensionLimits.ts'
 
-export const EXTENSION_FILE_LIMIT = 4 * 1024 * 1024
-export const EXTENSION_PACKAGE_LIMIT = 16 * 1024 * 1024
+export { EXTENSION_FILE_LIMIT, EXTENSION_PACKAGE_LIMIT } from './extensionLimits.ts'
 export const sha256 = (bytes: Uint8Array | string): string => createHash('sha256').update(bytes).digest('hex')
 
 export async function readExtensionFile(path: string, limit = EXTENSION_FILE_LIMIT): Promise<Buffer> {

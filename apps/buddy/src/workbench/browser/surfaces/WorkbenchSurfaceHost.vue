@@ -10,12 +10,11 @@ onScopeDispose(() => layout.dispose())
 </script>
 
 <template>
-  <div class="workbench-surface-host">
+  <div class="workbench-surface-host contents">
     <slot :layout="layout" />
   </div>
 </template>
 
-<style scoped>
-.workbench-surface-host { display: contents; }
+<style scoped lang="scss">
 :global(body:has(.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing) [data-workbench-surface], body:has(.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing) [data-workbench-hit-regions] button) { pointer-events: none !important; }
 </style>

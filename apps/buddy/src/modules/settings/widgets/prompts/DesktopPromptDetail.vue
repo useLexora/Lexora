@@ -39,22 +39,22 @@ async function copy() {
 </script>
 
 <template>
-  <article class="prompt-detail" :aria-labelledby="headingId">
-    <header class="prompt-detail__header" :class="{ 'has-variants': entry.variants.length > 1 }">
-      <div class="prompt-detail__heading">
+  <article class="prompt-detail flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden" :aria-labelledby="headingId">
+    <header class="prompt-detail__header grid grid-cols-[minmax(0,_1fr)_auto] items-center flex-none py-[18px] px-[24px] border-b-1 border-b-solid border-b-border" :class="{ 'has-variants': entry.variants.length > 1 }">
+      <div class="prompt-detail__heading flex col-[1] items-center flex-wrap min-w-0">
         <h2 :id="headingId">
           {{ entry.title }}
         </h2>
-        <span class="prompt-detail__status">
+        <span class="inline-flex flex-none items-center gap-[4px] text-muted text-[11px]">
           <DesktopIcon :component="LockClosed16Regular" :size="14" />
           {{ t('desktop.prompts.readonly') }}
         </span>
       </div>
-      <p class="prompt-detail__description">
+      <p class="prompt-detail__description col-[1] m-0 text-muted text-[12px] leading-[1.7]">
         {{ entry.description }}
       </p>
-      <div class="prompt-detail__toolbar">
-        <div v-if="entry.variants.length > 1" class="prompt-detail__variants">
+      <div class="prompt-detail__toolbar flex col-[2] row-[1_/_span_2] items-center gap-[12px]">
+        <div v-if="entry.variants.length > 1" class="prompt-detail__variants min-w-0">
           <DesktopSegmentedControl
             :model-value="variant.id"
             :options="variantOptions"
@@ -62,7 +62,7 @@ async function copy() {
             @update:model-value="emit('selectVariant', $event)"
           />
         </div>
-        <div class="prompt-detail__actions">
+        <div class="flex flex-none items-center gap-[8px] ml-auto">
           <NButton size="small" secondary @click="copy">
             <template #icon>
               <DesktopIcon :component="Copy20Regular" />
@@ -72,26 +72,20 @@ async function copy() {
         </div>
       </div>
     </header>
-    <div ref="document" class="prompt-detail__document" tabindex="0" :aria-labelledby="headingId">
+    <div ref="document" class="prompt-detail__document flex-1 min-w-0 min-h-0 overflow-auto pt-[20px] pr-[24px] pb-[28px] pl-[24px] ui-focus-ring" tabindex="0" :aria-labelledby="headingId">
       <DesktopPromptContent :key="`${entry.id}:${variant.id}`" :content="variant.content" />
     </div>
   </article>
 </template>
 
-<style scoped>
-.prompt-detail { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
-.prompt-detail__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; flex: none; padding: 18px 24px; border-bottom: 1px solid var(--buddy-border-subtle); }
-.prompt-detail__heading { display: flex; grid-column: 1; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+<style scoped lang="scss">
+.prompt-detail__header { gap: 8px 16px; }
+.prompt-detail__heading { gap: 8px 12px; }
 .prompt-detail__heading h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
-.prompt-detail__description { grid-column: 1; margin: 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.7; }
-.prompt-detail__status { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--buddy-text-muted); font-size: 11px; }
-.prompt-detail__toolbar { display: flex; grid-column: 2; grid-row: 1 / span 2; align-items: center; gap: 12px; }
 .has-variants .prompt-detail__description { grid-column: 1 / -1; }
 .has-variants .prompt-detail__toolbar { grid-column: 1 / -1; grid-row: 3; flex-wrap: wrap; margin-top: 4px; }
-.prompt-detail__actions { display: flex; flex: none; align-items: center; gap: 8px; margin-left: auto; }
-.prompt-detail__document { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 20px 24px 28px; scrollbar-width: thin; scrollbar-color: var(--buddy-border-strong) transparent; }
-.prompt-detail__document:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; }
-.prompt-detail__variants { min-width: 0; }
+
+.prompt-detail__document { scrollbar-width: thin; scrollbar-color: var(--buddy-border-strong) transparent; }
 @container (max-width: 720px) {
   .prompt-detail__header { padding: 16px 20px; }
   .prompt-detail__description { grid-column: 1 / -1; }

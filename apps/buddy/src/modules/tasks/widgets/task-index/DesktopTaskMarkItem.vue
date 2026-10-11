@@ -35,20 +35,20 @@ function handleAction(action: string | number) {
 </script>
 
 <template>
-  <div class="desktop-task-mark-item" :class="{ 'is-menu-open': menuOpen }" :data-mark-id="mark.id">
-    <button class="desktop-task-mark-item__main" type="button" :disabled="disabled" @click="emit('edit')">
-      <span class="desktop-task-mark-item__color" :style="{ '--mark-color': mark.color }">
+  <div class="desktop-task-mark-item flex min-w-0 items-center pr-[6px] rounded-[6px]" :class="{ 'is-menu-open': menuOpen }" :data-mark-id="mark.id">
+    <button class="desktop-task-mark-item__main flex min-w-0 min-h-[56px] flex-1 items-center gap-[10px] py-[9px] px-[8px] border-0 rounded-[6px] bg-transparent text-fg text-left cursor-pointer disabled:cursor-default ui-focus-ring" type="button" :disabled="disabled" @click="emit('edit')">
+      <span class="desktop-task-mark-item__color grid w-[28px] h-[28px] flex-none place-items-center rounded-[6px]" :style="{ '--mark-color': mark.color }">
         <DesktopTaskMarkSwatch :color="mark.color" />
       </span>
-      <span class="desktop-task-mark-item__body">
-        <span class="desktop-task-mark-item__identity">
+      <span class="grid min-w-0 flex-1 grid-cols-[minmax(0,_1fr)] gap-[3px]">
+        <span class="flex min-w-0 items-center gap-[6px]">
           <NEllipsis class="desktop-task-mark-item__name" :tooltip="{ width: 260 }">{{ mark.name }}</NEllipsis>
           <NTag v-if="isSystem" class="desktop-task-mark-item__badge" size="small" :bordered="false">{{ t('desktop.marks.system') }}</NTag>
         </span>
         <NEllipsis v-if="mark.description" class="desktop-task-mark-item__description" :tooltip="{ width: 320 }">{{ mark.description }}</NEllipsis>
       </span>
     </button>
-    <div class="desktop-task-mark-item__actions">
+    <div class="flex flex-none">
       <NTooltip v-if="isSystem">
         <template #trigger>
           <NButton class="desktop-task-mark-item__action" quaternary size="small" :disabled="disabled" :aria-label="t('common.edit')" @click="emit('edit')">
@@ -70,13 +70,8 @@ function handleAction(action: string | number) {
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-task-mark-item {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  padding-right: 6px;
-  border-radius: 6px;
   transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
 }
 
@@ -86,55 +81,8 @@ function handleAction(action: string | number) {
   background: var(--buddy-nav-hover);
 }
 
-.desktop-task-mark-item__main {
-  display: flex;
-  min-width: 0;
-  min-height: 56px;
-  flex: 1;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--buddy-text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.desktop-task-mark-item__main:disabled {
-  cursor: default;
-}
-
-.desktop-task-mark-item__main:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
 .desktop-task-mark-item__color {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  place-items: center;
-  border-radius: 6px;
   background: color-mix(in srgb, var(--mark-color) 10%, transparent);
-}
-
-.desktop-task-mark-item__body {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
-}
-
-.desktop-task-mark-item__identity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
 }
 
 .desktop-task-mark-item__name {
@@ -156,11 +104,6 @@ function handleAction(action: string | number) {
   color: var(--buddy-text-muted);
   font-size: 12px;
   line-height: 17px;
-}
-
-.desktop-task-mark-item__actions {
-  display: flex;
-  flex: none;
 }
 
 .desktop-task-mark-item__action {

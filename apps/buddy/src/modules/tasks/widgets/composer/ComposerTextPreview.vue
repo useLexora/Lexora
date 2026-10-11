@@ -31,7 +31,7 @@ const { t } = useBuddyI18n(() => props.language)
       <DesktopDocumentToolbar v-if="preview" :model-value="null" :name="preview.name" :modes="[]" :language="language" embedded />
     </template>
     <template v-if="preview">
-      <div v-if="preview.text !== undefined" class="composer-text-preview__document">
+      <div v-if="preview.text !== undefined" class="h-[min(60vh,_40rem)] overflow-hidden border-1 border-solid border-border rounded-micro">
         <DesktopMonacoFile :text="preview.text" :path="preview.name" :wrap="true">
           <template #error>
             {{ t('chat.attachmentReadFailed') }}
@@ -47,7 +47,7 @@ const { t } = useBuddyI18n(() => props.language)
       <NSpin v-else size="small" />
     </template>
     <template #footer>
-      <div class="composer-text-preview__actions">
+      <div class="flex justify-end gap-2">
         <NButton @click="emit('close')">
           {{ t('common.close') }}
         </NButton>
@@ -58,16 +58,3 @@ const { t } = useBuddyI18n(() => props.language)
     </template>
   </NModal>
 </template>
-
-<style scoped lang="scss">
-.composer-text-preview {
-  &__document {
-    height: min(60vh, 40rem);
-    overflow: hidden;
-    border: 1px solid var(--buddy-border-subtle);
-    border-radius: var(--buddy-radius-micro);
-  }
-
-  &__actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-}
-</style>
