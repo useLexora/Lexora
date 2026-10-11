@@ -2,6 +2,7 @@ import type * as Monaco from 'monaco-editor/editor/editor.api.js'
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
 import { watch } from 'vue'
 import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
+import { desktopTypography } from '@/theme/desktopTypography'
 
 interface MonacoEnvironmentGlobal {
   MonacoEnvironment?: {
@@ -46,7 +47,8 @@ export function loadDesktopMonaco(): Promise<typeof Monaco> {
   return monacoPromise
 }
 
-export function observeDesktopMonacoTheme(monaco: typeof Monaco): () => void {
+export function observeDesktopMonacoTheme(monaco: typeof Monaco, editor: Monaco.editor.IStandaloneCodeEditor | Monaco.editor.IStandaloneDiffEditor): () => void {
+  const stopTypography = watch(() => desktopTypography.value.mono, fontFamily => editor.updateOptions({ fontFamily }), { immediate: true })
   if (!themeSubscribers++) {
     stopTheme = watch(() => desktopThemeSnapshot.value.active, () => syncDesktopMonacoTheme(monaco), { immediate: true })
   }
@@ -55,6 +57,7 @@ export function observeDesktopMonacoTheme(monaco: typeof Monaco): () => void {
     if (disposed)
       return
     disposed = true
+    stopTypography()
     if (!--themeSubscribers) {
       stopTheme?.()
       stopTheme = null

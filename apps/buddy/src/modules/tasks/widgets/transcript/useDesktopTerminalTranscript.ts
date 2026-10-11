@@ -68,7 +68,7 @@ export function useDesktopTerminalTranscript(options: UseDesktopTerminalTranscri
       })
       updateTranscript(transcript)
       stopTranscriptWatch = watch(options.transcript, updateTranscript)
-      stopThemeSync = observeDesktopMonacoTheme(monaco)
+      stopThemeSync = observeDesktopMonacoTheme(monaco, editor)
       loading.value = false
 
       function updateTranscript(transcript: DesktopTerminalTranscriptProjection) {

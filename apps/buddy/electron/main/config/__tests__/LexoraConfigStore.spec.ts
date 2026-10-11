@@ -4,6 +4,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { DEFAULT_THEME_PREFERENCE } from '../../../../shared/theme/themePreferences'
+import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '../../../shared/desktopApi'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
@@ -18,6 +19,24 @@ async function createConfigStore() {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults legacy typography, merges independent choices and resets without losing other preferences', async () => {
+    const { configPath, store } = await createConfigStore()
+    expect((await store.read()).desktop.typography).toEqual(DEFAULT_TYPOGRAPHY)
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, '[desktop.chat]\nwelcome="none"\n[desktop.typography]\nfuture=true\n')
+    expect((await store.read()).desktop.typography).toEqual(DEFAULT_TYPOGRAPHY)
+    await store.update({ desktop: { typography: { bodyFont: 'Noto Serif CJK SC', bodySize: 15 } } })
+    await store.update({ desktop: { typography: { codeFont: 'Consolas' } } })
+    const restarted = new LexoraConfigStore({ configPath })
+    expect((await restarted.read()).desktop.typography).toEqual({ ...DEFAULT_TYPOGRAPHY, bodyFont: 'Noto Serif CJK SC', bodySize: 15, codeFont: 'Consolas' })
+    const saved = await readFile(configPath, 'utf8')
+    await expect(store.update({ desktop: { typography: { bodySize: 100 } } })).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(saved)
+    await restarted.update({ desktop: { typography: { ...DEFAULT_TYPOGRAPHY } } })
+    expect((await store.read()).desktop).toMatchObject({ typography: DEFAULT_TYPOGRAPHY, chat: { welcome: 'none' } })
+    expect(await readFile(configPath, 'utf8')).toContain('future = true')
+  })
+
   it('migrates paired themes into one selection while retaining system appearance tracking', async () => {
     for (const mode of ['light', 'dark', 'system'] as const) {
       const { configPath, store } = await createConfigStore()

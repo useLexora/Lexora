@@ -139,7 +139,7 @@ export function useMonacoDiff(options: UseMonacoDiffOptions) {
       stopOptionsWatch = watch([() => options.wrap?.value, () => options.sideBySide?.value], ([wrap, sideBySide]) => {
         editor?.updateOptions({ diffWordWrap: wrap ? 'on' : 'off', renderSideBySide: sideBySide ?? true, wordWrapOverride2: 'inherit' })
       })
-      stopThemeSync = observeDesktopMonacoTheme(monaco)
+      stopThemeSync = observeDesktopMonacoTheme(monaco, editor)
       stopModelWatch = watch([options.original, options.modified, options.language], ([original, modified, language]) => {
         if (!editor || !originalModel || !modifiedModel)
           return

@@ -101,7 +101,7 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
       padding: { top: 12, bottom: 12 },
     })
     editor = ownedEditor
-    stopTheme = observeDesktopMonacoTheme(lease.monaco)
+    stopTheme = observeDesktopMonacoTheme(lease.monaco, ownedEditor)
     if (props.view.state.editor)
       ownedEditor.restoreViewState(JSON.parse(JSON.stringify(props.view.state.editor)) as Monaco.editor.ICodeEditorViewState)
     const schedule = () => {

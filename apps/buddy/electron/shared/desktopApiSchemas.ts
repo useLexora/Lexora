@@ -7,6 +7,7 @@ import { BUDDY_PERMISSION_MODES } from '../../shared/permissions/permissionMode'
 import { runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
 import { themePreferenceSchema } from '../../shared/theme/themePreferences'
+import { typographyPreferencesSchema } from '../../shared/typography/typographyPreferences'
 import {
   DESKTOP_CHAT_OUTLINE_POSITIONS,
   DESKTOP_CHAT_WELCOME_VARIANT_IDS,
@@ -86,6 +87,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),
     theme: themePreferenceSchema.optional(),
+    typography: typographyPreferencesSchema.partial().optional(),
   }).strict().optional(),
   pet: z.object({
     alwaysOnTop: z.boolean().optional(),

@@ -16,6 +16,7 @@ import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMo
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
 import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
+import { DEFAULT_TYPOGRAPHY, typographyPreferencesSchema } from '../../../shared/typography/typographyPreferences'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_WELCOME_VARIANT_IDS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
@@ -41,6 +42,12 @@ const taskSidebarConfigSchema = z.object({
 })
 
 const desktopConfigSchema = z.object({
+  typography: z.object({
+    ui_font: typographyPreferencesSchema.shape.uiFont.default(DEFAULT_TYPOGRAPHY.uiFont),
+    body_font: typographyPreferencesSchema.shape.bodyFont.default(DEFAULT_TYPOGRAPHY.bodyFont),
+    code_font: typographyPreferencesSchema.shape.codeFont.default(DEFAULT_TYPOGRAPHY.codeFont),
+    body_size: typographyPreferencesSchema.shape.bodySize.default(DEFAULT_TYPOGRAPHY.bodySize),
+  }).passthrough().prefault({}),
   plugin_author: extensionAuthorSchema.default(''),
   background_close_notice_shown: z.boolean().default(false),
   chat: z.object({
@@ -77,6 +84,7 @@ const desktopConfigSchema = z.object({
   accent_color: z.enum(DESKTOP_ACCENT_COLORS).default('default'),
 }).passthrough().default({
   background_close_notice_shown: false,
+  typography: { ui_font: '', body_font: '', code_font: '', body_size: DEFAULT_TYPOGRAPHY.bodySize },
   plugin_author: '',
   chat: {
     outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
@@ -329,6 +337,12 @@ function decodeConfig(value: unknown): LexoraConfig {
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
       theme: migrateThemePreference(config.desktop.theme, config.desktop.accent_color),
+      typography: {
+        uiFont: config.desktop.typography.ui_font,
+        bodyFont: config.desktop.typography.body_font,
+        codeFont: config.desktop.typography.code_font,
+        bodySize: config.desktop.typography.body_size,
+      },
     },
     pet: {
       alwaysOnTop: config.pet.always_on_top,
@@ -381,6 +395,12 @@ function encodeConfig(config: LexoraConfig) {
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
       theme: config.desktop.theme,
+      typography: {
+        ui_font: config.desktop.typography.uiFont,
+        body_font: config.desktop.typography.bodyFont,
+        code_font: config.desktop.typography.codeFont,
+        body_size: config.desktop.typography.bodySize,
+      },
     },
     pet: {
       always_on_top: config.pet.alwaysOnTop,
@@ -399,6 +419,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       ...current.desktop,
       ...patch.desktop,
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
+      typography: typographyPreferencesSchema.parse({ ...current.desktop.typography, ...patch.desktop?.typography }),
       pluginAuthor: extensionAuthorSchema.parse(patch.desktop?.pluginAuthor ?? current.desktop.pluginAuthor),
       chat: {
         ...current.desktop.chat,
@@ -432,6 +453,7 @@ function mergeConfigFile(file: unknown, config: LexoraConfig): Record<string, un
   const nextDesktop: Record<string, unknown> = {
     ...desktop,
     ...encoded.desktop,
+    typography: { ...asRecord(desktop.typography), ...encoded.desktop.typography },
     chat: {
       ...asRecord(desktop.chat),
       ...asRecord(encoded.desktop.chat),

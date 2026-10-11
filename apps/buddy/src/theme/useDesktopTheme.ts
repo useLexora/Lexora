@@ -3,6 +3,7 @@ import { createExtensionThemeColors } from '@buddy-shared/theme/themeTokens'
 import { createInjectionState } from '@vueuse/core'
 import { computed } from 'vue'
 import { desktopThemeSnapshot } from './desktopThemeState'
+import { desktopTypography } from './desktopTypography'
 import { createBuddyNaiveThemeOverrides } from './naiveTheme'
 
 const [useProvideDesktopTheme, injectDesktopTheme] = createInjectionState(() => {
@@ -12,7 +13,11 @@ const [useProvideDesktopTheme, injectDesktopTheme] = createInjectionState(() => 
   const theme = computed(() => projectBuddyTheme(resolved.value))
   const variables = computed(() => resolved.value.variables)
   const overrides = computed(() => createBuddyNaiveThemeOverrides(theme.value, resolved.value.colors))
-  const extensionColors = computed(() => createExtensionThemeColors(variables.value))
+  const extensionColors = computed(() => ({
+    ...createExtensionThemeColors(variables.value),
+    'font-ui': desktopTypography.value.ui,
+    'font-mono': desktopTypography.value.mono,
+  }))
   const revision = computed(() => snapshot.value.revision)
   return { isDark, theme, resolved, snapshot, revision, overrides, extensionColors }
 })

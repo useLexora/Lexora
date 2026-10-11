@@ -351,6 +351,9 @@ function handleMarkdownLink(href: string) {
   .is-user & {
     justify-self: end;
     background: var(--buddy-user-message-surface);
+    font-family: var(--buddy-font-body);
+    font-size: var(--buddy-chat-user-font-size);
+    line-height: var(--buddy-chat-final-line-height);
   }
 
   .is-assistant &,

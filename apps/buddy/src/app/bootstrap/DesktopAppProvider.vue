@@ -23,6 +23,7 @@ import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { useDesktopTypography } from '@/theme/desktopTypography'
 import { useDesktopTheme } from '@/theme/useDesktopTheme'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
 import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
@@ -50,6 +51,7 @@ const router = useRouter()
 const message = useMessage()
 const appState = useDesktopAppState({ api })
 const { stores } = appState
+useDesktopTypography(() => stores.applicationSettings.config.value?.desktop.typography)
 useProvideDesktopUpdates(stores.updates)
 const taskIndex = useTaskIndex({
   api: api.localChat,

@@ -1,5 +1,4 @@
 import type { SpaceIconColor } from '../spaces/spaceAppearance'
-import { themeFonts } from './themeTokens'
 
 export type BuddyColorScheme = 'light' | 'dark'
 
@@ -338,8 +337,6 @@ export const buddyColorThemes = {
 
 export function createBuddyColorVariables(theme: BuddyColorTheme): Record<string, string> {
   return {
-    '--buddy-font-ui': themeFonts.ui,
-    '--buddy-font-mono': themeFonts.mono,
     ...Object.fromEntries(Object.entries(theme.spaceIcon).map(([color, value]) => [`--buddy-space-icon-${color}`, value])),
     '--buddy-surface-canvas': theme.surface.canvas,
     '--buddy-surface-app-sidebar': theme.surface.canvas,

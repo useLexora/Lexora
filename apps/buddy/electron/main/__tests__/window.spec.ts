@@ -7,6 +7,7 @@ const electron = vi.hoisted(() => {
     static instances: FakeBrowserWindow[] = []
 
     readonly hide = vi.fn()
+    readonly loadURL = vi.fn().mockResolvedValue(undefined)
     readonly maximize = vi.fn()
     readonly removeMenu = vi.fn()
     readonly setTitle = vi.fn()
@@ -103,5 +104,30 @@ describe('createDesktopWindow lifecycle', () => {
 
     expect(quittingClose.preventDefault).not.toHaveBeenCalled()
     expect(window.hide).toHaveBeenCalledOnce()
+  })
+})
+describe('desktop font permissions', () => {
+  it.each([null, 'http://localhost:1420'])('only allows local fonts from the trusted main frame (%s)', async (rendererUrl) => {
+    const handle = createDesktopWindow({ appName: 'Lexora', iconPath: '/tmp/icon.png', isQuitting: () => false, rendererUrl })
+    const window = electron.FakeBrowserWindow.instances.at(-1)!
+    const check = window.webContents.session.setPermissionCheckHandler.mock.calls[0]![0]
+    const request = window.webContents.session.setPermissionRequestHandler.mock.calls[0]![0]
+    const requestingUrl = rendererUrl ? `${rendererUrl}/#/settings/appearance` : 'lexora-app://renderer/index.html#/settings/appearance'
+    const details = { isMainFrame: true, requestingUrl }
+    const permits = (contents: unknown, permission: string, frame: { isMainFrame: boolean, requestingUrl?: string }) => {
+      let granted: boolean | undefined
+      request(contents, permission, (value: boolean) => granted = value, frame)
+      return [check(contents, permission, '', frame), granted]
+    }
+
+    expect(permits(window.webContents, 'local-fonts', details)).toEqual([false, false])
+    await handle.load()
+    expect(permits(window.webContents, 'local-fonts', details)).toEqual([true, true])
+    expect(permits(window.webContents, 'media', details)).toEqual([false, false])
+    expect(permits(null, 'local-fonts', details)).toEqual([false, false])
+    expect(permits({}, 'local-fonts', details)).toEqual([false, false])
+    expect(permits(window.webContents, 'local-fonts', { ...details, isMainFrame: false })).toEqual([false, false])
+    for (const url of [undefined, '', 'https://example.com', 'lexora-extension://plugin/index.html', `${requestingUrl.split('#')[0]}?other=1`])
+      expect(permits(window.webContents, 'local-fonts', { ...details, requestingUrl: url })).toEqual([false, false])
   })
 })

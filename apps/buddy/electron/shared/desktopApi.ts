@@ -187,6 +187,7 @@ export interface LexoraConfig {
     pluginAuthor: string
     sidebarCollapsed: boolean
     theme: ThemePreference
+    typography: import('../../shared/typography/typographyPreferences').TypographyPreferences
   }
   pet: {
     alwaysOnTop: boolean
@@ -199,7 +200,8 @@ export interface LexoraConfigPatch {
   runtime?: Partial<LexoraConfig['runtime']>
   browser?: Partial<LexoraConfig['browser']>
   proxy?: LexoraConfig['proxy']
-  desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar' | 'profile'>> & {
+  desktop?: Partial<Omit<LexoraConfig['desktop'], 'chat' | 'taskSidebar' | 'profile' | 'typography'>> & {
+    typography?: Partial<LexoraConfig['desktop']['typography']>
     chat?: Partial<DesktopChatPreferences>
     taskSidebar?: Partial<DesktopTaskSidebarPreferences>
     profile?: Partial<DesktopUserProfileConfig>

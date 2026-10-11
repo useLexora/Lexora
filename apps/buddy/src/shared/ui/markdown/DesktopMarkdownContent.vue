@@ -165,13 +165,13 @@ onBeforeUnmount(() => {
 }
 
 .buddy-chat-markdown-host :deep(.markstream-vue) {
-  --ms-font-sans: var(--buddy-font-ui);
+  --ms-font-sans: var(--buddy-font-body);
   --ms-font-mono: var(--buddy-font-mono);
   --ms-text-body: var(--buddy-chat-final-font-size);
   --ms-leading-body: var(--buddy-chat-final-line-height);
-  --ms-text-h1: 22px;
-  --ms-text-h2: 19px;
-  --ms-text-h3: 16px;
+  --ms-text-h1: calc(var(--buddy-chat-final-font-size) * 22 / 14);
+  --ms-text-h2: calc(var(--buddy-chat-final-font-size) * 19 / 14);
+  --ms-text-h3: calc(var(--buddy-chat-final-font-size) * 16 / 14);
   --ms-text-h4: var(--buddy-chat-final-heading-font-size);
   --ms-text-h5: var(--buddy-chat-final-heading-font-size);
   --ms-text-h6: var(--buddy-chat-final-heading-font-size);

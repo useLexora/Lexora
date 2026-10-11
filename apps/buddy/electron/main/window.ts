@@ -57,12 +57,20 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
     event.preventDefault()
     window.setTitle(options.appName)
   })
-  window.webContents.session.setPermissionCheckHandler(() => false)
-  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
+  let trustedRendererUrl = ''
+  window.webContents.session.setPermissionCheckHandler((webContents, permission, _origin, details) => {
+    return permission === 'local-fonts'
+      && webContents === window.webContents
+      && details.isMainFrame
+      && isAllowedRendererNavigation(details.requestingUrl ?? '', trustedRendererUrl)
+  })
+  window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(permission === 'local-fonts'
+      && webContents === window.webContents
+      && details.isMainFrame
+      && isAllowedRendererNavigation(details.requestingUrl, trustedRendererUrl))
   })
   window.removeMenu()
-  let trustedRendererUrl = ''
 
   const publishWindowState = () => {
     if (!window.webContents.isDestroyed()) {

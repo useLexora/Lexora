@@ -60,8 +60,9 @@ withDefaults(defineProps<{
 :deep(.desktop-chat-composer__editor-scrollbar) {
   min-height: calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
   max-height: calc(8lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
-  font-size: 0.9rem;
-  line-height: 1.58;
+  font-family: var(--buddy-font-body);
+  font-size: var(--buddy-chat-user-font-size);
+  line-height: var(--buddy-chat-final-line-height);
 }
 
 :deep(.desktop-chat-composer__prosemirror) {
@@ -69,8 +70,9 @@ withDefaults(defineProps<{
   border: 0;
   outline: 0;
   color: var(--buddy-composer-fg);
-  font-size: 0.9rem;
-  line-height: 1.58;
+  font-family: var(--buddy-font-body);
+  font-size: var(--buddy-chat-user-font-size);
+  line-height: var(--buddy-chat-final-line-height);
   white-space: pre-wrap;
   word-break: break-word;
 

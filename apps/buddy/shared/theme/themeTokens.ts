@@ -119,7 +119,7 @@ export const semanticColorTokens = {
 } as const
 
 export const themeFonts = {
-  ui: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif',
+  ui: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans", sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
 } as const
 

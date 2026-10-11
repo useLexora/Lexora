@@ -12,6 +12,7 @@ import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopThemeSettings from './DesktopThemeSettings.vue'
+import DesktopTypographySettings from './DesktopTypographySettings.vue'
 
 type AppearanceSettingField = 'welcome' | 'outlinePosition'
 
@@ -49,6 +50,7 @@ async function updateWelcomePreference(preference: DesktopChatWelcomePreference)
       </h2>
       <DesktopThemeSettings :language="language" />
     </section>
+    <DesktopTypographySettings v-bind="props" />
     <section class="grid gap-[0.8rem]">
       <h2 class="m-0 text-[0.92rem]">
         {{ t('desktop.settings.conversationAppearance') }}

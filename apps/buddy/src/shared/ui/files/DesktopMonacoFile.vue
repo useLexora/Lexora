@@ -70,7 +70,7 @@ watch(container, async (element, _previous, onCleanup) => {
       renderLineHighlight: 'none',
       padding: { top: 8, bottom: 8 },
     })
-    stopTheme = observeDesktopMonacoTheme(monaco)
+    stopTheme = observeDesktopMonacoTheme(monaco, editor)
     stopUpdates = watch(() => [props.text, props.path, props.wrap] as const, ([text, path, wrap], previous) => {
       if (!editor || !model)
         return
