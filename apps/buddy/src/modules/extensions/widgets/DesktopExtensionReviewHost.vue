@@ -3,6 +3,7 @@ import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import { useMessage } from 'naive-ui'
 import { onScopeDispose, shallowRef } from 'vue'
 import { useExtensionContext } from '../extensionContext'
+import { extensionLabels } from '../extensionLabels'
 import { extensionErrorCode } from '../state/useExtensionState'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 
@@ -21,16 +22,20 @@ onScopeDispose(state.api.onReview((next) => {
   review.value = next
 }))
 onScopeDispose(cancel)
-async function install() {
+async function install(applyUpdate: boolean) {
   if (!review.value || busy.value)
     return
   busy.value = true
   const current = review.value
   try {
-    await state.api.install(current.token)
+    await state.install(current, applyUpdate)
     if (review.value === current)
       review.value = null
     await state.refresh()
+    if (current.currentVersion) {
+      const labels = extensionLabels(language.value)
+      message.success(applyUpdate ? labels.updateApplied : labels.updateDeferred)
+    }
   }
   catch (error) { message.error(extensionErrorCode(error)) }
   finally { busy.value = false }
@@ -38,5 +43,5 @@ async function install() {
 </script>
 
 <template>
-  <DesktopExtensionInstallReview v-if="review" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
 </template>

@@ -139,7 +139,8 @@ export class ThemeService {
             encoded[path] = Buffer.from(bytes).toString('base64')
           }
           const descriptor: ThemeDescriptor = { id: contribution.id, label: contribution.label, appearance: contribution.appearance, source: 'plugin', extensionId: pkg.manifest.id, packageName: pkg.manifest.name, swatch: document.colors.accent ?? this.#fallbacks[contribution.appearance].colors.accent }
-          entries.set(contribution.id, { descriptor, document, resolved: resolveTheme(descriptor, document, {}, assets), archive: { schemaVersion: 1, label: contribution.label, appearance: contribution.appearance, document, assets: encoded } })
+          const resolved = resolveTheme(descriptor, document, {}, assets)
+          entries.set(contribution.id, { descriptor: resolved.descriptor, document, resolved, archive: { schemaVersion: 1, label: contribution.label, appearance: contribution.appearance, document, assets: encoded } })
         }
         catch {
           this.#record({ component: 'desktop.themes', level: 'warn', event: 'themes.package.invalid', extensionId: pkg.manifest.id, errorCode: 'EXTENSION_THEME_UNAVAILABLE' })
@@ -283,7 +284,8 @@ export class ThemeService {
   #userEntry(id: string, input: unknown): ThemeEntry {
     const { archive, assets } = validateThemeArchive(input)
     const descriptor = this.#descriptor(id, archive)
-    return { descriptor, document: archive.document, archive, resolved: resolveTheme(descriptor, archive.document, {}, assets) }
+    const resolved = resolveTheme(descriptor, archive.document, {}, assets)
+    return { descriptor: resolved.descriptor, document: archive.document, archive, resolved }
   }
 
   async #save(id: string | undefined, input: unknown, assertCurrent: () => void): Promise<ThemeDescriptor> {

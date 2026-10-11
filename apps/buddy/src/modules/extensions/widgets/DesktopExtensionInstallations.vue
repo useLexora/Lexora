@@ -8,7 +8,7 @@ const emit = defineEmits<{ cancel: [id: string] }>()
 const en = computed(() => props.language === 'en-US')
 const stages = computed<Record<string, string>>(() => en.value ? { download: 'Download', validate: 'Validate', review: 'Permissions', compile: 'Compile', install: 'Install', completed: 'Complete' } : { download: '获取插件', validate: '校验插件', review: '确认权限', compile: '编译', install: '安装', completed: '完成' })
 const statuses = computed<Record<string, string>>(() => en.value ? { running: 'In progress', review: 'Awaiting confirmation', completed: 'Installed', failed: 'Failed', cancelled: 'Cancelled' } : { running: '进行中', review: '等待确认', completed: '已安装', failed: '失败', cancelled: '已取消' })
-const messages = computed<Record<string, string>>(() => en.value ? { started: 'Started', permissions: 'Waiting for permission review', checking: 'Checking package format', compiled: 'Compilation succeeded', skipped: 'Compiled package; skipped', installing: 'Saving verified package', installed: 'Ready; updates take effect after restart' } : { started: '已开始', permissions: '等待确认插件权限', checking: '检查包格式', compiled: '编译成功', skipped: '已编译的插件包，跳过此步骤', installing: '保存已校验的插件包', installed: '安装完成；更新版本需重启插件后生效' })
+const messages = computed<Record<string, string>>(() => en.value ? { started: 'Started', permissions: 'Waiting for permission review', checking: 'Checking package format', compiled: 'Compilation succeeded', skipped: 'Compiled package; skipped', installing: 'Saving verified package', installed: 'Installation complete' } : { started: '已开始', permissions: '等待确认插件权限', checking: '检查包格式', compiled: '编译成功', skipped: '已编译的插件包，跳过此步骤', installing: '保存已校验的插件包', installed: '安装完成' })
 const errors = computed((): Record<string, string> => en.value
   ? {}
   : {

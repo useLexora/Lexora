@@ -183,7 +183,10 @@ export function registerExtensionIpc(options: {
     if (options.developmentDirectory) {
       const review = await service.review(options.developmentDirectory, true)
       await service.install(review.token)
-      await service.restart(review.manifest.id)
+      if (review.currentVersion)
+        await service.applyUpdate(review.manifest.id)
+      else
+        await service.restart(review.manifest.id)
     }
   })
   const record = safeDiagnosticReporter(options.record)
@@ -223,6 +226,7 @@ export function registerExtensionIpc(options: {
         case 'cancelInstall': return service.cancelInstall(input.token)
         case 'enable': return await service.enable(input.id, input.enabled)
         case 'restart': return await service.restart(input.id)
+        case 'applyUpdate': return await service.applyUpdate(input.id)
         case 'uninstall': return await service.uninstall(input.id, input.clearData)
         case 'devtools': return await service.devtools(input.id)
         case 'revokeResources': return await service.revokeResources(input.id)

@@ -23,6 +23,7 @@ export function createExtensionApi(): ExtensionApi {
     cancelInstall: token => request({ action: 'cancelInstall', token }),
     enable: (id, enabled) => request({ action: 'enable', id, enabled }),
     restart: id => request({ action: 'restart', id }),
+    applyUpdate: id => request({ action: 'applyUpdate', id }),
     uninstall: (id, options) => request({ action: 'uninstall', id, clearData: options?.clearData ?? false }),
     devtools: id => request({ action: 'devtools', id }),
     revokeResources: id => request({ action: 'revokeResources', id }),
