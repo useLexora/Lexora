@@ -4,8 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
-import { readBuddyReleaseMetadata } from './artifacts.mjs'
-import { resolveBuddyOutputPaths } from './output-paths.mjs'
+import { readBuddyReleaseMetadata, releaseAssets } from './artifacts.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
@@ -15,17 +14,22 @@ export function verifyBuddyReleaseArtifacts({ cwd = repoRoot, directory, verifyC
     const path = directory ? join(directory, artifact.name) : artifact.path
     return { ...artifact, path, hash: sha256(readFileSync(path)) }
   })
-  const content = `${artifacts.map(artifact => `${artifact.hash}  ${artifact.name}`).join('\n')}\n`
-  const path = join(directory ?? join(resolveBuddyOutputPaths(cwd).outputRoot, 'artifacts'), 'SHA256SUMS.txt')
-  if (verifyChecksum) {
-    if (readFileSync(path, 'utf8') !== content)
-      throw new Error('Release checksum file does not match the downloaded packages')
+  const entries = artifacts.map(artifact => `${artifact.hash}  ${artifact.name}\n`)
+  function checksumFile(checksum, content) {
+    const path = directory ? join(directory, checksum.name) : checksum.path
+    if (verifyChecksum) {
+      if (readFileSync(path, 'utf8') !== content)
+        throw new Error(`Release checksum file does not match the downloaded packages: ${checksum.name}`)
+    }
+    else {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, content)
+    }
+    return { ...checksum, path, hash: sha256(content) }
   }
-  else {
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, content)
-  }
-  return { ...metadata, artifacts, checksum: { name: 'SHA256SUMS.txt', path, hash: sha256(content) } }
+  const checksums = metadata.checksums.map((checksum, index) => checksumFile(checksum, entries[index]))
+  const checksum = checksumFile(metadata.checksum, entries.join(''))
+  return { ...metadata, artifacts, checksums, checksum }
 }
 
 export function writeBuddyReleaseGithubEnv(path, metadata) {
@@ -41,7 +45,7 @@ export function writeBuddyReleaseGithubEnv(path, metadata) {
 }
 
 export async function verifyPublicAssets(metadata, fetchAsset = fetch) {
-  for (const artifact of [...metadata.artifacts, metadata.checksum]) {
+  for (const artifact of releaseAssets(metadata)) {
     const url = `https://github.com/${metadata.releaseRepo}/releases/download/${metadata.releaseTag}/${artifact.name}`
     const response = await fetchAsset(url, { signal: AbortSignal.timeout(120_000) })
     if (!response.ok || !response.body)

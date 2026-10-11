@@ -17,7 +17,7 @@ const repoRoot = resolve(import.meta.dirname, '../../..')
 const { values } = parseArgs({ options: { target: { type: 'string' }, format: { type: 'string' } } })
 const target = values.format
 if (!target)
-  throw new Error('Usage: package-desktop.mjs --format deb|pacman|nsis|dmg [--target <os-architecture>]')
+  throw new Error('Usage: package-desktop.mjs --format deb|rpm|pacman|nsis|dmg [--target <os-architecture>]')
 const platform = resolveBuildTarget(values.target)
 requireNativeBuildTarget(platform)
 requirePackageFormat(platform, target)

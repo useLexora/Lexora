@@ -19,6 +19,7 @@ const qualitySteps = [
 const packageSteps = {
   dmg: ['macOS DMG package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:macos']],
   deb: ['Ubuntu deb package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:deb']],
+  rpm: ['Fedora RPM package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:rpm']],
   pacman: ['Arch Linux package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:arch']],
   nsis: ['Windows NSIS package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:windows']],
 }

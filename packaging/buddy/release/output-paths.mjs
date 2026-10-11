@@ -10,6 +10,7 @@ export function resolveBuddyOutputPaths(cwd = repoRoot) {
     artifacts: {
       arch: join(outputRoot, 'artifacts/arch'),
       desktop: join(outputRoot, 'artifacts/desktop'),
+      rpm: join(outputRoot, 'artifacts/rpm'),
       pet: join(outputRoot, 'artifacts/pet'),
       windows: join(outputRoot, 'artifacts/windows'),
       macos: join(outputRoot, 'artifacts/macos'),

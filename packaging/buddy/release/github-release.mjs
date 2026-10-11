@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { createReleaseNotesDraft, validateReleaseNotes } from '../../release/notes.mjs'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
-import { readBuddyReleaseMetadata } from './artifacts.mjs'
+import { readBuddyReleaseMetadata, releaseAssets } from './artifacts.mjs'
 import { verifyBuddyReleaseArtifacts, verifyPublicAssets } from './verify-release-artifacts.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
@@ -151,7 +151,7 @@ function stageRelease(commit) {
   requireReleaseIdentity(release, metadata)
   if (!release.draft)
     throw new Error('Cannot stage assets into an already published release')
-  const artifacts = [...metadata.artifacts, metadata.checksum]
+  const artifacts = releaseAssets(metadata)
   verifyReleaseAssets(release, artifacts, { allowMissing: true })
   for (const artifact of artifacts) {
     if (!release.assets.some(asset => asset.name === artifact.name))
@@ -175,7 +175,7 @@ async function publishRelease(commit) {
   const noteErrors = validateReleaseNotes(release.body)
   if (noteErrors.length)
     throw new Error(noteErrors.join('\n'))
-  const artifacts = [...metadata.artifacts, { name: 'SHA256SUMS.txt' }]
+  const artifacts = releaseAssets(metadata)
   verifyReleaseAssets(release, artifacts)
 
   const directory = mkdtempSync(join(tmpdir(), 'lexora-release-'))
@@ -191,8 +191,8 @@ async function publishRelease(commit) {
       ...artifacts.flatMap(artifact => ['--pattern', artifact.name]),
     ])
     const verified = verifyBuddyReleaseArtifacts({ directory, verifyChecksum: true })
-    verifyReleaseAssets(release, [...verified.artifacts, verified.checksum])
-    for (const artifact of [...verified.artifacts, verified.checksum]) {
+    verifyReleaseAssets(release, releaseAssets(verified))
+    for (const artifact of releaseAssets(verified)) {
       gh([
         'attestation',
         'verify',

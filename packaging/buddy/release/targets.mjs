@@ -5,10 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import targets from '../../../apps/buddy/platform/targets.json' with { type: 'json' }
 import definitions from '../../../apps/buddy/shared/platform/definitions.json' with { type: 'json' }
-import { CPU_ARCHITECTURE } from '../../../apps/buddy/shared/platform/identifiers.ts'
 
 const packaging = {
-  linux: { builderPlatform: 'linux', packageFormats: ['deb', 'pacman'] },
+  linux: { builderPlatform: 'linux', packageFormats: ['deb', 'rpm', 'pacman'] },
   win32: { builderPlatform: 'win', packageFormats: ['nsis'] },
   darwin: { builderPlatform: 'mac', packageFormats: ['dmg'], minimumSystemVersion: '15.0' },
 }
@@ -21,7 +20,7 @@ export function resolveBuildTarget(id = `${process.platform}-${process.arch}`) {
 }
 
 export function requirePackageFormat(target, format) {
-  if (!target.packageFormats.includes(format) || (format === 'pacman' && target.architecture !== CPU_ARCHITECTURE.X64))
+  if (!target.packageFormats.includes(format))
     throw new Error(`Unsupported Buddy package: ${target.id} ${format}`)
 }
 

@@ -10,10 +10,13 @@
 | --- | --- |
 | Windows x64 / ARM64 | 对应架构的 .exe |
 | Ubuntu / Debian x64 / ARM64 | 对应架构的 .deb |
-| Arch Linux x64 | .pkg.tar.zst |
+| Fedora 43 x64 / ARM64 | 对应架构的 .rpm |
+| Arch Linux x64 / Arch Linux ARM aarch64 | .pkg.tar.zst |
 | macOS 15+，Apple Silicon（ARM64） | .dmg |
 
-Intel / AMD 电脑选择 `x64`（.deb 标为 `amd64`），ARM 电脑选择 `arm64`。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
+Intel / AMD 电脑选择 `x64`（.deb 标为 `amd64`，.rpm 标为 `x86_64`），ARM 电脑选择 `arm64`（.rpm 和 Arch 包标为 `aarch64`）。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
+
+RPM 安装：`sudo dnf install ./Lexora-Buddy-<版本>-linux-<架构>.rpm`。Release 中的 `.sha256` 文件可用 `sha256sum -c <安装包文件名>.sha256` 校验。
 
 ### macOS 首次安装
 

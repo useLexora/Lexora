@@ -45,6 +45,10 @@ runs:
       env:
         WORKSPACE_PACKAGES: ${{ inputs.packages }}
       run: |
+        if [[ "$RUNNER_OS" == 'Windows' ]]; then
+          export PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy
+          export PNPM_CONFIG_REGISTRY=https://registry.npmjs.org
+        fi
         read -r -a packages <<< "$WORKSPACE_PACKAGES"
         filters=()
         for package in "${packages[@]}"; do

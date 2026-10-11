@@ -10,10 +10,13 @@ Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and
 | --- | --- |
 | Windows x64 / ARM64 | .exe for your architecture |
 | Ubuntu / Debian x64 / ARM64 | .deb for your architecture |
-| Arch Linux x64 | .pkg.tar.zst |
+| Fedora 43 x64 / ARM64 | .rpm for your architecture |
+| Arch Linux x64 / Arch Linux ARM aarch64 | .pkg.tar.zst |
 | macOS 15+, Apple Silicon (ARM64) | .dmg |
 
-Choose `x64` (`amd64` for .deb) for Intel / AMD computers, or `arm64` for ARM computers. The native Linux pet is optional company, not a requirement for completing tasks.
+Choose `x64` (`amd64` for .deb, `x86_64` for .rpm) for Intel / AMD computers, or `arm64` (`aarch64` for .rpm and Arch packages) for ARM computers. The native Linux pet is optional company, not a requirement for completing tasks.
+
+Install RPMs with `sudo dnf install ./Lexora-Buddy-<version>-linux-<architecture>.rpm`. Verify a downloaded package using its Release `.sha256` file with `sha256sum -c <package-filename>.sha256`.
 
 ### First macOS installation
 

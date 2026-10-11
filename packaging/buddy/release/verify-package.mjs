@@ -76,7 +76,7 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
 }
 
 export function verifyLinuxPackage(target, artifact, cwd = repoRoot, targetId = resolveBuildTarget().id) {
-  if (!['deb', 'pacman'].includes(target))
+  if (!['deb', 'rpm', 'pacman'].includes(target))
     throw new Error(`Unsupported Linux package target: ${target}`)
   const directory = mkdtempSync(join(tmpdir(), 'lexora-package-'))
   try {
@@ -90,6 +90,9 @@ export function verifyLinuxPackage(target, artifact, cwd = repoRoot, targetId = 
         throw new Error('Deb control or data archive is missing')
       metadata = execFileSync('bsdtar', ['-xOf', join(directory, control), './control'], { encoding: 'utf8' })
       execFileSync('bsdtar', ['-xf', join(directory, data), '-C', directory])
+    }
+    else if (target === 'rpm') {
+      metadata = execFileSync('rpm', ['-qp', '--queryformat', 'Package: %{NAME}\nVersion: %{VERSION}\nRelease: %{RELEASE}\nArchitecture: %{ARCH}\n[Depends: %{REQUIRENAME}\n]', resolve(artifact)], { encoding: 'utf8' })
     }
     else {
       metadata = readFileSync(join(directory, '.PKGINFO'), 'utf8')
@@ -114,23 +117,28 @@ export function verifyLinuxPackage(target, artifact, cwd = repoRoot, targetId = 
 
 export function verifyLinuxMetadata(target, content, version, buildTarget) {
   const deb = target === 'deb'
+  const rpm = target === 'rpm'
   const fields = new Map()
   for (const line of content.split(/\r?\n/)) {
-    const match = line.match(deb ? /^([^:]+):(.*)$/ : /^([^ ]+) = (.*)$/)
+    const match = line.match(deb || rpm ? /^([^:]+):(.*)$/ : /^([^ ]+) = (.*)$/)
     if (match)
       fields.set(match[1], [...fields.get(match[1]) ?? [], match[2].trim()])
   }
   const expected = deb
     ? { Package: 'lexora-buddy', Version: version, Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'amd64' : 'arm64' }
-    : { pkgname: 'lexora-buddy', pkgver: `${version}-1`, arch: 'x86_64' }
+    : rpm
+      ? { Package: 'lexora-buddy', Version: version, Release: '1', Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
+      : { pkgname: 'lexora-buddy', pkgver: `${version}-1`, arch: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
   for (const [key, value] of Object.entries(expected)) {
     if (fields.get(key)?.[0] !== value)
       throw new Error(`${target} ${key} must be ${value}`)
   }
-  const dependencies = deb
+  const dependencies = deb || rpm
     ? (fields.get('Depends') ?? []).flatMap(value => value.split(',').map(item => item.trim().split(/[ (]/)[0]))
     : fields.get('depend') ?? []
-  const required = deb ? ['git', 'libcap2', 'socat', 'libgtk-3-0', 'libgtk-layer-shell0', 'webp-pixbuf-loader'] : ['git', 'libcap', 'socat', 'which', 'gtk3', 'gtk-layer-shell']
+  const required = deb
+    ? ['git', 'libcap2', 'socat', 'libgtk-3-0', 'libgtk-layer-shell0', 'webp-pixbuf-loader']
+    : ['git', 'libcap', 'socat', 'which', 'gtk3', 'gtk-layer-shell', ...(rpm ? ['webp-pixbuf-loader'] : [])]
   for (const dependency of required) {
     if (!dependencies.includes(dependency))
       throw new Error(`${target} dependency is missing: ${dependency}`)
@@ -139,8 +147,8 @@ export function verifyLinuxMetadata(target, content, version, buildTarget) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2)
-  if (args.length !== 2 || args[0] !== '--target' || !['deb', 'pacman'].includes(args[1]))
-    throw new Error('Usage: verify-package.mjs --target deb|pacman')
+  if (args.length !== 2 || args[0] !== '--target' || !['deb', 'rpm', 'pacman'].includes(args[1]))
+    throw new Error('Usage: verify-package.mjs --target deb|rpm|pacman')
   const artifact = readBuddyReleaseMetadata().artifacts.find(entry => entry.target === args[1] && entry.targetId === resolveBuildTarget().id)
   verifyLinuxPackage(artifact.target, artifact.path)
   writeOutput(`Desktop package verified: ${artifact.name}`)

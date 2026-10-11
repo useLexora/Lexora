@@ -97,11 +97,21 @@ jobs:
           retention-days: 7
 
   build-arch:
-    name: Arch package
-    runs-on: ubuntu-24.04
+    name: Arch package (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            image: archlinux:latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: ghcr.io/pkgforge-dev/archlinux@sha256:3bc9c9aa56b6a4c4b7de3e55b69f654c21348762adc431e3aacba4bcb7541ca0
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
-      image: archlinux:latest
+      image: ${{ matrix.image }}
     steps:
       - name: Install Arch build dependencies
         run: pacman -Syu --noconfirm base-devel git gtk3 libarchive libcap meson ninja libxcrypt-compat
@@ -111,13 +121,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
@@ -132,7 +142,7 @@ jobs:
       - name: Resolve package target
         id: package
         run: |
-          node packaging/buddy/release/targets.mjs --target linux-x64 --github-output "$GITHUB_OUTPUT"
+          node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
           node packaging/buddy/release/artifacts.mjs --format pacman --github-output "$GITHUB_OUTPUT"
 
       - name: Build first-party Arch package
@@ -141,7 +151,7 @@ jobs:
       - name: Upload Arch package for installation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: arch-install-candidate
+          name: arch-install-candidate-${{ matrix.target }}
           path: ${{ steps.package.outputs.path }}
           if-no-files-found: error
           include-hidden-files: true
@@ -149,9 +159,19 @@ jobs:
           retention-days: 1
 
   verify-arch:
-    name: Arch install
+    name: Arch install (${{ matrix.target }})
     needs: build-arch
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            image: archlinux:latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: ghcr.io/pkgforge-dev/archlinux@sha256:3bc9c9aa56b6a4c4b7de3e55b69f654c21348762adc431e3aacba4bcb7541ca0
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -171,7 +191,7 @@ jobs:
       - name: Download Arch package for installation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: arch-install-candidate
+          name: arch-install-candidate-${{ matrix.target }}
           path: apps/buddy/.output/artifacts/arch
 
       - name: Install built Arch package in an isolated container
@@ -190,7 +210,7 @@ jobs:
             --workdir "$GITHUB_WORKSPACE" \
             --env ARCH_PACKAGE \
             --env PATH=/opt/node/bin:/usr/bin:/bin \
-            archlinux:latest sleep infinity
+            "${{ matrix.image }}" sleep infinity
           docker exec lexora-arch-install bash -euc '
             pacman -Syu --noconfirm dbus xorg-server-xvfb xorg-xauth
             pacman -U --noconfirm "$ARCH_PACKAGE"
@@ -221,6 +241,157 @@ jobs:
           fi
 
       - name: Upload verified Arch package
+        if: inputs.upload-artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 7
+
+  build-fedora:
+    name: Fedora RPM (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    container:
+      image: fedora:43
+    steps:
+      - name: Install Fedora build dependencies
+        run: dnf install -y gcc gcc-c++ make git gtk3-devel gtk-layer-shell-devel libxdo-devel libcap-devel meson ninja-build bsdtar rpm-build libxcrypt-compat libatomic which
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Install workspace dependencies
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
+
+      - name: Resolve package target
+        id: package
+        run: |
+          node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
+          node packaging/buddy/release/artifacts.mjs --format rpm --github-output "$GITHUB_OUTPUT"
+
+      - name: Build Fedora RPM
+        run: pnpm --filter @uselexora/lexora-buddy package:rpm
+
+      - name: Upload RPM for installation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-install-candidate-${{ matrix.target }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+
+  verify-fedora:
+    name: Fedora install (${{ matrix.target }})
+    needs: build-fedora
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Resolve package target
+        id: package
+        run: node packaging/buddy/release/artifacts.mjs --format rpm --github-output "$GITHUB_OUTPUT"
+
+      - name: Download RPM for installation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fedora-install-candidate-${{ matrix.target }}
+          path: apps/buddy/.output/artifacts/rpm
+
+      - name: Install RPM in a clean Fedora container
+        env:
+          RPM_PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          printf 'abi <abi/4.0>,\nprofile lexora-fedora-install flags=(unconfined) { userns, }\n' > "$RUNNER_TEMP/lexora-fedora-install.apparmor"
+          sudo apparmor_parser --replace "$RUNNER_TEMP/lexora-fedora-install.apparmor"
+          node_root="$(dirname "$(dirname "$(command -v node)")")"
+          docker run --detach --name lexora-fedora-install \
+            --security-opt seccomp=unconfined \
+            --security-opt systempaths=unconfined \
+            --security-opt apparmor=lexora-fedora-install \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
+            --volume "$node_root:/opt/node:ro" \
+            --workdir "$GITHUB_WORKSPACE" \
+            --env RPM_PACKAGE \
+            --env PATH=/opt/node/bin:/usr/bin:/bin \
+            fedora:43 sleep infinity
+          docker exec lexora-fedora-install bash -euc '
+            dnf install -y dbus-daemon xorg-x11-server-Xvfb xorg-x11-xauth libatomic
+            dnf install -y "$RPM_PACKAGE"
+            useradd -m buddy
+            install -d -m 700 -o buddy -g buddy /home/buddy/runtime
+          '
+
+      - name: Smoke installed Desktop and native pet
+        timeout-minutes: 2
+        run: |
+          docker exec --user buddy \
+            --env HOME=/home/buddy \
+            --env XDG_RUNTIME_DIR=/home/buddy/runtime \
+            --env LEXORA_GUI_SMOKE_NO_SANDBOX=1 \
+            --env LEXORA_BUDDY_PET_PATH=/opt/lexora-buddy/resources/native-pet/lexora-buddy-pet \
+            --env LEXORA_DESKTOP_EXECUTABLE_PATH=/opt/lexora-buddy/lexora-buddy \
+            lexora-fedora-install \
+            xvfb-run -a dbus-run-session -- node packaging/buddy/ci/run-gui-smoke.mjs
+
+      - name: Remove installation container and policy
+        if: always()
+        run: |
+          if docker container inspect lexora-fedora-install > /dev/null 2>&1; then
+            docker rm --force lexora-fedora-install
+          fi
+          if [[ -f "$RUNNER_TEMP/lexora-fedora-install.apparmor" ]]; then
+            sudo apparmor_parser --remove "$RUNNER_TEMP/lexora-fedora-install.apparmor"
+          fi
+
+      - name: Upload verified RPM
         if: inputs.upload-artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
