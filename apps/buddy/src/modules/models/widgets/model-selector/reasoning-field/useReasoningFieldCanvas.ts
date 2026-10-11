@@ -1,8 +1,9 @@
 import type { ShallowRef } from 'vue'
 import type { ReasoningFieldState } from '../typing'
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { clamp } from './geometry'
-import { createReasoningFieldRenderer } from './renderer'
+import { createReasoningFieldPalette, createReasoningFieldRenderer } from './renderer'
 
 export function useReasoningFieldCanvas(canvas: Readonly<ShallowRef<HTMLCanvasElement | null>>, props: ReasoningFieldState) {
   let animationFrame = 0
@@ -12,8 +13,12 @@ export function useReasoningFieldCanvas(canvas: Readonly<ShallowRef<HTMLCanvasEl
   let waveMomentum = 0
   let reducedMotionMedia: MediaQueryList | null = null
   let resizeObserver: ResizeObserver | null = null
-  const renderField = createReasoningFieldRenderer(document.createElement('canvas'))
-  let themeObserver: MutationObserver | null = null
+  const palette = computed(() => {
+    const { colors, descriptor } = desktopThemeSnapshot.value.active
+    return createReasoningFieldPalette(colors, descriptor.appearance === 'dark')
+  })
+  const renderField = createReasoningFieldRenderer(document.createElement('canvas'), () => palette.value)
+  watch(palette, () => draw(performance.now()))
 
   watch(() => props.progress, () => {
     if (!reducedMotion)
@@ -29,11 +34,6 @@ export function useReasoningFieldCanvas(canvas: Readonly<ShallowRef<HTMLCanvasEl
     resizeObserver = new ResizeObserver(resizeCanvas)
     if (canvas.value)
       resizeObserver.observe(canvas.value)
-    themeObserver = new MutationObserver(() => draw(performance.now()))
-    themeObserver.observe(document.documentElement, {
-      attributeFilter: ['data-buddy-theme'],
-      attributes: true,
-    })
     resizeCanvas()
     syncAnimation()
   })
@@ -41,7 +41,6 @@ export function useReasoningFieldCanvas(canvas: Readonly<ShallowRef<HTMLCanvasEl
   onBeforeUnmount(() => {
     cancelAnimationFrame(animationFrame)
     resizeObserver?.disconnect()
-    themeObserver?.disconnect()
     reducedMotionMedia?.removeEventListener('change', handleReducedMotionChange)
   })
 
@@ -118,7 +117,7 @@ export function useReasoningFieldCanvas(canvas: Readonly<ShallowRef<HTMLCanvasEl
       time,
       momentum: waveMomentum,
       dragging: props.dragging,
-      dark: document.documentElement.dataset.buddyTheme === 'dark',
+      dark: desktopThemeSnapshot.value.active.descriptor.appearance === 'dark',
     })
   }
 }

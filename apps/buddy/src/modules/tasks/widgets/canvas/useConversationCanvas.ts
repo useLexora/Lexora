@@ -4,6 +4,7 @@ import type { ConversationCanvasData } from './conversationCanvasContext'
 import { Graph, Snapline } from '@antv/x6'
 import { useResizeObserver } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
+import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { conversationCanvasConnection } from '../../model/canvas/conversationCanvasConnections'
 import { createCanvasInteraction, resolveCanvasSimplifiedMode } from '../../model/canvas/conversationCanvasInteraction'
 import { conversationNodeSize, layoutConversationCanvas } from '../../model/canvas/conversationCanvasLayout'
@@ -366,7 +367,7 @@ export function useConversationCanvas(options: {
       virtual: { enabled: true, margin: VIEWPORT_MARGIN_PX },
       createCellView: cell => cell.isNode() ? nodeHost.view : undefined,
       background: { color: 'transparent' },
-      grid: { visible: true, size: 20, args: { color: '#a2a2a226', thickness: 1 } },
+      grid: { visible: true, size: 20, args: { color: desktopThemeSnapshot.value.active.colors['canvas-grid'], thickness: 1 } },
       panning: { enabled: true, eventTypes: ['leftMouseDown', 'mouseWheel', 'mouseWheelDown'] },
       mousewheel: { enabled: true, modifiers: 'ctrl', minScale: 0.2, maxScale: 1.8, zoomAtMousePosition: true },
       scaling: { min: 0.2, max: 1.8 },
@@ -421,6 +422,9 @@ export function useConversationCanvas(options: {
     sync()
   })
   watch(geometry, scheduleLayout, { flush: 'post' })
+  watch(() => desktopThemeSnapshot.value.active.colors['canvas-grid'], (color) => {
+    graph.value?.drawGrid({ args: { color, thickness: 1 } })
+  })
   watch([options.conversationId, options.direction], () => {
     finishInteraction()
     scheduleLayout()

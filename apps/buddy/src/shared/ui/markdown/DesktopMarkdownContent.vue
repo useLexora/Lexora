@@ -217,8 +217,24 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
+.buddy-chat-markdown-host :deep(.code-block-container),
+.buddy-chat-markdown-host :deep(pre.code-pre-fallback) {
+  --markstream-code-fallback-bg: var(--code-bg) !important;
+  --markstream-code-fallback-fg: var(--code-fg) !important;
+  background-color: var(--code-bg) !important;
+  color: var(--code-fg) !important;
+}
+
 .buddy-chat-markdown-host :deep(.blockquote) {
   margin-inline: 0;
+}
+
+.buddy-chat-markdown-host :deep(.table-node tbody tr:nth-child(even)) {
+  background-color: var(--buddy-table-stripe);
+}
+
+.buddy-chat-markdown-host :deep(.table-node tbody tr:hover) {
+  background-color: var(--buddy-table-hover);
 }
 
 :global(.buddy-chat-markdown > .node-slot:first-of-type .node-content > :first-child) {

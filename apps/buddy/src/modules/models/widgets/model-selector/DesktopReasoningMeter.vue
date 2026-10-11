@@ -112,53 +112,28 @@ function readSliderIndex(event: Event): number {
 
 <style scoped lang="scss">
 .desktop-reasoning-meter {
-  --reasoning-node-active-background: #fffaf0;
-  --reasoning-node-active-border: rgb(214 176 109 / 62%);
+  --reasoning-node-active-background: color-mix(in srgb, var(--buddy-surface-raised) 85%, var(--buddy-brand-gold));
+  --reasoning-node-active-border: color-mix(in srgb, var(--buddy-brand-gold) 72%, var(--buddy-text-strong));
   --reasoning-node-active-shadow:
-    0 0 0.14rem rgb(255 248 229 / 66%),
-    0 0 0.3rem rgb(190 137 59 / 26%);
-  --reasoning-node-background: rgb(226 230 238 / 68%);
-  --reasoning-node-border: rgb(116 128 149 / 36%);
+    0 0 0.14rem color-mix(in srgb, var(--buddy-surface-raised) 66%, transparent),
+    0 0 0.3rem color-mix(in srgb, var(--buddy-brand-gold) 26%, transparent);
+  --reasoning-node-background: color-mix(in srgb, var(--buddy-text-disabled) 50%, transparent);
+  --reasoning-node-border: var(--buddy-border-strong);
   --reasoning-track-background:
-    linear-gradient(180deg, rgb(255 255 255 / 72%), rgb(236 241 249 / 28%)),
-    rgb(250 252 255 / 26%);
-  --reasoning-track-border: rgb(91 104 127 / 22%);
-  --reasoning-track-drag-border: rgb(190 148 78 / 52%);
+    linear-gradient(180deg, var(--buddy-surface-raised), var(--buddy-surface-canvas));
+  --reasoning-track-border: var(--buddy-border-strong);
+  --reasoning-track-drag-border: var(--buddy-accent-border-hover);
   --reasoning-track-drag-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 94%),
-    inset 0 -1px 0 rgb(91 104 127 / 12%),
-    0 0 0.72rem rgb(213 165 87 / 22%),
-    0 0.28rem 0.68rem rgb(40 49 65 / 12%);
-  --reasoning-track-hover-border: rgb(91 104 127 / 34%);
+    inset 0 1px 0 var(--buddy-border-subtle),
+    inset 0 -1px 0 var(--buddy-border-subtle),
+    0 0 0.72rem color-mix(in srgb, var(--buddy-accent-text) 22%, transparent),
+    var(--buddy-shadow-soft);
+  --reasoning-track-hover-border: var(--buddy-accent-border);
   --reasoning-track-inset: 0.75rem;
   --reasoning-track-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 94%),
-    inset 0 -1px 0 rgb(91 104 127 / 12%),
-    0 0.12rem 0.3rem rgb(40 49 65 / 9%);
-}
-
-:global(:root[data-buddy-theme='dark'] .desktop-reasoning-meter) {
-  --reasoning-node-active-background: #f3f4f7;
-  --reasoning-node-active-border: rgb(255 247 225 / 88%);
-  --reasoning-node-active-shadow:
-    0 0 0.2rem rgb(255 245 217 / 78%),
-    0 0 0.5rem rgb(203 153 73 / 48%);
-  --reasoning-node-background: rgb(176 183 199 / 38%);
-  --reasoning-node-border: rgb(226 231 242 / 28%);
-  --reasoning-track-background:
-    linear-gradient(180deg, #242831 0%, #1a1d26 56%, #14171f 100%);
-  --reasoning-track-border: rgb(213 220 236 / 24%);
-  --reasoning-track-drag-border: rgb(219 178 103 / 54%);
-  --reasoning-track-drag-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 9%),
-    inset 0 -1px 0 rgb(0 0 0 / 38%),
-    0 0 0.86rem rgb(57 84 181 / 38%),
-    0 0.3rem 0.76rem rgb(0 0 0 / 32%);
-  --reasoning-track-hover-border: rgb(213 220 236 / 36%);
-  --reasoning-track-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 8%),
-    inset 0 -1px 0 rgb(0 0 0 / 34%),
-    0 0.25rem 0.62rem rgb(0 0 0 / 24%);
+    inset 0 1px 0 var(--buddy-border-subtle),
+    inset 0 -1px 0 var(--buddy-border-subtle),
+    var(--buddy-shadow-soft);
 }
 
 .desktop-reasoning-meter__stage {
@@ -181,7 +156,7 @@ function readSliderIndex(event: Event): number {
   z-index: 4;
   height: 34%;
   border-radius: 999px 999px 46% 46%;
-  background: linear-gradient(180deg, rgb(255 255 255 / 12%), transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--buddy-text-strong) 12%, transparent), transparent);
   content: '';
   pointer-events: none;
 }

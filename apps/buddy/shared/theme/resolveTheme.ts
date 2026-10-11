@@ -46,18 +46,18 @@ export function resolveTheme(descriptor: ThemeDescriptor, input: ThemeDocumentIn
   const selectedHover = explicit['selected-hover'] ?? alpha(tint, dark ? 0.18 : 0.16)
   const pressed = explicit.pressed ?? alpha(tint, dark ? 0.24 : 0.20)
   const onSurface = explicit['accent-on-surface'] ?? (dark ? mixThemeColor(text, '#ffffff', 0.24) : text)
-  const terminal = dark
-    ? ['#1e1e2e', '#cdd6f4', '#9399b2', '#6c7086', '#cba6f7', '#89b4fa', '#a6e3a1', '#f9e2af', '#fab387', '#eba0ac', '#89dceb', '#f5e0dc']
-    : ['#eff1f5', '#4c4f69', '#7c7f93', '#9ca0b0', '#8839ef', '#1e66f5', '#40a02b', '#df8e1d', '#fe640b', '#e64553', '#04a5e5', '#dc8a78']
-  const terminalNames = ['background', 'foreground', 'muted', 'scrollbar', 'mauve', 'blue', 'green', 'yellow', 'peach', 'maroon', 'sky', 'rosewater']
+  const surface = explicit.surface ?? base.canvas
+  const readingForeground = explicit['reading-fg'] ?? base.fg
+  const code = explicit.code ?? base.raised
+  const codeForeground = explicit['code-fg'] ?? readingForeground
   const colors: ThemeColors = {
     ...base,
     'app-sidebar': explicit['app-sidebar'] ?? base.canvas,
     'workspace-sidebar': explicit['workspace-sidebar'] ?? base.canvas,
-    'surface': explicit.surface ?? base.canvas,
+    'surface': surface,
     'reading': base.canvas,
-    'reading-fg': base.fg,
-    'composer': base.surface ?? base.canvas,
+    'reading-fg': readingForeground,
+    'composer': surface,
     'composer-fg': base.strong,
     'app-sidebar-fg': base.fg,
     'workspace-sidebar-fg': base.fg,
@@ -93,14 +93,20 @@ export function resolveTheme(descriptor: ThemeDescriptor, input: ThemeDocumentIn
     'quote-border': alpha(tint, 0.38),
     'inline-code': base.subtle,
     'inline-code-fg': text,
-    'code': base.raised,
-    'code-fg': base.fg,
+    'code': code,
+    'code-fg': codeForeground,
+    'code-header': mixThemeColor(code, codeForeground, dark ? 0.05 : 0.03),
+    'code-border': base.border,
+    'code-line-number': base.muted,
     'table-header': base.subtle,
     'table-border': base.border,
+    'table-stripe': base.subtle,
+    'table-hover': hover,
+    'canvas-grid': base.border,
     'diff-added': alpha(base.success, 0.14),
     'diff-removed': alpha(base.danger, 0.14),
-    'editor': base.canvas,
-    'editor-fg': base.fg,
+    'editor': code,
+    'editor-fg': codeForeground,
     'editor-line': hover,
     'editor-gutter': base.muted,
     'editor-cursor': text,
@@ -110,9 +116,20 @@ export function resolveTheme(descriptor: ThemeDescriptor, input: ThemeDocumentIn
     'syntax-number': base.warning,
     'syntax-function': base['data-blue'],
     'syntax-type': base['data-cyan'],
-    'syntax-variable': base.fg,
+    'syntax-variable': codeForeground,
     'syntax-operator': text,
-    ...Object.fromEntries(terminalNames.map((name, index) => [`terminal-${name}`, terminal[index]!])),
+    'terminal-background': code,
+    'terminal-foreground': codeForeground,
+    'terminal-muted': base.muted,
+    'terminal-scrollbar': base['border-strong'],
+    'terminal-mauve': base['data-violet'],
+    'terminal-blue': base['data-blue'],
+    'terminal-green': base.success,
+    'terminal-yellow': base.warning,
+    'terminal-peach': base.gold,
+    'terminal-maroon': base.danger,
+    'terminal-sky': base['data-cyan'],
+    'terminal-rosewater': text,
     ...explicit,
   }
   for (const [name, value] of Object.entries(colors)) {
@@ -121,6 +138,9 @@ export function resolveTheme(descriptor: ThemeDescriptor, input: ThemeDocumentIn
   }
   variables['--buddy-text-muted'] = colors.muted
   variables['--buddy-terminal-selection'] = colors['text-selection']
+  variables['--buddy-media-overlay-hover'] = `color-mix(in srgb, ${colors['accent-text']} 18%, transparent)`
+  variables['--buddy-media-overlay-focus'] = colors.focus
+  variables['--buddy-media-overlay-danger-hover'] = alpha(colors['danger-solid'], 0.72)
   for (const [name, shadows] of Object.entries(document.shadows))
     variables[`--buddy-shadow-${name}`] = shadows.map(shadow => `${shadow.x}px ${shadow.y}px ${shadow.blur}px ${shadow.spread}px ${shadow.color}`).join(', ') || 'none'
   const preview = { canvas: colors.canvas, surface: colors.surface, accent: colors.accent, fg: colors.fg }
@@ -147,6 +167,8 @@ export function projectBuddyTheme(resolved: ResolvedTheme): BuddyColorTheme {
     theme.status[status] = { solid, solidHover: mixThemeColor(solid, '#ffffff', 0.10), solidPressed: mixThemeColor(solid, '#000000', 0.16), text: c[status], surface: c[`${status}-surface`], surfaceHover: c[`${status}-surface-hover`], border: c[`${status}-border`] }
   }
   theme.avatar = { background: c.avatar, foreground: c['avatar-foreground'] }
+  theme.brand = { gold: c.gold, goldSurface: c['gold-surface'] }
+  theme.data = { violet: c['data-violet'], cyan: c['data-cyan'], blue: c['data-blue'] }
   for (const name of Object.keys(theme.shadow) as Array<keyof BuddyColorTheme['shadow']>)
     theme.shadow[name] = resolved.variables[`--buddy-shadow-${name}`]!
   return theme

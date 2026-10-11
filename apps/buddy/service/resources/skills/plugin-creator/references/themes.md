@@ -36,7 +36,7 @@
 }
 ```
 
-颜色使用 `#RRGGBB` 或 `#RRGGBBAA`。完整键与范围见 `ThemeDocument` 类型或 `themes.describe()` 返回的 JSON Schema。缺失值由明暗基础主题与已合并的颜色派生；显式 hover、selected、selected-hover、pressed 等值优先。状态颜色、编辑器与语法、终端、正文、侧栏、输入框可以分别配置。主题不改变用户字号、行高、分屏尺寸、键盘行为或 Space 标记色。
+颜色使用 `#RRGGBB` 或 `#RRGGBBAA`。完整键与范围见 `ThemeDocument` 类型或 `themes.describe()` 返回的 JSON Schema。缺失值由明暗基础主题与已合并的颜色派生；显式 hover、selected、selected-hover、pressed 等值优先。状态颜色、编辑器与语法、终端、正文、侧栏、输入框可以分别配置。`code-header`、`code-border`、`code-line-number` 控制代码块配套，`table-stripe`、`table-hover` 控制表格状态，`canvas-grid` 控制画布网格；省略时沿用已合并的相关颜色。代码区、编辑器与终端的默认底色和前景成对派生，显式设置优先。主题不改变用户字号、行高、分屏尺寸、键盘行为或 Space 标记色。
 
 图片只能引用包内 PNG/JPEG/WebP/SVG；不得使用绝对路径、远端 URL、CSS 或脚本。材质锚点为 `app.sidebar`、`workbench.sidebar`、`workbench.pane`、`composer.input`，每个最多一层，支持图片、底色、渐变覆盖、0–1 透明度、0–24 模糊、百分比位置与 cover/contain。`imageOpacity` 独立控制图片透明度，`scale` 在适配尺寸上缩放 0.1–2 倍。透明度只作用于背景，背景不接收点击。动画与交互内容使用普通隔离视图扩展点。
 

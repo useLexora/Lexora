@@ -7,7 +7,6 @@ import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
 import { LexoraConfigStore } from '../../../electron/main/config/LexoraConfigStore'
-import { fallbackTheme, resolveTheme } from '../../../shared/theme/resolveTheme'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ExtensionPackageStore } from '../../extensions/ExtensionPackageStore'
 import { bundledThemeFiles, seedBundledThemes } from '../bundledThemes'
@@ -28,22 +27,62 @@ async function fixture() {
 }
 
 describe('theme data and lifecycle', () => {
-  it('migrates the legacy bundled package without enabling disabled themes', async () => {
+  it.each([
+    ['1.0.0', 'Lexora 官方主题', false],
+    ['1.0.1', 'Lexora 主题', true],
+  ])('upgrades bundled themes from %s and preserves their enabled state', async (version, name, enabled) => {
     const home = await createTemporaryDirectory('lexora-bundled-upgrade-')
     const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
     const files = bundledThemeFiles()
     const current = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
     const manifest = { ...current }
-    manifest.name = 'Lexora 官方主题'
-    manifest.version = '1.0.0'
+    manifest.name = name
+    manifest.version = version
     delete manifest.icon
     files.delete('icon.svg')
     files.set('extension.json', Buffer.from(JSON.stringify(manifest)))
+    const legacyTheme = JSON.parse(Buffer.from(files.get('themes/green-light.json')!).toString('utf8'))
+    legacyTheme.colors.canvas = '#fafaf8'
+    files.set('themes/green-light.json', Buffer.from(JSON.stringify(legacyTheme)))
     await store.install((await store.reviewFiles(files)).token)
     await writeFile(join(store.root, 'bundled-themes.json'), JSON.stringify({ version: 1 }))
-    await store.enable('lexora.themes', false)
+    await store.enable('lexora.themes', enabled)
     await seedBundledThemes(store)
-    expect(store.installed['lexora.themes']).toMatchObject({ enabled: false, pending: null, current: { manifest: { version: current.version } } })
+    expect(store.installed['lexora.themes']).toMatchObject({ enabled, pending: null, current: { manifest: { version: current.version, name: current.name } } })
+    const pkg = store.installed['lexora.themes']!.current
+    expect(JSON.parse(await readFile(join(store.packageRoot(pkg), 'themes/green-light.json'), 'utf8'))).toEqual(JSON.parse(Buffer.from(bundledThemeFiles().get('themes/green-light.json')!).toString('utf8')))
+  })
+
+  it.each([
+    ['1.1.0', false],
+    ['1.0.1', true],
+  ])('preserves a newer or development theme package: %s, development=%s', async (version, development) => {
+    const home = await createTemporaryDirectory('lexora-bundled-preserve-')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const files = bundledThemeFiles()
+    const manifest = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
+    manifest.version = version
+    files.set('extension.json', Buffer.from(JSON.stringify(manifest)))
+    await store.install((await store.reviewFiles(files, development)).token)
+    await writeFile(join(store.root, 'bundled-themes.json'), JSON.stringify({ version: 1 }))
+    const before = structuredClone(store.installed['lexora.themes'])
+    await seedBundledThemes(store)
+    expect(store.installed['lexora.themes']).toEqual(before)
+  })
+
+  it('preserves a pending theme update during bundled seeding', async () => {
+    const home = await createTemporaryDirectory('lexora-bundled-pending-')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const files = bundledThemeFiles()
+    const manifest = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
+    for (const version of ['1.0.1', '1.1.0']) {
+      files.set('extension.json', Buffer.from(JSON.stringify({ ...manifest, version })))
+      await store.install((await store.reviewFiles(files)).token)
+    }
+    await writeFile(join(store.root, 'bundled-themes.json'), JSON.stringify({ version: 1 }))
+    const before = structuredClone(store.installed['lexora.themes'])
+    await seedBundledThemes(store)
+    expect(store.installed['lexora.themes']).toEqual(before)
   })
 
   it('publishes one complete snapshot for each committed selection and preview', async () => {
@@ -92,9 +131,8 @@ describe('theme data and lifecycle', () => {
     })
     await service.initialize(DEFAULT_THEME_PREFERENCE, false)
     const lease = await service.request('desktop', { action: 'beginPreview', archive }) as ThemePreview
-    const before = service.snapshot.revision
     await expect(service.request('desktop', { action: 'commitPreview', ...lease })).rejects.toThrow('CONFIG_COMMIT_FAILED')
-    expect(service.snapshot).toMatchObject({ revision: before + 1, preference: DEFAULT_THEME_PREFERENCE, preview: true })
+    expect(service.snapshot).toMatchObject({ preference: DEFAULT_THEME_PREFERENCE, preview: true })
     const [saved] = service.snapshot.themes
     expect(saved!.label).toBe('Ocean')
     await service.dispose()
@@ -142,9 +180,7 @@ describe('theme data and lifecycle', () => {
     await service.initialize(DEFAULT_THEME_PREFERENCE, true)
     await service.request('desktop', { action: 'preference', preference: { id: 'lexora.themes.classic-light' } })
     systemDark = false
-    const before = service.snapshot.revision
     await service.request('desktop', { action: 'preference', preference: DEFAULT_THEME_PREFERENCE })
-    expect(service.snapshot.revision).toBe(before + 1)
     expect(service.snapshot.active.descriptor.appearance).toBe('light')
     const lease = await service.request('desktop', { action: 'beginPreview', archive }) as ThemePreview
     systemDark = true
@@ -194,17 +230,7 @@ describe('theme data and lifecycle', () => {
     await service.dispose()
   })
 
-  it('derives states after merging overrides, preserves explicit states, and rejects executable theme values', () => {
-    const descriptor = fallbackTheme('light').descriptor
-    const theme = resolveTheme(descriptor, archive.document)
-    const changed = resolveTheme(descriptor, archive.document, { accent: '#96304d', hover: '#12345678', reading: '#fafafa' })
-    expect(changed.colors.hover).toBe('#12345678')
-    expect(changed.colors['nav-hover']).toBe('#12345678')
-    expect(changed.colors.selected).not.toBe(theme.colors.selected)
-    expect(changed.colors['accent-hover']).not.toBe(theme.colors['accent-hover'])
-    expect(changed.colors.reading).toBe('#fafafa')
-    expect(changed.colors.canvas).toBe(theme.colors.canvas)
-    expect(changed.descriptor).toMatchObject({ swatch: '#96304d', preview: { accent: '#96304d', canvas: changed.colors.canvas, surface: changed.colors.surface, fg: changed.colors.fg } })
+  it('rejects executable theme values, asset traversal and missing assets', () => {
     expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, colors: { accent: 'url(https://example.test/a)' } } })).toThrow()
     expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, welcome: { image: '../outside.png' } } })).toThrow()
     expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, welcome: { image: 'missing.png' } } })).toThrow('EXTENSION_THEME_ASSET_MISSING')

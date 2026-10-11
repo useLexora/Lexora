@@ -79,10 +79,10 @@ const { t } = useBuddyI18n(() => props.language)
 <style scoped lang="scss">
 .desktop-model-selector__panel--spell {
   --desktop-model-spell-glow:
-    radial-gradient(ellipse at 42% 50%, rgb(217 166 83 / 18%), transparent 43%),
-    radial-gradient(ellipse at 70% 50%, rgb(53 83 165 / 14%), transparent 46%);
+    radial-gradient(ellipse at 42% 50%, color-mix(in srgb, var(--buddy-brand-gold) 18%, transparent), transparent 43%),
+    radial-gradient(ellipse at 70% 50%, color-mix(in srgb, var(--buddy-accent-text) 20%, transparent), transparent 46%);
 
-  background: linear-gradient(145deg, #fff, color-mix(in srgb, var(--buddy-surface-raised) 94%, #f8f6f0));
+  background: linear-gradient(145deg, var(--buddy-surface-raised), color-mix(in srgb, var(--buddy-surface-raised) 94%, var(--buddy-accent-text)));
 
   &::after {
     position: absolute;
@@ -96,18 +96,6 @@ const { t } = useBuddyI18n(() => props.language)
     filter: blur(0.75rem);
     pointer-events: none;
   }
-}
-
-:global(:root[data-buddy-theme='dark'] .desktop-model-selector__panel--spell) {
-  --desktop-model-spell-glow:
-    radial-gradient(ellipse at 42% 50%, rgb(218 164 78 / 20%), transparent 43%),
-    radial-gradient(ellipse at 72% 50%, rgb(51 80 174 / 24%), transparent 48%);
-
-  border-color: rgb(255 255 255 / 13%);
-  background: linear-gradient(145deg, #20242c, #171a21 76%);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 28%),
-    0 10px 24px rgb(0 0 0 / 36%);
 }
 
 .desktop-model-selector__effort {

@@ -13,7 +13,7 @@ function hsl(color: string, background: string): string {
 }
 
 export function markdownThemeVariables(c: ThemeColors): Record<string, string> {
-  const palette = { 'background': c.reading, 'foreground': c['reading-fg'], 'muted': c.subtle, 'muted-foreground': c.muted, 'secondary': c.hover, 'secondary-foreground': c.fg, 'accent': c.selected, 'accent-foreground': c['selected-fg'], 'primary': c.accent, 'primary-foreground': c['on-accent'], 'border': c.border, 'ring': c.focus, 'popover': c.raised, 'popover-foreground': c.fg, 'info': c['accent-text'], 'success': c.success, 'warning': c.warning, 'destructive': c.danger, 'highlight': c['text-selection'], 'highlight-foreground': c.fg }
+  const palette = { 'background': c.reading, 'foreground': c['reading-fg'], 'muted': c.subtle, 'muted-foreground': c.muted, 'secondary': c.hover, 'secondary-foreground': c['hover-fg'], 'accent': c.selected, 'accent-foreground': c['selected-fg'], 'primary': c.accent, 'primary-foreground': c['on-accent'], 'border': c.border, 'ring': c.focus, 'popover': c.raised, 'popover-foreground': c.fg, 'info': c['accent-text'], 'success': c.success, 'warning': c.warning, 'destructive': c.danger, 'highlight': c['text-selection'], 'highlight-foreground': c['reading-fg'] }
   return {
     ...Object.fromEntries(Object.entries(palette).map(([name, value]) => [`--ms-${name}`, hsl(value, c.reading)])),
     '--link-color': c.link,
@@ -23,9 +23,10 @@ export function markdownThemeVariables(c: ThemeColors): Record<string, string> {
     '--inline-code-fg': c['inline-code-fg'],
     '--code-bg': c.code,
     '--code-fg': c['code-fg'],
-    '--code-border': c.border,
-    '--code-header-bg': c.subtle,
+    '--code-border': c['code-border'],
+    '--code-header-bg': c['code-header'],
     '--code-selection-bg': c['text-selection'],
+    '--code-line-number': c['code-line-number'],
     '--markstream-code-fallback-bg': c.code,
     '--markstream-code-fallback-fg': c['code-fg'],
     '--markstream-code-fallback-selection-bg': c['text-selection'],

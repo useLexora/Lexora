@@ -1,5 +1,6 @@
 import type { ExtensionPackageStore } from '../extensions/ExtensionPackageStore'
 import { join } from 'node:path'
+import { lt } from 'semver'
 import manifest from '../../extensions/bundled/lexora.themes/extension.json'
 import icon from '../../extensions/bundled/lexora.themes/icon.svg?raw'
 import license from '../../extensions/bundled/lexora.themes/LICENSE?raw'
@@ -38,7 +39,9 @@ export async function seedBundledThemes(store: ExtensionPackageStore): Promise<v
       throw error
   }
   const installed = store.installed[manifest.id]
-  const upgrade = installed && !installed.development && !installed.pending && installed.current.manifest.version === '1.0.0' && installed.current.manifest.name === 'Lexora 官方主题'
+  const upgrade = installed && !installed.development && !installed.pending
+    && [manifest.name, 'Lexora 官方主题'].includes(installed.current.manifest.name)
+    && lt(installed.current.manifest.version, manifest.version)
   if ((!seeded && !installed) || upgrade) {
     const review = await store.reviewFiles(bundledThemeFiles())
     await store.install(review.token)

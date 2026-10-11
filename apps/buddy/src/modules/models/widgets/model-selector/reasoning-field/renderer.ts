@@ -1,4 +1,24 @@
+import type { ThemeColors } from '@buddy-shared/theme/themeDocument'
+import { mixThemeColor } from '@buddy-shared/theme/resolveTheme'
 import { clamp, createWavePoints, particles, threads, waveBoundaryOffset } from './geometry'
+
+const alpha = (color: string, opacity: number) => `${color.slice(0, 7)}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
+
+export function createReasoningFieldPalette(colors: ThemeColors, dark: boolean) {
+  const { canvas, raised, accent, gold, strong } = colors
+  const field: Array<[number, string]> = dark
+    ? [[0, mixThemeColor(canvas, accent, 0.08)], [0.28, mixThemeColor(canvas, accent, 0.3)], [0.56, mixThemeColor(canvas, accent, 0.6)], [0.8, accent], [1, colors['accent-hover']]]
+    : [[0, colors['gold-surface']], [0.18, mixThemeColor(colors['gold-surface'], gold, 0.4)], [0.4, gold], [0.57, mixThemeColor(gold, accent, 0.5)], [0.72, accent], [0.86, colors['accent-pressed']], [1, mixThemeColor(accent, strong, 0.4)]]
+  return {
+    field,
+    sheen: [alpha(dark ? strong : raised, dark ? 0.09 : 0.34), alpha(dark ? canvas : strong, dark ? 0.18 : 0.08)] as const,
+    clouds: [accent, colors['accent-text'], mixThemeColor(accent, strong, 0.2)] as const,
+    thread: gold,
+    threadShadow: mixThemeColor(gold, raised, 0.3),
+    particles: [gold, mixThemeColor(gold, strong, 0.4), colors['accent-text'], strong, mixThemeColor(gold, raised, 0.7)] as const,
+    waves: [gold, colors['accent-text'], mixThemeColor(gold, strong, 0.24)] as const,
+  }
+}
 
 export interface ReasoningFieldFrame {
   dark: boolean
@@ -10,7 +30,7 @@ export interface ReasoningFieldFrame {
   width: number
 }
 
-export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) {
+export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement, getPalette: () => ReturnType<typeof createReasoningFieldPalette>) {
   function drawEnergyField(
     context: CanvasRenderingContext2D,
     width: number,
@@ -48,22 +68,9 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
     dark: boolean,
   ) {
     const field = context.createLinearGradient(0, 0, width, 0)
-    if (dark) {
-      field.addColorStop(0, '#111827')
-      field.addColorStop(0.28, '#16213e')
-      field.addColorStop(0.56, '#1b2e60')
-      field.addColorStop(0.8, '#243d80')
-      field.addColorStop(1, '#2d4a96')
-    }
-    else {
-      field.addColorStop(0, '#f3e5ca')
-      field.addColorStop(0.18, '#e7c487')
-      field.addColorStop(0.4, '#cf9953')
-      field.addColorStop(0.57, '#8d685e')
-      field.addColorStop(0.72, '#485783')
-      field.addColorStop(0.86, '#1e3d7b')
-      field.addColorStop(1, '#0b285f')
-    }
+    const palette = getPalette()
+    for (const [position, color] of palette.field)
+      field.addColorStop(position, color)
     context.globalAlpha = dark
       ? 0.74 + progress * 0.26
       : 0.9 + progress * 0.1
@@ -71,9 +78,9 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
     context.fillRect(0, 0, width, height)
 
     const sheen = context.createLinearGradient(0, 0, 0, height)
-    sheen.addColorStop(0, dark ? 'rgb(255 255 255 / 9%)' : 'rgb(255 255 255 / 34%)')
+    sheen.addColorStop(0, palette.sheen[0])
     sheen.addColorStop(0.38, 'transparent')
-    sheen.addColorStop(1, dark ? 'rgb(0 0 0 / 18%)' : 'rgb(77 63 54 / 8%)')
+    sheen.addColorStop(1, palette.sheen[1])
     context.globalAlpha = 1
     context.fillStyle = sheen
     context.fillRect(0, 0, width, height)
@@ -88,15 +95,16 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
   ) {
     context.save()
     context.globalCompositeOperation = dark ? 'screen' : 'source-over'
+    const colors = getPalette().clouds
     if (dark) {
-      drawCloud(context, width * 0.22, height * 0.64, width * 0.28, height * 0.72, `rgb(32 63 143 / ${0.08 + intensity * 0.1})`)
-      drawCloud(context, width * 0.58, height * 0.34, width * 0.32, height * 0.78, `rgb(58 91 190 / ${0.08 + intensity * 0.14})`)
-      drawCloud(context, width * 0.86, height * 0.62, width * 0.24, height * 0.7, `rgb(93 116 224 / ${0.06 + intensity * 0.12})`)
+      drawCloud(context, width * 0.22, height * 0.64, width * 0.28, height * 0.72, alpha(colors[0], 0.08 + intensity * 0.1))
+      drawCloud(context, width * 0.58, height * 0.34, width * 0.32, height * 0.78, alpha(colors[1], 0.08 + intensity * 0.14))
+      drawCloud(context, width * 0.86, height * 0.62, width * 0.24, height * 0.7, alpha(colors[2], 0.06 + intensity * 0.12))
     }
     else {
-      drawCloud(context, width * 0.13, height * 0.36, width * 0.24, height * 0.72, `rgb(255 246 222 / ${0.1 + intensity * 0.1})`)
-      drawCloud(context, width * 0.4, height * 0.7, width * 0.27, height * 0.74, `rgb(232 181 99 / ${0.1 + intensity * 0.12})`)
-      drawCloud(context, width * 0.76, height * 0.34, width * 0.28, height * 0.76, `rgb(51 87 174 / ${0.06 + intensity * 0.11})`)
+      drawCloud(context, width * 0.13, height * 0.36, width * 0.24, height * 0.72, alpha(colors[0], 0.1 + intensity * 0.1))
+      drawCloud(context, width * 0.4, height * 0.7, width * 0.27, height * 0.74, alpha(colors[1], 0.1 + intensity * 0.12))
+      drawCloud(context, width * 0.76, height * 0.34, width * 0.28, height * 0.76, alpha(colors[2], 0.06 + intensity * 0.11))
     }
     context.restore()
   }
@@ -116,9 +124,9 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
     context.save()
     context.lineCap = 'round'
     context.lineWidth = 0.38
-    context.strokeStyle = dark ? '#c99754' : '#a87a52'
+    context.strokeStyle = getPalette().thread
     context.shadowBlur = progress * 1.8
-    context.shadowColor = dark ? '#dbaf69' : '#d4a05e'
+    context.shadowColor = getPalette().threadShadow
     for (const thread of threads) {
       if (thread.threshold > visibility)
         continue
@@ -154,9 +162,7 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
     dragging: boolean,
   ) {
     const density = 0.38 + progress * 0.62
-    const palette = dark
-      ? ['#d4a35b', '#efc978', '#c4d3ff', '#eef2ff', '#fff4d5']
-      : ['#8f6538', '#b9823e', '#d8a65e', '#fff4d5', '#ccd9f5']
+    const palette = getPalette().particles
 
     context.save()
     context.globalCompositeOperation = dark ? 'lighter' : 'source-over'
@@ -270,9 +276,7 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
     const endX = Math.min(width, frontX + height * (0.72 + progress * 0.22) * stretch)
     const span = Math.max(1, endX - startX)
     const amplitude = height * (0.07 + progress * 0.035 + Math.abs(momentum) * 0.025)
-    const colors = dark
-      ? ['224 181 103', '132 151 229', '239 207 151']
-      : ['169 122 61', '104 120 168', '197 151 78']
+    const colors = getPalette().waves
 
     context.save()
     context.globalCompositeOperation = dark ? 'screen' : 'source-over'
@@ -285,9 +289,9 @@ export function createReasoningFieldRenderer(waveMaskCanvas: HTMLCanvasElement) 
       const ribbon = context.createLinearGradient(startX, 0, endX, 0)
       const color = colors[index] ?? colors[0]
       ribbon.addColorStop(0, 'transparent')
-      ribbon.addColorStop(0.24, `rgb(${color} / ${dark ? 0.07 : 0.04})`)
-      ribbon.addColorStop(0.58, `rgb(${color} / ${dark ? 0.24 : 0.15})`)
-      ribbon.addColorStop(0.8, `rgb(${color} / ${dark ? 0.13 : 0.075})`)
+      ribbon.addColorStop(0.24, alpha(color, dark ? 0.07 : 0.04))
+      ribbon.addColorStop(0.58, alpha(color, dark ? 0.24 : 0.15))
+      ribbon.addColorStop(0.8, alpha(color, dark ? 0.13 : 0.075))
       ribbon.addColorStop(1, 'transparent')
 
       context.beginPath()

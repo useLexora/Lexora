@@ -225,7 +225,7 @@ async function handleSave() {
 }
 
 .desktop-account-dialog__error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  background: var(--buddy-status-danger-surface);
+  color: var(--buddy-status-danger-text);
 }
 </style>
