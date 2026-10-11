@@ -5,20 +5,23 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAssistantMessageEventStream, getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
-import { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToolAuthorizationService } from '../../../../permissions/ToolAuthorizationService'
 import { createEstimatedContextUsage } from '../../../context/contextUsageBreakdown'
 import { createIsolatedBuddyContextSnapshot as createBuddyContextSnapshot, createIsolatedBuddySession as createBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
 import { createReusableBuddySession } from '../../../sessions/createReusableBuddySession'
+import { toPiToolGroup } from '../../piToolGroup'
 import { createToolPolicyExtension } from '../../toolPolicyExtension'
 import { SessionToolCapabilities } from '../SessionToolCapabilities'
 import { createToolDiscoveryCapability } from '../toolDiscoveryExtension'
 import { readToolDiscoveryState } from '../toolDiscoveryState'
 
 const roots: string[] = []
-const name = 'lexora_sample_save'
+const sampleGroup = { name: 'lexora_sample', description: 'Save samples for the current task.', tools: [{ name: 'save' }] } as const
+const sampleTools = toPiToolGroup(sampleGroup)
+const name = sampleTools.save.name
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -32,20 +35,24 @@ async function fixture(resolveExposure?: BuddyToolExposureResolver) {
   const extension: BuddyInProcessExtension = {
     name: 'lexora-sample',
     factory(pi) {
-      pi.registerTool({
-        name,
-        label: 'Save sample',
-        description: 'Save a sample',
-        parameters: Type.Object({ text: Type.String() }),
-        promptGuidelines: ['DISCLOSED_SAMPLE_GUIDELINE'],
-        async execute(_id, input) {
-          await writeFile(join(root, 'result.txt'), input.text)
-          return { content: [{ type: 'text', text: 'Saved sample' }], details: {} }
-        },
+      const tools = toPiToolGroup({
+        ...sampleGroup,
+        tools: [defineTool({
+          name: sampleGroup.tools[0].name,
+          label: 'Save sample',
+          description: 'Save a sample',
+          parameters: Type.Object({ text: Type.String() }),
+          promptGuidelines: ['DISCLOSED_SAMPLE_GUIDELINE'],
+          async execute(_id, input) {
+            await writeFile(join(root, 'result.txt'), input.text)
+            return { content: [{ type: 'text', text: 'Saved sample' }], details: {} }
+          },
+        })],
       })
+      pi.registerTool(tools.save)
     },
   }
-  const discovery: BuddyInProcessExtension = { name: 'lexora-tool-discovery', factory: pi => createToolDiscoveryCapability([{ source: { kind: 'builtin', id: 'sample', title: 'Sample' }, exposure: 'on_demand', tools: [{ name }], keywords: 'sample 保存' }], new SessionToolCapabilities([], resolveExposure)).extension.factory(pi) }
+  const discovery: BuddyInProcessExtension = { name: 'lexora-tool-discovery', factory: pi => createToolDiscoveryCapability([{ source: { kind: 'builtin', id: 'sample', title: 'Sample' }, exposure: 'on_demand', tools: [sampleTools.save], keywords: 'sample 保存' }], new SessionToolCapabilities([], resolveExposure)).extension.factory(pi) }
   const options = {
     agentDir: join(root, 'agent'),
     branchId: 'branch-1',
@@ -265,7 +272,7 @@ describe('real Pi tool discovery loop', () => {
         messages: context.messages.filter(message => message.role !== 'system'),
       }))
       if (requests.length === 1)
-        return response(model, [{ name: 'lexora_tool_search', arguments: { toolNames: [name] } }])
+        return response(model, [{ name: 'lexora_tool_search', arguments: { namespace: 'lexora_sample', query: 'save' } }])
       if (requests.length === 2)
         return response(model, [{ name, arguments: { text: 'Original tool execution' } }])
       return response(model)

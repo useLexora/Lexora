@@ -6,6 +6,7 @@ import type { ImageTransformService } from './ImageTransformService'
 import type { ImageTransformToolDetails } from './imageTransformToolContract'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
+import { IMAGE_TOOLS } from './imageToolGroup'
 import {
   classifyImageTransformTool,
   IMAGE_TRANSFORM_TOOL_NAME,
@@ -24,7 +25,7 @@ export function createImageTransformCapability(options: CreateImageTransformExte
       source: { kind: 'builtin', id: 'image_transform', title: 'Image transformation' },
       exposure: 'on_demand',
       keywords: 'image transform chroma 图片 处理 变换 抠图 绿幕 透明 背景',
-      tools: [{ name: IMAGE_TRANSFORM_TOOL_NAME }],
+      tools: [IMAGE_TOOLS.chroma_key],
     }],
   }
 }
@@ -82,7 +83,7 @@ export function createImageTransformExtension(
           }
         },
         label: 'Remove chroma background',
-        name: IMAGE_TRANSFORM_TOOL_NAME,
+        ...IMAGE_TOOLS.chroma_key,
         parameters: imageTransformParameters,
         promptGuidelines: [
           'When a PNG conversation artifact has a solid green-screen or other chroma background, use lexora_image_chroma_key with its artifactId instead of shell commands, interpreters, or host image packages.',

@@ -3,10 +3,13 @@ import type { BuddyToolPresentation } from '../../../shared/runs/runEventPresent
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
 import { Type } from 'typebox'
 import { redactSensitiveText } from '../../../shared/permissions/approvalReviewPayload'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { boundedToolPreview, readOptionalString, readRecord, readToolDetails, readToolOutput } from '../events/toolPresentationSupport'
 
-export const SESSION_SEARCH_TOOL = 'lexora_session_search'
-export const SESSION_READ_TOOL = 'lexora_session_read'
+export const SESSION_TOOLS = toPiToolGroup({ name: 'lexora_session', description: 'Search and read task materials explicitly referenced in the current message.', tools: [{ name: 'search' }, { name: 'read' }] })
+
+export const SESSION_SEARCH_TOOL = SESSION_TOOLS.search.name
+export const SESSION_READ_TOOL = SESSION_TOOLS.read.name
 
 const id = Type.String({ minLength: 1, maxLength: 128 })
 export const sessionReferenceSourceSchema = Type.Union([

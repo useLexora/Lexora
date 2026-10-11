@@ -4,10 +4,13 @@ import type { BuddyToolClassificationResult } from '../approvals/toolClassificat
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
 import { Type } from 'typebox'
 import { Check } from 'typebox/value'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 import { readRecord } from '../events/toolPresentationSupport'
 
-export const OUTPUT_PRESENT_TOOL_NAME = 'lexora_output_present'
+export const OUTPUT_TOOLS = toPiToolGroup({ name: 'lexora_output', description: 'Present completed task files and artifacts.', tools: [{ name: 'present' }] })
+
+export const OUTPUT_PRESENT_TOOL_NAME = OUTPUT_TOOLS.present.name
 
 export const outputPresentParameters = Type.Object({
   paths: Type.Array(Type.String({

@@ -6,6 +6,7 @@ import type {
 import type { BuddyToolPresentation } from '../../../shared/runs/runEventPresentation'
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
 import type { AutomationPage } from './AutomationService'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 
 import {
   readArrayLength,
@@ -14,7 +15,9 @@ import {
   readToolDetails,
 } from '../events/toolPresentationSupport'
 
-export const AUTOMATION_TOOL_NAME = 'lexora_buddy_automation'
+export const AUTOMATION_TOOLS = toPiToolGroup({ name: 'lexora_automation', description: 'Manage scheduled tasks, recurring runs, and reminders.', tools: [{ name: 'manage' }] }, { manage: 'lexora_buddy_automation' })
+
+export const AUTOMATION_TOOL_NAME = AUTOMATION_TOOLS.manage.name
 
 export type AutomationToolOperation
   = | 'list'

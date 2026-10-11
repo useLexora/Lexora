@@ -1,6 +1,9 @@
 import type { SystemCapabilityErrorCode } from './systemCapability'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 
-export const SYSTEM_ACTION_TOOL_NAME = 'lexora_system_action'
+export const SYSTEM_TOOLS = toPiToolGroup({ name: 'lexora_system', description: 'Request authorized changes to host processes and services.', tools: [{ name: 'action' }] })
+
+export const SYSTEM_ACTION_TOOL_NAME = SYSTEM_TOOLS.action.name
 
 export type SystemToolFailureCode
   = SystemCapabilityErrorCode

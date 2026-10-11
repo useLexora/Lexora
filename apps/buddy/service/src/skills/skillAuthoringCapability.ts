@@ -6,8 +6,11 @@ import { resolve } from 'node:path'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { Check } from 'typebox/value'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { SkillError } from './skillFiles'
+
+const SKILL_TOOLS = toPiToolGroup({ name: 'lexora_skill', description: 'Validate skill packages and request installation review.', tools: [{ name: 'prepare' }] })
 
 export interface SkillAuthoringServices {
   skills: Pick<SkillService, 'preview' | 'discard'>
@@ -15,7 +18,7 @@ export interface SkillAuthoringServices {
   requestReview: (preview: SkillInstallPreview) => void
 }
 
-const name = 'lexora_skill_prepare'
+const name = SKILL_TOOLS.prepare.name
 const parameters = Type.Object({
   source: Type.String({ minLength: 1, maxLength: 4096, description: 'One skill directory containing SKILL.md, relative to the workspace or absolute. The directory name must match the skill name.' }),
   scope: Type.Optional(Type.Union([Type.Literal('current'), Type.Literal('global')], { description: 'Default current: install in this task’s Space, or globally if the task has no Space. Use global only when the user requests it.' })),
@@ -31,12 +34,12 @@ export function createSkillAuthoringCapability(context: BuddyCapabilityContext, 
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: event.input.review ? 'write' : 'read', paths: [{ path: event.input.source, mode: 'existing' }] }
     },
-    disclosure: [{ source: { kind: 'builtin', id: 'skills', title: 'Skill authoring' }, exposure: 'on_demand', keywords: 'skill create validate prepare install update 技能 创建 校验 安装 更新', tools: [{ name }] }],
+    disclosure: [{ source: { kind: 'builtin', id: 'skills', title: 'Skill authoring' }, exposure: 'on_demand', keywords: 'skill create validate prepare install update 技能 创建 校验 安装 更新', tools: [SKILL_TOOLS.prepare] }],
     extension: {
       name: 'lexora-skill-authoring',
       factory(pi) {
         pi.registerTool(defineTool({
-          name,
+          ...SKILL_TOOLS.prepare,
           label: 'Prepare skill',
           parameters,
           description: 'Validate a reusable skill directory and its resource package using Lexora’s installer. Returns metadata, diagnostics and same-scope replacement information. Optionally requests user installation review of the validated snapshot. Does not execute scripts, evaluate skill behavior, install dependencies or install skills. Preserve existing skill names when updating; installation takes effect for subsequent runs.',

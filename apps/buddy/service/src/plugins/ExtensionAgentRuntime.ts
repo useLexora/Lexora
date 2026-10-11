@@ -202,6 +202,7 @@ export class ExtensionAgentRuntime {
           for (const tool of tools) {
             pi.registerTool(defineTool({
               name: tool.name,
+              namespace: { name: prefix, description: descriptor.name },
               label: `${descriptor.name} · ${tool.title}`,
               description: tool.description,
               promptGuidelines: instructions ? [instructions] : [],

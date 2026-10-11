@@ -29,11 +29,14 @@ import {
   BROWSER_WAIT_TEXT_MAX_LENGTH,
   browserCapabilityActParamsSchema,
 } from '../../../shared/browser'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 
-export const BROWSER_ACT_TOOL_NAME = 'lexora_browser_act'
-export const BROWSER_OPEN_TOOL_NAME = 'lexora_browser_open'
-export const BROWSER_SNAPSHOT_TOOL_NAME = 'lexora_browser_snapshot'
+export const BROWSER_TOOLS = toPiToolGroup({ name: 'lexora_browser', description: 'Open browser pages, inspect their state, and interact with page elements.', tools: [{ name: 'open' }, { name: 'snapshot' }, { name: 'act' }] })
+
+export const BROWSER_ACT_TOOL_NAME = BROWSER_TOOLS.act.name
+export const BROWSER_OPEN_TOOL_NAME = BROWSER_TOOLS.open.name
+export const BROWSER_SNAPSHOT_TOOL_NAME = BROWSER_TOOLS.snapshot.name
 
 const browserUrl = Type.String({
   maxLength: 4_096,

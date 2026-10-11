@@ -1,7 +1,7 @@
 import type { Message } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyCatalogTool } from './toolCatalog'
-import type { BuddyToolDisclosurePolicy, BuddyToolExposureContext, BuddyToolExposureResolver, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
+import type { BuddyToolDisclosurePolicy, BuddyToolExposureContext, BuddyToolExposureResolver, BuddyToolGroupSummary, BuddyToolSearchCandidate, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
 import type { ToolDiscoveryState } from './toolDiscoveryState'
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import MiniSearch from 'minisearch'
@@ -24,7 +24,49 @@ export interface ToolDisclosureResolution {
   readonly model: { readonly provider: string, readonly id: string } | null
   readonly direct: string[]
   readonly active: string[]
-  readonly external: { name: string, title: string, source: string, description: string }[]
+  readonly catalog: BuddyToolDirectory
+}
+
+export interface BuddyToolDirectory {
+  readonly groups: readonly BuddyToolGroupSummary[]
+  readonly tools: readonly BuddyToolSearchCandidate[]
+}
+
+function sourceId(tool: BuddyCatalogTool): string {
+  return `${tool.source.kind}:${tool.source.id}`
+}
+
+function groupSource(tool: BuddyCatalogTool): string {
+  return tool.source.kind === 'builtin' ? 'builtin' : sourceId(tool)
+}
+
+function candidate(tool: BuddyCatalogTool): BuddyToolSearchCandidate {
+  return {
+    name: tool.name,
+    description: tool.description.slice(0, 240),
+    source: sourceId(tool),
+    ...(tool.namespace ? { namespace: tool.namespace.name } : {}),
+  }
+}
+
+function groupSummaries(tools: readonly BuddyCatalogTool[]): BuddyToolGroupSummary[] {
+  const groups = new Map<string, BuddyToolGroupSummary>()
+  for (const tool of tools) {
+    if (!tool.namespace)
+      continue
+    const source = groupSource(tool)
+    const key = JSON.stringify([source, tool.namespace.name])
+    const group = groups.get(key)
+    if (group) {
+      group.toolCount++
+      if (group.examples && group.examples.length < 2)
+        group.examples = [...group.examples, tool.description.slice(0, 120)]
+    }
+    else {
+      groups.set(key, { namespace: tool.namespace.name, source, description: (tool.namespace.description ?? tool.source.title).slice(0, 240), toolCount: 1, ...(tool.source.kind !== 'builtin' ? { examples: [tool.description.slice(0, 120)] } : {}) })
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.namespace.localeCompare(b.namespace, 'en') || a.source.localeCompare(b.source, 'en'))
 }
 
 export class ToolDisclosure {
@@ -42,11 +84,11 @@ export class ToolDisclosure {
     this.#resolveExposure = resolveExposure
     this.#index = new MiniSearch({
       idField: 'name',
-      fields: ['name', 'title', 'source', 'description', 'keywords', 'fields'],
+      fields: ['name', 'title', 'source', 'namespace', 'description', 'keywords', 'fields'],
       tokenize: text => [...segmenter.segment(text.replaceAll('_', ' '))].filter(part => part.isWordLike).map(part => part.segment),
       searchOptions: { boost: { name: 5, title: 5, keywords: 3, source: 2 }, prefix: true },
     })
-    this.#index.addAll([...this.#tools.values()].map(tool => ({ ...tool, fields: tool.fields.join(' '), source: `${tool.source.id} ${tool.source.title}` })))
+    this.#index.addAll([...this.#tools.values()].map(tool => ({ ...tool, namespace: tool.namespace ? `${tool.namespace.name} ${tool.namespace.description ?? ''}` : '', fields: tool.fields.join(' '), source: `${tool.source.id} ${tool.source.title}` })))
   }
 
   get snapshot() { return Object.freeze({ revision: this.#revision, discovered: Object.freeze([...this.#discovered]) }) }
@@ -63,7 +105,7 @@ export class ToolDisclosure {
   resolve(context: BuddyToolExposureContext): ToolDisclosureResolution {
     const direct: string[] = []
     const active: string[] = []
-    const external: ToolDisclosureResolution['external'] = []
+    const deferred: BuddyCatalogTool[] = []
     for (const tool of this.#tools.values()) {
       if (!this.#available(tool.name, context))
         continue
@@ -72,11 +114,11 @@ export class ToolDisclosure {
         direct.push(tool.name)
       if (exposure === 'direct' || (exposure === 'on_demand' && this.#discovered.has(tool.name)))
         active.push(tool.name)
-      else if (tool.source.kind !== 'builtin')
-        external.push({ name: tool.name, title: tool.title.slice(0, 160), source: tool.source.title.slice(0, 120), description: tool.description.slice(0, 180) })
+      else
+        deferred.push(tool)
     }
     const model = context.model ? Object.freeze({ provider: context.model.provider, id: context.model.id }) : null
-    return { model, direct, active, external }
+    return { model, direct, active, catalog: { groups: groupSummaries(deferred), tools: deferred.filter(tool => !tool.namespace).map(candidate) } }
   }
 
   active(context: BuddyToolExposureContext): string[] {
@@ -84,7 +126,27 @@ export class ToolDisclosure {
   }
 
   search(input: ToolSearchInput, context: BuddyToolExposureContext): ToolSearchResult {
-    const available = (name: string) => this.#available(name, context)
+    const available = (name: string) => {
+      const tool = this.#tools.get(name)
+      return !!tool && this.#available(name, context)
+        && (input.namespace === undefined || tool.namespace?.name === input.namespace)
+        && (input.source === undefined || input.source === sourceId(tool) || input.source === groupSource(tool))
+    }
+    if (input.query === undefined && input.toolNames === undefined) {
+      const availableTools = [...this.#tools.values()].filter(tool => available(tool.name))
+      const groups = groupSummaries(availableTools)
+      const offset = input.offset ?? 0
+      const limit = input.limit ?? 5
+      const entries = input.namespace ? availableTools : groups
+      return {
+        version: 1,
+        tools: [],
+        candidates: input.namespace ? availableTools.slice(offset, offset + limit).map(candidate) : [],
+        groups: input.namespace ? groups : groups.slice(offset, offset + limit),
+        notFound: [],
+        ...(offset + limit < entries.length ? { nextOffset: offset + limit } : {}),
+      }
+    }
     const requested = [...new Set((input.toolNames ?? []).map(name => this.#canonicalName(name)))]
     const query = this.#canonicalName(input.query?.trim() ?? '')
     const exact = available(query) ? [query] : []
@@ -102,20 +164,19 @@ export class ToolDisclosure {
       const tool = this.#tools.get(name)!
       discovered.add(name)
       return {
-        name,
         id: tool.id,
         title: tool.title.slice(0, 160),
-        description: tool.description.slice(0, 240),
-        source: tool.source.kind === 'builtin' ? 'buddy' : `${tool.source.kind}:${tool.source.id}`,
+        ...candidate(tool),
+        source: sourceId(tool),
         alreadyDisclosed: previous.has(name),
-        ...(tool.defaultExposure === 'codemode' ? { invocation: 'codemode' as const } : {}),
+        ...((this.#resolveExposure?.(tool, context) ?? tool.defaultExposure) === 'codemode' ? { invocation: 'codemode' as const } : {}),
       }
     })
     this.#replace(discovered, 'discovery')
     return {
       version: 1,
       tools,
-      candidates: ranked.slice(matches.length, matches.length + 5).map(name => ({ name, description: this.#tools.get(name)!.description.slice(0, 120) })),
+      candidates: ranked.slice(matches.length, matches.length + 5).map(name => candidate(this.#tools.get(name)!)),
       notFound: (input.toolNames ?? []).filter(name => !available(this.#canonicalName(name))),
     }
   }

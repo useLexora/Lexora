@@ -18,6 +18,7 @@ export interface SessionToolSnapshot {
   readonly discovered: readonly string[]
   readonly direct: readonly string[]
   readonly active: readonly string[]
+  readonly catalog: ToolDisclosureResolution['catalog']
   readonly model: { readonly provider: string, readonly id: string } | null
   readonly status: 'initializing' | 'ready' | 'degraded' | 'disposed'
 }
@@ -37,6 +38,7 @@ export class SessionToolCapabilities {
   #active: readonly string[] = Object.freeze([])
   #direct: readonly string[] = Object.freeze([])
   #model: SessionToolSnapshot['model'] = null
+  #catalog: ToolDisclosureResolution['catalog'] = copyEventSnapshot({ groups: [], tools: [] })
   #status: SessionToolSnapshot['status'] = 'initializing'
 
   constructor(resources: readonly BuddyCapabilityResourceRevision[] = [], resolveExposure?: BuddyToolExposureResolver) {
@@ -45,7 +47,7 @@ export class SessionToolCapabilities {
   }
 
   get snapshot(): SessionToolSnapshot {
-    return Object.freeze({ instanceId: this.#instanceId, revision: this.#revision, resources: this.#resources, disclosureRevision: this.#disclosure?.snapshot.revision ?? 0, discovered: this.#disclosure?.snapshot.discovered ?? Object.freeze([]), direct: this.#direct, active: this.#active, model: this.#model, status: this.#status })
+    return Object.freeze({ instanceId: this.#instanceId, revision: this.#revision, resources: this.#resources, disclosureRevision: this.#disclosure?.snapshot.revision ?? 0, discovered: this.#disclosure?.snapshot.discovered ?? Object.freeze([]), direct: this.#direct, active: this.#active, model: this.#model, catalog: this.#catalog, status: this.#status })
   }
 
   get persistedState(): ToolDiscoveryState { return this.#disclosure?.persistedState ?? { version: 1, discovered: [] } }
@@ -80,17 +82,18 @@ export class SessionToolCapabilities {
 
   apply(resolution: ToolDisclosureResolution, reason: ActiveToolReason, adapter: { getActiveTools: () => string[], setActiveTools: (tools: string[]) => void }): void {
     this.#assertCurrent()
-    const { active: desired, direct, model: nextModel } = resolution
+    const { active: desired, direct, model: nextModel, catalog } = resolution
     try {
       if (JSON.stringify(adapter.getActiveTools()) !== JSON.stringify(desired))
         adapter.setActiveTools(desired)
       const actual = Object.freeze([...adapter.getActiveTools()])
       if (JSON.stringify(actual) !== JSON.stringify(desired))
         throw new Error('SESSION_TOOLS_APPLICATION_MISMATCH')
-      const changed = this.#status !== 'ready' || JSON.stringify(actual) !== JSON.stringify(this.#active) || JSON.stringify(direct) !== JSON.stringify(this.#direct) || JSON.stringify(nextModel) !== JSON.stringify(this.#model)
+      const changed = this.#status !== 'ready' || JSON.stringify(actual) !== JSON.stringify(this.#active) || JSON.stringify(direct) !== JSON.stringify(this.#direct) || JSON.stringify(nextModel) !== JSON.stringify(this.#model) || JSON.stringify(catalog) !== JSON.stringify(this.#catalog)
       this.#active = actual
       this.#direct = Object.freeze(direct)
       this.#model = nextModel
+      this.#catalog = copyEventSnapshot(catalog)
       this.#status = 'ready'
       if (changed)
         this.#publish('active-applied', reason)

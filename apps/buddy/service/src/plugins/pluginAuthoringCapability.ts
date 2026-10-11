@@ -6,11 +6,14 @@ import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { EXTENSION_CAPABILITIES_RPC, EXTENSION_IDENTITY_RPC, EXTENSION_INSPECT_RPC, extensionCapabilitiesSchema, extensionIdentityRequestSchema, extensionIdentitySchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
 import { workbenchCapabilityKinds } from '../../../shared/workbench/workbenchContributionCatalog'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 
-const name = 'lexora_plugin_build'
-const inspectName = 'lexora_plugin_inspect'
-const capabilitiesName = 'lexora_plugin_capabilities'
-const identityName = 'lexora_plugin_identity'
+const PLUGIN_TOOLS = toPiToolGroup({ name: 'lexora_plugin', description: 'Create, inspect and build workbench plugins.', tools: [{ name: 'build' }, { name: 'inspect' }, { name: 'capabilities' }, { name: 'identity' }] })
+
+const name = PLUGIN_TOOLS.build.name
+const inspectName = PLUGIN_TOOLS.inspect.name
+const capabilitiesName = PLUGIN_TOOLS.capabilities.name
+const identityName = PLUGIN_TOOLS.identity.name
 const identityParameters = Type.Object({
   slug: Type.String({ minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: 'A short readable plugin command namespace, chosen from its purpose. This is not an author name and need not be unique.' }),
   author: Type.Optional(Type.String({ maxLength: 1024, description: 'Optional author display name, at most 80 visible characters. Unicode is supported. Omit to use the saved default; empty means unsigned. Do not infer from OS or Git accounts.' })),
@@ -41,12 +44,12 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
         return { blocked: true, reason: 'VALIDATION_FAILED' }
       return { access: 'write', paths: [{ path: event.input.source, mode: 'existing' }, { path: event.input.output, mode: 'create' }] }
     },
-    disclosure: [{ source: { kind: 'builtin', id: 'plugins', title: 'Plugin authoring' }, exposure: 'on_demand', keywords: 'plugin extension build create identity author inspect capabilities 插件 创建 身份 作者 编译 校验 安装 诊断 插槽', tools: [name, inspectName, capabilitiesName, identityName].map(name => ({ name })) }],
+    disclosure: [{ source: { kind: 'builtin', id: 'plugins', title: 'Plugin authoring' }, exposure: 'on_demand', keywords: 'plugin extension build create identity author inspect capabilities 插件 创建 身份 作者 编译 校验 安装 诊断 插槽', tools: Object.values(PLUGIN_TOOLS) }],
     extension: {
       name: 'lexora-plugin-authoring',
       factory(pi) {
         pi.registerTool(defineTool({
-          name: identityName,
+          ...PLUGIN_TOOLS.identity,
           label: 'Prepare plugin identity',
           parameters: identityParameters,
           description: 'Generate a new stable plugin ID and read the default author signature. Call only when creating a new independent plugin, then save the returned identity and engine requirement into extension.json. For edits or rebuilding, reuse the existing manifest ID. If a supplied author or slug is invalid, explain the rule and ask the user to choose a suitable name; never silently replace it. Does not write files, install or authenticate an author.',
@@ -63,7 +66,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.registerTool(defineTool({
-          name: capabilitiesName,
+          ...PLUGIN_TOOLS.capabilities,
           label: 'Discover plugin capabilities',
           parameters: capabilitiesParameters,
           description: 'Query the actual Lexora host for contribution targets and runtime capabilities. No filters returns a compact index; filter by kind or exact target for sizing, selection, scope and interaction rules. Read-only.',
@@ -77,7 +80,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.registerTool(defineTool({
-          name: inspectName,
+          ...PLUGIN_TOOLS.inspect,
           label: 'Inspect plugin',
           parameters: inspectParameters,
           description: 'Read a Lexora plugin installation, pending update, runtime views, errors and available entry commands from the actual desktop host. Does not install, activate, execute commands, read private plugin data or prove visual and media behavior.',
@@ -91,7 +94,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.registerTool(defineTool({
-          name,
+          ...PLUGIN_TOOLS.build,
           label: 'Build plugin',
           parameters,
           description: 'Validate and compile a self-contained Lexora TS/JS plugin using the isolated built-in compiler, and write an installable package. Returns the actual id, name, author (empty means unsigned), version and diagnostics. Author signature is the manifest author field, independent of the ID prefix; changing an author must not regenerate or rename the ID. Does not run plugin code, install dependencies or install plugins. Optionally opens the user installation review.',
@@ -102,7 +105,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           },
         }))
         pi.on('tool_result', (event) => {
-          if ([name, inspectName, capabilitiesName, identityName].includes(event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
+          if (Object.values(PLUGIN_TOOLS).some(tool => tool.name === event.toolName) && event.details && typeof event.details === 'object' && 'ok' in event.details && event.details.ok === false)
             return { isError: true }
         })
       },

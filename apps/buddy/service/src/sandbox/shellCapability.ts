@@ -10,9 +10,12 @@ import { Buffer } from 'node:buffer'
 import { createBashToolDefinition, createPowerShellToolDefinition, defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../approvals/ApprovalService'
 
 export const SHELL_SANDBOX_EXTENSION = 'lexora-shell-sandbox'
+
+const HOST_TOOLS = toPiToolGroup({ name: 'lexora_host', description: 'Run authorized host commands outside the sandbox.', tools: [{ name: 'shell' }] })
 
 export function createShellCapability(options: {
   cwd: string
@@ -35,7 +38,7 @@ export function createShellCapability(options: {
   return {
     disclosure: [
       { source: { kind: 'builtin', id: 'sandbox', title: 'Directory authorization' }, exposure: 'direct', keywords: '授权 目录 authorize directory', tools: [{ name: 'lexora_authorize_directory' }] },
-      { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: [{ name: 'lexora_host_shell' }] },
+      { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: [HOST_TOOLS.shell] },
     ],
     workspaceMutationTools: ['lexora_host_shell'],
     async classify(event) {
@@ -126,7 +129,7 @@ export function createShellCapability(options: {
         })
         pi.registerTool({
           ...native,
-          name: 'lexora_host_shell',
+          ...HOST_TOOLS.shell,
           label: 'Host shell',
           description: 'Run a command OUTSIDE the sandbox with the desktop service user permissions, including host files, credentials, network and desktop IPC. Requires user authorization; reusable grants expire with the current run. Use only when isolation prevents an operation required by the user, never to evade a declined request. Supply command and optional timeout in seconds.',
           promptSnippet: 'Run an authorized host command outside the sandbox',

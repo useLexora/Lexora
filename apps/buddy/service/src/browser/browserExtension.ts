@@ -20,18 +20,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent'
 import { BROWSER_ERROR_CODES } from '../../../shared/browser'
 import { GrantedPathError } from '../directories/resolveGrantedPath'
 import { BrowserCapabilityService } from './BrowserCapabilityService'
-import {
-  BROWSER_ACT_TOOL_NAME,
-  BROWSER_OPEN_TOOL_NAME,
-  BROWSER_SNAPSHOT_TOOL_NAME,
-  browserActToolParameters,
-  browserOpenToolParameters,
-  browserSnapshotToolParameters,
-  classifyBrowserTool,
-  isBrowserActToolInput,
-  isBrowserOpenToolInput,
-  isBrowserSnapshotToolInput,
-} from './browserToolContract'
+import { BROWSER_ACT_TOOL_NAME, BROWSER_OPEN_TOOL_NAME, BROWSER_SNAPSHOT_TOOL_NAME, BROWSER_TOOLS, browserActToolParameters, browserOpenToolParameters, browserSnapshotToolParameters, classifyBrowserTool, isBrowserActToolInput, isBrowserOpenToolInput, isBrowserSnapshotToolInput } from './browserToolContract'
 import { observeBrowserCapabilityDiagnostics } from './observeBrowserCapabilityDiagnostics'
 
 type BrowserExtensionService = Pick<BrowserCapabilityService, 'act' | 'observe' | 'open'>
@@ -80,7 +69,7 @@ export function createBrowserCapability(options: BrowserCapabilityServiceOptions
       source: { kind: 'builtin', id: 'browser', title: 'Browser' },
       exposure: 'on_demand',
       keywords: 'browser 浏览器 网页 打开 点击 按钮 表单 输入 快照 截图 navigate click snapshot',
-      tools: [BROWSER_OPEN_TOOL_NAME, BROWSER_SNAPSHOT_TOOL_NAME, BROWSER_ACT_TOOL_NAME].map(name => ({ name })),
+      tools: Object.values(BROWSER_TOOLS),
     }],
   }
 }
@@ -143,7 +132,7 @@ function createBrowserActTool(service: BrowserExtensionService) {
       }
     },
     label: 'Act in browser page',
-    name: BROWSER_ACT_TOOL_NAME,
+    ...BROWSER_TOOLS.act,
     parameters: browserActToolParameters,
     promptGuidelines: [browserFailureRecoveryGuideline],
   })
@@ -176,7 +165,7 @@ function createBrowserOpenTool({ service, getExecutionGrants, onOpened }: Create
       }
     },
     label: 'Open browser page',
-    name: BROWSER_OPEN_TOOL_NAME,
+    ...BROWSER_TOOLS.open,
     parameters: browserOpenToolParameters,
     promptGuidelines: [browserFailureRecoveryGuideline],
   })
@@ -203,7 +192,7 @@ function createBrowserSnapshotTool(service: BrowserExtensionService) {
       }
     },
     label: 'Capture browser snapshot',
-    name: BROWSER_SNAPSHOT_TOOL_NAME,
+    ...BROWSER_TOOLS.snapshot,
     parameters: browserSnapshotToolParameters,
     promptGuidelines: [browserFailureRecoveryGuideline],
   })

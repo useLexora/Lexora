@@ -4,12 +4,7 @@ import type { BuddyInProcessExtension } from '../agent/extensions/BuddyInProcess
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
-import {
-  classifyOutputPresentTool,
-  OUTPUT_PRESENT_TOOL_NAME,
-  outputPresentParameters,
-  readOutputPresentToolDetails,
-} from './artifactToolContract'
+import { classifyOutputPresentTool, OUTPUT_PRESENT_TOOL_NAME, OUTPUT_TOOLS, outputPresentParameters, readOutputPresentToolDetails } from './artifactToolContract'
 
 type OutputPresentParameters = Static<typeof outputPresentParameters>
 
@@ -17,7 +12,7 @@ export function createOutputPresentationCapability(options: CreateOutputPresenta
   return {
     extension: createOutputPresentationExtension(options),
     classify: classifyOutputPresentTool,
-    disclosure: [{ source: { kind: 'builtin', id: 'output', title: 'Task outputs' }, exposure: 'direct', keywords: '产物 交付 输出 artifact output deliverable', tools: [{ name: OUTPUT_PRESENT_TOOL_NAME }] }],
+    disclosure: [{ source: { kind: 'builtin', id: 'output', title: 'Task outputs' }, exposure: 'direct', keywords: '产物 交付 输出 artifact output deliverable', tools: [OUTPUT_TOOLS.present] }],
   }
 }
 
@@ -73,7 +68,7 @@ export function createOutputPresentationExtension(
           }
         },
         label: 'Present output',
-        name: OUTPUT_PRESENT_TOOL_NAME,
+        ...OUTPUT_TOOLS.present,
         parameters: outputPresentParameters,
         promptGuidelines: [
           'After creating or updating user-facing deliverables with file or shell tools, call lexora_output_present with the exact files or directories the user should receive.',

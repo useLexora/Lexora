@@ -2,6 +2,7 @@ import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolPresentation } from '../../../shared/runs/runEventPresentation'
 import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
+import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 
 import {
   readOptionalString,
@@ -15,7 +16,9 @@ export interface PetToolDetails {
   status: string
 }
 
-export const PET_TOOL_NAME = 'lexora_buddy_pet'
+export const PET_TOOLS = toPiToolGroup({ name: 'lexora_pet', description: 'Control desktop pet actions and visible feedback.', tools: [{ name: 'act' }] }, { act: 'lexora_buddy_pet' })
+
+export const PET_TOOL_NAME = PET_TOOLS.act.name
 
 const PET_TOOL_CLASSIFICATION: BuddyToolClassification = {
   access: 'visual',

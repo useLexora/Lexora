@@ -62,20 +62,20 @@ describe('toolDisclosure', () => {
     const policy: BuddyToolDisclosurePolicy = { source: { kind: 'plugin', id: 'tests.browser', title: 'Browser' }, exposure: 'on_demand', keywords: '', tools: [{ name }], available: () => available }
     const disclosure = new ToolDisclosure(tools, names, [policy], tool => tool.name === name ? exposure : undefined)
     expect(disclosure.active({ model })).toContain(name)
-    expect(disclosure.resolve({ model }).external).toEqual([])
+    expect(disclosure.resolve({ model }).catalog.tools).toEqual([])
     expect(disclosure.persistedState.discovered).toEqual([])
     exposure = 'on_demand'
     const deferred = disclosure.resolve({ model })
     expect(deferred.active).not.toContain(name)
-    expect(deferred.external).toEqual([{ name, title: name, source: 'Browser', description: name }])
+    expect(deferred.catalog.tools).toEqual([{ name, source: 'plugin:tests.browser', description: name }])
     exposure = 'direct'
     disclosure.search({ toolNames: [name] }, { model })
     exposure = 'on_demand'
     expect(disclosure.active({ model })).toContain(name)
-    expect(disclosure.resolve({ model }).external).toEqual([])
+    expect(disclosure.resolve({ model }).catalog.tools).toEqual([])
     available = false
     expect(disclosure.active({ model })).not.toContain(name)
-    expect(disclosure.resolve({ model }).external).toEqual([])
+    expect(disclosure.resolve({ model }).catalog.tools).toEqual([])
     expect(disclosure.search({ toolNames: [name] }, { model }).notFound).toEqual([name])
     available = true
     expect(disclosure.active({ model })).toContain(name)

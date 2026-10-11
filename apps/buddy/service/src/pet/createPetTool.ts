@@ -4,9 +4,9 @@ import type { PetActionService } from './PetActionService'
 import type { PetToolDetails } from './petToolContract'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { z } from 'zod'
-
 import { PET_MACRO_IDS } from './petMacroCatalog'
-import { PET_TOOL_NAME } from './petToolContract'
+
+import { PET_TOOLS } from './petToolContract'
 
 const petToolInputSchema = z.object({
   macro: z.enum(PET_MACRO_IDS),
@@ -59,7 +59,7 @@ export function createPetTool(options: CreatePetToolOptions): ToolDefinition {
       }
     },
     label: 'Lexora Buddy pet',
-    name: PET_TOOL_NAME,
+    ...PET_TOOLS.act,
     parameters: petToolParameters,
   })
 }

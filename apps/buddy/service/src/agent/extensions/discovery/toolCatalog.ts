@@ -36,6 +36,7 @@ export function createToolCatalog(tools: readonly ToolInfo[], baseline: readonly
         aliases: entry.aliases,
         title: entry.title ?? entry.name,
         source: policy.source,
+        namespace: definition.namespace,
         defaultExposure: policy.exposure,
         description: definition.description,
         keywords: policy.keywords,

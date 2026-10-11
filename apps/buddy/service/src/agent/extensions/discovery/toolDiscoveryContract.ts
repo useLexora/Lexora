@@ -1,4 +1,5 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
+import type { ToolNamespace } from '@earendil-works/pi-coding-agent'
 import type { Static } from 'typebox'
 import { Type } from 'typebox'
 
@@ -22,6 +23,7 @@ export interface BuddyToolMetadata {
   readonly aliases?: readonly string[]
   readonly title: string
   readonly source: Readonly<BuddyToolSource>
+  readonly namespace?: Readonly<ToolNamespace>
   readonly defaultExposure: BuddyToolExposure
 }
 
@@ -36,17 +38,37 @@ export interface BuddyToolDisclosurePolicy {
 }
 
 export const toolSearchParameters = Type.Object({
+  namespace: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Filter by exact namespace. Alone, lists members without loading them.' })),
+  source: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: 'Optional source from the catalog, such as builtin or mcp:connector-id.' })),
+  offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Pagination offset when listing namespaces or their members; never used with query or toolNames.' })),
   query: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: 'Natural-language capability or exact tool name. Supply query OR toolNames.' })),
   toolNames: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 5, uniqueItems: true })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, description: 'Maximum query matches; default 3. Not used with toolNames.' })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, description: 'Maximum matches; defaults to 3 for search and 5 for listing. Not used with toolNames.' })),
 }, { additionalProperties: false })
 
 export type ToolSearchInput = Static<typeof toolSearchParameters>
 
+export interface BuddyToolGroupSummary {
+  namespace: string
+  source: string
+  description: string
+  toolCount: number
+  examples?: readonly string[]
+}
+
+export interface BuddyToolSearchCandidate {
+  name: string
+  description: string
+  namespace?: string
+  source?: string
+}
+
 export interface ToolSearchResult {
   version: 1
-  tools: { name: string, id?: string, title?: string, description: string, source: string, alreadyDisclosed: boolean, invocation?: 'codemode' }[]
-  candidates: { name: string, description: string }[]
+  tools: (BuddyToolSearchCandidate & { id?: string, title?: string, source: string, alreadyDisclosed: boolean, invocation?: 'codemode' })[]
+  candidates: BuddyToolSearchCandidate[]
+  groups?: BuddyToolGroupSummary[]
+  nextOffset?: number
   notFound: string[]
 }
 

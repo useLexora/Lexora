@@ -11,6 +11,7 @@ import { Check } from 'typebox/value'
 import { readImageGenerationError } from './ImageGenerationGateway'
 import { classifyImageGenerationTool, IMAGE_GENERATION_TOOL_NAME, readImageGenerationToolDetails } from './imageGenerationToolContract'
 import { imageGenerationParameters } from './imageGenerationToolParameters'
+import { IMAGE_TOOLS } from './imageToolGroup'
 
 export interface CreateImageGenerationExtensionOptions {
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]
@@ -27,7 +28,7 @@ export function createImageGenerationCapability(options: CreateImageGenerationEx
       source: { kind: 'builtin', id: 'image_generation', title: 'Image generation' },
       exposure: 'on_demand',
       keywords: 'image generate edit picture draw 图片 生成 绘制 画图 编辑 修改',
-      tools: [{ name: IMAGE_GENERATION_TOOL_NAME }],
+      tools: [IMAGE_TOOLS.generate],
       available: ({ model }) => Boolean(model && options.service.supports(model)),
     }],
   }
@@ -86,7 +87,7 @@ function createImageGenerationTool(options: CreateImageGenerationExtensionOption
       }
     },
     label: 'Generate image',
-    name: IMAGE_GENERATION_TOOL_NAME,
+    ...IMAGE_TOOLS.generate,
     parameters: imageGenerationParameters,
     promptGuidelines: [
       'When the user asks to create or generatively edit an image, use lexora_image_generate instead of shell scripts or drawing libraries.',

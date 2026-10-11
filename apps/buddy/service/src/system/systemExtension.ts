@@ -8,17 +8,13 @@ import type { SystemToolFailureCode } from './systemToolFailure'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
 import { observeSystemDiagnostics } from './observeSystemDiagnostics'
-
 import { SystemCapabilityError, SystemCapabilityService } from './systemCapability'
+
 import {
   classifySystemTool,
-  SYSTEM_ACTION_TOOL_NAME,
   systemActionInputSchema,
 } from './systemToolContract'
-import {
-  createSystemToolFailure,
-  serializeSystemToolFailure,
-} from './systemToolFailure'
+import { createSystemToolFailure, serializeSystemToolFailure, SYSTEM_TOOLS } from './systemToolFailure'
 
 export interface CreateSystemExtensionOptions {
   service: SystemCapabilityService
@@ -40,7 +36,7 @@ export function createSystemCapability(host: SystemHostPort, report?: Applicatio
       source: { kind: 'builtin', id: 'system', title: 'System' },
       exposure: 'on_demand',
       keywords: 'system process service terminate kill restart stop 系统 进程 服务 终止 杀死 停止 重启',
-      tools: [{ name: SYSTEM_ACTION_TOOL_NAME }],
+      tools: [SYSTEM_TOOLS.action],
     }],
   }
 }
@@ -84,7 +80,7 @@ export function createSystemExtension(
           }
         },
         label: 'Change this computer',
-        name: SYSTEM_ACTION_TOOL_NAME,
+        ...SYSTEM_TOOLS.action,
         parameters: systemActionInputSchema,
       }))
     },

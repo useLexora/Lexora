@@ -17,15 +17,15 @@ import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { z } from 'zod'
-
 import {
   automationDefinitionDraftSchema,
   automationMutationRequestSchemas,
   automationRequestSchemas,
 } from '../../../shared/automation'
+
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 import { AutomationServiceError } from './AutomationService'
-import { AUTOMATION_TOOL_NAME } from './automationToolContract'
+import { AUTOMATION_TOOL_NAME, AUTOMATION_TOOLS } from './automationToolContract'
 
 const id = Type.String({ maxLength: 256, minLength: 1 })
 const requestId = Type.String({ maxLength: 128, minLength: 1 })
@@ -202,7 +202,7 @@ export function createAutomationTool(options: CreateAutomationToolOptions) {
       }
     },
     label: 'Manage Lexora Buddy automations',
-    name: AUTOMATION_TOOL_NAME,
+    ...AUTOMATION_TOOLS.manage,
     parameters: automationToolParameters,
   })
 }

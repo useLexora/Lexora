@@ -6,9 +6,10 @@ import type { CreateBuddyToolPresentationInput } from '../events/toolPresentatio
 import { Check } from 'typebox/value'
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 import { readRecord } from '../events/toolPresentationSupport'
+import { IMAGE_TOOLS } from './imageToolGroup'
 import { imageTransformParameters } from './imageTransformToolParameters'
 
-export const IMAGE_TRANSFORM_TOOL_NAME = 'lexora_image_chroma_key'
+export const IMAGE_TRANSFORM_TOOL_NAME = IMAGE_TOOLS.chroma_key.name
 
 export interface ImageTransformToolDetails {
   artifactIds: string[]

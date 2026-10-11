@@ -9,8 +9,9 @@ import {
   readOptionalString,
   readRecord,
 } from '../events/toolPresentationSupport'
+import { IMAGE_TOOLS } from './imageToolGroup'
 
-export const IMAGE_GENERATION_TOOL_NAME = 'lexora_image_generate'
+export const IMAGE_GENERATION_TOOL_NAME = IMAGE_TOOLS.generate.name
 
 export interface ImageGenerationToolDetails {
   artifactIds: string[]
