@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "lexora.themes",
-  "name": "Lexora 官方主题",
+  "name": "Lexora 主题",
   "author": "Lexora",
   "description": "经典、森林、鸢尾、玫瑰与琥珀，各含浅色和深色。",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "icon": "icon.svg",
   "apiVersion": 3,
   "engines": {
     "lexora": ">=0.10.1"

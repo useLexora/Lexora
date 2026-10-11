@@ -1,5 +1,5 @@
 import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
-import type { ExtensionApi, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionApi, ExtensionReview, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 
@@ -48,7 +48,12 @@ export function useExtensionState(api: ExtensionApi) {
     disposed = true
     revision++
   })
-  return { api, taskActions, installed, installations, error, refresh }
+  async function install(review: ExtensionReview, applyUpdate: boolean) {
+    await api.install(review.token)
+    if (review.currentVersion && applyUpdate)
+      await api.applyUpdate(review.manifest.id)
+  }
+  return { api, taskActions, installed, installations, error, refresh, install }
 }
 
 export function extensionErrorCode(reason: unknown): string {

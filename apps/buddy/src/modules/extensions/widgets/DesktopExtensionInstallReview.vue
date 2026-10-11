@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import { Alert20Regular, Clock20Regular, Document20Regular, Globe20Regular } from '@vicons/fluent'
-import { NButton, NEllipsis, NModal } from 'naive-ui'
-import { computed } from 'vue'
+import { NButton, NCheckbox, NEllipsis, NModal } from 'naive-ui'
+import { computed, shallowRef } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
 
 const props = defineProps<{ review: ExtensionReview, language: string, busy: boolean }>()
-const emit = defineEmits<{ cancel: [], install: [] }>()
+const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean] }>()
+const applyUpdate = shallowRef(true)
 const labels = computed(() => extensionLabels(props.language))
 const english = computed(() => props.language === 'en-US')
 const permissions = computed(() => {
@@ -104,13 +105,21 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
         {{ english ? 'This plugin can send authorized content to the listed websites.' : '此插件可以向上述网站发送已授权读取的内容。' }}
       </template>
     </p>
+    <div v-if="review.currentVersion" class="mt-5 border-t border-t-solid border-t-border pt-4">
+      <NCheckbox v-model:checked="applyUpdate" :disabled="busy">
+        {{ labels.applyAfterInstall }}
+      </NCheckbox>
+      <p v-if="applyUpdate" class="mt-1 mb-0 text-[12px] text-muted leading-[1.6]">
+        {{ labels.applyUpdateHint }}
+      </p>
+    </div>
     <template #footer>
       <div class="flex justify-end gap-[8px]">
         <NButton :disabled="busy" @click="emit('cancel')">
           {{ labels.cancel }}
         </NButton>
-        <NButton type="primary" :loading="busy" data-testid="extension-confirm-install" @click="emit('install')">
-          {{ review.currentVersion ? labels.update : labels.confirm }}
+        <NButton type="primary" :loading="busy" data-testid="extension-confirm-install" @click="emit('install', applyUpdate)">
+          {{ review.currentVersion ? (applyUpdate ? labels.updateAndApply : labels.update) : labels.confirm }}
         </NButton>
       </div>
     </template>

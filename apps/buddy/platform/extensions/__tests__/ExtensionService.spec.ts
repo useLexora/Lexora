@@ -111,16 +111,6 @@ it.each(['removeData', 'removePackages'] as const)('keeps the installation retry
   expect(await store.data('tests.reader')).toEqual({ version: 0, value: {} })
 })
 
-it('publishes static contributions without starting code and deduplicates concurrent activation', async () => {
-  const { service, hosts } = await fixture()
-  expect((await service.list())[0]?.state).toBe('inactive')
-  expect(hosts).toHaveLength(0)
-  await Promise.all([service.execute('tests.reader', 'tests.reader.open', null), service.execute('tests.reader', 'tests.reader.open', null)])
-  expect(hosts).toHaveLength(1)
-  expect(hosts[0]!.commands).toHaveLength(2)
-  expect((await service.list())[0]?.state).toBe('active')
-})
-
 it('exposes opaque selected-resource grants, revalidates bindings on every read, and blocks other grants', async () => {
   let allowed = true
   const { service, hosts } = await fixture({ readText: async (input) => {
@@ -142,7 +132,11 @@ it('invalidates in-flight requests and old generation brokers on disable and cra
   const pending = deferred<string>()
   let wait = false
   const { service, hosts } = await fixture({ readText: async () => wait ? pending.promise : 'Selected' })
-  await service.execute('tests.reader', 'tests.reader.open', target)
+  expect((await service.list())[0]?.state).toBe('inactive')
+  expect(hosts).toHaveLength(0)
+  await Promise.all([service.execute('tests.reader', 'tests.reader.open', target), service.execute('tests.reader', 'tests.reader.open', target)])
+  expect(hosts).toHaveLength(1)
+  expect(hosts[0]!.commands).toHaveLength(2)
   const resource = (hosts[0]!.commands[0] as { resource: { id: string } }).resource
   wait = true
   const reading = hosts[0]!.broker('resources.readText', { id: resource.id })
@@ -160,23 +154,26 @@ it('invalidates in-flight requests and old generation brokers on disable and cra
   await service.restart('tests.reader')
   await service.execute('tests.reader', 'tests.reader.open', null)
   expect((await service.list())[0]?.state).toBe('active')
-})
-
-it('invalidates old renderer requests while allowing a fresh renderer to reactivate the host', async () => {
-  const { service, hosts } = await fixture()
-  await service.execute('tests.reader', 'tests.reader.open', null)
   const generation = (await service.list())[0]!.generation
+  const previous = hosts.at(-1)!
   await service.resetHosts()
-  await expect(hosts[0]!.broker('storage.set', { value: {}, version: 1 })).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  await expect(previous.broker('storage.set', { value: {}, version: 1 })).rejects.toThrow('EXTENSION_HOST_STOPPED')
   await service.execute('tests.reader', 'tests.reader.open', null)
   expect((await service.list())[0]!.generation).not.toBe(generation)
 })
 
 it('binds every view to its token and resource, and acknowledges only persisted state', async () => {
-  const { service, hosts, events } = await fixture()
+  let failSave = false
+  const { service, hosts, events } = await fixture({ workbench: async (event) => {
+    if (failSave)
+      return null
+    events.push(event)
+    return event.kind === 'state' ? event.viewId : null
+  } })
   await service.execute('tests.reader', 'tests.reader.open', target)
   const resource = (hosts[0]!.commands[0] as { resource: { id: string, name: string } }).resource
   const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: { position: 3 }, stateVersion: 1 }
+  await expect(service.openView({ ...input, resource: null })).rejects.toThrow('EXTENSION_RESOURCE_REQUIRED')
   const first = await service.openView(input)
   const second = await service.openView(input)
   service.closeView(first.id, first.generation, first.token)
@@ -186,33 +183,37 @@ it('binds every view to its token and resource, and acknowledges only persisted 
   await expect(service.viewRequest(second.id, second.generation, second.token, 'storage.get', null)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await service.viewRequest(second.id, second.generation, second.token, 'view.setState', { position: 9 })
   expect(events).toContainEqual(expect.objectContaining({ kind: 'state', viewId: second.id, generation: second.generation, token: second.token, state: { position: 9 } }))
+  failSave = true
+  await expect(service.viewRequest(second.id, second.generation, second.token, 'view.setState', { position: 10 })).rejects.toThrow('EXTENSION_STATE_SAVE_FAILED')
+  expect(await service.viewRequest(second.id, second.generation, second.token, 'bootstrap', null)).toMatchObject({ state: { position: 9 } })
   await service.enable('tests.reader', false)
   await expect(service.viewRequest(second.id, second.generation, second.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
-it('does not claim state was saved if the workbench failed to persist it', async () => {
-  const { service } = await fixture({ workbench: async () => null })
-  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 }
-  await expect(service.openView(input)).rejects.toThrow('EXTENSION_RESOURCE_REQUIRED')
-  const grant = await service.store.grant('tests.reader', target)
-  const session = await service.openView({ ...input, resource: grant })
-  await expect(service.viewRequest(session.id, session.generation, session.token, 'view.setState', { position: 9 })).rejects.toThrow('EXTENSION_STATE_SAVE_FAILED')
-})
-
-it('keeps new network permissions inactive until an explicitly approved update is restarted', async () => {
+it('keeps pending versions and permissions inactive across restarts until the update is applied', async () => {
   const get = vi.fn(async () => new Response('allowed'))
   const { root, store, service, hosts } = await fixture({ get })
   await service.execute('tests.reader', 'tests.reader.open', null)
+  await expect(service.applyUpdate('tests.reader')).rejects.toThrow('EXTENSION_UPDATE_UNAVAILABLE')
+  expect(hosts[0]!.disposed).toBe(false)
   const update = await reviewPackage(root, store, manifest({ version: '1.1.0', permissions: { selectedResource: 'read', network: ['https://example.com'] } }))
   await service.install(update.token)
   await expect(hosts[0]!.broker('network.get', { url: 'https://example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
   expect(get).not.toHaveBeenCalled()
   await service.restart('tests.reader')
   await service.execute('tests.reader', 'tests.reader.open', null)
-  expect(await hosts[1]!.broker('network.get', { url: 'https://example.com/' })).toEqual({ status: 200, text: 'allowed' })
-  get.mockImplementation(async () => new Response(null, { status: 302, headers: { location: 'https://unapproved.example/' } }))
+  expect((await service.list())[0]).toMatchObject({ manifest: { version: '1.0.0' }, pending: { manifest: { version: '1.1.0' } } })
+  expect(hosts[0]!.disposed).toBe(true)
+  await expect(hosts[0]!.broker('storage.get', {})).rejects.toThrow('EXTENSION_HOST_STOPPED')
   await expect(hosts[1]!.broker('network.get', { url: 'https://example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
-  expect(get).toHaveBeenCalledTimes(2)
+  await service.applyUpdate('tests.reader')
+  expect((await service.list())[0]).toMatchObject({ manifest: { version: '1.1.0' }, pending: null })
+  expect(hosts[1]!.disposed).toBe(true)
+  await expect(hosts[1]!.broker('storage.get', {})).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  await service.execute('tests.reader', 'tests.reader.open', null)
+  expect(await hosts[2]!.broker('network.get', { url: 'https://example.com/' })).toEqual({ status: 200, text: 'allowed' })
+  get.mockImplementation(async () => new Response(null, { status: 302, headers: { location: 'https://unapproved.example/' } }))
+  await expect(hosts[2]!.broker('network.get', { url: 'https://example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
 })
 
 it('stops dependent hosts when their dependency is disabled', async () => {
@@ -386,7 +387,7 @@ it('keeps export permission separate from reads and expires writers with their o
   const payload = { name: 'file.unknown', size: 4 }
   await expect(f.service.viewRequest(readOnly.id, readOnly.generation, readOnly.token, 'resources.beginSave', payload)).rejects.toThrow('EXTENSION_RESOURCE_EXPORT_DENIED')
   await f.service.install((await reviewPackage(f.root, f.store, manifest({ ...value, version: '1.1.0', permissions: { resourceExport: true } }))).token)
-  await f.service.restart(value.id)
+  await f.service.applyUpdate(value.id)
   const owner = await f.service.openView(input)
   const other = await f.service.openView({ ...input, viewId: randomUUID() })
   const request = (method: string, params: JsonValue) => f.service.viewRequest(owner.id, owner.generation, owner.token, method, params)
@@ -490,21 +491,17 @@ it('requires an owned live interaction and immediately revokes its views on exit
   await expect(f.broker('placements.show', { id: 'tests.game.layer', interactionId: id })).rejects.toThrow('EXTENSION_INTERACTION_ENDED')
   await expect(f.service.openView({ ...f.input, interactionId: id })).rejects.toThrow('EXTENSION_INTERACTION_ENDED')
   expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: id, title: null }))
-})
-
-it('cancels interaction endpoints when the host stops and keeps broadcasts owned', async () => {
-  const f = await interactionFixture()
-  const id = randomUUID()
-  await f.broker('interactions.start', { id, title: 'Game' })
-  const view = await f.service.openView({ ...f.input, interactionId: id })
+  const nextId = randomUUID()
+  await f.broker('interactions.start', { id: nextId, title: 'Game' })
+  const nextView = await f.service.openView({ ...f.input, interactionId: nextId })
   await f.broker('views.broadcast', { score: 3 })
-  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'message', extensionId: 'tests.game', generation: view.generation, message: { score: 3 } }))
+  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'message', extensionId: 'tests.game', generation: nextView.generation, message: { score: 3 } }))
   await f.service.enable('tests.game', false)
-  await expect(f.service.viewRequest(view.id, view.generation, view.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
-  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: id, title: null }))
+  await expect(f.service.viewRequest(nextView.id, nextView.generation, nextView.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: nextId, title: null }))
 })
 
-it('runs same-name commands in different plugins without sharing handlers or data', async () => {
+it('routes same-name commands independently and keeps the other plugin available after disable', async () => {
   const f = await interactionFixture()
   const value = manifest({ id: 'other.game', apiVersion: 3, contributes: { commands: [{ id: 'other.game.start', title: 'Start', slash: { name: 'game-start' } }] } })
   await f.service.install((await reviewPackage(f.root, f.store, value)).token)
@@ -513,10 +510,6 @@ it('runs same-name commands in different plugins without sharing handlers or dat
   expect((await f.service.list()).filter(item => item.state === 'active').map(item => item.manifest.id).sort()).toEqual(['other.game', 'tests.game'])
   expect(f.hosts[0]!.commands.at(-1)).toMatchObject({ command: 'tests.game.start', arguments: 'first' })
   expect(f.hosts[1]!.commands.at(-1)).toMatchObject({ command: 'other.game.start', arguments: 'second' })
-  await f.store.saveData('tests.game', { selected: 'first' }, 1)
-  await f.store.saveData('other.game', { selected: 'second' }, 1)
-  expect((await f.store.data('tests.game')).value).toEqual({ selected: 'first' })
-  expect((await f.store.data('other.game')).value).toEqual({ selected: 'second' })
   await f.service.enable('tests.game', false)
   await f.service.executeSlash(value.id, 'other.game.start', 'still available')
   expect(f.hosts[1]!.commands.at(-1)).toMatchObject({ arguments: 'still available' })

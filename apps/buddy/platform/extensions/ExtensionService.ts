@@ -513,13 +513,25 @@ export class ExtensionService {
       if (!this.store.installed[id])
         throw new Error('EXTENSION_NOT_INSTALLED')
       await this.#stopClosure(id)
-      const previousRevision = this.store.installed[id]!.current.revision
-      await this.store.promote(id)
-      if (this.store.installed[id]!.current.revision !== previousRevision)
-        this.#publish({ kind: 'package', action: 'promoted', extensionId: id, packageRevision: this.store.installed[id]!.current.revision })
       this.#clearError(id)
       await this.scheduler.resume()
       this.#log(id, 'restarted')
+    })
+  }
+
+  applyUpdate(id: string): Promise<void> {
+    return this.#mutate(async () => {
+      const installed = this.store.installed[id]
+      if (!installed)
+        throw new Error('EXTENSION_NOT_INSTALLED')
+      if (!installed.pending)
+        throw new Error('EXTENSION_UPDATE_UNAVAILABLE')
+      await this.#stopClosure(id)
+      await this.store.promote(id)
+      this.#publish({ kind: 'package', action: 'promoted', extensionId: id, packageRevision: this.store.installed[id]!.current.revision })
+      this.#clearError(id)
+      await this.scheduler.resume()
+      this.#log(id, 'update.applied')
     })
   }
 

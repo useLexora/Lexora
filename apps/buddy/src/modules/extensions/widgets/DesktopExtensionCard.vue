@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import type { DropdownOption } from 'naive-ui'
-import { MoreHorizontal20Regular } from '@vicons/fluent'
+import { ArrowSync20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
 import { NButton, NDropdown, NEllipsis, NTag } from 'naive-ui'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -12,6 +12,7 @@ const props = defineProps<{ item: ExtensionStatus, language: string, busy: boole
 const emit = defineEmits<{
   toggle: []
   restart: []
+  applyUpdate: []
   diagnostics: []
   remove: []
   open: []
@@ -26,6 +27,7 @@ const actions = computed<DropdownOption[]>(() => {
   return [
     ...pluginActions,
     ...(pluginActions.length ? [{ key: 'plugin-actions-divider', type: 'divider' as const }] : []),
+    ...(props.item.pending ? [{ key: 'apply-update', label: labels.value.applyUpdate, props: { 'role': 'menuitem', 'data-testid': 'extension-apply-update-menu' } }] : []),
     { key: 'restart', label: labels.value.restart, props: { 'role': 'menuitem', 'data-testid': 'extension-restart' } },
     { key: 'diagnostics', label: labels.value.diagnostics, props: { role: 'menuitem' } },
     { key: 'divider', type: 'divider' },
@@ -35,6 +37,8 @@ const actions = computed<DropdownOption[]>(() => {
 function handleAction(key: string | number) {
   if (key === 'restart')
     emit('restart')
+  else if (key === 'apply-update')
+    emit('applyUpdate')
   else if (key === 'diagnostics')
     emit('diagnostics')
   else if (key === 'remove')
@@ -59,18 +63,25 @@ function handleAction(key: string | number) {
           </NEllipsis>
         </p>
       </div>
-      <NTag class="extension-card__status" size="small" :bordered="false" :type="item.state === 'failed' || item.state === 'blocked' ? 'warning' : 'default'">
-        {{ status }}
+      <NTag class="extension-card__status" size="small" :bordered="false" :type="item.pending || item.state === 'failed' || item.state === 'blocked' ? 'warning' : 'default'">
+        {{ item.pending ? labels.updateReady : status }}
       </NTag>
     </header>
     <NEllipsis v-if="item.manifest.description" class="extension-card__description" :line-clamp="2">
       {{ item.manifest.description }}
     </NEllipsis>
-    <p v-if="item.pending" class="extension-card__pending text-accent-text">
-      {{ labels.pending }} {{ item.pending.manifest.version }}
-    </p>
+    <div v-if="item.pending" class="extension-card__pending grid gap-1 border border-solid border-accent-border rounded-micro bg-accent-subtle px-3 py-2">
+      <span class="text-[12px] text-accent-text font-500">{{ labels.pending }} {{ item.pending.manifest.version }}</span>
+      <span class="text-[11px] text-muted">{{ labels.applyUpdateHint }}</span>
+    </div>
     <code v-if="item.error" class="extension-card__error text-danger">{{ item.error }}</code>
     <footer class="flex min-w-0 flex-wrap items-center gap-[4px] mt-auto pt-[4px]">
+      <NButton v-if="item.pending" type="primary" size="small" :disabled="busy" data-testid="extension-apply-update" @click="emit('applyUpdate')">
+        <template #icon>
+          <DesktopIcon :component="ArrowSync20Regular" :size="16" />
+        </template>
+        {{ labels.applyUpdate }}
+      </NButton>
       <NButton v-if="canOpen" size="small" secondary :disabled="busy" @click="emit('open')">
         {{ language === 'en-US' ? 'Open' : '打开' }}
       </NButton>
@@ -89,10 +100,38 @@ function handleAction(key: string | number) {
 </template>
 
 <style scoped lang="scss">
-.extension-card__author { min-width: 0; }
-.extension-card__meta > span:first-child, .extension-card__status { flex: none; }
-.extension-card__description { color: var(--buddy-text-secondary); font-size: 13px; line-height: 1.6; }
-.extension-card__pending, .extension-card__error { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.extension-card__author {
+  min-width: 0;
+}
 
-.extension-card__more { flex: none; width: 28px; height: 28px; margin-left: auto; padding: 0; }
+.extension-card__meta > span:first-child,
+.extension-card__status {
+  flex: none;
+}
+
+.extension-card__description {
+  color: var(--buddy-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.extension-card__pending {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.extension-card__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.extension-card__more {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+}
 </style>

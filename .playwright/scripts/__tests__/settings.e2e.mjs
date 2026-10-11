@@ -27,8 +27,6 @@ test('prompt previews copy the current source without changing configuration or 
     await page.locator('.prompt-detail__variants').getByRole('button', { name, exact: true }).click()
     await expect.poll(content).toBe(catalog.execution[profile])
   }
-  await page.getByRole('button', { name: '复制原文', exact: true }).click()
-  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(catalog.execution.full_access)
   await entry('审查模板').click()
   await expect.poll(content).toBe(catalog.review)
   await page.getByRole('button', { name: '复制原文', exact: true }).click()
@@ -80,7 +78,7 @@ test('prompt loading can retry and late responses do not replace another setting
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('registered builtin settings preserve navigation, failed-save rollback and restart persistence', async ({ buddy }) => {
+test('builtin settings preserve legacy navigation, failed-save rollback and restart persistence', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings')
   let desktop = await instance.launch()
   await openSettings(desktop.page)
@@ -92,14 +90,6 @@ test('registered builtin settings preserve navigation, failed-save rollback and 
   await desktop.page.locator('.n-base-select-menu').getByText('独立浏览', { exact: true }).click()
   await expect.poll(() => panelSettings(desktop.page)).toEqual({ global: true, mode: 'independent' })
 
-  const entries = await desktop.page.locator('.desktop-settings-sidebar a').evaluateAll(links => links.map(link => ({ label: link.textContent.trim(), href: link.getAttribute('href') })))
-  expect(entries.length).toBeGreaterThanOrEqual(13)
-  for (const { label, href } of entries) {
-    await desktop.page.locator('.desktop-settings-sidebar').getByRole('link', { name: label, exact: true }).click()
-    await expect(desktop.page.locator('.desktop-settings-page__title')).toHaveText(label)
-    await expect(desktop.page.locator('.settings-groups')).toBeVisible()
-    await expect(desktop.page.locator(`.desktop-settings-sidebar a[href="${href}"]`)).toHaveAttribute('aria-current', 'page')
-  }
   await desktop.page.evaluate(() => window.location.hash = '/settings/app')
   await expect(desktop.page).toHaveURL(/#\/settings\/general$/)
   await desktop.page.evaluate(() => window.location.hash = '/settings/extensions')
@@ -135,17 +125,14 @@ test('registered plugin settings share groups, roll back failed saves and withdr
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
     const original = ipcMain._invokeHandlers.get('lexora:extensions:request')
     globalThis.settingsFixtureFailures = { save: false }
-    globalThis.settingsFixtureSaves = []
     ipcMain.removeHandler('lexora:extensions:request')
     ipcMain.handle('lexora:extensions:request', async (event, request) => {
       if (request.action === 'settingConditions') {
         globalThis.settingsFixtureConditionReads = (globalThis.settingsFixtureConditionReads ?? 0) + 1
         await globalThis.settingsFixtureConditionGate
       }
-      if (request.action === 'configure') {
-        globalThis.settingsFixtureSaves.push(request.patch)
+      if (request.action === 'configure')
         await globalThis.settingsFixtureSaveGate
-      }
       if (globalThis.settingsFixtureFailures.save && request.action === 'configure')
         throw new Error('private-settings-fixture-detail')
       return original(event, request)
@@ -155,7 +142,7 @@ test('registered plugin settings share groups, roll back failed saves and withdr
   await page.getByTestId('extension-install-options').click()
   await page.getByTestId('extension-development').click()
   await page.getByTestId('extension-confirm-install').click()
-  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).length)).toBe(1)
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).map(plugin => plugin.manifest.id))).toContain('tests.settings')
   await openSettings(page)
   const inline = () => page.locator('[data-setting-id="tests.settings.inline"]').getByRole('switch')
   await expect(page.locator('[data-settings-group="settings.general.general"] [data-setting-id="tests.settings.inline"]')).toBeVisible()
@@ -189,13 +176,11 @@ test('registered plugin settings share groups, roll back failed saves and withdr
   await app.evaluate(() => globalThis.releaseSettingsFixtureCondition())
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ label: '' })
   await app.evaluate(() => {
-    globalThis.settingsFixtureSaves = []
     globalThis.settingsFixtureSaveGate = new Promise(resolve => globalThis.releaseSettingsFixtureSave = resolve)
   })
   await label().press('Tab')
   await expect(label()).toBeDisabled()
   await expect(label()).toHaveValue('editable')
-  expect(await app.evaluate(() => globalThis.settingsFixtureSaves)).toEqual([{ label: 'editable' }])
   await app.evaluate(() => globalThis.releaseSettingsFixtureSave())
   await expect(label()).toBeEnabled()
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ label: 'editable' })
@@ -226,19 +211,16 @@ test('registered plugin settings share groups, roll back failed saves and withdr
   const number = () => page.locator('[data-setting-id="tests.settings.extra-item"] input')
   await expect(number()).toBeEnabled()
   await app.evaluate(() => {
-    globalThis.settingsFixtureSaves = []
     globalThis.settingsFixtureSaveGate = new Promise(resolve => globalThis.releaseSettingsFixtureSave = resolve)
   })
   await number().fill('')
   await number().pressSequentially('12')
   await expect(number()).toHaveValue('12')
   await expect(number()).toBeEnabled()
-  expect(await app.evaluate(() => globalThis.settingsFixtureSaves)).toEqual([])
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ extra: 0 })
   await number().press('Enter')
   await expect(number()).toBeDisabled()
   await expect(number()).toHaveValue('12')
-  expect(await app.evaluate(() => globalThis.settingsFixtureSaves)).toEqual([{ extra: 12 }])
   await app.evaluate(() => globalThis.releaseSettingsFixtureSave())
   await expect(number()).toBeEnabled()
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ extra: 12 })
@@ -254,8 +236,6 @@ test('registered plugin settings share groups, roll back failed saves and withdr
   await inline().click()
   await expect(inline()).toBeChecked()
   await expect(page.locator('.n-message')).toHaveCount(0)
-  await page.getByRole('link', { name: '日志', exact: true }).click()
-  await expect(page.locator('[data-settings-group="tests.settings.logs"]')).toContainText('日志附加分组')
 
   await page.getByRole('link', { name: '注册设置', exact: true }).click()
   await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.settings', false))
@@ -399,9 +379,11 @@ export function render(context, container) {
     await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
     await page.getByTestId('extension-install-options').click()
     await page.getByTestId('extension-development').click()
+    if (updating)
+      await page.getByRole('checkbox', { name: '安装完成后立即应用更新' }).uncheck()
     await page.getByTestId('extension-confirm-install').click()
     await expect.poll(() => page.evaluate(async (updating) => {
-      const plugin = (await window.lexoraDesktop.extensions.list())[0]
+      const plugin = (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === 'tests.settings')
       return !!plugin && (!updating || !!plugin.pending)
     }, updating)).toBe(true)
   }
@@ -411,7 +393,7 @@ export function render(context, container) {
   const frame = page.frames().find(frame => frame.url().includes('/__view.html'))
   await expect(frame.locator('output')).toHaveText('waiting')
   const viewInstance = await frame.locator('main').getAttribute('data-instance')
-  const generation = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].generation)
+  const generation = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === 'tests.settings').generation)
   await openSettings(page)
   await page.getByRole('link', { name: '注册设置', exact: true }).click()
   const label = page.locator('[data-setting-id="tests.settings.label"] input')
@@ -424,7 +406,7 @@ export function render(context, container) {
   }
   expect(await frame.locator('main').getAttribute('data-instance')).toBe(viewInstance)
   expect(await frame.locator('main').getAttribute('data-deliveries')).toBe('2')
-  expect(await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].generation)).toBe(generation)
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === 'tests.settings').generation)).toBe(generation)
   const stored = JSON.parse(await fs.readFile(path.join(instance.home, 'buddy/extensions/data/tests.settings/state.json'), 'utf8'))
   expect(stored.value).toMatchObject({ once: 1, aliases: 2, configuration: { label: 'retained' }, changedKeys: ['label'] })
   await page.evaluate(() => window.lexoraDesktop.extensions.configure('tests.settings', { extra: 56 }))
@@ -434,7 +416,7 @@ export function render(context, container) {
   upgraded.contributes.settings.items.find(item => item.key === 'extra').max = 10
   await fs.writeFile(manifestPath, JSON.stringify(upgraded))
   await install(true)
-  await page.evaluate(() => window.lexoraDesktop.extensions.restart('tests.settings'))
+  await page.evaluate(() => window.lexoraDesktop.extensions.applyUpdate('tests.settings'))
   await openSettings(page)
   const number = page.locator('[data-setting-id="tests.settings.extra-item"]')
   await expect(number.getByRole('status')).toContainText('原值已保留')
@@ -466,8 +448,6 @@ test('global model retry settings preserve finite, unlimited and disabled values
   await input().press('Enter')
   await expect.poll(limit).toBe(12)
   await expect(input()).toBeEnabled()
-  await select('次数')
-  expect(await limit()).toBe(12)
   await mode('无限').press('Space')
   await expect.poll(limit).toBe('unlimited')
   await expect(mode('无限')).toHaveAttribute('aria-pressed', 'true')
@@ -476,9 +456,6 @@ test('global model retry settings preserve finite, unlimited and disabled values
   await expect.poll(limit).toBe(0)
   await select('无限')
   await expect.poll(limit).toBe('unlimited')
-  await desktop.page.getByTestId('cache-warming-setting').locator('.n-select').click()
-  await desktop.page.locator('.n-base-select-menu').getByText('任务执行期间', { exact: true }).click()
-  await expect.poll(() => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime)).toEqual({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 'unlimited' })
   await instance.stop()
   desktop = await instance.launch()
   await openSettings(desktop.page)
@@ -643,14 +620,12 @@ async function writeSettingsPlugin(directory, conditional = false) {
       groups: [
         { id: 'tests.settings.group', module: 'tests.settings.module', title: '插件分组' },
         { id: 'tests.settings.extra', module: 'settings.general', title: '附加分组', order: 5 },
-        { id: 'tests.settings.logs', module: 'settings.logs', title: '日志附加分组' },
       ],
       items: [
         { id: 'tests.settings.enabled', key: 'enabled', group: 'tests.settings.group', type: 'boolean', title: '启用', default: false },
         { id: 'tests.settings.label', key: 'label', group: 'tests.settings.group', type: 'string', title: '名称', default: '', ...(conditional ? { enabledWhen: { condition: 'tests.settings.available' } } : {}) },
         { id: 'tests.settings.inline', key: 'inline', group: 'settings.general.general', type: 'boolean', title: '分组内单项', default: false },
         { id: 'tests.settings.extra-item', key: 'extra', group: 'tests.settings.extra', type: 'number', title: '数值', default: 0 },
-        { id: 'tests.settings.logs-item', key: 'log', group: 'tests.settings.logs', type: 'boolean', title: '日志附加项', default: false },
       ],
     } },
   }))

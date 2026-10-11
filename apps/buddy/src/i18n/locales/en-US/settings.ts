@@ -264,6 +264,7 @@ export default {
   'desktop.settings.themeDark': 'Dark',
   'desktop.settings.themeLight': 'Light',
   'desktop.settings.themeSystem': 'System',
+  'desktop.settings.themeSystemDescription': 'Match the system’s light or dark appearance',
   'desktop.settings.conversationInput': 'Message input',
   'desktop.settings.pasteTextAsAttachment': 'Paste long text as an attachment',
   'desktop.settings.pasteTextAsAttachmentDescription': 'Convert pasted text over 1500 characters or 20 lines into a text attachment. When disabled, paste directly into the message.',

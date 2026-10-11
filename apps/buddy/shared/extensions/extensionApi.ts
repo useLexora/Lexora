@@ -120,6 +120,7 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('cancelInstall'), token: z.string().uuid() }).strict(),
   z.object({ action: z.literal('enable'), id: extensionIdSchema, enabled: z.boolean() }).strict(),
   z.object({ action: z.literal('restart'), id: extensionIdSchema }).strict(),
+  z.object({ action: z.literal('applyUpdate'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('uninstall'), id: extensionIdSchema, clearData: z.boolean().default(false) }).strict(),
   z.object({ action: z.literal('devtools'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('revokeResources'), id: extensionIdSchema }).strict(),
@@ -156,6 +157,7 @@ export interface ExtensionApi {
   cancelInstall: (token: string) => Promise<void>
   enable: (id: string, enabled: boolean) => Promise<void>
   restart: (id: string) => Promise<void>
+  applyUpdate: (id: string) => Promise<void>
   uninstall: (id: string, options?: { clearData?: boolean }) => Promise<void>
   devtools: (id: string) => Promise<void>
   revokeResources: (id: string) => Promise<void>

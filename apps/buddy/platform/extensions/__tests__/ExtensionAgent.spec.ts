@@ -31,28 +31,34 @@ function configuredManifest(id = 'tests.reader', agent = true) {
   } })
 }
 
-it('preserves incompatible upgrade values and repairs individual fields before restoring agent contributions', async () => {
+it('preserves false, null, retired and incompatible upgrade values through repair and reinstall', async () => {
   const { root, store } = await createStore()
-  const original = configuredManifest()
+  const base = configuredManifest()
+  const original = extensionManifestSchema.parse({ ...base, contributes: { ...base.contributes, settings: { ...base.contributes.settings, items: [
+    ...base.contributes.settings.items,
+    { id: `${base.id}.model`, key: 'model', group: `${base.id}.group`, type: 'model', title: 'Model', default: { providerId: 'fixture', modelId: 'default' } },
+    { id: `${base.id}.retired`, key: 'retired', group: `${base.id}.group`, type: 'string', title: 'Retired', default: '' },
+  ] } } })
   await store.install((await reviewPackage(root, store, original)).token)
-  await store.saveConfiguration(original.id, { enabled: true, mode: 'old', count: 90, retired: 'preserve' })
-  const upgraded = extensionManifestSchema.parse({ ...original, version: '1.1.0', contributes: { ...original.contributes, settings: { ...original.contributes.settings, items: original.contributes.settings.items.map(item => item.type === 'select' ? { ...item, options: [{ label: 'New', value: 'new' }] } : item.type === 'number' ? { ...item, max: 10 } : item) } } })
+  await store.saveConfiguration(original.id, { enabled: false, model: null, mode: 'old', count: 90, retired: 'preserve' })
+  const upgraded = extensionManifestSchema.parse({ ...original, version: '1.1.0', contributes: { ...original.contributes, settings: { ...original.contributes.settings, items: original.contributes.settings.items.filter(item => item.key !== 'retired').map(item => item.type === 'select' ? { ...item, options: [{ label: 'New', value: 'new' }] } : item.type === 'number' ? { ...item, max: 10 } : item) } } })
   await store.install((await reviewPackage(root, store, upgraded)).token)
   const service = new ExtensionService(store, ports)
   try {
-    await service.restart(original.id)
-    expect(await service.configurationSnapshot(original.id)).toEqual({ values: { enabled: true, mode: 'old', count: 90 }, invalidKeys: ['mode', 'count'] })
+    await service.applyUpdate(original.id)
+    expect(await service.configurationSnapshot(original.id)).toEqual({ values: { enabled: false, model: null, mode: 'old', count: 90 }, invalidKeys: ['mode', 'count'] })
     await expect(service.configuration(original.id)).rejects.toThrow('EXTENSION_CONFIGURATION_INVALID')
     expect(await service.agentContributions()).toEqual([])
-    await service.configure(original.id, { enabled: false })
+    await service.configure(original.id, { enabled: true })
+    expect(await service.agentContributions()).toEqual([])
     await service.configure(original.id, { mode: 'new' })
-    expect(await service.configurationSnapshot(original.id)).toEqual({ values: { enabled: false, mode: 'new', count: 90 }, invalidKeys: ['count'] })
-    await service.configure(original.id, { count: 1, enabled: true })
+    expect(await service.configurationSnapshot(original.id)).toEqual({ values: { enabled: true, model: null, mode: 'new', count: 90 }, invalidKeys: ['count'] })
+    await service.configure(original.id, { count: 1 })
     expect((await service.agentContributions()).map(item => item.id)).toEqual([original.id])
-    expect(await service.configuration(original.id)).toEqual({ enabled: true, mode: 'new', count: 1 })
+    expect(await service.configuration(original.id)).toEqual({ enabled: true, model: null, mode: 'new', count: 1 })
     await store.uninstall(original.id)
     await store.install((await reviewPackage(root, store, original)).token)
-    expect(await store.configuration(original.id)).toEqual({ enabled: true, mode: 'new', count: 1 })
+    expect(await store.configuration(original.id)).toEqual({ enabled: true, model: null, mode: 'new', count: 1, retired: 'preserve' })
     expect((await store.configurationSnapshot(original.id)).invalidKeys).toEqual([])
   }
   finally {
@@ -162,31 +168,6 @@ it('requires explicit API 3 permissions and owned, valid settings contributions'
   ]) {
     expect(extensionManifestSchema.safeParse({ ...definition, contributes: { ...definition.contributes, settings: { ...definition.contributes.settings, items: [item] } } }).success).toBe(false)
   }
-})
-
-it('preserves false, null and retired settings through upgrades and reinstall', async () => {
-  const { root, store } = await createStore()
-  const original = manifest({ apiVersion: 3, contributes: { settings: {
-    groups: [{ id: 'tests.reader.group', module: 'settings.general', title: 'Fixture' }],
-    items: [
-      { id: 'tests.reader.enabled', key: 'enabled', group: 'tests.reader.group', type: 'boolean', title: 'Enabled', default: true },
-      { id: 'tests.reader.model', key: 'model', group: 'tests.reader.group', type: 'model', title: 'Model', default: { providerId: 'fixture', modelId: 'default' } },
-      { id: 'tests.reader.retired', key: 'retired', group: 'tests.reader.group', type: 'string', title: 'Retired', default: '' },
-    ],
-  } } })
-  try {
-    await store.install((await reviewPackage(root, store, original)).token)
-    await store.saveConfiguration(original.id, { enabled: false, model: null, retired: 'preserve' })
-    const upgraded = extensionManifestSchema.parse({ ...original, version: '1.1.0', contributes: { settings: { ...original.contributes.settings, items: original.contributes.settings.items.slice(0, 2) } } })
-    await store.install((await reviewPackage(root, store, upgraded)).token)
-    await store.promote(original.id)
-    expect(await store.configuration(original.id)).toEqual({ enabled: false, model: null })
-    await store.saveConfiguration(original.id, { enabled: true, model: null })
-    await store.uninstall(original.id)
-    await store.install((await reviewPackage(root, store, original)).token)
-    expect(await store.configuration(original.id)).toEqual({ enabled: true, model: null, retired: 'preserve' })
-  }
-  finally { await rm(root, { recursive: true, force: true }) }
 })
 
 it('scopes task/model requests to live invocations, validates configuration and rejects stale or revoked contributions', async () => {

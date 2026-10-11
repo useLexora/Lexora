@@ -77,15 +77,23 @@ function cancel() {
   if (current)
     void state.api.cancelInstall(current.token).catch(() => {})
 }
-function install() {
+function install(applyUpdate: boolean) {
   const current = review.value
   if (current) {
     void run(async () => {
       review.value = null
-      await state.api.install(current.token)
+      await state.install(current, applyUpdate)
       section.value = 'installed'
+      if (current.currentVersion)
+        message.success(applyUpdate ? labels.value.updateApplied : labels.value.updateDeferred)
     })
   }
+}
+function applyUpdate(id: string) {
+  void run(async () => {
+    await state.api.applyUpdate(id)
+    message.success(labels.value.updateApplied)
+  })
 }
 function openLocation(item: ExtensionStatus) {
   if (!item.enabled || !item.compatible || item.state === 'blocked')
@@ -137,7 +145,7 @@ onScopeDispose(cancel)
         {{ language === 'en-US' ? 'View progress' : '查看进度' }}
       </NButton>
     </NAlert>
-    <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { review = await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version) })" />
+    <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { review = await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version) })" @apply-update="applyUpdate" />
     <NEmpty v-else-if="!installed.length && !state.error.value" class="extension-manager__empty">
       <template #default>
         <strong>{{ labels.empty }}</strong>
@@ -157,6 +165,7 @@ onScopeDispose(cancel)
         :can-open="!!openLocation(item)"
         @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled))"
         @restart="run(() => state.api.restart(item.manifest.id))"
+        @apply-update="applyUpdate(item.manifest.id)"
         @diagnostics="diagnostics = item.manifest.id"
         @remove="removing = item"
         @open="open(item)"
@@ -170,7 +179,7 @@ onScopeDispose(cancel)
   <NModal v-model:show="installationLog" preset="card" :title="language === 'en-US' ? 'Installation log' : '安装记录'" class="extension-dialog">
     <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />
   </NModal>
-  <DesktopExtensionInstallReview v-if="review" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
   <DesktopExtensionUninstallDialog v-if="removing" :name="removing.manifest.name" :language="language" :busy="busy" @cancel="removing = null" @remove="remove" />
   <NModal :show="!!selected" preset="card" :title="labels.diagnostics" class="extension-dialog" @update:show="value => { if (!value) diagnostics = null }">
     <template v-if="selected">

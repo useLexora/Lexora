@@ -262,6 +262,7 @@ export default {
   'desktop.settings.themeDark': '深色',
   'desktop.settings.themeLight': '浅色',
   'desktop.settings.themeSystem': '跟随系统',
+  'desktop.settings.themeSystemDescription': '随系统自动切换浅色与深色',
   'desktop.settings.conversationInput': '对话输入',
   'desktop.settings.pasteTextAsAttachment': '长文本粘贴转为附件',
   'desktop.settings.pasteTextAsAttachmentDescription': '将超过 1500 字符或 20 行的粘贴文本转为文本附件。关闭后直接粘贴到正文。',

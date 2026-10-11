@@ -123,7 +123,8 @@ export function resolveTheme(descriptor: ThemeDescriptor, input: ThemeDocumentIn
   variables['--buddy-terminal-selection'] = colors['text-selection']
   for (const [name, shadows] of Object.entries(document.shadows))
     variables[`--buddy-shadow-${name}`] = shadows.map(shadow => `${shadow.x}px ${shadow.y}px ${shadow.blur}px ${shadow.spread}px ${shadow.color}`).join(', ') || 'none'
-  return { descriptor, colors, variables, document, assets }
+  const preview = { canvas: colors.canvas, surface: colors.surface, accent: colors.accent, fg: colors.fg }
+  return { descriptor: { ...descriptor, swatch: colors.accent, preview }, colors, variables, document, assets }
 }
 
 export function fallbackTheme(appearance: 'light' | 'dark'): ResolvedTheme {

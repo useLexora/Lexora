@@ -4,6 +4,41 @@ import { expect, test } from '../fixtures/electron.mjs'
 
 const archive = { schemaVersion: 1, label: 'Isolated theme', appearance: 'dark', document: { schemaVersion: 1, colors: { accent: '#96304d' } } }
 
+test('theme selector follows system appearance, searches the catalog and persists its choice', async ({ buddy }) => {
+  const instance = await buddy.createInstance('theme-selector')
+  let { app, page, diagnostics } = await instance.launch()
+  const selectTheme = id => page.evaluate(id => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id } }), id)
+  await selectTheme('system')
+  const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors)
+  await app.evaluate(({ nativeTheme }, dark) => {
+    globalThis.systemThemeDescriptor = Object.getOwnPropertyDescriptor(nativeTheme, 'shouldUseDarkColors')
+    Object.defineProperty(nativeTheme, 'shouldUseDarkColors', { configurable: true, get: () => !dark })
+    nativeTheme.emit('updated')
+  }, systemDark)
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', systemDark ? 'light' : 'dark')
+  await selectTheme(`lexora.themes.classic-${systemDark ? 'dark' : 'light'}`)
+  await app.evaluate(({ nativeTheme }) => {
+    Object.defineProperty(nativeTheme, 'shouldUseDarkColors', globalThis.systemThemeDescriptor)
+    delete globalThis.systemThemeDescriptor
+    nativeTheme.emit('updated')
+  })
+  await selectTheme('system')
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', systemDark ? 'dark' : 'light')
+  expect(await app.evaluate(({ nativeTheme }) => ({ source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors }))).toEqual({ source: 'system', dark: systemDark })
+  await page.evaluate(() => window.location.hash = '/settings/appearance')
+  const select = () => page.getByTestId('desktop-theme-select')
+  await select().click()
+  await select().locator('input').fill('鸢尾')
+  await page.locator('.n-base-select-option').filter({ hasText: '鸢尾 · 深色' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'lexora.themes.violet-dark')
+  await page.screenshot({ path: path.join(instance.artifactDirectory, 'selected-theme.png'), animations: 'disabled' })
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  await instance.stop()
+  ;({ page, diagnostics } = await instance.launch())
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'lexora.themes.violet-dark')
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
 for (const [directory, filename, content, code] of [
   ['extensions', 'installed.json', '{"version":1,"installed":', 'EXTENSION_REGISTRY_UNREADABLE'],
   ['themes', 'user-themes.json', '{"version":1,"themes":', 'EXTENSION_THEME_STORE_UNREADABLE'],
@@ -36,49 +71,3 @@ for (const [directory, filename, content, code] of [
     expect(await fs.readFile(file, 'utf8')).toBe(content)
   })
 }
-
-test('system appearance resynchronizes without a native update and preview commits publish once and survive restart', async ({ buddy }) => {
-  const instance = await buddy.createInstance('theme-lifecycle')
-  let { app, page, diagnostics } = await instance.launch()
-  const select = id => page.evaluate(id => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id } }), id)
-  await select('system')
-  const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors)
-  await app.evaluate(({ nativeTheme }, dark) => {
-    globalThis.systemThemeDescriptor = Object.getOwnPropertyDescriptor(nativeTheme, 'shouldUseDarkColors')
-    Object.defineProperty(nativeTheme, 'shouldUseDarkColors', { configurable: true, get: () => !dark })
-    nativeTheme.emit('updated')
-  }, systemDark)
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', systemDark ? 'light' : 'dark')
-  await select(`lexora.themes.classic-${systemDark ? 'dark' : 'light'}`)
-  await app.evaluate(({ nativeTheme }) => {
-    Object.defineProperty(nativeTheme, 'shouldUseDarkColors', globalThis.systemThemeDescriptor)
-    delete globalThis.systemThemeDescriptor
-    nativeTheme.emit('updated')
-  })
-  await page.evaluate(() => {
-    window.themeChanges = []
-    window.lexoraDesktop.themes.onDidChange(snapshot => window.themeChanges.push(snapshot))
-  })
-  const restored = await select('system')
-  expect(restored.active.descriptor.appearance).toBe(systemDark ? 'dark' : 'light')
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', systemDark ? 'dark' : 'light')
-  await expect.poll(() => page.evaluate(() => window.themeChanges.length)).toBe(1)
-  expect(await app.evaluate(({ nativeTheme }) => ({ source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors }))).toEqual({ source: 'system', dark: systemDark })
-
-  const lease = await page.evaluate(archive => window.lexoraDesktop.themes.request({ action: 'beginPreview', archive }), archive)
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'user.preview')
-  await page.evaluate(() => window.themeChanges = [])
-  const saved = await page.evaluate(lease => window.lexoraDesktop.themes.request({ action: 'commitPreview', ...lease }), lease)
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', saved.id)
-  await expect.poll(() => page.evaluate(() => window.themeChanges.length)).toBe(1)
-  expect(await page.evaluate(() => window.themeChanges[0])).toMatchObject({ preview: false, preference: { id: saved.id }, active: { descriptor: { id: saved.id } } })
-  await page.evaluate(() => window.location.hash = '/settings/appearance')
-  await expect(page.locator('.desktop-appearance-settings')).toContainText('Isolated theme')
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'saved-theme.png'), animations: 'disabled' })
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-  await instance.stop()
-  ;({ app, page, diagnostics } = await instance.launch())
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', saved.id)
-  expect((await page.evaluate(() => window.lexoraDesktop.themes.request({ action: 'active' }))).preview).toBe(false)
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-})

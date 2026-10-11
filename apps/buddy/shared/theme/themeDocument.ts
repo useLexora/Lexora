@@ -56,6 +56,7 @@ export interface ThemeDescriptor extends Omit<ThemeContribution, 'path'> {
   extensionId: string | null
   packageName: string
   swatch: string
+  preview?: Pick<ThemeColors, 'canvas' | 'surface' | 'accent' | 'fg'>
 }
 
 export function themeAssetPaths(document: ThemeDocument): string[] {

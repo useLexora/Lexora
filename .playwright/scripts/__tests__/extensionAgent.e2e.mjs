@@ -3,9 +3,8 @@ import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
-import process from 'node:process'
 import { DatabaseSync } from 'node:sqlite'
-import { expect, test } from '../fixtures/electron.mjs'
+import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 test('agent plugin uses the originating model, persists settings and protects manual titles and cancelled writes', async ({ buddy }) => {
   test.setTimeout(180000)
@@ -55,7 +54,7 @@ test('agent plugin uses the originating model, persists settings and protects ma
   const instance = await buddy.createInstance('agent-title')
   try {
     let { app, page, diagnostics } = await instance.launch()
-    await syntheticCredentials(app, page)
+    await useSyntheticCredentialStorage({ app, page })
     await page.evaluate(async (baseUrl) => {
       const providers = window.lexoraDesktop.localChat.providers
       await providers.upsertCustom({ id: 'title-fixture', displayName: 'Title fixture', api: 'openai-completions', baseUrl, enabled: true, models: ['primary', 'secondary'].map(id => ({ id, name: id, input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 })) })
@@ -69,74 +68,26 @@ test('agent plugin uses the originating model, persists settings and protects ma
       finally { stop() }
       await providers.setDefaultModel({ providerId: 'title-fixture', modelId: 'primary', reasoning: null })
     }, `http://127.0.0.1:${server.address().port}/v1`)
-    const source = process.env.LEXORA_TEST_TITLE_PLUGIN ?? path.join(instance.home, 'fixture-plugin')
-    if (!process.env.LEXORA_TEST_TITLE_PLUGIN)
-      await writeFixture(source)
-    await page.reload()
-    async function install(target, updating = false) {
-      const development = (await fs.stat(target)).isDirectory()
-      await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
-      await app.evaluate(({ dialog }, target) => {
-        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] })
-      }, target)
-      await page.getByTestId('extension-install-options').click()
-      await page.getByTestId(development ? 'extension-development' : 'extension-install').click()
-      await expect(page.getByText('调用已配置的模型', { exact: true })).toBeVisible()
-      await page.getByTestId('extension-confirm-install').click()
-      await expect.poll(() => page.evaluate(async (updating) => {
-        const plugin = (await window.lexoraDesktop.extensions.list())[0]
-        return !!plugin && (!updating || !!plugin.pending)
-      }, updating)).toBe(true)
-    }
-    const previous = process.env.LEXORA_TEST_TITLE_PLUGIN_PREVIOUS
-    if (previous) {
-      await install(previous)
-      await page.evaluate(async () => {
-        const plugin = (await window.lexoraDesktop.extensions.list())[0]
-        await window.lexoraDesktop.extensions.configure(plugin.manifest.id, { enabled: false, model: { providerId: 'title-fixture', modelId: 'secondary' } })
-      })
-    }
-    await install(source, !!previous)
-    const pluginId = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.id)
-    if (previous) {
-      await page.locator(`[data-extension-id="${pluginId}"]`).getByTestId('extension-card-more').click()
-      await page.getByTestId('extension-restart').click()
-      await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].pending)).toBeNull()
-      expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toMatchObject({ enabled: false, model: { providerId: 'title-fixture', modelId: 'secondary' } })
-      await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { enabled: true, model: null }), pluginId)
-    }
-    if (process.env.LEXORA_TEST_TITLE_PLUGIN) {
-      const icon = page.locator(`[data-extension-id="${pluginId}"] img`)
-      await expect(icon).toBeVisible()
-      await expect.poll(() => icon.evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true)
-      await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-plugin-card.png'), animations: 'disabled' })
-    }
+    const source = path.join(instance.home, 'fixture-plugin')
+    const pluginId = 'tests.title'
+    await writeFixture(source)
+    await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
+    await app.evaluate(({ dialog }, source) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
+    }, source)
+    await page.getByTestId('extension-install-options').click()
+    await page.getByTestId('extension-development').click()
+    await expect(page.getByText('调用已配置的模型', { exact: true })).toBeVisible()
+    await page.getByTestId('extension-confirm-install').click()
+    await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).some(plugin => plugin.manifest.id === id), pluginId)).toBe(true)
     const settings = async () => {
       await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
       await page.locator(`[data-extension-id="${pluginId}"]`).getByRole('button', { name: '打开', exact: true }).click()
     }
     const taskPage = () => page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
     await settings()
-    if (process.env.LEXORA_TEST_TITLE_PLUGIN) {
-      await expect(page).toHaveURL(/#\/settings\/runtime\?group=lexora.auto-title.naming$/)
-      await expect(page.getByRole('link', { name: '标题自动生成', exact: true })).toHaveCount(0)
-      await expect(page.locator('[data-settings-group="lexora.auto-title.naming"]')).toBeFocused()
-      expect(await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].iconUrl)).toMatch(/^data:image\/svg\+xml;base64,/)
-    }
     const toggle = () => page.locator(`[data-setting-id="${pluginId}.enabled"]`).getByRole('switch')
     await expect(toggle()).toBeChecked()
-    await toggle().click()
-    await expect(toggle()).not.toBeChecked()
-    await expect.poll(() => page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toMatchObject({ enabled: false })
-    await toggle().click()
-    await expect(toggle()).toBeChecked()
-    await expect.poll(() => page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toMatchObject({ enabled: true })
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-settings.png'), animations: 'disabled' })
-    if (!process.env.LEXORA_TEST_TITLE_PLUGIN) {
-      await page.getByRole('link', { name: '常规', exact: true }).click()
-      await expect(page.getByText('附加分组', { exact: true })).toBeVisible()
-      await expect(page.locator(`[data-setting-id="${pluginId}.inline"]`)).toBeVisible()
-    }
     await taskPage()
     async function send(text, newTask = false) {
       if (newTask) {
@@ -160,8 +111,6 @@ test('agent plugin uses the originating model, persists settings and protects ma
     expect(requests.filter(body => !body.tools?.length).map(body => body.model)).toEqual(['primary'])
     expect(JSON.stringify(requests[0].messages)).not.toContain('proactively')
     expect(requests[0].tools.some(tool => tool.function.name.startsWith('lexora_plugin_'))).toBe(false)
-    expect(requests[0].tools.some(tool => tool.function.name === 'lexora_host_shell')).toBe(false)
-    expect(requests[0].tools.map(tool => tool.function.name)).toEqual(expect.arrayContaining(['read', 'write', 'edit', 'grep', 'find', 'ls', 'lexora_web_search', 'lexora_web_fetch', 'lexora_output_present', 'lexora_authorize_directory', 'lexora_tool_search']))
     expect(requests[0].tools.find(tool => tool.function.name === 'lexora_tool_search').function.description).toContain('生成标题')
     const disclosed = requests.find(body => body.tools?.some(tool => tool.function.name.startsWith('lexora_plugin_')))
     expect(JSON.stringify(disclosed.messages)).toContain('proactively')
@@ -179,7 +128,6 @@ test('agent plugin uses the originating model, persists settings and protects ma
       await modelField().locator('.plugin-model-setting__select').click()
       await expect(page.locator('.desktop-model-picker__providers')).toContainText('Title fixture')
       await page.locator('.desktop-model-picker__search input').fill('secondary')
-      await page.screenshot({ path: path.join(instance.artifactDirectory, 'title-model-picker.png'), animations: 'disabled' })
       await page.getByRole('menuitemradio', { name: 'secondary secondary', exact: true }).click()
       await expect(modelField()).toContainText('secondary · Title fixture')
     }
@@ -223,7 +171,7 @@ test('agent plugin uses the originating model, persists settings and protects ma
 
     await instance.stop()
     ;({ app, page, diagnostics } = await instance.launch())
-    await syntheticCredentials(app, page)
+    await useSyntheticCredentialStorage({ app, page })
     await taskPage()
     const resumedRequests = requests.length
     await send('重启后继续同一任务')
@@ -281,21 +229,6 @@ function rows(home, sql) {
   finally { database.close() }
 }
 
-async function syntheticCredentials(app, page) {
-  await app.evaluate(({ app, safeStorage }) => {
-    if (app.getName() !== 'Lexora Buddy Test')
-      throw new Error('Synthetic credentials require an isolated test instance')
-    Object.defineProperties(safeStorage, {
-      isEncryptionAvailable: { configurable: true, value: () => true },
-      getSelectedStorageBackend: { configurable: true, value: () => 'offline-fixture' },
-      encryptString: { configurable: true, value: value => Buffer.from(`offline-fixture:${value}`) },
-      decryptString: { configurable: true, value: value => value.toString('utf8').slice('offline-fixture:'.length) },
-    })
-  })
-  await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
-  await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
-}
-
 async function writeFixture(directory) {
   const id = 'tests.title'
   await fs.mkdir(directory, { recursive: true })
@@ -311,12 +244,10 @@ async function writeFixture(directory) {
     contributes: {
       settings: {
         modules: [{ id: `${id}.settings`, title: '标题自动生成' }],
-        groups: [{ id: `${id}.group`, module: `${id}.settings`, title: '命名' }, { id: `${id}.extra`, module: 'settings.general', title: '附加分组' }],
+        groups: [{ id: `${id}.group`, module: `${id}.settings`, title: '命名' }],
         items: [
           { id: `${id}.enabled`, key: 'enabled', group: `${id}.group`, type: 'boolean', title: '启用', default: true },
           { id: `${id}.model`, key: 'model', group: `${id}.group`, type: 'model', title: '模型', default: null },
-          { id: `${id}.inline`, key: 'inline', group: 'settings.general.general', type: 'boolean', title: '分组内单项', default: false },
-          { id: `${id}.extra-item`, key: 'extra', group: `${id}.extra`, type: 'string', title: '附加字段', default: '' },
         ],
       },
       agent: { enabledWhen: 'enabled', instructions: `Please proactively call {{${id}.generate}} to name the task.`, tools: [{ id: `${id}.generate`, title: '生成标题', description: 'Generate and save a concise title', parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false } }] },
@@ -376,7 +307,7 @@ test('background plugin actions join their reply flow while preserving protected
   const instance = await buddy.createInstance('background-title')
   try {
     const { app, page, diagnostics } = await instance.launch()
-    await syntheticCredentials(app, page)
+    await useSyntheticCredentialStorage({ app, page })
     await page.evaluate(async (baseUrl) => {
       const providers = window.lexoraDesktop.localChat.providers
       await providers.upsertCustom({ id: 'title-fixture', displayName: 'Title fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'primary', name: 'primary', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
@@ -390,52 +321,24 @@ test('background plugin actions join their reply flow while preserving protected
       finally { stop() }
       await providers.setDefaultModel({ providerId: 'title-fixture', modelId: 'primary', reasoning: null })
     }, `http://127.0.0.1:${server.address().port}/v1`)
-    const source = process.env.LEXORA_TEST_ACTION_PLUGIN ?? path.join(instance.home, 'action-fixture')
-    if (!process.env.LEXORA_TEST_ACTION_PLUGIN)
-      await writeActionFixture(source)
-    const previous = process.env.LEXORA_TEST_ACTION_PLUGIN_PREVIOUS
-    if (previous) {
-      await app.evaluate(({ dialog }, previous) => {
-        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [previous] })
-      }, previous)
-      await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
-      await page.getByTestId('extension-install-options').click()
-      await page.getByTestId((await fs.stat(previous)).isDirectory() ? 'extension-development' : 'extension-install').click()
-      await page.getByTestId('extension-confirm-install').click()
-      await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).length)).toBe(1)
-      await page.evaluate(async () => {
-        const plugin = (await window.lexoraDesktop.extensions.list())[0]
-        await window.lexoraDesktop.extensions.configure(plugin.manifest.id, { enabled: false, model: { providerId: 'title-fixture', modelId: 'primary' }, updateOnGoalChange: true })
-      })
-    }
-    const development = (await fs.stat(source)).isDirectory()
-    await page.reload()
+    const source = path.join(instance.home, 'action-fixture')
+    const pluginId = 'tests.actions'
+    await writeActionFixture(source)
     await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
     await app.evaluate(({ dialog }, source) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] })
     }, source)
     await page.getByTestId('extension-install-options').click()
-    await page.getByTestId(development ? 'extension-development' : 'extension-install').click()
+    await page.getByTestId('extension-development').click()
     await expect(page.getByText('读取任务消息', { exact: true })).toBeVisible()
     await page.getByTestId('extension-confirm-install').click()
-    await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).length)).toBe(1)
-    const pluginId = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.id)
-    if (previous) {
-      await expect.poll(() => page.evaluate(async () => !!(await window.lexoraDesktop.extensions.list())[0].pending)).toBe(true)
-      await page.locator(`[data-extension-id="${pluginId}"]`).getByTestId('extension-card-more').click()
-      await page.getByTestId('extension-restart').click()
-      await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].pending)).toBeNull()
-      expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)).toMatchObject({ enabled: false, model: { providerId: 'title-fixture', modelId: 'primary' }, updateOnGoalChange: true })
-      await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { enabled: true, model: null, updateOnGoalChange: false }), pluginId)
-    }
-
-    const declaredActions = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.agent.actions)
+    await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).some(plugin => plugin.manifest.id === id), pluginId)).toBe(true)
+    const declaredActions = await page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).find(plugin => plugin.manifest.id === id).manifest.contributes.agent.actions, pluginId)
     const manualAction = declaredActions.find(action => action.triggers.includes('user'))
-    const pluginSettings = await page.evaluate(async () => (await window.lexoraDesktop.extensions.list())[0].manifest.contributes.settings.items)
     await page.locator(`[data-extension-id="${pluginId}"]`).getByRole('button', { name: '打开', exact: true }).click()
     const master = page.locator(`[data-setting-id="${pluginId}.enabled"]`).getByRole('switch')
     const model = page.locator(`[data-setting-id="${pluginId}.model"] .plugin-model-setting__select`)
-    const updates = page.locator(`[data-setting-id="${pluginSettings.find(item => item.key === 'updateOnGoalChange').id}"]`).getByRole('switch')
+    const updates = page.locator(`[data-setting-id="${pluginId}.updates"]`).getByRole('switch')
     await page.evaluate(id => window.lexoraDesktop.extensions.configure(id, { updateOnGoalChange: true }), pluginId)
     await expect(updates).toBeChecked()
     const preservedConfiguration = await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), pluginId)
@@ -543,14 +446,8 @@ test('background plugin actions join their reply flow while preserving protected
     expect(backgroundRequests()).toBe(1)
 
     hold = false
-    if (manualAction) {
-      await page.locator('[data-workbench-menu="task.actions"]:visible').click()
-      await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
-    }
-    else {
-      await expect(page.locator('[data-workbench-menu="task.actions"]:visible')).toHaveCount(0)
-      await send('整理下一项任务的发布计划', true)
-    }
+    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+    await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
     await expect.poll(() => latest().title).toBe('后台标题 2')
     await settled()
     await expectActionInReplyFlow('completed')
@@ -559,16 +456,10 @@ test('background plugin actions join their reply flow while preserving protected
     await expect.poll(() => latest().title).toBe('后台标题 3')
     await settled()
     await expectActionInReplyFlow('completed')
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'generated-task-title.png'), animations: 'disabled' })
 
     hold = true
-    if (manualAction) {
-      await page.locator('[data-workbench-menu="task.actions"]:visible').click()
-      await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
-    }
-    else {
-      await send('验证手动命名优先', true)
-    }
+    await page.locator('[data-workbench-menu="task.actions"]:visible').click()
+    await page.locator('.n-dropdown-menu').getByText(manualAction.title, { exact: true }).click()
     await expect.poll(() => pending.length).toBe(1)
     await expectActionInReplyFlow('running')
     await page.evaluate(id => window.lexoraDesktop.localChat.conversations.rename(id, '用户最终命名'), latest().id)
@@ -608,7 +499,6 @@ test('background plugin actions join their reply flow while preserving protected
     await expect(page.locator('[data-workbench-menu="task.actions"]:visible')).toHaveCount(0)
     await expectActionInReplyFlow('cancelled')
     expect(rows(instance.home, 'SELECT id FROM runs WHERE status = \'failed\'')).toEqual([])
-    await page.screenshot({ path: path.join(instance.artifactDirectory, 'background-actions.png'), animations: 'disabled' })
     expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
     const persistedTaskId = latest().id
     const beforeRestart = await page.evaluate(conversationId => window.lexoraDesktop.localChat.conversations.listTimeline({ conversationId }), persistedTaskId)

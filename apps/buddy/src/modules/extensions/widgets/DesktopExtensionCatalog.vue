@@ -7,7 +7,7 @@ import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { useExtensionContext } from '../extensionContext'
 
 defineProps<{ busy: boolean }>()
-const emit = defineEmits<{ install: [entry: ExtensionCatalogEntry] }>()
+const emit = defineEmits<{ install: [entry: ExtensionCatalogEntry], applyUpdate: [id: string] }>()
 const { state, language } = useExtensionContext()
 const snapshot = shallowRef<ExtensionCatalogSnapshot | null>(null)
 const loading = shallowRef(false)
@@ -81,7 +81,10 @@ onScopeDispose(() => {
             </NTag>
           </div>
           <footer>
-            <NButton size="small" :type="item.available ? 'primary' : 'default'" :disabled="busy || !item.available" @click="emit('install', item)">
+            <NButton v-if="item.installed?.pending && !item.available" size="small" type="primary" :disabled="busy" data-testid="catalog-apply-update" @click="emit('applyUpdate', item.manifest.id)">
+              {{ en ? 'Apply update' : '应用更新' }}
+            </NButton>
+            <NButton v-else size="small" :type="item.available ? 'primary' : 'default'" :disabled="busy || !item.available" @click="emit('install', item)">
               {{ !item.compatible ? (en ? 'Incompatible' : '版本不兼容') : !item.available ? (en ? 'Installed' : '已安装') : item.installed ? (en ? 'Update' : '更新') : (en ? 'Install' : '安装') }}
             </NButton>
           </footer>
