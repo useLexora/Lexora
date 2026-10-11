@@ -14,9 +14,9 @@ const stars = [
 </script>
 
 <template>
-  <div class="startup-art" :class="{ 'is-still': still }" aria-hidden="true">
-    <div class="startup-art__aura" />
-    <svg class="startup-art__constellations" viewBox="0 0 1440 900" fill="none" preserveAspectRatio="xMidYMid slice">
+  <div class="startup-art absolute inset-0 overflow-hidden isolate pointer-events-none" :class="{ 'is-still': still }" aria-hidden="true">
+    <div class="startup-art__aura w-[min(48rem,_80vw)] rounded-full" />
+    <svg class="startup-art__constellations absolute inset-0 w-full h-full opacity-20" viewBox="0 0 1440 900" fill="none" preserveAspectRatio="xMidYMid slice">
       <path d="m138 264 83-48 68 35 51-63M1132 187l67 47 36 89M1080 699l84-37 77 45M204 642l64 53 66-21" stroke="currentColor" />
       <g fill="currentColor">
         <circle cx="138" cy="264" r="2" />
@@ -35,36 +35,31 @@ const stars = [
       </g>
     </svg>
     <div class="startup-art__orbit startup-art__orbit--gold">
-      <div class="startup-art__track">
+      <div class="startup-art__track absolute inset-0 rounded-full">
         <i /><b />
       </div>
     </div>
     <div class="startup-art__orbit startup-art__orbit--blue">
-      <div class="startup-art__track">
+      <div class="startup-art__track absolute inset-0 rounded-full">
         <i /><b />
       </div>
     </div>
-    <div class="startup-art__portrait">
+    <div class="startup-art__portrait w-[var(--startup-avatar-size)]">
       <img :src="avatar" alt="" width="1254" height="1254" draggable="false" fetchpriority="high">
     </div>
     <i
       v-for="(star, index) in stars"
       :key="index"
-      class="startup-art__star"
+      class="startup-art__star absolute"
       :style="{ left: star.x, top: star.y, width: star.size, height: star.size, animationDelay: star.delay }"
     />
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .startup-art {
   --startup-gold: light-dark(#a7803c, #e6c78b);
   --startup-blue: light-dark(#7186a4, #8aa8ce);
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  isolation: isolate;
-  pointer-events: none;
 }
 
 .startup-art__aura,
@@ -78,8 +73,6 @@ const stars = [
 }
 
 .startup-art__aura {
-  width: min(48rem, 80vw);
-  border-radius: 50%;
   background:
     radial-gradient(ellipse at 43% 41%, light-dark(#efdab941, #dec49212), transparent 55%),
     radial-gradient(ellipse at 60% 62%, light-dark(#d1dfed52, #779bc31c), transparent 52%);
@@ -87,12 +80,7 @@ const stars = [
 }
 
 .startup-art__constellations {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
   color: var(--startup-gold);
-  opacity: 0.2;
   stroke-width: 0.7;
 }
 
@@ -103,10 +91,7 @@ const stars = [
 }
 
 .startup-art__track {
-  position: absolute;
-  inset: 0;
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-radius: 50%;
   animation: startup-revolve 32s linear infinite;
 }
 
@@ -151,10 +136,6 @@ const stars = [
   animation-direction: reverse;
 }
 
-.startup-art__portrait {
-  width: var(--startup-avatar-size);
-}
-
 .startup-art__portrait img {
   display: block;
   width: 100%;
@@ -164,7 +145,6 @@ const stars = [
 }
 
 .startup-art__star {
-  position: absolute;
   background: var(--startup-gold);
   clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
   animation: startup-twinkle 4.8s ease-in-out infinite;

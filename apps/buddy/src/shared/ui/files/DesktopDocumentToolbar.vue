@@ -9,28 +9,22 @@ const mode = defineModel<FileDocumentMode | null>({ required: true })
 </script>
 
 <template>
-  <header class="desktop-document-toolbar" :class="{ 'is-embedded': embedded }">
+  <header class="desktop-document-toolbar flex min-w-0 h-[var(--buddy-context-toolbar-height)] box-border flex-none flex-col justify-center gap-0 py-0 px-[12px] border-b-1 border-b-solid border-b-border" :class="{ 'is-embedded': embedded }">
     <div class="desktop-document-toolbar__row">
-      <strong class="desktop-document-toolbar__name">{{ name }}</strong>
-      <div class="desktop-document-toolbar__actions">
+      <strong class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-600 text-strong">{{ name }}</strong>
+      <div class="flex flex-none items-center gap-[6px]">
         <DesktopDocumentModes v-model="mode" :modes="modes" :language="language" />
         <slot name="actions" />
       </div>
     </div>
-    <div v-if="path || detail" class="desktop-document-toolbar__metadata">
-      <span class="desktop-document-toolbar__path">{{ path }}</span>
-      <span class="desktop-document-toolbar__detail">{{ detail }}</span>
+    <div v-if="path || detail" class="desktop-document-toolbar__metadata text-muted text-[10px] leading-[12px]">
+      <span class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono">{{ path }}</span>
+      <span class="max-w-[55%] overflow-hidden text-ellipsis whitespace-nowrap">{{ detail }}</span>
     </div>
   </header>
 </template>
 
-<style scoped>
-.desktop-document-toolbar { display: flex; min-width: 0; height: var(--buddy-context-toolbar-height); box-sizing: border-box; flex: none; flex-direction: column; justify-content: center; gap: 0; padding: 0 12px; border-bottom: 1px solid var(--buddy-border-subtle); }
+<style scoped lang="scss">
 .desktop-document-toolbar.is-embedded { flex: 1; min-height: 0; padding: 0; border: 0; }
 .desktop-document-toolbar__row, .desktop-document-toolbar__metadata { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.desktop-document-toolbar__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--buddy-text-strong); }
-.desktop-document-toolbar__actions { display: flex; flex: none; align-items: center; gap: 6px; }
-.desktop-document-toolbar__metadata { color: var(--buddy-text-muted); font-size: 10px; line-height: 12px; }
-.desktop-document-toolbar__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--buddy-font-mono); }
-.desktop-document-toolbar__detail { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

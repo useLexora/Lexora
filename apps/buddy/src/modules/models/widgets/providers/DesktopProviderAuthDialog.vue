@@ -48,19 +48,19 @@ function submit() {
 
 <template>
   <NModal v-if="challenge" :show="true" :mask-closable="false" @esc="cancel">
-    <div class="desktop-provider-auth" role="dialog" aria-modal="true">
-      <form class="desktop-provider-auth__form" @submit.prevent="submit">
+    <div class="desktop-provider-auth w-[min(30rem,_calc(100vw_-_2rem))] rounded-4 bg-raised text-fg p-[1.35rem] shadow-window" role="dialog" aria-modal="true">
+      <form class="grid relative gap-[0.85rem]" @submit.prevent="submit">
         <input
           v-if="challenge.type === 'secret'"
           aria-hidden="true"
           autocomplete="username"
-          class="desktop-provider-auth__credential-owner"
+          class="absolute w-[1px] h-[1px] opacity-0 pointer-events-none"
           name="username"
           tabindex="-1"
           type="text"
           :value="challenge.providerId"
         >
-        <span class="desktop-provider-auth__eyebrow">{{ providerName ?? challenge.providerId }}</span>
+        <span class="text-accent-text text-[0.68rem] font-700">{{ providerName ?? challenge.providerId }}</span>
         <h2>{{ title }}</h2>
         <p v-if="message">
           {{ message }}
@@ -108,16 +108,7 @@ function submit() {
   </NModal>
 </template>
 
-<style scoped>
-.desktop-provider-auth {
-  width: min(30rem, calc(100vw - 2rem));
-  border-radius: 1rem;
-  background: var(--buddy-surface-raised);
-  color: var(--buddy-text-primary);
-  padding: 1.35rem;
-  box-shadow: var(--buddy-shadow-window);
-}
-
+<style scoped lang="scss">
 .desktop-provider-auth.fade-in-scale-up-transition-enter-active,
 .desktop-provider-auth.fade-in-scale-up-transition-leave-active {
   transition: opacity 120ms ease-out !important;
@@ -130,23 +121,9 @@ function submit() {
   transform: none !important;
 }
 
-.desktop-provider-auth__form {
-  display: grid;
-  position: relative;
-  gap: 0.85rem;
-}
-
-.desktop-provider-auth__credential-owner {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .desktop-provider-auth h2,
 .desktop-provider-auth p { margin: 0; }
-.desktop-provider-auth__eyebrow { color: var(--buddy-accent-text); font-size: 0.68rem; font-weight: 700; }
+
 .desktop-provider-auth p { color: var(--buddy-text-secondary); line-height: 1.6; }
 .desktop-provider-auth a { overflow-wrap: anywhere; color: var(--buddy-accent-text); }
 .desktop-provider-auth dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.7rem; margin: 0; }

@@ -35,7 +35,7 @@ const scrollable = computed(() => (
 
 <template>
   <section
-    class="desktop-terminal-transcript"
+    class="desktop-terminal-transcript relative box-border min-w-0 max-h-64 overflow-hidden py-[8px] px-[10px]"
     :class="{ 'is-scrollable': scrollable }"
     :data-language="transcript.language"
     :data-scrollable="scrollable"
@@ -43,61 +43,22 @@ const scrollable = computed(() => (
   >
     <div
       ref="container"
-      class="desktop-terminal-transcript__editor"
+      class="desktop-terminal-transcript__editor w-full h-full"
       :class="{ 'is-loading': loading || failed }"
     />
     <pre
       v-if="loading || failed"
-      class="desktop-terminal-transcript__fallback"
+      class="desktop-terminal-transcript__fallback absolute m-0 overflow-auto font-mono text-[12px] leading-[20px] p-0 whitespace-pre-wrap [overflow-wrap:anywhere]"
     >{{ transcript.text }}</pre>
   </section>
 </template>
 
 <style scoped lang="scss">
 .desktop-terminal-transcript {
-  --buddy-terminal-background: #eff1f5;
-  --buddy-terminal-foreground: #4c4f69;
-  --buddy-terminal-muted: #7c7f93;
-  --buddy-terminal-selection: rgb(30 102 245 / 22%);
-  --buddy-terminal-scrollbar: #9ca0b0;
-  --buddy-terminal-mauve: #8839ef;
-  --buddy-terminal-blue: #1e66f5;
-  --buddy-terminal-green: #40a02b;
-  --buddy-terminal-yellow: #df8e1d;
-  --buddy-terminal-peach: #fe640b;
-  --buddy-terminal-maroon: #e64553;
-  --buddy-terminal-sky: #04a5e5;
-  --buddy-terminal-rosewater: #dc8a78;
-
-  position: relative;
-  box-sizing: border-box;
-  min-width: 0;
-  max-height: 16rem;
-  overflow: hidden;
   background: var(--buddy-terminal-background);
-  padding: 8px 10px;
-}
-
-:global(:root[data-buddy-theme='dark'] .desktop-terminal-transcript) {
-  --buddy-terminal-background: #1e1e2e;
-  --buddy-terminal-foreground: #cdd6f4;
-  --buddy-terminal-muted: #9399b2;
-  --buddy-terminal-selection: rgb(137 180 250 / 28%);
-  --buddy-terminal-scrollbar: #6c7086;
-  --buddy-terminal-mauve: #cba6f7;
-  --buddy-terminal-blue: #89b4fa;
-  --buddy-terminal-green: #a6e3a1;
-  --buddy-terminal-yellow: #f9e2af;
-  --buddy-terminal-peach: #fab387;
-  --buddy-terminal-maroon: #eba0ac;
-  --buddy-terminal-sky: #89dceb;
-  --buddy-terminal-rosewater: #f5e0dc;
 }
 
 .desktop-terminal-transcript__editor {
-  width: 100%;
-  height: 100%;
-
   &.is-loading {
     opacity: 0;
   }
@@ -207,20 +168,11 @@ const scrollable = computed(() => (
 }
 
 .desktop-terminal-transcript__fallback {
-  position: absolute;
   inset: 8px 10px;
-  margin: 0;
-  overflow: auto;
   background: var(--buddy-terminal-background);
   color: var(--buddy-terminal-foreground);
-  font-family: var(--buddy-font-mono);
-  font-size: 12px;
-  line-height: 20px;
-  padding: 0;
   scrollbar-color: var(--buddy-terminal-scrollbar) transparent;
   scrollbar-width: thin;
   tab-size: 2;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 </style>

@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
+import type { ThemeService } from '../../../platform/themes/ThemeService'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
 import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
@@ -13,6 +14,8 @@ import { z } from 'zod'
 import { ExtensionPackageStore } from '../../../platform/extensions/ExtensionPackageStore'
 import { ExtensionService } from '../../../platform/extensions/ExtensionService'
 import { observeExtensionDiagnostics } from '../../../platform/extensions/observeExtensionDiagnostics'
+import { seedBundledThemes } from '../../../platform/themes/bundledThemes'
+import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../../shared/extensions/extensionApi'
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
@@ -21,6 +24,7 @@ import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
 export function registerExtensionIpc(options: {
   home: string
+  themes: ThemeService
   version: string
   getWindow: () => BrowserWindow | null
   readText: (target: SpaceFileTarget, signal: AbortSignal) => Promise<string>
@@ -33,7 +37,7 @@ export function registerExtensionIpc(options: {
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
@@ -46,6 +50,7 @@ export function registerExtensionIpc(options: {
       event.preventDefault()
   }
   const service = new ExtensionService(store, {
+    themes: options.themes,
     createHost: (pkg, broker, failed) => {
       const host = new SandboxedExtensionHost(pkg, protocol, broker, failed)
       hosts.add(host)
@@ -127,7 +132,13 @@ export function registerExtensionIpc(options: {
       current.webContents.send(EXTENSION_IPC.workbench, event)
     }),
   })
+  const refreshThemes = () => options.themes.refresh(Object.values(store.installed).filter(record => record.enabled && record.current.manifest.contributes.themes.length).map(record => ({ package: record.current, root: store.packageRoot(record.current) })))
   const subscriptions = [
+    service.onDidChange((change) => {
+      if (change.kind === 'package' || change.kind === 'enabled')
+        return refreshThemes()
+    }),
+    options.themes.onDidChange(snapshot => service.notifyThemeChanged(snapshot.revision)),
     service.onDidChange(() => {
       const current = window()
       if (current && !current.isDestroyed())
@@ -140,6 +151,7 @@ export function registerExtensionIpc(options: {
     observeExtensionDiagnostics(service, event => options.record?.(event)),
   ]
   const resetHosts = () => {
+    options.themes.releaseOwner('desktop')
     void service.resetHosts().catch(() => {})
   }
   const resetOnNavigation = (event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
@@ -161,14 +173,21 @@ export function registerExtensionIpc(options: {
     }
     return current
   }
-  const prepared = options.developmentDirectory
-    ? service.initialize().then(async () => {
-        const review = await service.review(options.developmentDirectory!, true)
-        await service.install(review.token)
-        await service.restart(review.manifest.id)
-      })
-    : service.initialize()
-  void prepared.catch(() => {})
+  const themesReady = (async () => {
+    await store.load()
+    await seedBundledThemes(store)
+    await refreshThemes()
+  })()
+  const prepared = themesReady.then(async () => {
+    await service.initialize()
+    if (options.developmentDirectory) {
+      const review = await service.review(options.developmentDirectory, true)
+      await service.install(review.token)
+      await service.restart(review.manifest.id)
+    }
+  })
+  const record = safeDiagnosticReporter(options.record)
+  void prepared.catch(error => record({ component: 'desktop.extensions', level: 'warn', event: 'extensions.initialize.failed', errorCode: extensionError(error) }))
   const suspend = () => service.scheduler.suspend()
   const resume = () => {
     void prepared.then(() => service.scheduler.resume()).catch(() => {})
@@ -272,6 +291,7 @@ export function registerExtensionIpc(options: {
       owner.webContents.send(EXTENSION_IPC.conditionsChanged, event)
   }))
   return {
+    themesReady,
     conditions: service.conditions,
     dispose,
     agent: {

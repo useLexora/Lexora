@@ -153,11 +153,7 @@ function scheduleLayout(): void {
 <template>
   <div
     ref="hostElement"
-    class="desktop-browser-guest-host"
+    class="desktop-browser-guest-host contents"
     data-testid="desktop-browser-guest-host"
   />
 </template>
-
-<style scoped>
-.desktop-browser-guest-host { display: contents; }
-</style>

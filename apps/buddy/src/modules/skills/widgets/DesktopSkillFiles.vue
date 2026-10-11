@@ -24,15 +24,15 @@ defineExpose({ open })
 </script>
 
 <template>
-  <div class="skill-files">
-    <div class="skill-files__toolbar">
+  <div class="skill-files flex flex-1 min-w-0 min-h-0 flex-col">
+    <div class="flex flex-none h-10 border-b-1 border-b-solid border-b-border">
       <DesktopFileToolbar :path="path" :root-name="skill.name" :language="language" :wrap="wrap" :tree-visible="treeVisible" @toggle-wrap="wrap = !wrap" @toggle-tree="treeVisible = !treeVisible" />
     </div>
     <DesktopContextSplit v-model:width="treeWidth" :tree-visible="treeVisible">
-      <div v-if="loading" class="skill-files__state">
+      <div v-if="loading" class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted">
         <NSpin size="small" />
       </div>
-      <div v-else-if="failed" class="skill-files__state" role="alert">
+      <div v-else-if="failed" class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted" role="alert">
         {{ t('desktop.context.previewLoadFailed') }}
       </div>
       <DesktopMonacoFile v-else-if="preview?.kind === 'text'" :text="preview.text ?? ''" :path="path" :wrap="wrap">
@@ -40,14 +40,14 @@ defineExpose({ open })
           {{ t('desktop.context.editorLoadFailed') }}
         </template>
       </DesktopMonacoFile>
-      <div v-else-if="preview?.kind === 'image'" class="skill-files__image">
+      <div v-else-if="preview?.kind === 'image'" class="skill-files__image grid w-full h-full overflow-auto place-items-center p-4">
         <img :src="preview.imageUrl ?? ''" :alt="path">
       </div>
-      <div v-else class="skill-files__state">
+      <div v-else class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted">
         {{ t(preview ? 'desktop.context.previewUnavailable' : 'desktop.context.selectFile') }}
       </div>
       <template #tree>
-        <div v-if="treeFailed" class="skill-files__state" role="alert">
+        <div v-if="treeFailed" class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted" role="alert">
           {{ t('desktop.context.directoryLoadFailed') }}
         </div>
         <DesktopContextFileTree v-model:expanded-keys="expandedKeys" :nodes="nodes" :selected-key="path" :language="language" :load="load" @select="open" />
@@ -56,10 +56,7 @@ defineExpose({ open })
   </div>
 </template>
 
-<style scoped>
-.skill-files { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.skill-files__toolbar { display: flex; flex: none; height: 2.5rem; border-bottom: 1px solid var(--buddy-border-subtle); }
-.skill-files__state { display: grid; flex: 1; min-height: 0; place-content: center; padding: 1rem; font-size: 0.8rem; color: var(--buddy-text-muted); }
-.skill-files__image { display: grid; width: 100%; height: 100%; overflow: auto; place-items: center; padding: 1rem; }
+<style scoped lang="scss">
+.skill-files__state { place-content: center; }
 .skill-files__image img { max-width: 100%; max-height: 100%; object-fit: contain; }
 </style>

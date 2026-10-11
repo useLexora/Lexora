@@ -25,7 +25,7 @@ async function save() {
 </script>
 
 <template>
-  <form class="extension-authoring-settings" @submit.prevent="save">
+  <form class="extension-authoring-settings grid gap-[12px]" @submit.prevent="save">
     <label for="plugin-author">{{ en ? 'Default author signature' : '默认作者署名' }}</label>
     <NInput v-model:value="author" :input-props="{ id: 'plugin-author' }" :status="valid ? undefined : 'error'" :placeholder="en ? 'Optional' : '可选，留空表示未署名'" :disabled="saving" />
     <p>{{ en ? 'Used for new plugins. Each plugin can have its own signature; existing plugins keep theirs.' : '用于新建插件。每个插件可以单独署名，已有插件的署名保持不变。' }}</p>
@@ -41,8 +41,7 @@ async function save() {
   </form>
 </template>
 
-<style scoped>
-.extension-authoring-settings { display: grid; gap: 12px; }
+<style scoped lang="scss">
 .extension-authoring-settings p { margin: 0; color: var(--buddy-text-secondary); line-height: 1.6; }
 .extension-authoring-settings [role=alert] { color: var(--buddy-status-danger-text); }
 .extension-authoring-settings :deep(.n-button) { justify-self: end; }

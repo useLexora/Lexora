@@ -43,9 +43,9 @@ async function refresh(): Promise<void> {
 </script>
 
 <template>
-  <section class="desktop-automation-workbench">
-    <header class="desktop-automation-workbench__header">
-      <div class="desktop-automation-workbench__primary">
+  <section class="desktop-automation-workbench flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface">
+    <header class="desktop-automation-workbench__header flex flex-none items-center justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header">
+      <div class="desktop-automation-workbench__primary min-w-0 gap-[8px]">
         <nav :aria-label="t('desktop.automations.title')">
           <RouterLink
             :class="{ 'is-active': route.meta.automationSection === 'plans' }"
@@ -61,7 +61,7 @@ async function refresh(): Promise<void> {
           </RouterLink>
         </nav>
       </div>
-      <div class="desktop-automation-workbench__header-actions">
+      <div class="desktop-automation-workbench__header-actions flex-none gap-[8px]">
         <NButton size="small" secondary :loading="isRefreshing" @click="refresh">
           <template #icon>
             <DesktopIcon :component="ArrowClockwise20Regular" :size="16" />
@@ -81,7 +81,7 @@ async function refresh(): Promise<void> {
       class="desktop-automation-workbench__scroll"
       content-style="min-height: 100%;"
     >
-      <div class="desktop-automation-workbench__content">
+      <div class="desktop-automation-workbench__content flex min-h-full box-border flex-col gap-[12px] pt-[14px] pr-[18px] pb-[36px] pl-[18px]">
         <slot />
       </div>
     </NScrollbar>
@@ -89,27 +89,6 @@ async function refresh(): Promise<void> {
 </template>
 
 <style scoped lang="scss">
-.desktop-automation-workbench {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-automation-workbench__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 18px;
-}
-
 .desktop-automation-workbench__primary,
 .desktop-automation-workbench__header-actions {
   display: flex;
@@ -117,9 +96,6 @@ async function refresh(): Promise<void> {
 }
 
 .desktop-automation-workbench__primary {
-  min-width: 0;
-  gap: 8px;
-
   nav {
     display: flex;
     align-items: center;
@@ -155,24 +131,12 @@ async function refresh(): Promise<void> {
   }
 }
 
-.desktop-automation-workbench__header-actions {
-  flex: none;
-  gap: 8px;
-}
-
 .desktop-automation-workbench__scroll {
   min-height: 0;
   flex: 1;
 }
 
 .desktop-automation-workbench__content {
-  display: flex;
-  min-height: 100%;
-  box-sizing: border-box;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px 18px 36px;
-
   > :deep(.desktop-automation-route-view) {
     display: flex;
     min-height: 0;

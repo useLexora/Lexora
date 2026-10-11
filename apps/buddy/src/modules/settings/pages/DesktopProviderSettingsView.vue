@@ -61,7 +61,7 @@ const { authChallenge, language } = providerSettings
 <template>
   <DesktopSettingsPageLayout requires-runtime>
     <template #title>
-      <span class="desktop-provider-settings-view__breadcrumb desktop-settings-page__breadcrumb">
+      <span class="desktop-provider-settings-view__breadcrumb desktop-settings-page__breadcrumb flex min-w-0 items-center">
         <button type="button" @click="leaveProvider">
           {{ t('desktop.settings.category.models') }}
         </button>
@@ -75,7 +75,7 @@ const { authChallenge, language } = providerSettings
     <template v-if="provider" #actions>
       <NTooltip :delay="350">
         <template #trigger>
-          <span class="desktop-provider-settings-view__action">
+          <span class="inline-flex">
             <NPopconfirm
               :negative-text="t('common.cancel')"
               :positive-text="t('common.confirm')"
@@ -100,7 +100,7 @@ const { authChallenge, language } = providerSettings
         </template>
         {{ t('desktop.providers.removeService') }}
       </NTooltip>
-      <span class="desktop-provider-settings-view__divider" aria-hidden="true" />
+      <span class="w-[1px] h-[14px] bg-border" aria-hidden="true" />
       <NSwitch
         :round="false"
         :value="provider.enabled"
@@ -130,25 +130,9 @@ const { authChallenge, language } = providerSettings
   </DesktopSettingsPageLayout>
 </template>
 
-<style scoped>
-.desktop-provider-settings-view__action {
-  display: inline-flex;
-}
-
+<style scoped lang="scss">
 .desktop-provider-settings-view__remove:not(:disabled):hover {
   color: var(--buddy-status-danger-text);
-}
-
-.desktop-provider-settings-view__divider {
-  width: 1px;
-  height: 14px;
-  background: var(--buddy-border-subtle);
-}
-
-.desktop-provider-settings-view__breadcrumb {
-  display: flex;
-  min-width: 0;
-  align-items: center;
 }
 
 .desktop-provider-settings-view__breadcrumb button {

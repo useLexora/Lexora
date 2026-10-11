@@ -26,7 +26,7 @@ export function useExtensionFrameEvents(options: {
     if (control)
       frame.projection.publish({ type: 'control:changed', data: { control } })
   }
-  watch([context.language, context.isDark, context.workbench], () => {
+  watch([context.language, context.isDark, context.themeColors, () => context.themeRevision?.value, context.workbench], () => {
     for (const frame of frames.values()) refresh(frame)
   }, { flush: 'post' })
   watch(() => [...context.views.surfaces.values()].map(surface => surface.control?.snapshot()), () => {

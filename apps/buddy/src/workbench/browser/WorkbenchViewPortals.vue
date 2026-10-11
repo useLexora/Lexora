@@ -19,11 +19,11 @@ const views = computed(() => {
   <div ref="parking" hidden />
   <template v-if="parking">
     <Teleport v-for="view in views" :key="view.id" defer :to="viewTarget(view.id) ?? parking">
-      <section :id="`workbench-view-${view.id}`" class="workbench__view" role="region" :aria-label="view.title" :data-view-id="view.id" :data-resource-id="view.resource.id">
+      <section :id="`workbench-view-${view.id}`" class="workbench__view flex flex-1 flex-col w-full h-full min-h-0 min-w-0 overflow-hidden" role="region" :aria-label="view.title" :data-view-id="view.id" :data-resource-id="view.resource.id">
         <WorkbenchUiScope :instance-id="view.mountInstanceId ?? controller.navigation.find(view.id)?.paneId ?? panes(layout.root).find(pane => pane.view === view.id)?.id">
           <WorkbenchViewBoundary @error="controller.navigation.fail(view.id)">
             <slot v-if="controller.registry.views.has(view.type)" :view="view" :visible="viewVisible(view.id)" />
-            <div v-else class="workbench__missing">
+            <div v-else class="m-auto p-[24px] text-muted text-center">
               <p>{{ labels.missing }}</p><code>{{ view.type }}</code>
             </div>
           </WorkbenchViewBoundary>
@@ -32,8 +32,3 @@ const views = computed(() => {
     </Teleport>
   </template>
 </template>
-
-<style scoped>
-.workbench__view { display: flex; flex: 1; flex-direction: column; width: 100%; height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
-.workbench__missing { margin: auto; padding: 24px; color: var(--buddy-text-secondary); text-align: center; }
-</style>

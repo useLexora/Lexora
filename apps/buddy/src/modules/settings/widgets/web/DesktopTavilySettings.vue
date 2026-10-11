@@ -31,13 +31,13 @@ function prepareEdit(event: Event) {
 </script>
 
 <template>
-  <div class="desktop-tavily-settings">
+  <div class="desktop-tavily-settings grid gap-[0.7rem]">
     <header class="desktop-tavily-settings__heading">
-      <h3 class="desktop-tavily-settings__title">
+      <h3 class="m-0 text-[0.82rem] font-600">
         Tavily
       </h3>
     </header>
-    <p class="desktop-tavily-settings__description">
+    <p class="m-0 text-muted text-[0.75rem] leading-[1.65]">
       {{ t('desktop.web.tavilyDescription') }}
     </p>
     <form class="desktop-tavily-settings__credentials" @submit.prevent="save">
@@ -66,10 +66,8 @@ function prepareEdit(event: Event) {
 </template>
 
 <style scoped lang="scss">
-.desktop-tavily-settings { display: grid; gap: 0.7rem; }
 .desktop-tavily-settings__heading, .desktop-tavily-settings__credentials { display: flex; align-items: center; gap: 0.65rem; }
-.desktop-tavily-settings__title { margin: 0; font-size: 0.82rem; font-weight: 600; }
-.desktop-tavily-settings__description { margin: 0; color: var(--buddy-text-secondary); font-size: 0.75rem; line-height: 1.65; }
+
 .desktop-tavily-settings__reveal { width: 1.5rem; height: 1.5rem; padding: 0; color: var(--buddy-text-secondary); border-radius: 6px; }
 .desktop-tavily-settings__credentials > .n-input { min-width: 0; flex: 1; }
 @media (max-width: 900px) {

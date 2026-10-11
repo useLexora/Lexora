@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog'
+import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog.ts'
 
 interface TargetDefinition {
   title: { 'zh-CN': string, 'en-US': string }
@@ -44,6 +44,7 @@ export const workbenchDecorations = {
 } as const satisfies Record<string, TargetDefinition>
 
 export const workbenchRuntimeCapabilities = {
+  'themes': { title: { 'zh-CN': '主题与预览', 'en-US': 'Themes and previews' }, scope: 'application', description: 'API 3 contributes.themes provides multiple declarative light/dark themes without an entry. context.themes reads, validates and resolves documents; themeManagement grants user copies, import/export, preferences and owned revisioned previews. Colors, structured anchor materials and welcome text/images only; no host DOM access. task.welcome remains an independent content slot. See themes.md and api.d.ts.' },
   'events': { title: { 'zh-CN': '作用域事件订阅', 'en-US': 'Scoped events' }, scope: 'application', description: 'Lexora 0.9.1 context.events.on(pattern | readonly patterns[], listener, {once?,signal?}) subscribes to owned domain events as {type,data}. Exact names, suffix :* and :**, root * and **; overlapping patterns deliver once per group. No publishing or added permissions. Existing callbacks remain supported. See events.md.' },
   'agent.tools': { title: { 'zh-CN': 'Agent 指令与工具', 'en-US': 'Agent instructions and tools' }, scope: 'application', description: 'API 3 contributes.agent declares instructions, tools and optional enabledWhen boolean setting key or registered condition reference. Requires permissions.agent. Register tools with context.agent.registerTool during activate; instructions reference {{full-tool-id}}. Callbacks receive invocation-scoped task/models APIs and AbortSignal, not raw Pi or credentials. See agent-settings.md.' },
   'agent.actions': { title: { 'zh-CN': '任务事件与菜单动作', 'en-US': 'Task event and menu actions' }, scope: 'application', description: 'API 3 contributes.agent.actions declares id/title/triggers, registered with context.agent.registerAction. Exact triggers: task:input:committed, task:turn:completed, user. Typed invocation.cause preserves each event payload; user adds a task menu action. Independent cancellable invocation, no main-chat tool result. Requires permissions.agent; task/models permissions remain separate. See events.md and agent-settings.md.' },

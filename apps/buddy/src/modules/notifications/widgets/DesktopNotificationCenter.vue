@@ -44,17 +44,17 @@ const emptyTitle = computed(() => t(isUnseenEmpty.value
 
 <template>
   <section
-    class="desktop-notification-center"
+    class="desktop-notification-center grid h-[min(332px,_calc(100dvh_-_88px))] grid-rows-[minmax(0,_1fr)] overflow-hidden bg-raised"
     :class="{ 'has-header': hasNotifications }"
   >
-    <header v-if="hasNotifications" class="desktop-notification-center__header">
+    <header v-if="hasNotifications" class="relative z-1 flex h-[44px] items-center justify-between gap-[10px] bg-raised shadow-soft py-0 px-[8px]">
       <div
-        class="desktop-notification-center__filters"
+        class="flex h-[44px] items-center gap-[1px]"
         role="group"
         :aria-label="t('desktop.notifications.filterLabel')"
       >
         <button
-          class="desktop-notification-center__filter"
+          class="desktop-notification-center__filter relative flex h-[28px] items-center justify-center gap-[3px] border-0 bg-transparent text-muted cursor-pointer text-[12px] py-0 px-[5px] hover:text-strong focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[1px]"
           :class="{ 'is-active': activeFilter === 'all' }"
           type="button"
           :aria-pressed="activeFilter === 'all'"
@@ -63,7 +63,7 @@ const emptyTitle = computed(() => t(isUnseenEmpty.value
           {{ t('desktop.notifications.filterAll') }}
         </button>
         <button
-          class="desktop-notification-center__filter"
+          class="desktop-notification-center__filter relative flex h-[28px] items-center justify-center gap-[3px] border-0 bg-transparent text-muted cursor-pointer text-[12px] py-0 px-[5px] hover:text-strong focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[1px]"
           :class="{ 'is-active': activeFilter === 'unseen' }"
           type="button"
           :aria-pressed="activeFilter === 'unseen'"
@@ -93,10 +93,10 @@ const emptyTitle = computed(() => t(isUnseenEmpty.value
     </div>
     <div
       v-else-if="!hasVisibleNotifications"
-      class="desktop-notification-center__empty"
+      class="desktop-notification-center__empty content-center gap-[9px] p-[16px] text-center"
       aria-live="polite"
     >
-      <span class="desktop-notification-center__empty-icon" aria-hidden="true">
+      <span class="grid w-[32px] h-[32px] place-items-center rounded-[8px] bg-subtle text-muted text-[16px]" aria-hidden="true">
         <DesktopIcon :component="emptyIcon" />
       </span>
       <b>{{ emptyTitle }}</b>
@@ -120,62 +120,13 @@ const emptyTitle = computed(() => t(isUnseenEmpty.value
   </section>
 </template>
 
-<style scoped>
-.desktop-notification-center {
-  display: grid;
-  height: min(332px, calc(100dvh - 88px));
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-  background: var(--buddy-surface-raised);
-}
-
+<style scoped lang="scss">
 .desktop-notification-center.has-header {
   grid-template-rows: 44px minmax(0, 1fr);
 }
 
-.desktop-notification-center__header {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-soft);
-  padding: 0 8px;
-}
-
-.desktop-notification-center__filters {
-  display: flex;
-  height: 44px;
-  align-items: center;
-  gap: 1px;
-}
-
 .desktop-notification-center__filter {
-  position: relative;
-  display: flex;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  border: 0;
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  cursor: pointer;
-  font-size: 12px;
   letter-spacing: 0.04em;
-  padding: 0 5px;
-}
-
-.desktop-notification-center__filter:hover {
-  color: var(--buddy-text-strong);
-}
-
-.desktop-notification-center__filter:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 1px;
 }
 
 .desktop-notification-center__filter.is-active {
@@ -219,24 +170,6 @@ const emptyTitle = computed(() => t(isUnseenEmpty.value
   min-height: 0;
   place-items: center;
   background: var(--buddy-surface-base);
-}
-
-.desktop-notification-center__empty {
-  align-content: center;
-  gap: 9px;
-  padding: 16px;
-  text-align: center;
-}
-
-.desktop-notification-center__empty-icon {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--buddy-surface-subtle);
-  color: var(--buddy-text-secondary);
-  font-size: 16px;
 }
 
 .desktop-notification-center__empty b {

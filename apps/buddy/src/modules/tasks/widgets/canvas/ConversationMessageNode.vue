@@ -76,7 +76,7 @@ function open(event: MouseEvent) {
       <header class="conversation-node__header">
         <DesktopIcon class="conversation-node__role" :component="message.kind === 'answer' ? Wand20Regular : Keyboard20Regular" :title="label" />
         <span v-if="message.toolCount" class="conversation-node__tools">{{ t('desktop.canvas.tools', { count: message.toolCount }) }}</span>
-        <div class="conversation-node__trailing">
+        <div class="conversation-node__trailing flex flex-none items-center gap-[6px] ml-auto">
           <span v-if="message.kind === 'draft'" class="conversation-node__status">{{ label }}</span>
           <span v-if="message.status && message.status !== 'completed'" class="conversation-node__status" :class="message.status">{{ t(`desktop.canvas.${message.status}`) }}</span>
           <div v-if="!simplified && message.kind !== 'draft' && !busy" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
@@ -95,10 +95,10 @@ function open(event: MouseEvent) {
         </div>
       </header>
       <div v-if="simplified" class="conversation-node__summary" @mousedown.stop @pointerdown.stop>
-        <p v-if="summary" class="conversation-node__summary-text">
+        <p v-if="summary" class="conversation-node__summary-text m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-[1.65]">
           {{ summary }}
         </p>
-        <p v-else-if="busy || message.kind === 'draft'" class="conversation-node__placeholder">
+        <p v-else-if="busy || message.kind === 'draft'" class="my-[4px] mx-0 text-muted text-[12px] leading-[1.7]">
           {{ t(message.kind === 'draft' ? 'desktop.canvas.writeInComposer' : 'desktop.canvas.generating') }}
         </p>
       </div>
@@ -122,12 +122,12 @@ function open(event: MouseEvent) {
             {{ t('desktop.canvas.more') }}
           </button>
         </div>
-        <div v-if="message.text" ref="textRef" class="conversation-node__text">
+        <div v-if="message.text" ref="textRef" class="flex-1 min-h-0 overflow-hidden">
           <p class="conversation-node__preview">
             {{ message.text }}
           </p>
         </div>
-        <p v-else-if="busy || message.kind === 'draft'" class="conversation-node__placeholder">
+        <p v-else-if="busy || message.kind === 'draft'" class="my-[4px] mx-0 text-muted text-[12px] leading-[1.7]">
           {{ t(message.kind === 'draft' ? 'desktop.canvas.writeInComposer' : 'desktop.canvas.generating') }}
         </p>
         <div v-if="message.artifactCount" class="conversation-node__artifacts">
@@ -143,7 +143,7 @@ function open(event: MouseEvent) {
         </div>
       </div>
       <footer v-if="!simplified && message.metadata" class="conversation-node__footer" @mousedown.stop @pointerdown.stop>
-        <span class="conversation-node__model" :title="message.metadata.modelId">{{ message.metadata.modelId }}</span>
+        <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" :title="message.metadata.modelId">{{ message.metadata.modelId }}</span>
         <BuddyChatTokenUsage v-if="message.metadata.usage" compact :language="actions.language.value" :usage="message.metadata.usage" />
         <span v-if="duration" class="conversation-node__duration">{{ duration }}</span>
       </footer>
@@ -249,16 +249,16 @@ function open(event: MouseEvent) {
 .conversation-node__tools, .conversation-node__status { font-size: 10px; color: var(--buddy-text-muted); }
 .conversation-node__status.running, .conversation-node__status.queued { color: var(--buddy-accent-text); }
 .conversation-node__status.failed { color: var(--buddy-status-danger-text); }
-.conversation-node__trailing { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; }
+
 .conversation-node__body { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 8px; padding: 0 16px 12px; overflow: hidden; }
 .conversation-node__quotes { display: flex; flex: none; height: 88px; align-items: flex-start; gap: 6px; overflow: hidden; }
 .conversation-node__quotes :deep(.chat-quote-strip) { flex: 1; }
-.conversation-node__text { flex: 1; min-height: 0; overflow: hidden; }
+
 .conversation-node__preview { margin: 0; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
 .conversation-node.busy .conversation-node__preview { display: block; }
-.conversation-node__placeholder { margin: 4px 0; color: var(--buddy-text-muted); font-size: 12px; line-height: 1.7; }
+
 .conversation-node__footer { margin-top: auto; display: flex; flex: none; align-items: center; gap: 8px; min-height: 30px; padding: 0 16px 10px; color: var(--buddy-text-muted); font-size: 10px; }
-.conversation-node__model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .conversation-node__duration { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
 .conversation-node__actions { display: flex; flex: none; gap: 2px; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
 .conversation-node:hover .conversation-node__actions, .conversation-node:focus-within .conversation-node__actions { opacity: 1; pointer-events: auto; }
@@ -276,7 +276,7 @@ function open(event: MouseEvent) {
 .conversation-node__more:hover { background: var(--buddy-state-hover); }
 // LOD changes only card contents, never the graph's geometry or anchors.
 .conversation-node__summary { min-width: 0; padding: 0 16px 12px; overflow: hidden; }
-.conversation-node__summary-text { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 1.65; }
+
 .conversation-node.active-branch .conversation-node__role { color: var(--buddy-accent-text); }
 .conversation-node.simplified .conversation-node__card { box-shadow: none; transition: none; }
 .conversation-node.simplified.selected .conversation-node__card { box-shadow: none; outline: 1px solid var(--buddy-focus-ring); }

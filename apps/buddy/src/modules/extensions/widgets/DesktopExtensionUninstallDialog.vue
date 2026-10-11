@@ -13,11 +13,11 @@ watch(cancelButton, button => button?.$el.focus(), { flush: 'post' })
 <template>
   <NModal show preset="dialog" type="warning" :title="labels.removeTitle" :auto-focus="false" :closable="!busy" :mask-closable="!busy" :close-on-esc="!busy" @close="emit('cancel')" @mask-click="!busy && emit('cancel')" @esc="!busy && emit('cancel')">
     <p>{{ name }} · {{ labels.retained }}</p>
-    <p class="extension-uninstall__hint">
+    <p class="text-muted text-[0.78rem]">
       {{ labels.cleanupHint }}
     </p>
     <template #action>
-      <div class="extension-uninstall__actions">
+      <div class="flex w-full gap-2">
         <NButton class="extension-uninstall__cleanup" quaternary type="error" :disabled="busy" @click="emit('remove', true)">
           {{ labels.removeAndClear }}
         </NButton>
@@ -32,8 +32,6 @@ watch(cancelButton, button => button?.$el.focus(), { flush: 'post' })
   </NModal>
 </template>
 
-<style scoped>
-.extension-uninstall__hint { color: var(--buddy-text-secondary); font-size: 0.78rem; }
-.extension-uninstall__actions { display: flex; width: 100%; gap: 0.5rem; }
+<style scoped lang="scss">
 .extension-uninstall__cleanup { margin-right: auto; }
 </style>

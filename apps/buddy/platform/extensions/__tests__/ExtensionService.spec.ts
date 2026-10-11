@@ -4,7 +4,10 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { afterEach, expect, it, vi } from 'vitest'
+import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
+import { ThemeService } from '../../themes/ThemeService'
 import { ExtensionService } from '../ExtensionService'
 import { createStore, manifest, reviewPackage } from './fixtures'
 
@@ -468,17 +471,6 @@ it('passes explicit slash arguments and origin only, and rejects obsolete panes'
   await expect(f.service.executeSlash('tests.reader', 'tests.reader.open', '')).rejects.toThrow('EXTENSION_COMMAND_UNAVAILABLE')
 })
 
-it('allows the same local name in different plugin namespaces without sharing handlers', async () => {
-  const f = await interactionFixture()
-  const value = manifest({ id: 'tests.other', apiVersion: 3, contributes: { commands: [{ id: 'tests.other.start', title: 'Start', slash: { name: 'game-start' } }] } })
-  await f.service.install((await reviewPackage(f.root, f.store, value)).token)
-  await f.service.executeSlash(value.id, 'tests.other.start', 'second')
-  await f.service.executeSlash('tests.game', 'tests.game.start', 'first')
-  expect((await f.service.list()).filter(item => item.state === 'active').map(item => item.manifest.id).sort()).toEqual(['tests.game', 'tests.other'])
-  expect(f.hosts[0]!.commands.at(-1)).toMatchObject({ command: 'tests.game.start', arguments: 'first' })
-  expect(f.hosts[1]!.commands.at(-1)).toMatchObject({ command: 'tests.other.start', arguments: 'second' })
-})
-
 it('requires an owned live interaction and immediately revokes its views on exit', async () => {
   const f = await interactionFixture()
   await expect(f.service.openView(f.input)).rejects.toThrow('EXTENSION_INTERACTION_REQUIRED')
@@ -528,4 +520,27 @@ it('runs same-name commands in different plugins without sharing handlers or dat
   await f.service.enable('tests.game', false)
   await f.service.executeSlash(value.id, 'other.game.start', 'still available')
   expect(f.hosts[1]!.commands.at(-1)).toMatchObject({ arguments: 'still available' })
+})
+
+it.each([false, true])('requires theme management permission and revokes host-owned previews on disable: %s', async (themeManagement) => {
+  const home = await createTemporaryDirectory('lexora-theme-permission-')
+  const themes = new ThemeService(home, async () => {})
+  await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
+  cleanup.push(() => themes.dispose())
+  const f = await fixture({ themes }, manifest({ apiVersion: 3, permissions: { selectedResource: 'read', themeManagement } }))
+  await f.service.execute('tests.reader', 'tests.reader.open', null)
+  const broker = f.hosts[0]!.broker
+  expect(await broker('themes.request', { action: 'active' })).toMatchObject({ preview: false })
+  const input = { action: 'beginPreview', archive: { schemaVersion: 1, appearance: 'light', label: 'Preview', document: { schemaVersion: 1 } } }
+  if (!themeManagement) {
+    await expect(broker('themes.request', input)).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
+    expect(themes.snapshot.preview).toBe(false)
+  }
+  else {
+    await broker('themes.request', input)
+    expect(themes.snapshot.preview).toBe(true)
+    await f.service.enable('tests.reader', false)
+    expect(themes.snapshot.preview).toBe(false)
+    await expect(broker('themes.request', input)).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  }
 })

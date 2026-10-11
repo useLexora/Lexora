@@ -26,7 +26,7 @@ const rows = computed(() => rowProjector.project(props.nodes))
 </script>
 
 <template>
-  <div class="buddy-chat-agent-turn__flow">
+  <div class="grid min-w-0 gap-[6px] mt-[var(--buddy-chat-gap-block)]">
     <template v-for="row in rows" :key="row.id">
       <BuddyChatActivityGroup
         v-if="row.kind === 'activity-group'"
@@ -46,12 +46,12 @@ const rows = computed(() => rowProjector.project(props.nodes))
         :language="language"
         :text="row.text"
       />
-      <p v-else-if="row.kind === 'panel'" class="buddy-chat-agent-turn__panel-operation" data-testid="context-panel-operation">
+      <p v-else-if="row.kind === 'panel'" class="buddy-chat-agent-turn__panel-operation flex items-center gap-[6px] my-[4px] mx-0 text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)]" data-testid="context-panel-operation">
         <DesktopIcon :component="PanelRight20Regular" />
         <span>{{ t(row.actor === 'harness' ? 'desktop.chat.panelActorSystem' : 'desktop.chat.panelActorUser') }} · {{ t(row.action === 'open' ? 'desktop.chat.panelOpened' : 'desktop.chat.panelClosed') }}</span>
       </p>
     </template>
-    <p v-if="failureDetailText" class="buddy-chat-agent-turn__failure-detail">
+    <p v-if="failureDetailText" class="buddy-chat-agent-turn__failure-detail m-0 text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)] [overflow-wrap:anywhere] whitespace-pre-wrap">
       <span>{{ t('desktop.chat.failureDetail') }}</span>
       {{ failureDetailText }}
     </p>
@@ -59,20 +59,8 @@ const rows = computed(() => rowProjector.project(props.nodes))
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-agent-turn__flow {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-  margin-top: var(--buddy-chat-gap-block);
-}
-
 .buddy-chat-agent-turn__failure-detail {
-  margin: 0;
   color: var(--buddy-chat-meta-color);
-  font-size: var(--buddy-chat-meta-font-size);
-  line-height: var(--buddy-chat-meta-line-height);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
 
   span {
     color: var(--buddy-chat-process-color);
@@ -81,13 +69,7 @@ const rows = computed(() => rowProjector.project(props.nodes))
 }
 
 .buddy-chat-agent-turn__panel-operation {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 4px 0;
   color: var(--buddy-chat-process-color);
-  font-size: var(--buddy-chat-meta-font-size);
-  line-height: var(--buddy-chat-meta-line-height);
 
   svg {
     width: 16px;

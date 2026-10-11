@@ -1,6 +1,6 @@
 import type { ExtensionManifest } from './extensionManifest'
 import { z } from 'zod'
-import { extensionModelSelectionSchema } from './extensionSettings'
+import { extensionModelSelectionSchema } from './extensionSettings.ts'
 
 interface RequestLimits { calls: number, concurrent: number, error: string }
 function capability<I extends z.ZodType, O extends z.ZodType>(input: I, output: O, permitted: (permissions: ExtensionManifest['permissions']) => boolean, limits: RequestLimits | null = null) {

@@ -20,19 +20,19 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <header class="desktop-chat-workspace-header">
-    <div class="desktop-chat-workspace-header__copy">
+  <header class="desktop-chat-workspace-header flex flex-none items-center justify-between gap-[0.85rem] border-b-1 border-b-solid border-b-border bg-surface pt-0 pr-3 pb-0 pl-4 h-region-header">
+    <div class="desktop-chat-workspace-header__copy grid min-w-0 flex-1 gap-[0.05rem] select-none">
       <slot name="title">
         <strong>{{ title }}</strong>
       </slot>
     </div>
 
-    <div class="desktop-chat-workspace-header__actions">
+    <div class="flex min-w-0 flex-none items-center gap-[0.18rem]">
       <WorkbenchMenu target="task.actions" :task-id="taskId" />
       <slot name="leadingActions" />
       <button
         v-if="canToggleCanvas"
-        class="desktop-chat-workspace-header__icon-button"
+        class="desktop-chat-workspace-header__icon-button grid w-8 h-8 flex-none place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer ui-focus-ring disabled:cursor-not-allowed disabled:opacity-42"
         :class="{ 'is-active': viewMode === 'canvas' }"
         data-testid="conversation-canvas-toggle"
         type="button"
@@ -55,25 +55,7 @@ const { t } = useBuddyI18n(() => props.language)
 </template>
 
 <style scoped lang="scss">
-.desktop-chat-workspace-header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.85rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-base);
-  padding: 0 0.75rem 0 1rem;
-}
-
 .desktop-chat-workspace-header__copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 0.05rem;
-  user-select: none;
-
   strong {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -86,26 +68,7 @@ const { t } = useBuddyI18n(() => props.language)
   }
 }
 
-.desktop-chat-workspace-header__actions {
-  display: flex;
-  min-width: 0;
-  flex: none;
-  align-items: center;
-  gap: 0.18rem;
-}
-
 .desktop-chat-workspace-header__icon-button {
-  display: grid;
-  width: 2rem;
-  height: 2rem;
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  cursor: pointer;
-
   .n-icon {
     font-size: 16px;
   }
@@ -113,16 +76,6 @@ const { t } = useBuddyI18n(() => props.language)
   &:hover:not(:disabled) {
     background: var(--buddy-state-hover);
     color: var(--buddy-text-strong);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.42;
   }
 }
 </style>

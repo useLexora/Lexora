@@ -42,7 +42,7 @@ function loadPreview() {
 </script>
 
 <template>
-  <div class="file-preview">
+  <div class="file-preview flex flex-1 flex-col min-h-0 overflow-auto">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
@@ -50,19 +50,12 @@ function loadPreview() {
         </template>
       </DesktopDocumentToolbar>
     </Teleport>
-    <div v-if="failed" class="file-preview__notice" role="alert">
+    <div v-if="failed" class="flex items-center gap-[8px] p-[12px] text-muted text-[12px]" role="alert">
       <span>{{ labels.failed }}</span>
-      <button type="button" class="file-preview__retry" @click="loadPreview">
+      <button type="button" class="file-preview__retry border-0 bg-transparent p-0 text-accent cursor-pointer underline text-[12px] hover:opacity-85" @click="loadPreview">
         {{ labels.retry }}
       </button>
     </div>
     <DesktopDocumentContent v-else :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText" />
   </div>
 </template>
-
-<style scoped>
-.file-preview { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; }
-.file-preview__notice { display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--buddy-text-secondary); font-size: 12px; }
-.file-preview__retry { border: 0; background: transparent; padding: 0; color: var(--buddy-accent-solid); cursor: pointer; text-decoration: underline; font: inherit; font-size: 12px; }
-.file-preview__retry:hover { opacity: 0.85; }
-</style>

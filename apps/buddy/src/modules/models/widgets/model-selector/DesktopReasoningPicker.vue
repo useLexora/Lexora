@@ -22,96 +22,25 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <section class="desktop-reasoning-picker" role="menu">
-    <span class="desktop-reasoning-picker__title">{{ t('desktop.chat.effort') }}</span>
-    <div class="desktop-reasoning-picker__options">
+  <section class="desktop-reasoning-picker grid overflow-hidden w-54 max-h-[min(24rem,_58vh)] border-1 border-solid border-border rounded-menu bg-raised shadow-overlay" role="menu">
+    <span class="text-muted text-[0.7rem] leading-[1.35] pt-[0.65rem] pr-[1.05rem] pb-[0.3rem] pl-[1.05rem]">{{ t('desktop.chat.effort') }}</span>
+    <div class="desktop-reasoning-picker__options overflow-x-hidden overflow-y-auto grid min-h-0 content-start gap-[0.15rem] pt-0 pr-2 pb-2 pl-2">
       <template v-for="(option, index) in options" :key="option.value">
         <button
-          class="desktop-reasoning-picker__item"
+          class="desktop-reasoning-picker__item ui-menu-option min-h-[2.15rem] gap-[0.65rem] px-[0.55rem] py-[0.4rem]"
           type="button"
           role="menuitemradio"
           :aria-checked="selectedEffort === option.value"
           @click="emit('select', option.value)"
         >
-          <strong>{{ option.label }}</strong>
-          <DesktopIcon v-if="selectedEffort === option.value" :component="Checkmark16Regular" />
+          <strong class="min-w-0 truncate text-[0.78rem] font-650">{{ option.label }}</strong>
+          <DesktopIcon v-if="selectedEffort === option.value" class="flex-none" :component="Checkmark16Regular" />
         </button>
         <span
           v-if="option.value === 'off' && index < options.length - 1"
-          class="desktop-reasoning-picker__divider"
+          class="h-[1px] my-1 mx-[0.15rem] bg-border"
         />
       </template>
     </div>
   </section>
 </template>
-
-<style scoped>
-.desktop-reasoning-picker {
-  display: grid;
-  overflow: hidden;
-  width: 13.5rem;
-  max-height: min(24rem, 58vh);
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--desktop-model-popover-radius, 3px);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-overlay);
-}
-
-.desktop-reasoning-picker__title {
-  color: var(--buddy-text-muted);
-  font-size: 0.7rem;
-  line-height: 1.35;
-  padding: 0.65rem 1.05rem 0.3rem;
-}
-
-.desktop-reasoning-picker__options {
-  display: grid;
-  min-height: 0;
-  align-content: start;
-  gap: 0.15rem;
-  overflow: hidden auto;
-  padding: 0 0.5rem 0.5rem;
-}
-
-.desktop-reasoning-picker__divider {
-  height: 1px;
-  margin: 0.25rem 0.15rem;
-  background: var(--buddy-border-subtle);
-}
-
-.desktop-reasoning-picker__item {
-  display: flex;
-  min-width: 0;
-  min-height: 2.15rem;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  border: 0;
-  border-radius: var(--buddy-menu-item-radius);
-  background: transparent;
-  color: var(--buddy-text-strong);
-  cursor: pointer;
-  font: inherit;
-  padding: 0.4rem 0.55rem;
-  text-align: left;
-}
-
-.desktop-reasoning-picker__item:hover,
-.desktop-reasoning-picker__item:focus-visible {
-  background: var(--buddy-state-hover);
-  outline: 0;
-}
-
-.desktop-reasoning-picker__item strong {
-  overflow: hidden;
-  min-width: 0;
-  font-size: 0.78rem;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-reasoning-picker__item :deep(.n-icon) {
-  flex: none;
-}
-</style>

@@ -28,15 +28,15 @@ const levelOptions = computed(() => (['all', 'error', 'warn', 'info', 'debug'] a
 </script>
 
 <template>
-  <div class="log-filters">
-    <div class="log-filters__search">
+  <div class="log-filters grid flex-none gap-[0.65rem]">
+    <div class="log-filters__search flex items-center gap-2">
       <NInput v-model:value="search" size="small" clearable :maxlength="256" :placeholder="t('applicationLogs.search')" :aria-label="t('applicationLogs.search')">
         <template #prefix>
           <DesktopIcon :component="Search20Regular" />
         </template>
       </NInput>
     </div>
-    <div class="log-filters__selectors">
+    <div class="log-filters__selectors grid grid-cols-[minmax(10rem,_1.4fr)_minmax(8rem,_1fr)_minmax(6rem,_0.65fr)] gap-2">
       <NSelect v-model:value="launch" size="small" :options="launchOptions" :aria-label="t('applicationLogs.launch')" class="log-filters__launch" />
       <NSelect v-model:value="category" size="small" :options="categoryOptions" :aria-label="t('applicationLogs.category')" />
       <NSelect v-model:value="level" size="small" :options="levelOptions" :aria-label="t('applicationLogs.level')" />
@@ -44,11 +44,8 @@ const levelOptions = computed(() => (['all', 'error', 'warn', 'info', 'debug'] a
   </div>
 </template>
 
-<style scoped>
-.log-filters { display: grid; flex: none; gap: 0.65rem; }
-.log-filters__search { display: flex; align-items: center; gap: 0.5rem; }
+<style scoped lang="scss">
 .log-filters__search > :first-child { min-width: 0; flex: 1; }
-.log-filters__selectors { display: grid; grid-template-columns: minmax(10rem, 1.4fr) minmax(8rem, 1fr) minmax(6rem, 0.65fr); gap: 0.5rem; }
 @media (max-width: 1000px) {
   .log-filters__selectors { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .log-filters__launch { grid-column: 1 / -1; }

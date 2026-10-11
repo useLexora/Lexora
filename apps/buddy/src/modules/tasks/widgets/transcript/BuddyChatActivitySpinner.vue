@@ -1,16 +1,11 @@
 <template>
-  <span class="buddy-chat-activity-spinner" aria-hidden="true" />
+  <span class="buddy-chat-activity-spinner block w-[10px] h-[10px] flex-none rounded-full" aria-hidden="true" />
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .buddy-chat-activity-spinner {
-  display: block;
-  width: 10px;
-  height: 10px;
-  flex: none;
   border: 1.5px solid var(--buddy-border-strong);
   border-top-color: var(--buddy-text-secondary);
-  border-radius: 50%;
   animation: buddy-chat-activity-spin 900ms linear infinite;
 }
 

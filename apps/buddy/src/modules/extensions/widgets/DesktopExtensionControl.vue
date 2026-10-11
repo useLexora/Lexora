@@ -20,16 +20,14 @@ const height = computed(() => selected.value[0]?.height ?? 64)
 </script>
 
 <template>
-  <div ref="root" class="extension-control" :data-workbench-control="target">
-    <div class="extension-control__content" :style="ready ? { height: `${height}px` } : undefined">
+  <div ref="root" class="extension-control min-w-0" :data-workbench-control="target">
+    <div class="relative min-h-[32px]" :style="ready ? { height: `${height}px` } : undefined">
       <DesktopExtensionSurface v-for="surface in surfaces" :key="surface.input.viewId" :input="surface.input" :visible="selected.includes(surface)" :control="control" silent class="extension-control__surface" />
       <slot v-if="!ready" />
     </div>
   </div>
 </template>
 
-<style scoped>
-.extension-control { min-width: 0; }
-.extension-control__content { position: relative; min-height: 32px; }
+<style scoped lang="scss">
 .extension-control__surface { position: absolute; inset: 0; }
 </style>

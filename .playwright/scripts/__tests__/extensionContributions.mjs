@@ -1,19 +1,21 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-export async function writeContributionPlugin(directory, name) {
+export async function writeContributionPlugin(directory, name, { uno = false } = {}) {
   const id = `tests.${name}`
   const manifest = {
     schemaVersion: 1,
-    format: 'compiled',
+    format: uno ? 'source' : 'compiled',
+    ...(uno ? { styles: { uno: true } } : {}),
     id,
     name: `Contribution ${name}`,
     version: '1.0.0',
     apiVersion: 3,
     engines: { lexora: '*' },
     entry: 'host.js',
+    permissions: { themeManagement: uno },
     contributes: {
-      commands: ['read', 'save'].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
+      commands: ['read', 'save', 'theme'].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
       views: [
         { id: `${id}.settings`, title: `Settings ${name}`, entry: 'settings.js', resource: 'none', location: 'page' },
         { id: `${id}.footer`, title: `Footer ${name}`, entry: 'footer.js', resource: 'none' },
@@ -30,7 +32,7 @@ export async function writeContributionPlugin(directory, name) {
     'extension.json': JSON.stringify(manifest),
     'host.js': `export const activate = ${activate.toString()}`,
     'settings.js': `export const render = (...args) => (${settings.toString()})(${JSON.stringify(id)}, ...args)`,
-    'footer.js': `export const render = (...args) => (${footer.toString()})(${JSON.stringify(id)}, ...args)`,
+    'footer.js': `export const render = (...args) => (${footer.toString()})(${JSON.stringify(id)}, ${uno}, ...args)`,
     'actions.js': `export const render = (...args) => (${actions.toString()})(${JSON.stringify(id)}, ...args)`,
   }
   await fs.mkdir(directory, { recursive: true })
@@ -46,6 +48,12 @@ async function activate(context) {
     await context.views.broadcast(state)
   }
   context.subscriptions.add(context.commands.register(`${id}.read`, () => state))
+  context.subscriptions.add(context.commands.register(`${id}.theme`, async () => {
+    const document = { schemaVersion: 1, colors: { accent: '#207cba' } }
+    const resolved = await context.themes.resolve('light', document)
+    const saved = await context.themes.save({ schemaVersion: 1, label: 'Host SDK theme', appearance: 'light', document })
+    return { accent: resolved.colors.accent, id: saved.id }
+  }))
   context.subscriptions.add(context.commands.register(`${id}.save`, async ({ arguments: patch }) => {
     state = { ...state, ...patch }
     await context.storage.set(state)
@@ -66,15 +74,24 @@ async function settings(pluginId, context, container) {
   }
 }
 
-async function footer(pluginId, context, container) {
+async function footer(pluginId, uno, context, container) {
   container.dataset.contributionFixture = `${pluginId}.footer`
   window.fixture = { instance: crypto.randomUUID(), visible: context.visible }
   context.onVisibilityChange(visible => window.fixture.visible = visible)
-  container.style.cssText = 'height:100%;display:grid;place-items:center;color:var(--lexora-text);font:14px system-ui'
+  if (uno)
+    container.className = 'h-full grid place-items-center bg-accent text-on-accent text-[14px] font-sans'
+  else
+    container.style.cssText = 'height:100%;display:grid;place-items:center;color:var(--lexora-text);font:14px system-ui'
   container.textContent = `${pluginId} content`
   const apply = state => context.setActive(state.active)
   context.onMessage(state => void apply(state))
   await apply(await context.commands.execute(`${pluginId}.read`))
+  if (uno) {
+    const document = { schemaVersion: 1, colors: { accent: '#96304d' } }
+    const resolved = await context.themes.resolve('light', document)
+    const saved = await context.themes.save({ schemaVersion: 1, label: 'View SDK theme', appearance: 'light', document })
+    window.fixture.theme = { view: { accent: resolved.colors.accent, id: saved.id }, host: await context.commands.execute(`${pluginId}.theme`) }
+  }
 }
 
 async function actions(pluginId, context, container) {

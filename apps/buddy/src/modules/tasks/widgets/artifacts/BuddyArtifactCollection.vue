@@ -58,12 +58,12 @@ function findHorizontalScrollport(): HTMLElement | null {
 <template>
   <div
     ref="scrollRoot"
-    class="buddy-artifact-collection__scroll"
+    class="buddy-artifact-collection__scroll min-w-0 overflow-hidden"
     :class="`is-${layout}`"
     @wheel="handleWheel"
   >
     <NScrollbar class="buddy-artifact-collection__scrollbar" trigger="hover" x-scrollable>
-      <div class="buddy-artifact-collection__items" :class="`is-${layout}`">
+      <div class="buddy-artifact-collection__items grid gap-[0.625rem] p-[0.125rem]" :class="`is-${layout}`">
         <BuddyArtifactCard
           v-for="artifact in artifacts"
           :key="artifact.artifactId"
@@ -77,20 +77,11 @@ function findHorizontalScrollport(): HTMLElement | null {
 </template>
 
 <style scoped lang="scss">
-.buddy-artifact-collection__scroll {
-  min-width: 0;
-  overflow: hidden;
-}
-
 :deep(.buddy-artifact-collection__scrollbar) {
   width: 100%;
 }
 
 .buddy-artifact-collection__items {
-  display: grid;
-  gap: 0.625rem;
-  padding: 0.125rem;
-
   &.is-strip {
     width: max-content;
     grid-auto-columns: 17rem;

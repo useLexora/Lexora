@@ -38,9 +38,9 @@ function preview(item: LocalChatQueueItem, id: string) {
 </script>
 
 <template>
-  <div v-if="rows.length" class="chat-message-queue" role="list" :aria-label="t('desktop.chat.queueWaiting')">
-    <div v-for="item in rows" :key="item.id" class="chat-message-queue__row" :class="{ 'is-paused': item.state === 'paused' }" role="listitem" :data-queued-message="item.id">
-      <span class="chat-message-queue__status" :title="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')" :aria-label="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')">
+  <div v-if="rows.length" class="chat-message-queue grid grid-cols-[minmax(0,_1fr)] min-w-0 max-h-[min(10rem,_25vh)] mb-[0.45rem] border-1 border-solid border-border rounded-micro bg-surface" role="list" :aria-label="t('desktop.chat.queueWaiting')">
+    <div v-for="item in rows" :key="item.id" class="chat-message-queue__row flex items-center min-w-0 h-[38px] gap-2 pt-0 pr-[0.35rem] pb-0 pl-[0.65rem]" :class="{ 'is-paused': item.state === 'paused' }" role="listitem" :data-queued-message="item.id">
+      <span class="chat-message-queue__status inline-flex flex-none text-muted text-[1rem]" :title="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')" :aria-label="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')">
         <DesktopIcon :component="item.state === 'paused' ? Pause20Regular : TextBulletListLtr20Regular" />
       </span>
       <div v-if="item.attachments.length" class="chat-message-queue__attachments">
@@ -52,9 +52,9 @@ function preview(item: LocalChatQueueItem, id: string) {
             <FileIcon :name="attachment.name" size="small" />
           </span>
         </template>
-        <span v-if="item.attachments.length > 2" class="chat-message-queue__more" :title="item.attachmentNames">+{{ item.attachments.length - 2 }}</span>
+        <span v-if="item.attachments.length > 2" class="chat-message-queue__more px-[0.15rem] text-muted" :title="item.attachmentNames">+{{ item.attachments.length - 2 }}</span>
       </div>
-      <span class="chat-message-queue__text" :title="item.text || item.attachmentNames">{{ item.text || item.attachments.map(attachment => attachment.name).join('、') }}</span>
+      <span class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.82rem] text-muted" :title="item.text || item.attachmentNames">{{ item.text || item.attachments.map(attachment => attachment.name).join('、') }}</span>
       <div class="chat-message-queue__actions">
         <NTooltip>
           <template #trigger>
@@ -79,46 +79,14 @@ function preview(item: LocalChatQueueItem, id: string) {
 
 <style scoped lang="scss">
 .chat-message-queue {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  max-height: min(10rem, 25vh);
   overflow: hidden auto;
   overscroll-behavior: contain;
-  margin-bottom: 0.45rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-base);
 
   &__row {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    height: 38px;
-    gap: 0.5rem;
-    padding: 0 0.35rem 0 0.65rem;
-
     & + & { border-top: 1px solid var(--buddy-border-subtle); }
   }
 
-  &__status {
-    display: inline-flex;
-    flex: none;
-    color: var(--buddy-text-muted);
-    font-size: 1rem;
-  }
-
   &__row.is-paused &__status { color: var(--buddy-status-warning-text); }
-
-  &__text {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.82rem;
-    color: var(--buddy-text-secondary);
-  }
 
   &__attachments, &__actions {
     display: flex;
@@ -146,8 +114,6 @@ function preview(item: LocalChatQueueItem, id: string) {
   }
 
   &__more {
-    padding-inline: 0.15rem;
-    color: var(--buddy-text-muted);
     font-size: 0.7rem;
     font-variant-numeric: tabular-nums;
   }

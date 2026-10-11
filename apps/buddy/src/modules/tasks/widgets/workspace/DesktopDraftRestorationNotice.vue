@@ -50,7 +50,7 @@ async function restoreSavedDraft(): Promise<void> {
     role="status"
   >
     {{ t(`desktop.chat.draftRestoration.${state === 'pending' ? 'restoring' : state}`) }}
-    <div v-if="state === 'failed' || state === 'conflict'" class="desktop-draft-restoration__actions">
+    <div v-if="state === 'failed' || state === 'conflict'" class="mt-[8px]">
       <NButton v-if="state === 'failed'" size="small" @click="restore">
         {{ t('desktop.chat.draftRestoration.retry') }}
       </NButton>
@@ -69,7 +69,7 @@ async function restoreSavedDraft(): Promise<void> {
     :closable="!resolving"
     :close-on-esc="!resolving"
   >
-    <div v-if="conflict" class="desktop-draft-restoration__comparison">
+    <div v-if="conflict" class="desktop-draft-restoration__comparison grid gap-[12px]">
       <p>{{ t('desktop.chat.draftRestoration.explanation') }}</p>
       <section v-for="(draft, index) in [conflict.local, conflict.remote]" :key="draft.draftId">
         <strong>{{ t(index === 0 ? 'desktop.chat.draftRestoration.local' : 'desktop.chat.draftRestoration.saved') }}</strong>
@@ -98,14 +98,7 @@ async function restoreSavedDraft(): Promise<void> {
   width: 100%;
 }
 
-.desktop-draft-restoration__actions {
-  margin-top: 8px;
-}
-
 .desktop-draft-restoration__comparison {
-  display: grid;
-  gap: 12px;
-
   p {
     margin: 0;
   }

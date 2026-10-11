@@ -12,21 +12,13 @@ const bodyHtml = computed(() => renderChatMarkdown(props.text))
 <template>
   <div
     v-if="text"
-    class="buddy-chat-reasoning-entry__body"
+    class="buddy-chat-reasoning-entry__body min-w-0 m-0 text-muted text-[length:var(--buddy-chat-tool-font-size)] leading-[1.7] [overflow-wrap:anywhere] py-1 px-0"
     v-html="bodyHtml"
   />
 </template>
 
 <style scoped lang="scss">
 .buddy-chat-reasoning-entry__body {
-  min-width: 0;
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: var(--buddy-chat-tool-font-size);
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-  padding: 0.25rem 0;
-
   :deep(> :first-child) {
     margin-top: 0;
   }

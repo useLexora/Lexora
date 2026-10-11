@@ -71,10 +71,10 @@ const output = computed(() => {
 </script>
 
 <template>
-  <div class="buddy-chat-tool-details" :class="`is-${status}`">
+  <div class="buddy-chat-tool-details grid gap-[var(--buddy-chat-gap-block)] min-w-0" :class="`is-${status}`">
     <button
       v-if="session?.sessionId && navigateSession && status !== 'denied'"
-      class="buddy-chat-tool-details__source" type="button"
+      class="block max-w-full overflow-hidden py-[4px] px-0 border-0 bg-transparent text-accent-text text-ellipsis whitespace-nowrap text-start cursor-pointer text-[length:var(--buddy-chat-caption-font-size)]" type="button"
       :title="session.title ?? undefined" @click="navigateSession(session.sessionId)"
     >
       {{ t('desktop.chat.processToolSourceTask') }}{{ session.title ? ` · ${session.title}` : '' }}
@@ -119,7 +119,7 @@ const output = computed(() => {
         </div>
       </dl>
     </section>
-    <section v-if="terminal" class="buddy-chat-terminal-card">
+    <section v-if="terminal" class="buddy-chat-terminal-card min-w-0 overflow-hidden rounded-micro bg-subtle">
       <BuddyChatToolToolbar
         :language="language" :title="t('desktop.chat.processToolCommand')"
         :copy-text="terminal.command" :copy-label="t('desktop.chat.processToolCopyCommand')"
@@ -129,10 +129,10 @@ const output = computed(() => {
         :output="terminalOutput"
         :shell="terminalShell"
       />
-      <p v-if="terminalNotice" class="buddy-chat-terminal-card__notice">
+      <p v-if="terminalNotice" class="m-0 text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-code-line-height)] pt-[0.45rem] pr-[0.625rem] pb-[0.55rem] pl-[0.625rem]">
         {{ terminalNotice }}
       </p>
-      <small v-if="terminal.truncated" class="buddy-chat-terminal-card__truncated">
+      <small v-if="terminal.truncated" class="block text-muted pt-0 pr-3 pb-[0.65rem] pl-3">
         {{ t('desktop.chat.processToolTruncated') }}
       </small>
     </section>
@@ -145,7 +145,7 @@ const output = computed(() => {
         :language="language" :title="!diff && filePath ? filePath : t('desktop.chat.processToolOutput')"
         :copy-text="output?.content" :file-path="diff ? undefined : filePath"
       >
-        <small v-if="output?.truncated" class="buddy-chat-tool-details__truncated">{{ t('desktop.chat.processToolTruncated') }}</small>
+        <small v-if="output?.truncated" class="buddy-chat-tool-details__truncated flex-none">{{ t('desktop.chat.processToolTruncated') }}</small>
       </BuddyChatToolToolbar>
       <template v-if="output">
         <BuddyChatToolRead
@@ -164,48 +164,8 @@ const output = computed(() => {
 
 <style scoped lang="scss">
 .buddy-chat-tool-details {
-  display: grid;
-  gap: var(--buddy-chat-gap-block);
-  min-width: 0;
   margin: 4px 0 8px;
   margin-inline-start: var(--buddy-chat-activity-indent);
-}
-
-.buddy-chat-tool-details__source {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--buddy-accent-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: start;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--buddy-chat-caption-font-size);
-}
-
-.buddy-chat-terminal-card {
-  min-width: 0;
-  overflow: hidden;
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-subtle);
-}
-
-.buddy-chat-terminal-card__notice {
-  margin: 0;
-  color: var(--buddy-text-muted);
-  font-size: var(--buddy-chat-caption-font-size);
-  line-height: var(--buddy-chat-code-line-height);
-  padding: 0.45rem 0.625rem 0.55rem;
-}
-
-.buddy-chat-terminal-card__truncated {
-  display: block;
-  color: var(--buddy-text-muted);
-  padding: 0 0.75rem 0.65rem;
 }
 
 .buddy-chat-tool-details__section {
@@ -222,7 +182,6 @@ const output = computed(() => {
 }
 
 .buddy-chat-tool-details__truncated {
-  flex: none;
   font-size: inherit;
 }
 

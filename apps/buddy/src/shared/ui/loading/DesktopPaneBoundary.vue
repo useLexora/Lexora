@@ -13,14 +13,14 @@ defineSlots<{ default: () => unknown }>()
 </script>
 
 <template>
-  <div class="desktop-pane-boundary" :class="{ 'is-animated': animate }" :aria-busy="loading">
+  <div class="desktop-pane-boundary relative isolate" :class="{ 'is-animated': animate }" :aria-busy="loading">
     <div class="desktop-pane-boundary__content" :class="{ 'is-covered': loading || error }" :inert="loading || !!error" :aria-hidden="loading || !!error">
       <slot />
     </div>
     <Transition name="pane-reveal" :css="animate">
-      <div v-if="loading || error" class="desktop-pane-boundary__cover" :role="error ? 'alert' : 'status'">
-        <div class="desktop-pane-boundary__status">
-          <span v-if="!error" class="desktop-pane-boundary__spinner" aria-hidden="true" />
+      <div v-if="loading || error" class="absolute z-3 inset-0 grid place-items-center bg-surface" :role="error ? 'alert' : 'status'">
+        <div class="flex max-w-96 flex-col items-center gap-[0.9rem] p-6 text-muted text-[0.75rem] leading-[1.6] text-center">
+          <span v-if="!error" class="desktop-pane-boundary__spinner w-[1.1rem] h-[1.1rem] rounded-full" aria-hidden="true" />
           <span>{{ error || label }}</span>
           <NButton v-if="error" size="small" secondary @click="emit('retry')">
             {{ retryLabel }}
@@ -31,7 +31,7 @@ defineSlots<{ default: () => unknown }>()
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-pane-boundary,
 .desktop-pane-boundary__content {
   display: flex;
@@ -41,35 +41,12 @@ defineSlots<{ default: () => unknown }>()
   flex: 1;
   flex-direction: column;
 }
-.desktop-pane-boundary { position: relative; isolation: isolate; }
 .is-animated > .desktop-pane-boundary__content { transition: opacity 160ms ease; }
 .desktop-pane-boundary__content.is-covered { opacity: 0; pointer-events: none; }
-.desktop-pane-boundary__cover {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--buddy-surface-base);
-}
-.desktop-pane-boundary__status {
-  display: flex;
-  max-width: 24rem;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 1.5rem;
-  color: var(--buddy-text-secondary);
-  font-size: 0.75rem;
-  line-height: 1.6;
-  text-align: center;
-}
+
 .desktop-pane-boundary__spinner {
-  width: 1.1rem;
-  height: 1.1rem;
   border: 1.5px solid var(--buddy-border-subtle);
   border-top-color: var(--buddy-text-muted);
-  border-radius: 50%;
   animation: pane-spin 900ms linear infinite;
 }
 .pane-reveal-enter-active, .pane-reveal-leave-active { transition: opacity 160ms ease; }

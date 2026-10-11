@@ -11,36 +11,23 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <header class="buddy-chat-agent-identity">
-    <span class="buddy-chat-agent-identity__avatar">
+  <header class="buddy-chat-agent-identity inline-flex w-fit min-w-0 items-center gap-[var(--buddy-chat-avatar-gap)]">
+    <span class="buddy-chat-agent-identity__avatar relative w-[var(--buddy-chat-avatar-size)] h-[var(--buddy-chat-avatar-size)] overflow-hidden rounded-full">
       <img
         :src="BRAND_ASSET_URLS.chatAvatar"
         alt=""
         draggable="false"
       >
     </span>
-    <span class="buddy-chat-agent-identity__name">
+    <span class="buddy-chat-agent-identity__name min-w-0 leading-[var(--buddy-brand-name-line-height)]">
       {{ t('desktop.chat.agentName') }}
     </span>
   </header>
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-agent-identity {
-  display: inline-flex;
-  width: fit-content;
-  min-width: 0;
-  align-items: center;
-  gap: var(--buddy-chat-avatar-gap);
-}
-
 .buddy-chat-agent-identity__avatar {
-  position: relative;
-  width: var(--buddy-chat-avatar-size);
-  height: var(--buddy-chat-avatar-size);
   flex: 0 0 auto;
-  overflow: hidden;
-  border-radius: 50%;
 }
 
 .buddy-chat-agent-identity__avatar img {
@@ -51,11 +38,9 @@ const { t } = useBuddyI18n(() => props.language)
 }
 
 .buddy-chat-agent-identity__name {
-  min-width: 0;
   color: var(--buddy-chat-agent-name-color);
   font-family: var(--buddy-font-brand);
   font-size: var(--buddy-brand-name-font-size);
   font-weight: var(--buddy-brand-name-font-weight);
-  line-height: var(--buddy-brand-name-line-height);
 }
 </style>

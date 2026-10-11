@@ -73,7 +73,7 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
   >
     <NForm @submit.prevent="confirm">
       <NFormItem :label="t('desktop.tasks.spaceName')" required>
-        <div class="desktop-space-dialog__identity">
+        <div class="flex w-full min-w-0 items-center gap-[8px]">
           <DesktopSpaceAppearancePicker
             v-model:show="appearanceOpen"
             v-model:icon="form.icon"
@@ -127,7 +127,7 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
       </NAlert>
     </NForm>
     <template #footer>
-      <div class="desktop-space-dialog__actions">
+      <div class="flex justify-end gap-2">
         <NButton @click="emit('update:show', false)">
           {{ t('common.cancel') }}
         </NButton>
@@ -144,15 +144,7 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
   </NModal>
 </template>
 
-<style scoped>
-.desktop-space-dialog__identity {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
+<style scoped lang="scss">
 :global(.desktop-space-dialog__memory-option) {
   display: grid;
   min-width: 22rem;
@@ -168,11 +160,5 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
   white-space: normal;
-}
-
-.desktop-space-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
 }
 </style>

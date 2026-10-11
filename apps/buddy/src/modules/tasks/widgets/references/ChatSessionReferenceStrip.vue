@@ -14,7 +14,7 @@ const navigate = inject(sessionReferenceNavigationKey, null)
 </script>
 
 <template>
-  <div v-if="references.length" class="chat-session-reference-strip" data-quote-exclude>
+  <div v-if="references.length" class="chat-session-reference-strip flex min-w-0 max-w-full gap-[8px] overflow-x-auto pb-[6px]" data-quote-exclude>
     <ChatReferenceCard
       v-for="reference in references" :key="reference.id" class="chat-session-reference" :data-session-id="reference.id"
       :icon="Chat20Regular" :label="t('desktop.chat.sessionReferences')" :text="reference.title"
@@ -24,6 +24,6 @@ const navigate = inject(sessionReferenceNavigationKey, null)
   </div>
 </template>
 
-<style scoped>
-.chat-session-reference-strip { display: flex; min-width: 0; max-width: 100%; gap: 8px; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: 6px; }
+<style scoped lang="scss">
+.chat-session-reference-strip { overscroll-behavior-inline: contain; }
 </style>

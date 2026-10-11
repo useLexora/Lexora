@@ -47,7 +47,7 @@ function confirm() {
     :mask-closable="false"
     :title="text.title"
   >
-    <p class="desktop-full-access-confirmation__description">
+    <p class="m-0 text-muted text-[0.86rem] leading-[1.7]">
       {{ text.description }}
     </p>
     <NCheckbox v-model:checked="acknowledged" class="desktop-full-access-confirmation__acknowledgement">
@@ -55,7 +55,7 @@ function confirm() {
     </NCheckbox>
 
     <template #action>
-      <div class="desktop-full-access-confirmation__actions">
+      <div class="flex justify-end gap-[0.6rem]">
         <NButton @click="cancel">
           {{ text.cancelLabel }}
         </NButton>
@@ -68,22 +68,9 @@ function confirm() {
 </template>
 
 <style scoped lang="scss">
-.desktop-full-access-confirmation__description {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 0.86rem;
-  line-height: 1.7;
-}
-
 .desktop-full-access-confirmation__acknowledgement {
   margin-top: 1rem;
   color: var(--buddy-text-primary);
   font-size: 0.84rem;
-}
-
-.desktop-full-access-confirmation__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
 }
 </style>

@@ -161,81 +161,85 @@ useTaskHistoryDrag({
 <template>
   <div
     ref="row"
-    class="desktop-task-row"
+    class="desktop-task-row relative h-[var(--buddy-task-sidebar-row-size,_2.5rem)] min-w-0 pr-[var(--buddy-task-sidebar-scrollbar-gutter,_0)] pb-[calc(var(--buddy-task-sidebar-row-size,_2.5rem)_-_var(--buddy-task-sidebar-row-height,_2.25rem))]"
     :data-task-id="taskId"
     :class="{
       'is-active': active,
-      'is-dragging': dragging,
+      'is-dragging opacity-48': dragging,
       'is-drop-after': dropPosition === 'after',
       'is-drop-before': dropPosition === 'before',
-      'is-space-task': spaceTask,
-      'is-reorderable': reorderable,
+      'is-space-task pl-7': spaceTask,
+      'pl-[var(--buddy-task-sidebar-scrollbar-gutter,_0)]': !spaceTask,
+      'is-reorderable cursor-grab': reorderable,
     }"
   >
     <div
-      class="desktop-task-row__surface"
-      :class="{ 'is-active': active, 'is-space': spaceTask }"
+      class="desktop-task-row__surface relative flex h-full min-w-0 items-center pl-[6px] rounded-[var(--buddy-task-sidebar-state-radius,_8px)] transition-state-colors"
+      :class="[active ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'text-fg hover:bg-hover focus-within:bg-hover active:bg-pressed', { 'is-space': spaceTask }]"
     >
-      <span class="desktop-task-row__mark" :data-mark-id="markState?.markId ?? (markState?.unread ? 'system:unread' : undefined)">
+      <span class="grid w-[3px] flex-none place-items-center leading-[0]" :data-mark-id="markState?.markId ?? (markState?.unread ? 'system:unread' : undefined)">
         <NTooltip v-if="marker" placement="right">
           <template #trigger>
             <span role="img" :aria-label="marker.name"><DesktopTaskMarkSwatch :color="marker.color" compact /></span>
           </template>
-          <div class="desktop-task-row__mark-tooltip">
+          <div class="max-w-[260px] whitespace-pre-wrap [overflow-wrap:anywhere]">
             <strong>{{ marker.name }}</strong>
-            <p v-if="marker.description">{{ marker.description }}</p>
+            <p v-if="marker.description" class="m-0 mt-[4px] text-[12px]">{{ marker.description }}</p>
           </div>
         </NTooltip>
         <DesktopTaskMarkSwatch v-else compact />
       </span>
       <button
         ref="handle"
-        class="desktop-task-sidebar__task"
+        class="desktop-task-sidebar__task flex min-w-0 flex-1 items-center text-[length:var(--buddy-task-sidebar-item-font-size,_var(--buddy-sidebar-item-font-size))] [font-weight:var(--buddy-sidebar-item-font-weight)] leading-[20px] pt-0 pr-2 pb-0 pl-[4px] text-left text-inherit ui-focus-ring focus-visible:rounded-micro border-0 bg-transparent cursor-pointer"
         :class="{ 'is-active': active }"
         type="button"
         :aria-busy="loading || undefined"
         @click="emit('open')"
       >
-        <span v-if="opening" class="desktop-task-row__opening" aria-hidden="true"><DesktopIcon :component="SpinnerIos20Regular" /></span>
-        <DesktopOverflowingLabel :paused="dragging" :text="title" />
+        <span v-if="opening" class="desktop-task-row__opening flex flex-none mr-[6px]" :class="active ? 'text-inherit' : 'text-muted'" aria-hidden="true"><DesktopIcon :size="16" :component="SpinnerIos20Regular" /></span>
+        <DesktopOverflowingLabel class="flex-1" :paused="dragging" :text="title" />
       </button>
-      <div class="desktop-task-row__trailing">
+      <div class="grid w-[calc(2_*_var(--buddy-task-sidebar-action-size,_1.75rem)_+_var(--buddy-task-sidebar-action-gap,_0.125rem)_+_var(--buddy-task-sidebar-action-inset,_0.25rem))] flex-none items-center pr-[var(--buddy-task-sidebar-action-inset,_0.25rem)]">
         <time
           v-if="activity === 'idle'"
-          class="desktop-task-row__relative-time"
+          class="desktop-task-row__relative-time max-w-full overflow-hidden text-[0.75rem] leading-[1] pointer-events-none text-ellipsis whitespace-nowrap [grid-area:1/1] justify-self-end"
+          :class="active ? 'text-inherit' : 'text-muted'"
           :datetime="occurredAt"
         >{{ relativeTimeLabel }}</time>
         <span
           v-else
-          class="desktop-task-row__activity"
-          :class="{
-            'is-awaiting-approval': activity === 'awaiting_approval',
+          class="desktop-task-row__activity grid w-[var(--buddy-task-sidebar-action-size,_1.75rem)] h-[var(--buddy-task-sidebar-action-size,_1.75rem)] place-items-center pointer-events-none [grid-area:1/1] justify-self-end"
+          :class="[{
+            'is-awaiting-approval text-warning': activity === 'awaiting_approval',
             'is-running': activity === 'running',
-          }"
+          }, activity === 'running' ? active ? 'text-inherit' : 'text-muted' : '']"
           role="status"
           :aria-label="activityLabel"
         >
-          <DesktopIcon :component="activityIcon" />
+          <DesktopIcon :size="16" :component="activityIcon" />
         </span>
-        <div class="desktop-task-row__actions">
+        <div class="desktop-task-row__actions flex items-center gap-[var(--buddy-task-sidebar-action-gap,_0.125rem)] opacity-0 pointer-events-none [grid-area:1/1] justify-self-end">
           <NDropdown trigger="click" placement="bottom-start" :options="actions" @select="handleAction">
             <button
-              class="desktop-task-sidebar__more"
+              class="desktop-task-sidebar__more ui-focus-ring transition-state-colors grid w-[var(--buddy-task-sidebar-action-size,1.75rem)] h-[var(--buddy-task-sidebar-action-size,1.75rem)] flex-none place-items-center p-0 border-0 rounded-icon bg-transparent cursor-pointer leading-[1]"
+              :class="active ? 'text-inherit hover:bg-nav-selected-hover' : 'text-muted hover:(bg-nav-hover text-strong)'"
               type="button"
               :aria-label="t('desktop.tasks.moreActions')"
             >
-              <DesktopIcon :component="MoreHorizontal20Regular" />
+              <DesktopIcon class="flex" :size="16" :component="MoreHorizontal20Regular" />
             </button>
           </NDropdown>
           <button
             v-if="pinMode"
-            class="desktop-task-sidebar__more desktop-task-sidebar__pin"
+            class="desktop-task-sidebar__more desktop-task-sidebar__pin ui-focus-ring transition-state-colors grid w-[var(--buddy-task-sidebar-action-size,1.75rem)] h-[var(--buddy-task-sidebar-action-size,1.75rem)] flex-none place-items-center p-0 border-0 rounded-icon bg-transparent cursor-pointer leading-[1]"
             type="button"
             :aria-label="pinLabel"
             :aria-pressed="pinMode === 'unpin'"
+            :class="active ? 'text-inherit hover:bg-nav-selected-hover' : pinMode === 'unpin' ? 'text-accent hover:(bg-nav-hover text-accent)' : 'text-muted hover:(bg-nav-hover text-strong)'"
             @click="emit('pin')"
           >
-            <DesktopIcon :name="pinMode === 'pin' ? 'windowPin' : 'pinOff'" :size="16" />
+            <DesktopIcon class="flex" :name="pinMode === 'pin' ? 'windowPin' : 'pinOff'" :size="16" />
           </button>
         </div>
       </div>
@@ -245,25 +249,6 @@ useTaskHistoryDrag({
 
 <style scoped lang="scss">
 .desktop-task-row {
-  position: relative;
-  height: var(--buddy-task-sidebar-row-size, 2.5rem);
-  min-width: 0;
-  padding-right: var(--buddy-task-sidebar-scrollbar-gutter, 0);
-  padding-bottom: calc(var(--buddy-task-sidebar-row-size, 2.5rem) - var(--buddy-task-sidebar-row-height, 2.25rem));
-  padding-left: var(--buddy-task-sidebar-scrollbar-gutter, 0);
-
-  &.is-space-task {
-    padding-left: 1.75rem;
-  }
-
-  &.is-reorderable {
-    cursor: grab;
-  }
-
-  &.is-dragging {
-    opacity: 0.48;
-  }
-
   &.is-drop-before::before,
   &.is-drop-after::after {
     position: absolute;
@@ -276,218 +261,33 @@ useTaskHistoryDrag({
     pointer-events: none;
   }
 
-  &.is-drop-before::before {
-    top: 0;
-  }
-
-  &.is-drop-after::after {
-    bottom: 0;
-  }
-}
-
-.desktop-task-row__surface {
-  position: relative;
-  display: flex;
-  height: 100%;
-  min-width: 0;
-  align-items: center;
-  padding-left: 6px;
-  border-radius: var(--buddy-task-sidebar-state-radius, 8px);
-  color: var(--buddy-text-primary);
-  transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
+  &.is-drop-before::before { top: 0; }
+  &.is-drop-after::after { bottom: 0; }
 
   &:hover,
-  &:focus-within {
-    background: var(--buddy-state-hover);
-  }
+  &:has(:focus-visible) {
+    .desktop-task-row__relative-time,
+    .desktop-task-row__activity {
+      opacity: 0;
+    }
 
-  &.is-active {
-    background: var(--buddy-nav-selected);
-  }
-
-  &.is-active:hover {
-    background: var(--buddy-nav-pressed);
-  }
-
-}
-
-button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.desktop-task-row__mark {
-  display: grid;
-  width: 3px;
-  flex: none;
-  place-items: center;
-  line-height: 0;
-}
-
-.desktop-task-row__mark-tooltip {
-  max-width: 260px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-
-  p { margin: 4px 0 0; font-size: 12px; }
-}
-
-.desktop-task-sidebar__task {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  color: var(--buddy-text-primary);
-  font-size: var(--buddy-task-sidebar-item-font-size, var(--buddy-sidebar-item-font-size));
-  font-weight: var(--buddy-sidebar-item-font-weight);
-  line-height: 20px;
-  padding: 0 0.5rem 0 4px;
-  text-align: left;
-
-  .desktop-overflow-label {
-    flex: 1;
-  }
-
-  &.is-active {
-    color: var(--buddy-nav-foreground);
-  }
-
-  &:focus-visible {
-    border-radius: 6px;
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-}
-
-.desktop-task-sidebar__more {
-  display: grid;
-  width: var(--buddy-task-sidebar-action-size, 1.75rem);
-  height: var(--buddy-task-sidebar-action-size, 1.75rem);
-  flex: none;
-  place-items: center;
-  padding: 0;
-  border-radius: var(--buddy-icon-button-radius);
-  color: var(--buddy-text-muted);
-  line-height: 1;
-  transition:
-    background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  .n-icon {
-    display: flex;
-    font-size: 16px;
-  }
-
-  &:hover {
-    background: var(--buddy-nav-hover);
-    color: var(--buddy-text-strong);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-}
-
-.desktop-task-row__trailing {
-  display: grid;
-  width: calc(2 * var(--buddy-task-sidebar-action-size, 1.75rem) + var(--buddy-task-sidebar-action-gap, 0.125rem) + var(--buddy-task-sidebar-action-inset, 0.25rem));
-  flex: none;
-  align-items: center;
-  padding-right: var(--buddy-task-sidebar-action-inset, 0.25rem);
-}
-
-.desktop-task-row__relative-time,
-.desktop-task-row__activity,
-.desktop-task-row__actions {
-  grid-area: 1 / 1;
-  justify-self: end;
-}
-
-.desktop-task-sidebar__pin {
-  color: var(--buddy-text-muted);
-
-  &[aria-pressed='true'] {
-    color: var(--buddy-accent-solid);
-  }
-}
-
-.desktop-task-row__opening {
-  display: flex;
-  flex: none;
-  margin-right: 6px;
-  color: var(--buddy-text-muted);
-  .n-icon { font-size: 16px; animation: desktop-task-row-spin 1s linear infinite; }
-}
-
-.desktop-task-row__activity {
-  display: grid;
-  width: var(--buddy-task-sidebar-action-size, 1.75rem);
-  height: var(--buddy-task-sidebar-action-size, 1.75rem);
-  place-items: center;
-  pointer-events: none;
-
-  .n-icon {
-    font-size: 16px;
-  }
-
-  &.is-running {
-    color: var(--buddy-text-muted);
-
-    .n-icon {
-      animation: desktop-task-row-spin 1s linear infinite;
+    .desktop-task-row__actions {
+      opacity: 1;
+      pointer-events: auto;
     }
   }
+}
 
-  &.is-awaiting-approval {
-    color: var(--buddy-status-warning-text);
+.desktop-task-row__activity.is-running .n-icon,
+.desktop-task-row__opening .n-icon {
+  animation: desktop-task-row-spin 1s linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
   }
-}
-
-.desktop-task-row__relative-time {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--buddy-text-muted);
-  font-size: 0.75rem;
-  line-height: 1;
-  pointer-events: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-task-row__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--buddy-task-sidebar-action-gap, 0.125rem);
-  opacity: 0;
-  pointer-events: none;
-}
-
-.desktop-task-row:hover .desktop-task-row__relative-time,
-.desktop-task-row:has(:focus-visible) .desktop-task-row__relative-time,
-.desktop-task-row:hover .desktop-task-row__activity,
-.desktop-task-row:has(:focus-visible) .desktop-task-row__activity {
-  opacity: 0;
-}
-
-.desktop-task-row:hover .desktop-task-row__actions,
-.desktop-task-row:has(:focus-visible) .desktop-task-row__actions {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 @keyframes desktop-task-row-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desktop-task-row__activity.is-running .n-icon,
-  .desktop-task-row__opening .n-icon {
-    animation: none;
-  }
+  to { transform: rotate(360deg); }
 }
 </style>

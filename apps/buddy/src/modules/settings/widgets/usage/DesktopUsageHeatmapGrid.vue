@@ -85,38 +85,33 @@ function navigate(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div ref="calendar" class="usage-heatmap__calendar" @pointerover="inspect" @pointerleave="dismiss" @focusin="inspect" @focusout="dismiss" @click="inspect" @keydown="navigate">
-    <div v-for="band in bands" :key="band.key" class="usage-heatmap__grid" :style="{ gridTemplateColumns: `2.5rem repeat(${columns}, minmax(0, 1fr))` }">
-      <span v-for="weekday in weekdayLabels" :key="weekday.row" class="usage-heatmap__weekday" :style="{ gridRow: weekday.row }">{{ weekday.label }}</span>
+  <div ref="calendar" class="grid w-full min-w-0 gap-[16px]" @pointerover="inspect" @pointerleave="dismiss" @focusin="inspect" @focusout="dismiss" @click="inspect" @keydown="navigate">
+    <div v-for="band in bands" :key="band.key" class="relative grid min-w-0 grid-rows-[22px_repeat(7,_auto)] gap-[3px] p-[2px]" :style="{ gridTemplateColumns: `2.5rem repeat(${columns}, minmax(0, 1fr))` }">
+      <span v-for="weekday in weekdayLabels" :key="weekday.row" class="usage-heatmap__weekday col-[1] self-center" :style="{ gridRow: weekday.row }">{{ weekday.label }}</span>
       <template v-for="(week, column) in band.weeks" :key="week[0]!.date">
-        <span class="usage-heatmap__month" :style="{ gridColumn: column + 2, gridRow: 1 }">{{ band.months[column] }}</span>
+        <span class="usage-heatmap__month self-start pt-[2px]" :style="{ gridColumn: column + 2, gridRow: 1 }">{{ band.months[column] }}</span>
         <template v-for="(cell, row) in week" :key="cell.date">
           <button
-            v-if="cell.inRange" type="button" class="usage-heatmap__cell" :data-date="cell.date" :data-level="cell.level"
+            v-if="cell.inRange" type="button" class="usage-heatmap__cell focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[1px]" :data-date="cell.date" :data-level="cell.level"
             :style="{ gridColumn: column + 2, gridRow: row + 2, background: `var(--usage-level-${cell.level})` }"
             :tabindex="tabDate === cell.date ? 0 : -1"
           >
-            <span class="usage-heatmap__accessible">{{ cell.label }}</span>
+            <span class="usage-heatmap__accessible absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden whitespace-nowrap">{{ cell.label }}</span>
           </button>
-          <span v-else class="usage-heatmap__cell usage-heatmap__padding" :style="{ gridColumn: column + 2, gridRow: row + 2 }" aria-hidden="true" />
+          <span v-else class="usage-heatmap__cell usage-heatmap__padding focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[1px]" :style="{ gridColumn: column + 2, gridRow: row + 2 }" aria-hidden="true" />
         </template>
       </template>
     </div>
   </div>
 </template>
 
-<style scoped>
-.usage-heatmap__calendar { display: grid; width: 100%; min-width: 0; gap: 16px; }
-.usage-heatmap__grid { position: relative; display: grid; min-width: 0; grid-template-rows: 22px repeat(7, auto); gap: 3px; padding: 2px; }
+<style scoped lang="scss">
 .usage-heatmap__weekday, .usage-heatmap__month { color: var(--buddy-text-secondary); font-size: 10px; line-height: 1; white-space: nowrap; }
-.usage-heatmap__weekday { grid-column: 1; align-self: center; }
-.usage-heatmap__month { align-self: start; padding-top: 2px; }
 .usage-heatmap__cell { display: block; width: 100%; min-width: 0; aspect-ratio: 1; border: 1px solid transparent; border-radius: 3px; padding: 0; }
 .usage-heatmap__cell[data-level='-1'] { border-color: var(--buddy-border-subtle); }
 .usage-heatmap__cell[data-level='0'] { border-color: var(--buddy-border-strong); }
 .usage-heatmap__padding { visibility: hidden; }
 button.usage-heatmap__cell { cursor: pointer; }
 button.usage-heatmap__cell:hover { outline: 1.5px solid var(--buddy-accent-text); outline-offset: 1px; }
-.usage-heatmap__cell:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: 1px; }
-.usage-heatmap__accessible { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.usage-heatmap__accessible { clip-path: inset(50%); }
 </style>

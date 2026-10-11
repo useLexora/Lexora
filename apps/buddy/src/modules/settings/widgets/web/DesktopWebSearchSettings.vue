@@ -29,18 +29,18 @@ function dragEnd(event: DragEndEvent) {
 </script>
 
 <template>
-  <section class="desktop-web-search">
-    <header class="desktop-web-search__header">
-      <h2 class="desktop-web-search__title">
+  <section class="desktop-web-search grid gap-[0.8rem]">
+    <header class="grid gap-[0.3rem]">
+      <h2 class="m-0 text-[0.92rem] font-600">
         {{ t('desktop.web.search') }}
       </h2>
-      <p class="desktop-web-search__description">
+      <p class="m-0 text-muted text-[0.75rem] leading-[1.65]">
         {{ t('desktop.web.searchOrderDescription') }}
       </p>
-      <span id="web-search-order-help" class="desktop-web-search__keyboard-help">{{ t('desktop.web.searchKeyboardHelp') }}</span>
+      <span id="web-search-order-help" class="desktop-web-search__keyboard-help absolute w-[1px] h-[1px] overflow-hidden whitespace-nowrap">{{ t('desktop.web.searchKeyboardHelp') }}</span>
     </header>
     <DragDropProvider :modifiers="[RestrictToVerticalAxis]" @drag-end="dragEnd">
-      <ol class="desktop-web-search__list">
+      <ol class="desktop-web-search__list m-0 p-0 border-1 border-solid border-border rounded-[0.65rem]">
         <DesktopWebSearchSource v-for="(source, index) in sources" :key="source.provider" :source="source" :index="index" :disabled="disabled" :language="language" @toggle="emit('toggle', source.provider, $event)" />
       </ol>
     </DragDropProvider>
@@ -48,10 +48,6 @@ function dragEnd(event: DragEndEvent) {
 </template>
 
 <style scoped lang="scss">
-.desktop-web-search { display: grid; gap: 0.8rem; }
-.desktop-web-search__header { display: grid; gap: 0.3rem; }
-.desktop-web-search__title { margin: 0; font-size: 0.92rem; font-weight: 600; }
-.desktop-web-search__description { margin: 0; color: var(--buddy-text-secondary); font-size: 0.75rem; line-height: 1.65; }
-.desktop-web-search__keyboard-help { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.desktop-web-search__list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--buddy-border-subtle); border-radius: 0.65rem; }
+.desktop-web-search__keyboard-help { clip-path: inset(50%); }
+.desktop-web-search__list { list-style: none; }
 </style>

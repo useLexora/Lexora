@@ -13,7 +13,7 @@ const { t } = useBuddyI18n(language)
 <template>
   <DesktopSettingsModuleLayout>
     <DesktopAboutSettings :app-info="appInfo" :language="language" />
-    <div class="desktop-about-preferences">
+    <div class="desktop-about-preferences grid gap-[0.8rem]">
       <DesktopApplicationToggle
         field="updateNotificationsEnabled"
         :label="t('desktop.update.notifications')"
@@ -44,10 +44,3 @@ const { t } = useBuddyI18n(language)
     </div>
   </DesktopSettingsModuleLayout>
 </template>
-
-<style scoped>
-.desktop-about-preferences {
-  display: grid;
-  gap: 0.8rem;
-}
-</style>

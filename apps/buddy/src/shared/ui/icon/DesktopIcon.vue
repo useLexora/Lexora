@@ -25,7 +25,7 @@ const maskStyle = computed(() => ({
   <!-- n-icon：与 Fluent 图标共用 naive 的图标字号规则，例如下拉菜单的 --n-option-icon-size -->
   <span
     v-if="name"
-    class="desktop-icon n-icon"
+    class="desktop-icon n-icon inline-block w-[1em] h-[1em] flex-none bg-current"
     :style="maskStyle"
     aria-hidden="true"
     v-bind="$attrs"
@@ -35,13 +35,8 @@ const maskStyle = computed(() => ({
   </NIcon>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-icon {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  flex: none;
-  background-color: currentColor;
   mask: var(--desktop-icon-mask) center / contain no-repeat;
   mask-mode: alpha;
   -webkit-mask: var(--desktop-icon-mask) center / contain no-repeat;

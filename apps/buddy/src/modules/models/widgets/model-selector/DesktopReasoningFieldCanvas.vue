@@ -9,15 +9,5 @@ useReasoningFieldCanvas(canvas, props)
 </script>
 
 <template>
-  <canvas ref="canvas" class="desktop-reasoning-field-canvas" />
+  <canvas ref="canvas" class="desktop-reasoning-field-canvas absolute inset-0 w-full h-full pointer-events-none" />
 </template>
-
-<style scoped>
-.desktop-reasoning-field-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-</style>

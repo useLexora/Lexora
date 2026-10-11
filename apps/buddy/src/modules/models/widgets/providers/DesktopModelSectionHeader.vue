@@ -19,11 +19,11 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <header class="desktop-model-section-header">
-    <h3 class="desktop-model-section-header__title">
+  <header class="desktop-model-section-header flex min-h-[2.8rem] flex-wrap items-center py-[0.6rem] px-4">
+    <h3 class="m-0 text-[0.76rem]">
       {{ label }}
     </h3>
-    <div class="desktop-model-section-header__trailing">
+    <div class="desktop-model-section-header__trailing ml-auto">
       <NButton v-if="canRestore" quaternary size="small" :disabled="disabled || saving" @click="emit('restore')">
         {{ t('desktop.providers.restoreDefaultParameters') }}
       </NButton>
@@ -49,28 +49,14 @@ const { t } = useBuddyI18n(() => props.language)
   </header>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-model-section-header {
-  display: flex;
-  min-height: 2.8rem;
-  flex-wrap: wrap;
-  align-items: center;
   gap: 0.45rem 0.65rem;
-  padding: 0.6rem 1rem;
-}
-
-.desktop-model-section-header__title {
-  margin: 0;
-  font-size: 0.76rem;
 }
 
 .desktop-model-section-header__actions,
 .desktop-model-section-header__trailing {
   display: flex;
   gap: 0.45rem;
-}
-
-.desktop-model-section-header__trailing {
-  margin-left: auto;
 }
 </style>

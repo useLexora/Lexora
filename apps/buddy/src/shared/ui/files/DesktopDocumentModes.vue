@@ -30,7 +30,7 @@ function navigate(event: KeyboardEvent, index: number) {
 </script>
 
 <template>
-  <div v-if="modes.length > 1" class="desktop-document-modes" role="tablist">
+  <div v-if="modes.length > 1" class="desktop-document-modes inline-flex flex-none gap-[2px] p-[2px] rounded-[6px] bg-subtle" role="tablist">
     <NTooltip v-for="(item, index) in modes" :key="item" trigger="hover" :delay="350">
       <template #trigger>
         <button type="button" role="tab" :data-testid="`document-mode-${item}`" :aria-label="labels[item]" :aria-selected="mode === item" :tabindex="mode === item ? 0 : -1" :class="{ 'is-active': mode === item }" @click="mode = item" @keydown="navigate($event, index)">
@@ -42,8 +42,7 @@ function navigate(event: KeyboardEvent, index: number) {
   </div>
 </template>
 
-<style scoped>
-.desktop-document-modes { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 6px; background: var(--buddy-surface-subtle); }
+<style scoped lang="scss">
 .desktop-document-modes > button { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--buddy-text-secondary); cursor: pointer; }
 .desktop-document-modes > button:hover { color: var(--buddy-text-strong); }
 .desktop-document-modes > button.is-active { background: var(--buddy-surface-base); color: var(--buddy-text-strong); font-weight: 600; }

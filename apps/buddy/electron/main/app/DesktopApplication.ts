@@ -120,10 +120,10 @@ class DesktopApplication {
       }, ['desktop.browser_adapter'])
       await host.step('desktop.features', () => this.#integrations.applyConfig(config), ['desktop.runtime'])
       this.#runtime.start()
-      await host.start('desktop.integrations', ({ defer }) => {
+      await host.start('desktop.integrations', async ({ defer }) => {
         defer(() => this.#integrations.destroyTray())
         defer(() => this.#integrations.stopSubscriptions())
-        this.#integrations.start()
+        await this.#integrations.start()
       }, ['desktop.runtime'])
       return host.start('desktop.window', ({ defer }) => {
         defer(() => this.#windows.close())

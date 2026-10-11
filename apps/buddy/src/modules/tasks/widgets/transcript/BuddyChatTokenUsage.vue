@@ -32,10 +32,10 @@ const metrics = computed(() => [
   <NPopover v-model:show="showDetails" :delay="300" to=".buddy-app" trigger="hover">
     <template #trigger>
       <dl
-        v-bind="$attrs" class="buddy-chat-token-usage" :class="{ 'is-compact': compact }" tabindex="0"
+        v-bind="$attrs" class="buddy-chat-token-usage inline-flex flex-none min-w-0 items-center gap-3 m-0 text-muted leading-[1] focus-visible:outline-solid focus-visible:outline-1 focus-visible:outline-focus focus-visible:outline-offset-[3px] focus-visible:rounded-micro" :class="{ 'is-compact': compact }" tabindex="0"
         @focus="showDetails = true" @blur="showDetails = false" @keydown.esc="showDetails = false"
       >
-        <div v-for="metric in metrics" :key="metric.key" class="buddy-chat-token-usage__metric" :data-usage-metric="metric.key">
+        <div v-for="metric in metrics" :key="metric.key" class="buddy-chat-token-usage__metric flex items-center gap-[0.25em] whitespace-nowrap" :data-usage-metric="metric.key">
           <dt :aria-label="metric.label">
             <DesktopIcon :component="metric.icon" aria-hidden="true" />
           </dt>
@@ -49,22 +49,8 @@ const metrics = computed(() => [
 
 <style scoped lang="scss">
 .buddy-chat-token-usage {
-  display: inline-flex;
-  flex: none;
-  min-width: 0;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0;
-  color: var(--buddy-text-muted);
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
-
-  &:focus-visible {
-    outline: 1px solid var(--buddy-focus-ring);
-    outline-offset: 3px;
-    border-radius: var(--buddy-radius-micro);
-  }
 
   &.is-compact {
     gap: 6px;
@@ -73,11 +59,6 @@ const metrics = computed(() => [
 }
 
 .buddy-chat-token-usage__metric {
-  display: flex;
-  align-items: center;
-  gap: 0.25em;
-  white-space: nowrap;
-
   dt {
     display: flex;
     align-items: center;

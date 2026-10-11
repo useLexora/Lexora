@@ -45,14 +45,14 @@ function handleAction(key: string | number) {
 </script>
 
 <template>
-  <article class="extension-card" :data-extension-id="item.manifest.id">
-    <header class="extension-card__header">
+  <article class="extension-card flex min-w-0 flex-col gap-[12px] border-1 border-solid border-border rounded-micro bg-surface p-[16px]" :data-extension-id="item.manifest.id">
+    <header class="flex min-w-0 items-start justify-between gap-[12px]">
       <DesktopPluginIcon :src="item.iconUrl" :size="28" />
-      <div class="extension-card__identity">
-        <h2 class="extension-card__name">
+      <div class="min-w-0 flex-1">
+        <h2 class="m-0 text-strong text-[14px] font-600 leading-[1.5] [overflow-wrap:anywhere]">
           {{ item.manifest.name }}
         </h2>
-        <p class="extension-card__meta">
+        <p class="extension-card__meta flex min-w-0 items-center gap-[8px] mt-[4px] mr-0 mb-0 ml-0 text-muted text-[11px]">
           <span>{{ item.manifest.version }}</span>
           <NEllipsis class="extension-card__author">
             {{ item.manifest.author || (language === 'en-US' ? 'Unsigned' : '未署名') }}
@@ -66,11 +66,11 @@ function handleAction(key: string | number) {
     <NEllipsis v-if="item.manifest.description" class="extension-card__description" :line-clamp="2">
       {{ item.manifest.description }}
     </NEllipsis>
-    <p v-if="item.pending" class="extension-card__pending">
+    <p v-if="item.pending" class="extension-card__pending text-accent-text">
       {{ labels.pending }} {{ item.pending.manifest.version }}
     </p>
-    <code v-if="item.error" class="extension-card__error">{{ item.error }}</code>
-    <footer class="extension-card__actions">
+    <code v-if="item.error" class="extension-card__error text-danger">{{ item.error }}</code>
+    <footer class="flex min-w-0 flex-wrap items-center gap-[4px] mt-auto pt-[4px]">
       <NButton v-if="canOpen" size="small" secondary :disabled="busy" @click="emit('open')">
         {{ language === 'en-US' ? 'Open' : '打开' }}
       </NButton>
@@ -88,18 +88,11 @@ function handleAction(key: string | number) {
   </article>
 </template>
 
-<style scoped>
-.extension-card { display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid var(--buddy-border-subtle); border-radius: var(--buddy-radius-micro); background: var(--buddy-surface-base); padding: 16px; }
-.extension-card__header { display: flex; min-width: 0; align-items: start; justify-content: space-between; gap: 12px; }
-.extension-card__identity { min-width: 0; flex: 1; }
-.extension-card__name { margin: 0; color: var(--buddy-text-strong); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
-.extension-card__meta { display: flex; min-width: 0; align-items: center; gap: 8px; margin: 4px 0 0; color: var(--buddy-text-secondary); font-size: 11px; }
+<style scoped lang="scss">
 .extension-card__author { min-width: 0; }
 .extension-card__meta > span:first-child, .extension-card__status { flex: none; }
 .extension-card__description { color: var(--buddy-text-secondary); font-size: 13px; line-height: 1.6; }
 .extension-card__pending, .extension-card__error { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.extension-card__pending { color: var(--buddy-accent-text); }
-.extension-card__error { color: var(--buddy-status-danger-text); }
-.extension-card__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: auto; padding-top: 4px; }
+
 .extension-card__more { flex: none; width: 28px; height: 28px; margin-left: auto; padding: 0; }
 </style>

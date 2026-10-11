@@ -49,13 +49,13 @@ async function selectChangeFile(id: string) {
       <DesktopChangeToolbar v-model:range="changeView.range" :language="language" :added="changes.counts.value.added" :deleted="changes.counts.value.deleted" :can-show-turn="Boolean(changeTab.changeSet)" :all-collapsed="allCollapsed" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" :tree-visible="changeView.treeVisible" @toggle-all="changes.toggleAll" @toggle-wrap="changeView.wrap = !changeView.wrap" @toggle-layout="changeView.sideBySide = !changeView.sideBySide" @toggle-tree="changeView.treeVisible = !changeView.treeVisible" />
     </template>
     <DesktopContextSplit v-model:width="changeView.treeWidth" :tree-visible="changeView.treeVisible">
-      <div v-if="changeView.loading" class="context-resource-state">
+      <div v-if="changeView.loading" class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted">
         <NSpin size="small" />
       </div>
-      <div v-else-if="changeView.failed" class="context-resource-state">
+      <div v-else-if="changeView.failed" class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted">
         {{ t('desktop.context.changesLoadFailed') }}
       </div>
-      <div v-else-if="!changeView.detail?.files.length" class="context-resource-state">
+      <div v-else-if="!changeView.detail?.files.length" class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted">
         {{ t('desktop.context.noCapturedChanges') }}
       </div>
       <DesktopChangeList v-else ref="changeList" :files="changeView.detail.files" :language="language" :collapsed-files="changeView.collapsedFiles" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" @toggle="changes.toggleFile" />
@@ -66,6 +66,6 @@ async function selectChangeFile(id: string) {
   </WorkbenchPanelContent>
 </template>
 
-<style scoped>
-.context-resource-state { display: grid; flex: 1; min-width: 0; min-height: 0; place-content: center; padding: 20px; font-size: 12px; color: var(--buddy-text-muted); }
+<style scoped lang="scss">
+.context-resource-state { place-content: center; }
 </style>

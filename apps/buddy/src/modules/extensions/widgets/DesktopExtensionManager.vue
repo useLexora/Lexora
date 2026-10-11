@@ -115,7 +115,7 @@ onScopeDispose(cancel)
           </template>
         </NButton>
       </NDropdown>
-      <div class="extension-manager__acquisition-split">
+      <div class="inline-flex items-stretch">
         <NButton class="extension-manager__create-button" type="primary" size="small" :disabled="busy" data-testid="extension-create" @click="create">
           <template #icon>
             <DesktopIcon :component="Wand20Regular" :size="16" />
@@ -147,7 +147,7 @@ onScopeDispose(cancel)
         </NButton>
       </template>
     </NEmpty>
-    <div v-else-if="section === 'installed' && installed.length" class="extension-manager__grid">
+    <div v-else-if="section === 'installed' && installed.length" class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] items-stretch gap-[12px]">
       <DesktopExtensionCard
         v-for="item in installed"
         :key="item.manifest.id"
@@ -185,7 +185,7 @@ onScopeDispose(cancel)
       <p v-if="!selected.logs.length">
         {{ labels.noLogs }}
       </p>
-      <ol class="extension-dialog__logs">
+      <ol class="pl-[20px] max-h-[320px] overflow-auto text-[12px] leading-[1.8]">
         <li v-for="(entry, index) in selected.logs" :key="index">
           <time>{{ new Date(entry.time).toLocaleTimeString() }}</time> <code>{{ entry.event }} {{ entry.code }} {{ entry.durationMs !== undefined ? `${entry.durationMs} ms` : '' }}</code>
         </li>
@@ -196,13 +196,13 @@ onScopeDispose(cancel)
 
 <style scoped lang="scss">
 .extension-manager__more { width: 28px; height: 28px; padding: 0; }
-.extension-manager__acquisition-split { display: inline-flex; align-items: stretch; }
+
 .extension-manager__create-button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .extension-manager__acquisition-arrow { width: 28px; margin-left: 1px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .extension-manager__acquisition-chevron { transition: transform 140ms ease; }
 .extension-manager__acquisition-chevron.is-open { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .extension-manager__acquisition-chevron { transition: none; } }
-.extension-manager__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); align-items: stretch; gap: 12px; }
+
 .extension-manager__empty {
   min-height: 360px;
   margin: 0;
@@ -212,6 +212,6 @@ onScopeDispose(cancel)
   strong { color: var(--buddy-text-strong); font-size: 16px; }
   p { margin: 0 0 6px; line-height: 1.6; }
 }
-.extension-dialog__logs { padding-left: 20px; max-height: 320px; overflow: auto; font-size: 12px; line-height: 1.8; }
+
 :global(.extension-dialog) { width: min(560px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; }
 </style>

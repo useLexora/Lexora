@@ -1,3 +1,4 @@
+import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionViewState } from './ExtensionViewState'
 
 const token = location.hostname
@@ -79,12 +80,21 @@ async function initialize() {
       document.body.style.overflow = 'hidden'
     }
     applyEnvironment(state.snapshot.environment)
+    await Promise.all((initial.styles ?? []).map(href => new Promise((resolve, reject) => {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = `/__package/${href}`
+      link.onload = resolve
+      link.onerror = () => reject(new Error('EXTENSION_VIEW_STYLES_FAILED'))
+      document.head.append(link)
+    })))
     const entry = await import(`/__package/${initial.entry}`)
     const controller = new AbortController()
     addEventListener('pagehide', () => controller.abort(), { once: true })
     const api = Object.freeze({
       apiVersion: initial.apiVersion,
       events,
+      themes: createThemeClient(input => request('themes.request', input), listener => events.on('view:environment:changed', listener)),
       instanceId: initial.instanceId,
       interaction: interactionId ? Object.freeze({ id: interactionId, setRegions: regions => request('interaction.setRegions', regions), onActivate: listener => events.on('interaction:activated', ({ data }) => listener({ id: data.regionId, x: data.x, y: data.y })) }) : null,
       onMessage: listener => events.on('view:message:received', event => listener(event.data.message)),

@@ -19,7 +19,7 @@ const cachedTools = computed(() => props.connector.runtime.updatedAt !== null &&
 </script>
 
 <template>
-  <article class="mcp-connection" :aria-label="connector.name">
+  <article class="mcp-connection border-1 border-solid border-border rounded-3 py-[1.1rem] px-[1.2rem] min-w-0" :aria-label="connector.name">
     <header>
       <div class="mcp-connection__identity">
         <h2>{{ connector.name }}</h2>
@@ -34,19 +34,19 @@ const cachedTools = computed(() => props.connector.runtime.updatedAt !== null &&
         {{ t(connector.enabled ? 'desktop.mcp.disableHint' : 'desktop.mcp.enableHint') }}
       </NTooltip>
     </header>
-    <p class="mcp-connection__target" :title="target">
+    <p class="font-mono overflow-hidden text-ellipsis whitespace-nowrap mt-[0.85rem] mr-0 mb-[0.35rem] ml-0 text-[0.8rem] text-muted" :title="target">
       {{ target }}
     </p>
-    <p class="mcp-connection__meta">
+    <p class="flex gap-[0.4rem] m-0 text-[0.78rem] text-muted">
       {{ t(connector.transport === 'stdio' ? 'desktop.mcp.stdio' : 'desktop.mcp.http') }}
       <span>·</span> {{ connector.runtime.updatedAt === null ? t('desktop.mcp.noCatalog') : t(cachedTools ? 'desktop.mcp.cachedToolsCount' : 'desktop.mcp.toolsCount', { count: connector.runtime.toolCount }) }}
       <span>·</span> {{ t(`desktop.mcp.exposure.${connector.toolExposure}`) }}
       <span v-if="connector.credentialConfigured">· {{ t('desktop.mcp.configured') }}</span>
     </p>
-    <p v-if="connector.runtime.errorCode" class="mcp-connection__error">
+    <p v-if="connector.runtime.errorCode" class="text-warning text-[0.82rem] mt-[0.65rem] mr-0 mb-0 ml-0">
       {{ t(`desktop.mcp.error.${connector.runtime.errorCode}`) }}
     </p>
-    <p v-if="connector.enabled && connector.toolExposure === 'codemode' && !codemodeEnabled" class="mcp-connection__error">
+    <p v-if="connector.enabled && connector.toolExposure === 'codemode' && !codemodeEnabled" class="text-warning text-[0.82rem] mt-[0.65rem] mr-0 mb-0 ml-0">
       {{ t('desktop.mcp.codemodeDisabled') }}
     </p>
     <footer>
@@ -89,14 +89,10 @@ const cachedTools = computed(() => props.connector.runtime.updatedAt !== null &&
   </article>
 </template>
 
-<style scoped>
-.mcp-connection { border: 1px solid var(--buddy-border-subtle); border-radius: 0.75rem; padding: 1.1rem 1.2rem; min-width: 0; }
+<style scoped lang="scss">
 .mcp-connection header, .mcp-connection__identity { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
 .mcp-connection header { justify-content: space-between; }
 .mcp-connection h2 { margin: 0; font-size: 0.95rem; font-weight: 600; overflow-wrap: anywhere; }
-.mcp-connection__target { font-family: var(--buddy-font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0.85rem 0 0.35rem; font-size: 0.8rem; color: var(--buddy-text-secondary); }
-.mcp-connection__meta { display: flex; gap: 0.4rem; margin: 0; font-size: 0.78rem; color: var(--buddy-text-secondary); }
-.mcp-connection__error { color: var(--buddy-status-warning-text); font-size: 0.82rem; margin: 0.65rem 0 0; }
 .mcp-connection footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; border-top: 1px solid var(--buddy-border-subtle); margin-top: 1rem; padding-top: 0.65rem; }
 .mcp-connection footer > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
 </style>

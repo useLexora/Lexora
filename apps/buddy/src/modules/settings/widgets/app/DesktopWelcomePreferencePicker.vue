@@ -52,7 +52,7 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
   >
     <template #trigger>
       <button
-        class="desktop-welcome-preference-picker__trigger"
+        class="desktop-welcome-preference-picker__trigger grid w-full min-w-0 min-h-[2.35rem] grid-cols-[minmax(0,_1fr)_auto] items-center gap-[0.65rem] border-1 border-solid border-border-strong rounded-1 bg-raised text-fg py-[0.35rem] px-[0.65rem] text-[0.8rem] text-left hover:border-accent-border"
         type="button"
         aria-haspopup="dialog"
         :aria-expanded="panelOpen"
@@ -67,19 +67,19 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
     </template>
 
     <section
-      class="desktop-welcome-preference-picker__panel"
+      class="w-[min(34rem,_calc(100vw_-_2rem))] overflow-hidden border-1 border-solid border-border rounded-[0.65rem] bg-raised shadow-overlay p-[0.8rem]"
       role="dialog"
       :aria-label="t('desktop.settings.welcome')"
     >
-      <header class="desktop-welcome-preference-picker__header">
+      <header class="desktop-welcome-preference-picker__header flex items-center min-h-[1.8rem] text-strong">
         <strong>{{ t('desktop.settings.welcome') }}</strong>
       </header>
 
-      <div class="desktop-welcome-preference-picker__modes">
+      <div class="grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0.65rem]">
         <button
           v-for="preference in defaultPreferences"
           :key="preference"
-          class="desktop-welcome-preference-picker__mode"
+          class="desktop-welcome-preference-picker__mode w-full min-h-[2.55rem] border-1 border-solid border-border rounded-[0.45rem] bg-surface text-fg text-[0.78rem] font-600 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
           :class="{ 'is-selected': value === preference }"
           type="button"
           :aria-pressed="value === preference"
@@ -90,13 +90,13 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
         </button>
       </div>
 
-      <div class="desktop-welcome-preference-picker__specific">
+      <div class="desktop-welcome-preference-picker__specific grid gap-[0.55rem] border-t-1 border-t-solid border-t-border mt-3 pt-[0.7rem]">
         <strong>{{ t('desktop.settings.welcomeSpecific') }}</strong>
-        <div class="desktop-welcome-preference-picker__options" role="group">
+        <div class="desktop-welcome-preference-picker__options flex gap-[0.65rem] overflow-x-auto pt-[0.1rem] pr-[0.1rem] pb-[0.45rem] pl-[0.1rem]" role="group">
           <button
             v-for="variant in DESKTOP_CHAT_WELCOME_VARIANTS"
             :key="variant.id"
-            class="desktop-welcome-preference-picker__option"
+            class="desktop-welcome-preference-picker__option grid min-h-43 grid-rows-[7.6rem_minmax(2.25rem,_auto)] items-center gap-[0.2rem] border-1 border-solid border-border rounded-2 bg-surface text-fg pt-[0.35rem] pr-2 pb-[0.55rem] pl-2 text-center focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
             :class="{ 'is-selected': value === variant.id }"
             type="button"
             :aria-pressed="value === variant.id"
@@ -104,7 +104,7 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
             @click="selectPreference(variant.id)"
           >
             <img
-              class="desktop-welcome-preference-picker__illustration"
+              class="desktop-welcome-preference-picker__illustration w-[7.4rem] h-[7.4rem] select-none"
               :src="variant.illustrationUrl"
               alt=""
               draggable="false"
@@ -119,21 +119,6 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
 
 <style scoped lang="scss">
 .desktop-welcome-preference-picker__trigger {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  min-height: 2.35rem;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.65rem;
-  border: 1px solid var(--buddy-border-strong);
-  border-radius: 0.25rem;
-  background: var(--buddy-surface-raised);
-  color: var(--buddy-text-primary);
-  padding: 0.35rem 0.65rem;
-  font: inherit;
-  font-size: 0.8rem;
-  text-align: left;
   transition:
     border-color 100ms ease,
     box-shadow 100ms ease;
@@ -142,10 +127,6 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  &:hover {
-    border-color: var(--buddy-accent-border);
   }
 
   &:focus-visible {
@@ -164,44 +145,14 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
   }
 }
 
-.desktop-welcome-preference-picker__panel {
-  width: min(34rem, calc(100vw - 2rem));
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-overlay);
-  padding: 0.8rem;
-}
-
 .desktop-welcome-preference-picker__header {
-  display: flex;
-  align-items: center;
-  min-height: 1.8rem;
-  color: var(--buddy-text-strong);
-
   strong {
     font-size: 0.82rem;
     font-weight: 600;
   }
 }
 
-.desktop-welcome-preference-picker__modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
-}
-
 .desktop-welcome-preference-picker__mode {
-  width: 100%;
-  min-height: 2.55rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.45rem;
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-primary);
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 600;
   transition:
     background-color 100ms ease,
     border-color 100ms ease,
@@ -214,11 +165,6 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
   &:not(:disabled):hover {
     border-color: var(--buddy-accent-border);
     background: var(--buddy-accent-surface);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
   }
 
   &.is-selected {
@@ -229,12 +175,6 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
 }
 
 .desktop-welcome-preference-picker__specific {
-  display: grid;
-  gap: 0.55rem;
-  border-top: 1px solid var(--buddy-border-subtle);
-  margin-top: 0.75rem;
-  padding-top: 0.7rem;
-
   > strong {
     color: var(--buddy-text-secondary);
     font-size: 0.7rem;
@@ -243,30 +183,15 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
 }
 
 .desktop-welcome-preference-picker__options {
-  display: flex;
-  gap: 0.65rem;
-  overflow-x: auto;
   overscroll-behavior-inline: contain;
-  padding: 0.1rem 0.1rem 0.45rem;
   scroll-snap-type: inline proximity;
   scrollbar-color: var(--buddy-border-strong) transparent;
   scrollbar-width: thin;
 }
 
 .desktop-welcome-preference-picker__option {
-  display: grid;
-  min-height: 10.75rem;
   flex: 0 0 9.75rem;
-  grid-template-rows: 7.6rem minmax(2.25rem, auto);
-  align-items: center;
-  gap: 0.2rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.5rem;
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-primary);
-  padding: 0.35rem 0.5rem 0.55rem;
   scroll-snap-align: start;
-  text-align: center;
   transition:
     background-color 100ms ease,
     border-color 100ms ease,
@@ -279,11 +204,6 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
   &:not(:disabled):hover {
     border-color: var(--buddy-accent-border);
     background: var(--buddy-accent-surface);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
   }
 
   &.is-selected {
@@ -303,10 +223,7 @@ function selectPreference(preference: DesktopChatWelcomePreference) {
 }
 
 .desktop-welcome-preference-picker__illustration {
-  width: 7.4rem;
-  height: 7.4rem;
   place-self: center;
   object-fit: contain;
-  user-select: none;
 }
 </style>

@@ -19,8 +19,8 @@ const input = computed<ExtensionViewInput | null>(() => {
 </script>
 
 <template>
-  <section class="extension-page" :data-extension-page="extensionId">
-    <header class="extension-page__header">
+  <section class="extension-page flex flex-col w-full h-full min-h-0" :data-extension-page="extensionId">
+    <header class="flex items-center flex-none py-0 px-[20px] border-b-1 border-b-solid border-b-border text-[14px] text-strong min-h-region-header">
       <strong>{{ plugin?.manifest.contributes.navigation?.title ?? (language === 'en-US' ? 'Plugin' : '插件') }}</strong>
     </header>
     <DesktopExtensionSurface v-if="input" :input="input" visible />
@@ -34,8 +34,6 @@ const input = computed<ExtensionViewInput | null>(() => {
   </section>
 </template>
 
-<style scoped>
-.extension-page { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
-.extension-page__header { display: flex; align-items: center; min-height: var(--buddy-region-header-height); flex: none; padding: 0 20px; border-bottom: 1px solid var(--buddy-border-subtle); font-size: 14px; color: var(--buddy-text-strong); }
+<style scoped lang="scss">
 .extension-page__empty { margin: auto; }
 </style>

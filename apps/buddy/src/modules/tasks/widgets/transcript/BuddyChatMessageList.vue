@@ -144,13 +144,13 @@ onBeforeUnmount(clearOutlineHighlight)
 
 <template>
   <div
-    class="buddy-chat-message-list"
+    class="buddy-chat-message-list relative h-full min-w-0 min-h-0"
     role="log"
     @click.capture="handleReaderLayoutIntent"
   >
     <div
       v-if="isLoadingOlderMessages"
-      class="buddy-chat-message-list__history-status"
+      class="buddy-chat-message-list__history-status absolute z-2 top-[0.45rem] left-[50%] flex items-center gap-[0.4rem] whitespace-nowrap border-1 border-solid border-border rounded-micro bg-raised text-muted text-[0.68rem] py-1 px-[0.6rem] pointer-events-none"
       role="status"
     >
       <NSpin :size="14" />
@@ -267,29 +267,7 @@ onBeforeUnmount(clearOutlineHighlight)
 </template>
 
 <style scoped lang="scss">
-.buddy-chat-message-list {
-  position: relative;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
 .buddy-chat-message-list__history-status {
-  position: absolute;
-  z-index: 2;
-  top: 0.45rem;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  white-space: nowrap;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  color: var(--buddy-text-secondary);
-  font-size: 0.68rem;
-  padding: 0.25rem 0.6rem;
-  pointer-events: none;
   transform: translateX(-50%);
 }
 

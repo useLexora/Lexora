@@ -14,7 +14,7 @@ onErrorCaptured(() => {
 </script>
 
 <template>
-  <div v-if="failed" class="workbench-view-error" role="alert">
+  <div v-if="failed" class="workbench-view-error m-auto p-[24px] text-muted text-center" role="alert">
     <p>{{ labels.failed }}</p>
     <button type="button" @click="failed = false; attempt++">
       {{ labels.retry }}
@@ -22,7 +22,3 @@ onErrorCaptured(() => {
   </div>
   <slot v-else :key="attempt" />
 </template>
-
-<style scoped>
-.workbench-view-error { margin: auto; padding: 24px; color: var(--buddy-text-secondary); text-align: center; }
-</style>

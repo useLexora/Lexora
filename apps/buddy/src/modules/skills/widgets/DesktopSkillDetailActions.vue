@@ -22,13 +22,13 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
 </script>
 
 <template>
-  <div class="skill-detail__actions">
+  <div class="flex flex-none items-center gap-1 text-muted">
     <DesktopContextAction v-if="showSource" :icon="source ? Eye20Regular : Code20Regular" :label="t(source ? 'desktop.skills.detail.rendered' : 'desktop.skills.detail.source')" :active="source" @click="source = !source" />
     <DesktopContextAction :icon="FolderOpen20Regular" :label="t('desktop.skills.reveal')" :disabled="busy" @click="$emit('reveal')" />
     <DesktopContextAction v-if="spaceId && !skill.spaceId" :icon="Globe20Regular" :label="t('desktop.skills.manageGlobal')" @click="$emit('global')" />
     <NTooltip v-if="skill.canUpdate" :delay="350">
       <template #trigger>
-        <span class="skill-detail__action">
+        <span class="skill-detail__action inline-flex">
           <NButton class="buddy-icon-button" quaternary :disabled="mutationDisabled" :aria-label="t('desktop.skills.update')" @click="$emit('update')">
             <template #icon>
               <DesktopIcon :component="ArrowSync20Regular" />
@@ -40,7 +40,7 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
     </NTooltip>
     <NTooltip v-if="skill.canRemove" :delay="350">
       <template #trigger>
-        <span class="skill-detail__action">
+        <span class="skill-detail__action inline-flex">
           <NPopconfirm :disabled="mutationDisabled" @positive-click="$emit('remove')">
             <template #trigger>
               <NButton class="buddy-icon-button skill-detail__remove" quaternary :disabled="mutationDisabled" :aria-label="t('desktop.skills.remove')">
@@ -58,9 +58,7 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
   </div>
 </template>
 
-<style scoped>
-.skill-detail__actions { display: flex; flex: none; align-items: center; gap: 0.25rem; color: var(--buddy-text-secondary); }
-.skill-detail__action { display: inline-flex; }
+<style scoped lang="scss">
 .skill-detail__action .n-button { width: 28px; height: 28px; }
 .skill-detail__remove:not(:disabled):hover { color: var(--buddy-status-danger-text); }
 </style>

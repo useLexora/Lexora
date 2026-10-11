@@ -12,17 +12,12 @@ export interface WorkbenchConfiguration {
   defaultValue: boolean | number | string
   validate: (value: unknown) => boolean
 }
-export interface WorkbenchTheme {
-  id: string
-  colorScheme: 'light' | 'dark'
-  tokens: Readonly<Record<string, string>>
-}
 
 export interface ContributionChange {
   readonly revision: number
   readonly owner: string
   readonly kind: 'registered' | 'removed'
-  readonly ids: Readonly<Record<'views' | 'placements' | 'commands' | 'configurations' | 'themes', readonly string[]>>
+  readonly ids: Readonly<Record<'views' | 'placements' | 'commands' | 'configurations', readonly string[]>>
 }
 
 interface Registration {
@@ -37,12 +32,10 @@ export class ContributionRegistry {
   readonly #placements = new Map<string, EventSnapshot<ViewPlacement>>()
   readonly #commands = new Map<string, EventSnapshot<WorkbenchCommand>>()
   readonly #configurations = new Map<string, EventSnapshot<WorkbenchConfiguration>>()
-  readonly #themes = new Map<string, EventSnapshot<WorkbenchTheme>>()
   readonly views = new ReadonlyMapView(this.#views)
   readonly placements = new ReadonlyMapView(this.#placements)
   readonly commands = new ReadonlyMapView(this.#commands)
   readonly configurations = new ReadonlyMapView(this.#configurations)
-  readonly themes = new ReadonlyMapView(this.#themes)
   readonly #owners = new Map<string, Registration>()
   readonly #changes: Emitter<ContributionChange>
   readonly onDidChange
@@ -65,7 +58,6 @@ export class ContributionRegistry {
     placement: (placement: ViewPlacement) => void
     command: (command: WorkbenchCommand) => void
     configuration: (configuration: WorkbenchConfiguration) => void
-    theme: (theme: WorkbenchTheme) => void
     cleanup: (cleanup: Cleanup) => void
     signal: AbortSignal
   }) => void): Cleanup {
@@ -75,7 +67,7 @@ export class ContributionRegistry {
       throw new Error(`Contribution already registered: ${owner}`)
     const scope = new DisposableScope()
     const staged = new Map<Map<string, unknown>, Map<string, unknown>>()
-    const ids = { views: [] as string[], placements: [] as string[], commands: [] as string[], configurations: [] as string[], themes: [] as string[] }
+    const ids = { views: [] as string[], placements: [] as string[], commands: [] as string[], configurations: [] as string[] }
     const registration: Registration = { scope, entries: staged, ids, committed: false }
     const add = <T>(kind: keyof typeof ids, map: Map<string, EventSnapshot<T>>, id: string, value: T) => {
       if (scope.signal.aborted || registration.committed)
@@ -94,7 +86,6 @@ export class ContributionRegistry {
         placement: placement => add('placements', this.#placements, placement.id, placement),
         command: command => add('commands', this.#commands, command.id, command),
         configuration: configuration => add('configurations', this.#configurations, configuration.id, configuration),
-        theme: theme => add('themes', this.#themes, theme.id, theme),
         cleanup: cleanup => scope.add(cleanup),
         signal: scope.signal,
       })

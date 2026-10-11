@@ -2,16 +2,18 @@
 import type { LexoraConfigPatch } from '@buddy-electron/shared/desktopApi'
 import type { GeneralSettingField } from '../../model/settingsRegistry'
 import { NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
-import { computed, shallowRef, useId } from 'vue'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useSettingsContext } from '../../settingsContext'
+import { useSettingMutation } from '../../state/useSettingMutation'
+import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 
 const props = defineProps<{ field: GeneralSettingField }>()
 const { applicationSettings: { config, language, updateSettings } } = useSettingsContext()
 const { languageOptions, t } = useBuddyI18n(language)
 const message = useMessage()
-const pending = shallowRef(false)
-const labelId = useId()
+const { pending: pendingFields, save: saveSetting } = useSettingMutation<GeneralSettingField>(updateSettings, () => message.error(t('desktop.settings.saveFailed')))
+const pending = computed(() => pendingFields.value.has(props.field))
 const contextPanelModes = computed(() => [
   { label: t('desktop.settings.contextPanelTask'), value: 'task' },
   { label: t('desktop.settings.contextPanelSpace'), value: 'space' },
@@ -24,41 +26,17 @@ const labels = computed(() => ({
   pasteTextAsAttachment: { title: t('desktop.settings.pasteTextAsAttachment'), description: t('desktop.settings.pasteTextAsAttachmentDescription'), testId: 'paste-text-as-attachment-setting' },
 }))
 const isToggle = computed(() => props.field === 'contextPanelGlobal' || props.field === 'pasteTextAsAttachment')
-async function save(patch: LexoraConfigPatch) {
-  if (pending.value)
-    return
-  pending.value = true
-  try {
-    if (!await updateSettings(patch))
-      message.error(t('desktop.settings.saveFailed'))
-  }
-  finally { pending.value = false }
+function save(patch: LexoraConfigPatch) {
+  return saveSetting(props.field, patch)
 }
 </script>
 
 <template>
-  <div v-if="config" class="desktop-settings-row" :data-testid="labels[props.field].testId">
-    <div class="desktop-settings-row__copy">
-      <strong :id="labelId">{{ labels[field].title }}</strong>
-      <small v-if="labels[field].description">{{ labels[field].description }}</small>
-    </div>
-    <div class="desktop-settings-row__control" :class="{ 'desktop-settings-row__control--toggle': isToggle }">
-      <NSelect v-if="field === 'language'" :aria-labelledby="labelId" :options="languageOptions" :value="config.desktop.language" :disabled="pending" @update:value="save({ desktop: { language: $event } })" />
-      <NSelect v-else-if="field === 'contextPanelMode'" :aria-labelledby="labelId" :options="contextPanelModes" :value="config.desktop.contextPanelMode" :disabled="pending" @update:value="save({ desktop: { contextPanelMode: $event } })" />
-      <NSwitch v-else-if="field === 'contextPanelGlobal'" :aria-labelledby="labelId" :aria-disabled="pending" :round="false" :value="config.desktop.contextPanelGlobal" :loading="pending" :disabled="pending" @update:value="save({ desktop: { contextPanelGlobal: $event } })" />
-      <NSwitch v-else :aria-labelledby="labelId" :round="false" :value="config.desktop.chat.pasteTextAsAttachment" :loading="pending" :disabled="pending" @update:value="save({ desktop: { chat: { pasteTextAsAttachment: $event } } })" />
-      <NSpin v-if="pending && !isToggle" size="small" />
-    </div>
-  </div>
+  <DesktopSettingRow v-if="config" v-slot="{ controlAttrs }" :label="labels[field].title" :description="labels[field].description" :toggle="isToggle" :data-testid="labels[field].testId">
+    <NSelect v-if="field === 'language'" v-bind="controlAttrs" :options="languageOptions" :value="config.desktop.language" :disabled="pending" @update:value="save({ desktop: { language: $event } })" />
+    <NSelect v-else-if="field === 'contextPanelMode'" v-bind="controlAttrs" :options="contextPanelModes" :value="config.desktop.contextPanelMode" :disabled="pending" @update:value="save({ desktop: { contextPanelMode: $event } })" />
+    <NSwitch v-else-if="field === 'contextPanelGlobal'" v-bind="controlAttrs" :aria-disabled="pending" :round="false" :value="config.desktop.contextPanelGlobal" :loading="pending" :disabled="pending" @update:value="save({ desktop: { contextPanelGlobal: $event } })" />
+    <NSwitch v-else v-bind="controlAttrs" :round="false" :value="config.desktop.chat.pasteTextAsAttachment" :loading="pending" :disabled="pending" :aria-disabled="pending" @update:value="save({ desktop: { chat: { pasteTextAsAttachment: $event } } })" />
+    <NSpin v-if="pending && !isToggle" size="small" />
+  </DesktopSettingRow>
 </template>
-
-<style scoped>
-.desktop-settings-row { display: grid; min-height: 4rem; grid-template-columns: minmax(0, 1fr) minmax(10rem, 19rem); align-items: center; gap: 2rem; border-bottom: 1px solid var(--buddy-border-subtle); padding: 0.75rem 0.9rem; }
-.desktop-settings-row:last-child { border-bottom: 0; }
-.desktop-settings-row__copy { display: grid; gap: 0.25rem; }
-.desktop-settings-row strong { color: var(--buddy-text-primary); font-size: 0.8rem; font-weight: 600; }
-.desktop-settings-row small { color: var(--buddy-text-secondary); font-size: 0.7rem; line-height: 1.5; }
-.desktop-settings-row__control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.55rem; }
-.desktop-settings-row__control--toggle { grid-template-columns: auto; justify-items: end; }
-@container (max-width: 560px) { .desktop-settings-row { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; } }
-</style>

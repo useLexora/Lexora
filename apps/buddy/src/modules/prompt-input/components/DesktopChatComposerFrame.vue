@@ -13,7 +13,7 @@ withDefaults(defineProps<{
 
 <template>
   <div
-    class="desktop-chat-composer-frame"
+    class="desktop-chat-composer-frame w-full min-w-0 my-0 mx-auto"
     :class="{
       'is-expanded': expanded,
       'has-single-line-toolbar': singleLineToolbar,
@@ -21,20 +21,20 @@ withDefaults(defineProps<{
   >
     <slot name="attachments" />
 
-    <div class="desktop-chat-composer" :style="{ borderRadius }">
+    <div class="desktop-chat-composer relative w-full min-w-0 border-1 border-solid border-border-strong rounded-[6px] bg-composer text-composer-fg p-[0.65rem] focus-within:border-focus" :style="{ borderRadius }">
       <slot name="overlay" />
 
-      <div class="desktop-chat-composer__editor-wrap">
+      <div class="relative">
         <NScrollbar class="desktop-chat-composer__editor-scrollbar">
           <slot name="editor" />
         </NScrollbar>
       </div>
 
-      <div class="desktop-chat-composer__toolbar">
-        <div class="desktop-chat-composer__leading-actions">
+      <div class="desktop-chat-composer__toolbar flex-wrap justify-between gap-[0.55rem] min-h-control">
+        <div class="desktop-chat-composer__leading-actions max-w-full flex-wrap gap-[0.35rem]">
           <slot name="leading" />
         </div>
-        <div class="desktop-chat-composer__actions">
+        <div class="desktop-chat-composer__actions max-w-full justify-end gap-[0.35rem] ml-auto">
           <slot name="actions" />
         </div>
       </div>
@@ -50,30 +50,11 @@ withDefaults(defineProps<{
 .desktop-chat-composer-frame {
   --desktop-chat-composer-editor-padding-top: 0.35rem;
   --desktop-chat-composer-editor-padding-bottom: 0.35rem;
-
-  width: 100%;
-  min-width: 0;
-  margin: 0 auto;
   container: desktop-chat-composer / inline-size;
 }
 
 .desktop-chat-composer {
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--buddy-border-strong);
-  border-radius: 6px;
-  background: var(--buddy-surface-base);
-  padding: 0.65rem;
-  transition: border-color 120ms ease;
-
-  &:focus-within {
-    border-color: var(--buddy-focus-ring);
-  }
-}
-
-.desktop-chat-composer__editor-wrap {
-  position: relative;
+  transition: border-color 120ms ease
 }
 
 :deep(.desktop-chat-composer__editor-scrollbar) {
@@ -87,7 +68,7 @@ withDefaults(defineProps<{
   min-height: calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
   border: 0;
   outline: 0;
-  color: var(--buddy-text-strong);
+  color: var(--buddy-composer-fg);
   font-size: 0.9rem;
   line-height: 1.58;
   white-space: pre-wrap;
@@ -154,26 +135,6 @@ withDefaults(defineProps<{
   display: flex;
   min-width: 0;
   align-items: center;
-}
-
-.desktop-chat-composer__toolbar {
-  min-height: var(--buddy-composer-control-height);
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.55rem;
-}
-
-.desktop-chat-composer__actions {
-  max-width: 100%;
-  justify-content: flex-end;
-  gap: 0.35rem;
-  margin-left: auto;
-}
-
-.desktop-chat-composer__leading-actions {
-  max-width: 100%;
-  flex-wrap: wrap;
-  gap: 0.35rem;
 }
 
 .has-single-line-toolbar {

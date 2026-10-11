@@ -140,7 +140,7 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
 </script>
 
 <template>
-  <div class="file-editor" :data-dirty="copy?.dirty">
+  <div class="file-editor flex flex-1 min-h-0 min-w-0 flex-col" :data-dirty="copy?.dirty">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
@@ -168,20 +168,18 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
     </div>
     <DesktopDocumentContent :mode="mode" :name="view.title" :text="copy?.text ?? ''" :language="language" :write-clipboard-text="writeClipboardText">
       <template #source>
-        <div ref="container" class="file-editor__monaco" data-testid="workbench-text-editor" />
+        <div ref="container" class="flex-1 min-h-0" data-testid="workbench-text-editor" />
       </template>
     </DesktopDocumentContent>
-    <footer v-if="mode === 'edit' || copy?.dirty" class="file-editor__status">
+    <footer v-if="mode === 'edit' || copy?.dirty" class="flex-none py-[3px] px-[12px] text-muted border-t-1 border-t-solid border-t-border text-[10px]">
       {{ copy?.loading ? labels.loading : copy?.dirty ? labels.dirty : labels.saved }} · UTF-8
     </footer>
   </div>
 </template>
 
-<style scoped>
-.file-editor { display: flex; flex: 1; min-height: 0; min-width: 0; flex-direction: column; }
+<style scoped lang="scss">
 .file-editor__conflict button, .file-editor__error button { padding: 3px 7px; background: var(--buddy-state-hover); border: 1px solid var(--buddy-border-subtle); border-radius: 4px; color: var(--buddy-text-secondary); cursor: pointer; }
-.file-editor__monaco { flex: 1; min-height: 0; }
+
 .file-editor__conflict, .file-editor__error { padding: 10px 14px; font-size: 12px; background: var(--buddy-state-hover); }
 .file-editor__conflict pre { max-height: 150px; overflow: auto; white-space: pre-wrap; }
-.file-editor__status { flex: none; padding: 3px 12px; color: var(--buddy-text-secondary); border-top: 1px solid var(--buddy-border-subtle); font-size: 10px; }
 </style>

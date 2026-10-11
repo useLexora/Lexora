@@ -39,7 +39,7 @@ const cacheLabel = computed(() => cacheRate.value === null ? '—' : new Intl.Nu
 </script>
 
 <template>
-  <div class="usage-dashboard">
+  <div class="usage-dashboard grid min-w-0 gap-[24px]">
     <NAlert v-if="analytics.error.value" type="error" :show-icon="false">
       {{ analytics.error.value }}
       <NButton size="small" @click="analytics.refresh">
@@ -47,9 +47,9 @@ const cacheLabel = computed(() => cacheRate.value === null ? '—' : new Intl.Nu
       </NButton>
     </NAlert>
     <template v-else>
-      <div class="usage-dashboard__overview">
-        <dl class="usage-summary">
-          <div v-for="metric in metrics" :key="metric.key" class="usage-summary__metric" :data-metric="metric.key">
+      <div class="usage-dashboard__overview flex items-center gap-[28px]">
+        <dl class="usage-summary grid min-w-0 flex-1 grid-cols-[repeat(4,_minmax(0,_1fr))] gap-[20px] m-0 pt-[2px] pr-0 pb-[4px] pl-0">
+          <div v-for="metric in metrics" :key="metric.key" class="usage-summary__metric min-w-0" :data-metric="metric.key">
             <dt>{{ metric.label }}</dt>
             <dd>
               <NTooltip v-if="analytics.overview.value.totals.recordCount">
@@ -57,8 +57,8 @@ const cacheLabel = computed(() => cacheRate.value === null ? '—' : new Intl.Nu
                   <strong>{{ formatUsageNumber(metric.value, language) }}</strong>
                 </template>
                 {{ new Intl.NumberFormat(language).format(metric.value) }}
-                <div v-if="metric.key === 'tokens'" class="usage-summary__breakdown">
-                  <div v-for="[key, value] in tokenBuckets" :key="key" class="usage-summary__bucket">
+                <div v-if="metric.key === 'tokens'" class="usage-summary__breakdown grid max-w-[290px] gap-[8px] mt-[12px]">
+                  <div v-for="[key, value] in tokenBuckets" :key="key" class="usage-summary__bucket flex justify-between gap-[24px]">
                     <span>{{ t(key) }}</span><span>{{ new Intl.NumberFormat(language).format(value) }}</span>
                   </div>
                   <p>{{ t('usageAnalytics.compositionNote') }}</p>
@@ -67,7 +67,7 @@ const cacheLabel = computed(() => cacheRate.value === null ? '—' : new Intl.Nu
               <strong v-else>—</strong>
             </dd>
           </div>
-          <div class="usage-summary__metric" data-metric="cache">
+          <div class="usage-summary__metric min-w-0" data-metric="cache">
             <dt>
               <NTooltip>
                 <template #trigger>
@@ -87,41 +87,34 @@ const cacheLabel = computed(() => cacheRate.value === null ? '—' : new Intl.Nu
         :period="analytics.period.value" :years="analytics.years.value" :loading="analytics.loading.value"
         @update:period="analytics.setPeriod"
       />
-      <div v-if="!analytics.overview.value.totals.recordCount" class="usage-dashboard__empty">
+      <div v-if="!analytics.overview.value.totals.recordCount" class="usage-dashboard__empty py-[20px] px-0 text-center">
         <strong>{{ t('usageAnalytics.empty') }}</strong><p>{{ t('usageAnalytics.emptyDescription') }}</p>
       </div>
       <template v-else>
-        <div class="usage-dashboard__annual">
+        <div class="usage-dashboard__annual grid min-w-0 grid-cols-[minmax(0,_1fr)_minmax(0,_1fr)] gap-[20px]">
           <DesktopUsageTasks :tasks="analytics.tasks.value" :loading="analytics.tasksLoading.value" :error="analytics.tasksError.value" :language="language" @open-task="emit('openTask', $event)" @retry="analytics.refresh" />
           <DesktopUsageModels :models="analytics.overview.value.models" :providers="providers" :catalog="catalog" :language="language" />
         </div>
         <DesktopUsageTrend :trend="analytics.trend" :language="language" />
       </template>
     </template>
-    <footer class="usage-dashboard__footnote">
+    <footer class="border-t-1 border-t-solid border-t-border pt-[16px] text-muted text-[11px] leading-[1.7]">
       {{ t('usageAnalytics.deletedNote') }}
     </footer>
   </div>
 </template>
 
-<style scoped>
-.usage-dashboard { display: grid; min-width: 0; gap: 24px; container: usage / inline-size; }
-.usage-dashboard__overview { display: flex; align-items: center; gap: 28px; }
-.usage-summary { display: grid; min-width: 0; flex: 1; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 0; padding: 2px 0 4px; }
-.usage-summary__metric { min-width: 0; }
+<style scoped lang="scss">
+.usage-dashboard { container: usage / inline-size; }
 .usage-summary dt { margin-bottom: 8px; color: var(--buddy-text-secondary); font-size: 12px; }
 .usage-summary dd { margin: 0; }
 .usage-summary strong { color: var(--buddy-text-strong); font-size: clamp(21px, 2.8cqi, 30px); font-variant-numeric: tabular-nums; font-weight: 550; line-height: 1.2; letter-spacing: -0.6px; }
 .usage-summary__metric:first-child strong { color: var(--buddy-accent-text); }
-.usage-summary__breakdown { display: grid; max-width: 290px; gap: 8px; margin-top: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.usage-summary__bucket { display: flex; justify-content: space-between; gap: 24px; }
+.usage-summary__breakdown { font-size: 12px; font-variant-numeric: tabular-nums; }
 .usage-summary__bucket > span:first-child { color: var(--buddy-text-secondary); }
 .usage-summary__breakdown p { margin: 4px 0 0; color: var(--buddy-text-secondary); font-size: 11px; line-height: 1.6; }
-.usage-dashboard__annual { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-.usage-dashboard__empty { padding: 20px 0; text-align: center; }
 .usage-dashboard__empty strong { color: var(--buddy-text-primary); font-size: 14px; font-weight: 500; }
 .usage-dashboard__empty p { color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
-.usage-dashboard__footnote { border-top: 1px solid var(--buddy-border-subtle); padding-top: 16px; color: var(--buddy-text-secondary); font-size: 11px; line-height: 1.7; }
 @container usage (max-width: 760px) {
   .usage-dashboard__overview { flex-wrap: wrap; gap: 20px; }
   .usage-summary { flex-basis: 100%; gap: 14px; }

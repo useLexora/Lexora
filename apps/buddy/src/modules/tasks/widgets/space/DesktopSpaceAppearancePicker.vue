@@ -79,7 +79,7 @@ function reset() {
     </template>
     <section
       ref="panel"
-      class="desktop-space-appearance-picker"
+      class="desktop-space-appearance-picker w-[246px] text-fg"
       role="dialog"
       :aria-label="t('desktop.tasks.spaceAppearance')"
       @keydown.esc.stop.prevent="close"
@@ -92,7 +92,7 @@ function reset() {
           {{ t('desktop.tasks.spaceIconFilled') }}
         </NRadioButton>
       </NRadioGroup>
-      <div class="desktop-space-appearance-picker__icons">
+      <div class="grid grid-cols-[repeat(6,_36px)] gap-[6px] mb-[16px]">
         <NButton
           v-for="value in visibleIcons"
           :key="value"
@@ -109,7 +109,7 @@ function reset() {
         </NButton>
       </div>
       <DesktopColorPalette v-model="iconColor" class="desktop-space-appearance-picker__colors" :options="colorOptions" :disabled="disabled" />
-      <div class="desktop-space-appearance-picker__footer">
+      <div class="flex justify-end mt-[12px] pt-[8px] border-t-1 border-t-solid border-t-border">
         <NButton size="tiny" quaternary :disabled="disabled" @click="reset">
           {{ t('desktop.tasks.spaceAppearanceReset') }}
         </NButton>
@@ -118,17 +118,12 @@ function reset() {
   </NPopover>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-space-appearance-picker__trigger {
   width: var(--n-height);
   flex: none;
   padding: 0;
   border-radius: 6px;
-}
-
-.desktop-space-appearance-picker {
-  width: 246px;
-  color: var(--buddy-text-primary);
 }
 
 .desktop-space-appearance-picker__styles {
@@ -140,13 +135,6 @@ function reset() {
 .desktop-space-appearance-picker__style {
   flex: 1;
   text-align: center;
-}
-
-.desktop-space-appearance-picker__icons {
-  display: grid;
-  grid-template-columns: repeat(6, 36px);
-  gap: 6px;
-  margin-bottom: 16px;
 }
 
 .desktop-space-appearance-picker__option {
@@ -164,14 +152,6 @@ function reset() {
 
 .desktop-space-appearance-picker__colors {
   padding-top: 16px;
-  border-top: 1px solid var(--buddy-border-subtle);
-}
-
-.desktop-space-appearance-picker__footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-  padding-top: 8px;
   border-top: 1px solid var(--buddy-border-subtle);
 }
 </style>

@@ -10,12 +10,16 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <div class="desktop-startup" :class="{ 'is-failed': failed }" :role="failed ? 'alert' : 'status'" :aria-busy="!failed">
+  <div class="desktop-startup [--startup-avatar-size:clamp(10rem,26vmin,15rem)] absolute z-20 inset-0 overflow-hidden bg-surface select-none" :class="{ 'is-failed': failed }" :role="failed ? 'alert' : 'status'" :aria-busy="!failed">
     <DesktopStartupArtwork :still="failed" />
-    <div class="desktop-startup__identity">
-      <h1>Lexora Buddy</h1>
-      <p>{{ t(failed ? 'desktop.loading.failed' : 'desktop.loading.app') }}</p>
-      <div v-if="failed" class="desktop-startup__actions">
+    <div class="desktop-startup__identity absolute top-[calc(50%_+_var(--startup-avatar-size)_/_2_+_1rem)] left-[50%] grid w-[min(28rem,_calc(100%_-_3rem))] gap-[0.85rem] justify-items-center font-brand text-center -translate-x-1/2">
+      <h1 class="m-0 text-fg text-[1.25rem] font-500 tracking-[0.09em]">
+        Lexora Buddy
+      </h1>
+      <p class="m-0 text-muted text-[0.75rem]">
+        {{ t(failed ? 'desktop.loading.failed' : 'desktop.loading.app') }}
+      </p>
+      <div v-if="failed" class="flex gap-2 mt-[0.4rem]">
         <NButton size="small" secondary @click="emit('retry')">
           {{ t('desktop.loading.retry') }}
         </NButton>
@@ -26,48 +30,3 @@ const { t } = useBuddyI18n(() => props.language)
     </div>
   </div>
 </template>
-
-<style scoped>
-.desktop-startup {
-  --startup-avatar-size: clamp(10rem, 26vmin, 15rem);
-  position: absolute;
-  z-index: 20;
-  inset: 0;
-  overflow: hidden;
-  background: var(--buddy-surface-base);
-  user-select: none;
-}
-
-.desktop-startup__identity {
-  position: absolute;
-  top: calc(50% + var(--startup-avatar-size) / 2 + 1rem);
-  left: 50%;
-  display: grid;
-  width: min(28rem, calc(100% - 3rem));
-  justify-items: center;
-  gap: 0.85rem;
-  font-family: var(--buddy-font-brand);
-  text-align: center;
-  transform: translateX(-50%);
-}
-
-.desktop-startup h1 {
-  margin: 0;
-  color: var(--buddy-text-primary);
-  font-size: 1.25rem;
-  font-weight: 500;
-  letter-spacing: 0.09em;
-}
-
-.desktop-startup p {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 0.75rem;
-}
-
-.desktop-startup__actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
-}
-</style>

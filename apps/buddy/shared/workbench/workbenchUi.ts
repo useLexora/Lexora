@@ -1,8 +1,8 @@
 import type { WorkbenchAnchor, WorkbenchMountTarget } from './workbenchContributionCatalog'
 import { z } from 'zod'
-import { workbenchMountTargetSchema } from './workbenchContributionCatalog'
+import { workbenchMountTargetSchema } from './workbenchContributionCatalog.ts'
 
-export * from './workbenchContributionCatalog'
+export * from './workbenchContributionCatalog.ts'
 const mountLengthSchema = z.union([z.number().min(0).max(8192), z.string().regex(/^(?:100|\d{1,2})(?:\.\d{1,3})?%$/).refine(value => Number.parseFloat(value) <= 100)])
 export const workbenchPresentationSchema = z.object({
   target: workbenchMountTargetSchema.optional(),

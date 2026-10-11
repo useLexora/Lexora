@@ -85,8 +85,8 @@ function updateActiveRange(value: string | [string, string] | null): void {
 </script>
 
 <template>
-  <section class="desktop-automation-schedule">
-    <div class="desktop-automation-schedule__heading">
+  <section class="desktop-automation-schedule grid gap-[12px] border-t-1 border-t-solid border-t-border pt-[20px]">
+    <div class="desktop-automation-schedule__heading grid gap-[3px]">
       <h2>{{ t('desktop.automations.editor.frequency') }}</h2>
     </div>
 
@@ -106,7 +106,7 @@ function updateActiveRange(value: string | [string, string] | null): void {
       </NRadioButton>
     </NRadioGroup>
 
-    <div class="desktop-automation-schedule__controls">
+    <div class="flex items-center flex-wrap gap-[10px]">
       <template v-if="value.frequencyMode === 'calendar'">
         <NSelect
           class="desktop-automation-schedule__cadence"
@@ -153,7 +153,7 @@ function updateActiveRange(value: string | [string, string] | null): void {
       </template>
 
       <template v-else-if="value.frequencyMode === 'interval'">
-        <div class="desktop-automation-schedule__interval">
+        <div class="desktop-automation-schedule__interval flex items-center gap-[10px]">
           <span>{{ t('desktop.automations.editor.every') }}</span>
           <NInputNumber
             class="desktop-automation-schedule__number"
@@ -187,7 +187,7 @@ function updateActiveRange(value: string | [string, string] | null): void {
 
     <div
       v-if="value.frequencyMode === 'calendar' && value.cadence === 'weekly'"
-      class="desktop-automation-schedule__weekdays"
+      class="desktop-automation-schedule__weekdays flex items-center gap-[12px]"
     >
       <span>{{ t('desktop.automations.editor.weekdays') }}</span>
       <NCheckboxGroup
@@ -203,8 +203,8 @@ function updateActiveRange(value: string | [string, string] | null): void {
       </NCheckboxGroup>
     </div>
 
-    <section v-if="value.frequencyMode !== 'once'" class="desktop-automation-schedule__active">
-      <div class="desktop-automation-schedule__heading">
+    <section v-if="value.frequencyMode !== 'once'" class="desktop-automation-schedule__active grid gap-[10px] border-t-1 border-t-solid border-t-border mt-[6px] pt-[18px]">
+      <div class="desktop-automation-schedule__heading grid gap-[3px]">
         <h2>{{ t('desktop.automations.editor.activeRange') }}</h2>
         <p>{{ t('desktop.automations.editor.activeRangeHint') }}</p>
       </div>
@@ -223,17 +223,7 @@ function updateActiveRange(value: string | [string, string] | null): void {
 </template>
 
 <style scoped lang="scss">
-.desktop-automation-schedule {
-  display: grid;
-  gap: 12px;
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding-top: 20px;
-}
-
 .desktop-automation-schedule__heading {
-  display: grid;
-  gap: 3px;
-
   h2,
   p {
     margin: 0;
@@ -252,18 +242,7 @@ function updateActiveRange(value: string | [string, string] | null): void {
   }
 }
 
-.desktop-automation-schedule__controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
 .desktop-automation-schedule__interval {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-
   > span {
     flex: none;
     color: var(--buddy-text-secondary);
@@ -292,12 +271,6 @@ function updateActiveRange(value: string | [string, string] | null): void {
   width: min(100%, 300px);
 }
 
-.desktop-automation-schedule__weekdays {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .desktop-automation-schedule__weekdays > span {
   flex: none;
   color: var(--buddy-text-secondary);
@@ -308,14 +281,6 @@ function updateActiveRange(value: string | [string, string] | null): void {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-}
-
-.desktop-automation-schedule__active {
-  display: grid;
-  gap: 10px;
-  border-top: 1px solid var(--buddy-border-subtle);
-  margin-top: 6px;
-  padding-top: 18px;
 }
 
 .desktop-automation-schedule__active-range {

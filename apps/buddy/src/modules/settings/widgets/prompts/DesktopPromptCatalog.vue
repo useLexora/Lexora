@@ -21,41 +21,36 @@ const groups = computed(() => (['system', 'template'] as const).map(kind => ({
 </script>
 
 <template>
-  <nav class="prompt-catalog">
+  <nav class="prompt-catalog min-w-0 overflow-auto py-[20px] px-[10px] border-r-1 border-r-solid border-r-border">
     <section v-for="group in groups" :key="group.kind" class="prompt-catalog__group">
       <h3>{{ group.label }}</h3>
-      <div class="prompt-catalog__items">
+      <div class="prompt-catalog__items grid gap-[4px]">
         <button
           v-for="item in group.entries"
           :key="item.id"
           type="button"
-          class="prompt-catalog__item"
+          class="prompt-catalog__item flex items-center gap-[8px] w-full py-[8px] px-[10px] border-0 rounded-[6px] bg-transparent text-muted text-left cursor-pointer hover:bg-hover ui-focus-ring"
           :class="{ 'is-selected': selectedId === item.id }"
           :aria-current="selectedId === item.id ? 'true' : undefined"
           @click="emit('select', item.id)"
         >
           <DesktopIcon :component="group.kind === 'template' ? DocumentText20Regular : TextDescription20Regular" />
-          <span class="prompt-catalog__title">{{ item.title }}</span>
-          <span v-if="item.command" class="prompt-catalog__command">{{ item.command }}</span>
+          <span class="prompt-catalog__title min-w-0 text-[13px] leading-[20px]">{{ item.title }}</span>
+          <span v-if="item.command" class="ml-auto text-muted text-[11px] leading-[16px]">{{ item.command }}</span>
         </button>
       </div>
     </section>
   </nav>
 </template>
 
-<style scoped>
-.prompt-catalog { flex: 0 0 204px; min-width: 0; overflow: auto; padding: 20px 10px; border-right: 1px solid var(--buddy-border-subtle); scrollbar-width: thin; scrollbar-color: var(--buddy-border-strong) transparent; }
+<style scoped lang="scss">
+.prompt-catalog { flex: 0 0 204px; scrollbar-width: thin; scrollbar-color: var(--buddy-border-strong) transparent; }
 .prompt-catalog__group + .prompt-catalog__group { margin-top: 24px; }
 .prompt-catalog__group h3 { margin: 0 10px 8px; color: var(--buddy-text-muted); font-size: 11px; font-weight: 500; }
-.prompt-catalog__items { display: grid; gap: 4px; }
-.prompt-catalog__item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--buddy-text-secondary); text-align: left; cursor: pointer; }
 .prompt-catalog__item > :first-child { flex: none; }
-.prompt-catalog__item:hover { background: var(--buddy-state-hover); }
 .prompt-catalog__item.is-selected { background: var(--buddy-nav-selected); color: var(--buddy-nav-foreground); }
-.prompt-catalog__item:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; }
-.prompt-catalog__title { min-width: 0; font-size: 13px; line-height: 20px; }
 .is-selected .prompt-catalog__title { font-weight: 600; }
-.prompt-catalog__command { margin-left: auto; color: var(--buddy-text-muted); font-size: 11px; line-height: 16px; }
+
 @container (max-width: 720px) {
   .prompt-catalog { flex: none; max-height: 38%; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--buddy-border-subtle); }
   .prompt-catalog__group { display: flex; align-items: flex-start; gap: 10px; }

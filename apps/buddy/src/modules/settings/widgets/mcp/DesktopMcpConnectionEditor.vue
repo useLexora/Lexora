@@ -104,8 +104,8 @@ function submit() {
     @update:show="value => !value && emit('close')"
   >
     <template #header>
-      <div class="mcp-editor__header">
-        <span class="mcp-editor__title">{{ title }}</span>
+      <div class="flex items-center gap-[0.6rem]">
+        <span class="font-600 text-[0.95rem]">{{ title }}</span>
         <NTag v-if="existing" size="small" :bordered="false">
           {{ form.transport === 'stdio' ? 'Stdio' : 'HTTP' }}
         </NTag>
@@ -191,12 +191,12 @@ function submit() {
       </NForm>
     </NScrollbar>
     <template #footer>
-      <div class="mcp-editor__footer">
-        <div class="mcp-editor__footer-hint">
+      <div class="flex items-center justify-between w-full gap-4">
+        <div class="text-muted text-[0.78rem] flex-1 min-w-0 leading-[1.4]">
           <span v-if="!connector">{{ t('desktop.mcp.createHint') }}</span>
           <span v-else-if="connector?.credentialConfigured">{{ t('desktop.mcp.secretHint') }}</span>
         </div>
-        <div class="mcp-editor__actions">
+        <div class="flex items-center gap-[0.6rem] flex-none">
           <NButton :disabled="busy" @click="emit('close')">
             {{ t('desktop.mcp.cancel') }}
           </NButton>
@@ -209,30 +209,8 @@ function submit() {
   </NModal>
 </template>
 
-<style scoped>
-.mcp-editor__header { display: flex; align-items: center; gap: 0.6rem; }
-.mcp-editor__title { font-weight: 600; font-size: 0.95rem; }
+<style scoped lang="scss">
 .mcp-editor__advanced { margin-top: 0.5rem; }
 .mcp-editor__alert { margin-bottom: 1rem; }
 .mcp-editor__codemode-alert { margin: -0.25rem 0 0.85rem; }
-.mcp-editor__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  gap: 1rem;
-}
-.mcp-editor__footer-hint {
-  color: var(--buddy-text-secondary);
-  font-size: 0.78rem;
-  flex: 1;
-  min-width: 0;
-  line-height: 1.4;
-}
-.mcp-editor__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex: none;
-}
 </style>

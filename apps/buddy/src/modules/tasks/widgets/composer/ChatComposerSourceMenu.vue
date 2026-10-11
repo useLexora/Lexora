@@ -93,12 +93,12 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 
     <div
       v-if="show"
-      class="desktop-chat-composer__source-menu"
+      class="desktop-chat-composer__source-menu grid w-fit min-w-[min(8.5rem,_calc(100vw_-_2rem))] max-w-[min(13rem,_calc(100vw_-_2rem))] gap-[0.125rem] overflow-hidden"
       :class="{ 'is-files': sourceMenuView === 'files' }"
     >
       <template v-if="sourceMenuView === 'menu'">
         <button
-          class="desktop-chat-composer__source-action"
+          class="desktop-chat-composer__source-action grid w-full grid-cols-[1.1rem_minmax(0,_1fr)] py-[0.36rem] px-[0.35rem] gap-x-2 text-[0.8rem] leading-[1.35]"
           type="button"
           @click="chooseLocalFiles"
         >
@@ -106,7 +106,7 @@ function handleDocumentKeydown(event: KeyboardEvent) {
           <span>{{ t('desktop.chat.addLocalFile') }}</span>
         </button>
         <button
-          class="desktop-chat-composer__source-action"
+          class="desktop-chat-composer__source-action grid w-full grid-cols-[1.1rem_minmax(0,_1fr)] py-[0.36rem] px-[0.35rem] gap-x-2 text-[0.8rem] leading-[1.35]"
           type="button"
           @click="openConversationFilePicker"
         >
@@ -115,9 +115,9 @@ function handleDocumentKeydown(event: KeyboardEvent) {
         </button>
       </template>
       <template v-else>
-        <div class="desktop-chat-composer__source-header">
+        <div class="flex items-center">
           <button
-            class="desktop-chat-composer__source-back"
+            class="desktop-chat-composer__source-back py-1 px-[0.35rem] text-muted text-[0.75rem]"
             type="button"
             @click="sourceMenuView = 'menu'"
           >
@@ -171,13 +171,7 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 }
 
 .desktop-chat-composer__source-menu {
-  display: grid;
-  width: fit-content;
-  min-width: min(8.5rem, calc(100vw - 2rem));
-  max-width: min(13rem, calc(100vw - 2rem));
-  gap: 0.125rem;
   interpolate-size: allow-keywords;
-  overflow: hidden;
   transition: width 160ms var(--buddy-motion-state-easing);
 
   &.is-files {
@@ -213,31 +207,10 @@ function handleDocumentKeydown(event: KeyboardEvent) {
   }
 }
 
-.desktop-chat-composer__source-action {
-  display: grid;
-  width: 100%;
-  grid-template-columns: 1.1rem minmax(0, 1fr);
-  padding: 0.36rem 0.35rem;
-  column-gap: 0.5rem;
-  font-size: 0.8rem;
-  line-height: 1.35;
-}
-
 .desktop-chat-composer__source-action-icon {
   flex: none;
   color: var(--buddy-text-secondary);
   font-size: 1.05rem;
-}
-
-.desktop-chat-composer__source-header {
-  display: flex;
-  align-items: center;
-}
-
-.desktop-chat-composer__source-back {
-  padding: 0.25rem 0.35rem;
-  color: var(--buddy-text-secondary);
-  font-size: 0.75rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

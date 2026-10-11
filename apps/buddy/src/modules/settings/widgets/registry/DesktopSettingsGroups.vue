@@ -6,6 +6,7 @@ import { settingsText } from '../../model/settingsRegistry'
 import { useSettingsContext } from '../../settingsContext'
 import DesktopGeneralSettingField from '../app/DesktopGeneralSettingField.vue'
 import DesktopPluginSetting from '../plugins/DesktopPluginSetting.vue'
+import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 
 defineProps<{ groups: readonly SettingsGroupNode[], fill?: boolean }>()
 defineSlots<{ default?: () => unknown, status?: () => unknown }>()
@@ -24,32 +25,26 @@ watchPostEffect(() => {
 </script>
 
 <template>
-  <div class="settings-groups" :class="{ 'is-fill': fill }">
+  <div class="settings-groups gap-[1.8rem] [container-type:inline-size]" :class="fill ? 'is-fill flex flex-1 min-w-0 min-h-0 flex-col overflow-y-auto' : 'grid'">
     <slot name="status" />
-    <section v-for="group in groups" :key="group.id" ref="sections" tabindex="-1" class="settings-group" :class="{ 'is-unframed': group.unframed }" :data-settings-group="group.id">
-      <h2 v-if="group.title">
+    <section
+      v-for="group in groups" :key="group.id" ref="sections" tabindex="-1" class="settings-group min-w-0 gap-[0.8rem]" :class="[
+        { 'is-unframed': group.unframed },
+        fill
+          ? (group.unframed ? 'flex w-full min-h-80 flex-1 p-0 only:min-h-0' : 'grid flex-none w-[min(100%,64rem)] self-center px-8 py-6')
+          : 'grid',
+      ]" :data-settings-group="group.id"
+    >
+      <h2 v-if="group.title" class="m-0 text-[0.92rem]">
         {{ settingsText(group.title, language) }}
       </h2>
-      <div class="settings-group__items">
+      <DesktopSettingsGroup class="settings-group__items" :unframed="group.unframed" :fill="fill">
         <template v-for="item in group.items" :key="item.id">
           <slot v-if="item.kind === 'content'" />
           <DesktopGeneralSettingField v-else-if="item.kind === 'general'" :field="item.field" />
           <DesktopPluginSetting v-else :field="item.field" />
         </template>
-      </div>
+      </DesktopSettingsGroup>
     </section>
   </div>
 </template>
-
-<style scoped>
-.settings-groups { display: grid; gap: 1.8rem; container-type: inline-size; }
-.settings-group { display: grid; min-width: 0; gap: 0.8rem; }
-.settings-group h2 { margin: 0; font-size: 0.92rem; }
-.settings-group__items { overflow: hidden; border: 1px solid var(--buddy-border-subtle); border-radius: 0.65rem; background: var(--buddy-surface-base); }
-.is-unframed > .settings-group__items { display: grid; gap: 1.8rem; overflow: visible; border: 0; border-radius: 0; background: transparent; }
-.is-fill { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; overflow-y: auto; }
-.is-fill > .settings-group { flex: none; width: min(100%, 64rem); align-self: center; padding: 1.5rem 2rem; }
-.is-fill > .is-unframed { display: flex; width: 100%; min-height: 20rem; flex: 1; padding: 0; }
-.is-fill > .is-unframed:only-child { min-height: 0; }
-.is-fill > .is-unframed > .settings-group__items { display: flex; flex: 1; min-width: 0; min-height: 0; }
-</style>

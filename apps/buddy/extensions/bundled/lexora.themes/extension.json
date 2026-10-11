@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "lexora.themes",
+  "name": "Lexora 官方主题",
+  "author": "Lexora",
+  "description": "经典、森林、鸢尾、玫瑰与琥珀，各含浅色和深色。",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "engines": {
+    "lexora": ">=0.10.1"
+  },
+  "categories": [
+    "themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "id": "lexora.themes.classic-light",
+        "label": "经典 · 浅色",
+        "appearance": "light",
+        "path": "themes/classic-light.json"
+      },
+      {
+        "id": "lexora.themes.classic-dark",
+        "label": "经典 · 深色",
+        "appearance": "dark",
+        "path": "themes/classic-dark.json"
+      },
+      {
+        "id": "lexora.themes.green-light",
+        "label": "森林 · 浅色",
+        "appearance": "light",
+        "path": "themes/green-light.json"
+      },
+      {
+        "id": "lexora.themes.green-dark",
+        "label": "森林 · 深色",
+        "appearance": "dark",
+        "path": "themes/green-dark.json"
+      },
+      {
+        "id": "lexora.themes.violet-light",
+        "label": "鸢尾 · 浅色",
+        "appearance": "light",
+        "path": "themes/violet-light.json"
+      },
+      {
+        "id": "lexora.themes.violet-dark",
+        "label": "鸢尾 · 深色",
+        "appearance": "dark",
+        "path": "themes/violet-dark.json"
+      },
+      {
+        "id": "lexora.themes.rose-light",
+        "label": "玫瑰 · 浅色",
+        "appearance": "light",
+        "path": "themes/rose-light.json"
+      },
+      {
+        "id": "lexora.themes.rose-dark",
+        "label": "玫瑰 · 深色",
+        "appearance": "dark",
+        "path": "themes/rose-dark.json"
+      },
+      {
+        "id": "lexora.themes.amber-light",
+        "label": "琥珀 · 浅色",
+        "appearance": "light",
+        "path": "themes/amber-light.json"
+      },
+      {
+        "id": "lexora.themes.amber-dark",
+        "label": "琥珀 · 深色",
+        "appearance": "dark",
+        "path": "themes/amber-dark.json"
+      }
+    ]
+  }
+}

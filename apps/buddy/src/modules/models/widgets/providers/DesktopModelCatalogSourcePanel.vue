@@ -50,35 +50,37 @@ function formatTokens(value: number): string {
 </script>
 
 <template>
-  <section class="desktop-model-catalog-source">
+  <section class="desktop-model-catalog-source grid gap-[0.7rem] border border-solid border-border rounded-[0.6rem] p-3">
     <header class="desktop-model-catalog-source__header">
       <div>
         <strong>{{ t('desktop.providers.catalogSource') }}</strong>
-        <p>{{ t('desktop.providers.catalogSourceDescription') }}</p>
+        <p class="m-0 text-muted text-[0.72rem]">
+          {{ t('desktop.providers.catalogSourceDescription') }}
+        </p>
       </div>
       <NButton v-if="!candidatesVisible" size="small" quaternary @click="choosing = true">
         {{ t('desktop.providers.changeCatalogSource') }}
       </NButton>
     </header>
-    <div v-if="model.catalog.source" class="desktop-model-catalog-source__current">
+    <div v-if="model.catalog.source" class="desktop-model-catalog-source__current [overflow-wrap:anywhere] text-[0.75rem]">
       <strong>{{ model.catalog.source.providerName }}</strong>
       <span>{{ model.catalog.source.providerId }} / {{ model.catalog.source.modelId }}</span>
       <NTag size="small" :bordered="false">
         {{ t(model.catalog.selection ? 'desktop.providers.catalogSourceSelected' : 'desktop.providers.catalogSourceAutomatic') }}
       </NTag>
     </div>
-    <p v-if="model.catalog.selection && model.catalogMatch !== 'matched'" class="desktop-model-catalog-source__notice">
+    <p v-if="model.catalog.selection && model.catalogMatch !== 'matched'" class="m-0 text-muted text-[0.72rem]">
       {{ t('desktop.providers.catalogSelectionUnavailable') }}
       {{ model.catalog.selection.providerId }} / {{ model.catalog.selection.modelId }}
     </p>
-    <p v-else-if="model.catalogMatch === 'ambiguous'" class="desktop-model-catalog-source__notice">
+    <p v-else-if="model.catalogMatch === 'ambiguous'" class="m-0 text-muted text-[0.72rem]">
       {{ t('desktop.providers.catalogSourceConflict') }}
     </p>
-    <p v-else-if="!model.metadataKnown" class="desktop-model-catalog-source__notice">
+    <p v-else-if="!model.metadataKnown" class="m-0 text-muted text-[0.72rem]">
       {{ t('desktop.providers.catalogSourceUnknown') }}
     </p>
     <div v-if="candidatesVisible" class="desktop-model-catalog-source__candidates">
-      <article v-for="candidate in candidates" :key="candidate.key" class="desktop-model-catalog-source__candidate">
+      <article v-for="candidate in candidates" :key="candidate.key" class="desktop-model-catalog-source__candidate border-t-1 border-t-solid border-t-border pt-[0.65rem] text-[0.75rem] [overflow-wrap:anywhere]">
         <div class="desktop-model-catalog-source__candidate-heading">
           <div>
             <strong>{{ candidate.providerName }} · {{ candidate.displayName }}</strong>
@@ -96,7 +98,7 @@ function formatTokens(value: number): string {
           contextWindow: formatTokens(candidate.contextWindow),
           maxTokens: formatTokens(candidate.maxTokens),
         }) }}</small>
-        <div class="desktop-model-catalog-source__tags">
+        <div class="desktop-model-catalog-source__tags flex flex-wrap gap-[0.3rem]">
           <NTag size="small" :bordered="false">
             {{ t(candidate.input.includes('image') ? 'desktop.providers.imageAttachment' : 'desktop.providers.imageUnsupported') }}
           </NTag>
@@ -118,15 +120,7 @@ function formatTokens(value: number): string {
   </section>
 </template>
 
-<style scoped>
-.desktop-model-catalog-source {
-  display: grid;
-  gap: 0.7rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.6rem;
-  padding: 0.75rem;
-}
-
+<style scoped lang="scss">
 .desktop-model-catalog-source__header,
 .desktop-model-catalog-source__candidate-heading {
   display: flex;
@@ -143,13 +137,6 @@ function formatTokens(value: number): string {
   gap: 0.25rem;
 }
 
-.desktop-model-catalog-source__header p,
-.desktop-model-catalog-source__notice {
-  margin: 0;
-  color: var(--buddy-text-secondary);
-  font-size: 0.72rem;
-}
-
 .desktop-model-catalog-source__candidates,
 .desktop-model-catalog-source__candidate {
   display: grid;
@@ -157,23 +144,8 @@ function formatTokens(value: number): string {
   gap: 0.5rem;
 }
 
-.desktop-model-catalog-source__candidate {
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding-top: 0.65rem;
-  font-size: 0.75rem;
-  overflow-wrap: anywhere;
-}
-
 .desktop-model-catalog-source__current {
   justify-items: start;
-  overflow-wrap: anywhere;
-  font-size: 0.75rem;
-}
-
-.desktop-model-catalog-source__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
 }
 
 .desktop-model-catalog-source__tags :deep(.n-tag) {

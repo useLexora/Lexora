@@ -42,41 +42,18 @@ const { failed, loading } = useMonacoDiff({
 </script>
 
 <template>
-  <div class="desktop-monaco-diff" :style="fitContent ? { height: `${contentHeight}px` } : undefined">
-    <div ref="container" class="desktop-monaco-diff__editor" />
-    <div v-if="loading" class="desktop-monaco-diff__status">
+  <div class="desktop-monaco-diff relative min-w-0 min-h-0 h-full bg-surface" :style="fitContent ? { height: `${contentHeight}px` } : undefined">
+    <div ref="container" class="w-full h-full" />
+    <div v-if="loading" class="desktop-monaco-diff__status absolute inset-0 grid place-items-center bg-surface text-muted text-[0.76rem]">
       <slot name="loading" />
     </div>
-    <div v-else-if="failed" class="desktop-monaco-diff__status is-error">
+    <div v-else-if="failed" class="desktop-monaco-diff__status is-error absolute inset-0 grid place-items-center bg-surface text-muted text-[0.76rem]">
       <slot name="error" />
     </div>
   </div>
 </template>
 
-<style scoped>
-.desktop-monaco-diff {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  background: var(--buddy-surface-base);
-}
-
-.desktop-monaco-diff__editor {
-  width: 100%;
-  height: 100%;
-}
-
-.desktop-monaco-diff__status {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--buddy-surface-base);
-  color: var(--buddy-text-secondary);
-  font-size: 0.76rem;
-}
-
+<style scoped lang="scss">
 .desktop-monaco-diff__status.is-error {
   color: var(--buddy-status-danger-text);
 }

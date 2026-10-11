@@ -9,10 +9,7 @@ const props = defineProps<{
 const value = defineModel<T>({ required: true })
 const themeOverrides: GlobalThemeOverrides['Tabs'] = {
   colorSegment: 'var(--buddy-surface-subtle)',
-  tabColorSegment: 'var(--buddy-surface-base)',
   tabTextColorSegment: 'var(--buddy-text-secondary)',
-  tabTextColorActiveSegment: 'var(--buddy-text-strong)',
-  tabTextColorHoverSegment: 'var(--buddy-text-strong)',
   tabFontSizeSmall: '13px',
   tabFontWeight: '580',
   fontWeightStrong: '580',
@@ -29,7 +26,7 @@ function select(next: string | number) {
 
 <template>
   <NTabs
-    class="desktop-segmented-control"
+    class="desktop-segmented-control w-max max-w-full flex-none"
     role="group"
     type="segment"
     size="small"
@@ -55,21 +52,17 @@ function select(next: string | number) {
   </NTabs>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-segmented-control {
-  width: max-content;
-  max-width: 100%;
-  flex: none;
-}
+  :deep(.n-tabs-tab:focus-visible) {
+    outline: 2px solid var(--buddy-focus-ring);
+    outline-offset: -2px;
+  }
 
-.desktop-segmented-control :deep(.n-tabs-tab:focus-visible) {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desktop-segmented-control :deep(.n-tabs-capsule) {
-    transition: none;
+  @media (prefers-reduced-motion: reduce) {
+    :deep(.n-tabs-capsule) {
+      transition: none;
+    }
   }
 }
 </style>

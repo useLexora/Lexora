@@ -9,16 +9,14 @@ const { surfaces, selected } = useExtensionUiSurfaces(() => ({ kind: 'slot', tar
 </script>
 
 <template>
-  <div class="extension-slot" :data-workbench-slot="target">
-    <div v-for="surface in surfaces" :key="surface.input.viewId" class="extension-slot__content" :style="{ height: selected.includes(surface) ? `${surface.height}px` : '0px' }">
+  <div class="extension-slot min-w-0" :data-workbench-slot="target">
+    <div v-for="surface in surfaces" :key="surface.input.viewId" class="relative min-w-0" :style="{ height: selected.includes(surface) ? `${surface.height}px` : '0px' }">
       <DesktopExtensionSurface :input="surface.input" :visible="selected.includes(surface)" silent class="extension-slot__surface" />
     </div>
     <slot v-if="!selected.length" />
   </div>
 </template>
 
-<style scoped>
-.extension-slot { min-width: 0; }
-.extension-slot__content { position: relative; min-width: 0; }
+<style scoped lang="scss">
 .extension-slot__surface { position: absolute; inset: 0; }
 </style>

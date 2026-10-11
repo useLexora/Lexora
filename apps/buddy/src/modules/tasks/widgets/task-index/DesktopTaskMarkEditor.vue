@@ -36,14 +36,10 @@ function submit() {
     <NFormItem :label="t('desktop.marks.color')" :required="!readonly">
       <DesktopTaskMarkColorPicker v-model="color" :disabled="busy" :readonly="readonly" :language="language" />
     </NFormItem>
-    <div v-if="!readonly" class="desktop-task-mark-editor__actions">
+    <div v-if="!readonly" class="flex justify-end gap-[8px]">
       <NButton type="primary" attr-type="submit" :loading="busy" :disabled="!parsed.success || busy">
         {{ t('common.save') }}
       </NButton>
     </div>
   </NForm>
 </template>
-
-<style scoped>
-.desktop-task-mark-editor__actions { display: flex; justify-content: flex-end; gap: 8px; }
-</style>

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { zipSync } from 'fflate'
-import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPathSchema } from './authoring.mjs'
+import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPathSchema, validateThemeFiles } from './authoring.mjs'
 
 export async function readPlugin(source) {
   const files = new Map()
@@ -33,6 +33,7 @@ export async function readPlugin(source) {
   const manifest = extensionManifestSchema.parse(JSON.parse(new TextDecoder().decode(files.get('extension.json'))))
   for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)].filter(Boolean))
     assert(files.has(entry), `Missing entry: ${entry}`)
+  validateThemeFiles(files, manifest.contributes.themes)
   const iconUrl = extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
   return { manifest, files, iconUrl }
 }
@@ -42,7 +43,7 @@ export async function buildPlugin(source, destination, report = () => {}) {
   destination = path.resolve(destination)
   assert(source !== destination && !source.startsWith(`${destination}${path.sep}`), 'Output must not contain source')
   const { files, manifest } = await readPlugin(source)
-  const result = manifest.format === 'source' ? compileExtensionSource(files, manifest, report) : files
+  const result = manifest.format === 'source' ? await compileExtensionSource(files, manifest, report) : files
   const old = await fs.readdir(destination).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))
   if (old.length)
     assert(JSON.parse(await fs.readFile(path.join(destination, 'extension.json'), 'utf8')).id === manifest.id, 'Output belongs to another plugin')

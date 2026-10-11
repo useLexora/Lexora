@@ -24,20 +24,13 @@ defineExpose({ reveal })
 </script>
 
 <template>
-  <div ref="root" class="context-change-list">
+  <div ref="root" class="context-change-list flex w-full h-full flex-col gap-[12px] overflow-auto p-[12px]">
     <DesktopChangeFileBlock v-for="file in files" :key="file.id" :file="file" :language="language" :collapsed="collapsedFiles.has(file.id)" :observe="observe" :wrap="wrap" :side-by-side="sideBySide" @toggle="$emit('toggle', file.id)" />
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .context-change-list {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  flex-direction: column;
-  gap: 12px;
-  overflow: auto;
-  padding: 12px;
   scroll-padding-block: 12px;
 }
 </style>

@@ -54,11 +54,11 @@ async function copyContent() {
 </script>
 
 <template>
-  <div class="buddy-chat-action-toolbar">
+  <div class="buddy-chat-action-toolbar flex flex-wrap min-h-6 items-center gap-[0.15rem]">
     <WorkbenchMenu v-if="actions.showCopy" target="message.actions" :values="{ 'message.role': role }" :capture="() => ({ content: copyText })" />
     <time
       v-if="actions.showTime && role === 'user'"
-      class="buddy-chat-action-toolbar__time"
+      class="buddy-chat-action-toolbar__time inline-flex h-6 items-center text-muted px-[0.2rem] whitespace-nowrap"
       :datetime="createdAt"
     >
       {{ formatChatMessageTimeLabel(createdAt) }}
@@ -117,7 +117,7 @@ async function copyContent() {
       </template>
       {{ t('desktop.chat.regenerate') }}
     </NTooltip>
-    <div v-if="branchNavigator" class="buddy-chat-action-toolbar__branch">
+    <div v-if="branchNavigator" class="buddy-chat-action-toolbar__branch inline-flex items-center gap-[0.05rem] ml-[0.1rem] text-muted">
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
@@ -156,7 +156,7 @@ async function copyContent() {
     </div>
     <time
       v-if="actions.showTime && role === 'assistant'"
-      class="buddy-chat-action-toolbar__time"
+      class="buddy-chat-action-toolbar__time inline-flex h-6 items-center text-muted px-[0.2rem] whitespace-nowrap"
       :datetime="createdAt"
     >
       {{ formatChatMessageTimeLabel(createdAt) }}
@@ -172,12 +172,6 @@ async function copyContent() {
 
 <style scoped lang="scss">
 .buddy-chat-action-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  min-height: 1.5rem;
-  align-items: center;
-  gap: 0.15rem;
-
   :deep(.n-button) {
     color: var(--buddy-text-secondary);
     font-size: 0.68rem;
@@ -189,11 +183,6 @@ async function copyContent() {
 }
 
 .buddy-chat-action-toolbar__branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.05rem;
-  margin-left: 0.1rem;
-  color: var(--buddy-text-secondary);
   font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
 
@@ -204,15 +193,9 @@ async function copyContent() {
 }
 
 .buddy-chat-action-toolbar__time {
-  display: inline-flex;
-  height: 1.5rem;
-  align-items: center;
-  color: var(--buddy-text-muted);
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
   font-weight: 400;
-  padding-inline: 0.2rem;
-  white-space: nowrap;
 }
 
 .buddy-chat-action-toolbar__copy-button {

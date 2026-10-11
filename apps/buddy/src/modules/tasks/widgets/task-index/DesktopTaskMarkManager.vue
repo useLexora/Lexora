@@ -86,14 +86,14 @@ async function remove() {
     :close-on-esc="!marks.busy.value"
   >
     <template #header>
-      <div class="desktop-task-mark-manager__header">
-        <div class="desktop-task-mark-manager__title">
+      <div class="flex min-w-0 items-center justify-between gap-[12px] pr-[12px]">
+        <div class="flex min-w-0 items-center gap-[8px]">
           <NButton v-if="editing" class="desktop-task-mark-manager__back" quaternary size="small" :disabled="marks.busy.value" :aria-label="t('desktop.marks.back')" @click="backToList">
             <template #icon>
               <DesktopIcon :component="ArrowLeft20Regular" :size="18" />
             </template>
           </NButton>
-          <span class="desktop-task-mark-manager__heading">{{ heading }}</span>
+          <span class="text-[16px] font-600">{{ heading }}</span>
         </div>
         <NButton v-if="!editing" size="small" secondary :disabled="marks.busy.value || marks.loading.value" @click="edit(null)">
           <template #icon>
@@ -110,9 +110,9 @@ async function remove() {
       </NButton>
     </NAlert>
     <DesktopTaskMarkEditor v-if="editing" :key="session" :initial="initial" :readonly="readOnly" :busy="marks.busy.value" :language="language" @save="save" />
-    <div v-else class="desktop-task-mark-manager__content">
+    <div v-else class="grid grid-cols-[minmax(0,_1fr)] gap-[12px]">
       <NSpin :show="marks.loading.value">
-        <div class="desktop-task-mark-manager__list">
+        <div class="grid min-w-0 max-h-[min(360px,_48vh)] grid-cols-[minmax(0,_1fr)] gap-[2px] overflow-y-auto">
           <DesktopTaskMarkItem
             v-for="mark in definitions"
             :key="mark.id"
@@ -126,7 +126,7 @@ async function remove() {
       </NSpin>
       <NAlert v-if="deletion" type="warning" :show-icon="false" class="desktop-task-mark-manager__deletion">
         <p>{{ t('desktop.marks.deleteMessage', { name: deletion.name }) }}</p>
-        <div class="desktop-task-mark-manager__actions">
+        <div class="flex justify-end gap-[8px]">
           <NButton size="small" :disabled="marks.busy.value" @click="deleteId = null">
             {{ t('common.cancel') }}
           </NButton>
@@ -139,23 +139,7 @@ async function remove() {
   </NModal>
 </template>
 
-<style scoped>
-.desktop-task-mark-manager__header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-right: 12px;
-}
-
-.desktop-task-mark-manager__title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
+<style scoped lang="scss">
 .desktop-task-mark-manager__back {
   width: 28px;
   height: 28px;
@@ -163,34 +147,8 @@ async function remove() {
   margin-left: -6px;
 }
 
-.desktop-task-mark-manager__heading {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.desktop-task-mark-manager__content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-}
-
 .desktop-task-mark-manager__error {
   margin-bottom: 12px;
-}
-
-.desktop-task-mark-manager__list {
-  display: grid;
-  min-width: 0;
-  max-height: min(360px, 48vh);
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  overflow-y: auto;
-}
-
-.desktop-task-mark-manager__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .desktop-task-mark-manager__deletion p {

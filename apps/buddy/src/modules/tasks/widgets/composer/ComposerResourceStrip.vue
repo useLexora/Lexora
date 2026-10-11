@@ -47,7 +47,7 @@ defineExpose({ highlightResource })
 </script>
 
 <template>
-  <div v-if="cards.length" class="composer-resource-strip__scroll">
+  <div v-if="cards.length" class="min-w-0 mb-2">
     <NScrollbar
       class="composer-resource-strip__scrollbar"
       container-class="composer-resource-strip__scrollport"
@@ -55,11 +55,11 @@ defineExpose({ highlightResource })
       trigger="hover"
       x-scrollable
     >
-      <div ref="resourceTrack" class="composer-resource-strip">
+      <div ref="resourceTrack" class="composer-resource-strip flex flex-nowrap gap-[0.45rem]">
         <div
           v-for="{ resource, canRetry, imageLabel, previewUrl, textPreview, textLineCount } in cards"
           :key="resource.resourceId"
-          class="composer-resource-strip__card"
+          class="composer-resource-strip__card flex items-center gap-2 min-w-0 max-w-[min(18rem,_100%)] border-1 border-solid border-border rounded-micro bg-raised p-[0.4rem] text-[0.75rem]"
           :class="{ 'is-failed': resource.state === 'failed', 'is-highlighted': highlightedResourceId === resource.resourceId }"
           :data-resource-card="resource.resourceId"
         >
@@ -76,7 +76,7 @@ defineExpose({ highlightResource })
             <img v-else-if="previewUrl" :src="previewUrl" :alt="resource.name" width="36" height="36" @error="markPreviewFailed(previewUrl)">
             <FolderIcon v-else-if="resource.kind === 'directory'" class="composer-resource-strip__folder" />
             <FileIcon v-else :name="resource.name" size="medium" />
-            <span class="composer-resource-strip__details">
+            <span class="composer-resource-strip__details grid min-w-0 max-w-52">
               <span>{{ imageLabel ?? resource.name }}</span>
               <small v-if="resource.state !== 'ready'">
                 {{ t(resource.state === 'importing'
@@ -110,11 +110,6 @@ defineExpose({ highlightResource })
 </template>
 
 <style scoped lang="scss">
-.composer-resource-strip__scroll {
-  min-width: 0;
-  margin-bottom: 0.5rem;
-}
-
 :deep(.composer-resource-strip__scrollbar) {
   height: auto;
 }
@@ -125,29 +120,12 @@ defineExpose({ highlightResource })
 
 .composer-resource-strip {
   &__folder { width: 2rem; height: 2rem; }
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.45rem;
 
   &__card {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    max-width: min(18rem, 100%);
     flex: 0 0 auto;
-    border: 1px solid var(--buddy-border-subtle);
-    border-radius: var(--buddy-radius-micro);
-    background: var(--buddy-surface-raised);
-    padding: 0.4rem;
-    font-size: 0.75rem;
   }
 
   &__details {
-    display: grid;
-    min-width: 0;
-    max-width: 13rem;
-
     > span {
       overflow: hidden;
       text-overflow: ellipsis;

@@ -74,7 +74,7 @@ function handlePrimaryAction() {
 <template>
   <article
     v-if="blocker"
-    class="desktop-chat-page__alert"
+    class="desktop-chat-page__alert grid grid-cols-[auto_minmax(0,_1fr)_auto] items-center gap-[0.7rem] border-1 border-solid border-warning-border rounded-[0.65rem] bg-warning-surface text-fg py-[0.65rem] px-3"
     :class="`is-${blocker.kind}`"
     role="alert"
   >
@@ -83,7 +83,7 @@ function handlePrimaryAction() {
       <strong>{{ title }}</strong>
       <p>{{ description }}</p>
     </div>
-    <div class="desktop-chat-page__alert-actions">
+    <div class="desktop-chat-page__alert-actions flex items-center gap-[0.4rem]">
       <NButton
         v-if="blocker.kind === 'runtime' && canRestartRuntime"
         size="small"
@@ -115,16 +115,6 @@ function handlePrimaryAction() {
 
 <style scoped lang="scss">
 .desktop-chat-page__alert {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.7rem;
-  border: 1px solid var(--buddy-status-warning-border);
-  border-radius: 0.65rem;
-  background: var(--buddy-status-warning-surface);
-  color: var(--buddy-text-primary);
-  padding: 0.65rem 0.75rem;
-
   > .n-icon {
     color: var(--buddy-status-warning-text);
     font-size: 1.1rem;
@@ -154,12 +144,6 @@ function handlePrimaryAction() {
     font-size: 0.68rem;
     line-height: 1.45;
   }
-}
-
-.desktop-chat-page__alert-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
 }
 
 @container desktop-chat-page (max-width: 34rem) {

@@ -20,13 +20,13 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <div class="desktop-space-primary-directory">
-    <div class="desktop-space-primary-directory__header">
+  <div class="desktop-space-primary-directory w-full gap-[0.55rem]">
+    <div class="desktop-space-primary-directory__header gap-[0.1rem]">
       <strong>{{ t('desktop.tasks.spaceWorkingDirectory') }}</strong>
       <small>{{ t('desktop.tasks.spaceWorkingDirectoryDescription') }}</small>
     </div>
 
-    <div class="desktop-space-primary-directory__binding">
+    <div class="flex items-center gap-2">
       <NInput
         class="desktop-space-primary-directory__input"
         readonly
@@ -55,24 +55,10 @@ const { t } = useBuddyI18n(() => props.language)
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-space-primary-directory,
 .desktop-space-primary-directory__header {
   display: grid;
-}
-
-.desktop-space-primary-directory {
-  width: 100%;
-  gap: 0.55rem;
-}
-
-.desktop-space-primary-directory__binding {
-  display: flex;
-  align-items: center;
-}
-
-.desktop-space-primary-directory__header {
-  gap: 0.1rem;
 }
 
 .desktop-space-primary-directory__header strong {
@@ -84,10 +70,6 @@ const { t } = useBuddyI18n(() => props.language)
   color: var(--buddy-text-secondary);
   font-size: 0.7rem;
   line-height: 1.5;
-}
-
-.desktop-space-primary-directory__binding {
-  gap: 0.5rem;
 }
 
 .desktop-space-primary-directory__input {

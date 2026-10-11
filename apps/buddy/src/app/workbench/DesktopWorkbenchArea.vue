@@ -60,13 +60,13 @@ function focusContext() {
       </WorkbenchMountPoint>
     </template>
     <template #workspace>
-      <div v-show="tasksVisible" class="desktop-workbench-area__tasks">
+      <div v-show="tasksVisible" class="desktop-workbench-area__tasks flex flex-1 min-w-0 min-h-0">
         <WorkbenchLayoutNode :node="layout.root" />
       </div>
       <RouterView v-if="!tasksVisible" />
     </template>
     <template #context>
-      <div class="desktop-workbench-area__context" data-workbench-context @focusin="focusContext" @pointerdown="focusContext">
+      <div class="flex flex-1 min-w-0 min-h-0" data-workbench-context @focusin="focusContext" @pointerdown="focusContext">
         <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="contextVisible">
           <template #header-actions>
             <WorkbenchResourcePanelActions :language="language" :maximized="panels.contextMaximized.value" :on-left="panels.contextOnLeft.value" :can-swap="tasksVisible" @swap="panels.swap" @toggle-maximize="panels.toggleMaximize" />
@@ -75,11 +75,11 @@ function focusContext() {
             <WorkbenchSurface :view-id="viewId" :visible="contextVisible" />
           </template>
           <template #file-toolbar="{ tab }">
-            <div :ref="element => toolbarTarget(tab.id, element)" class="desktop-workbench-area__file-toolbar" />
+            <div :ref="element => toolbarTarget(tab.id, element)" class="flex min-w-0 flex-1" />
           </template>
           <template #file="{ wrap, setWrap }">
             <DesktopDirectoryFileSurface v-if="selectedFile" :view="selectedFile" :wrap="wrap" :visible="contextVisible" @update-wrap="setWrap" />
-            <div v-else class="desktop-workbench-area__file-loading">
+            <div v-else class="desktop-workbench-area__file-loading grid flex-1 gap-[12px] text-muted text-[12px]">
               <NSpin size="small" />{{ labels.loading }}
             </div>
           </template>
@@ -89,10 +89,7 @@ function focusContext() {
   </WorkbenchLayout>
 </template>
 
-<style scoped>
-.desktop-workbench-area__context { display: flex; flex: 1; min-width: 0; min-height: 0; }
-.desktop-workbench-area__tasks { display: flex; flex: 1; min-width: 0; min-height: 0; }
+<style scoped lang="scss">
 .desktop-workbench-area__tasks > :deep(*) { flex: 1; }
-.desktop-workbench-area__file-toolbar { display: flex; min-width: 0; flex: 1; }
-.desktop-workbench-area__file-loading { display: grid; flex: 1; place-content: center; gap: 12px; color: var(--buddy-text-muted); font-size: 12px; }
+.desktop-workbench-area__file-loading { place-content: center; }
 </style>

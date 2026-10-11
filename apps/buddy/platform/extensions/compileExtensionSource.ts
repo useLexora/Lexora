@@ -2,11 +2,13 @@ import type { ExtensionManifest } from '../../shared/extensions/extensionManifes
 import { posix } from 'node:path'
 import ts from 'typescript'
 import { extensionPathSchema } from '../../shared/extensions/extensionManifest.ts'
+import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles.ts'
+import { compileExtensionStyles } from './compileExtensionStyles.ts'
 
 export type ExtensionCompiler = (files: Map<string, Uint8Array>, manifest: ExtensionManifest, signal: AbortSignal, report: (message: string) => void) => Promise<Map<string, Uint8Array>>
 const outputPath = (path: string) => path.replace(/\.(?:ts|mts)$/, '.js')
 
-export function compileExtensionSource(files: Map<string, Uint8Array>, manifest: ExtensionManifest, report: (message: string) => void): Map<string, Uint8Array> {
+export async function compileExtensionSource(files: Map<string, Uint8Array>, manifest: ExtensionManifest, report: (message: string) => void): Promise<Map<string, Uint8Array>> {
   const output = new Map<string, Uint8Array>()
   const text = new TextDecoder('utf-8', { fatal: true })
   const encode = new TextEncoder()
@@ -79,6 +81,11 @@ export function compileExtensionSource(files: Map<string, Uint8Array>, manifest:
     finally {
       transformed.dispose()
     }
+  }
+  const styles = await compileExtensionStyles(files, manifest)
+  if (styles) {
+    report(EXTENSION_UNO_STYLESHEET)
+    output.set(EXTENSION_UNO_STYLESHEET, styles)
   }
   const compiledManifest: ExtensionManifest = { ...manifest, format: 'compiled', ...(manifest.entry ? { entry: outputPath(manifest.entry) } : {}), contributes: { ...manifest.contributes, views: manifest.contributes.views.map(view => ({ ...view, entry: outputPath(view.entry) })) } }
   output.set('extension.json', encode.encode(JSON.stringify(compiledManifest)))

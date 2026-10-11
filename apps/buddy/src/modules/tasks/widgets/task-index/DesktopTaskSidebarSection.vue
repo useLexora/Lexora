@@ -66,7 +66,7 @@ const sectionStyle = computed(() => ({
 <template>
   <section
     ref="sectionElement"
-    class="desktop-task-sidebar__section"
+    class="desktop-task-sidebar__section flex min-h-[var(--buddy-task-sidebar-section-header-size)] flex-col overflow-hidden"
     :class="[`is-${layout.mode}`, `desktop-task-sidebar__${section}`]"
     :style="sectionStyle"
   >
@@ -95,11 +95,6 @@ const sectionStyle = computed(() => ({
 
 <style scoped lang="scss">
 .desktop-task-sidebar__section {
-  display: flex;
-  min-height: var(--buddy-task-sidebar-section-header-size);
-  flex-direction: column;
-  overflow: hidden;
-
   &.is-weighted {
     max-height: var(--buddy-task-sidebar-section-natural-size);
     flex: var(--buddy-task-sidebar-section-priority) 1 0;

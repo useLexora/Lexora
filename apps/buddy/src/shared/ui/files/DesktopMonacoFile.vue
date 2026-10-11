@@ -91,16 +91,10 @@ watch(container, async (element, _previous, onCleanup) => {
 </script>
 
 <template>
-  <div class="desktop-monaco-file">
-    <div ref="container" class="desktop-monaco-file__editor" />
-    <div v-if="failed" class="desktop-monaco-file__error">
+  <div class="desktop-monaco-file relative w-full h-full min-w-0 min-h-0">
+    <div ref="container" class="w-full h-full" />
+    <div v-if="failed" class="absolute inset-0 grid place-items-center text-muted bg-surface">
       <slot name="error" />
     </div>
   </div>
 </template>
-
-<style scoped>
-.desktop-monaco-file { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; }
-.desktop-monaco-file__editor { width: 100%; height: 100%; }
-.desktop-monaco-file__error { position: absolute; inset: 0; display: grid; place-items: center; color: var(--buddy-text-muted); background: var(--buddy-surface-base); }
-</style>

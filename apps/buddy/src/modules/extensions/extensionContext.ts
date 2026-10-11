@@ -15,6 +15,8 @@ export interface ExtensionContext {
   views: ReturnType<typeof useExtensionViews>
   language: Readonly<Ref<string>>
   isDark: Readonly<Ref<boolean>>
+  themeColors: Readonly<Ref<Record<string, string>>>
+  themeRevision?: Readonly<Ref<number>>
   endInteraction: (id: string) => void
   focusView: (id: string) => void
   authoring: { author: Readonly<Ref<string>>, save: (author: string) => Promise<boolean> }

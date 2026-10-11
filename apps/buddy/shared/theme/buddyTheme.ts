@@ -1,9 +1,9 @@
-import type { SpaceIconColor } from '@buddy-shared/spaces/spaceAppearance'
-import type { GlobalThemeOverrides } from 'naive-ui'
+import type { SpaceIconColor } from '../spaces/spaceAppearance'
+import { themeFonts } from './themeTokens'
 
 export type BuddyColorScheme = 'light' | 'dark'
 
-interface BuddyColorTheme {
+export interface BuddyColorTheme {
   colorScheme: BuddyColorScheme
   surface: {
     canvas: string
@@ -15,6 +15,12 @@ interface BuddyColorTheme {
     hover: string
     pressed: string
     selected: string
+    selectedHover: string
+  }
+  selection: {
+    background: string
+    inactive: string
+    match: string
   }
   border: {
     subtle: string
@@ -36,7 +42,10 @@ interface BuddyColorTheme {
     surfaceSubtle: string
     surface: string
     surfaceHover: string
+    surfacePressed: string
     border: string
+    borderHover: string
+    onOverlay: string
     onSurface: string
   }
   status: {
@@ -77,18 +86,15 @@ interface BuddyStatusColors {
   border: string
 }
 
-const lightTheme: BuddyColorTheme = {
+type BuddyBaseTheme = Omit<BuddyColorTheme, 'state' | 'selection'>
+
+const lightTheme: BuddyBaseTheme = {
   colorScheme: 'light',
   surface: {
     canvas: '#fafaf8',
     raised: '#ffffff',
     muted: 'rgba(32, 37, 34, 0.04)',
     userMessage: '#edf4ff',
-  },
-  state: {
-    hover: 'rgb(32 37 34 / 5%)',
-    pressed: 'rgb(32 37 34 / 12%)',
-    selected: 'rgb(32 37 34 / 8%)',
   },
   border: {
     subtle: 'rgba(32, 37, 34, 0.1)',
@@ -110,7 +116,10 @@ const lightTheme: BuddyColorTheme = {
     surfaceSubtle: 'rgb(80 107 144 / 7%)',
     surface: 'rgb(80 107 144 / 12%)',
     surfaceHover: 'rgb(80 107 144 / 16%)',
+    surfacePressed: 'rgb(80 107 144 / 20%)',
     border: 'rgb(80 107 144 / 38%)',
+    borderHover: 'rgb(80 107 144 / 54%)',
+    onOverlay: '#91abcc',
     onSurface: '#40597b',
   },
   status: {
@@ -192,18 +201,13 @@ const lightTheme: BuddyColorTheme = {
   },
 }
 
-const darkTheme: BuddyColorTheme = {
+const darkTheme: BuddyBaseTheme = {
   colorScheme: 'dark',
   surface: {
     canvas: '#202422',
     raised: '#2a2f2b',
     muted: 'rgba(255, 255, 255, 0.05)',
     userMessage: '#29384a',
-  },
-  state: {
-    hover: 'rgba(255, 255, 255, 0.07)',
-    pressed: 'rgb(255 255 255 / 13%)',
-    selected: 'rgb(255 255 255 / 10%)',
   },
   border: {
     subtle: 'rgba(255, 255, 255, 0.11)',
@@ -225,7 +229,10 @@ const darkTheme: BuddyColorTheme = {
     surfaceSubtle: 'rgb(145 171 204 / 8%)',
     surface: 'rgb(145 171 204 / 13%)',
     surfaceHover: 'rgb(145 171 204 / 18%)',
+    surfacePressed: 'rgb(145 171 204 / 24%)',
     border: 'rgb(145 171 204 / 38%)',
+    borderHover: 'rgb(145 171 204 / 54%)',
+    onOverlay: '#91abcc',
     onSurface: '#a9bed8',
   },
   status: {
@@ -307,13 +314,32 @@ const darkTheme: BuddyColorTheme = {
   },
 }
 
+export function withAccentInteractionStates(theme: BuddyBaseTheme): BuddyColorTheme {
+  return {
+    ...theme,
+    selection: {
+      background: `${theme.accent.text}40`,
+      inactive: `${theme.accent.text}26`,
+      match: `${theme.accent.text}1f`,
+    },
+    state: {
+      hover: theme.accent.surfaceSubtle,
+      selected: theme.accent.surface,
+      selectedHover: theme.accent.surfaceHover,
+      pressed: theme.accent.surfacePressed,
+    },
+  }
+}
+
 export const buddyColorThemes = {
-  dark: darkTheme,
-  light: lightTheme,
+  dark: withAccentInteractionStates(darkTheme),
+  light: withAccentInteractionStates(lightTheme),
 } as const
 
 export function createBuddyColorVariables(theme: BuddyColorTheme): Record<string, string> {
   return {
+    '--buddy-font-ui': themeFonts.ui,
+    '--buddy-font-mono': themeFonts.mono,
     ...Object.fromEntries(Object.entries(theme.spaceIcon).map(([color, value]) => [`--buddy-space-icon-${color}`, value])),
     '--buddy-surface-canvas': theme.surface.canvas,
     '--buddy-surface-app-sidebar': theme.surface.canvas,
@@ -325,9 +351,14 @@ export function createBuddyColorVariables(theme: BuddyColorTheme): Record<string
     '--buddy-state-hover': theme.state.hover,
     '--buddy-state-pressed': theme.state.pressed,
     '--buddy-state-selected': theme.state.selected,
+    '--buddy-state-selected-hover': theme.state.selectedHover,
+    '--buddy-text-selection': theme.selection.background,
+    '--buddy-text-selection-inactive': theme.selection.inactive,
+    '--buddy-text-selection-match': theme.selection.match,
     '--buddy-nav-hover': theme.accent.surfaceSubtle,
     '--buddy-nav-selected': theme.accent.surface,
-    '--buddy-nav-pressed': theme.accent.surfaceHover,
+    '--buddy-nav-selected-hover': theme.state.selectedHover,
+    '--buddy-nav-pressed': theme.state.pressed,
     '--buddy-nav-foreground': theme.accent.onSurface,
     '--buddy-border-subtle': theme.border.subtle,
     '--buddy-border-strong': theme.border.strong,
@@ -345,7 +376,9 @@ export function createBuddyColorVariables(theme: BuddyColorTheme): Record<string
     '--buddy-accent-surface-subtle': theme.accent.surfaceSubtle,
     '--buddy-accent-surface': theme.accent.surface,
     '--buddy-accent-surface-hover': theme.accent.surfaceHover,
+    '--buddy-accent-surface-pressed': theme.accent.surfacePressed,
     '--buddy-accent-border': theme.accent.border,
+    '--buddy-accent-border-hover': theme.accent.borderHover,
     '--buddy-accent-on-surface': theme.accent.onSurface,
     '--buddy-status-success-solid': theme.status.success.solid,
     '--buddy-status-success-text': theme.status.success.text,
@@ -378,86 +411,9 @@ export function createBuddyColorVariables(theme: BuddyColorTheme): Record<string
     '--buddy-media-overlay-border': 'rgb(255 255 255 / 14%)',
     '--buddy-media-overlay-divider': 'rgb(255 255 255 / 16%)',
     '--buddy-media-overlay-text': 'rgb(255 255 255 / 82%)',
-    '--buddy-media-overlay-hover': 'rgb(255 255 255 / 13%)',
-    '--buddy-media-overlay-focus': '#91abcc',
+    '--buddy-media-overlay-hover': `color-mix(in srgb, ${theme.accent.onOverlay} 18%, transparent)`,
+    '--buddy-media-overlay-focus': theme.accent.onOverlay,
     '--buddy-media-overlay-danger-hover': 'rgb(185 71 71 / 72%)',
     '--buddy-media-overlay-shadow': '0 8px 22px rgb(0 0 0 / 18%), 0 2px 6px rgb(0 0 0 / 12%)',
-  }
-}
-
-export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme): GlobalThemeOverrides {
-  return {
-    Tooltip: {
-      borderRadius: '6px',
-      boxShadow: theme.shadow.overlay,
-      color: theme.surface.raised,
-      padding: '7px 10px',
-      textColor: theme.text.primary,
-    },
-    common: {
-      actionColor: theme.surface.muted,
-      avatarColor: theme.avatar.background,
-      baseColor: theme.text.onAccent,
-      bodyColor: theme.surface.canvas,
-      borderColor: theme.border.strong,
-      boxShadow1: theme.shadow.soft,
-      boxShadow2: theme.shadow.raised,
-      boxShadow3: theme.shadow.overlay,
-      buttonColor2: theme.surface.muted,
-      buttonColor2Hover: theme.state.hover,
-      buttonColor2Pressed: theme.state.pressed,
-      cardColor: theme.surface.raised,
-      codeColor: theme.surface.muted,
-      dividerColor: theme.border.subtle,
-      errorColor: theme.status.danger.solid,
-      errorColorHover: theme.status.danger.solidHover,
-      errorColorPressed: theme.status.danger.solidPressed,
-      errorColorSuppl: theme.status.danger.solidHover,
-      fontFamily: 'var(--buddy-font-ui)',
-      fontFamilyMono: 'var(--buddy-font-mono)',
-      hoverColor: theme.state.hover,
-      iconColor: theme.text.secondary,
-      iconColorDisabled: theme.text.disabled,
-      iconColorHover: theme.text.strong,
-      iconColorPressed: theme.text.primary,
-      infoColor: theme.accent.solid,
-      infoColorHover: theme.accent.solidHover,
-      infoColorPressed: theme.accent.solidPressed,
-      infoColorSuppl: theme.accent.solidHover,
-      inputColor: theme.surface.raised,
-      inputColorDisabled: theme.surface.muted,
-      modalColor: theme.surface.raised,
-      placeholderColor: theme.text.secondary,
-      placeholderColorDisabled: theme.text.disabled,
-      popoverColor: theme.surface.raised,
-      pressedColor: theme.state.pressed,
-      primaryColor: theme.accent.solid,
-      primaryColorHover: theme.accent.solidHover,
-      primaryColorPressed: theme.accent.solidPressed,
-      primaryColorSuppl: theme.accent.solidHover,
-      progressRailColor: theme.border.subtle,
-      railColor: theme.border.subtle,
-      scrollbarColor: theme.border.strong,
-      scrollbarColorHover: theme.text.disabled,
-      successColor: theme.status.success.solid,
-      successColorHover: theme.status.success.solidHover,
-      successColorPressed: theme.status.success.solidPressed,
-      successColorSuppl: theme.status.success.solidHover,
-      tableColor: theme.surface.raised,
-      tableColorHover: theme.state.hover,
-      tableColorStriped: theme.surface.muted,
-      tableHeaderColor: theme.surface.muted,
-      tabColor: theme.surface.canvas,
-      tagColor: theme.surface.muted,
-      textColor1: theme.text.strong,
-      textColor2: theme.text.primary,
-      textColor3: theme.text.secondary,
-      textColorBase: theme.text.strong,
-      textColorDisabled: theme.text.disabled,
-      warningColor: theme.status.warning.solid,
-      warningColorHover: theme.status.warning.solidHover,
-      warningColorPressed: theme.status.warning.solidPressed,
-      warningColorSuppl: theme.status.warning.solidHover,
-    },
   }
 }

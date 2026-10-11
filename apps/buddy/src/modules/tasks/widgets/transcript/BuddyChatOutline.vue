@@ -148,7 +148,7 @@ function select(messageId: string) {
   <aside
     v-if="items.length"
     ref="root"
-    class="buddy-chat-outline"
+    class="buddy-chat-outline absolute z-4 top-4 right-[0.875rem] w-[14px] h-[calc(100%_-_2rem)] pointer-events-none"
     :class="{ 'is-left': position.endsWith('left'), 'is-center': position.startsWith('center'), 'is-bottom': position.startsWith('bottom') }"
     tabindex="-1"
     :aria-label="t('desktop.chat.outline')"
@@ -158,10 +158,10 @@ function select(messageId: string) {
   >
     <section
       v-if="isExpanded"
-      class="buddy-chat-outline__panel"
+      class="buddy-chat-outline__panel absolute top-0 right-[calc(100%_+_0.5rem)] box-border flex w-60 h-[calc(var(--buddy-outline-content-height)_+_1.25rem_+_2px)] max-h-full flex-col gap-1 border-1 border-solid border-border rounded-micro bg-raised shadow-overlay p-[0.625rem] pointer-events-auto"
       :style="{ '--buddy-outline-content-height': `${items.length * OUTLINE_ROW_HEIGHT}px` }"
     >
-      <div v-if="isLoading" class="buddy-chat-outline__loading" role="status">
+      <div v-if="isLoading" class="text-muted text-[0.68rem] leading-[1.5] py-[0.125rem] px-1" role="status">
         {{ t('desktop.chat.outlineLoading') }}
       </div>
       <NVirtualList
@@ -178,14 +178,14 @@ function select(messageId: string) {
         <template #default="{ item, index }">
           <li
             :key="item.messageId"
-            class="buddy-chat-outline__item"
+            class="buddy-chat-outline__item box-border h-[32px] min-w-0 rounded-micro text-fg py-[2px]"
             :class="[`is-${item.kind}`, { 'is-active': item.messageId === activeMessageId }]"
             :aria-posinset="index + 1"
             :aria-setsize="items.length"
           >
             <button
               type="button"
-              class="buddy-chat-outline__item-button"
+              class="buddy-chat-outline__item-button box-border grid w-full h-full min-w-0 grid-cols-[1rem_minmax(0,_1fr)] items-center gap-[0.375rem] border-0 bg-transparent text-inherit cursor-pointer py-0 px-2 text-left ui-focus-ring"
               :data-outline-index="index"
               :aria-label="itemAriaLabel(item)"
               :aria-current="item.messageId === activeMessageId ? 'location' : undefined"
@@ -197,29 +197,29 @@ function select(messageId: string) {
                 :component="roleIcon(item)"
                 aria-hidden="true"
               />
-              <span class="buddy-chat-outline__text">{{ itemText(item) }}</span>
+              <span class="overflow-hidden text-[0.75rem] leading-[1.4] text-ellipsis whitespace-nowrap">{{ itemText(item) }}</span>
             </button>
           </li>
         </template>
       </NVirtualList>
     </section>
 
-    <ol class="buddy-chat-outline__rail" @wheel.prevent="handleRailWheel">
+    <ol class="buddy-chat-outline__rail box-border flex w-full h-full flex-col items-end gap-[1px] m-0 overflow-hidden py-[0.125rem] px-0" @wheel.prevent="handleRailWheel">
       <li
         v-for="item in railItems"
         :key="item.messageId"
-        class="buddy-chat-outline__indicator"
+        class="buddy-chat-outline__indicator flex w-full max-h-[6px] justify-end"
         :class="{ 'is-active': item.messageId === activeMessageId }"
       >
         <button
           type="button"
-          class="buddy-chat-outline__indicator-button"
+          class="buddy-chat-outline__indicator-button flex w-full items-center justify-end border-0 bg-transparent cursor-pointer p-0 pointer-events-auto focus-visible:outline-0"
           :aria-label="itemAriaLabel(item)"
           :aria-current="item.messageId === activeMessageId ? 'location' : undefined"
           @click="select(item.messageId)"
           @mouseenter="expand"
         >
-          <span class="buddy-chat-outline__indicator-line" />
+          <span class="buddy-chat-outline__indicator-line block w-[10px] h-[min(2px,_100%)] rounded-[1px] bg-border-strong" />
         </button>
       </li>
     </ol>
@@ -228,14 +228,6 @@ function select(messageId: string) {
 
 <style scoped lang="scss">
 .buddy-chat-outline {
-  position: absolute;
-  z-index: 4;
-  top: 1rem;
-  right: 0.875rem;
-  width: 14px;
-  height: calc(100% - 2rem);
-  pointer-events: none;
-
   &.is-left {
     right: auto;
     left: 0.875rem;
@@ -279,23 +271,6 @@ function select(messageId: string) {
 }
 
 .buddy-chat-outline__panel {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 0.5rem);
-  box-sizing: border-box;
-  display: flex;
-  width: 15rem;
-  height: calc(var(--buddy-outline-content-height) + 1.25rem + 2px);
-  max-height: 100%;
-  flex-direction: column;
-  gap: 0.25rem;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-overlay);
-  padding: 0.625rem;
-  pointer-events: auto;
-
   &::after {
     position: absolute;
     top: 0;
@@ -304,13 +279,6 @@ function select(messageId: string) {
     height: 100%;
     content: '';
   }
-}
-
-.buddy-chat-outline__loading {
-  color: var(--buddy-text-secondary);
-  font-size: 0.68rem;
-  line-height: 1.5;
-  padding: 0.125rem 0.25rem;
 }
 
 .buddy-chat-outline__list {
@@ -329,13 +297,6 @@ function select(messageId: string) {
 }
 
 .buddy-chat-outline__item {
-  box-sizing: border-box;
-  height: 32px;
-  min-width: 0;
-  border-radius: var(--buddy-radius-micro);
-  color: var(--buddy-text-primary);
-  padding-block: 2px;
-
   &.is-active .buddy-chat-outline__item-button {
     background: var(--buddy-accent-surface);
     color: var(--buddy-accent-on-surface);
@@ -347,26 +308,7 @@ function select(messageId: string) {
 }
 
 .buddy-chat-outline__item-button {
-  box-sizing: border-box;
-  display: grid;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  grid-template-columns: 1rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.375rem;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 0 0.5rem;
-  text-align: left;
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
+  border-radius: inherit
 }
 
 .buddy-chat-outline__role-icon {
@@ -378,58 +320,12 @@ function select(messageId: string) {
   color: var(--buddy-accent-text);
 }
 
-.buddy-chat-outline__text {
-  overflow: hidden;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .buddy-chat-outline__rail {
-  box-sizing: border-box;
-  display: flex;
-  width: 100%;
-  height: 100%;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  margin: 0;
-  overflow: hidden;
-  padding: 0.125rem 0;
   list-style: none;
 }
 
 .buddy-chat-outline__indicator {
-  display: flex;
-  width: 100%;
-  max-height: 6px;
   flex: 1 1 6px;
-  justify-content: flex-end;
-}
-
-.buddy-chat-outline__indicator-button {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: flex-end;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-  pointer-events: auto;
-
-  &:focus-visible {
-    outline: 0;
-  }
-}
-
-.buddy-chat-outline__indicator-line {
-  display: block;
-  width: 10px;
-  height: min(2px, 100%);
-  border-radius: 1px;
-  background: var(--buddy-border-strong);
 }
 
 .buddy-chat-outline__indicator.is-active .buddy-chat-outline__indicator-line,

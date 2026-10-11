@@ -48,24 +48,24 @@ const visibleGroups = computed(() => settingsNavigationSections.map(section => (
 </script>
 
 <template>
-  <nav class="desktop-settings-sidebar">
-    <header class="desktop-settings-sidebar__header">
+  <nav class="desktop-settings-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar">
+    <header class="flex flex-none items-center gap-[0.35rem] border-b-1 border-b-solid border-b-border py-0 px-3 h-region-header">
       <DesktopWorkspaceSidebarIdentity
         :label="t('desktop.navigation.settings')"
         :visible="appSidebarCollapsed"
       />
     </header>
 
-    <div class="desktop-settings-sidebar__content">
-      <section v-for="group in visibleGroups" :key="group.id" class="desktop-settings-sidebar__group">
-        <h2 class="desktop-settings-sidebar__group-title">
+    <div class="flex min-h-0 flex-1 flex-col gap-[1.15rem] overflow-y-auto py-[0.9rem] px-[0.7rem]">
+      <section v-for="group in visibleGroups" :key="group.id" class="flex flex-none flex-col gap-[0.15rem]">
+        <h2 class="mt-0 mr-0 mb-1 ml-0 py-0 px-[0.65rem] text-muted text-sidebar-section [font-weight:var(--buddy-sidebar-section-font-weight)] leading-[1.5]">
           {{ settingsText(group.title, language) }}
         </h2>
         <RouterLink
           v-for="module in group.modules"
           :key="module.id"
-          class="desktop-settings-sidebar__item"
-          :class="{ 'is-active': activeModuleId === module.id }"
+          class="desktop-settings-sidebar__item ui-focus-ring transition-state-colors flex w-full items-center gap-[0.65rem] border-0 rounded-[0.45rem] text-sidebar-item [font-weight:var(--buddy-sidebar-item-font-weight)] leading-[20px] px-[0.65rem] py-[0.4rem] text-left decoration-none"
+          :class="activeModuleId === module.id ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'bg-transparent text-fg hover:bg-nav-hover active:bg-nav-pressed'"
           :aria-current="activeModuleId === module.id ? 'page' : undefined"
           :to="settingsModuleLocation(module)"
         >
@@ -76,90 +76,3 @@ const visibleGroups = computed(() => settingsNavigationSections.map(section => (
     </div>
   </nav>
 </template>
-
-<style scoped>
-.desktop-settings-sidebar {
-  display: flex;
-  width: var(--buddy-workspace-sidebar-width);
-  height: 100%;
-  min-height: 0;
-  flex: none;
-  flex-direction: column;
-  border-right: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-workspace-sidebar);
-}
-
-.desktop-settings-sidebar__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  gap: 0.35rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 0.75rem;
-}
-
-.desktop-settings-sidebar__content {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1.15rem;
-  overflow-y: auto;
-  padding: 0.9rem 0.7rem;
-}
-
-.desktop-settings-sidebar__group {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.desktop-settings-sidebar__group-title {
-  margin: 0 0 0.25rem;
-  padding: 0 0.65rem;
-  color: var(--buddy-text-muted);
-  font-size: var(--buddy-sidebar-section-font-size);
-  font-weight: var(--buddy-sidebar-section-font-weight);
-  line-height: 1.5;
-}
-
-.desktop-settings-sidebar__item {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 0.65rem;
-  border: 0;
-  border-radius: 0.45rem;
-  background: transparent;
-  color: var(--buddy-text-primary);
-  font-size: var(--buddy-sidebar-item-font-size);
-  font-weight: var(--buddy-sidebar-item-font-weight);
-  line-height: 20px;
-  padding: 0.4rem 0.65rem;
-  text-align: left;
-  text-decoration: none;
-  transition:
-    background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
-    color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-}
-
-.desktop-settings-sidebar__item:hover {
-  background: var(--buddy-nav-hover);
-}
-
-.desktop-settings-sidebar__item:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: -2px;
-}
-
-.desktop-settings-sidebar__item.is-active {
-  background: var(--buddy-nav-selected);
-  color: var(--buddy-nav-foreground);
-}
-
-.desktop-settings-sidebar__item.is-active:hover {
-  background: var(--buddy-nav-pressed);
-}
-</style>

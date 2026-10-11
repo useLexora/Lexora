@@ -7,6 +7,7 @@ import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLife
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
 import type { BuddyCapabilities } from '../../shared/platform'
 import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
+import type { ThemePreference } from '../../shared/theme/themePreferences'
 import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
 import type { DesktopUpdateApi, DesktopUpdateCheckResult } from './desktopUpdates'
 import type { LocalChatApi } from './localChatApi'
@@ -185,7 +186,7 @@ export interface LexoraConfig {
     profile: DesktopUserProfileConfig
     pluginAuthor: string
     sidebarCollapsed: boolean
-    theme: 'system' | 'light' | 'dark'
+    theme: ThemePreference
   }
   pet: {
     alwaysOnTop: boolean
@@ -207,6 +208,7 @@ export interface LexoraConfigPatch {
 }
 
 export interface LexoraDesktopApi {
+  themes: import('../../shared/theme/themeApi').ThemeApi
   extensions: import('../../shared/extensions/extensionApi').ExtensionApi
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi
   contextPanel: import('../../shared/context-panel/contextPanel').ContextPanelApi

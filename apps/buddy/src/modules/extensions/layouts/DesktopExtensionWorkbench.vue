@@ -18,20 +18,20 @@ const sections = computed(() => [
 </script>
 
 <template>
-  <section class="desktop-extension-workbench">
-    <header class="desktop-extension-workbench__header">
+  <section class="desktop-extension-workbench flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface">
+    <header class="desktop-extension-workbench__header flex flex-none items-center justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header">
       <DesktopSegmentedControl
         v-model="section"
         class="desktop-extension-workbench__sections"
         :aria-label="labels.title"
         :options="sections"
       />
-      <div class="desktop-extension-workbench__actions">
+      <div class="desktop-extension-workbench__actions flex flex-none items-center gap-[8px]">
         <slot name="actions" />
       </div>
     </header>
     <NScrollbar class="desktop-extension-workbench__scroll" content-style="min-height: 100%;">
-      <div class="desktop-extension-workbench__content">
+      <div class="desktop-extension-workbench__content flex min-h-full box-border flex-col gap-[12px] pt-[14px] pr-[18px] pb-[36px] pl-[18px]">
         <slot />
       </div>
     </NScrollbar>
@@ -40,30 +40,9 @@ const sections = computed(() => [
 
 <style scoped lang="scss">
 .desktop-extension-workbench {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
   container-type: inline-size;
 }
-
-.desktop-extension-workbench__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 18px;
-}
-
-.desktop-extension-workbench__actions { display: flex; flex: none; align-items: center; gap: 8px; }
 .desktop-extension-workbench__scroll { min-height: 0; flex: 1; }
-.desktop-extension-workbench__content { display: flex; min-height: 100%; box-sizing: border-box; flex-direction: column; gap: 12px; padding: 14px 18px 36px; }
 
 @container (max-width: 600px) {
   .desktop-extension-workbench__header { gap: 8px; padding: 0 12px; }

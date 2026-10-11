@@ -8,24 +8,17 @@ const content = computed(() => presentChatToolRead(props.output, props.lineStart
 
 <template>
   <div class="buddy-chat-tool-read">
-    <div class="buddy-chat-tool-read__viewport">
-      <pre v-if="content.numbers" class="buddy-chat-tool-read__numbers" aria-hidden="true">{{ content.numbers }}</pre>
-      <pre class="buddy-chat-tool-read__content"><code>{{ content.content }}</code></pre>
+    <div class="flex max-h-60 overflow-auto pt-[4px] pr-0 pb-[8px] pl-0">
+      <pre v-if="content.numbers" class="buddy-chat-tool-read__numbers sticky left-0 flex-none py-0 px-[12px] bg-subtle text-muted text-right select-none" aria-hidden="true">{{ content.numbers }}</pre>
+      <pre class="buddy-chat-tool-read__content flex-1 pt-0 pr-[12px] pb-0 pl-0 first:pl-[12px] first:whitespace-pre-wrap first:[overflow-wrap:anywhere]"><code>{{ content.content }}</code></pre>
     </div>
-    <p v-if="content.notice" class="buddy-chat-tool-read__notice">
+    <p v-if="content.notice" class="m-0 pt-[5px] pr-[10px] pb-[8px] pl-[10px] text-muted text-[length:var(--buddy-chat-caption-font-size)] [overflow-wrap:anywhere]">
       {{ content.notice }}
     </p>
   </div>
 </template>
 
-<style scoped>
-.buddy-chat-tool-read__viewport {
-  display: flex;
-  max-height: 15rem;
-  overflow: auto;
-  padding: 4px 0 8px;
-}
-
+<style scoped lang="scss">
 pre {
   margin: 0;
   font-family: var(--buddy-font-mono);
@@ -35,23 +28,10 @@ pre {
 }
 
 .buddy-chat-tool-read__numbers {
-  position: sticky;
-  left: 0;
-  flex: none;
   min-width: 3ch;
-  padding: 0 12px;
-  background: var(--buddy-surface-subtle);
-  color: var(--buddy-text-muted);
-  text-align: right;
-  user-select: none;
 }
 
 .buddy-chat-tool-read__content {
-  flex: 1;
-  padding: 0 12px 0 0;
   color: var(--buddy-chat-code-color);
 }
-
-.buddy-chat-tool-read__content:first-child { padding-left: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.buddy-chat-tool-read__notice { margin: 0; padding: 5px 10px 8px; color: var(--buddy-text-muted); font-size: var(--buddy-chat-caption-font-size); overflow-wrap: anywhere; }
 </style>

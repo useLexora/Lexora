@@ -7,6 +7,7 @@ import { computed, defineAsyncComponent, nextTick, shallowRef, useTemplateRef, w
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
+import { useThemeMaterial } from '@/theme/useThemeMaterial'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
@@ -62,6 +63,7 @@ watch(() => props.viewMode, (value) => {
   else nodeDetail.close()
 }, { immediate: true })
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
+useThemeMaterial('workbench.pane', () => pageRef.value)
 const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
 watch([pageRef, isLoading], ([element, loading], _, cleanup) => {
   if (!element || loading)
@@ -178,8 +180,8 @@ function openDetailChanges(id: string) {
 
 <template>
   <DesktopRuntimePane :loading="isLoading" :language="language" :animate="false">
-    <section ref="pageRef" class="desktop-chat-page" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode">
-      <main class="desktop-chat-page__content">
+    <section ref="pageRef" class="desktop-chat-page relative grid min-w-0 min-h-0 flex-1 grid-cols-[minmax(0,_1fr)] grid-rows-[minmax(0,_1fr)_auto] bg-reading text-reading-fg" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode">
+      <main class="desktop-chat-page__content [grid-area:content] flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
         <DesktopConversationCanvas
           v-if="canvasVisited"
           v-show="viewMode === 'canvas'"
@@ -193,7 +195,7 @@ function openDetailChanges(id: string) {
           @edit-node="editNode"
           @open-node-artifact="nodeDetail.close(); emit('openNodeArtifact', $event)"
         />
-        <WorkbenchSlot v-if="viewMode !== 'canvas' && isEmpty && !isLoading && welcomeVariant" target="task.welcome">
+        <WorkbenchSlot v-if="viewMode !== 'canvas' && isEmpty && !isLoading" target="task.welcome">
           <DesktopChatWelcome
             :language="language"
             :variant="welcomeVariant"
@@ -220,12 +222,12 @@ function openDetailChanges(id: string) {
       </main>
 
       <div
-        v-if="detailVisible" class="desktop-chat-page__detail-resizer" role="separator" tabindex="0" aria-orientation="vertical"
+        v-if="detailVisible" class="desktop-chat-page__detail-resizer relative col-[2] row-[1_/_-1] justify-self-start w-[1px] z-4 cursor-col-resize" role="separator" tabindex="0" aria-orientation="vertical"
         :aria-label="t('desktop.canvas.resizeDetail')" :aria-valuenow="Math.round(detailResize.width.value)"
         :aria-valuemin="Math.round(detailResize.minimum.value)" :aria-valuemax="Math.round(detailResize.maximum.value)"
         data-testid="canvas-detail-resizer" @pointerdown="detailResize.begin" @keydown="detailResize.keydown"
       />
-      <aside v-if="detailVisible && nodeDetail.target.value" class="desktop-chat-page__node-detail" data-testid="canvas-detail-pane">
+      <aside v-if="detailVisible && nodeDetail.target.value" class="[grid-area:detail] min-w-0 min-h-0 border-l-1 border-l-solid border-l-border overflow-hidden" data-testid="canvas-detail-pane">
         <ConversationNodeDetail
           :target="nodeDetail.target.value" :rows="nodeDetail.rows.value" :language="language"
           :stopping-run-id="workspace.execution.stoppingRunId.value"
@@ -237,8 +239,8 @@ function openDetailChanges(id: string) {
         />
       </aside>
 
-      <footer v-show="composerVisible" class="desktop-chat-page__composer-dock" :data-composer-placement="composerVisible ? detailVisible ? 'detail' : 'bottom' : 'hidden'">
-        <div class="desktop-chat-page__composer-stack">
+      <footer v-show="composerVisible" class="desktop-chat-page__composer-dock [grid-area:composer] relative z-2 flex-none pt-0 pr-[var(--buddy-chat-inline-gutter)] pb-4 pl-[var(--buddy-chat-inline-gutter)]" :data-composer-placement="composerVisible ? detailVisible ? 'detail' : 'bottom' : 'hidden'">
+        <div class="grid grid-cols-[minmax(0,_1fr)] min-w-0 w-[min(100%,_var(--buddy-chat-reading-width))] gap-[0.55rem] my-0 mx-auto">
           <DesktopTaskNotices
             :execution="workspace.execution"
             :language="language"
@@ -247,7 +249,7 @@ function openDetailChanges(id: string) {
             @open-settings="emit('openSettings', $event)"
             @select-model="openModelSelector"
           />
-          <div v-if="followup" class="desktop-chat-page__followup" data-testid="canvas-followup-context">
+          <div v-if="followup" class="desktop-chat-page__followup flex min-w-0 items-center gap-[12px] py-[8px] px-[12px] border-1 border-solid border-accent-border rounded-[8px] bg-accent-subtle text-accent-on-surface text-[12px]" data-testid="canvas-followup-context">
             <span>{{ t('desktop.canvas.composerTarget') }}<strong>{{ followup.text }}</strong></span>
             <button type="button" :disabled="workspace.execution.isSending.value" @click="workspace.execution.cancelFollowup">
               {{ t('desktop.canvas.cancelFollowup') }}
@@ -271,7 +273,7 @@ function openDetailChanges(id: string) {
         :root="pageRef" :language="language" :owner-key="quoteOwnerKey" :disabled="quoteDisabled"
         :add-quote="quote => composerRef?.quote(quote) ?? 'unavailable'" @accepted="focusComposer"
       />
-      <div v-if="detailResize.dragging.value" class="desktop-chat-page__resize-shield" />
+      <div v-if="detailResize.dragging.value" class="absolute inset-0 z-3 cursor-col-resize" />
     </section>
   </DesktopRuntimePane>
 </template>
@@ -284,26 +286,8 @@ function openDetailChanges(id: string) {
 }
 
 .desktop-chat-page {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: 'content' 'composer';
-  background: var(--buddy-surface-base);
   container: desktop-chat-page / inline-size;
-}
-
-.desktop-chat-page__content {
-  grid-area: content;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .desktop-chat-page.is-loading {
@@ -332,49 +316,21 @@ function openDetailChanges(id: string) {
   flex: 1;
 }
 
-.desktop-chat-page__composer-dock {
-  grid-area: composer;
-  position: relative;
-  z-index: 2;
-  flex: none;
-  background: var(--buddy-surface-base);
-  padding: 0 var(--buddy-chat-inline-gutter) 1rem;
-}
-
 .desktop-chat-page.has-node-detail {
   grid-template-columns: minmax(0, 1fr) var(--conversation-detail-width);
   grid-template-areas: 'content detail' 'content composer';
 }
 
 .desktop-chat-page.is-question-preview { grid-template-rows: minmax(0, 1fr); grid-template-areas: 'content detail'; }
-.desktop-chat-page__detail-resizer { position: relative; grid-column: 2; grid-row: 1 / -1; justify-self: start; width: 1px; z-index: 4; cursor: col-resize; touch-action: none; }
+.desktop-chat-page__detail-resizer { touch-action: none; }
 .desktop-chat-page__detail-resizer::before { position: absolute; content: ''; inset: 0 -4px; }
 .desktop-chat-page__detail-resizer:hover, .desktop-chat-page__detail-resizer:focus-visible, .is-resizing-detail .desktop-chat-page__detail-resizer { background: var(--buddy-focus-ring); outline: none; }
-.desktop-chat-page__resize-shield { position: absolute; inset: 0; z-index: 3; cursor: col-resize; }
 .desktop-chat-page.is-resizing-detail { user-select: none; }
-
-.desktop-chat-page__node-detail {
-  grid-area: detail;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--buddy-border-subtle);
-  overflow: hidden;
-}
 
 .has-node-detail .desktop-chat-page__composer-dock {
   border-left: 1px solid var(--buddy-border-subtle);
   padding: 8px 12px 12px;
 }
-
-.desktop-chat-page__composer-stack {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  width: min(100%, var(--buddy-chat-reading-width));
-  gap: 0.55rem;
-  margin: 0 auto;
-}
-.desktop-chat-page__followup { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid var(--buddy-accent-border); border-radius: 8px; background: var(--buddy-accent-surface-subtle); color: var(--buddy-accent-on-surface); font-size: 12px; }
 .desktop-chat-page__followup > span { min-width: 0; flex: 1; }
 .desktop-chat-page__followup strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 400; color: var(--buddy-text-secondary); }
 .desktop-chat-page__followup button { flex: none; border: 0; border-radius: 6px; padding: 5px 8px; background: transparent; color: var(--buddy-text-secondary); font-size: 11px; cursor: pointer; }

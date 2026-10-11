@@ -27,9 +27,9 @@ function close(): void {
 </script>
 
 <template>
-  <section class="desktop-automation-editor">
-    <header class="desktop-automation-editor__header">
-      <div class="desktop-automation-editor__breadcrumb">
+  <section class="desktop-automation-editor flex w-full h-full min-w-0 min-h-0 flex-col bg-surface">
+    <header class="desktop-automation-editor__header flex-none justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header">
+      <div class="desktop-automation-editor__breadcrumb min-w-0 gap-[7px] text-muted text-[13px]">
         <DesktopIcon name="navigationAutomation" />
         <button type="button" @click="close">
           {{ t('desktop.automations.title') }}
@@ -37,7 +37,7 @@ function close(): void {
         <span>/</span>
         <strong>{{ pageTitle }}</strong>
       </div>
-      <div class="desktop-automation-editor__header-actions">
+      <div class="desktop-automation-editor__header-actions flex-none gap-[8px]">
         <NButton :disabled="busy" @click="close">
           {{ t('desktop.automations.editor.cancel') }}
         </NButton>
@@ -53,7 +53,7 @@ function close(): void {
     </header>
 
     <NScrollbar class="desktop-automation-editor__scroll">
-      <div class="desktop-automation-editor__content">
+      <div class="desktop-automation-editor__content grid w-[min(100%,_1120px)] gap-[16px] my-0 mx-auto pt-[clamp(18px,_3vw,_34px)] pr-[clamp(18px,_3vw,_34px)] pb-[48px] pl-[clamp(18px,_3vw,_34px)]">
         <NAlert
           v-if="mode === 'create' && runtimeNoticeVisible"
           class="desktop-automation-editor__runtime-alert"
@@ -83,7 +83,7 @@ function close(): void {
               />
             </NFormItem>
 
-            <div class="desktop-automation-editor__space-field">
+            <div class="desktop-automation-editor__space-field grid gap-[4px]">
               <NFormItem :label="t('desktop.automations.editor.space')">
                 <NSelect
                   v-model:value="form.spaceId"
@@ -129,7 +129,7 @@ function close(): void {
             />
           </NForm>
 
-          <div v-else-if="!loading" class="desktop-automation-editor__unavailable">
+          <div v-else-if="!loading" class="desktop-automation-editor__unavailable grid min-h-[260px] gap-[12px] text-muted text-center">
             <p>{{ t('desktop.automations.editor.loadUnavailable') }}</p>
             <NButton @click="close">
               {{ t('desktop.automations.editor.cancel') }}
@@ -142,16 +142,6 @@ function close(): void {
 </template>
 
 <style scoped lang="scss">
-.desktop-automation-editor {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
-}
-
 .desktop-automation-editor__header,
 .desktop-automation-editor__breadcrumb,
 .desktop-automation-editor__header-actions {
@@ -159,21 +149,7 @@ function close(): void {
   align-items: center;
 }
 
-.desktop-automation-editor__header {
-  height: var(--buddy-region-header-height);
-  flex: none;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  padding: 0 18px;
-}
-
 .desktop-automation-editor__breadcrumb {
-  min-width: 0;
-  gap: 7px;
-  color: var(--buddy-text-secondary);
-  font-size: 13px;
-
   > .n-icon,
   > .desktop-icon {
     flex: none;
@@ -209,22 +185,9 @@ function close(): void {
   }
 }
 
-.desktop-automation-editor__header-actions {
-  flex: none;
-  gap: 8px;
-}
-
 .desktop-automation-editor__scroll {
   min-height: 0;
   flex: 1;
-}
-
-.desktop-automation-editor__content {
-  display: grid;
-  width: min(100%, 1120px);
-  gap: 16px;
-  margin: 0 auto;
-  padding: clamp(18px, 3vw, 34px) clamp(18px, 3vw, 34px) 48px;
 }
 
 .desktop-automation-editor__body {
@@ -241,9 +204,6 @@ function close(): void {
 }
 
 .desktop-automation-editor__space-field {
-  display: grid;
-  gap: 4px;
-
   p {
     margin: -10px 0 8px;
     color: var(--buddy-text-muted);
@@ -257,13 +217,8 @@ function close(): void {
 }
 
 .desktop-automation-editor__unavailable {
-  display: grid;
-  min-height: 260px;
   place-content: center;
   justify-items: center;
-  gap: 12px;
-  color: var(--buddy-text-secondary);
-  text-align: center;
 
   p {
     margin: 0;

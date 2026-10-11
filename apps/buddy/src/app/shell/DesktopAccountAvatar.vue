@@ -27,16 +27,16 @@ const resolvedInitials = computed(() => {
 </script>
 
 <template>
-  <span class="desktop-account-avatar" :class="`is-${size}`" aria-hidden="true">
+  <span class="desktop-account-avatar grid flex-none place-items-center overflow-hidden rounded-full bg-avatar text-avatar-foreground select-none" :class="`is-${size}`" aria-hidden="true">
     <img
       v-if="avatarUrl"
-      class="desktop-account-avatar__image"
+      class="desktop-account-avatar__image w-full h-full rounded-full"
       :src="avatarUrl"
       alt=""
     >
     <span
       v-else-if="resolvedInitials"
-      class="desktop-account-avatar__initials"
+      class="desktop-account-avatar__initials flex w-full h-full items-center justify-center rounded-full bg-accent font-600"
       :style="backgroundColor ? { backgroundColor } : undefined"
     >
       {{ resolvedInitials }}
@@ -49,17 +49,9 @@ const resolvedInitials = computed(() => {
   </span>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-account-avatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--buddy-avatar-background);
   box-shadow: inset 0 0 0 1px var(--buddy-border-strong);
-  color: var(--buddy-avatar-foreground);
-  user-select: none;
 }
 
 .desktop-account-avatar.is-compact {
@@ -87,22 +79,11 @@ const resolvedInitials = computed(() => {
 }
 
 .desktop-account-avatar__image {
-  width: 100%;
-  height: 100%;
   object-fit: cover;
-  border-radius: 50%;
 }
 
 .desktop-account-avatar__initials {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--buddy-accent-solid);
   color: #ffffff;
-  font-weight: 600;
   letter-spacing: 0.02em;
 }
 

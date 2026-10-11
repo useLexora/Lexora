@@ -3,18 +3,12 @@ defineProps<{ color?: string | null, compact?: boolean }>()
 </script>
 
 <template>
-  <span class="desktop-task-mark-swatch" :class="{ 'is-empty': !color, 'is-compact': compact }" :style="{ backgroundColor: color ?? undefined }" aria-hidden="true" />
+  <span class="desktop-task-mark-swatch inline-block w-[8px] h-[8px] flex-none rounded-[2px] box-border" :class="{ 'is-empty': !color, 'is-compact': compact }" :style="{ backgroundColor: color ?? undefined }" aria-hidden="true" />
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-task-mark-swatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  flex: none;
   border: 1px solid color-mix(in srgb, var(--buddy-text-primary) 18%, transparent);
-  border-radius: 2px;
-  box-sizing: border-box;
 }
 .desktop-task-mark-swatch.is-empty { visibility: hidden; }
 .desktop-task-mark-swatch.is-compact {

@@ -125,7 +125,7 @@ useTaskHistoryDrag({
 <template>
   <div
     ref="row"
-    class="desktop-task-space-row"
+    class="desktop-task-space-row relative flex h-[var(--buddy-task-sidebar-row-height)] min-w-0 items-center rounded-[var(--buddy-task-sidebar-state-radius)] hover:bg-nav-hover"
     :class="{
       'is-dragging': dragging,
       'is-drop-after': dropPosition === 'after',
@@ -135,7 +135,7 @@ useTaskHistoryDrag({
   >
     <button
       ref="handle"
-      class="desktop-task-space-row__name"
+      class="desktop-task-space-row__name flex min-w-0 flex-1 items-center gap-1 text-fg text-[length:var(--buddy-sidebar-space-font-size)] [font-weight:var(--buddy-sidebar-space-font-weight)] leading-[20px] py-0 px-[0.375rem] text-left focus-visible:rounded-[var(--buddy-task-sidebar-state-radius)] focus-visible:outline-solid focus-visible:outline-1 focus-visible:outline-focus focus-visible:outline-offset-[-1px]"
       type="button"
       :aria-expanded="expanded"
       @click="emit('toggle')"
@@ -151,7 +151,7 @@ useTaskHistoryDrag({
       />
       <DesktopOverflowingLabel :paused="dragging" :text="space.name" />
     </button>
-    <div class="desktop-task-space-row__actions">
+    <div class="desktop-task-space-row__actions flex flex-none items-center gap-[var(--buddy-task-sidebar-action-gap)] opacity-0 pr-[var(--buddy-task-sidebar-action-inset)] pointer-events-none">
       <NDropdown
         trigger="click"
         placement="bottom-start"
@@ -161,7 +161,7 @@ useTaskHistoryDrag({
         @select="handleMenuAction"
       >
         <button
-          class="desktop-task-space-row__action"
+          class="desktop-task-space-row__action ui-focus-ring"
           type="button"
           :aria-label="t('desktop.tasks.moreActions')"
         >
@@ -169,7 +169,7 @@ useTaskHistoryDrag({
         </button>
       </NDropdown>
       <button
-        class="desktop-task-space-row__action desktop-task-space-row__pin"
+        class="desktop-task-space-row__action desktop-task-space-row__pin ui-focus-ring"
         type="button"
         :aria-label="pinLabel"
         :aria-pressed="pinMode === 'unpin'"
@@ -180,7 +180,7 @@ useTaskHistoryDrag({
     </div>
     <span
       v-if="showActivity"
-      class="desktop-task-space-row__activity"
+      class="desktop-task-space-row__activity absolute top-[50%] right-[var(--buddy-task-sidebar-action-inset)] grid w-[var(--buddy-task-sidebar-action-size)] h-[var(--buddy-task-sidebar-action-size)] place-items-center text-muted pointer-events-none"
       :class="{
         'is-awaiting-approval': activity === 'awaiting_approval',
         'is-running': activity === 'running',
@@ -195,17 +195,7 @@ useTaskHistoryDrag({
 
 <style scoped lang="scss">
 .desktop-task-space-row {
-  position: relative;
-  display: flex;
-  height: var(--buddy-task-sidebar-row-height);
-  min-width: 0;
-  align-items: center;
-  border-radius: var(--buddy-task-sidebar-state-radius);
   transition: background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);
-
-  &:hover {
-    background: var(--buddy-nav-hover);
-  }
 
   &.is-reorderable {
     cursor: grab;
@@ -244,26 +234,8 @@ button {
 }
 
 .desktop-task-space-row__name {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 0.25rem;
-  color: var(--buddy-text-primary);
-  font-size: var(--buddy-sidebar-space-font-size);
-  font-weight: var(--buddy-sidebar-space-font-weight);
-  line-height: 20px;
-  padding: 0 0.375rem;
-  text-align: left;
-
   .desktop-overflow-label {
     flex: 1;
-  }
-
-  &:focus-visible {
-    border-radius: var(--buddy-task-sidebar-state-radius);
-    outline: 1px solid var(--buddy-focus-ring);
-    outline-offset: -1px;
   }
 }
 
@@ -281,16 +253,6 @@ button {
   margin-right: 0.0625rem;
 }
 
-.desktop-task-space-row__actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--buddy-task-sidebar-action-gap);
-  opacity: 0;
-  padding-right: var(--buddy-task-sidebar-action-inset);
-  pointer-events: none;
-}
-
 .desktop-task-space-row:hover .desktop-task-space-row__actions,
 .desktop-task-space-row:has(:focus-visible) .desktop-task-space-row__actions {
   opacity: 1;
@@ -298,16 +260,7 @@ button {
 }
 
 .desktop-task-space-row__activity {
-  position: absolute;
-  top: 50%;
-  right: var(--buddy-task-sidebar-action-inset);
-  display: grid;
-  width: var(--buddy-task-sidebar-action-size);
-  height: var(--buddy-task-sidebar-action-size);
-  place-items: center;
   transform: translateY(-50%);
-  color: var(--buddy-text-muted);
-  pointer-events: none;
 
   &.is-running .n-icon {
     animation: desktop-task-space-row-spin 1s linear infinite;
@@ -357,11 +310,6 @@ button {
   &:hover {
     background: var(--buddy-nav-hover);
     color: var(--buddy-text-strong);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
   }
 }
 

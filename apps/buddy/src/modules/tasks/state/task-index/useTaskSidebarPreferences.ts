@@ -139,7 +139,8 @@ export function useTaskSidebarPreferences(
   }
 
   function setWidth(value: number | null): Promise<boolean> {
-    return commit({ desktop: { taskSidebar: { width: value } } }, () => width.value = value)
+    const next = value === null ? null : Math.round(value)
+    return commit({ desktop: { taskSidebar: { width: next } } }, () => width.value = next)
   }
 
   function pruneSpaces(validSpaceIds: ReadonlySet<string>): void {

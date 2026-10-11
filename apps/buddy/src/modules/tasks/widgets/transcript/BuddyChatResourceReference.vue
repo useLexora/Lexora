@@ -20,7 +20,7 @@ const { t } = useBuddyI18n(() => props.language)
 
 <template>
   <a
-    class="buddy-chat-resource-reference"
+    class="buddy-chat-resource-reference decoration-none"
     :href="`#buddy-resource-${resourceId}`"
     :aria-label="t('desktop.chat.locateAttachment', { name: imageLabel ?? attachment.name })"
     :data-resource-id="resourceId"
@@ -33,8 +33,6 @@ const { t } = useBuddyI18n(() => props.language)
 
 .buddy-chat-resource-reference {
   @include highlight.inline-highlight-token;
-
-  text-decoration: none;
 
   &:hover,
   &:focus-visible {

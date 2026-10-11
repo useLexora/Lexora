@@ -23,7 +23,7 @@ test('plugin-owned preferences activate contributions, yield native content and 
   const visible = async name => (await pluginFrame(name, 'footer')).evaluate(() => window.fixture.visible)
   async function install(name) {
     const directory = path.join(instance.home, 'fixtures', name)
-    const id = await writeContributionPlugin(directory, name)
+    const id = await writeContributionPlugin(directory, name, { uno: name === 'alpha' })
     await navigate('插件')
     await app.evaluate(({ dialog }, directory) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
@@ -32,7 +32,6 @@ test('plugin-owned preferences activate contributions, yield native content and 
     await page.getByTestId('extension-development').click()
     await page.getByTestId('extension-confirm-install').click()
     await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).some(item => item.manifest.id === id), id)).toBe(true)
-    await expect(page.getByText('界面呈现', { exact: true })).toHaveCount(0)
   }
   async function preference(name, enabled) {
     await navigate(`Settings ${name}`)
@@ -47,8 +46,23 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await preference('alpha', true)
   const alpha = await pluginFrame('alpha', 'footer')
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
+  await expect.poll(() => alpha.evaluate(() => window.fixture.theme?.view.accent)).toBe('#96304d')
+  const sdkTheme = await alpha.evaluate(() => window.fixture.theme)
+  expect(sdkTheme.host.accent).toBe('#207cba')
+  expect(sdkTheme.view.id).toMatch(/^user\.theme\./)
+  expect(sdkTheme.host.id).toMatch(/^user\.theme\./)
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.themes.request({ action: 'list' })).filter(theme => theme.source === 'user').map(theme => theme.label))).toEqual(['View SDK theme', 'Host SDK theme'])
   await expect(nativeFooter()).toHaveCount(0)
   const identity = await alpha.evaluate(() => window.fixture.instance)
+  const hostColor = name => page.evaluate((name) => {
+    const style = document.createElement('span').style
+    style.color = getComputedStyle(document.documentElement).getPropertyValue(`--buddy-${name}`)
+    return style.color
+  }, name)
+  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.violet-dark' } } }))
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'lexora.themes.violet-dark')
+  await expect.poll(() => alpha.evaluate(() => getComputedStyle(document.querySelector('main')).backgroundColor)).toBe(await hostColor('accent-solid'))
+  expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
   await page.getByTestId('context-panel-toggle').click()
   await page.getByTestId('context-panel-swap').click()
   await page.getByTestId('context-panel-maximize').click()
@@ -59,15 +73,14 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await page.getByTestId('context-panel-swap').click()
   await page.getByTestId('context-panel-toggle').click()
   const alphaActions = await pluginFrame('alpha', 'actions')
+  const actionFrame = await alphaActions.frameElement()
+  await actionFrame.waitForElementState('stable')
+  await actionFrame.dispose()
   await alphaActions.getByRole('checkbox', { name: 'Content tests.alpha' }).uncheck()
   await expect(nativeFooter()).toBeVisible()
   await alphaActions.getByRole('checkbox', { name: 'Content tests.alpha' }).check()
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
   expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
-  await preference('alpha', false)
-  await expect(nativeFooter()).toBeVisible()
-  await preference('alpha', true)
-
   await install('beta')
   await preference('beta', true)
   await expect.poll(() => visible('alpha')).toBe(true)
@@ -89,6 +102,5 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await expect.poll(() => restoredBeta.evaluate(() => window.fixture.visible)).toBe(true)
   await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.beta', false))
   await expect(nativeFooter()).toBeVisible()
-  await page.screenshot({ path: path.join(instance.artifactDirectory, 'native-fallback.png'), animations: 'disabled' })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

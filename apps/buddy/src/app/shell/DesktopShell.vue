@@ -27,7 +27,7 @@ function navigate(id: string) {
 </script>
 
 <template>
-  <div class="desktop-shell">
+  <div class="desktop-shell flex min-w-0 min-h-0 flex-col bg-canvas">
     <DesktopTitleBar
       :app-info="bindings.appInfo.value"
       :shortcut-bindings="bindings.shortcuts.bindings.value"
@@ -38,7 +38,7 @@ function navigate(id: string) {
       @toggle-context="bindings.resources.toggle"
       @toggle-app-sidebar="bindings.toggleAppSidebar"
     />
-    <div class="desktop-shell__body">
+    <div class="desktop-shell__body relative">
       <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
         <div class="desktop-shell__content" :class="{ 'is-starting': startupVisible }" :inert="startupVisible" :aria-hidden="startupVisible">
           <Transition name="desktop-app-sidebar">
@@ -74,15 +74,10 @@ function navigate(id: string) {
   </div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-shell {
-  display: flex;
   width: 100dvw;
   height: 100dvh;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--buddy-surface-canvas);
 }
 
 .desktop-shell__body,
@@ -93,8 +88,6 @@ function navigate(id: string) {
   min-height: 0;
   flex: 1;
 }
-
-.desktop-shell__body { position: relative; }
 .desktop-shell__content { transition: opacity 220ms ease; }
 .desktop-shell__content.is-starting { opacity: 0; }
 .desktop-startup-reveal-leave-active { transition: opacity 220ms ease; }

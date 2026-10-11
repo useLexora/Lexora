@@ -15,7 +15,7 @@ const emit = defineEmits<{
 <template>
   <button
     :aria-label="label"
-    class="buddy-chat-return-to-latest"
+    class="buddy-chat-return-to-latest inline-flex w-7 min-w-7 h-7 min-h-7 items-center justify-center border-1 border-solid border-border rounded-micro bg-raised shadow-soft text-muted cursor-pointer p-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
     type="button"
     @click="emit('activate')"
   >
@@ -29,21 +29,6 @@ const emit = defineEmits<{
 
 <style scoped lang="scss">
 .buddy-chat-return-to-latest {
-  display: inline-flex;
-  width: 1.75rem;
-  min-width: 1.75rem;
-  height: 1.75rem;
-  min-height: 1.75rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-soft);
-  color: var(--buddy-text-secondary);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
   transition:
     border-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
     background-color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing),
@@ -65,11 +50,6 @@ const emit = defineEmits<{
       var(--buddy-accent-text) 14%,
       var(--buddy-surface-raised) 86%
     );
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
   }
 }
 

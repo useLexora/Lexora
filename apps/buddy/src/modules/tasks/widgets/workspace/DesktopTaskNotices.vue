@@ -47,7 +47,7 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
     @select-model="emit('selectModel')"
   />
 
-  <article v-if="editingMessageId" class="desktop-chat-page__editing" role="status">
+  <article v-if="editingMessageId" class="desktop-chat-page__editing grid min-h-11 grid-cols-[auto_minmax(0,_1fr)_auto] items-center gap-[0.55rem] border-1 border-solid border-accent-border rounded-[0.625rem] bg-accent-surface text-accent-on-surface pt-[0.4rem] pr-[0.45rem] pb-[0.4rem] pl-[0.65rem]" role="status">
     <DesktopIcon class="desktop-chat-page__editing-icon" name="messageEdit" />
     <strong>{{ t('desktop.chat.editingHistoryMessage') }}</strong>
     <NButton
@@ -63,7 +63,7 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
     </NButton>
   </article>
 
-  <div v-if="approvalViews.length" class="desktop-chat-page__approvals">
+  <div v-if="approvalViews.length" class="flex flex-col items-stretch gap-[0.4rem]">
     <DesktopApprovalCard
       v-for="approval in approvalViews"
       :key="approval.id"
@@ -77,25 +77,7 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
 </template>
 
 <style scoped lang="scss">
-.desktop-chat-page__approvals {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.4rem;
-}
-
 .desktop-chat-page__editing {
-  display: grid;
-  min-height: 2.75rem;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.55rem;
-  border: 1px solid var(--buddy-accent-border);
-  border-radius: 0.625rem;
-  background: var(--buddy-accent-surface);
-  color: var(--buddy-accent-on-surface);
-  padding: 0.4rem 0.45rem 0.4rem 0.65rem;
-
   strong {
     font-size: 0.82rem;
     font-weight: 650;

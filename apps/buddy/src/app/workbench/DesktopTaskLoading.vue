@@ -11,28 +11,28 @@ const { labels } = useWorkbench()
 
 <template>
   <section
-    class="desktop-task-loading"
+    class="desktop-task-loading relative flex flex-1 min-w-0 min-h-0 flex-col bg-surface select-none"
     :aria-busy="!failed"
     data-testid="task-loading"
   >
-    <header class="desktop-task-loading__header">
-      <div class="desktop-task-loading__copy">
+    <header class="flex flex-none items-center justify-between gap-[0.85rem] border-b-1 border-b-solid border-b-border bg-surface pt-0 pr-3 pb-0 pl-4 h-region-header">
+      <div class="grid min-w-0 flex-1 text-[0.88rem] font-660 overflow-hidden text-ellipsis whitespace-nowrap">
         <slot name="title" />
       </div>
-      <div class="desktop-task-loading__actions">
+      <div class="flex min-w-0 flex-none items-center gap-[0.18rem]">
         <slot name="actions" />
       </div>
     </header>
 
-    <div v-if="failed" class="desktop-task-loading__failure" role="alert">
-      <div class="desktop-task-loading__failure-icon-wrap" aria-hidden="true">
+    <div v-if="failed" class="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 p-8 text-muted text-center" role="alert">
+      <div class="grid place-items-center w-11 h-11 rounded-full bg-danger-surface text-danger mb-[0.15rem]" aria-hidden="true">
         <DesktopIcon :component="ErrorCircle20Regular" :size="24" />
       </div>
-      <div class="desktop-task-loading__failure-copy">
-        <h3 class="desktop-task-loading__failure-title">
+      <div class="flex flex-col gap-1">
+        <h3 class="m-0 text-[0.95rem] font-600 text-strong">
           {{ labels.failed }}
         </h3>
-        <p class="desktop-task-loading__failure-desc">
+        <p class="m-0 text-[0.78rem] text-muted">
           {{ labels.commandFailed }}
         </p>
       </div>
@@ -44,14 +44,14 @@ const { labels } = useWorkbench()
       </NButton>
     </div>
 
-    <div v-else class="desktop-task-loading__body">
-      <div class="desktop-task-loading__progress" aria-hidden="true">
-        <div class="desktop-task-loading__progress-bar" />
+    <div v-else class="relative flex flex-1 min-w-0 min-h-0 flex-col">
+      <div class="absolute top-0 left-0 right-0 h-[2px] overflow-hidden z-2" aria-hidden="true">
+        <div class="desktop-task-loading__progress-bar h-full w-[40%]" />
       </div>
 
-      <main class="desktop-task-loading__content">
-        <div class="desktop-task-loading__status" role="status">
-          <span class="desktop-task-loading__spinner" aria-hidden="true" />
+      <main class="flex-1 grid place-items-center min-w-0 min-h-0 p-6">
+        <div class="desktop-task-loading__status inline-flex items-center gap-2 py-[0.35rem] px-3 rounded-micro border-1 border-solid border-border bg-raised text-muted text-[0.74rem] shadow-soft" role="status">
+          <span class="desktop-task-loading__spinner w-[0.8rem] h-[0.8rem] rounded-full" aria-hidden="true" />
           <span>{{ labels.loading }}</span>
         </div>
       </main>
@@ -60,70 +60,7 @@ const { labels } = useWorkbench()
 </template>
 
 <style scoped lang="scss">
-.desktop-task-loading {
-  position: relative;
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--buddy-surface-base);
-  user-select: none;
-}
-
-.desktop-task-loading__header {
-  display: flex;
-  height: var(--buddy-region-header-height);
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.85rem;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-base);
-  padding: 0 0.75rem 0 1rem;
-}
-
-.desktop-task-loading__copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  font-size: 0.88rem;
-  font-weight: 660;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-task-loading__actions {
-  display: flex;
-  min-width: 0;
-  flex: none;
-  align-items: center;
-  gap: 0.18rem;
-}
-
-.desktop-task-loading__body {
-  position: relative;
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.desktop-task-loading__progress {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  overflow: hidden;
-  z-index: 2;
-}
-
 .desktop-task-loading__progress-bar {
-  height: 100%;
-  width: 40%;
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -142,26 +79,7 @@ const { labels } = useWorkbench()
   }
 }
 
-.desktop-task-loading__content {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  min-width: 0;
-  min-height: 0;
-  padding: 1.5rem;
-}
-
 .desktop-task-loading__status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: var(--buddy-radius-micro);
-  border: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-raised);
-  color: var(--buddy-text-secondary);
-  font-size: 0.74rem;
-  box-shadow: var(--buddy-shadow-soft);
   animation: task-status-appear 220ms ease-out 180ms backwards;
 }
 
@@ -177,11 +95,8 @@ const { labels } = useWorkbench()
 }
 
 .desktop-task-loading__spinner {
-  width: 0.8rem;
-  height: 0.8rem;
   border: 1.5px solid var(--buddy-border-subtle);
   border-top-color: var(--buddy-accent-solid);
-  border-radius: 50%;
   animation: task-spin 800ms linear infinite;
 }
 
@@ -189,49 +104,6 @@ const { labels } = useWorkbench()
   to {
     transform: rotate(360deg);
   }
-}
-
-.desktop-task-loading__failure {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  padding: 2rem;
-  color: var(--buddy-text-secondary);
-  text-align: center;
-}
-
-.desktop-task-loading__failure-icon-wrap {
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
-  background: var(--buddy-status-danger-surface);
-  color: var(--buddy-status-danger-text);
-  margin-bottom: 0.15rem;
-}
-
-.desktop-task-loading__failure-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.desktop-task-loading__failure-title {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--buddy-text-strong);
-}
-
-.desktop-task-loading__failure-desc {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--buddy-text-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {

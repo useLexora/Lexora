@@ -34,13 +34,13 @@ const fileView = filePreview.current
     </template>
     <DesktopContextSplit v-model:width="fileView.treeWidth" :tree-visible="fileView.treeVisible">
       <slot v-if="fileTab.target.path" name="file" :tab="fileTab" :wrap="fileView.wrap" :set-wrap="(value: boolean) => fileView!.wrap = value" />
-      <div v-else class="context-resource-state">
+      <div v-else class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted">
         {{ t('desktop.context.selectFile') }}
       </div>
       <template #tree>
-        <div v-if="fileView.treeFailed" class="context-tree-error">
+        <div v-if="fileView.treeFailed" class="context-tree-error flex items-center justify-between gap-[8px] py-[8px] px-[12px] text-[11px] text-muted">
           <span>{{ t('desktop.context.directoryLoadFailed') }}</span>
-          <button type="button" class="context-tree-retry" @click="filePreview.refresh()">
+          <button type="button" class="context-tree-retry border-0 bg-transparent p-0 text-accent cursor-pointer underline text-[11px] hover:opacity-85" @click="filePreview.refresh()">
             {{ t('desktop.context.retry') }}
           </button>
         </div>
@@ -50,9 +50,6 @@ const fileView = filePreview.current
   </WorkbenchPanelContent>
 </template>
 
-<style scoped>
-.context-resource-state { display: grid; flex: 1; min-width: 0; min-height: 0; place-content: center; padding: 20px; font-size: 12px; color: var(--buddy-text-muted); }
-.context-tree-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; font-size: 11px; color: var(--buddy-text-muted); }
-.context-tree-retry { border: 0; background: transparent; padding: 0; color: var(--buddy-accent-solid); cursor: pointer; text-decoration: underline; font: inherit; font-size: 11px; }
-.context-tree-retry:hover { opacity: 0.85; }
+<style scoped lang="scss">
+.context-resource-state { place-content: center; }
 </style>

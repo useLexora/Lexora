@@ -11,7 +11,7 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <section class="desktop-web-settings">
+  <section class="desktop-web-settings grid gap-8">
     <NAlert v-if="error" type="error" :show-icon="false">
       {{ error }}
       <NButton text :disabled="busy" @click="load()">
@@ -33,8 +33,8 @@ const { t } = useBuddyI18n(() => props.language)
         :language="language"
         @toggle="setFetchEnabled"
       />
-      <section class="desktop-web-settings__services">
-        <h2 class="desktop-web-settings__title">
+      <section class="grid gap-4">
+        <h2 class="m-0 text-[0.92rem] font-600">
           {{ t('desktop.web.services') }}
         </h2>
         <DesktopTavilySettings
@@ -49,9 +49,3 @@ const { t } = useBuddyI18n(() => props.language)
     <NSkeleton v-else-if="busy" text :repeat="6" />
   </section>
 </template>
-
-<style scoped lang="scss">
-.desktop-web-settings { display: grid; gap: 2rem; }
-.desktop-web-settings__services { display: grid; gap: 1rem; }
-.desktop-web-settings__title { margin: 0; font-size: 0.92rem; font-weight: 600; }
-</style>

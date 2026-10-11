@@ -32,14 +32,14 @@ const detail = computed(() => props.artifact.kind === 'directory'
 
 <template>
   <button
-    class="buddy-artifact-collection__item"
+    class="buddy-artifact-collection__item grid overflow-hidden min-w-0 border-1 border-solid border-accent-border rounded-micro bg-raised shadow-soft text-inherit cursor-pointer p-0 text-left hover:border-accent hover:bg-accent-subtle hover:shadow-raised focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px]"
     :class="{ 'is-directory': artifact.kind === 'directory', 'is-compact': compact }"
     type="button"
     :title="artifact.name"
     @click="emit('openArtifact', artifact.artifactId)"
   >
     <div
-      class="buddy-artifact-collection__preview"
+      class="buddy-artifact-collection__preview grid h-28 place-items-center overflow-hidden border-b-1 border-b-solid border-b-border bg-accent-subtle text-muted"
       :class="{
         'is-contain': artifact.mimeType === 'image/svg+xml',
       }"
@@ -59,51 +59,17 @@ const detail = computed(() => props.artifact.kind === 'directory'
       >
       <FileIcon v-else :name="artifact.name" size="preview" />
     </div>
-    <div class="buddy-artifact-collection__meta">
-      <span class="buddy-artifact-collection__type">{{ fileType }}</span>
-      <span class="buddy-artifact-collection__name">{{ artifact.name }}</span>
-      <span class="buddy-artifact-collection__detail">{{ detail }}</span>
+    <div class="buddy-artifact-collection__meta grid min-w-0 grid-cols-[auto_minmax(0,_1fr)_auto] items-center py-2 px-[0.625rem]">
+      <span class="buddy-artifact-collection__type [grid-area:type] text-accent-text text-[length:var(--buddy-chat-caption-font-size)] font-650">{{ fileType }}</span>
+      <span class="buddy-artifact-collection__name overflow-hidden [grid-area:name] text-strong text-[length:var(--buddy-chat-caption-font-size)] text-ellipsis whitespace-nowrap">{{ artifact.name }}</span>
+      <span class="buddy-artifact-collection__detail overflow-hidden [grid-area:detail] text-muted text-ellipsis whitespace-nowrap">{{ detail }}</span>
       <DesktopIcon :component="Open20Regular" class="buddy-artifact-collection__open" />
     </div>
   </button>
 </template>
 
 <style scoped lang="scss">
-.buddy-artifact-collection__item {
-  display: grid;
-  overflow: hidden;
-  min-width: 0;
-  border: 1px solid var(--buddy-accent-border);
-  border-radius: var(--buddy-radius-micro);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-soft);
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-
-  &:hover {
-    border-color: var(--buddy-accent-solid);
-    background: var(--buddy-accent-surface-subtle);
-    box-shadow: var(--buddy-shadow-raised);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: 2px;
-  }
-}
-
 .buddy-artifact-collection__preview {
-  display: grid;
-  height: 7rem;
-  place-items: center;
-  overflow: hidden;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-accent-surface-subtle);
-  color: var(--buddy-text-muted);
-
   .buddy-artifact-collection__image {
     display: block;
     width: 100%;
@@ -124,41 +90,15 @@ const detail = computed(() => props.artifact.kind === 'directory'
 }
 
 .buddy-artifact-collection__meta {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
     'type name open'
     'detail detail open';
-  align-items: center;
   gap: 0.2rem 0.45rem;
-  padding: 0.5rem 0.625rem;
-}
-
-.buddy-artifact-collection__type {
-  grid-area: type;
-  color: var(--buddy-accent-text);
-  font-size: var(--buddy-chat-caption-font-size);
-  font-weight: 650;
-}
-
-.buddy-artifact-collection__name {
-  overflow: hidden;
-  grid-area: name;
-  color: var(--buddy-text-strong);
-  font-size: var(--buddy-chat-caption-font-size);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .buddy-artifact-collection__detail {
-  overflow: hidden;
-  grid-area: detail;
-  color: var(--buddy-text-muted);
   font-family: var(--buddy-font-mono, ui-monospace, monospace);
   font-size: var(--buddy-chat-caption-font-size);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .buddy-artifact-collection__open {

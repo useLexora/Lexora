@@ -94,7 +94,7 @@ describe('extension package contract', () => {
     const malicious = await reviewPackage(root, store, source, { 'extension.ts': 'export function activate() {}' })
     await expect(store.prepare(malicious.token, async (files, input) => {
       files.delete('extension.js')
-      const compiled = compileExtensionSource(files, input, () => {})
+      const compiled = await compileExtensionSource(files, input, () => {})
       const changed = JSON.parse(new TextDecoder().decode(compiled.get('extension.json')))
       changed.permissions.notifications = true
       compiled.set('extension.json', strToU8(JSON.stringify(changed)))

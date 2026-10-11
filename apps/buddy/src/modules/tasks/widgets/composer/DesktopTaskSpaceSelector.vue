@@ -71,7 +71,7 @@ function openSpaceCreator() {
 </script>
 
 <template>
-  <div class="desktop-task-space-selector">
+  <div class="desktop-task-space-selector inline-flex min-w-0 flex-none items-center">
     <NPopover
       class="buddy-raw-popover"
       raw
@@ -103,11 +103,11 @@ function openSpaceCreator() {
       </template>
 
       <section
-        class="desktop-task-space-selector__panel"
+        class="w-[min(12rem,_calc(100vw_-_2rem))] overflow-hidden border-1 border-solid border-border rounded-menu bg-raised shadow-overlay text-strong p-[8px]"
         role="dialog"
         :aria-label="t('desktop.tasks.spaceSelect')"
       >
-        <div class="desktop-task-space-selector__search">
+        <div class="desktop-task-space-selector__search pb-[5px]">
           <NInput
             ref="searchInput"
             v-model:value="query"
@@ -121,7 +121,7 @@ function openSpaceCreator() {
           </NInput>
         </div>
 
-        <div class="desktop-task-space-selector__spaces" role="listbox">
+        <div class="desktop-task-space-selector__spaces grid max-h-[calc(var(--buddy-menu-row-height)_*_5_+_var(--buddy-menu-row-gap)_*_4)] content-start overflow-y-auto gap-menu-gap" role="listbox">
           <button
             v-for="space in visibleSpaces"
             :key="space.id"
@@ -141,14 +141,14 @@ function openSpaceCreator() {
               :size="16"
             />
           </button>
-          <span v-if="!visibleSpaces.length" class="desktop-task-space-selector__empty">
+          <span v-if="!visibleSpaces.length" class="grid place-items-center text-muted text-[0.72rem] min-h-menu-row">
             {{ t('desktop.tasks.spaceSearchEmpty') }}
           </span>
         </div>
 
-        <div class="desktop-task-space-selector__divider" role="separator" />
+        <div class="h-[1px] bg-border my-[5px] mx-[6px]" role="separator" />
         <button
-          class="desktop-task-space-selector__action desktop-task-space-selector__create"
+          class="desktop-task-space-selector__action desktop-task-space-selector__create grid-cols-[var(--buddy-menu-icon-size)_minmax(0,_1fr)]"
           type="button"
           @click="openSpaceCreator"
         >
@@ -157,9 +157,9 @@ function openSpaceCreator() {
         </button>
 
         <template v-if="activeSpace">
-          <div class="desktop-task-space-selector__divider" role="separator" />
+          <div class="h-[1px] bg-border my-[5px] mx-[6px]" role="separator" />
           <button
-            class="desktop-task-space-selector__action desktop-task-space-selector__clear"
+            class="desktop-task-space-selector__action desktop-task-space-selector__clear grid-cols-[var(--buddy-menu-icon-size)_minmax(0,_1fr)]"
             type="button"
             @click="clearSpace"
           >
@@ -182,11 +182,6 @@ function openSpaceCreator() {
 
 <style scoped lang="scss">
 .desktop-task-space-selector {
-  display: inline-flex;
-  min-width: 0;
-  flex: none;
-  align-items: center;
-
   @container desktop-chat-composer (max-width: 21rem) {
     display: none;
   }
@@ -260,31 +255,11 @@ function openSpaceCreator() {
   }
 }
 
-.desktop-task-space-selector__panel {
-  width: min(12rem, calc(100vw - 2rem));
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: var(--buddy-menu-radius);
-  background: var(--buddy-surface-raised);
-  box-shadow: var(--buddy-shadow-overlay);
-  color: var(--buddy-text-strong);
-  padding: 8px;
-}
-
-.desktop-task-space-selector__search {
-  padding-bottom: 5px;
-}
-
 .desktop-task-space-selector__search :deep(.n-input) {
   border-radius: var(--buddy-radius-micro);
 }
 
 .desktop-task-space-selector__spaces {
-  display: grid;
-  max-height: calc(var(--buddy-menu-row-height) * 5 + var(--buddy-menu-row-gap) * 4);
-  align-content: start;
-  gap: var(--buddy-menu-row-gap);
-  overflow-y: auto;
   scrollbar-color: var(--buddy-border-strong) transparent;
   scrollbar-width: thin;
 
@@ -364,27 +339,9 @@ function openSpaceCreator() {
   color: var(--buddy-nav-foreground);
 }
 
-.desktop-task-space-selector__action {
-  grid-template-columns: var(--buddy-menu-icon-size) minmax(0, 1fr);
-}
-
 .desktop-task-space-selector__icon {
   width: var(--buddy-menu-icon-size);
   height: var(--buddy-menu-icon-size);
   font-size: var(--buddy-menu-icon-size);
-}
-
-.desktop-task-space-selector__divider {
-  height: 1px;
-  background: var(--buddy-border-subtle);
-  margin: 5px 6px;
-}
-
-.desktop-task-space-selector__empty {
-  display: grid;
-  min-height: var(--buddy-menu-row-height);
-  place-items: center;
-  color: var(--buddy-text-muted);
-  font-size: 0.72rem;
 }
 </style>

@@ -92,7 +92,7 @@ async function keepCustomParameters() {
 </script>
 
 <template>
-  <section class="desktop-model-parameters-panel">
+  <section class="desktop-model-parameters-panel overflow-hidden border border-solid border-border rounded-[0.65rem] bg-surface">
     <DesktopModelSectionHeader
       :label="t('desktop.providers.modelParameters')"
       :language="language"
@@ -115,7 +115,7 @@ async function keepCustomParameters() {
           <strong>{{ t('desktop.providers.sourceParametersUpdated') }}</strong>
           <span>{{ t('desktop.providers.sourceParametersUpdatedDescription') }}</span>
         </div>
-        <div class="desktop-model-parameters-panel__notice-actions">
+        <div class="flex flex-none gap-[0.45rem]">
           <NButton size="small" :loading="saving" @click="keepCustomParameters">
             {{ t('desktop.providers.keepOverride') }}
           </NButton>
@@ -150,7 +150,7 @@ async function keepCustomParameters() {
 
     <footer
       v-if="model.hasParameterOverride && !editing"
-      class="desktop-model-parameters-panel__defaults"
+      class="desktop-model-parameters-panel__defaults border-t-1 border-t-solid border-t-border bg-subtle py-[0.65rem] px-4"
     >
       <div>
         <strong>{{ defaultParametersLabel }}</strong>
@@ -168,14 +168,7 @@ async function keepCustomParameters() {
   </section>
 </template>
 
-<style scoped>
-.desktop-model-parameters-panel {
-  overflow: hidden;
-  border: 1px solid var(--buddy-border-subtle);
-  border-radius: 0.65rem;
-  background: var(--buddy-surface-base);
-}
-
+<style scoped lang="scss">
 .desktop-model-parameters-panel__defaults,
 .desktop-model-parameters-panel__notice-content {
   display: flex;
@@ -210,12 +203,6 @@ async function keepCustomParameters() {
 .desktop-model-parameters-panel__notice :deep(.n-alert-body),
 .desktop-model-parameters-panel__notice :deep(.n-alert-body__content) {
   width: 100%;
-}
-
-.desktop-model-parameters-panel__notice-actions {
-  display: flex;
-  flex: none;
-  gap: 0.45rem;
 }
 
 .desktop-model-parameters-panel__metrics,
@@ -255,12 +242,6 @@ async function keepCustomParameters() {
 
 .desktop-model-parameters-panel__form :deep(.n-input-number) {
   width: 100%;
-}
-
-.desktop-model-parameters-panel__defaults {
-  border-top: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-subtle);
-  padding: 0.65rem 1rem;
 }
 
 @media (max-width: 620px) {

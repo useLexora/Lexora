@@ -30,9 +30,9 @@ const issue = computed(() => isChatToolIssue(props.node))
 </script>
 
 <template>
-  <section class="buddy-chat-tool" :class="[`is-${node.status}`, compact && `is-compact-${compact}`, { 'is-selected': open, 'is-highlighted': highlighted }]" :data-activity-node-id="node.id" :data-tool-call-id="node.toolCallId" :data-action-id="node.invocation?.id" :data-action-status="node.invocation?.status" tabindex="-1">
+  <section class="buddy-chat-tool min-w-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px] focus-visible:rounded-micro" :class="[`is-${node.status}`, compact && `is-compact-${compact}`, { 'is-selected': open, 'is-highlighted': highlighted }]" :data-activity-node-id="node.id" :data-tool-call-id="node.toolCallId" :data-action-id="node.invocation?.id" :data-action-status="node.invocation?.status" tabindex="-1">
     <button
-      class="buddy-chat-tool__header buddy-chat-activity-row"
+      class="buddy-chat-tool__header buddy-chat-activity-row flex w-[calc(100%_+_8px)] items-baseline"
       :aria-expanded="canExpand ? open === true : undefined"
       :aria-label="[display.label, display.fullTarget, issue || active ? display.status : ''].filter(Boolean).join(' · ')"
       :disabled="!canExpand"
@@ -43,10 +43,10 @@ const issue = computed(() => isChatToolIssue(props.node))
       <BuddyChatShimmerText v-if="compact !== 'continuation'" class="buddy-chat-tool__title buddy-chat-activity-row__label" :mode="shimmer && processing ? 'continuous' : 'static'">
         {{ display.label }}
       </BuddyChatShimmerText>
-      <span v-if="display.target" class="buddy-chat-tool__summary">{{ compactTarget ?? display.target }}<span v-if="hasNext" class="buddy-chat-tool__separator" aria-hidden="true">,</span></span>
-      <span v-if="display.context && !compact" class="buddy-chat-tool__context">{{ display.context }}</span>
-      <span v-if="issue || active || node.status === 'cancelled' || node.status === 'skipped' || node.presentation.card === 'directory-authorization' || node.presentation.card === 'system'" class="buddy-chat-tool__status" :class="{ 'is-issue': issue }">
-        <span class="buddy-chat-tool__status-label">{{ display.status }}</span>
+      <span v-if="display.target" class="buddy-chat-tool__summary min-w-0 overflow-hidden text-fg text-ellipsis whitespace-nowrap">{{ compactTarget ?? display.target }}<span v-if="hasNext" class="text-muted" aria-hidden="true">,</span></span>
+      <span v-if="display.context && !compact" class="buddy-chat-tool__context min-w-0 overflow-hidden text-muted text-[11.5px] text-ellipsis whitespace-nowrap">{{ display.context }}</span>
+      <span v-if="issue || active || node.status === 'cancelled' || node.status === 'skipped' || node.presentation.card === 'directory-authorization' || node.presentation.card === 'system'" class="buddy-chat-tool__status flex items-center gap-[5px] max-w-[40%] text-muted text-[11px] whitespace-nowrap" :class="{ 'is-issue': issue }">
+        <span class="overflow-hidden text-ellipsis">{{ display.status }}</span>
         <BuddyChatActivitySpinner v-if="processing" />
       </span>
       <DesktopIcon v-if="!compact" :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open, 'is-hidden': !canExpand }" aria-hidden="true" />
@@ -61,7 +61,6 @@ const issue = computed(() => isChatToolIssue(props.node))
 
 .buddy-chat-tool {
   --buddy-shimmer-base: var(--buddy-text-secondary);
-  min-width: 0;
 }
 
 .buddy-chat-tool.is-compact-start,
@@ -86,28 +85,12 @@ const issue = computed(() => isChatToolIssue(props.node))
   margin-inline-start: 0;
 }
 
-.buddy-chat-tool__separator {
-  color: var(--buddy-text-muted);
-}
-
 .is-selected:is(.is-compact-start, .is-compact-continuation) .buddy-chat-tool__header {
   background: var(--buddy-state-hover);
 }
 
 .is-highlighted .buddy-chat-tool__header {
   background: var(--buddy-status-warning-surface);
-}
-
-.buddy-chat-tool:focus-visible {
-  outline: 2px solid var(--buddy-focus-ring);
-  outline-offset: 2px;
-  border-radius: var(--buddy-radius-micro);
-}
-
-.buddy-chat-tool__header {
-  display: flex;
-  width: calc(100% + 8px);
-  align-items: baseline;
 }
 
 .buddy-chat-tool__header > :is(.buddy-chat-activity-row__icon, .buddy-chat-activity-row__chevron) {
@@ -119,41 +102,14 @@ const issue = computed(() => isChatToolIssue(props.node))
   max-width: 40%;
 }
 
-.buddy-chat-tool__summary {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--buddy-text-primary);
-  font: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .buddy-chat-tool__context {
   flex: 0 2 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--buddy-text-muted);
-  font-size: 11.5px;
   line-height: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .buddy-chat-tool__status {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  max-width: 40%;
-  color: var(--buddy-text-muted);
-  font-size: 11px;
   line-height: normal;
-  white-space: nowrap;
-}
-
-.buddy-chat-tool__status-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .buddy-chat-tool__status.is-issue {

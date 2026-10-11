@@ -138,14 +138,14 @@ async function confirmSetup() {
         <NTooltip v-if="boundaryWarning" placement="top" :disabled="popoverOpen">
           <template #trigger>
             <span
-              class="desktop-permission-mode-selector__warning"
+              class="desktop-permission-mode-selector__warning absolute top-[-0.1rem] right-[-0.1rem] z-1 inline-flex w-[0.875rem] h-[0.875rem] items-center justify-center text-warning"
               role="img"
               :aria-label="t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`)"
             >
               <DesktopIcon :component="Warning20Regular" :size="16" aria-hidden="true" />
             </span>
           </template>
-          <div class="desktop-permission-mode-selector__warning-tooltip">
+          <div class="desktop-permission-mode-selector__warning-tooltip grid max-w-[min(18rem,_calc(100vw_-_2rem))] gap-1">
             <strong>{{ t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) }}</strong>
             <span>{{ t(`desktop.chat.shellSandboxHint.${sandboxStatus}`) }}</span>
           </div>
@@ -153,15 +153,15 @@ async function confirmSetup() {
       </NButton>
     </template>
 
-    <section class="desktop-permission-mode-selector__popover">
-      <header class="desktop-permission-mode-selector__header">
+    <section class="w-[min(18rem,_calc(100vw_-_1rem))]">
+      <header class="pt-[0.1rem] pr-1 pb-[0.45rem] pl-1 text-muted text-[0.7rem] leading-[1.4]">
         {{ t('desktop.chat.permissionModeTitle') }}
       </header>
-      <div class="desktop-permission-mode-selector__options" role="menu">
+      <div class="grid gap-[0.15rem]" role="menu">
         <button
           v-for="option in availableOptions"
           :key="option.value"
-          class="desktop-permission-mode-selector__option"
+          class="desktop-permission-mode-selector__option grid w-full grid-cols-[1.1rem_minmax(0,_1fr)] items-center border-0 rounded-menu-item py-[0.36rem] px-[0.35rem] bg-transparent text-fg gap-x-2 cursor-pointer text-left ui-focus-ring disabled:cursor-not-allowed disabled:opacity-55"
           :class="{
             'is-danger': option.value === 'full_access',
             'is-selected': option.value === permissionMode,
@@ -176,16 +176,16 @@ async function confirmSetup() {
             class="desktop-permission-mode-selector__option-icon"
             :component="option.icon"
           />
-          <span class="desktop-permission-mode-selector__option-copy">
+          <span class="desktop-permission-mode-selector__option-copy grid min-w-0 gap-[0.05rem]">
             <strong>{{ t(option.label) }}</strong>
             <small>{{ t(availability.isolated ? option.sandboxDescription : option.description) }}</small>
           </span>
         </button>
       </div>
-      <small v-if="!canUpdate && !isUpdating" class="desktop-permission-mode-selector__locked">
+      <small v-if="!canUpdate && !isUpdating" class="block border-t-1 border-t-solid border-t-border mt-[0.3rem] pt-[0.4rem] pr-1 pb-[0.05rem] pl-1 text-muted text-[0.68rem]">
         {{ t('desktop.chat.executionProfileRunLocked') }}
       </small>
-      <footer v-if="boundaryWarning" class="desktop-permission-mode-selector__boundary" role="status">
+      <footer v-if="boundaryWarning" class="grid gap-1 mt-[0.45rem] border-t-1 border-t-solid border-t-border pt-[0.55rem] pr-1 pb-[0.1rem] pl-1 text-warning text-[0.7rem] leading-[1.5]" role="status">
         <strong>{{ t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) }}</strong>
         <span>{{ t(`desktop.chat.shellSandboxHint.${sandboxStatus}`) }}</span>
         <NButton v-if="availability.action" size="small" :disabled="!canUpdate || isSettingUp" @click="popoverOpen = false; setupOpen = true">
@@ -260,80 +260,14 @@ async function confirmSetup() {
   }
 }
 
-.desktop-permission-mode-selector__popover {
-  width: min(18rem, calc(100vw - 1rem));
-}
-
-.desktop-permission-mode-selector__warning {
-  position: absolute;
-  top: -0.1rem;
-  right: -0.1rem;
-  z-index: 1;
-  display: inline-flex;
-  width: 0.875rem;
-  height: 0.875rem;
-  align-items: center;
-  justify-content: center;
-  color: var(--buddy-status-warning-text);
-}
-
 .desktop-permission-mode-selector__warning-tooltip {
-  display: grid;
-  max-width: min(18rem, calc(100vw - 2rem));
-  gap: 0.25rem;
   white-space: normal;
 }
 
-.desktop-permission-mode-selector__boundary {
-  display: grid;
-  gap: 0.25rem;
-  margin-top: 0.45rem;
-  border-top: 1px solid var(--buddy-border-subtle);
-  padding: 0.55rem 0.25rem 0.1rem;
-  color: var(--buddy-status-warning-text);
-  font-size: 0.7rem;
-  line-height: 1.5;
-}
-
-.desktop-permission-mode-selector__header {
-  padding: 0.1rem 0.25rem 0.45rem;
-  color: var(--buddy-text-muted);
-  font-size: 0.7rem;
-  line-height: 1.4;
-}
-
-.desktop-permission-mode-selector__options {
-  display: grid;
-  gap: 0.15rem;
-}
-
 .desktop-permission-mode-selector__option {
-  display: grid;
-  width: 100%;
-  grid-template-columns: 1.1rem minmax(0, 1fr);
-  align-items: center;
-  border: 0;
-  border-radius: var(--buddy-menu-item-radius);
-  padding: 0.36rem 0.35rem;
-  background: transparent;
-  color: var(--buddy-text-primary);
-  column-gap: 0.5rem;
-  cursor: pointer;
-  text-align: left;
-
   &:hover:not(:disabled),
   &:focus-visible:not(:disabled) {
     background: var(--buddy-accent-surface-subtle);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
   }
 
   &.is-danger {
@@ -355,10 +289,6 @@ async function confirmSetup() {
 }
 
 .desktop-permission-mode-selector__option-copy {
-  display: grid;
-  min-width: 0;
-  gap: 0.05rem;
-
   strong {
     font-size: 0.8rem;
     font-weight: 580;
@@ -375,14 +305,5 @@ async function confirmSetup() {
 .desktop-permission-mode-selector__option.is-danger small {
   color: var(--buddy-status-danger-text);
   opacity: 0.82;
-}
-
-.desktop-permission-mode-selector__locked {
-  display: block;
-  border-top: 1px solid var(--buddy-border-subtle);
-  margin-top: 0.3rem;
-  padding: 0.4rem 0.25rem 0.05rem;
-  color: var(--buddy-text-muted);
-  font-size: 0.68rem;
 }
 </style>

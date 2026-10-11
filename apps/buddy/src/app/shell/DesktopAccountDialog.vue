@@ -129,14 +129,14 @@ async function handleSave() {
     :title="t('desktop.account.dialogTitle')"
     @update:show="emit('update:show', $event)"
   >
-    <div v-if="errorMessage" class="desktop-account-dialog__error" role="alert">
+    <div v-if="errorMessage" class="desktop-account-dialog__error mb-3 py-2 px-3 rounded-micro text-[0.8rem]" role="alert">
       {{ errorMessage }}
     </div>
 
-    <div class="desktop-account-dialog__content">
-      <div class="desktop-account-dialog__avatar-col">
+    <div class="flex items-center gap-5 py-1 px-0">
+      <div class="flex flex-col items-center gap-[0.4rem] flex-none">
         <div
-          class="desktop-account-dialog__avatar-wrapper"
+          class="desktop-account-dialog__avatar-wrapper relative inline-block cursor-pointer rounded-full overflow-hidden"
           :title="t('desktop.account.changeAvatar')"
           @click="triggerAvatarUpload"
         >
@@ -146,7 +146,7 @@ async function handleSave() {
             :name="userName.trim() || resolvedProfile.userName"
             :initials="resolvedProfile.initials"
           />
-          <div class="desktop-account-dialog__avatar-overlay">
+          <div class="desktop-account-dialog__avatar-overlay absolute inset-0 flex flex-col items-center justify-center gap-[2px] text-[10px] font-500 opacity-0">
             <DesktopIcon :component="Camera20Regular" />
             <span>{{ t('desktop.account.changeAvatar') }}</span>
           </div>
@@ -161,7 +161,7 @@ async function handleSave() {
         <button
           v-if="hasCustomAvatar"
           type="button"
-          class="desktop-account-dialog__reset-avatar"
+          class="desktop-account-dialog__reset-avatar inline-flex items-center gap-[3px] py-[2px] px-[6px] border-0 rounded-micro bg-transparent text-muted text-[0.72rem] cursor-pointer hover:text-strong hover:bg-hover"
           @click="resetAvatar"
         >
           <DesktopIcon :component="Dismiss20Regular" />
@@ -183,7 +183,7 @@ async function handleSave() {
     </div>
 
     <template #footer>
-      <div class="desktop-account-dialog__actions">
+      <div class="flex justify-end gap-3">
         <NButton @click="emit('update:show', false)">
           {{ t('common.cancel') }}
         </NButton>
@@ -200,43 +200,10 @@ async function handleSave() {
   </NModal>
 </template>
 
-<style scoped>
-.desktop-account-dialog__content {
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  padding: 0.25rem 0;
-}
-
-.desktop-account-dialog__avatar-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-  flex: none;
-}
-
-.desktop-account-dialog__avatar-wrapper {
-  position: relative;
-  display: inline-block;
-  cursor: pointer;
-  border-radius: 50%;
-  overflow: hidden;
-}
-
+<style scoped lang="scss">
 .desktop-account-dialog__avatar-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
   background: rgba(0, 0, 0, 0.55);
   color: #ffffff;
-  font-size: 10px;
-  font-weight: 500;
-  opacity: 0;
   transition: opacity var(--buddy-motion-state-duration) ease;
 }
 
@@ -245,24 +212,9 @@ async function handleSave() {
 }
 
 .desktop-account-dialog__reset-avatar {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  font-size: 0.72rem;
-  cursor: pointer;
   transition:
     color var(--buddy-motion-state-duration) ease,
-    background-color var(--buddy-motion-state-duration) ease;
-
-  &:hover {
-    color: var(--buddy-text-strong);
-    background: var(--buddy-state-hover);
-  }
+    background-color var(--buddy-motion-state-duration) ease
 }
 
 .desktop-account-dialog__form {
@@ -273,17 +225,7 @@ async function handleSave() {
 }
 
 .desktop-account-dialog__error {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--buddy-radius-micro);
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
-  font-size: 0.8rem;
-}
-
-.desktop-account-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
 }
 </style>

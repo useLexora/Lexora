@@ -38,13 +38,13 @@ const modelSourceSummary = computed(() => (
       @close="emit('update:show', false)"
     >
       <template #header>
-        <div class="desktop-model-detail-dialog__title">
+        <div class="desktop-model-detail-dialog__title grid min-w-0 gap-[0.12rem]">
           <strong>{{ model.displayName }}</strong>
           <span>{{ model.modelId }} · {{ modelSourceSummary }}</span>
         </div>
       </template>
 
-      <div class="desktop-model-detail-dialog__body">
+      <div class="grid gap-[0.85rem]">
         <DesktopManualModelInfoPanel
           v-if="model.source === 'manual'"
           :actions="actions"
@@ -81,16 +81,10 @@ const modelSourceSummary = computed(() => (
   </NModal>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-model-detail-dialog {
   max-height: min(42rem, calc(100dvh - 3rem));
   overflow: hidden;
-}
-
-.desktop-model-detail-dialog__title {
-  display: grid;
-  min-width: 0;
-  gap: 0.12rem;
 }
 
 .desktop-model-detail-dialog__title strong,
@@ -104,10 +98,5 @@ const modelSourceSummary = computed(() => (
   color: var(--buddy-text-secondary);
   font-size: 0.68rem;
   font-weight: 400;
-}
-
-.desktop-model-detail-dialog__body {
-  display: grid;
-  gap: 0.85rem;
 }
 </style>

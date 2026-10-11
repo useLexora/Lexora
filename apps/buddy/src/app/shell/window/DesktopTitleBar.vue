@@ -151,8 +151,8 @@ function applyWindowState(state: DesktopWindowState) {
 </script>
 
 <template>
-  <header class="desktop-title-bar" @dblclick="toggleMaximize">
-    <div class="desktop-title-bar__safe-area">
+  <header class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none" @dblclick="toggleMaximize">
+    <div class="absolute inset-0 flex items-center justify-between">
       <DesktopWindowMenuBar
         :app-sidebar-collapsed="appSidebarCollapsed"
         :language="language"
@@ -163,7 +163,7 @@ function applyWindowState(state: DesktopWindowState) {
       />
 
       <div
-        class="desktop-title-bar__controls"
+        class="desktop-title-bar__controls flex h-[var(--buddy-titlebar-height)] flex-none self-center"
         @dblclick.stop
         @mousedown.stop
         @pointerdown.stop
@@ -172,7 +172,7 @@ function applyWindowState(state: DesktopWindowState) {
           v-if="contextAvailable"
           :aria-label="t(contextOpen ? 'desktop.context.collapse' : 'desktop.context.open')"
           :aria-expanded="contextOpen"
-          class="desktop-title-bar__control"
+          class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
           :class="{ 'is-active': contextOpen }"
           data-testid="context-panel-toggle"
           type="button"
@@ -182,7 +182,7 @@ function applyWindowState(state: DesktopWindowState) {
         </button>
         <button
           :aria-label="t('desktop.window.minimize')"
-          class="desktop-title-bar__control"
+          class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
           type="button"
           @click="minimize"
         >
@@ -190,7 +190,7 @@ function applyWindowState(state: DesktopWindowState) {
         </button>
         <button
           :aria-label="maximizeLabel"
-          class="desktop-title-bar__control"
+          class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
           type="button"
           @click="toggleMaximize"
         >
@@ -207,7 +207,7 @@ function applyWindowState(state: DesktopWindowState) {
         </button>
         <button
           :aria-label="t('desktop.command.window.close')"
-          class="desktop-title-bar__control is-close"
+          class="desktop-title-bar__control is-close grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
           type="button"
           @click="executeDesktopCommand('window.close')"
         >
@@ -224,56 +224,16 @@ function applyWindowState(state: DesktopWindowState) {
   </header>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-title-bar {
-  position: relative;
-  height: var(--buddy-titlebar-height);
-  flex: none;
-  border-bottom: 1px solid var(--buddy-border-subtle);
-  background: var(--buddy-surface-canvas);
-  color: var(--buddy-text-strong);
-  user-select: none;
   -webkit-app-region: drag;
 }
 
-.desktop-title-bar__safe-area {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
 .desktop-title-bar__controls {
-  display: flex;
-  height: var(--buddy-titlebar-height);
-  flex: none;
-  align-self: center;
   -webkit-app-region: no-drag;
 }
 
 .desktop-title-bar__control {
-  display: grid;
-  width: var(--buddy-titlebar-height);
-  height: var(--buddy-titlebar-height);
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: var(--buddy-radius-micro);
-  background: transparent;
-  color: var(--buddy-text-secondary);
-  cursor: default;
-
-  &:hover {
-    background: var(--buddy-state-hover);
-    color: var(--buddy-text-strong);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--buddy-focus-ring);
-    outline-offset: -2px;
-  }
-
   &.is-active {
     color: var(--buddy-accent-text);
   }
