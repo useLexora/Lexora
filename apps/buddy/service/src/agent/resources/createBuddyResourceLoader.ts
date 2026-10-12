@@ -16,12 +16,14 @@ import {
 import { DEFAULT_MODEL_RETRY_LIMIT } from '../../../../shared/runtime/runtimePreferences'
 import { SHELL_SANDBOX_EXTENSION } from '../../sandbox/shellCapability'
 import { CODEMODE_EXTENSION, CODEMODE_TOOL_NAME } from '../extensions/codemodeExtension'
+import { FILE_MUTATION_EXTENSION } from '../extensions/fileMutationExtension'
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
 import { createSystemSectionsExtension } from '../extensions/systemSectionsExtension'
 import { BUDDY_MANUAL_APPROVAL_PROMPT, createBuddyExecutionPrompt, createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
+  actorPrompt?: string
   getPermissionSettings?: () => BuddyPermissionSettings
   getPendingInput?: () => BuddyInputReferenceV1 | null
   approvedSkills: readonly LocalSkill[]
@@ -65,7 +67,7 @@ export async function createBuddyResourceLoader(
     directoryContext: options.directoryContext,
     executionProfile: options.executionProfile,
     platform: options.platform,
-    includePermissions: !options.getPermissionSettings,
+    includePermissions: false,
   })
   const loader = new DefaultResourceLoader({
     additionalExtensionPaths: [],
@@ -76,7 +78,7 @@ export async function createBuddyResourceLoader(
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
     appendSystemPromptOverride: () => [],
     cwd: options.cwd,
-    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, options.getPermissionSettings ? () => createPermissionPrompt(options.getPermissionSettings!(), options.platform) : undefined)],
+    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.actorPrompt ?? '')],
     noContextFiles: true,
     noExtensions: true,
     noPromptTemplates: true,
@@ -107,8 +109,8 @@ export async function createBuddyResourceLoader(
   return loader
 }
 
-export function createPermissionPrompt(settings: BuddyPermissionSettings, platform?: NodeJS.Platform): string {
-  return [createBuddyExecutionPrompt(settings.executionProfile, platform), ...settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
+export function createPermissionPrompt(settings: BuddyPermissionSettings, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
+  return [createBuddyExecutionPrompt(settings.executionProfile, platform, activeToolNames), ...settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
 }
 
 export class BuddyResourceLoadError extends Error {
@@ -132,7 +134,8 @@ function validateLoadedExtensions(loader: DefaultResourceLoader): void {
     [...extension.tools.keys()].some(toolName => (
       (PI_BUILTIN_TOOL_NAME_SET.has(toolName)
         && !(toolName === getPiShellToolName(process.platform) && extension.path === `<inline:${SHELL_SANDBOX_EXTENSION}>`)
-        && !(toolName === 'read' && extension.path === `<inline:${READ_FILE_EXTENSION}>`))
+        && !(toolName === 'read' && extension.path === `<inline:${READ_FILE_EXTENSION}>`)
+        && !((toolName === 'write' || toolName === 'edit') && extension.path === `<inline:${FILE_MUTATION_EXTENSION}>`))
       || (!toolName.startsWith('lexora_') && !toolName.startsWith('mcp__') && !PI_BUILTIN_TOOL_NAME_SET.has(toolName)
         && !(toolName === CODEMODE_TOOL_NAME && extension.path === `<inline:${CODEMODE_EXTENSION}>`))
     ))

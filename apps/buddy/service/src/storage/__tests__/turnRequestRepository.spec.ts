@@ -49,6 +49,9 @@ describe('turnRequestRepository', () => {
     const input = createInput()
     expect(() => service.prepare({ ...input, draft: { draftId: 'draft-1', expectedRevision: 99 } })).toThrow(ComposerDraftCommitConflictError)
     expect(events).toEqual([])
+    for (const table of ['conversations', 'messages', 'runs'])
+      expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 })
+    expect(createComposerDraftRepository(database).findById('draft-1')).toMatchObject({ revision: 0, scope: { kind: 'global' } })
     const result = service.prepare(input)
     expect(events[0]).toMatchObject({ commitId: result.runId, requestId: result.requestId, conversationId: result.conversationId, branchId: result.branchId })
     expect(events[0]!.facts.map(fact => fact.kind)).toEqual(['task.created', 'branch.created', 'task.branch_activated', 'task.model_changed', 'message.created', 'run.queued', 'draft.consumed'])
@@ -57,6 +60,21 @@ describe('turnRequestRepository', () => {
     expect(service.prepare(input)).toMatchObject({ created: false, draftReceipt: { committedRevision: 1 } })
     expect(events).toHaveLength(1)
     service.dispose()
+  })
+
+  it('rejects an actor model changed after preparation without consuming the next input', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    repository.prepare(createInput())
+    database.prepare('UPDATE runs SET status = \'completed\' WHERE id = \'run-1\'').run()
+    const original = createComposerDraftRepository(database).findById('draft-1')!
+    const selection = { providerId: 'fixture', modelId: 'new-model', reasoning: null, serviceTier: null }
+    const captured = createConversationRepository(database).findById('conversation-1')!.modelSelection
+    createConversationRepository(database).setModelSelection({ id: 'conversation-1', modelSelection: selection, updatedAt: '2026-10-11T00:00:00.000Z' })
+    expect(() => repository.prepare({ ...createInput(), expectedActorModelSelection: captured, runId: 'run-2', requestId: 'request-2', requestFingerprint: 'request-2', userMessageId: 'message-2', draft: { draftId: 'draft-1', expectedRevision: original.revision } })).toThrow(expect.objectContaining({ code: 'BUDDY_CONFLICT' }))
+    expect(database.prepare('SELECT id FROM runs WHERE id = \'run-2\'').get()).toBeUndefined()
+    expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(original)
+    expect(createConversationRepository(database).findById('conversation-1')?.modelSelection).toEqual(selection)
   })
 
   it('narrows only the run profile and rejects wider overrides without consuming the draft', () => {
@@ -213,21 +231,6 @@ describe('turnRequestRepository', () => {
     expect(repository.prepare(input)).toMatchObject({ created: false })
     expect(drafts.findById('draft-1')).toEqual(newer)
     expect(() => repository.prepare({ ...input, requestFingerprint: 'different' })).toThrow(TurnRequestConflictError)
-  })
-
-  it('rolls back the message, run and conversation when the draft revision conflicts', () => {
-    const database = createDatabase()
-    const drafts = createComposerDraftRepository(database)
-    const repository = createTurnRequestRepository(database)
-
-    expect(() => repository.prepare({
-      ...createInput(),
-      draft: { draftId: 'draft-1', expectedRevision: 3 },
-    })).toThrow(ComposerDraftCommitConflictError)
-    expect(database.prepare('SELECT COUNT(*) AS count FROM conversations').get()).toEqual({ count: 0 })
-    expect(database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 0 })
-    expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 0 })
-    expect(drafts.findById('draft-1')).toMatchObject({ revision: 0, scope: { kind: 'global' } })
   })
 
   it('rejects a second turn while the conversation already has an incomplete run', () => {
@@ -472,6 +475,7 @@ function createDatabase(): DatabaseSync {
 
 function createInput() {
   return {
+    modelOverride: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', reasoning: 'high' as const, serviceTier: null },
     attachmentBindings: [],
     attachmentIds: [],
     branchId: 'branch-1',

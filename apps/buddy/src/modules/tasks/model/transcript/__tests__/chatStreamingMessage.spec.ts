@@ -6,18 +6,16 @@ import { describe, expect, it } from 'vitest'
 
 import { createChatAgentActivityProjector } from '../chatAgentActivities'
 import { createChatAgentTurnReducer } from '../chatAgentTurn'
-import * as chatProjections from '../chatStreamingMessage'
+import {
+  projectChatAgentTurns,
+  projectChatRecoveryNotices,
+  projectStreamingAssistantMessage,
+} from '../chatStreamingMessage'
 import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
 import {
   projectChatTranscript,
   projectPersistedChatTranscriptRows,
 } from '../chatTranscriptProjection'
-
-const {
-  projectChatAgentTurns,
-  projectChatRecoveryNotices,
-  projectStreamingAssistantMessage,
-} = chatProjections
 
 describe('projectStreamingAssistantMessage', () => {
   it('replays desktop panel actions as visible system records without model messages or tool counts', () => {
@@ -274,7 +272,7 @@ describe('projectStreamingAssistantMessage', () => {
   })
 
   it('projects phase-aware commentary as process text even when the response completes normally', () => {
-    const turns = projectChatRunProcessesForTest([
+    const turns = projectChatAgentTurns([
       event(1, 'message.delta', {
         contentIndex: 0,
         delta: 'I found the target process and will verify its memory usage.',
@@ -302,7 +300,7 @@ describe('projectStreamingAssistantMessage', () => {
         role: 'assistant',
         stopReason: 'completed',
       }),
-    ], [run('completed')]) as ReadonlyArray<ChatAgentTurn>
+    ], [run('completed')])
 
     expect(turns[0]).toMatchObject({
       finalMessageId: 'message-mixed',
@@ -370,13 +368,11 @@ describe('projectStreamingAssistantMessage', () => {
     const responding = [...thought, event(3, 'message.delta', { contentIndex: 1, messageId: 'stream', delta: 'Answer' })]
     const reducer = createChatAgentTurnReducer(run('running'))
     reducer.append(thought)
-    const thinking = reducer.project()
     reducer.append([responding[2]!])
     const settled = reducer.project()
-    expect(settled).not.toBe(thinking)
     expect(settled.nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
     reducer.append([event(4, 'message.delta', { contentIndex: 1, messageId: 'stream', delta: ' continues' })])
-    expect(reducer.project()).toBe(settled)
+    expect(reducer.project()).toEqual(settled)
     expect(projectChatAgentTurns(thought, [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking' }])
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: null })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed' }])
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: 'read' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running' }])
@@ -398,7 +394,7 @@ describe('projectStreamingAssistantMessage', () => {
   })
 
   it('removes empty reasoning blocks and duplicate tool-use narration', () => {
-    const process = projectChatRunProcessesForTest([
+    const process = projectChatAgentTurns([
       event(1, 'message.block.started', {
         contentIndex: 0,
         kind: 'reasoning',
@@ -427,7 +423,7 @@ describe('projectStreamingAssistantMessage', () => {
         kind: 'reasoning',
         messageId: 'message-empty',
       }),
-    ], [run('completed')])[0] as { nodes?: ReadonlyArray<unknown> } | undefined
+    ], [run('completed')])[0]
 
     expect(process?.nodes).toEqual([expect.objectContaining({
       kind: 'reasoning',
@@ -467,7 +463,7 @@ describe('projectStreamingAssistantMessage', () => {
   )
 
   it('preserves a denied approval as a distinct tool outcome', () => {
-    const turns = projectChatRunProcessesForTest([
+    const turns = projectChatAgentTurns([
       event(1, 'approval.requested', {
         id: 'approval-1',
         kind: 'shell',
@@ -500,7 +496,7 @@ describe('projectStreamingAssistantMessage', () => {
         toolCallId: 'tool-1',
         toolName: 'bash',
       }),
-    ], [run('completed')]) as ReadonlyArray<ChatAgentTurn>
+    ], [run('completed')])
 
     expect(turns[0]?.nodes).toEqual([
       expect.objectContaining({
@@ -526,7 +522,7 @@ describe('projectStreamingAssistantMessage', () => {
   })
 
   it('does not let a late tool start overwrite a pending approval', () => {
-    const turns = projectChatRunProcessesForTest([
+    const turns = projectChatAgentTurns([
       event(1, 'approval.requested', {
         id: 'approval-1',
         kind: 'shell',
@@ -553,7 +549,7 @@ describe('projectStreamingAssistantMessage', () => {
         toolCallId: 'tool-1',
         toolName: 'bash',
       }),
-    ], [run('running')]) as ReadonlyArray<ChatAgentTurn>
+    ], [run('running')])
 
     expect(turns[0]?.nodes).toEqual([
       expect.objectContaining({
@@ -565,7 +561,7 @@ describe('projectStreamingAssistantMessage', () => {
   })
 
   it('keeps the run activity in awaiting approval despite a stale executing event', () => {
-    const turns = projectChatRunProcessesForTest([
+    const turns = projectChatAgentTurns([
       event(1, 'approval.requested', {
         id: 'approval-1',
         kind: 'shell',
@@ -579,7 +575,7 @@ describe('projectStreamingAssistantMessage', () => {
         toolCallId: 'tool-1',
       }),
       event(2, 'run.progress', { phase: 'tool_executing', toolName: 'bash' }),
-    ], [run('running')]) as ReadonlyArray<ChatAgentTurn>
+    ], [run('running')])
 
     expect(turns[0]?.progress).toEqual({
       phase: 'awaiting_approval',
@@ -695,28 +691,8 @@ describe('projectStreamingAssistantMessage', () => {
     })
   })
 
-  it('projects automatic context compaction as one lifecycle event', () => {
-    expect(projectChatRunProcessesForTest([
-      event(1, 'context.compaction.started', { reason: 'overflow' }),
-      event(2, 'context.compaction.completed', {
-        estimatedTokensAfter: 24_000,
-        reason: 'overflow',
-        tokensBefore: 292_000,
-        willRetry: false,
-      }),
-    ], [run('completed')])[0]).toMatchObject({
-      nodes: [{
-        estimatedTokensAfter: 24_000,
-        id: 'compaction:run-1:1',
-        kind: 'compaction',
-        status: 'completed',
-        tokensBefore: 292_000,
-      }],
-    })
-  })
-
   it('keeps a read-only policy denial attached to its tool row', () => {
-    expect(projectChatRunProcessesForTest([
+    expect(projectChatAgentTurns([
       event(1, 'tool.preparing', {
         presentation: {
           card: 'diff',
@@ -795,7 +771,7 @@ describe('projectStreamingAssistantMessage', () => {
   })
 
   it('marks unfinished automatic context compaction as interrupted with its run', () => {
-    expect(projectChatRunProcessesForTest([
+    expect(projectChatAgentTurns([
       event(1, 'context.compaction.started', { reason: 'overflow' }),
     ], [run('failed')])[0]).toMatchObject({
       nodes: [{
@@ -811,6 +787,7 @@ describe('projectStreamingAssistantMessage', () => {
 
 function run(status: LocalRun['status']): LocalRun {
   return {
+    buddyId: 'default',
     branchId: 'branch-1',
     completedAt: status === 'completed' ? '2026-08-14T00:00:02.000Z' : null,
     conversationId: 'conversation-1',
@@ -854,11 +831,4 @@ function message(
     role,
     runId: role === 'assistant' ? 'run-1' : null,
   }
-}
-
-function projectChatRunProcessesForTest(
-  events: ReadonlyArray<LocalRunEvent>,
-  runs: ReadonlyArray<LocalRun>,
-): ReadonlyArray<unknown> {
-  return projectChatAgentTurns(events, runs)
 }

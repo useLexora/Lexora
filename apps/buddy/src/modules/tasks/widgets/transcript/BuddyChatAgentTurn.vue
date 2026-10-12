@@ -83,7 +83,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     :class="`is-${turn.status}`"
   >
     <div v-if="showIdentity !== false" class="flex min-w-0 items-center justify-between gap-[12px]">
-      <BuddyChatAgentIdentity :language="language" />
+      <BuddyChatAgentIdentity :run-id="turn.runId" :language="language" />
       <div v-if="!isActive" class="buddy-chat-agent-turn__status inline-flex flex-none items-baseline gap-[6px] text-muted text-[length:var(--buddy-chat-tool-font-size)] leading-[20px]">
         <span class="buddy-chat-agent-turn__status-label">{{ statusLabel }}</span>
         <span class="buddy-chat-agent-turn__duration">{{ duration }}</span>

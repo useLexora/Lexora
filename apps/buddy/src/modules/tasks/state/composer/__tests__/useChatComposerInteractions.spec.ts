@@ -57,6 +57,7 @@ function run(
   errorCode: string | null,
 ): LocalRun {
   return {
+    buddyId: 'default',
     branchId: 'branch-1',
     completedAt: status === 'queued' || status === 'running'
       ? null

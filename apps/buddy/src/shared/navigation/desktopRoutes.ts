@@ -6,6 +6,7 @@ export type DesktopAutomationSection = 'history' | 'plans'
 export type DesktopSettingsCategory = BuiltinSettingsCategory | 'extensions'
 
 export const DESKTOP_ROUTE_NAMES = {
+  buddies: 'desktop.buddies',
   extensions: 'desktop.extensions',
   extensionPage: 'desktop.extension-page',
   automations: 'desktop.automations',
@@ -42,6 +43,7 @@ const AUTOMATION_ROUTE_NAMES: Record<DesktopAutomationSection, string> = {
 }
 
 export const desktopRouteLocations = {
+  buddies: (buddyId?: string): RouteLocationRaw => ({ name: DESKTOP_ROUTE_NAMES.buddies, params: { buddyId } }),
   extensions: (): RouteLocationRaw => ({ name: DESKTOP_ROUTE_NAMES.extensions }),
   extensionPage: (extensionId: string): RouteLocationRaw => ({ name: DESKTOP_ROUTE_NAMES.extensionPage, params: { extensionId } }),
   automationCreate: (): RouteLocationRaw => ({

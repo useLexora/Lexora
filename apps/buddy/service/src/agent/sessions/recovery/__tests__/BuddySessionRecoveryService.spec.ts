@@ -7,6 +7,28 @@ import {
 } from '../BuddySessionRecoveryService'
 
 describe('buddySessionRecoveryService', () => {
+  it('recovers only the receiving actor input references and never another actor materialized prompt', async () => {
+    const history = ['a', 'b'].flatMap(id => [
+      message(`user-${id}`, 'user', { text: `Public ${id}`, modelInputText: `Private ${id}` }),
+      message(`answer-${id}`, 'assistant', { text: `Answer ${id}` }, `run-${id}`),
+    ])
+    const service = new BuddySessionRecoveryService({
+      conversations: { listBranchMessages: () => history },
+      models: { resolve: () => model() },
+      usage: { listForRun: () => [] },
+      runs: { findById: id => ({ id, threadId: `thread-${id.slice(-1)}`, status: 'completed' }) as RunRecord },
+      runInputs: { findByMessageId: id => ({ runId: `run-${id.slice(-1)}`, attachmentIds: [`image-${id.slice(-1)}`], prompt: `Private materialized ${id}`, contextItems: [], reasoning: null, serviceTier: null, createdAt: '2026-10-01T00:00:00.000Z' }) },
+      attachments: { resolveRecoveryInputReferences: async ids => ({ documents: [], images: ids.map(attachmentId => ({ attachmentId, mimeType: 'image/png' })), missingAttachmentIds: [] }) },
+    })
+    const recovered = await service.create({ conversationId: 'conversation-1', branchId: 'branch-1', threadId: 'thread-b', fallbackModel: model(), point: { kind: 'branch_head' } })
+    expect(recovered.messages).toHaveLength(2)
+    expect(recovered.messages[0]).toMatchObject({ buddyInput: { messageId: 'user-b', prompt: 'Private materialized user-b', images: [{ attachmentId: 'image-b', mimeType: 'image/png' }] } })
+    expect(recovered.messages[1]).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: 'Answer b' }] })
+    expect(recovered.recoveredImageCount).toBe(1)
+    expect(JSON.stringify(recovered)).not.toContain('user-a')
+    expect(JSON.stringify(recovered)).not.toContain('image-a')
+  })
+
   it.each([false, true])('preserves delivery evidence when recovering a run with a size error (delivered: %s)', async (delivered) => {
     const service = new BuddySessionRecoveryService({
       attachments: { resolveRecoveryInputReferences: async () => ({ documents: [{ attachmentId: 'audio-1', mimeType: 'audio/wav' }], images: [], missingAttachmentIds: [] }) },

@@ -10,6 +10,7 @@ import { modelKey } from '../../model/modelSelection'
 import { useModelPicker } from './useModelPicker'
 
 const props = defineProps<{
+  disabled?: boolean
   language: BuddyLocale
   models: ReadonlyArray<LocalRuntimeModelOption>
   providers: ReadonlyArray<LocalProvider>
@@ -62,6 +63,7 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
           class="desktop-model-picker__model h-13 min-h-13 ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
           type="button"
           role="menuitemradio"
+          :disabled="disabled"
           :aria-checked="selectedModelId === modelKey(model)"
           @click="emit('select', modelKey(model))"
         >

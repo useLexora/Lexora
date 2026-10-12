@@ -20,6 +20,7 @@ import DesktopModelTrigger from './DesktopModelTrigger.vue'
 import { useModelSelector } from './useModelSelector'
 
 const props = withDefaults(defineProps<{
+  busy?: boolean
   clearable?: boolean
   disabled: boolean
   language: BuddyLocale
@@ -34,6 +35,7 @@ const props = withDefaults(defineProps<{
   showFastMode?: boolean
   surface?: 'compact' | 'field'
 }>(), {
+  busy: false,
   clearable: false,
   placement: 'top-end',
   placeholder: undefined,
@@ -65,6 +67,7 @@ const {
   effortTransitionDirection,
   canClearModel,
   canOpen,
+  controlsDisabled,
   reasoningLevelOptions,
   selectedEffortValue,
   isEffortUnavailable,
@@ -105,7 +108,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="root" class="desktop-model-selector relative min-w-0">
+  <div ref="root" class="desktop-model-selector relative min-w-0" :aria-busy="busy">
     <NPopover
       class="buddy-raw-popover"
       raw
@@ -129,18 +132,21 @@ defineExpose({
       <div
         class="desktop-model-selector__popover flex max-w-[calc(100vw_-_3rem)] gap-2"
         :class="placement === 'bottom-start' ? 'is-bottom-start flex-row items-start' : 'is-top-end flex-row-reverse items-end'"
+        :aria-busy="busy"
         @pointerdown.stop
       >
         <DesktopModelMainPanel
           v-if="activePanel === 'main'" :language="language" :is-meter-dragging="isMeterDragging"
+          :disabled="controlsDisabled"
           :effort-transition-direction="effortTransitionDirection" :displayed-effort="displayedEffort"
           :displayed-effort-label="displayedEffortLabel" :supports-fast-mode="supportsFastMode" :is-fast-mode="isFastMode"
           @advanced="openAdvancedPanel" @toggle-fast="toggleFastMode"
         >
           <template v-if="reasoningLevelOptions.length" #default>
-            <WorkbenchControl target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="disabled" @change="selectContributedEffort" @dismiss="close">
+            <WorkbenchControl target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="controlsDisabled" @change="selectContributedEffort" @dismiss="close">
               <DesktopReasoningPicker
                 v-if="isEffortUnavailable"
+                :disabled="controlsDisabled"
                 :language="language"
                 :options="reasoningLevelOptions"
                 :selected-effort="selectedEffortValue"
@@ -148,6 +154,7 @@ defineExpose({
               />
               <DesktopReasoningMeter
                 v-else
+                :disabled="controlsDisabled"
                 :label="t('desktop.chat.effort')"
                 :options="reasoningLevelOptions"
                 :selected-effort="selectedEffortValue"
@@ -161,6 +168,7 @@ defineExpose({
 
         <DesktopModelAdvancedPanel
           v-else-if="activePanel === 'advanced'"
+          :disabled="controlsDisabled"
           :language="language"
           :model-label="modelLabel"
           :selected-effort-label="selectedEffortLabel"
@@ -174,8 +182,9 @@ defineExpose({
           @toggle-fast="toggleFastMode"
         />
 
-        <WorkbenchControl v-if="activePanel === 'advanced' && secondaryPanel === 'reasoning'" target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="disabled" @change="selectContributedEffort" @dismiss="close">
+        <WorkbenchControl v-if="activePanel === 'advanced' && secondaryPanel === 'reasoning'" target="model.reasoning" :context-key="selectedModelId ?? ''" :value="selectedEffortValue" :options="reasoningLevelOptions" :disabled="controlsDisabled" @change="selectContributedEffort" @dismiss="close">
           <DesktopReasoningPicker
+            :disabled="controlsDisabled"
             :language="language"
             :options="reasoningLevelOptions"
             :selected-effort="selectedEffortValue"
@@ -185,6 +194,7 @@ defineExpose({
 
         <DesktopModelPicker
           v-else-if="activePanel === 'advanced' && secondaryPanel === 'model'"
+          :disabled="controlsDisabled"
           :language="language"
           :models="models"
           :providers="providers"

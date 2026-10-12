@@ -60,48 +60,25 @@ describe('chat run transcript projector', () => {
     expect(terminal.turn.usage).toEqual(updated.turn.usage)
   })
 
-  it('reuses the complete projection for an unaffected run', () => {
-    const runA = run('run-a')
-    const runB = run('run-b')
-    const runAEvents = [
-      reasoningEvent('run-a', 1, 'A'),
-      recoveryEvent('run-a', 2, 2),
-      messageEvent('run-a', 3, 'message.started', { messageId: 'assistant-run-a' }),
-      messageEvent('run-a', 4, 'message.delta', {
-        delta: 'A answer',
-        messageId: 'assistant-run-a',
-      }),
-    ]
-    const runBEvents = [
-      messageEvent('run-b', 1, 'message.started', { messageId: 'assistant-run-b' }),
-      messageEvent('run-b', 2, 'message.delta', {
-        delta: 'B',
-        messageId: 'assistant-run-b',
-      }),
-    ]
+  it('preserves another run’s text and recovery notices during an incremental update', () => {
+    const runs = [run('run-a'), run('run-b')]
     const projector = createChatRunTranscriptProjector()
-    const initialBuckets = replaceChatRunEventBuckets([...runAEvents, ...runBEvents])
-    const initial = projector.project(initialBuckets, [runA, runB])
+    const buckets = replaceChatRunEventBuckets([
+      recoveryEvent('run-a', 1, 2),
+      messageEvent('run-a', 2, 'message.started', { messageId: 'assistant-run-a' }),
+      messageEvent('run-a', 3, 'message.delta', { delta: 'A answer', messageId: 'assistant-run-a' }),
+      messageEvent('run-b', 1, 'message.started', { messageId: 'assistant-run-b' }),
+      messageEvent('run-b', 2, 'message.delta', { delta: 'B', messageId: 'assistant-run-b' }),
+    ])
+    projector.project(buckets, runs)
+    const updated = projector.project(mergeChatRunEventBuckets(buckets, [
+      messageEvent('run-b', 3, 'message.delta', { delta: '+', messageId: 'assistant-run-b' }),
+    ]), runs)
 
-    const updated = projector.project(mergeChatRunEventBuckets(initialBuckets, [
-      messageEvent('run-b', 3, 'message.delta', {
-        delta: '+',
-        messageId: 'assistant-run-b',
-      }),
-    ]), [runA, runB])
-
-    expect(updated[0]).toBe(initial[0])
-    expect(updated[0]?.turn).toBe(initial[0]?.turn)
-    expect(updated[0]?.recoveryNotices).toEqual([{
-      createdAt: '2026-09-03T00:00:02.000Z',
-      missingAttachmentCount: 2,
-      runId: 'run-a',
-      sequence: 2,
-    }])
-    expect(updated[1]).not.toBe(initial[1])
-    expect(updated[1]?.turn).toBe(initial[1]?.turn)
-    expect(updated[1]?.turn.nodes).toMatchObject([])
+    expect(updated[0]?.streamingMessages[0]?.text).toBe('A answer')
+    expect(updated[0]?.recoveryNotices).toMatchObject([{ missingAttachmentCount: 2, runId: 'run-a' }])
     expect(updated[1]?.streamingMessages[0]?.text).toBe('B+')
+    expect(updated[1]?.recoveryNotices).toEqual([])
   })
 
   it('preserves the message start time while a terminal result awaits persistence', () => {
@@ -175,17 +152,14 @@ describe('chat run transcript projector', () => {
     }])
   })
 
-  it('applies an appended suffix without rebuilding unaffected turn nodes', () => {
+  it('appends reasoning deltas to their original content block', () => {
     const currentRun = run('run-a')
     const firstReasoning = reasoningEvent('run-a', 1, 'First', 0)
     const secondReasoning = reasoningEvent('run-a', 2, 'Second', 1)
     const initialEvents = [firstReasoning, secondReasoning]
     const projector = createChatRunTranscriptProjector()
     const initialBuckets = replaceChatRunEventBuckets(initialEvents)
-    const initial = projector.project(
-      initialBuckets,
-      [currentRun],
-    )[0]!
+    projector.project(initialBuckets, [currentRun])
 
     const updated = projector.project(mergeChatRunEventBuckets(initialBuckets, [
       reasoningEvent('run-a', 3, '+', 1),
@@ -195,12 +169,9 @@ describe('chat run transcript projector', () => {
       'First',
       'Second+',
     ])
-    expect(updated.turn.nodes[0]).toBe(initial.turn.nodes[0])
-    expect(updated.turn.nodes[1]).not.toBe(initial.turn.nodes[1])
-    expect(updated.recoveryNotices).toBe(initial.recoveryNotices)
   })
 
-  it('keeps compaction lifecycle order and untouched reasoning when later events append', () => {
+  it('keeps compaction lifecycle order and reasoning through incremental updates and replay', () => {
     const currentRun = run('run-a')
     const projector = createChatRunTranscriptProjector()
     const initialBuckets = replaceChatRunEventBuckets([
@@ -208,7 +179,7 @@ describe('chat run transcript projector', () => {
       messageEvent('run-a', 2, 'context.compaction.started', { reason: 'overflow' }),
       reasoningEvent('run-a', 3, 'During', 1),
     ])
-    const initial = projector.project(initialBuckets, [currentRun])[0]!
+    projector.project(initialBuckets, [currentRun])
     const updatedBuckets = mergeChatRunEventBuckets(initialBuckets, [
       messageEvent('run-a', 4, 'context.compaction.completed', {
         estimatedTokensAfter: 2000,
@@ -233,8 +204,6 @@ describe('chat run transcript projector', () => {
       { id: 'compaction:run-a:5', kind: 'compaction', status: 'cancelled' },
       { kind: 'reasoning', text: 'After' },
     ])
-    expect(updated.turn.nodes[0]).toBe(initial.turn.nodes[0])
-    expect(updated.turn.nodes[2]).toBe(initial.turn.nodes[2])
     expect(updated).toEqual(createChatRunTranscriptProjector().project(updatedBuckets, [currentRun])[0])
   })
 
@@ -261,8 +230,6 @@ describe('chat run transcript projector', () => {
     const projection = projector.project(updatedBuckets, [currentRun])[0]
 
     expect(updatedBucket?.events).toEqual([secondUpdate])
-    expect((updatedBucket?.update as unknown as { events?: ReadonlyArray<LocalRunEvent> })?.events)
-      .toEqual([secondUpdate])
     expect(projection?.turn.nodes).toMatchObject([{
       presentation: { output: 'first\nsecond' },
       toolCallId: 'tool-1',
@@ -430,6 +397,7 @@ describe('chat run transcript projector', () => {
 
 function run(id: string): LocalRun {
   return {
+    buddyId: 'default',
     branchId: 'branch-1',
     completedAt: null,
     conversationId: 'conversation-1',

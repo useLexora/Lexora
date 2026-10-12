@@ -1,6 +1,7 @@
 import type { LocalConversationStatus } from '@buddy-shared/runs/conversationStatusApi'
 import type { ArtifactChangeNotice, LocalArtifactText } from '../../shared/artifacts/artifactApi'
 import type { LocalAutomation, LocalAutomationCreateRequest, LocalAutomationListRequest, LocalAutomationMutationRequest, LocalAutomationOccurrenceListRequest, LocalAutomationOccurrencePage, LocalAutomationPage, LocalAutomationPreviewRequest, LocalAutomationPreviewResult, LocalAutomationRunNowResult, LocalAutomationUpdateRequest } from '../../shared/automation/automationApi'
+import type { BuddyCatalog, BuddyCreate, BuddyDefaultUpdate, BuddyMutation, BuddyToolOption, BuddyUpdate, LocalBuddy } from '../../shared/buddies/buddyApi'
 import type { ChangeOverviewRequest, ChangeSetChangeNotice, LocalChangeOverview, LocalChangeSetDetail } from '../../shared/changes/changeApi'
 import type { ConnectorChangeNotice, LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
@@ -18,10 +19,11 @@ import type {
   BuddyComposerSpaceFileSelect,
 } from '../../shared/conversation/composerResource'
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
-import type { ConversationListFilter, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
+import type { ConversationListFilter, ConversationModelControls, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
+import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
 import type { LocalNotificationList, NotificationsChanged } from '../../shared/notifications/notificationApi'
@@ -45,6 +47,23 @@ import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePer
 import type { LocalUsageSnapshot } from '../../shared/usage/usageApi'
 
 export const LOCAL_CHAT_IPC_CHANNELS = {
+  executionsList: 'lexora:local-chat:executions:list',
+  executionsDetail: 'lexora:local-chat:executions:detail',
+  executionsAnswer: 'lexora:local-chat:executions:answer',
+  executionsCancel: 'lexora:local-chat:executions:cancel',
+  executionsEvents: 'lexora:local-chat:executions:events',
+  executionsSend: 'lexora:local-chat:executions:send',
+  executionsCancelChildren: 'lexora:local-chat:executions:cancel-children',
+  executionsChanged: 'lexora:local-chat:executions:changed',
+  buddiesList: 'lexora:local-chat:buddies:list',
+  buddiesToolOptions: 'lexora:local-chat:buddies:tool-options',
+  buddiesGet: 'lexora:local-chat:buddies:get',
+  buddiesCreate: 'lexora:local-chat:buddies:create',
+  buddiesDelete: 'lexora:local-chat:buddies:delete',
+  buddiesResetProfile: 'lexora:local-chat:buddies:resetProfile',
+  buddiesSetDefault: 'lexora:local-chat:buddies:setDefault',
+  buddiesUpdate: 'lexora:local-chat:buddies:update',
+  buddiesChanged: 'lexora:local-chat:buddies:changed',
   promptsGet: 'lexora:buddy:prompts:get',
   taskMarksList: 'lexora:buddy:task-marks:list',
   taskMarksCreate: 'lexora:buddy:task-marks:create',
@@ -124,6 +143,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsDelete: 'lexora:buddy:conversations:delete',
   conversationsActivateBranch: 'lexora:buddy:conversations:activate-branch',
   conversationsGet: 'lexora:buddy:conversations:get',
+  conversationsGetModelControls: 'lexora:buddy:conversations:get-model-controls',
   conversationsGetNodeDetail: 'lexora:buddy:conversations:get-node-detail',
   conversationsGetTree: 'lexora:buddy:conversations:get-tree',
   conversationsList: 'lexora:buddy:conversations:list',
@@ -133,6 +153,10 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsChanged: 'lexora:buddy:conversations:changed',
   conversationsTimelineChanged: 'lexora:buddy:conversations:timeline-changed',
   conversationsSetPermissionSettings: 'lexora:buddy:conversations:set-permission-settings',
+  conversationsListMembers: 'lexora:buddy:conversations:list-members',
+  conversationsAddMember: 'lexora:buddy:conversations:add-member',
+  conversationsRemoveMember: 'lexora:buddy:conversations:remove-member',
+  conversationsSetBuddy: 'lexora:local-chat:conversations:set-buddy',
   conversationsSetModelSelection: 'lexora:buddy:conversations:set-model-selection',
   conversationsListTimeline: 'lexora:buddy:conversations:list-timeline',
   notificationsChanged: 'lexora:buddy:notifications:changed',
@@ -213,6 +237,27 @@ interface LocalMutationResult {
 }
 
 export interface LocalChatApi {
+  executions: {
+    list: (input: ExecutionScope) => Promise<readonly LocalExecution[]>
+    detail: (input: ExecutionTarget) => Promise<LocalExecutionDetail>
+    events: (input: ExecutionEventsRequest) => Promise<LocalExecutionEventsPage>
+    send: (input: ExecutionSend) => Promise<{ accepted: boolean }>
+    cancelChildren: (input: ExecutionTarget) => Promise<{ cancelledRunIds: string[] }>
+    answer: (input: ExecutionAnswer) => Promise<{ accepted: boolean }>
+    cancel: (input: ExecutionTarget) => Promise<{ cancelled: boolean }>
+    onChanged: (listener: (event: ExecutionsChanged) => void) => () => void
+  }
+  buddies: {
+    toolOptions: () => Promise<readonly BuddyToolOption[]>
+    list: () => Promise<BuddyCatalog>
+    get: (buddyId: string) => Promise<LocalBuddy>
+    create: (input: BuddyCreate) => Promise<LocalBuddy>
+    delete: (input: BuddyMutation) => Promise<LocalBuddy>
+    resetProfile: (input: BuddyMutation) => Promise<LocalBuddy>
+    setDefault: (input: BuddyDefaultUpdate) => Promise<BuddyCatalog>
+    update: (input: BuddyUpdate) => Promise<LocalBuddy>
+    onChanged: (listener: (event: { buddyId: string, catalogRevision: number }) => void) => () => void
+  }
   taskMarks: {
     list: () => Promise<readonly LocalTaskMark[]>
     create: (input: TaskMarkInput) => Promise<LocalTaskMark>
@@ -397,6 +442,7 @@ export interface LocalChatApi {
     getTree: (conversationId: string) => Promise<LocalConversationTree>
     list: (limit?: number, filter?: ConversationListFilter) => Promise<ReadonlyArray<LocalConversationSummary>>
     get: (conversationId: string) => Promise<LocalConversation>
+    getModelControls: (conversationId: string, actorId?: string) => Promise<ConversationModelControls>
     delete: (conversationId: string) => Promise<boolean>
     activateBranch: (input: {
       branchId: string
@@ -414,9 +460,14 @@ export interface LocalChatApi {
       conversationId: string,
       settings: BuddyPermissionSettings,
     ) => Promise<LocalConversation>
+    listMembers: (conversationId: string) => Promise<readonly LocalConversationMember[]>
+    addMember: (conversationId: string, buddyId: string) => Promise<readonly LocalConversationMember[]>
+    removeMember: (conversationId: string, buddyId: string) => Promise<readonly LocalConversationMember[]>
+    setBuddy: (conversationId: string, buddyId: string) => Promise<LocalConversation>
     setModelSelection: (
       conversationId: string,
-      modelSelection: NonNullable<LocalConversation['modelSelection']>,
+      modelSelection: LocalConversation['modelSelection'],
+      target?: { actorId?: string, runId?: string },
     ) => Promise<LocalConversation>
     listTimeline: (input: {
       branchId?: string
@@ -448,6 +499,8 @@ export interface LocalChatApi {
   }
   approvals: {
     list: (input?: {
+      conversationId?: string
+      branchId?: string
       limit?: number
       runId?: string | null
       status?: 'pending' | 'approved' | 'denied' | 'cancelled' | null

@@ -81,5 +81,29 @@ function message(id: string, branchId: string, role: MessageRecord['role'], runI
 }
 
 function run(id: string, branchId: string, triggeringMessageId: string, startedAt: string, status: RunRecord['status'] = 'completed'): RunRecord {
-  return { id, branchId, triggeringMessageId, startedAt, status, conversationId: 'conversation', purpose: 'chat', provider: 'test', model: 'test', contextWindow: null, maxTokens: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', executionContext: null, completedAt: startedAt, errorCode: null, piSessionFile: null }
+  return {
+    rootRunId: id,
+    parentRunId: null,
+    executionKind: 'root',
+    threadId: 'actor-thread',
+    generation: 0,
+    buddyId: 'default',
+    id,
+    branchId,
+    triggeringMessageId,
+    startedAt,
+    status,
+    conversationId: 'conversation',
+    purpose: 'chat',
+    provider: 'test',
+    model: 'test',
+    contextWindow: null,
+    maxTokens: null,
+    approvalPolicy: 'policy',
+    executionProfile: 'workspace_write',
+    executionContext: null,
+    completedAt: startedAt,
+    errorCode: null,
+    piSessionFile: null,
+  }
 }

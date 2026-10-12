@@ -44,6 +44,10 @@ struct Request {
 
 pub(super) fn run() -> io::Result<i32> {
     require_host(current_process(), false)?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity()?})
+    );
     if fs::canonicalize(std::env::current_exe()?)? != fs::canonicalize(setup::installed_path()?)? {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
@@ -129,6 +133,10 @@ pub(super) fn run() -> io::Result<i32> {
         }
     };
     job.finish()?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"processesReleased","protocol":1})
+    );
     drop(child);
     drop(job);
     lease.finish()?;
@@ -172,9 +180,17 @@ fn validate(request: &Request) -> io::Result<()> {
     Ok(())
 }
 
-struct Job(OwnedHandle);
+pub(crate) struct Job(pub(crate) OwnedHandle);
 impl Job {
     fn new() -> io::Result<Self> {
+        Self::create(true)
+    }
+
+    pub(crate) fn host() -> io::Result<Self> {
+        Self::create(false)
+    }
+
+    fn create(restrict_ui: bool) -> io::Result<Self> {
         // SAFETY: A private, non-inheritable job handle never enters the sandbox's handle list.
         let job = Self(owned(unsafe {
             CreateJobObjectW(ptr::null(), ptr::null())
@@ -190,6 +206,9 @@ impl Job {
                 size_of_val(&limits) as u32,
             )
         })?;
+        if !restrict_ui {
+            return Ok(job);
+        }
         let restrictions = JOBOBJECT_BASIC_UI_RESTRICTIONS {
             UIRestrictionsClass: JOB_OBJECT_UILIMIT_HANDLES
                 | JOB_OBJECT_UILIMIT_READCLIPBOARD
@@ -212,7 +231,7 @@ impl Job {
         Ok(job)
     }
 
-    fn finish(&self) -> io::Result<()> {
+    pub(crate) fn finish(&self) -> io::Result<()> {
         // SAFETY: This private job contains only this command and its descendants.
         boolean(unsafe { TerminateJobObject(self.0.as_raw_handle(), 125) })?;
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -248,9 +267,9 @@ impl Drop for Job {
     }
 }
 
-struct Child {
-    process: OwnedHandle,
-    thread: OwnedHandle,
+pub(crate) struct Child {
+    pub(crate) process: OwnedHandle,
+    pub(crate) thread: OwnedHandle,
 }
 impl Drop for Child {
     fn drop(&mut self) {
@@ -378,11 +397,11 @@ fn launch(
     Ok(child)
 }
 
-struct Attributes {
+pub(crate) struct Attributes {
     storage: Vec<usize>,
 }
 impl Attributes {
-    fn new(count: u32) -> io::Result<Self> {
+    pub(crate) fn new(count: u32) -> io::Result<Self> {
         let mut size = 0;
         // SAFETY: The first sizing call accepts a null list and writes the required allocation size.
         unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), count, 0, &mut size) };
@@ -397,11 +416,11 @@ impl Attributes {
         Ok(Self { storage })
     }
 
-    fn pointer(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
+    pub(crate) fn pointer(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
         self.storage.as_mut_ptr().cast()
     }
 
-    fn set<T>(&mut self, key: usize, value: &T) -> io::Result<()> {
+    pub(crate) fn set<T>(&mut self, key: usize, value: &T) -> io::Result<()> {
         // SAFETY: Each caller keeps its attribute data alive until CreateProcess returns; the list owns sufficient storage.
         boolean(unsafe {
             UpdateProcThreadAttribute(

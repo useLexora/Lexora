@@ -10,6 +10,7 @@ import { resolveConcreteEffort } from '../../model/modelSelection'
 type EffortTransitionDirection = 'decreasing' | 'increasing'
 
 export interface ModelSelectorInput {
+  busy?: boolean
   clearable: boolean
   disabled: boolean
   models: ReadonlyArray<LocalRuntimeModelOption>
@@ -34,12 +35,14 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
   const previewEffort = shallowRef<BuddyThinkingLevel | null>(null)
   const isMeterDragging = shallowRef(false)
   const effortTransitionDirection = shallowRef<EffortTransitionDirection>('increasing')
+  const controlsDisabled = computed(() => props.disabled || props.busy === true)
   const canClearModel = computed(() => (
     props.clearable
     && props.selectedModelId !== null
-    && !props.disabled
+    && !controlsDisabled.value
   ))
-  const canOpen = computed(() => !props.disabled && props.models.length > 0)
+  const canRemainOpen = computed(() => !props.disabled && props.models.length > 0)
+  const canOpen = computed(() => canRemainOpen.value && !props.busy)
   const reasoningLevelOptions = computed<ReadonlyArray<ReasoningSelectorOption>>(() => (
     props.selectedModel?.reasoningOptions.map(value => ({
       label: formatReasoningLabel(value),
@@ -68,7 +71,7 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
 
   useEventListener(document, 'pointerdown', handleDocumentPointerDown)
   useEventListener(document, 'keydown', handleDocumentKeydown)
-  watch(canOpen, (available) => {
+  watch(canRemainOpen, (available) => {
     if (!available)
       close()
   })
@@ -110,15 +113,21 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
   }
 
   function selectEffort(value: BuddyThinkingLevel) {
+    if (controlsDisabled.value)
+      return
     actions.updateEffort(value)
     close()
   }
 
   function selectMeterEffort(value: BuddyThinkingLevel) {
+    if (controlsDisabled.value)
+      return
     actions.updateEffort(value)
   }
 
   function previewMeterEffort(value: BuddyThinkingLevel | null) {
+    if (value && controlsDisabled.value)
+      return
     if (value) {
       const currentIndex = reasoningLevelOptions.value.findIndex(option => option.value === displayedEffort.value)
       const nextIndex = reasoningLevelOptions.value.findIndex(option => option.value === value)
@@ -133,15 +142,21 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
   }
 
   function selectModel(modelId: string) {
+    if (controlsDisabled.value)
+      return
     actions.updateModel(modelId)
   }
 
   function clearModel() {
+    if (controlsDisabled.value)
+      return
     actions.clearModel()
     close()
   }
 
   function toggleFastMode() {
+    if (controlsDisabled.value)
+      return
     actions.updateServiceTier(isFastMode.value ? null : BUDDY_FAST_SERVICE_TIER)
   }
 
@@ -186,6 +201,7 @@ export function useModelSelector(props: ModelSelectorInput, root: Readonly<Shall
     effortTransitionDirection,
     canClearModel,
     canOpen,
+    controlsDisabled,
     reasoningLevelOptions,
     selectedEffortValue,
     isEffortUnavailable,

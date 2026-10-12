@@ -16,7 +16,7 @@ export interface ApprovalRecord {
 
 export interface ApprovalRepository {
   findById: (id: string) => ApprovalRecord | null
-  list: (options?: { limit?: number, runId?: string | null, status?: ApprovalStatus | null }) => ApprovalRecord[]
+  list: (options?: { limit?: number, runId?: string | null, status?: ApprovalStatus | null, conversationId?: string, branchId?: string }) => ApprovalRecord[]
   listPending: (runId?: string) => ApprovalRecord[]
 }
 
@@ -43,9 +43,18 @@ export function createApprovalRepository(database: DatabaseSync): ApprovalReposi
     ORDER BY created_at, id
   `)
   const listByFilters = database.prepare(`
-    SELECT * FROM approvals
-    WHERE (? IS NULL OR run_id = ?) AND (? IS NULL OR status = ?)
-    ORDER BY created_at DESC, id DESC
+    SELECT a.* FROM approvals a
+    WHERE (? IS NULL OR a.run_id = ?) AND (? IS NULL OR a.status = ?)
+      AND (? IS NULL OR EXISTS (
+        SELECT 1 FROM runs r
+        JOIN runs root ON root.id = r.root_run_id
+        JOIN conversations c ON c.id = root.conversation_id
+        WHERE r.id = a.run_id AND root.execution_kind = 'root'
+          AND root.conversation_id = ? AND root.branch_id = ?
+          AND r.conversation_id = root.conversation_id AND r.branch_id = root.branch_id
+          AND c.deleted_at IS NULL
+      ))
+    ORDER BY a.created_at DESC, a.id DESC
     LIMIT ?
   `)
 
@@ -66,6 +75,9 @@ export function createApprovalRepository(database: DatabaseSync): ApprovalReposi
         runId,
         status,
         status,
+        options.conversationId ?? null,
+        options.conversationId ?? null,
+        options.branchId ?? null,
         options.limit ?? 100,
       ) as unknown as ApprovalRow[]).map(toApproval)
     },

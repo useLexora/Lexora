@@ -10,7 +10,7 @@ export function registerChangeRpc(options: {
   rpc: RuntimeRequestRegistrar
   service: Pick<ChangeCaptureService, 'getVisibleDetail' | 'getForRuns'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
-  runs: Pick<RunRepository, 'listForTimeline'>
+  runs: Pick<RunRepository, 'listForTimeline' | 'listTree'>
 }): () => void {
   const get = registerRuntimeRequest(options.rpc, changesRpc.get, async (input) => {
     try {
@@ -33,7 +33,7 @@ export function registerChangeRpc(options: {
       messages.filter(message => message.role === 'user').map(message => message.id),
       messages.flatMap(message => message.runId ? [message.runId] : []),
     )
-    const result = await options.service.getForRuns(runs.map(run => run.id))
+    const result = await options.service.getForRuns([...new Set(runs.flatMap(run => options.runs.listTree(run.id).map(member => member.id)))])
     if (options.conversations.findById(input.conversationId)?.deletedAt !== null)
       throw new BuddyServiceError('VALIDATION_FAILED')
     return result

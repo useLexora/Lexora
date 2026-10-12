@@ -1,10 +1,10 @@
-import type { RunLifecycleService } from '../../runs/RunLifecycleService'
 import type { BuddyAgentRunner } from './BuddyAgentRunner'
 import type { BuddyRunExecutionPlanner } from './BuddyRunExecutionPlanner'
+import type { ExecutionCoordinator } from './ExecutionCoordinator'
 import type { BuddyTurnHandle } from './turnTypes'
 
 export interface BuddyTurnLauncherOptions {
-  lifecycle: Pick<RunLifecycleService, 'failBeforeStart'>
+  executions: Pick<ExecutionCoordinator, 'prepare' | 'failBeforeStart'>
   planner: Pick<BuddyRunExecutionPlanner, 'resolve'>
   runner: Pick<BuddyAgentRunner, 'startCompaction' | 'startTurn'>
 }
@@ -17,28 +17,24 @@ export class BuddyTurnLauncher {
   }
 
   async launch(runId: string, signal?: AbortSignal): Promise<BuddyTurnHandle> {
-    let plan: Awaited<ReturnType<BuddyRunExecutionPlanner['resolve']>>
+    let preparation: ReturnType<ExecutionCoordinator['prepare']> | undefined
     try {
-      signal?.throwIfAborted()
-      plan = await this.#options.planner.resolve(runId)
-      signal?.throwIfAborted()
-    }
-    catch (error) {
-      const failed = await this.#options.lifecycle.failBeforeStart(runId, error)
-      if (!failed)
-        throw error
-      return { completion: Promise.resolve(failed), runId }
-    }
-    try {
+      preparation = this.#options.executions.prepare(runId, signal)
+      preparation.signal.throwIfAborted()
+      const plan = await this.#options.planner.resolve(runId)
+      preparation.signal.throwIfAborted()
       return plan.kind === 'turn'
         ? this.#options.runner.startTurn(plan.input)
         : this.#options.runner.startCompaction(plan.input)
     }
     catch (error) {
-      const failed = await this.#options.lifecycle.failBeforeStart(runId, error)
+      const failed = await this.#options.executions.failBeforeStart(runId, error)
       if (!failed)
         throw error
       return { completion: Promise.resolve(failed), runId }
+    }
+    finally {
+      preparation?.release()
     }
   }
 }

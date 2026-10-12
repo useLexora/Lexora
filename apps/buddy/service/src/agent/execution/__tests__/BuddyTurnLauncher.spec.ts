@@ -9,12 +9,15 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BuddyDefinitionResolver } from '../../../buddies/BuddyDefinitionResolver'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
 import { SkillService } from '../../../skills/SkillService'
 import { prepareTestTurnRequest } from '../../../storage/__tests__/composerDraftTestFixture'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
+import { createBuddyRepository } from '../../../storage/buddyRepository'
 import { createCommandRequestRepository } from '../../../storage/commandRequestRepository'
+import { createConversationMemberRepository } from '../../../storage/conversationMemberRepository'
 import { createConversationRepository } from '../../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../../storage/database'
 import { createRunInputRepository } from '../../../storage/runInputRepository'
@@ -24,6 +27,7 @@ import { createSpaceRepository } from '../../../storage/spaceRepository'
 import { BuddySessionBlueprintService } from '../../sessions/BuddySessionBlueprintService'
 import { BuddyRunExecutionPlanner } from '../BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from '../BuddyTurnLauncher'
+import { createTestExecutionCoordinator } from './executionCoordinatorFixture'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -66,8 +70,8 @@ describe('buddyTurnLauncher', () => {
     expect(fixture.runs.findById('run-1')?.status).toBe('queued')
   })
 
-  it('rebuilds the executable turn from persisted run facts', async () => {
-    const fixture = await createFixture()
+  it('rebuilds the executable turn from persisted facts while preserving image references for a text-only model', async () => {
+    const fixture = await createFixture({ modelInput: ['text'] })
     fixture.prepareTurn({ spaceId: null })
     let launched: StartBuddyTurnInput | null = null
     const launcher = fixture.createLauncher({
@@ -89,17 +93,13 @@ describe('buddyTurnLauncher', () => {
       },
       thinkingLevel: 'high',
       userInput: {
+        attachmentIds: ['attachment-1'],
         images: [{ attachmentId: 'attachment-1', mimeType: 'image/png' }],
         messageId: 'message-1',
         prompt: 'Persisted prompt',
         version: 1,
       },
     })
-    expect(fixture.resolveInputReferences).toHaveBeenCalledWith(
-      ['attachment-1'],
-      'conversation-1',
-      'Persisted prompt',
-    )
   })
 
   it('durably fails a queued run when its Space directory was revoked before launch', async () => {
@@ -151,18 +151,6 @@ describe('buddyTurnLauncher', () => {
       status: 'failed',
     })
     expect(startTurn).not.toHaveBeenCalled()
-  })
-
-  it('keeps stable image references when launching a text-only model', async () => {
-    const fixture = await createFixture({ modelInput: ['text'] })
-    fixture.prepareTurn({ spaceId: null })
-    let launched: StartBuddyTurnInput | null = null
-    const launcher = fixture.createLauncher({ startTurn(input) {
-      launched = input
-      return queuedHandle(input.runId, fixture.runs.findById(input.runId)!)
-    } })
-    await expect(launcher.launch('run-1')).resolves.toMatchObject({ runId: 'run-1' })
-    expect(launched).toMatchObject({ userInput: { attachmentIds: ['attachment-1'], images: [{ attachmentId: 'attachment-1', mimeType: 'image/png' }] } })
   })
 
   it('durably fails a queued run when the runner rejects it synchronously', async () => {
@@ -236,7 +224,10 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
     skills,
     spaces,
   })
+  const definitions = new BuddyDefinitionResolver({ buddies: createBuddyRepository(database), members: createConversationMemberRepository(database), providers: { getDefaultModel: async () => null, executionModels: { getServiceTiers: () => [{ id: 'priority', displayName: 'Priority' }], resolveAvailable: async input => ({ id: input.modelId, provider: input.providerId, api: 'openai-completions', input: options.modelInput ?? ['text', 'image'], contextWindow: 128000, maxTokens: 16384, reasoning: true }) as never } } })
+  const executions = createTestExecutionCoordinator({ database, eventLog, lifecycle })
   const planner = new BuddyRunExecutionPlanner({
+    definitions,
     attachments: { resolveInputReferences },
     commands: createCommandRequestRepository(database),
     conversations: createConversationRepository(database),
@@ -251,7 +242,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
       startTurn?: (input: StartBuddyTurnInput) => BuddyTurnHandle
     } = {}) {
       return new BuddyTurnLauncher({
-        lifecycle,
+        executions,
         planner,
         runner: {
           startCompaction() {

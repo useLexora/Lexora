@@ -69,6 +69,10 @@ export function projectBuddyUserContent(
           literal += '\n'
           break
         }
+        case 'actor_ref': {
+          literal += `@${node.name}`
+          break
+        }
         case 'prompt_directive': {
           if (node.directive === 'slash_command' && node.commandMode === 'action')
             throw new Error('Action commands cannot be sent as model input')

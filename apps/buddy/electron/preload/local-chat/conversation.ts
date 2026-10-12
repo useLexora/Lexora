@@ -24,6 +24,7 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
         LOCAL_CHAT_IPC_CHANNELS.conversationsGet,
         { conversationId },
       ),
+      getModelControls: (conversationId, actorId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, { conversationId, ...(actorId ? { actorId } : {}) }),
       delete: conversationId =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, { conversationId }),
       activateBranch: input =>
@@ -38,9 +39,13 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
         LOCAL_CHAT_IPC_CHANNELS.conversationsSetPermissionSettings,
         { conversationId, ...settings },
       ),
-      setModelSelection: (conversationId, modelSelection) => ipcRenderer.invoke(
+      listMembers: conversationId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListMembers, { conversationId }),
+      addMember: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsAddMember, { conversationId, buddyId }),
+      removeMember: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRemoveMember, { conversationId, buddyId }),
+      setBuddy: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetBuddy, { conversationId, buddyId }),
+      setModelSelection: (conversationId, modelSelection, target) => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.conversationsSetModelSelection,
-        { conversationId, modelSelection },
+        { conversationId, modelSelection, ...(target?.actorId ? { actorId: target.actorId } : {}), ...(target?.runId ? { targetRunId: target.runId } : {}) },
       ),
       listTimeline: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListTimeline, input),

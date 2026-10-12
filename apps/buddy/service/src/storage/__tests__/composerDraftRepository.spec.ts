@@ -43,17 +43,6 @@ describe('composerDraftRepository', () => {
     expect(() => repository.open({ ...createOpenInput(), scope: { kind: 'task', draftId: 'different-id', spaceId: null } })).toThrow(ComposerDraftConflictError)
   })
 
-  it('restores quote snapshots from SQLite without rewriting a legacy draft', () => {
-    const database = createDatabase()
-    const repository = createComposerDraftRepository(database)
-    const initial = repository.open(createOpenInput())
-    const quote = { id: 'quote-1', text: '    enabled: true\n', source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
-    const saved = repository.save({ ...initial, content: { ...initial.content, quotes: [quote] }, expectedRevision: 0, now: '2026-09-06T00:00:01.000Z' })
-    expect(createComposerDraftRepository(database).findById(initial.draftId)).toEqual(saved)
-    expect(saved.content.quotes).toEqual([quote])
-    expect(initial.content).toEqual(createBuddyUserContent('Hello'))
-  })
-
   it('opens one canonical draft per scope and persists the complete initial snapshot', () => {
     const database = createDatabase()
     seedSpace(database)
@@ -87,12 +76,15 @@ describe('composerDraftRepository', () => {
     expect(repository.open({ ...input, draftId: 'draft-2' }).draftId).toBe('draft-1')
   })
 
-  it('saves whole snapshots with compare-and-swap revisions', () => {
-    const repository = createComposerDraftRepository(createDatabase())
-    repository.open(createOpenInput())
+  it('persists whole snapshots including quotes and participants with compare-and-swap revisions', () => {
+    const database = createDatabase()
+    const repository = createComposerDraftRepository(database)
+    const initial = repository.open({ ...createOpenInput(), initialParticipants: { leaderId: 'default', actorIds: ['default', 'reviewer'] } })
+    const quote = { id: 'quote-1', text: '    enabled: true\n', source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
 
     const saved = repository.save({
-      content: createBuddyUserContent('Updated'),
+      participants: initial.participants,
+      content: { ...createBuddyUserContent('Updated'), quotes: [quote] },
       draftId: 'draft-1',
       executionConfig: {
         approvalPolicy: 'manual',
@@ -103,8 +95,10 @@ describe('composerDraftRepository', () => {
       now: '2026-09-06T00:00:01.000Z',
     })
 
+    expect(initial.content).toEqual(createBuddyUserContent('Hello'))
+    expect(saved.participants).toEqual({ leaderId: 'default', actorIds: ['default', 'reviewer'] })
     expect(saved).toMatchObject({
-      content: createBuddyUserContent('Updated'),
+      content: { ...createBuddyUserContent('Updated'), quotes: [quote] },
       executionConfig: {
         approvalPolicy: 'manual',
         executionProfile: 'full_access',
@@ -117,7 +111,7 @@ describe('composerDraftRepository', () => {
       expectedRevision: 0,
       now: '2026-09-06T00:00:02.000Z',
     })).toThrow(ComposerDraftConflictError)
-    expect(repository.findById('draft-1')).toEqual(saved)
+    expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(saved)
   })
 })
 

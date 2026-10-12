@@ -55,15 +55,15 @@ export function createAutomationDefinitionCommandStore(
 ): AutomationDefinitionCommandStore {
   const insertAutomation = database.prepare(`
     INSERT INTO automations (
-      id, name, prompt, space_id, execution_profile, model_mode, provider_id, model_id, reasoning,
+      id, actor_id, name, prompt, space_id, execution_profile, model_mode, provider_id, model_id, reasoning,
       schedule_kind, schedule_json, timezone, active_from, active_until,
       status, blocked_reason, next_run_at, last_run_at, deleted_at, revision,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
   `)
   const replaceAutomation = database.prepare(`
     UPDATE automations SET
-      name = ?, prompt = ?, space_id = ?, execution_profile = ?, model_mode = ?, provider_id = ?,
+      actor_id = ?, name = ?, prompt = ?, space_id = ?, execution_profile = ?, model_mode = ?, provider_id = ?,
       model_id = ?, reasoning = ?, schedule_kind = ?, schedule_json = ?,
       timezone = ?, active_from = ?, active_until = ?, status = ?,
       blocked_reason = ?, next_run_at = ?, deleted_at = ?, revision = ?, updated_at = ?
@@ -185,6 +185,7 @@ export function createAutomationDefinitionCommandStore(
           if (existing.revision !== input.expectedRevision)
             throw new AutomationRepositoryError('conflict')
           if (Number(replaceAutomation.run(
+            input.automation.actorId ?? null,
             input.automation.name,
             input.automation.prompt,
             input.automation.spaceId,
@@ -231,6 +232,7 @@ function persistAutomation(
 ): void {
   statement.run(
     automation.id,
+    automation.actorId ?? null,
     automation.name,
     automation.prompt,
     automation.spaceId,

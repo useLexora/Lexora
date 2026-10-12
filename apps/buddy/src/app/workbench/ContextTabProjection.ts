@@ -1,5 +1,6 @@
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
+import { executionTargetSchema } from '@buddy-shared/executions/executionPresentationApi'
 
 export class ContextTabProjection {
   readonly #subscriptions: (() => void)[]
@@ -25,10 +26,13 @@ export class ContextTabProjection {
     for (const view of Object.values(this.controller.layout.views)) {
       if (view.location !== 'context' || typeof view.state.contextTabId === 'string')
         continue
-      if (!resources.hasTab(view.id))
-        resources.openView(view.id, view.title)
-      else if (resources.allTabs.value.some(tab => tab.id === view.id && tab.kind === 'view' && tab.label !== view.title))
+      if (!resources.hasTab(view.id)) {
+        const target = view.resource.scheme === 'execution' ? executionTargetSchema.safeParse(view.resource.data) : null
+        resources.openView(view.id, view.title, target?.success ? { conversationId: target.data.conversationId, runId: target.data.runId } : undefined)
+      }
+      else if (resources.allTabs.value.some(tab => tab.id === view.id && tab.kind === 'view' && tab.label !== view.title)) {
         resources.updateView(view.id, view.title)
+      }
     }
     this.#select()
   }

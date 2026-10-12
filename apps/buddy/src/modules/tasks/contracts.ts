@@ -83,6 +83,17 @@ export interface TaskSession {
 }
 
 export interface TaskWorkspaceSession {
+  members: {
+    memberIds: State<readonly string[]>
+    busy: State<boolean>
+    error: State<string>
+    refresh: () => Promise<void>
+    add: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+  }
+  selectedBuddyId: State<string | null>
+  isSelectingBuddy: State<boolean>
+  selectBuddy: (buddyId: string) => Promise<boolean>
   activeBranchId: State<string | null>
   activeConversation: State<LocalConversation | null>
   activeConversationId: State<string | null>
@@ -107,6 +118,8 @@ export interface TaskComposer {
   isSelectingFiles: State<boolean>
   interaction: State<ChatComposerInteraction | null>
   models: State<readonly LocalRuntimeModelOption[]>
+  isLoadingModel: State<boolean>
+  isUpdatingModel: State<boolean>
   providers: State<readonly LocalProvider[]>
   selectedEffort: State<BuddyThinkingLevel | null>
   selectedModel: State<LocalRuntimeModelOption | null>

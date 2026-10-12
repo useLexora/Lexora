@@ -1,9 +1,11 @@
 import type { RegisterLocalChatIpcOptions } from './local-chat/registrar'
 import { registerActivityIpc } from './local-chat/activity'
 import { registerAutomationsIpc } from './local-chat/automations'
+import { registerBuddiesIpc } from './local-chat/buddies'
 import { registerComposerIpc } from './local-chat/composer'
 import { registerConnectorsIpc } from './local-chat/connectors'
 import { registerConversationIpc } from './local-chat/conversation'
+import { registerExecutionsIpc } from './local-chat/executions'
 import { registerLocalChatNotifications } from './local-chat/notifications'
 import { registerPromptsIpc } from './local-chat/prompts'
 import { registerProvidersIpc } from './local-chat/providers'
@@ -18,6 +20,8 @@ export type { DesktopRuntimeGateway, RegisterLocalChatIpcOptions } from './local
 
 export function registerLocalChatIpc(options: RegisterLocalChatIpcOptions): () => void {
   const context = createLocalChatIpcContext(options)
+  registerBuddiesIpc(context)
+  registerExecutionsIpc(context)
   registerRuntimeIpc(context)
   registerActivityIpc(context)
   registerAutomationsIpc(context)

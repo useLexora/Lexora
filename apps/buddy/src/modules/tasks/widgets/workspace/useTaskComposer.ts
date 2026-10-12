@@ -30,6 +30,8 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
       language: props.language,
       loadContextOptions: composer.listContextOptions,
       models: composer.models.value,
+      isLoadingModel: composer.isLoadingModel.value,
+      isUpdatingModel: composer.isUpdatingModel.value,
       permissionMode: composer.permissionMode.value,
       providers: composer.providers.value,
       selectedEffort: composer.selectedEffort.value,

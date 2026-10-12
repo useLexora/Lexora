@@ -6,6 +6,7 @@ import { buddyUserMessageContentV1Schema } from './buddyUserContent'
 import { buddyComposerDraftSendSchema } from './composerDraft'
 
 export const chatQueueItemSchema = z.object({
+  buddyId: idSchema,
   id: idSchema,
   conversationId: idSchema,
   branchId: idSchema,

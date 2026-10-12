@@ -16,6 +16,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     persist: options.persistWorkspaceState,
   })
   const turnExecution = useChatTurnExecution({
+    getNewBuddyId: options.getNewBuddyId,
     activeRun: options.activeRun,
     approvalPolicy: options.approvalPolicy,
     api: options.api,

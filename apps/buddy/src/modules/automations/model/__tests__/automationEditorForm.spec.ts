@@ -23,6 +23,15 @@ const schedules: AutomationSchedule[] = [
 ]
 
 describe('automation editor form', () => {
+  it('preserves a fixed actor and restores application-default routing when cleared', () => {
+    const definition = { ...draft(schedules[0]!), actorId: 'actor-fixture' }
+    const form = automationEditorFormFromDefinition(definition, currentTime)
+    expect(buildAutomationDraft(form, definition.timing)?.actorId).toBe('actor-fixture')
+    form.actorId = null
+    expect(buildAutomationDraft(form, definition.timing)?.actorId).toBeNull()
+    expect(automationEditorFormFromDefinition({ ...definition, actorId: undefined }, currentTime).actorId).toBeNull()
+  })
+
   it('creates local defaults at the next whole hour across a date boundary', () => {
     const form = createAutomationEditorForm(
       Temporal.ZonedDateTime.from('2026-12-31T23:45:37.123+08:00[Asia/Shanghai]'),
@@ -178,6 +187,7 @@ describe('automation editor form', () => {
 
 function draft(schedule: AutomationSchedule): AutomationDefinitionDraft {
   return {
+    actorId: null,
     executionProfile: 'workspace_write',
     model: {
       mode: 'pinned',

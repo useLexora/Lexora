@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { app, powerMonitor } from 'electron'
 import { currentPlatform } from '../../../platform/currentPlatform'
-import { createBuddyNativeEnvironment, resolveBuddyShellSandbox } from '../../../platform/native/nativeHost'
+import { createBuddyNativeEnvironment, resolveBuddyProcessControl, resolveBuddyShellSandbox } from '../../../platform/native/nativeHost'
 import shellSandbox from '../../../platform/native/shellSandbox.json'
 import { checkSandboxEnvironment } from '../../../platform/process/sandboxDependencies'
 import { setupWindowsSandbox } from '../../../platform/process/windowsSandbox'
@@ -124,6 +124,7 @@ export class DesktopRuntimeHost {
         : undefined,
       windowsSandbox: this.#sandboxExecutable(),
       windowsShell: this.#windowsPowerShell,
+      processControl: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
     }
   }
 

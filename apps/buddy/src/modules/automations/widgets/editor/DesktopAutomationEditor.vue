@@ -3,6 +3,7 @@ import type { AutomationEditorEmits, AutomationEditorProps } from './typing'
 import { NAlert, NButton, NForm, NFormItem, NInput, NScrollbar, NSelect, NSpin } from 'naive-ui'
 import { shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { BuddyActorSelect } from '@/modules/buddies/ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopAutomationPromptComposer from './DesktopAutomationPromptComposer.vue'
 import DesktopAutomationScheduleEditor from './DesktopAutomationScheduleEditor.vue'
@@ -110,6 +111,10 @@ function close(): void {
                 @update-model="updatePinnedModel"
                 @update-prompt="form.prompt = $event"
               />
+            </NFormItem>
+
+            <NFormItem :label="language === 'en-US' ? 'Actor' : '主角'">
+              <BuddyActorSelect v-model:value="form.actorId" :disabled="busy" />
             </NFormItem>
 
             <NAlert v-if="modelIssue" type="warning" :bordered="false">

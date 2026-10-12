@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SessionToolScope } from '../../agent/extensions/discovery/SessionToolScope'
 import { ApprovalService } from '../../approvals/ApprovalService'
 import { resolveGrantedPath } from '../../directories/resolveGrantedPath'
 import { SandboxDirectoryPermissions } from '../../sandbox/SandboxDirectoryPermissions'
@@ -80,6 +81,27 @@ describe('harness tool authorization', () => {
     }
     return { approvals, approve, authorization, call, controller, directories, events, executionPermissions, grants, options, records, repository, run }
   }
+
+  it('rejects calls outside the role scope even with full access and a read classification', async () => {
+    const f = fixture()
+    const scope = new SessionToolScope([], { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', 'read'])] })
+    const authorization = new ToolAuthorizationService({ ...f.options, executionProfile: 'full_access', getToolScopeDenial: name => scope.denial(name) })
+    const event = f.call('write', { path: join(workspace, 'result.txt'), content: 'outside scope' })
+    expect(await authorization.authorize(event, f.run, { access: 'read', paths: [] })).toBe('TOOL_OUTSIDE_ROLE_SCOPE')
+    expect(f.events).toEqual([])
+    expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+  })
+
+  it('keeps the role file ceiling through permission updates while allowing only sandbox execution', async () => {
+    const f = fixture()
+    const authorization = new ToolAuthorizationService({ ...f.options, fileAccessLimit: 'read_only' })
+    authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
+    expect(await authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'blocked' }), f.run)).toBe('READ_ONLY_PROFILE')
+    expect(await authorization.authorize(f.call('bash', { command: 'git diff --cached' }), f.run, { access: 'execute', shellBoundary: 'sandbox' })).toBeNull()
+    expect(await authorization.authorize(f.call('bash', { command: 'git diff --cached' }), f.run, { access: 'execute' })).toBe('ROLE_FILE_ACCESS_READ_ONLY')
+    expect(await authorization.authorize(f.call('lexora_unknown', {}), f.run)).toBe('ROLE_FILE_ACCESS_READ_ONLY')
+    expect(f.events).toEqual([])
+  })
 
   it('revokes temporary tool grants when the required persistent application fails', async () => {
     const f = fixture()

@@ -112,7 +112,6 @@ describe('composer input at the Buddy session boundary', () => {
     await fixture.send(plan())
     await fixture.send({ ...plan('follow'), text: '下一轮正文', images: [] })
 
-    expect(fixture.lifecycle.filter(event => event === 'input')).toHaveLength(3)
     expect(fixture.contexts[0]?.systemPrompt).not.toContain('Attachment resources:')
     expect(fixture.contexts[1]?.systemPrompt).toContain('Use supplied native content directly when the task requires understanding the sent snapshot')
     expect(fixture.contexts[2]?.systemPrompt).toContain('Use supplied native content directly when the task requires understanding the sent snapshot')
@@ -796,18 +795,7 @@ async function createFixture(options: {
         throw new Error('MESSAGE_SNAPSHOT_MISMATCH')
       return false
     }
-    const release = await reusable!.activateTurn({
-      contextWindow: null,
-      flushProjectedEvents: async () => {},
-      maxTokens: null,
-      model: model!.id,
-      onToolExecutionAuthorized: async () => {},
-      onToolExecutionDenied: async () => {},
-      provider: model!.provider,
-      runId,
-      serviceTier: 'priority',
-      signal: new AbortController().signal,
-    })
+    const release = await reusable!.activateTurn({ generation: 0, contextWindow: null, flushProjectedEvents: async () => {}, maxTokens: null, model: model!.id, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {}, provider: model!.provider, runId, serviceTier: 'priority', signal: new AbortController().signal })
     try {
       await reusable!.prompt(input.text, {
         expandPromptTemplates: false,

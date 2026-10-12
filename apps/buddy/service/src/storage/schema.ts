@@ -10,7 +10,6 @@ import { BUDDY_V9_COMPOSER_SCHEMA_SQL } from './migrations/v9Composer'
 import { BUDDY_V10_TREE_SCHEMA_SQL } from './migrations/v10Tree'
 import { BUDDY_V11_SPACE_APPEARANCE_SCHEMA_SQL } from './migrations/v11SpaceAppearance'
 import { BUDDY_V12_TASK_MARKS_SCHEMA_SQL } from './migrations/v12TaskMarks'
-
 import { BUDDY_V13_CHAT_QUEUE_SCHEMA_SQL } from './migrations/v13ChatQueue'
 import { BUDDY_V14_USAGE_SCHEMA_SQL } from './migrations/v14Usage'
 import { BUDDY_V15_MODEL_SERVICES_SCHEMA_SQL } from './migrations/v15ModelServices'
@@ -18,14 +17,13 @@ import { BUDDY_V16_ATTACHMENT_NAMES_SCHEMA_SQL } from './migrations/v16Attachmen
 import { BUDDY_V17_SKILLS_SCHEMA_SQL } from './migrations/v17Skills'
 import { BUDDY_V18_CONNECTORS_SCHEMA_SQL } from './migrations/v18Connectors'
 import { BUDDY_V19_LOCAL_RESOURCES_SCHEMA_SQL } from './migrations/v19LocalResources'
-
 import { BUDDY_V20_TASK_DRAFTS_SCHEMA_SQL } from './migrations/v20TaskDrafts'
 import { BUDDY_V21_TITLE_SCHEMA_SQL } from './migrations/v21Title'
-
 import { BUDDY_V22_EXTENSION_SCHEMA_SQL } from './migrations/v22Extension'
 import { BUDDY_V23_PROVIDERS_SCHEMA_SQL } from './migrations/v23Providers'
 import { BUDDY_V24_RUN_EVENT_CHECKPOINTS_SCHEMA_SQL } from './migrations/v24RunEventCheckpoints'
 import { BUDDY_V25_MCP_TOOLS_SCHEMA_SQL } from './migrations/v25McpTools'
+import { BUDDY_V26_BUDDIES_SCHEMA_SQL } from './migrations/v26Buddies'
 
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
@@ -33,7 +31,7 @@ export interface BuddySchemaMigration {
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 25 as const
+export const BUDDY_SCHEMA_VERSION = 26 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -61,4 +59,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V23_PROVIDERS_SCHEMA_SQL, version: 23 },
   { sql: BUDDY_V24_RUN_EVENT_CHECKPOINTS_SCHEMA_SQL, version: 24 },
   { sql: BUDDY_V25_MCP_TOOLS_SCHEMA_SQL, version: 25 },
+  { sql: BUDDY_V26_BUDDIES_SCHEMA_SQL, version: 26 },
 ]

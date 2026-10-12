@@ -26,6 +26,11 @@ export function createToolPolicyExtension(options: CreateToolPolicyExtensionOpti
             return block('RUN_CONTEXT_UNAVAILABLE')
           const signal = event.signal ? AbortSignal.any([run.signal, event.signal]) : run.signal
           signal.throwIfAborted()
+          const scopeDenial = options.authorization.getToolScopeDenial(event.toolName)
+          if (scopeDenial) {
+            await run.onToolExecutionDenied?.({ denialCode: scopeDenial, toolCallId: event.toolCallId, toolName: event.toolName })
+            return block(scopeDenial)
+          }
           const classification = await options.classifyTool?.(event, event.signal ? { ...run, signal } : run)
           signal.throwIfAborted()
           const reason = classification && isToolClassificationFailure(classification)

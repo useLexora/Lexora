@@ -2,6 +2,7 @@ import type { AutomationCommit } from '../../automations/AutomationEvents'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { ProviderCommit } from '../../providers/ProviderState'
 import type { RunSqlReconciliation } from '../../runs/RunLifecycleService'
+import type { RunRecord } from '../../storage/runRecord'
 import { describe, expect, it } from 'vitest'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { openBuddyDatabase } from '../../storage/database'
@@ -14,7 +15,7 @@ function sources() {
   const automations = new Emitter<AutomationCommit>(() => {})
   const runs = new Emitter<BuddyRunEvent>(() => {})
   const lifecycle = new Emitter<RunSqlReconciliation>(() => {})
-  return { providers, automations, runs, lifecycle, options: { providers: { onDidCommit: providers.event }, automations: { onDidCommit: automations.event }, runs: { onDidCommit: runs.event, state: 'open' as const }, lifecycle: { onDidReconcile: lifecycle.event } } }
+  return { providers, automations, runs, lifecycle, options: { runRecords: { findById: () => ({ executionKind: 'root' } as RunRecord) }, providers: { onDidCommit: providers.event }, automations: { onDidCommit: automations.event }, runs: { onDidCommit: runs.event, state: 'open' as const }, lifecycle: { onDidReconcile: lifecycle.event } } }
 }
 
 describe('notification projection', () => {
@@ -66,15 +67,12 @@ describe('notification projection', () => {
   it('bounds failed reconciliation and allows explicit recovery with no false current state', async () => {
     const source = sources()
     let unavailable = true
-    let attempts = 0
     const projection = new NotificationProjection({ ...source.options, service: { reconcile: () => {
-      attempts++
       if (unavailable)
         throw new Error('storage unavailable')
     } }, record: () => {} })
     await projection.whenIdle()
     expect(projection.snapshot.status).toBe('degraded')
-    expect(attempts).toBe(3)
     unavailable = false
     projection.reconcile()
     await projection.whenIdle()

@@ -111,17 +111,7 @@ describe('buddy cache warming', () => {
       reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
       expect(created.session.settingsManager.getCacheWarmingMode()).toBe('off')
       expect(reusable.getCacheWarmingStatus?.()).toBe(stop === 'unsupported' ? 'unsupported' : 'idle')
-      const release = await reusable.activateTurn({
-        runId: 'run-1',
-        provider: model.provider,
-        model: model.id,
-        contextWindow: null,
-        maxTokens: null,
-        signal: new AbortController().signal,
-        flushProjectedEvents: () => channel.flush(),
-        onToolExecutionAuthorized: async () => {},
-        onToolExecutionDenied: async () => {},
-      })
+      const release = await reusable.activateTurn({ generation: 0, runId: 'run-1', provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: () => channel.flush(), onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
       task = reusable.prompt('Run the waiting tool')
       await started.promise

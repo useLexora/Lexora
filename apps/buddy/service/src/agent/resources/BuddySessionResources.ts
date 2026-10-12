@@ -1,11 +1,17 @@
 import type { LocalSkill, SkillReference } from '../../../../shared/skills/skillApi'
+import type { BuddyExecutionDefinition } from '../../buddies/BuddyExecutionDefinition'
 import type { SkillService } from '../../skills/SkillService'
 import type { BoundedContextFilesResult } from './loadBoundedContextFiles'
 import { createHash } from 'node:crypto'
+import { dirname } from 'node:path'
+import { SkillError } from '../../skills/skillFiles'
+import { formatBuddySkillPrompt } from '../../skills/SkillService'
 
 import { loadBoundedContextFiles } from './loadBoundedContextFiles'
 
 export interface BuddySessionResources {
+  actorPrompt?: string
+  availableSkillReferences?: readonly SkillReference[]
   approvedSkills: readonly LocalSkill[]
   skillReadRoots: readonly string[]
   skillReferences: readonly SkillReference[]
@@ -16,6 +22,8 @@ export interface BuddySessionResources {
 }
 
 export interface ResolveBuddySessionResourcesOptions {
+  contextMode?: 'execution' | 'compaction'
+  actor?: BuddyExecutionDefinition
   additionalDirectories: readonly {
     canonicalRoot: string
   }[]
@@ -24,7 +32,7 @@ export interface ResolveBuddySessionResourcesOptions {
   loadDirectoryContext: boolean
   primaryDirectory: { canonicalRoot: string } | null
   spaceId: string | null
-  skills: Pick<SkillService, 'loadForSpace'>
+  skills: Pick<SkillService, 'loadForSpace' | 'materializeForSpace'>
 }
 
 export async function resolveBuddySessionResources(
@@ -39,7 +47,24 @@ export async function resolveBuddySessionResources(
         })
       : Promise.resolve({ agentsFiles: [], diagnostics: [] }),
   ])
+  const actor = options.contextMode === 'compaction' ? undefined : options.actor
+  const scope = options.contextMode === 'compaction' ? { mode: 'none' as const } : actor?.settings.skills ?? { mode: 'all' as const }
+  const approvedSkills = skills.skills.filter(skill => scope.mode === 'all' || (scope.mode === 'selected' && scope.ids.includes(skill.id)))
+  const approvedIds = new Set(approvedSkills.map(skill => skill.id))
+  const skillReferences = skills.references.filter(skill => approvedIds.has(skill.id))
+  const requiredIds = actor?.settings.requiredSkills ?? []
+  const requiredReferences = requiredIds.map((id) => {
+    const reference = skillReferences.find(skill => skill.id === id)
+    if (!reference)
+      throw new SkillError('SKILL_NOT_FOUND')
+    return reference
+  })
+  const required = requiredReferences.length ? await options.skills.materializeForSpace(options.spaceId, requiredReferences) : []
+  const actorPrompt = [actor?.settings.instructions ?? '', ...required.map(formatBuddySkillPrompt)].filter(Boolean).join('\n\n')
   const hash = createHash('sha256')
+  hash.update(options.contextMode ?? 'execution')
+  hash.update(JSON.stringify(skillReferences))
+  hash.update(actorPrompt)
   const directoryContext = createDirectoryContext(
     options.cwd,
     options.primaryDirectory,
@@ -56,9 +81,11 @@ export async function resolveBuddySessionResources(
     hash.update('\0')
   }
   return {
-    approvedSkills: skills.skills,
-    skillReadRoots: skills.readRoots,
-    skillReferences: skills.references,
+    actorPrompt,
+    approvedSkills,
+    skillReadRoots: [...new Set(approvedSkills.map(skill => dirname(skill.filePath)))],
+    skillReferences,
+    availableSkillReferences: skills.references,
     context,
     directoryContext,
     revision: hash.digest('hex'),

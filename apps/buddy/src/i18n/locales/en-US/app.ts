@@ -1,6 +1,19 @@
 import type zhCN from '../zh-CN/app'
 
 export default {
+  'desktop.error.buddyDisabled': 'This actor is disabled. Enable it before running.',
+  'desktop.error.buddyNotMember': 'Add this companion to the task before using it.',
+  'desktop.error.buddyLeaderProtected': 'Choose another task protagonist before removing this one.',
+  'desktop.error.buddyNotActor': 'Select an available actor.',
+  'desktop.error.buddyInvalidNpcBinding': 'A bound NPC is unavailable. Check the actor configuration.',
+  'desktop.error.buddyCapabilityUnavailable': 'A selected capability is unavailable. Check the tool configuration.',
+  'desktop.error.buddyDeleted': 'This companion was removed and can no longer be selected or edited.',
+  'desktop.error.buddyBuiltinProtected': 'The built-in companion cannot be deleted.',
+  'desktop.error.buddyDefaultProtected': 'Choose another default companion before deleting this one.',
+  'desktop.error.buddyResetUnavailable': 'Only the built-in companion supports restoring its original profile.',
+  'desktop.error.buddyNotFound': 'Companion not found',
+  'desktop.error.buddyConflict': 'The companion profile has changed. Refresh and try again.',
+  'desktop.navigation.buddies': 'Companions',
   'desktop.loading.app': 'Preparing your workspace…',
   'desktop.loading.pane': 'Loading…',
   'desktop.loading.failed': 'Unable to load. Please try again.',

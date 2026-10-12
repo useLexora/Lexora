@@ -6,7 +6,7 @@ describe('buddySessionRegistry', () => {
   it('acknowledges recovery only for the current immutable binding incarnation', async () => {
     const registry = new BuddySessionRegistry<TestSession>()
     const sessionIdentity = identity('branch-1')
-    const recovered = await registry.getOrCreate(sessionIdentity, null, async () => ({ piSessionFile: '/sessions/one', session: new TestSession(), recoveredFromProductHistory: true, recoveryDegradation: { missingAttachmentIds: ['missing-attachment'], recoveredImageCount: 0 } }))
+    const recovered = await registry.getOrCreate(sessionIdentity, '/sessions/corrupt', async () => ({ piSessionFile: '/sessions/one', session: new TestSession(), recoveredFromProductHistory: true, recoveryDegradation: { missingAttachmentIds: ['missing-attachment'], recoveredImageCount: 0 } }))
     expect(registry.snapshot()[0]?.recoveryPending).toBe(true)
     expect(registry.acknowledgeRecovery(sessionIdentity, recovered)).toBe(true)
     expect(recovered.recoveredFromProductHistory).toBe(true)
@@ -14,6 +14,8 @@ describe('buddySessionRegistry', () => {
     const current = await registry.getOrCreate(sessionIdentity, '/sessions/one', async () => {
       throw new Error('must reuse')
     })
+    expect(current.session).toBe(recovered.session)
+    expect(current.piSessionFile).toBe('/sessions/one')
     expect(current.recoveredFromProductHistory).toBeUndefined()
     expect(registry.acknowledgeRecovery(sessionIdentity, recovered)).toBe(false)
     await registry.invalidateAll()
@@ -191,6 +193,72 @@ describe('buddySessionRegistry', () => {
     releaseFirst()
     await Promise.all([first, second, otherBranch])
     expect(order).toEqual(['first:start', 'other', 'first:end', 'second'])
+  })
+
+  it('keeps actor and NPC threads independent while serializing branches of one thread', async () => {
+    const registry = new BuddySessionRegistry<TestSession>({ maxSessions: 1 })
+    const main = { ...identity('branch-1'), threadId: 'actor-thread', actorKind: 'actor' as const, actorId: 'main' }
+    const child = { ...main, threadId: 'npc-call', actorKind: 'npc' as const, actorId: 'researcher' }
+    const gate = Promise.withResolvers<void>()
+    const order: string[] = []
+    const parentSession = new TestSession()
+    const childSession = new TestSession()
+    const parent = registry.withConversationRun(main, 'parent', undefined, async () => {
+      await registry.getOrCreate(main, null, async () => ({ piSessionFile: '/sessions/parent', session: parentSession }))
+      order.push('parent')
+      await gate.promise
+    })
+    await vi.waitUntil(() => order.includes('parent'))
+    const siblingBranch = registry.withConversationRun({ ...main, branchId: 'branch-2' }, 'later', undefined, async () => {
+      order.push('later')
+    })
+    const npc = registry.withConversationRun(child, 'child', undefined, async () => {
+      await registry.getOrCreate(child, null, async () => ({ piSessionFile: '/sessions/child', session: childSession }))
+      expect(registry.snapshot().filter(entry => entry.status === 'ready')).toHaveLength(2)
+      expect(registry.getReady(main.conversationId, main.branchId, 'main')).toBe(parentSession)
+      expect(registry.getReady(main.conversationId, main.branchId, 'researcher')).toBeNull()
+      expect(parentSession.shutdownReasons).toEqual([])
+      order.push('child')
+    })
+    await npc
+    expect(order).toEqual(['parent', 'child'])
+    expect(parentSession.shutdownReasons).toEqual([])
+    gate.resolve()
+    await Promise.all([parent, siblingBranch])
+    expect(order).toEqual(['parent', 'child', 'later'])
+    await registry.dispose()
+  })
+
+  it('refreshes only the requested active run without waking another thread', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const first = { ...identity('branch-1'), threadId: 'first' }
+    const second = { ...first, threadId: 'second' }
+    let firstRevision = 0
+    let secondRevision = 0
+    const gate = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
+    const a = registry.withConversationRun(first, 'run-a', undefined, async () => {
+      await registry.getOrCreate(first, null, async () => ({ piSessionFile: '/sessions/a', session: Object.assign(new TestSession(), { refreshModelSelection: () => {
+        firstRevision++
+      } }) }))
+      ready.resolve()
+      await gate.promise
+    })
+    await ready.promise
+    await registry.withConversationRun(second, 'run-b', undefined, async () => {
+      await registry.getOrCreate(second, null, async () => ({ piSessionFile: '/sessions/b', session: Object.assign(new TestSession(), { refreshModelSelection: () => {
+        secondRevision++
+      } }) }))
+      registry.refreshRunModel('run-b')
+      expect([firstRevision, secondRevision]).toEqual([0, 1])
+      registry.refreshRunModel('not-active')
+      expect([firstRevision, secondRevision]).toEqual([0, 1])
+    })
+    gate.resolve()
+    await a
+    registry.refreshRunModel('run-b')
+    expect(secondRevision).toBe(1)
+    await registry.dispose()
   })
 
   it('does not rebind an existing Buddy branch to another directory', async () => {
@@ -382,36 +450,6 @@ describe('buddySessionRegistry', () => {
       }),
     )).rejects.toMatchObject({ code: 'SESSION_BINDING_MISMATCH' })
     expect(cachedSession.shutdownReasons).toEqual(['invalidate'])
-  })
-
-  it('accepts the new persisted binding after product-history recovery replaces a Pi file', async () => {
-    const registry = new BuddySessionRegistry<TestSession>()
-    let creates = 0
-    const recovered = await registry.getOrCreate(
-      identity('branch-1'),
-      '/sessions/corrupt.jsonl',
-      async () => {
-        creates += 1
-        return {
-          piSessionFile: '/sessions/recovered.jsonl',
-          session: new TestSession(),
-        }
-      },
-    )
-    const reused = await registry.getOrCreate(
-      identity('branch-1'),
-      '/sessions/recovered.jsonl',
-      async () => {
-        creates += 1
-        return {
-          piSessionFile: '/sessions/unexpected.jsonl',
-          session: new TestSession(),
-        }
-      },
-    )
-
-    expect(reused).toBe(recovered)
-    expect(creates).toBe(1)
   })
 })
 

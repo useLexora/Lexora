@@ -224,8 +224,13 @@ function handleMarkdownLink(href: string) {
             class="buddy-chat-message-content__session-reference inline-block max-w-[min(24rem,_100%)] overflow-hidden text-ellipsis"
             :title="sessionReferenceTitle(node.sessionId)"
           >@{{ sessionReferenceTitle(node.sessionId) }}</span>
+          <span
+            v-else-if="node.type === 'actor_ref'"
+            class="buddy-chat-message-content__directive"
+            :data-actor-id="node.actorId"
+          >@{{ node.name }}</span>
           <BuddyChatResourceReference
-            v-else-if="attachmentByResourceId.get(node.resourceId)"
+            v-else-if="node.type === 'resource_ref' && attachmentByResourceId.get(node.resourceId)"
             :attachment="attachmentByResourceId.get(node.resourceId)!"
             :image-label="imageLabels.get(node.resourceId)"
             :language="language"

@@ -1,4 +1,5 @@
 import type { AttachmentService } from '../../attachments/AttachmentService'
+import type { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
 import type { ProviderExecutionModelResolver } from '../../providers/ProviderExecutionModelResolver'
 import type { SkillService } from '../../skills/SkillService'
 import type { CommandRequestRepository } from '../../storage/commandRequestRepository'
@@ -13,18 +14,21 @@ import type {
 import { BuddyAgentRunError } from '../../runs/runError'
 import { SkillError } from '../../skills/skillFiles'
 import { createBuddyInputReference } from '../context/BuddyInputReference'
+import { recoverRunActorSnapshot } from '../sessions/recovery/recoverRunActorSnapshot'
 
 export type BuddyRunExecutionPlan
   = | { input: StartBuddyTurnInput, kind: 'turn' }
     | { input: StartBuddyCompactionInput, kind: 'compaction' }
 
 export interface BuddyRunExecutionPlannerOptions {
+  getFileAccessCeiling?: (runId: string) => 'read_only' | undefined
+  definitions: Pick<BuddyDefinitionResolver, 'resolve'>
   attachments: Pick<AttachmentService, 'resolveInputReferences'>
   commands: Pick<CommandRequestRepository, 'findByRunId'>
   conversations: Pick<ConversationRepository, 'findById'>
   models: Pick<ProviderExecutionModelResolver, 'resolveAvailable'>
   runInputs: Pick<RunInputRepository, 'findByRunId'>
-  runs: Pick<RunRepository, 'findById'>
+  runs: Pick<RunRepository, 'findById' | 'setActorSnapshot'>
   sessions: Pick<BuddySessionBlueprintService, 'createForConversation'>
   skills: Pick<SkillService, 'materializeForSpace'>
 }
@@ -51,7 +55,13 @@ export class BuddyRunExecutionPlanner {
     ) {
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     }
+    let actor = await recoverRunActorSnapshot(run, this.#options)
+    if (actor && this.#options.getFileAccessCeiling?.(run.id) === 'read_only')
+      actor = { ...actor, settings: { ...actor.settings, limits: { fileAccess: 'read_only' } } }
     const session = await this.#options.sessions.createForConversation({
+      threadId: run.threadId,
+      contextMode: run.purpose === 'conversation.compaction' ? 'compaction' : 'execution',
+      actor,
       approvalPolicy: run.approvalPolicy,
       branchId: run.branchId,
       conversationId: run.conversationId,
@@ -92,12 +102,12 @@ export class BuddyRunExecutionPlanner {
       throw new BuddyAgentRunError('RUN_INPUT_NOT_FOUND')
     const selections = input.contextItems.flatMap(item => item.kind === 'skill' ? [item.skill ?? item.value] : [])
     for (const selection of selections) {
-      if (typeof selection !== 'string' && !session.resources.skillReferences.some(skill => skill.id === selection.id && skill.name === selection.name))
+      if (typeof selection !== 'string' && !(session.resources.availableSkillReferences ?? session.resources.skillReferences).some(skill => skill.id === selection.id && skill.name === selection.name))
         throw new SkillError('SKILL_CHANGED')
     }
     const selectedSkills = await this.#options.skills.materializeForSpace(conversation.spaceId, selections)
     for (const { reference: selected } of selectedSkills) {
-      if (!session.resources.skillReferences.some(skill => skill.id === selected.id && skill.name === selected.name && skill.revision === selected.revision))
+      if (!(session.resources.availableSkillReferences ?? session.resources.skillReferences).some(skill => skill.id === selected.id && skill.name === selected.name && skill.revision === selected.revision))
         throw new SkillError('SKILL_CHANGED')
     }
     const { images, documents, resourceLabels } = await this.#options.attachments.resolveInputReferences(
@@ -105,11 +115,13 @@ export class BuddyRunExecutionPlanner {
       run.conversationId,
       input.prompt,
     )
+    const effectiveModel = this.#options.runs.findById(run.id)?.modelOverride ?? actor?.model
+    const changedModel = effectiveModel && (effectiveModel.providerId !== run.provider || effectiveModel.modelId !== run.model)
     await this.#options.models.resolveAvailable({
-      contextWindow: run.contextWindow,
-      maxTokens: run.maxTokens,
-      modelId: run.model,
-      providerId: run.provider,
+      contextWindow: changedModel ? null : run.contextWindow,
+      maxTokens: changedModel ? null : run.maxTokens,
+      modelId: effectiveModel?.modelId ?? run.model,
+      providerId: effectiveModel?.providerId ?? run.provider,
     })
     return {
       input: {

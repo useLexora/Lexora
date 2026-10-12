@@ -8,7 +8,19 @@ import { useChatSession } from '../useChatSession'
 const scopes: ReturnType<typeof effectScope>[] = []
 afterEach(() => scopes.splice(0).forEach(scope => scope.stop()))
 function conversation(id: string): LocalConversation {
-  return { id, activeBranchId: `branch-${id}`, createdAt: '2026-09-08T00:00:00.000Z', deletedAt: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, spaceId: null, title: id, updatedAt: '2026-09-08T00:00:00.000Z' }
+  return {
+    buddyId: 'default',
+    id,
+    activeBranchId: `branch-${id}`,
+    createdAt: '2026-09-08T00:00:00.000Z',
+    deletedAt: null,
+    approvalPolicy: 'policy',
+    executionProfile: 'workspace_write',
+    modelSelection: null,
+    spaceId: null,
+    title: id,
+    updatedAt: '2026-09-08T00:00:00.000Z',
+  }
 }
 function fixture() {
   const scope = effectScope()

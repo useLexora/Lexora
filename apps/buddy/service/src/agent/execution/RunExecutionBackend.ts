@@ -1,12 +1,14 @@
 import type { RunRecord } from '../../storage/runRecord'
 import type { BuddySessionIdentity } from '../sessions/BuddySessionBlueprint'
 import type { ActiveRunSession } from './ActiveRunRegistry'
+import type { ExecutionContinuationPort } from './ExecutionContinuationPort'
 import type { StartBuddyCompactionInput, StartBuddyTurnInput } from './turnTypes'
 
-export type RunExecutionOutcome
-  = | { status: 'completed' }
-    | { errorCode: string | null, status: 'cancelled' }
-    | { errorCode: string, errorMessage?: string, status: 'failed' }
+export type RunExecutionOutcome = (
+  | { status: 'completed' }
+  | { errorCode: string | null, status: 'cancelled' }
+  | { errorCode: string, errorMessage?: string, status: 'failed' }
+) & { closingGeneration?: number }
 
 interface RunExecutionContext {
   identity: BuddySessionIdentity
@@ -18,6 +20,7 @@ interface RunExecutionContext {
 
 export interface RunExecutionBackend {
   executeTurn: (input: RunExecutionContext & {
+    continuation: ExecutionContinuationPort
     input: StartBuddyTurnInput
     onSessionStartupTimeout: () => void
   }) => Promise<RunExecutionOutcome>

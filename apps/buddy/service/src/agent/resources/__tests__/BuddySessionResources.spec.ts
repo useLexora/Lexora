@@ -23,6 +23,7 @@ describe('buddySessionResources', () => {
       loadDirectoryContext: true,
       primaryDirectory: { canonicalRoot: root },
       skills: {
+        materializeForSpace: async () => [],
         loadForSpace: async () => ({
           diagnostics: [],
           readRoots: [],

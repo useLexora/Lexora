@@ -10,7 +10,9 @@ import {
   approvalReviewPayloadSchema,
 } from '../../../shared/permissions/approvalReviewPayload'
 import { buddyAssistantTextPhaseSchema } from '../../../shared/runs/assistantTextPhase'
+import { projectConversationPublication } from '../storage/conversationPublicationRepository'
 import { withTransaction } from '../storage/database'
+import { createMailboxRepository } from '../storage/mailboxRepository'
 import { buddyRunIdSchema, terminalRunStatus } from './BuddyRunEvent'
 
 const messageIdSchema = z.string().min(1).max(256)
@@ -121,12 +123,15 @@ export class RunEventProjector {
   rebuild(runId: string, events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint): number {
     return withTransaction(this.#database, () => {
       this.invalidateCheckpoint(runId)
+      const mailbox = createMailboxRepository(this.#database)
+      mailbox.resetOwnedFacts(runId)
+      const executionKind = readExecutionKind(this.#database, runId)
       const messageIds = new Set<string>()
       for (const event of events) {
         if (event.runId !== runId)
           throw new Error('Replayed events must belong to one run')
         const message = parseProductMessage(event)
-        if (!message)
+        if (!message || !isPublicMessage(executionKind, message))
           continue
         if (messageIds.has(message.messageId))
           throw new Error(`Duplicate replayed message: ${message.messageId}`)
@@ -186,8 +191,12 @@ export class RunEventProjector {
       SELECT 1 FROM usage_records
       WHERE run_id = ? AND source_entry_id = ? AND purpose = ?
     `)
+    const mailbox = createMailboxRepository(this.#database)
+    mailbox.validateNewFacts(events)
+    const executionKind = readExecutionKind(this.#database, runId)
     for (const event of events) {
-      const message = parseProductMessage(event)
+      const parsed = parseProductMessage(event)
+      const message = parsed && isPublicMessage(executionKind, parsed) ? parsed : null
       if (message && (messageIds.has(message.messageId) || findMessage.get(message.messageId))) {
         throw new Error(
           `Lexora Buddy ${message.conflictKind} message conflicts with storage: ${message.messageId}`,
@@ -246,8 +255,10 @@ export class RunEventProjector {
       JSON.stringify(event.payload),
       event.createdAt,
     )
-    projectRunStatus(this.#database, event)
+    createMailboxRepository(this.#database).project(event)
+    projectRunStatus(this.#database, event, mode)
     projectProductMessage(this.#database, event, mode)
+    projectConversationPublication(this.#database, event)
     projectApprovalRequest(this.#database, event)
     projectApprovalResolution(this.#database, event)
     projectUsage(this.#database, event)
@@ -259,7 +270,7 @@ export class RunEventProjector {
   }
 }
 
-function projectRunStatus(database: DatabaseSync, event: BuddyRunEvent): void {
+function projectRunStatus(database: DatabaseSync, event: BuddyRunEvent, mode: 'append' | 'rebuild'): void {
   const status = terminalRunStatus(event.type)
   if (status) {
     database.prepare(`
@@ -272,14 +283,22 @@ function projectRunStatus(database: DatabaseSync, event: BuddyRunEvent): void {
     database.prepare(`
       UPDATE runs
       SET status = 'running', started_at = ?, completed_at = NULL, error_code = NULL
-      WHERE id = ?
-    `).run(event.createdAt, event.runId)
+      WHERE id = ? AND (status = 'queued' OR ?)
+    `).run(event.createdAt, event.runId, Number(mode === 'rebuild'))
   }
+}
+
+function readExecutionKind(database: DatabaseSync, runId: string): string | undefined {
+  return (database.prepare('SELECT execution_kind AS kind FROM runs WHERE id = ?').get(runId) as { kind: string } | undefined)?.kind
+}
+
+function isPublicMessage(kind: string | undefined, message: ProductMessageProjection): boolean {
+  return kind === 'root' || (kind === 'actor_child' && message.role === 'assistant')
 }
 
 function projectProductMessage(database: DatabaseSync, event: BuddyRunEvent, mode: 'append' | 'rebuild'): void {
   const message = parseProductMessage(event)
-  if (!message)
+  if (!message || !isPublicMessage(readExecutionKind(database, event.runId), message))
     return
   const contentJson = JSON.stringify(message.content)
   const result = database.prepare(`

@@ -1,16 +1,17 @@
 import type { FileEntry, SessionEntry } from '@earendil-works/pi-coding-agent'
-import type { ConversationTreeRepository } from '../../../storage/conversationTreeRepository'
 import type { RunRecord } from '../../../storage/runRecord'
+import type { ThreadBindingRepository } from '../../../storage/threadBindingRepository'
 import type { BuddyTreeFact } from './BuddyTreeEvents'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, closeSync, fsyncSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { containsCanonicalPath } from '../../../../../platform/filesystem/filePaths'
 import { BuddyAgentRunError } from '../../../runs/runError'
 import { toBuddySessionStorageError } from '../BuddySessionErrors'
 import { BuddyTreeEvents } from './BuddyTreeEvents'
+import { syncBuddySessionJournal } from './syncBuddySessionJournal'
 
 const CHECKPOINT_TYPE = 'lexora.conversation.checkpoint.v1'
 const ROOT_TYPE = 'lexora.conversation.root.v1'
@@ -24,7 +25,7 @@ export interface TreeCheckpoint {
 
 interface BuddyTreeStoreOptions {
   conversationsDirectory: string
-  repository: Pick<ConversationTreeRepository, 'findBinding' | 'bind'>
+  threads: Pick<ThreadBindingRepository, 'find' | 'findBinding' | 'bind'>
   onObserverError?: (error: unknown) => void
 }
 
@@ -41,14 +42,14 @@ export class BuddyTreeStore {
     this.onDidFail = this.#events.onDidFail
   }
 
-  async open(conversationId: string, cwd: string) {
+  async open(conversationId: string, cwd: string, threadId: string) {
     this.#events.assertOpen()
     const operationId = randomUUID()
     let stage: 'open' | 'binding' = 'open'
     try {
       return await this.#open(conversationId, cwd, operationId, () => {
         stage = 'binding'
-      })
+      }, threadId)
     }
     catch (error) {
       this.#events.fail(conversationId, stage, error, operationId)
@@ -56,9 +57,10 @@ export class BuddyTreeStore {
     }
   }
 
-  async #open(conversationId: string, cwd: string, operationId: string, beforeBinding: () => void) {
-    const binding = this.#options.repository.findBinding(conversationId)
-    const directory = await this.#directory(conversationId)
+  async #open(conversationId: string, cwd: string, operationId: string, beforeBinding: () => void, threadId: string) {
+    const owner = this.#bindingOwner(conversationId, threadId)
+    const binding = owner.findBinding()
+    const directory = await this.#directory(conversationId, threadId)
     let manager: SessionManager | undefined
     let rootId: string | undefined
     if (binding) {
@@ -73,7 +75,7 @@ export class BuddyTreeStore {
         const root = manager.getEntry(binding.rootEntryId)
         if (root?.type !== 'custom' || root.customType !== ROOT_TYPE)
           throw new InvalidPiTreeError()
-        if ((root.data as { conversationId?: unknown })?.conversationId !== conversationId)
+        if (!matchesRoot(root.data, conversationId, threadId))
           throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
         rootId = binding.rootEntryId
       }
@@ -86,7 +88,7 @@ export class BuddyTreeStore {
     if (!manager || !rootId) {
       const path = join(directory, binding ? `tree-${randomUUID()}.jsonl` : 'tree.jsonl')
       const seed = SessionManager.inMemory(cwd)
-      rootId = seed.appendCustomEntry(ROOT_TYPE, { conversationId })
+      rootId = seed.appendCustomEntry(ROOT_TYPE, { conversationId, threadId })
       let created = false
       try {
         const fd = openSync(path, 'wx', 0o600)
@@ -106,24 +108,24 @@ export class BuddyTreeStore {
         readSessionEntries(path)
         const existing = SessionManager.open(path, directory, cwd)
         const root = existing.getEntries().find(entry => entry.type === 'custom' && entry.customType === ROOT_TYPE)
-        if (!root || root.type !== 'custom' || (root.data as { conversationId?: unknown })?.conversationId !== conversationId)
+        if (!root || root.type !== 'custom' || !matchesRoot(root.data, conversationId, threadId))
           throw new BuddyAgentRunError('SESSION_STORAGE_UNAVAILABLE')
         rootId = root.id
       }
       manager = SessionManager.open(path, directory, cwd)
       beforeBinding()
-      this.#options.repository.bind(conversationId, path, rootId)
+      owner.bind(path, rootId)
       this.#events.commit({ kind: 'binding.committed', conversationId, operationId, treeId: rootId, reason: binding ? 'replaced' : created ? 'created' : 'reconciled' })
     }
-    return new BuddyTreeJournal(manager, rootId, directory, conversationId, this.#events)
+    return new BuddyTreeJournal(manager, rootId, directory, conversationId, this.#events, threadId)
   }
 
-  async read(conversationId: string, cwd: string) {
+  async read(conversationId: string, cwd: string, threadId: string) {
     this.#events.assertOpen()
-    const binding = this.#options.repository.findBinding(conversationId)
+    const binding = this.#bindingOwner(conversationId, threadId).findBinding()
     if (!binding)
       return null
-    const directory = await this.#directory(conversationId)
+    const directory = await this.#directory(conversationId, threadId)
     let path: string
     try {
       path = await realpath(binding.sessionFile)
@@ -138,7 +140,7 @@ export class BuddyTreeStore {
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     const manager = SessionManager.open(path, directory, cwd)
     const root = manager.getEntry(binding.rootEntryId)
-    if (root?.type !== 'custom' || (root.data as { conversationId?: unknown })?.conversationId !== conversationId)
+    if (root?.type !== 'custom' || !matchesRoot(root.data, conversationId, threadId))
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     if (root.customType !== ROOT_TYPE)
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
@@ -146,22 +148,33 @@ export class BuddyTreeStore {
     return { manager: snapshot, rootId: binding.rootEntryId, validateAncestry: (id: string) => validateAncestry(snapshot, id, binding.rootEntryId) }
   }
 
-  async readLegacy(conversationId: string, cwd: string, sessionFile: string | null) {
+  async readLegacy(conversationId: string, cwd: string, sessionFile: string | null, threadId?: string) {
     this.#events.assertOpen()
     if (!sessionFile)
       return null
-    return readLegacySession(await this.#directory(conversationId), sessionFile, cwd)
+    return readLegacySession(await this.#directory(conversationId), sessionFile, cwd, threadId)
   }
 
-  async #directory(conversationId: string) {
+  async #directory(conversationId: string, threadId?: string) {
     if (!/^[A-Z0-9][\w-]{0,127}$/i.test(conversationId))
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-    const directory = join(this.#options.conversationsDirectory, conversationId, 'session')
+    const base = join(this.#options.conversationsDirectory, conversationId, 'session')
+    const directory = threadId ? join(base, 'threads', createHash('sha256').update(threadId).digest('hex')) : base
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const canonical = await realpath(directory)
     if (!containsCanonicalPath(await realpath(this.#options.conversationsDirectory), canonical))
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     return canonical
+  }
+
+  #bindingOwner(conversationId: string, threadId: string) {
+    const repository = this.#options.threads
+    if (repository.find(threadId)?.conversationId !== conversationId)
+      throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+    return {
+      findBinding: () => repository.findBinding(threadId),
+      bind: (path: string, rootId: string) => repository.bind(threadId, path, rootId),
+    }
   }
 
   dispose() {
@@ -178,9 +191,11 @@ export class BuddyTreeJournal {
   readonly manager: SessionManager
   readonly rootId: string
   readonly directory: string
+  readonly threadId: string
 
-  constructor(manager: SessionManager, rootId: string, directory: string, conversationId: string, events: BuddyTreeEvents) {
+  constructor(manager: SessionManager, rootId: string, directory: string, conversationId: string, events: BuddyTreeEvents, threadId: string) {
     this.manager = manager
+    this.threadId = threadId
     this.rootId = rootId
     this.directory = directory
     this.#conversationId = conversationId
@@ -205,7 +220,7 @@ export class BuddyTreeJournal {
     try {
       this.manager.branch(parentId)
       const id = this.manager.appendCustomEntry(CHECKPOINT_TYPE, { runId: run.id, branchId: run.branchId, position, legacy: recovery?.source === 'legacy' || recovery?.source === 'product_history' } satisfies TreeCheckpoint)
-      syncSession(this.manager)
+      syncBuddySessionJournal(this.manager)
       this.#checkpoints.set(`${run.id}:${position}`, id)
       this.#events.commit({ kind: 'checkpoint.committed', operationId, conversationId: this.#conversationId, treeId: this.rootId, runId: run.id, branchId: run.branchId, checkpointId: id, position, ...(recovery ? { recovery } : {}) })
       return id
@@ -254,7 +269,7 @@ export class BuddyTreeJournal {
     let stage: 'import' | 'import_index' = 'import'
     try {
       appendFileSync(sessionFile, `${entries.map(entry => JSON.stringify(entry)).join('\n')}\n`)
-      syncSession(this.manager)
+      syncBuddySessionJournal(this.manager)
       this.#events.commit({ kind: 'entries.imported', operationId, conversationId: this.#conversationId, treeId: this.rootId, runId: run.id, branchId: run.branchId, entryCount: entries.length })
       stage = 'import_index'
       this.manager.setSessionFile(sessionFile)
@@ -269,7 +284,10 @@ export class BuddyTreeJournal {
   }
 
   readLegacy(sessionFile: string | null) {
-    return readLegacySession(this.directory, sessionFile, this.manager.getCwd())
+    const directory = dirname(dirname(this.directory))
+    if (sessionFile && containsCanonicalPath(join(directory, 'threads'), resolve(sessionFile)) && !containsCanonicalPath(this.directory, resolve(sessionFile)))
+      throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+    return readLegacySession(directory, sessionFile, this.manager.getCwd(), this.threadId)
   }
 
   validateAncestry(id: string) {
@@ -278,7 +296,13 @@ export class BuddyTreeJournal {
 
   assertConversation(conversationId: string) {
     const root = this.manager.getEntry(this.rootId)
-    if (root?.type !== 'custom' || (root.data as { conversationId?: unknown })?.conversationId !== conversationId)
+    if (root?.type !== 'custom' || !matchesRoot(root.data, conversationId, this.threadId))
+      throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+  }
+
+  assertRun(run: RunRecord) {
+    this.assertConversation(run.conversationId)
+    if (run.threadId !== this.threadId)
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
   }
 
@@ -317,21 +341,6 @@ function validateAncestry(manager: SessionManager, id: string, rootId: string) {
     cursor = entry.parentId
   }
   throw new BuddyAgentRunError('SESSION_STORAGE_UNAVAILABLE')
-}
-
-function syncSession(manager: SessionManager) {
-  try {
-    const fd = openSync(manager.getSessionFile()!, 'r+')
-    try {
-      fsyncSync(fd)
-    }
-    finally {
-      closeSync(fd)
-    }
-  }
-  catch (error) {
-    throw toBuddySessionStorageError(error) ?? error
-  }
 }
 
 class InvalidPiTreeError extends Error { }
@@ -378,18 +387,32 @@ function readSessionEntries(path: string): FileEntry[] {
   }
 }
 
-async function readLegacySession(directory: string, sessionFile: string | null, cwd: string) {
+async function readLegacySession(directory: string, sessionFile: string | null, cwd: string, threadId?: string) {
   if (!sessionFile || !isAbsolute(sessionFile))
     return null
   try {
     const path = await realpath(sessionFile)
     if (!containsCanonicalPath(directory, path))
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-    return { path, manager: SessionManager.inMemory(cwd, undefined, readSessionEntries(path)) }
+    if (threadId && containsCanonicalPath(join(directory, 'threads'), path) && !containsCanonicalPath(join(directory, 'threads', createHash('sha256').update(threadId).digest('hex')), path))
+      throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+    const manager = SessionManager.inMemory(cwd, undefined, readSessionEntries(path))
+    if (threadId && manager.getEntries().some(entry => entry.type === 'custom' && entry.customType === ROOT_TYPE
+      && typeof entry.data === 'object' && entry.data && 'threadId' in entry.data && entry.data.threadId !== threadId)) {
+      throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+    }
+    return { path, manager }
   }
   catch (error) {
     if (isMissingFile(error) || error instanceof InvalidPiTreeError)
       return null
     throw toBuddySessionStorageError(error) ?? error
   }
+}
+
+function matchesRoot(data: unknown, conversationId: string, threadId?: string): boolean {
+  if (!data || typeof data !== 'object')
+    return false
+  const root = data as { conversationId?: unknown, threadId?: unknown }
+  return root.conversationId === conversationId && root.threadId === threadId
 }

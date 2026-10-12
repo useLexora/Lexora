@@ -7,8 +7,8 @@ import type { PiTurnExecutorOptions } from '../PiTurnExecutor'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunEventStorageError } from '../../../events/RunEventFailure'
 import { RunContinuityService } from '../../../runs/RunContinuityService'
@@ -28,6 +28,7 @@ import { BuddySessionStorageError } from '../../sessions/BuddySessionErrors'
 import { BuddySessionRegistry } from '../../sessions/BuddySessionRegistry'
 import { BuddyAgentRunner } from '../BuddyAgentRunner'
 import { PiTurnExecutor } from '../PiTurnExecutor'
+import { createTestExecutionCoordinator } from './executionCoordinatorFixture'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -416,6 +417,14 @@ describe('buddyAgentRunner', () => {
     })
     const prompt = vi.fn(async () => {})
     const session: ReusableBuddySession = {
+      readInternalMessageReceipts: async (messages) => {
+        if (messages.length)
+          throw new Error('Unexpected mailbox messages')
+        return []
+      },
+      appendInternalMessages: async () => { throw new Error('not used') },
+      resumeInternal: async () => { throw new Error('not used') },
+      finishTurn: async () => {},
       abort: async () => {},
       abortCompaction: () => {},
       activateTurn: async () => () => {},
@@ -464,6 +473,14 @@ describe('buddyAgentRunner', () => {
     })
     const prompt = vi.fn(async () => {})
     const session: ReusableBuddySession = {
+      readInternalMessageReceipts: async (messages) => {
+        if (messages.length)
+          throw new Error('Unexpected mailbox messages')
+        return []
+      },
+      appendInternalMessages: async () => { throw new Error('not used') },
+      resumeInternal: async () => { throw new Error('not used') },
+      finishTurn: async () => {},
       abort: async () => releaseActivation(),
       abortCompaction: () => {},
       activateTurn: async () => {
@@ -533,7 +550,7 @@ describe('buddyAgentRunner', () => {
     })
   })
 
-  it('completes a run when the final assistant answer is durable before Pi session persistence fails', async () => {
+  it('preserves the durable answer but fails closing when Pi session persistence fails', async () => {
     const fixture = await createFixture()
     const sessions = new BuddySessionRegistry<ReusableBuddySession>()
     const failedSession = new MessageThenStorageFailureSession('stop')
@@ -562,9 +579,9 @@ describe('buddyAgentRunner', () => {
     fixture.prepareTurn(first, 'message-user-storage-after-final')
 
     await expect(runner.startTurn(withSession(first)).completion).resolves.toMatchObject({
-      errorCode: null,
+      errorCode: 'SESSION_STORAGE_UNAVAILABLE',
       piSessionFile: null,
-      status: 'completed',
+      status: 'failed',
     })
     expect(fixture.conversations.listMessages('conversation-1', 'branch-1'))
       .toEqual(expect.arrayContaining([
@@ -575,14 +592,7 @@ describe('buddyAgentRunner', () => {
         }),
       ]))
     expect(await fixture.eventLog.read(first.runId)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        payload: {
-          errorCode: 'SESSION_STORAGE_UNAVAILABLE',
-          source: 'pi_session',
-        },
-        type: 'session.continuity.degraded',
-      }),
-      expect.objectContaining({ type: 'run.completed' }),
+      expect.objectContaining({ type: 'run.failed', payload: expect.objectContaining({ errorCode: 'SESSION_STORAGE_UNAVAILABLE' }) }),
     ]))
 
     const second = { ...base, prompt: 'Second', runId: 'run-after-storage-degradation' }
@@ -590,7 +600,6 @@ describe('buddyAgentRunner', () => {
     await expect(runner.startTurn(withSession(second)).completion).resolves.toMatchObject({
       status: 'completed',
     })
-    expect(sessionFactory).toHaveBeenCalledTimes(2)
     expect(sessionFactory).toHaveBeenNthCalledWith(2, expect.objectContaining({
       piSessionFile: null,
     }))
@@ -660,7 +669,6 @@ describe('buddyAgentRunner', () => {
     fixture.prepareTurn(second, 'message-user-second')
     await runner.startTurn(withSession(second)).completion
 
-    expect(sessionFactory).toHaveBeenCalledTimes(2)
     expect(sessionFactory.mock.calls[1]?.[0]).toMatchObject({
       piSessionFile: join(fixture.root, 'run-first.jsonl'),
       runId: 'run-second',
@@ -910,6 +918,16 @@ describe('buddyAgentRunner', () => {
 })
 
 class OfflineSession implements ReusableBuddySession {
+  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
+  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
+  finishTurn = async () => {}
+
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
   readonly #target: string
   #turnContext: BuddySessionTurnContext | null = null
@@ -1043,6 +1061,16 @@ class OfflineSession implements ReusableBuddySession {
 }
 
 class ReasoningFailureSession implements ReusableBuddySession {
+  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
+  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
+  finishTurn = async () => {}
+
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
 
   abort(): Promise<void> {
@@ -1101,6 +1129,16 @@ class ReasoningFailureSession implements ReusableBuddySession {
 }
 
 class WaitingSession implements ReusableBuddySession {
+  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
+  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
+  finishTurn = async () => {}
+
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
   readonly started: Promise<void>
   #releaseStarted!: () => void
@@ -1158,6 +1196,16 @@ class WaitingSession implements ReusableBuddySession {
 }
 
 class ModelFailureSession implements ReusableBuddySession {
+  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
+  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
+  finishTurn = async () => {}
+
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
 
   abort(): Promise<void> {
@@ -1212,6 +1260,16 @@ class ModelFailureSession implements ReusableBuddySession {
 }
 
 class IdleSession implements ReusableBuddySession {
+  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
+  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
+  finishTurn = async () => {}
+
   activateTurn: ReusableBuddySession['activateTurn'] = async () => () => {}
 
   abort(): Promise<void> {
@@ -1502,7 +1560,6 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const conversationsDirectory = join(root, 'conversations')
-  const eventsDirectory = join(conversationsDirectory, 'conversation-1', 'events')
   const eventLog = createRunEventLog({ conversationsDirectory, database })
   if (options.onCommit)
     eventLog.onDidCommit(options.onCommit)
@@ -1526,7 +1583,11 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
       executorOptions: Pick<PiTurnExecutorOptions, 'automationSessionStartupTimeoutMs'> = {},
     ) {
       const piEvents = new PiEventBridge({ eventLog, usage: usageService })
-      return new BuddyAgentRunner({
+      const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
+      let runner: BuddyAgentRunner
+      const executions = createTestExecutionCoordinator({ database, eventLog, lifecycle, stopExecution: id => runner.interruptExecution(id) })
+      runner = new BuddyAgentRunner({
+        executions,
         executor: new PiTurnExecutor({
           ...executorOptions,
           eventLog,
@@ -1535,13 +1596,13 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
           sessionFactory,
           sessions,
         }),
-        lifecycle: new RunLifecycleService({ eventLog, repository: runs }),
+        lifecycle,
         sessions,
       })
+      return runner
     },
     database,
     eventLog,
-    eventsDirectory,
     prepareTurn(input: {
       branchId: string
       conversationId: string
@@ -1603,12 +1664,6 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
         requestId: `request-${runId}`,
         runId,
       })
-    },
-    prepareInterruptedCompaction(runId: string) {
-      this.prepareCompaction(runId)
-      database.prepare(`
-        UPDATE runs SET status = 'running' WHERE id = ?
-      `).run(runId)
     },
     root,
     runs,

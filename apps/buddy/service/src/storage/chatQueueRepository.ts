@@ -1,12 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../../shared/conversation/chatQueueApi'
+import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { BuddyPermissionSettings } from '../../../shared/permissions/permissionMode'
 import type { PrepareTurnRequestInput } from './turnRequestRepository'
-import { buddyUserMessageContentV1Schema } from '../../../shared/conversation/buddyUserContent'
+import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../../shared/conversation/buddyUserContent'
+import { buddyExecutionDefinitionSchema, buddyExecutionFingerprint } from '../buddies/BuddyExecutionDefinition'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { createAttachmentRepository } from './attachmentRepository'
 import { createComposerDraftCommitter } from './commitComposerDraft'
 import { withTransaction } from './database'
-import { assertTurnAttachmentBindings, resolveTurnExecutionProfile, TurnRequestAttachmentError } from './turnRequestRepository'
+import { assertTurnAttachmentBindings, TurnRequestAttachmentError } from './turnRequestRepository'
 
 interface QueueRow {
   id: string
@@ -20,11 +23,43 @@ interface QueueRow {
 
 export type ChatQueueRepository = ReturnType<typeof createChatQueueRepository>
 
+export interface QueuedTurnRequestInput extends PrepareTurnRequestInput {
+  queueRouting?: { mode: 'current_actor' } | { mode: 'actor', actorId: string }
+  queueActorBinding?: { currentBuddyId: string, modelSelectionJson: string | null, updatedAt: string }
+}
+
 export function createChatQueueRepository(database: DatabaseSync) {
   const attachments = createAttachmentRepository(database)
   const commitDraft = createComposerDraftCommitter(database)
   const find = (id: string) => database.prepare('SELECT * FROM chat_queue WHERE id = ?').get(id) as QueueRow | undefined
-  const decode = (row: QueueRow) => JSON.parse(row.prepared_json) as PrepareTurnRequestInput
+  const decode = (row: QueueRow) => JSON.parse(row.prepared_json) as QueuedTurnRequestInput
+  const routing = (input: QueuedTurnRequestInput): NonNullable<QueuedTurnRequestInput['queueRouting']> => {
+    if (input.queueRouting)
+      return input.queueRouting
+    const content = buddyUserMessageContentV1Schema.parse(input.userMessageContent)
+    const ids = [...new Set(getBuddyUserContentActorReferences(content.userContent).map(reference => reference.actorId))]
+    return ids.length === 1 ? { mode: 'actor', actorId: ids[0]! } : { mode: 'current_actor' }
+  }
+  const bindActor = (input: QueuedTurnRequestInput): QueuedTurnRequestInput => {
+    const current = database.prepare('SELECT buddy_id, updated_at, approval_policy AS approvalPolicy, execution_profile AS executionProfile FROM conversations WHERE id = ? AND deleted_at IS NULL').get(input.conversationId) as { buddy_id: string, updated_at: string } & BuddyPermissionSettings | undefined
+    if (!current)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const queueRouting = routing(input)
+    const buddyId = queueRouting.mode === 'actor' ? queueRouting.actorId : current.buddy_id
+    const member = database.prepare('SELECT model_selection_json FROM conversation_members WHERE conversation_id = ? AND actor_id = ?').get(input.conversationId, buddyId) as { model_selection_json: string | null } | undefined
+    return { ...input, approvalPolicy: current.approvalPolicy, executionProfile: current.executionProfile, ...(buddyId !== input.buddyId && queueRouting.mode === 'current_actor' ? { modelOverride: undefined } : {}), actorSnapshot: undefined, buddyId, queueRouting, queueActorBinding: { currentBuddyId: current.buddy_id, modelSelectionJson: member?.model_selection_json ?? null, updatedAt: current.updated_at } }
+  }
+  const isCurrentInput = (input: QueuedTurnRequestInput) => {
+    const current = bindActor(input)
+    if (current.buddyId !== input.buddyId || current.approvalPolicy !== input.approvalPolicy || current.executionProfile !== input.executionProfile || JSON.stringify(current.queueActorBinding) !== JSON.stringify(input.queueActorBinding))
+      return false
+    if (input.actorSnapshot) {
+      const buddy = database.prepare('SELECT revision, enabled, deleted_at FROM buddies WHERE id = ?').get(input.buddyId!)
+      if (!buddy || !buddy.enabled || buddy.deleted_at || buddy.revision !== input.actorSnapshot.revision)
+        return false
+    }
+    return true
+  }
   const receipt = (row: QueueRow): LocalChatQueueReceipt => {
     const input = decode(row)
     return { id: row.id, conversationId: row.conversation_id, branchId: row.branch_id, draftReceipt: { draftId: input.draft.draftId, sourceRevision: input.draft.expectedRevision, committedRevision: input.draft.expectedRevision + 1 } }
@@ -60,8 +95,11 @@ export function createChatQueueRepository(database: DatabaseSync) {
             attachments.create({ ...source, id: binding.id, draftId: id, messageId: null, conversationId: null, storedPath: binding.storedPath })
           }
         }
-        const prepared: PrepareTurnRequestInput = {
+        const prepared: QueuedTurnRequestInput = {
           ...input,
+          actorSnapshot: undefined,
+          queueRouting: routing(input),
+          buddyId: input.buddyId ?? (database.prepare('SELECT buddy_id FROM conversations WHERE id = ?').get(input.conversationId) as { buddy_id: string }).buddy_id,
           queuedMessageId: id,
           attachmentBindings: input.attachmentBindings.map(binding => ({ ...binding, sourceDraftId: id, sourceAttachmentId: binding.id })),
         }
@@ -75,8 +113,8 @@ export function createChatQueueRepository(database: DatabaseSync) {
       if (!database.prepare('SELECT id FROM conversations WHERE id = ? AND deleted_at IS NULL').get(scope.conversationId))
         return []
       return (database.prepare('SELECT * FROM chat_queue WHERE conversation_id = ? AND branch_id = ? AND state IN (\'waiting\', \'paused\') ORDER BY rowid').all(scope.conversationId, scope.branchId) as unknown as QueueRow[]).map((row) => {
-        const input = decode(row)
-        return { id: row.id, conversationId: row.conversation_id, branchId: row.branch_id, state: row.state as 'waiting' | 'paused', content: buddyUserMessageContentV1Schema.parse(input.userMessageContent), createdAt: row.created_at, attachments: input.runInput.attachmentIds.map((id) => {
+        const input = bindActor(decode(row))
+        return { buddyId: input.buddyId!, id: row.id, conversationId: row.conversation_id, branchId: row.branch_id, state: row.state as 'waiting' | 'paused', content: buddyUserMessageContentV1Schema.parse(input.userMessageContent), createdAt: row.created_at, attachments: input.runInput.attachmentIds.map((id) => {
           const attachment = attachments.findById(id)
           if (!attachment)
             throw new TurnRequestAttachmentError()
@@ -96,14 +134,15 @@ export function createChatQueueRepository(database: DatabaseSync) {
         )`).get(conversationId) as LocalChatQueueScope | undefined ?? null
     },
     latestRun(scope: LocalChatQueueScope) {
-      return database.prepare('SELECT id, status FROM runs WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1')
+      return database.prepare('SELECT id, status FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') ORDER BY rowid DESC LIMIT 1')
         .get(scope.conversationId) as { id: string, status: string } | undefined
     },
     pending(target: LocalChatQueueTarget) {
       assertScope(target)
       const row = find(target.id)
-      return row && row.conversation_id === target.conversationId && row.branch_id === target.branchId && ['waiting', 'paused'].includes(row.state) ? decode(row) : null
+      return row && row.conversation_id === target.conversationId && row.branch_id === target.branchId && ['waiting', 'paused'].includes(row.state) ? bindActor(decode(row)) : null
     },
+    isCurrentInput,
     cancel(target: LocalChatQueueTarget) {
       const row = find(target.id)
       if (!row || row.conversation_id !== target.conversationId || row.branch_id !== target.branchId)
@@ -111,21 +150,34 @@ export function createChatQueueRepository(database: DatabaseSync) {
       return Number(database.prepare('UPDATE chat_queue SET state = \'cancelled\' WHERE id = ? AND state IN (\'waiting\', \'paused\')').run(target.id).changes) === 1
     },
     activeRun(scope: LocalChatQueueScope) {
-      return database.prepare('SELECT id, purpose, model, provider FROM runs WHERE conversation_id = ? AND status IN (\'queued\', \'running\') ORDER BY started_at DESC LIMIT 1').get(scope.conversationId) as { id: string, purpose: string, model: string, provider: string } | undefined
+      return database.prepare('SELECT id, purpose, model, provider FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') AND status IN (\'queued\', \'running\') ORDER BY started_at DESC LIMIT 1').get(scope.conversationId) as { id: string, purpose: string, model: string, provider: string } | undefined
     },
     pause(conversationId?: string) {
       if (conversationId)
         return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE conversation_id = ? AND state = \'waiting\'').run(conversationId).changes)
       return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE state = \'waiting\'').run().changes)
     },
-    commitInRun(input: PrepareTurnRequestInput, runId: string) {
+    commitInRun(input: QueuedTurnRequestInput, runId: string, runPermissionCeiling: BuddyExecutionProfile | undefined) {
       return withTransaction(database, () => {
         assertScope(input)
+        if (!isCurrentInput(input))
+          throw new BuddyServiceError('BUDDY_CONFLICT')
         if (!database.prepare('SELECT id FROM chat_queue WHERE id = ? AND state IN (\'waiting\', \'paused\')').get(input.queuedMessageId!))
           throw new BuddyServiceError('VALIDATION_FAILED')
-        const run = database.prepare('SELECT id FROM runs WHERE id = ? AND conversation_id = ? AND branch_id = ? AND status = \'running\' AND purpose = \'chat\' AND approval_policy = ? AND execution_profile = ?').get(runId, input.conversationId, input.branchId, input.approvalPolicy, resolveTurnExecutionProfile(input))
-        if (!run)
+        const run = database.prepare(`SELECT r.id, r.actor_snapshot_json FROM runs r JOIN conversations c ON c.id = r.conversation_id
+          WHERE r.id = ? AND r.conversation_id = ? AND r.branch_id = ? AND r.status = 'running' AND r.purpose = 'chat' AND r.execution_kind = 'root'
+          AND c.approval_policy = ? AND c.execution_profile = ? AND r.buddy_id = ?`).get(runId, input.conversationId, input.branchId, input.approvalPolicy, input.executionProfile, input.buddyId!)
+        if (!run || runPermissionCeiling !== input.runExecutionProfile)
           throw new BuddyServiceError('VALIDATION_FAILED')
+        const snapshot = run.actor_snapshot_json ? buddyExecutionDefinitionSchema.parse(JSON.parse(String(run.actor_snapshot_json))) : null
+        if (snapshot && input.actorSnapshot ? buddyExecutionFingerprint(snapshot) !== buddyExecutionFingerprint(input.actorSnapshot) : !!snapshot !== !!input.actorSnapshot)
+          throw new BuddyServiceError('BUDDY_CONFLICT')
+        if (input.modelOverride !== undefined) {
+          const now = new Date().toISOString()
+          if (Number(database.prepare('UPDATE conversation_members SET model_selection_json = ?, model_selection_source = ? WHERE conversation_id = ? AND actor_id = ?').run(input.modelOverride ? JSON.stringify(input.modelOverride) : null, input.modelOverride ? 'explicit' : null, input.conversationId, input.buddyId!).changes) !== 1)
+            throw new BuddyServiceError('BUDDY_CONFLICT')
+          database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, input.conversationId)
+        }
         database.prepare('INSERT INTO messages (id, conversation_id, branch_id, run_id, role, content_json, created_at) VALUES (?, ?, ?, NULL, \'user\', ?, ?)').run(input.userMessageId, input.conversationId, input.branchId, JSON.stringify(input.userMessageContent), new Date().toISOString())
         for (const binding of input.attachmentBindings) {
           if (Number(database.prepare('UPDATE attachments SET draft_id = NULL, message_id = ? WHERE id = ? AND draft_id = ?').run(input.userMessageId, binding.id, input.queuedMessageId!).changes) !== 1)

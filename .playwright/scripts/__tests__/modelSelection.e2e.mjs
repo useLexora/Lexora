@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { once } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -84,7 +84,7 @@ test('model controls preview dragging, commit on release and retain advanced pan
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('live model and permission controls resume retries, revoke approvals and regenerate with the current model', async ({ buddy }, testInfo) => {
+test('live model selection resumes retries and drives regeneration while permission changes revoke approvals', async ({ buddy }, testInfo) => {
   const requests = []
   let requestedWrite = false
   let gatedResponse = null
@@ -143,6 +143,7 @@ test('live model and permission controls resume retries, revoke approvals and re
     await page.getByRole('menuitemradio', { name: /人工审批/ }).click()
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('人工审批')
     const trigger = page.locator('.desktop-model-selector__trigger:visible')
+    await expect(trigger).toBeEnabled()
     await trigger.click()
     await page.locator('.desktop-model-selector__advanced').click()
     await page.locator('.desktop-model-selector__panel--advanced').getByRole('button', { name: /^模型/ }).click()
@@ -174,7 +175,6 @@ test('live model and permission controls resume retries, revoke approvals and re
     expect(requests.at(-1).model).toBe('model-b')
     for (const body of requests)
       expect(body.messages.filter(message => message.role === 'user')).toHaveLength(1)
-    expect(read(db => JSON.parse(db.prepare('SELECT model_selection_json FROM conversations WHERE id = ?').get(first.conversation_id).model_selection_json).modelId)).toBe('model-b')
     await expect(trigger).toContainText('Model B')
 
     requestedWrite = false
@@ -195,7 +195,8 @@ test('live model and permission controls resume retries, revoke approvals and re
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('完全访问')
     releaseResponse()
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(3)
-    expect(requests.at(-1).messages.some(message => message.role === 'tool' && JSON.stringify(message.content).includes('READ_ONLY_PROFILE'))).toBe(true)
+    expect(requests[beforeReview].tools.some(tool => tool.function?.name === 'write')).toBe(false)
+    expect(JSON.stringify(requests.at(-1).messages.findLast(message => message.role === 'tool')?.content)).toContain('Tool write not found')
     const taskFile = path.join(instance.home, 'buddy/conversations', first.conversation_id, 'workspace/hot-permission.txt')
     await expect(readFile(taskFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
@@ -228,7 +229,8 @@ test('live model and permission controls resume retries, revoke approvals and re
     expect(queuedReview.run_id).not.toBe(ordinary.id)
     expect(read(db => db.prepare('SELECT execution_profile FROM runs WHERE id = ?').get(queuedReview.run_id).execution_profile)).toBe('read_only')
     expect(requests).toHaveLength(beforeOrdinary + 3)
-    expect(JSON.stringify(requests.at(-1).messages.findLast(message => message.role === 'tool')?.content)).toContain('READ_ONLY_PROFILE')
+    expect(requests[beforeOrdinary + 1].tools.some(tool => tool.function?.name === 'write')).toBe(false)
+    expect(JSON.stringify(requests.at(-1).messages.findLast(message => message.role === 'tool')?.content)).toContain('Tool write not found')
     await expect(readFile(taskFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
     await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeVisible()
@@ -243,6 +245,112 @@ test('live model and permission controls resume retries, revoke approvals and re
   }
   finally {
     releaseResponse()
+    await instance.stop()
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
+test('queued steering uses live permissions and deferred follow-up starts with the latest settings', async ({ buddy }, testInfo) => {
+  const requests = []
+  const gates = new Map([0, 2].map(index => [index, Promise.withResolvers()]))
+  const instance = await buddy.createInstance('queue-live-permissions')
+  const file = path.join(instance.home, 'queue-fixture.txt')
+  await writeFile(file, 'A safe input for the queued steering test.')
+  const server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request)
+      chunks.push(chunk)
+    const index = requests.length
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    requests.push(body)
+    await gates.get(index)?.promise
+    const common = { id: `queue-${index}`, model: body.model, object: 'chat.completion.chunk', created: 1 }
+    const delta = index === 0
+      ? { role: 'assistant', tool_calls: [{ index: 0, id: 'queue-read', type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: file }) } }] }
+      : { role: 'assistant', content: 'The queued input was received.' }
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: index === 0 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 } })}\n\n`)
+    response.end('data: [DONE]\n\n')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const desktop = await instance.launch()
+    await useSyntheticCredentialStorage(desktop)
+    const { page } = desktop
+    await page.evaluate(async (baseUrl) => {
+      const providers = window.lexoraDesktop.localChat.providers
+      await providers.upsertCustom({ id: 'queue-fixture', displayName: 'Queue fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'queue-model', name: 'Queue model', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
+      const stop = providers.onAuthChallenge((challenge) => {
+        if (challenge.providerId === 'queue-fixture' && challenge.type === 'secret')
+          void providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
+      })
+      try {
+        await providers.login('queue-fixture', 'api_key')
+      }
+      finally { stop() }
+      await providers.setDefaultModel({ providerId: 'queue-fixture', modelId: 'queue-model', reasoning: null })
+    }, `http://127.0.0.1:${server.address().port}/v1`)
+    await page.reload()
+    const read = query => readModelDatabase(instance.home, query)
+    const composer = page.locator('.desktop-chat-composer__prosemirror:visible')
+    const permission = page.locator('.desktop-permission-mode-selector__trigger:visible')
+    await composer.fill('Read the fixture and wait for additional instructions.')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    const first = read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE status = ?').get('running'))
+    expect(first.execution_profile).toBe('workspace_write')
+    await permission.click()
+    await page.getByRole('menuitemradio', { name: /完全访问/ }).click()
+    await page.getByRole('checkbox', { name: '我已了解风险，并愿意继续' }).check()
+    await page.getByRole('button', { name: '允许完全访问', exact: true }).click()
+    await expect(permission).toContainText('完全访问')
+    await composer.fill('Include this immediate instruction after the permission change.')
+    await page.getByRole('button', { name: '加入队列', exact: true }).click()
+    await expect(page.locator('.chat-message-queue__row')).toHaveCount(1)
+    await page.getByRole('button', { name: '立即发送', exact: true }).click()
+    await expect.poll(() => read(db => db.prepare('SELECT state, run_id FROM chat_queue ORDER BY rowid DESC LIMIT 1').get())).toEqual({ state: 'sent', run_id: first.id })
+    await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
+    await expect(page.getByText('队列操作未完成，请稍后重试', { exact: true })).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('steering-after-full-access.png'), animations: 'disabled' })
+    gates.get(0).resolve()
+    await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(first.id).status)).toBe('completed')
+    expect(requests).toHaveLength(2)
+    expect(JSON.stringify(requests[1].messages)).toContain('Include this immediate instruction after the permission change.')
+    expect(JSON.stringify(requests[1].messages)).toContain('Full access does not grant root privileges')
+    expect(read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE id = ?').get(first.id))).toEqual(first)
+
+    await composer.fill('Finish the current turn before processing the queued follow-up.')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect.poll(() => requests.length).toBe(3)
+    const second = read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE status = ?').get('running'))
+    expect(second.execution_profile).toBe('full_access')
+    await composer.fill('Process this queued follow-up with the latest read-only permissions.')
+    await page.getByRole('button', { name: '加入队列', exact: true }).click()
+    await expect(page.locator('.chat-message-queue__row')).toHaveCount(1)
+    await permission.click()
+    await page.getByRole('menuitemradio', { name: /本机只读/ }).click()
+    await expect(permission).toContainText('本机只读')
+    gates.get(2).resolve()
+    await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(second.id).status)).toBe('completed')
+    await expect.poll(() => requests.length).toBe(4)
+    expect(JSON.stringify(requests[3].messages)).toContain('Process this queued follow-up with the latest read-only permissions.')
+    expect(JSON.stringify(requests[3].messages)).toContain('Writing and deleting are blocked in this profile')
+    const followUp = read(db => db.prepare('SELECT state, run_id FROM chat_queue ORDER BY rowid DESC LIMIT 1').get())
+    expect(followUp.state).toBe('sent')
+    expect(followUp.run_id).not.toBe(second.id)
+    await expect.poll(() => read(db => db.prepare('SELECT status, execution_profile FROM runs WHERE id = ?').get(followUp.run_id))).toEqual({ status: 'completed', execution_profile: 'read_only' })
+    expect(read(db => db.prepare('SELECT COUNT(*) AS count FROM runs').get().count)).toBe(3)
+    expect(read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE id = ?').get(second.id))).toEqual(second)
+    await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('follow-up-after-read-only.png'), animations: 'disabled' })
+    expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  }
+  finally {
+    for (const gate of gates.values())
+      gate.resolve()
     await instance.stop()
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))

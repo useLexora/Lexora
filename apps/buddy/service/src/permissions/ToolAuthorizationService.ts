@@ -1,3 +1,4 @@
+import type { BuddySettings } from '../../../shared/buddies/buddySettings'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { PathApprovalReviewInput } from '../../../shared/permissions/approvalReviewPayload'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
@@ -9,6 +10,7 @@ import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { GrantOwner, GrantProposal, PermissionDecision } from './permissionContract'
 import type { ToolExecutionPermissions } from './ToolExecutionPermissions'
+import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { PathClassificationError } from './classifyPath'
 import { PermissionEngine } from './PermissionEngine'
 
@@ -24,6 +26,8 @@ export interface ToolAuthorizationOptions {
   applySandboxDirectory?: (run: BuddyExtensionRunContext, grant: SandboxDirectoryGrant) => Promise<void>
   executionPermissions?: ToolExecutionPermissions
   engine?: PermissionEngine
+  fileAccessLimit?: BuddySettings['limits']['fileAccess']
+  getToolScopeDenial?: (toolName: string) => string | null
 }
 
 export interface ToolAuthorizationCall {
@@ -32,11 +36,20 @@ export interface ToolAuthorizationCall {
   toolName: string
 }
 
+export interface ToolExecutionPermit {
+  readonly call: ToolAuthorizationCall
+  readonly classification: BuddyToolClassification
+  readonly executionProfile: BuddyExecutionProfile
+  readonly grants: readonly DirectoryGrant[]
+  readonly lifetime: AbortSignal
+}
+
 export class ToolAuthorizationService {
   readonly #options: ToolAuthorizationOptions
   readonly #engine: PermissionEngine
   #settings: BuddyPermissionSettings
   #settingsLifetime = new AbortController()
+  readonly #permits = new WeakMap<BuddyExtensionRunContext, Map<string, ToolExecutionPermit>>()
 
   constructor(options: ToolAuthorizationOptions) {
     this.#options = options
@@ -51,6 +64,27 @@ export class ToolAuthorizationService {
     this.#settings = { ...settings }
     this.#settingsLifetime = new AbortController()
     previous.abort()
+  }
+
+  getToolScopeDenial(toolName: string): string | null {
+    return this.#options.getToolScopeDenial?.(toolName) ?? null
+  }
+
+  getExecutionPermit(event: ToolAuthorizationCall, run: BuddyExtensionRunContext): ToolExecutionPermit | null {
+    const permit = this.#permits.get(run)?.get(event.toolCallId)
+    return permit && permit.call.toolName === event.toolName && JSON.stringify(permit.call.input) === JSON.stringify(event.input) ? permit : null
+  }
+
+  isPermitCurrent(permit: ToolExecutionPermit, run: BuddyExtensionRunContext): boolean {
+    return !run.signal.aborted && !permit.lifetime.aborted
+      && this.#permits.get(run)?.get(permit.call.toolCallId) === permit
+      && JSON.stringify(permit.grants) === JSON.stringify(this.#options.getGrants())
+      && this.getToolScopeDenial(permit.call.toolName) === null
+  }
+
+  releaseExecutionPermit(event: ToolAuthorizationCall, run: BuddyExtensionRunContext): void {
+    this.#permits.get(run)?.delete(event.toolCallId)
+    this.#options.executionPermissions?.release(run, event.toolCallId)
   }
 
   async authorize(
@@ -81,10 +115,18 @@ export class ToolAuthorizationService {
   ): Promise<string | null> {
     const options = this.#options
     let authorized = false
-    options.executionPermissions?.release(run, event.toolCallId)
+    if (!resource.network)
+      this.releaseExecutionPermit(event, run)
     try {
       const signal = AbortSignal.any([lifetime, run.signal, ...resource.signal ? [resource.signal] : []])
       signal.throwIfAborted()
+      const scopeDenial = this.getToolScopeDenial(event.toolName)
+      if (scopeDenial)
+        return scopeDenial
+      if (options.fileAccessLimit === 'read_only' && ((declared.access === 'execute' && declared.shellBoundary !== 'sandbox')
+        || (!declared.access && !['read', 'find', 'grep', 'ls', 'write', 'edit'].includes(event.toolName)))) {
+        return 'ROLE_FILE_ACCESS_READ_ONLY'
+      }
       await run.flushProjectedEvents()
       const decision = await this.#engine.decide({
         access: declared.access,
@@ -99,7 +141,7 @@ export class ToolAuthorizationService {
         grants: options.getGrants(),
         owner: options.owner,
         paths: declared.paths,
-        profile: settings.executionProfile,
+        profile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
         toolName: event.toolName,
       })
       signal.throwIfAborted()
@@ -179,10 +221,21 @@ export class ToolAuthorizationService {
       }
       signal.throwIfAborted()
       authorized = true
+      if (!resource.network) {
+        const permits = this.#permits.get(run) ?? new Map<string, ToolExecutionPermit>()
+        permits.set(event.toolCallId, {
+          call: copyEventSnapshot({ input: event.input, toolCallId: event.toolCallId, toolName: event.toolName }),
+          classification: { ...declared, paths: declared.paths ? copyEventSnapshot(declared.paths) : undefined },
+          executionProfile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
+          grants: copyEventSnapshot(options.getGrants()),
+          lifetime,
+        })
+        this.#permits.set(run, permits)
+      }
       return null
     }
     finally {
-      if (!authorized)
+      if (!authorized && !resource.network)
         options.executionPermissions?.release(run, event.toolCallId)
     }
   }

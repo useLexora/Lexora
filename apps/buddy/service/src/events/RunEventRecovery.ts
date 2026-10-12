@@ -1,5 +1,5 @@
 // Bump when projection semantics or the compaction plan become incompatible.
-export const RUN_EVENT_PROJECTION_VERSION = 1
+export const RUN_EVENT_PROJECTION_VERSION = 3
 
 export interface RunEventCheckpoint {
   fileFingerprint: string

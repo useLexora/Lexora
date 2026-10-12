@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { SpaceExecutionContext } from '../../../shared/conversation/space'
 import type {
   AutomationOccurrenceRecord,
@@ -8,11 +8,12 @@ import type {
 import type { ConversationRecord } from './conversationRecord'
 import type { RunRecord } from './runRecord'
 import { spaceExecutionContextSchema } from '../../../shared/conversation/space'
+import { buddyExecutionDefinitionSchema } from '../buddies/BuddyExecutionDefinition'
 import {
   requireAutomationOccurrenceRecord,
   toAutomationOccurrenceRecord,
 } from './automationOccurrenceRecord'
-import { requireConversationRecord } from './conversationRecord'
+import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, requireConversationRecord } from './conversationRecord'
 import { withTransaction } from './database'
 import { requireRunRecord } from './runRecord'
 
@@ -30,6 +31,7 @@ export interface BindAutomationTurnInput {
   spaceId: string | null
   provider: string
   reasoning: BuddyThinkingLevel | null
+  serviceTier?: BuddyServiceTier | null
   runId: string
 }
 
@@ -51,6 +53,11 @@ export interface ChangedSpaceAutomationTurn {
   occurrence: AutomationOccurrenceRecord
 }
 
+export interface UnavailableActorAutomationTurn {
+  kind: 'actor_unavailable'
+  occurrence: AutomationOccurrenceRecord
+}
+
 export interface UnavailableSpaceAutomationTurn {
   kind: 'space_unavailable'
   occurrence: AutomationOccurrenceRecord
@@ -62,6 +69,7 @@ export interface AutomationTurnRepository {
     | ChangedSpaceAutomationTurn
     | SkippedAutomationTurn
     | UnavailableSpaceAutomationTurn
+    | UnavailableActorAutomationTurn
 }
 
 export class AutomationTurnBindingError extends Error {
@@ -75,7 +83,7 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
   const findOccurrence = database.prepare(`
     SELECT * FROM automation_occurrences WHERE id = ? AND deleted_at IS NULL
   `)
-  const findConversation = database.prepare('SELECT * FROM conversations WHERE id = ?')
+  const findConversation = database.prepare(`SELECT *, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations WHERE id = ?`)
   const findRun = database.prepare('SELECT * FROM runs WHERE id = ?')
   const findActiveSpace = database.prepare(`
     SELECT id FROM spaces WHERE id = ? AND revoked_at IS NULL
@@ -89,8 +97,12 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
   const insertConversation = database.prepare(`
     INSERT INTO conversations (
       id, space_id, title, active_branch_id, created_at, updated_at,
-      execution_profile, origin, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'automation', NULL)
+      execution_profile, origin, deleted_at, buddy_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'automation', NULL, ?)
+  `)
+  const insertMember = database.prepare(`
+    INSERT INTO conversation_members (conversation_id, actor_id, joined_at, model_selection_json, model_selection_source)
+    SELECT id, buddy_id, created_at, NULL, NULL FROM conversations WHERE id = ?
   `)
   const insertBranch = database.prepare(`
     INSERT INTO conversation_branches (
@@ -106,14 +118,14 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
     INSERT INTO runs (
       id, conversation_id, branch_id, triggering_message_id, provider, model,
       context_window, max_tokens, purpose, status, pi_session_file, error_code,
-      started_at, completed_at, execution_profile, execution_context_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'automation', 'queued', NULL, NULL, ?, NULL, ?, ?)
+      started_at, completed_at, execution_profile, execution_context_json, buddy_id, actor_snapshot_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'automation', 'queued', NULL, NULL, ?, NULL, ?, ?, ?, ?)
   `)
   const insertRunInput = database.prepare(`
     INSERT INTO run_inputs (
       run_id, prompt, attachment_ids_json, context_items_json,
       reasoning, service_tier, created_at
-    ) VALUES (?, ?, '[]', '[]', ?, NULL, ?)
+    ) VALUES (?, ?, '[]', '[]', ?, ?, ?)
   `)
   const bindOccurrence = database.prepare(`
     UPDATE automation_occurrences
@@ -171,6 +183,15 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
           }
         }
         const snapshot = occurrence.executionSnapshot
+        const actor = occurrence.actorSnapshot
+        if (!actor || !database.prepare('SELECT id FROM buddies WHERE id = ? AND kind = \'actor\' AND enabled = 1 AND deleted_at IS NULL').get(actor.id))
+          return { kind: 'actor_unavailable', occurrence }
+        const acceptedDefinition = buddyExecutionDefinitionSchema.parse({
+          ...actor,
+          model: { modelId: input.model, providerId: input.provider, reasoning: input.reasoning, serviceTier: input.serviceTier ?? null },
+          modelSource: snapshot.model.mode === 'pinned' ? 'input' : actor.settings.model ? 'definition' : 'application',
+        })
+        const executionProfile = actor.settings.limits.fileAccess === 'read_only' ? 'read_only' : snapshot.executionProfile
         if (
           snapshot.spaceId !== input.spaceId
           || JSON.stringify(snapshot.spaceContext) !== JSON.stringify(input.executionContext)
@@ -199,8 +220,10 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
           input.branchId,
           input.boundAt,
           input.boundAt,
-          snapshot.executionProfile,
+          executionProfile,
+          actor.id,
         )
+        insertMember.run(input.conversationId)
         insertBranch.run(input.branchId, input.conversationId, input.boundAt)
         insertMessage.run(
           input.messageId,
@@ -224,10 +247,14 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
           input.contextWindow,
           input.maxTokens,
           input.boundAt,
-          snapshot.executionProfile,
+          executionProfile,
           input.executionContext ? JSON.stringify(input.executionContext) : null,
+          actor.id,
+          JSON.stringify(acceptedDefinition),
         )
-        insertRunInput.run(input.runId, snapshot.prompt, input.reasoning, input.boundAt)
+        if (actor.settings.limits.fileAccess === 'read_only')
+          database.prepare('UPDATE execution_state SET file_access_ceiling = \'read_only\' WHERE run_id = ?').run(input.runId)
+        insertRunInput.run(input.runId, snapshot.prompt, input.reasoning, input.serviceTier ?? null, input.boundAt)
         if (Number(bindOccurrence.run(
           input.boundAt,
           input.conversationId,

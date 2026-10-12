@@ -3,6 +3,9 @@ import type { RuntimeRequestHandler } from '../../../../shared/runtime/rpcPeer'
 import type { RuntimeRequestRegistrar } from '../../rpc/runtimeRequest'
 import type { RegisterConversationRpcOptions } from '../registerConversationRpc'
 import { afterEach, describe, expect, it } from 'vitest'
+import { conversationResponseSchemas } from '../../../../shared/conversation/conversationApi'
+import { RunEventProjector } from '../../events/RunEventProjector'
+import { createBuddyRepository } from '../../storage/buddyRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
@@ -92,9 +95,10 @@ describe('registerConversationRpc', () => {
       modelSelection,
     })).resolves.toMatchObject({ modelSelection })
     const storedSelection = database.prepare(`
-      SELECT model_selection_json FROM conversations WHERE id = ?
-    `).get('conversation-1') as { model_selection_json: string }
+      SELECT model_selection_json, model_selection_source FROM conversation_members WHERE conversation_id = ? AND actor_id = 'default'
+    `).get('conversation-1') as { model_selection_json: string, model_selection_source: string }
     expect(JSON.parse(storedSelection.model_selection_json)).toEqual(modelSelection)
+    expect(storedSelection.model_selection_source).toBe('explicit')
 
     await expect(harness.invoke('conversations.activateBranch', {
       branchId: 'branch-2',
@@ -115,7 +119,7 @@ describe('registerConversationRpc', () => {
       .toMatchObject({ code: 'VALIDATION_FAILED' })
   })
 
-  it('projects attachments, runs, public events and artifacts as one timeline read model', async () => {
+  it('projects attachments, public actor replies, root events and artifacts while paging through the root input', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
     const conversations = createConversationRepository(database)
@@ -136,15 +140,6 @@ describe('registerConversationRpc', () => {
       id: 'message-user',
       role: 'user',
       runId: null,
-    })
-    conversations.createMessage({
-      branchId: 'branch-1',
-      content: { text: 'Done' },
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-27T00:02:00.000Z',
-      id: 'message-assistant',
-      role: 'assistant',
-      runId: 'run-1',
     })
     const run = {
       branchId: 'branch-1',
@@ -169,6 +164,15 @@ describe('registerConversationRpc', () => {
     runs.create(run)
     conversations.createMessage({
       branchId: 'branch-1',
+      content: { text: 'Done' },
+      conversationId: 'conversation-1',
+      createdAt: '2026-08-27T00:02:00.000Z',
+      id: 'message-assistant',
+      role: 'assistant',
+      runId: 'run-1',
+    })
+    conversations.createMessage({
+      branchId: 'branch-1',
       content: { text: 'Stored tool result' },
       conversationId: 'conversation-1',
       createdAt: '2026-08-27T00:01:30.000Z',
@@ -176,6 +180,9 @@ describe('registerConversationRpc', () => {
       role: 'tool',
       runId: 'run-1',
     })
+    const actor = createBuddyRepository(database).create({ kind: 'actor', name: 'Supporting actor' })
+    const child = runs.create({ ...run, id: 'actor-child', buddyId: actor.id, rootRunId: run.id, parentRunId: run.id, executionKind: 'actor_child', triggeringMessageId: 'private-child-task', piSessionFile: null })
+    new RunEventProjector(database).project([{ runId: child.id, sequence: 1, type: 'message.completed', createdAt: '2026-08-27T00:02:40.000Z', payload: { messageId: 'public-child-answer', role: 'assistant', stopReason: 'completed', content: { text: 'Public supporting actor answer' } } }])
     const toolEvent = {
       createdAt: '2026-08-27T00:01:30.000Z',
       payload: { isError: false, toolCallId: 'tool-1', toolName: 'read' },
@@ -247,6 +254,7 @@ describe('registerConversationRpc', () => {
       conversationId: 'conversation-1',
       limit: 2,
     }) as Record<string, unknown>
+    expect(conversationResponseSchemas.timelinePage.safeParse(timeline).success).toBe(true)
     expect(timeline).toMatchObject({
       items: [
         {
@@ -262,6 +270,7 @@ describe('registerConversationRpc', () => {
         },
         { attachments: [], id: 'message-tool' },
         { attachments: [], id: 'message-assistant' },
+        { attachments: [], id: 'public-child-answer', runId: child.id, content: { text: 'Public supporting actor answer' } },
       ],
       outputs: [{
         artifacts: [{
@@ -285,7 +294,10 @@ describe('registerConversationRpc', () => {
     })
     expect(timeline).not.toHaveProperty('runs.0.piSessionFile')
     expect(conversations.listMessages('conversation-1', 'branch-1').map(message => message.id))
-      .toEqual(['message-user', 'message-tool', 'message-assistant'])
+      .toEqual(['message-user', 'message-tool', 'message-assistant', 'public-child-answer'])
+    expect(conversations.findMessageById('private-child-task')).toBeNull()
+    database.prepare('UPDATE runs SET root_run_id = id WHERE id = ?').run(child.id)
+    await expect(harness.invoke('conversations.listTimeline', { conversationId: 'conversation-1', limit: 2 })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
   })
 })
 

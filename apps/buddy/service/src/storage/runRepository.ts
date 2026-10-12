@@ -1,12 +1,20 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ConversationModelSelection } from './conversationRecord'
 import type { RunRecord, RunRow, RunStatus } from './runRecord'
+import { buddyComposerDraftModelSelectionSchema } from '../../../shared/conversation/composerDraft'
 import { withTransaction } from './database'
 import { requireRunRecord, toRunRecord } from './runRecord'
 
 export interface CreateRunInput extends Omit<
   RunRecord,
-  'completedAt' | 'contextWindow' | 'errorCode' | 'executionContext' | 'maxTokens'
+  'rootRunId' | 'parentRunId' | 'executionKind' | 'threadId' | 'generation' | 'buddyId' | 'completedAt' | 'contextWindow' | 'errorCode' | 'executionContext' | 'maxTokens'
 > {
+  rootRunId?: string
+  parentRunId?: string | null
+  executionKind?: RunRecord['executionKind']
+  threadId?: string
+  generation?: number
+  buddyId?: string
   completedAt?: string | null
   contextWindow?: number | null
   errorCode?: string | null
@@ -15,6 +23,9 @@ export interface CreateRunInput extends Omit<
 }
 
 export interface RunRepository {
+  setModelSelection: (id: string, modelSelection: ConversationModelSelection | null) => boolean
+  findActiveForConversation: (conversationId: string) => RunRecord | null
+  setActorSnapshot: (id: string, snapshot: NonNullable<RunRecord['actorSnapshot']>) => boolean
   bindSession: (id: string, piSessionFile: string) => boolean
   clearSessionBindings: (
     conversationId: string,
@@ -25,6 +36,8 @@ export interface RunRepository {
   create: (input: CreateRunInput) => RunRecord
   findById: (id: string) => RunRecord | null
   findLatestForBranch: (conversationId: string, branchId: string) => RunRecord | null
+  findLatestForThread: (threadId: string, branchId: string) => RunRecord | null
+  listTree: (rootRunId: string) => RunRecord[]
   hasIncomplete: () => boolean
   listIncomplete: () => RunRecord[]
   listRecent: (limit?: number) => RunRecord[]
@@ -51,12 +64,12 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     INSERT INTO runs (
       id, conversation_id, branch_id, triggering_message_id, provider, model,
       context_window, max_tokens, purpose, status, pi_session_file, error_code,
-      started_at, completed_at, approval_policy, execution_profile, execution_context_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      started_at, completed_at, approval_policy, execution_profile, execution_context_json, buddy_id, actor_snapshot_json, model_override_json, root_run_id, parent_run_id, execution_kind, thread_id, generation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT buddy_id FROM conversations WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?)
   `)
   const list = database.prepare(`
     SELECT * FROM runs
-    WHERE conversation_id = ?
+    WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance')
     ORDER BY started_at DESC, id DESC
     LIMIT ?
   `)
@@ -67,11 +80,11 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY started_at, id
   `)
   const listRecent = database.prepare(`
-    SELECT * FROM runs ORDER BY started_at DESC, id DESC LIMIT ?
+    SELECT * FROM runs WHERE execution_kind IN ('root', 'maintenance') ORDER BY started_at DESC, id DESC LIMIT ?
   `)
   const findLatestForBranch = database.prepare(`
     SELECT * FROM runs
-    WHERE conversation_id = ? AND branch_id = ? AND pi_session_file IS NOT NULL
+    WHERE conversation_id = ? AND branch_id = ? AND execution_kind IN ('root', 'maintenance') AND pi_session_file IS NOT NULL
     ORDER BY started_at DESC, id DESC
     LIMIT 1
   `)
@@ -99,6 +112,17 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
   })
 
   return {
+    setModelSelection(id, modelSelection) {
+      const selected = modelSelection === null ? null : buddyComposerDraftModelSelectionSchema.parse(modelSelection)
+      return Number(database.prepare('UPDATE runs SET model_override_json = ? WHERE id = ? AND status IN (\'queued\', \'running\')').run(selected ? JSON.stringify(selected) : null, id).changes) === 1
+    },
+    findActiveForConversation(conversationId) {
+      const row = database.prepare('SELECT * FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') AND status IN (\'queued\', \'running\') ORDER BY started_at DESC, id DESC LIMIT 1').get(conversationId) as RunRow | undefined
+      return row ? toRunRecord(row) : null
+    },
+    setActorSnapshot(id, snapshot) {
+      return Number(database.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ? AND status = \'queued\' AND actor_snapshot_json IS NULL').run(JSON.stringify(snapshot), id).changes) === 1
+    },
     bindSession(id, piSessionFile) {
       return Number(bindSession.run(piSessionFile, id).changes) === 1
     },
@@ -125,6 +149,15 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
         input.approvalPolicy,
         input.executionProfile,
         input.executionContext ? JSON.stringify(input.executionContext) : null,
+        input.buddyId ?? null,
+        input.conversationId,
+        input.actorSnapshot ? JSON.stringify(input.actorSnapshot) : null,
+        input.modelOverride ? JSON.stringify(input.modelOverride) : null,
+        input.rootRunId ?? input.id,
+        input.parentRunId ?? null,
+        input.executionKind ?? (input.purpose === 'conversation.compaction' ? 'maintenance' : 'root'),
+        input.threadId ?? null,
+        input.generation ?? 0,
       )
       return requireRunRecord(find.get(input.id), input.id)
     },
@@ -135,6 +168,13 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     findLatestForBranch(conversationId, branchId) {
       const row = findLatestForBranch.get(conversationId, branchId) as RunRow | undefined
       return row ? toRunRecord(row) : null
+    },
+    findLatestForThread(threadId, branchId) {
+      const row = database.prepare('SELECT * FROM runs WHERE thread_id = ? AND branch_id = ? AND pi_session_file IS NOT NULL ORDER BY started_at DESC, id DESC LIMIT 1').get(threadId, branchId) as unknown as RunRow | undefined
+      return row ? toRunRecord(row) : null
+    },
+    listTree(rootRunId) {
+      return (database.prepare('SELECT * FROM runs WHERE root_run_id = ? ORDER BY rowid').all(rootRunId) as unknown as RunRow[]).map(toRunRecord)
     },
     listForConversation(conversationId, limit = 100) {
       return (list.all(conversationId, limit) as unknown as RunRow[]).map(toRunRecord)
@@ -157,7 +197,7 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
         return []
       const rows = database.prepare(`
         SELECT * FROM runs
-        WHERE conversation_id = ? AND (${clauses.join(' OR ')})
+        WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance') AND (${clauses.join(' OR ')})
         ORDER BY started_at, id
       `).all(...parameters) as unknown as RunRow[]
       return rows.map(toRunRecord)

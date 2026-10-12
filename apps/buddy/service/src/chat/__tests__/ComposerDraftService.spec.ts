@@ -11,6 +11,7 @@ import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
 import { createComposerResourceRepository } from '../../storage/composerResourceRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
+import { createConversationTreeRepository } from '../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { ComposerDraftService } from '../ComposerDraftService'
 
@@ -65,7 +66,7 @@ describe('composerDraftService lifecycle', () => {
     const attachmentRepository = createAttachmentRepository(database)
     const resourceRepository = createComposerResourceRepository(database)
     const attachments = new AttachmentService({ paths, repository: attachmentRepository })
-    const resources = new ComposerResourceService({ attachments, paths, drafts, repository: resourceRepository })
+    const resources = new ComposerResourceService({ attachments, paths, drafts, repository: resourceRepository, publications: createConversationTreeRepository(database) })
     const service = new ComposerDraftService(drafts, id => resources.discard(id))
     try {
       const source = join(root, 'source.txt')

@@ -2,31 +2,18 @@ import type { LocalConversation } from '@buddy-shared/conversation/conversationA
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { TaskModelSelection } from './typing'
 import type { ModelProvidersStore } from '@/modules/models'
-import { computed, readonly, shallowRef, watch } from 'vue'
+import { computed, readonly, shallowRef } from 'vue'
 import { modelKey, resolveConcreteEffort } from '@/modules/models'
 
 type ConversationModelSelection = LocalConversation['modelSelection']
 
-export function useTaskModelSelection(catalog: ModelProvidersStore): TaskModelSelection {
-  const configuration = shallowRef<ConversationModelSelection>(null)
-  const selectedModelId = computed(() => configuration.value ? modelKey(configuration.value) : null)
-  const selectedEffort = computed(() => configuration.value?.reasoning ?? null)
-  const selectedServiceTier = computed(() => configuration.value?.serviceTier ?? null)
-  const selectedModel = computed(() => catalog.models.value.find(model => modelKey(model) === selectedModelId.value) ?? null)
-  const selectedModelOption = computed(() => catalog.registeredModels.value.find(model => modelKey(model) === selectedModelId.value) ?? null)
-
-  const stopCatalogSync = watch(
-    () => [catalog.registeredModels.value, catalog.isLoadingModelCatalog.value] as const,
-    ([, loading]) => {
-      if (!loading && !configuration.value)
-        selectDefaultModel()
-    },
-    { immediate: true },
-  )
-
-  function selectDefaultModel() {
+export function useTaskModelSelection(catalog: ModelProvidersStore, options: { rememberSelection?: boolean } = {}): TaskModelSelection {
+  const override = shallowRef<ConversationModelSelection>(null)
+  const configuration = computed<ConversationModelSelection>(() => {
+    if (override.value)
+      return override.value
     const model = catalog.models.value.find(item => modelKey(item) === catalog.defaultModelId.value)
-    configuration.value = model
+    return model
       ? {
           modelId: model.modelId,
           providerId: model.providerId,
@@ -34,21 +21,26 @@ export function useTaskModelSelection(catalog: ModelProvidersStore): TaskModelSe
           serviceTier: null,
         }
       : null
+  })
+  const selectedModelId = computed(() => configuration.value ? modelKey(configuration.value) : null)
+  const selectedEffort = computed(() => configuration.value?.reasoning ?? null)
+  const selectedServiceTier = computed(() => configuration.value?.serviceTier ?? null)
+  const selectedModel = computed(() => catalog.models.value.find(model => modelKey(model) === selectedModelId.value) ?? null)
+  const selectedModelOption = computed(() => catalog.registeredModels.value.find(model => modelKey(model) === selectedModelId.value) ?? null)
+
+  function selectDefaultModel() {
+    override.value = null
   }
 
   function restoreConversationModelSelection(value: ConversationModelSelection) {
-    if (!value) {
-      selectDefaultModel()
-      return
-    }
-    configuration.value = { ...value }
+    override.value = value ? { ...value } : null
   }
 
   async function selectModel(value: string): Promise<boolean> {
     const model = catalog.models.value.find(item => modelKey(item) === value)
     if (!model)
       return false
-    configuration.value = {
+    override.value = {
       modelId: model.modelId,
       providerId: model.providerId,
       reasoning: resolveConcreteEffort(model, null),
@@ -61,16 +53,18 @@ export function useTaskModelSelection(catalog: ModelProvidersStore): TaskModelSe
     const model = selectedModel.value
     if (!model || !configuration.value)
       return false
-    configuration.value = { ...configuration.value, reasoning: resolveConcreteEffort(model, value) }
+    override.value = { ...configuration.value, reasoning: resolveConcreteEffort(model, value) }
     return rememberSelection()
   }
 
   function setSelectedServiceTier(value: BuddyServiceTier | null) {
     if (configuration.value)
-      configuration.value = { ...configuration.value, serviceTier: value }
+      override.value = { ...configuration.value, serviceTier: value }
   }
 
   function rememberSelection(): Promise<boolean> {
+    if (options.rememberSelection === false)
+      return Promise.resolve(true)
     const value = configuration.value
     return value
       ? catalog.rememberModelSelection({ modelId: value.modelId, providerId: value.providerId, reasoning: value.reasoning })
@@ -79,7 +73,7 @@ export function useTaskModelSelection(catalog: ModelProvidersStore): TaskModelSe
 
   return {
     currentSelection: () => configuration.value,
-    dispose: stopCatalogSync,
+    dispose: () => {},
     restoreConversationModelSelection,
     selectDefaultModel,
     selectedEffort: readonly(selectedEffort),

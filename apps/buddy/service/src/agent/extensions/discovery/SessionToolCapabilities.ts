@@ -1,6 +1,7 @@
 import type { Message } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyCapabilityResourceRevision } from '../BuddyCapability'
+import type { SessionToolScope } from './SessionToolScope'
 import type { ToolDisclosureResolution } from './ToolDisclosure'
 import type { BuddyToolDisclosurePolicy, BuddyToolExposureContext, BuddyToolExposureResolver, ToolSearchInput } from './toolDiscoveryContract'
 import type { ToolDiscoveryState } from './toolDiscoveryState'
@@ -33,6 +34,7 @@ export class SessionToolCapabilities {
   readonly #instanceId = randomUUID()
   readonly #resources: readonly BuddyCapabilityResourceRevision[]
   readonly #resolveExposure: BuddyToolExposureResolver | undefined
+  readonly #scope: SessionToolScope | undefined
   #disclosure?: ToolDisclosure
   #revision = 0
   #active: readonly string[] = Object.freeze([])
@@ -41,9 +43,10 @@ export class SessionToolCapabilities {
   #catalog: ToolDisclosureResolution['catalog'] = copyEventSnapshot({ groups: [], tools: [] })
   #status: SessionToolSnapshot['status'] = 'initializing'
 
-  constructor(resources: readonly BuddyCapabilityResourceRevision[] = [], resolveExposure?: BuddyToolExposureResolver) {
+  constructor(resources: readonly BuddyCapabilityResourceRevision[] = [], resolveExposure?: BuddyToolExposureResolver, scope?: SessionToolScope) {
     this.#resources = copyEventSnapshot(resources)
     this.#resolveExposure = resolveExposure
+    this.#scope = scope
   }
 
   get snapshot(): SessionToolSnapshot {
@@ -55,7 +58,7 @@ export class SessionToolCapabilities {
   initialize(tools: readonly ToolInfo[], baseline: readonly string[], policies: readonly BuddyToolDisclosurePolicy[]): void {
     this.#assertCurrent()
     this.#disclosure?.dispose()
-    this.#disclosure = new ToolDisclosure(tools, baseline, policies, this.#resolveExposure)
+    this.#disclosure = new ToolDisclosure(tools, baseline, policies, this.#resolveExposure, this.#scope)
     this.#disclosure.onDidChange(event => this.#publish('disclosure-changed', event.reason))
     this.#status = 'initializing'
     this.#publish('catalog-accepted', 'initial')

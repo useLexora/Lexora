@@ -31,6 +31,7 @@ export interface CreateBuddySessionRecoveryInput {
   conversationId: string
   fallbackModel: Model<Api>
   point: BuddySessionRecoveryPoint
+  threadId?: string
 }
 
 export interface BuddySessionRecoveryServiceOptions {
@@ -59,6 +60,14 @@ export class BuddySessionRecoveryService {
     if (pointIndex < 0)
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     const boundary = pointIndex + (input.point.kind === 'after_message' ? 1 : 0)
+    const messages = history.slice(0, boundary).filter((message) => {
+      if (!input.threadId)
+        return true
+      const runId = message.role === 'user'
+        ? this.#options.runInputs.findByMessageId(message.id)?.runId
+        : message.runId
+      return !!runId && this.#options.runs.findById(runId)?.threadId === input.threadId
+    })
     const rejectedInputs = new Map<string, string>()
 
     const missingAttachmentIds = new Set<string>()
@@ -70,7 +79,7 @@ export class BuddySessionRecoveryService {
       prompt: string
     }>()
     let recoveredImageCount = 0
-    for (const message of history.slice(0, boundary)) {
+    for (const message of messages) {
       if (message.role !== 'user')
         continue
       const storedInput = this.#options.runInputs.findByMessageId(message.id)
@@ -105,7 +114,7 @@ export class BuddySessionRecoveryService {
     return {
       messages: createBuddyRecoveryMessages({
         fallbackModel: input.fallbackModel,
-        messages: history.slice(0, boundary),
+        messages,
         resolveRunModel: runId => this.#resolveRunModel(runId),
         resolveUserInput: messageId => recoveredUserInputs.get(messageId) ?? null,
         triggeringMessageId: null,

@@ -32,9 +32,12 @@ const fileName = computed(() => props.file.path.slice(parentPath.value.length))
     <button class="desktop-change-file-block__header flex w-full min-w-0 min-h-[42px] items-center gap-[8px] py-[8px] px-[12px] border-0 bg-subtle text-fg cursor-pointer text-left hover:bg-hover ui-focus-ring" type="button" :aria-expanded="!collapsed" @click="$emit('toggle')">
       <DesktopIcon :component="collapsed ? ChevronRight16Regular : ChevronDown16Regular" />
       <FileIcon :name="file.path" />
-      <span class="flex min-w-0 flex-1 font-mono text-[12px] whitespace-nowrap" :title="file.path">
+      <span class="flex min-w-0 flex-1 font-mono text-[12px] whitespace-nowrap">
         <span v-if="parentPath" class="min-w-0 overflow-hidden text-muted text-ellipsis">{{ parentPath }}</span>
         <span class="desktop-change-file-block__filename min-w-0 max-w-full overflow-hidden font-500 text-ellipsis">{{ fileName }}</span>
+      </span>
+      <span v-if="file.sourceOrder" class="max-w-[150px] shrink-0 overflow-hidden text-muted text-[11px] text-ellipsis whitespace-nowrap" :data-change-source="file.source?.runId">
+        {{ t('desktop.context.changeSource', { name: file.source?.actorName ?? t('desktop.context.changeSourceUnknown'), index: file.sourceOrder }) }}
       </span>
       <span v-if="counts" class="flex flex-none gap-[5px] font-mono text-[11px] font-500"><span class="is-added text-success">+{{ counts.added }}</span><span class="is-deleted text-danger">-{{ counts.deleted }}</span></span>
     </button>

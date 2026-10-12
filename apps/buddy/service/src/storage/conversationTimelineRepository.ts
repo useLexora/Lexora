@@ -102,7 +102,14 @@ export function createConversationTimelineRepository(
   const findAction = database.prepare('SELECT id, conversation_id, branch_id, started_at FROM extension_invocations WHERE id = ? AND branch_id IS NOT NULL')
   const findTriggeringMessageForRun = database.prepare(`
     SELECT messages.* FROM runs
-    INNER JOIN messages ON messages.id = runs.triggering_message_id
+    INNER JOIN runs root ON root.id = CASE
+      WHEN runs.execution_kind = 'actor_child' THEN runs.root_run_id
+      ELSE runs.id
+    END
+      AND root.conversation_id = runs.conversation_id
+      AND root.branch_id = runs.branch_id
+      AND (runs.execution_kind <> 'actor_child' OR root.execution_kind = 'root')
+    INNER JOIN messages ON messages.id = root.triggering_message_id
     WHERE runs.id = ?
   `)
   const timelineProjection = `

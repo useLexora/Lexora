@@ -417,6 +417,8 @@ function resolveRequestPaths(
       break
   }
 
+  if (request.paths)
+    return request.paths
   if (access === 'delete' || access === 'write')
     throw new PermissionValidationError()
   return []

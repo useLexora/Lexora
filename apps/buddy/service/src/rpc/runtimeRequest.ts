@@ -20,6 +20,18 @@ export function registerRuntimeRequest<Contract extends RuntimeRequestContract, 
 
 export type BuddyServiceErrorCode
   = | 'RUNTIME_UNAVAILABLE'
+    | 'BUDDY_NOT_FOUND'
+    | 'BUDDY_CONFLICT'
+    | 'BUDDY_DELETED'
+    | 'BUDDY_DISABLED'
+    | 'BUDDY_NOT_ACTOR'
+    | 'BUDDY_NOT_MEMBER'
+    | 'BUDDY_LEADER_PROTECTED'
+    | 'BUDDY_INVALID_NPC_BINDING'
+    | 'BUDDY_CAPABILITY_UNAVAILABLE'
+    | 'BUDDY_BUILTIN_PROTECTED'
+    | 'BUDDY_DEFAULT_PROTECTED'
+    | 'BUDDY_RESET_UNAVAILABLE'
     | 'DRAFT_CONFLICT'
     | 'DIRECTORY_NOT_AUTHORIZED'
     | 'MODEL_INPUT_UNSUPPORTED'

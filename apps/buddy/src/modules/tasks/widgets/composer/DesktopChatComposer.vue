@@ -6,11 +6,12 @@ import type { JSONContent } from '@tiptap/core'
 import type { DesktopChatComposerProps } from './typing'
 import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import type { WorkbenchMenuSelection } from '@/shared/ui/contributions/workbenchUiContext'
+import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { EditorContent } from '@tiptap/vue-3'
 import { computed, shallowRef, toRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { DesktopModelSelector } from '@/modules/models/ui'
-import { createChatComposerContentFromText } from '@/modules/prompt-input'
+import { chatComposerDocumentToUserContent, createChatComposerContentFromText } from '@/modules/prompt-input'
 import { DesktopChatComposerFrame, DesktopPermissionModeSelector } from '@/modules/prompt-input/ui'
 import ChatContextUsage from '@/modules/tasks/widgets/composer/ChatContextUsage.vue'
 import DesktopChatComposerInteractionHost from '@/modules/tasks/widgets/composer/DesktopChatComposerInteractionHost.vue'
@@ -101,6 +102,7 @@ const {
 })
 
 const queuesSubmission = computed(() => !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
+const collaborationCount = computed(() => isLocalCommand.value ? 0 : getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(props.composerContent)).length)
 const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
 
 defineExpose({
@@ -253,15 +255,17 @@ function captureDraft(): WorkbenchMenuSelection {
       </div>
 
       <div
-        class="desktop-chat-composer__model-selector inline-flex min-w-0 flex-none items-center"
+        class="desktop-chat-composer__model-selector inline-flex min-w-0 flex-none items-center gap-1"
         data-testid="composer-model-selector"
       >
         <DesktopModelSelector
           ref="modelSelectorRef"
-          :disabled="isSending"
+          :busy="Boolean(isUpdatingModel || isLoadingModel)"
+          :disabled="Boolean(isSending)"
           :language="language"
           :models="models"
           :providers="providers"
+          :placeholder="isLoadingModel ? t('desktop.chat.modelControlLoading') : undefined"
           :selected-effort="selectedEffort"
           :selected-model="selectedModel"
           :selected-model-id="selectedModelId"
@@ -288,8 +292,8 @@ function captureDraft(): WorkbenchMenuSelection {
 
     <template #footer>
       <WorkbenchSlot target="composer.footer" class="desktop-chat-composer__footer mt-[0.45rem]">
-        <p class="desktop-chat-composer__disclaimer m-0 text-[0.68rem] text-muted text-center">
-          {{ t('desktop.chat.disclaimer') }}
+        <p class="desktop-chat-composer__disclaimer m-0 text-[0.68rem] text-muted text-center" role="status" :data-testid="collaborationCount > 1 ? 'composer-collaboration-status' : undefined">
+          {{ collaborationCount > 1 ? t('desktop.chat.collaborationStatus', { count: collaborationCount }) : t('desktop.chat.disclaimer') }}
         </p>
       </WorkbenchSlot>
     </template>

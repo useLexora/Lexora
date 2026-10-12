@@ -1,12 +1,26 @@
 import type { SpaceExecutionContext } from '../../../shared/conversation/space'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { BuddyExecutionDefinition } from '../buddies/BuddyExecutionDefinition'
+import type { ConversationModelSelection } from './conversationRecord'
+import { buddyComposerDraftModelSelectionSchema } from '../../../shared/conversation/composerDraft'
 import { spaceExecutionContextSchema } from '../../../shared/conversation/space'
+import { buddyExecutionDefinitionSchema } from '../buddies/BuddyExecutionDefinition'
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunPurpose = 'automation' | 'chat' | 'conversation.compaction'
 
+export type ExecutionKind = 'root' | 'actor_child' | 'npc_child' | 'maintenance'
+
 export interface RunRecord {
+  rootRunId: string
+  parentRunId: string | null
+  executionKind: ExecutionKind
+  threadId: string
+  generation: number
+  modelOverride?: ConversationModelSelection | null
+  actorSnapshot?: BuddyExecutionDefinition | null
+  buddyId: string
   approvalPolicy: BuddyApprovalPolicy
   id: string
   conversationId: string
@@ -27,6 +41,14 @@ export interface RunRecord {
 }
 
 export interface RunRow {
+  root_run_id: string
+  parent_run_id: string | null
+  execution_kind: ExecutionKind
+  thread_id: string
+  generation: number
+  model_override_json: string | null
+  actor_snapshot_json: string | null
+  buddy_id: string
   approval_policy: BuddyApprovalPolicy
   id: string
   conversation_id: string
@@ -55,6 +77,14 @@ export function requireRunRecord(value: unknown, id: string): RunRecord {
 
 export function toRunRecord(row: RunRow): RunRecord {
   return {
+    rootRunId: row.root_run_id,
+    parentRunId: row.parent_run_id,
+    executionKind: row.execution_kind,
+    threadId: row.thread_id,
+    generation: row.generation,
+    modelOverride: row.model_override_json ? buddyComposerDraftModelSelectionSchema.parse(JSON.parse(row.model_override_json)) : null,
+    actorSnapshot: row.actor_snapshot_json ? buddyExecutionDefinitionSchema.parse(JSON.parse(row.actor_snapshot_json)) : null,
+    buddyId: row.buddy_id,
     approvalPolicy: row.approval_policy,
     id: row.id,
     conversationId: row.conversation_id,

@@ -1,5 +1,6 @@
 import type { Message } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
+import type { SessionToolScope } from './SessionToolScope'
 import type { BuddyCatalogTool } from './toolCatalog'
 import type { BuddyToolDisclosurePolicy, BuddyToolExposureContext, BuddyToolExposureResolver, BuddyToolGroupSummary, BuddyToolSearchCandidate, ToolSearchInput, ToolSearchResult } from './toolDiscoveryContract'
 import type { ToolDiscoveryState } from './toolDiscoveryState'
@@ -79,8 +80,9 @@ export class ToolDisclosure {
   readonly #resolveExposure: BuddyToolExposureResolver | undefined
   #discovered = new Set<string>()
 
-  constructor(tools: readonly ToolInfo[], baseline: readonly string[], policies: readonly BuddyToolDisclosurePolicy[], resolveExposure?: BuddyToolExposureResolver) {
-    this.#tools = createToolCatalog(tools, baseline, policies)
+  constructor(tools: readonly ToolInfo[], baseline: readonly string[], policies: readonly BuddyToolDisclosurePolicy[], resolveExposure?: BuddyToolExposureResolver, scope?: SessionToolScope) {
+    scope?.assertRegistered(tools.map(tool => tool.name))
+    this.#tools = new Map([...createToolCatalog(tools, baseline, policies)].filter(([name]) => !scope?.denial(name)))
     this.#resolveExposure = resolveExposure
     this.#index = new MiniSearch({
       idField: 'name',

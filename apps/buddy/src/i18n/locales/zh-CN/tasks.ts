@@ -136,6 +136,8 @@ export default {
   'desktop.context.changePreview.oversized': '文件过大，不提供文本差异',
   'desktop.context.changePreview.sensitive': '敏感文件不提供内容预览',
   'desktop.context.changePreview.unavailable': '无法读取该文件的差异',
+  'desktop.context.changeSource': '{name} · 第 {index} 段',
+  'desktop.context.changeSourceUnknown': '伙伴',
   'desktop.context.changeRedacted': '预览中的敏感内容已脱敏',
   'desktop.context.changeType.created': '新增',
   'desktop.context.changeType.deleted': '删除',

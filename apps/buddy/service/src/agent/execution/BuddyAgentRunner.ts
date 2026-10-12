@@ -4,6 +4,7 @@ import type { RunRecord } from '../../storage/runRecord'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddySessionRegistry, DisposableBuddySession } from '../sessions/BuddySessionRegistry'
 import type { ActiveRunContext } from './ActiveRunRegistry'
+import type { ExecutionLifecyclePort } from './ExecutionLifecyclePort'
 import type { RunExecutionBackend, RunExecutionOutcome } from './RunExecutionBackend'
 import type {
   BuddyTurnHandle,
@@ -17,8 +18,9 @@ import { ActiveRunRegistry } from './ActiveRunRegistry'
 
 export interface BuddyAgentRunnerOptions {
   executor: RunExecutionBackend
-  lifecycle: Pick<RunLifecycleService, 'finalize' | 'find' | 'start'>
-  releaseRunResources?: (runId: string) => void
+  executions: ExecutionLifecyclePort
+  lifecycle: Pick<RunLifecycleService, 'find' | 'start'>
+  releaseRunResources?: (runId: string) => void | Promise<void>
   onObserverError?: (error: unknown) => void
   sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
 }
@@ -27,6 +29,7 @@ export class BuddyAgentRunner {
   readonly #activeRuns: ActiveRunRegistry
   readonly onDidSettle: ActiveRunRegistry['onDidSettle']
   readonly #executor: BuddyAgentRunnerOptions['executor']
+  readonly #executions: ExecutionLifecyclePort
   readonly #lifecycle: BuddyAgentRunnerOptions['lifecycle']
   readonly #releaseRunResources: NonNullable<BuddyAgentRunnerOptions['releaseRunResources']>
   readonly #sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
@@ -34,6 +37,7 @@ export class BuddyAgentRunner {
 
   constructor(options: BuddyAgentRunnerOptions) {
     this.#executor = options.executor
+    this.#executions = options.executions
     this.#activeRuns = new ActiveRunRegistry(options.onObserverError)
     this.onDidSettle = this.#activeRuns.onDidSettle
     this.#lifecycle = options.lifecycle
@@ -120,21 +124,26 @@ export class BuddyAgentRunner {
     return this.#activeRuns.followUp(runId, prepare, skills)
   }
 
-  async cancel(runId: string, errorCode = 'RUN_CANCELLED'): Promise<boolean> {
+  async interruptExecution(runId: string, errorCode = 'RUN_CANCELLED'): Promise<boolean> {
     return this.#activeRuns.cancel(runId, errorCode)
   }
 
+  async cancel(runId: string, errorCode = 'RUN_CANCELLED'): Promise<boolean> {
+    return this.#executions.cancel(runId, errorCode, id => this.#activeRuns.cancel(id, errorCode))
+  }
+
   cancelAndWaitForConversation(conversationId: string): Promise<number> {
-    return this.#activeRuns.cancelAndWaitForConversation(conversationId)
+    return this.#executions.cancelAll({ conversationId }, id => this.#activeRuns.cancel(id))
   }
 
   cancelAndWaitForRoot(canonicalRoot: string): Promise<number> {
-    return this.#activeRuns.cancelAndWaitForRoot(canonicalRoot)
+    return this.#executions.cancelAll({ runIds: this.#activeRuns.activeRunIds(canonicalRoot) }, id => this.#activeRuns.cancel(id))
   }
 
   async dispose(): Promise<void> {
+    this.#activeRuns.stopAccepting()
     const failures: unknown[] = []
-    for (const cleanup of [() => this.#activeRuns.dispose(), () => this.#sessions.dispose()]) {
+    for (const cleanup of [() => this.#executions.cancelAll({}, id => this.#activeRuns.cancel(id)), () => this.#activeRuns.dispose(), () => this.#sessions.dispose()]) {
       try {
         await cleanup()
       }
@@ -146,16 +155,28 @@ export class BuddyAgentRunner {
       throw new AggregateError(failures, 'Execution backend cleanup failed')
   }
 
-  async #withConversationRun(execution: ActiveRunContext, operation: () => Promise<RunRecord>): Promise<RunRecord> {
-    let entered = false
+  async #withConversationRun(execution: ActiveRunContext, operation: () => Promise<RunExecutionOutcome>): Promise<RunRecord> {
+    let outcome: RunExecutionOutcome | null = null
+    let fatal = false
+    const handleError = async (error: unknown) => {
+      if (error instanceof RunEventLogFatalError) {
+        fatal = true
+        return
+      }
+      outcome = await this.#outcomeFromError(execution, error)
+    }
     try {
-      return await this.#sessions.withConversationRun(
+      await this.#sessions.withConversationRun(
         execution.identity,
         execution.runId,
         execution.signal,
-        () => {
-          entered = true
-          return operation().catch(error => this.#closeExecutionFromError(execution, error))
+        async () => {
+          try {
+            outcome = await operation()
+          }
+          catch (error) {
+            await handleError(error)
+          }
         },
         (result) => {
           if (result.cleanup === 'degraded')
@@ -164,25 +185,43 @@ export class BuddyAgentRunner {
       )
     }
     catch (error) {
-      if (entered)
-        throw error
-      return await this.#closeExecutionFromError(execution, error)
+      await handleError(error)
     }
     finally {
       try {
-        this.#releaseRunResources(execution.runId)
+        await this.#releaseRunResources(execution.runId)
       }
       catch {
         execution.markCleanupDegraded()
       }
+    }
+    if (fatal) {
+      const run = this.#lifecycle.find(execution.runId)
+      if (!run)
+        throw new BuddyAgentRunError('RUN_NOT_FOUND')
+      return run
+    }
+    const result: RunExecutionOutcome = outcome ?? { status: 'failed', errorCode: 'AGENT_RUN_FAILED' }
+    try {
+      return await this.#executions.finalize({ runId: execution.runId, outcome: withCancellationCode(result, execution.getCancellationCode()), cleanup: execution.getCleanupState() })
+    }
+    catch (error) {
+      if (!(error instanceof RunEventLogFatalError))
+        throw error
+      const run = this.#lifecycle.find(execution.runId)
+      if (!run)
+        throw new BuddyAgentRunError('RUN_NOT_FOUND')
+      return run
     }
   }
 
   async #executeTurn(
     input: StartBuddyTurnInput,
     execution: ActiveRunContext,
-  ): Promise<RunRecord> {
+  ): Promise<RunExecutionOutcome> {
     const { identity, runId, signal } = execution
+    signal.throwIfAborted()
+    const continuation = await this.#executions.begin(runId, signal)
     signal.throwIfAborted()
     const run = await this.#lifecycle.start({
       expectedPurposes: ['automation', 'chat'],
@@ -191,6 +230,7 @@ export class BuddyAgentRunner {
       startedAt: this.#timestamp(),
     })
     const outcome = await this.#executor.executeTurn({
+      continuation,
       identity,
       input,
       onSessionActivated: execution.activateSession,
@@ -199,14 +239,14 @@ export class BuddyAgentRunner {
       signal,
       timestamp: () => this.#timestamp(),
     })
-    return this.#closeExecutionOutcome(execution, outcome)
+    return outcome
   }
 
   async #executeCompaction(
     input: StartBuddyCompactionInput,
     run: RunRecord,
     execution: ActiveRunContext,
-  ): Promise<RunRecord> {
+  ): Promise<RunExecutionOutcome> {
     execution.signal.throwIfAborted()
     const startedRun = await this.#lifecycle.start({
       expectedPurposes: ['conversation.compaction'],
@@ -222,73 +262,21 @@ export class BuddyAgentRunner {
       signal: execution.signal,
       timestamp: () => this.#timestamp(),
     })
-    return this.#closeExecutionOutcome(execution, outcome)
+    return outcome
   }
 
-  async #closeExecutionFromError(
+  async #outcomeFromError(
     execution: ActiveRunContext,
     error: unknown,
-  ): Promise<RunRecord> {
-    if (error instanceof RunEventLogFatalError) {
-      const run = this.#lifecycle.find(execution.runId)
-      if (!run)
-        throw new BuddyAgentRunError('RUN_NOT_FOUND')
-      return run
-    }
+  ): Promise<RunExecutionOutcome> {
     await this.#executor.invalidateSessionContinuityAfterFailure({
       error,
       identity: execution.identity,
       runId: execution.runId,
     })
-    if (execution.signal.aborted || isAbortError(error)) {
-      return this.#closeRun(
-        execution.runId,
-        'cancelled',
-        execution.getCancellationCode() ?? 'RUN_CANCELLED',
-      )
-    }
-    return this.#closeRun(
-      execution.runId,
-      'failed',
-      readStableRunErrorCode(error),
-    )
-  }
-
-  #closeExecutionOutcome(
-    execution: ActiveRunContext,
-    outcome: RunExecutionOutcome,
-  ): Promise<RunRecord> {
-    const { runId } = execution
-    if (outcome.status === 'completed')
-      return this.#closeRun(runId, 'completed', null)
-    if (outcome.status === 'cancelled') {
-      return this.#closeRun(
-        runId,
-        'cancelled',
-        outcome.errorCode ?? execution.getCancellationCode() ?? 'RUN_CANCELLED',
-      )
-    }
-    return this.#closeRun(
-      runId,
-      'failed',
-      outcome.errorCode,
-      outcome.errorMessage,
-    )
-  }
-
-  async #closeRun(
-    runId: string,
-    status: 'cancelled' | 'completed' | 'failed',
-    errorCode: string | null,
-    errorMessage?: string,
-  ): Promise<RunRecord> {
-    return this.#lifecycle.finalize({
-      completedAt: this.#timestamp(),
-      errorCode,
-      errorMessage,
-      runId,
-      status,
-    })
+    if (execution.signal.aborted || isAbortError(error))
+      return { status: 'cancelled', errorCode: execution.getCancellationCode() ?? 'RUN_CANCELLED' }
+    return { status: 'failed', errorCode: readStableRunErrorCode(error) }
   }
 
   #timestamp(): string {
@@ -319,4 +307,10 @@ function createRunStartedPayload(
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError'
+}
+
+function withCancellationCode(outcome: RunExecutionOutcome, cancellationCode: string | null): RunExecutionOutcome {
+  return outcome.status === 'cancelled'
+    ? { ...outcome, errorCode: outcome.errorCode ?? cancellationCode ?? 'RUN_CANCELLED' }
+    : outcome
 }

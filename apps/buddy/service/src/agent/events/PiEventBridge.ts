@@ -54,7 +54,6 @@ export interface PiEventBridgeSettlement {
 export interface PiTurnEventOutcome {
   failureCode: string | undefined
   failureMessage: string | undefined
-  finalAssistantAnswerProjected: boolean
 }
 
 interface PiEventChannel {
@@ -137,7 +136,6 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   #eventTail = Promise.resolve()
   #failureCode: string | undefined
   #failureMessage: string | undefined
-  #finalAssistantAnswerProjected = false
   #pendingTerminalToolUpdates = new Map<string, PiToolExecutionUpdateEvent>()
   #terminalToolUpdateTimer: NodeJS.Timeout | undefined
 
@@ -165,7 +163,6 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     return {
       failureCode: this.#failureCode,
       failureMessage: this.#failureMessage,
-      finalAssistantAnswerProjected: this.#finalAssistantAnswerProjected,
     }
   }
 
@@ -265,8 +262,6 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
         this.#failureCode = undefined
         this.#failureMessage = undefined
       }
-      this.#finalAssistantAnswerProjected = event.message.stopReason === 'stop'
-        && projected.events.some(candidate => candidate.type === 'message.completed')
     }
     this.#appendProjectedEvents(projected.events)
     if (this.#recordEventUsage)

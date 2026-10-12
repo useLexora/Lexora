@@ -6,6 +6,7 @@ import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } 
 import type { ArtifactService } from './artifacts/ArtifactService'
 import type { CreateAutomationToolOptions } from './automations/createAutomationTool'
 import type { BrowserCapabilityHost } from './browser/BrowserCapabilityService'
+import type { BuddiesService } from './buddies/BuddiesService'
 import type { McpConnectorService } from './connectors/mcp/McpConnectorService'
 import type { SessionReferenceServices } from './conversations/SessionReferenceService'
 import type { ImageGenerationGateway } from './images/ImageGenerationGateway'
@@ -18,6 +19,7 @@ import type { WebCapabilityService } from './web/WebCapabilityService'
 import { createOutputPresentationCapability } from './artifacts/outputPresentationExtension'
 import { createAutomationCapability } from './automations/automationExtension'
 import { createBrowserCapability } from './browser/browserExtension'
+import { createBuddiesCapability } from './buddies/buddiesExtension'
 import { createMcpCapability } from './connectors/mcp/mcpExtension'
 import { createMcpResultWriter } from './connectors/mcp/McpResultStore'
 import { createSessionReferenceCapability } from './conversations/sessionReferenceExtension'
@@ -33,6 +35,8 @@ import { createSystemCapability } from './system/systemExtension'
 import { createWebCapability } from './web/webExtension'
 
 export interface BuddyCapabilityServices {
+  buddies: BuddiesService
+  getRunBuddyId: (runId: string) => string | null
   record?: ApplicationDiagnosticReporter
   pluginCapabilities?: (context: BuddyCapabilityContext) => Promise<BuddyCapability[]>
   pluginAuthoring: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
@@ -48,7 +52,7 @@ export interface BuddyCapabilityServices {
   imageTransformService: Pick<ImageTransformService, 'removeChroma'>
   webService: Pick<WebCapabilityService, 'search' | 'fetch'>
   conversations: SessionReferenceServices['conversations']
-  eventLog: SessionReferenceServices['eventLog']
+  publications: SessionReferenceServices['publications']
 }
 
 export function createBuddyCapabilityFactory(
@@ -97,11 +101,15 @@ export function createBuddyCapabilityFactory(
       createImageCapability(context, services),
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),
-      createSessionReferenceCapability({ conversationId: context.conversationId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, eventLog: services.eventLog }),
+      createSessionReferenceCapability({ conversationId: context.conversationId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, publications: services.publications }),
       ...supported.map(create => create(context)),
     ]
     try {
       if (context.sessionMode === 'interactive') {
+        capabilities.push(createBuddiesCapability(context, services.buddies, () => {
+          const runId = context.getRunId()
+          return runId ? services.getRunBuddyId(runId) : null
+        }))
         capabilities.push(...await services.pluginCapabilities?.(context) ?? [])
         capabilities.push(createPluginAuthoringCapability(context, services.pluginAuthoring, services.pluginBuilder))
         capabilities.push(createSkillAuthoringCapability(context, { ...services.skillAuthoring, conversations: services.conversations }))

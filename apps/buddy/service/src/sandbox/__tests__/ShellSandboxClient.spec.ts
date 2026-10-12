@@ -31,13 +31,40 @@ function fixture() {
   const controller = new AbortController()
   const events: SandboxClientEvent[] = []
   client.onDidChange(event => events.push(event))
-  const execute = () => client.exec({ command: 'private command text', cwd: '/workspace', roots: ['/workspace'], workspaceRoots: [], resourceReadRoots: [], additionalDirectories: [], readOnly: true }, { onData: () => {}, signal: controller.signal }, async () => false)
-  return { client, controller, events, execute, notifications, response, backend(revision: number, kind: string, result?: unknown) {
-    for (const listener of listeners) listener('host.sandbox.lifecycle', { requestId, revision, kind, snapshot: { phase: kind === 'settled' ? 'finished' : 'running', started: true, waiting: 0, cancellation: 'none', ...result ? { result } : {} } })
+  const execute = (supervision?: Parameters<ShellSandboxClient['exec']>[3]) => client.exec({ command: 'private command text', cwd: '/workspace', roots: ['/workspace'], workspaceRoots: [], resourceReadRoots: [], additionalDirectories: [], readOnly: true }, { onData: () => {}, signal: controller.signal }, async () => false, supervision)
+  return { client, controller, events, execute, notifications, response, backend(revision: number, kind: string, result?: unknown, process?: unknown) {
+    for (const listener of listeners) listener('host.sandbox.lifecycle', { requestId, revision, kind, snapshot: { phase: kind === 'settled' ? 'finished' : 'running', started: true, waiting: 0, cancellation: 'none', ...result ? { result } : {}, ...process ? { process } : {} } })
   } }
 }
 
 describe('sandbox client facts', () => {
+  it('requires a trusted tree release receipt even when the backend returns success', async () => {
+    const f = fixture()
+    const states = new Map<string, string>()
+    const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
+    f.backend(1, 'started')
+    f.backend(2, 'settled', { ok: true, exitCode: 0 })
+    f.response.resolve({ ok: true, exitCode: 0 })
+    await pending
+    expect([...states.values()]).toEqual(['unknown'])
+    await f.client.dispose()
+  })
+
+  it('retains actual tree release facts after cancellation without treating cancellation delivery as proof', async () => {
+    const f = fixture()
+    const states = new Map<string, string>()
+    const identity = JSON.stringify({ kind: 'native-shell', pid: 1234, startTime: '12345', bootId: 'fixture' })
+    const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
+    const rejected = expect(pending).rejects.toThrow()
+    f.backend(1, 'process', undefined, { phase: 'spawned', pid: 1234, processId: identity })
+    f.controller.abort()
+    expect([...states.values()]).toEqual(['pending', 'pending'])
+    f.backend(2, 'process', undefined, { phase: 'resources_released', pid: 1234, processId: identity })
+    f.response.resolve({ ok: false, code: 'SANDBOX_CANCELLED' })
+    await rejected
+    expect([...states.values()]).toEqual(['released', 'released'])
+    await f.client.dispose()
+  })
   it('retains tool correlation across incoming backend notifications outside the original async scope', async () => {
     const f = fixture()
     const records: import('../../../../shared/diagnostics/applicationDiagnostic').ApplicationDiagnostic[] = []

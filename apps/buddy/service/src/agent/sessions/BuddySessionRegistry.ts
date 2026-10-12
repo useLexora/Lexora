@@ -114,7 +114,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     if (this.#disposal)
       throw new BuddySessionLifecycleAbortError()
     identity = copyEventSnapshot(identity)
-    const conversationKey = createConversationKey(identity)
+    const conversationKey = createThreadKey(identity)
     const boundRoot = this.#conversationRoots.get(conversationKey)
     if (boundRoot !== undefined && boundRoot !== identity.canonicalRoot)
       throw new BuddySessionBindingError()
@@ -133,7 +133,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
 
     for (const [candidateKey, candidateIdentity] of [...this.#identities]) {
       const candidate = this.#sessions.get(candidateKey)
-      if (candidate && createConversationKey(candidateIdentity) === conversationKey)
+      if (candidate && createThreadKey(candidateIdentity) === conversationKey)
         await this.#settleSessionDisposal(candidateKey, 'resource-change', candidate)
     }
     if (this.#disposal)
@@ -160,7 +160,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         this.#sessions.delete(sessionKey)
         this.#identities.delete(sessionKey)
         this.#lastUsed.delete(sessionKey)
-        if (![...this.#identities.values()].some(candidate => createConversationKey(candidate) === conversationKey))
+        if (![...this.#identities.values()].some(candidate => createThreadKey(candidate) === conversationKey))
           this.#conversationRoots.delete(conversationKey)
         this.#publish('startup-failed', this.#snapshotEntry(entry))
       }
@@ -180,13 +180,14 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   }
 
   getActiveRun(identity: BuddySessionIdentity): ActiveRun | undefined {
-    const run = this.#activeRuns.get(createConversationKey(identity))
+    const run = this.#activeRuns.get(createThreadKey(identity))
     return run ? Object.freeze({ ...run }) : undefined
   }
 
-  getReady(conversationId: string, branchId: string): TSession | null {
+  getReady(conversationId: string, branchId: string, actorId?: string): TSession | null {
     for (const [key, identity] of this.#identities) {
-      if (identity.conversationId === conversationId && identity.branchId === branchId) {
+      if (identity.conversationId === conversationId && identity.branchId === branchId
+        && identity.actorKind !== 'npc' && (!actorId || identity.actorId === actorId)) {
         const entry = this.#sessions.get(key)
         if (entry?.status === 'ready')
           return entry.binding?.session ?? null
@@ -219,9 +220,9 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     return this.invalidateMatching(identity => identity.conversationId === conversationId)
   }
 
-  refreshConversationModel(conversationId: string): void {
+  refreshRunModel(runId: string): void {
     for (const entry of this.#sessions.values()) {
-      if (entry.identity.conversationId === conversationId)
+      if (this.#activeRuns.get(createThreadKey(entry.identity))?.runId === runId)
         entry.binding?.session.refreshModelSelection?.()
     }
   }
@@ -265,7 +266,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     operation: () => Promise<TResult>,
     onReleased?: (result: BuddyRunRelease) => void,
   ): Promise<TResult> {
-    const conversationKey = createConversationKey(identity)
+    const conversationKey = createThreadKey(identity)
     const previous = this.#runTails.get(conversationKey) ?? Promise.resolve()
     let release!: () => void
     const current = new Promise<void>((resolve) => {
@@ -339,7 +340,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
       if (!entry || (selected && !selected.has(entry.id)) || !predicate(identity))
         continue
       affected.add(entry.id)
-      const conversationKey = createConversationKey(identity)
+      const conversationKey = createThreadKey(identity)
       if (this.#activeRuns.has(conversationKey)) {
         if (!this.#pendingInvalidations.has(sessionKey)) {
           this.#pendingInvalidations.add(sessionKey)
@@ -357,7 +358,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
   async #flushInvalidations(conversationKey: string): Promise<void> {
     for (const sessionKey of [...this.#pendingInvalidations]) {
       const identity = this.#identities.get(sessionKey)
-      if (!identity || createConversationKey(identity) !== conversationKey)
+      if (!identity || createThreadKey(identity) !== conversationKey)
         continue
       this.#pendingInvalidations.delete(sessionKey)
       const entry = this.#sessions.get(sessionKey)
@@ -394,8 +395,8 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     }
     finally {
       if (identity) {
-        const conversationKey = createConversationKey(identity)
-        if (![...this.#identities.values()].some(candidate => createConversationKey(candidate) === conversationKey))
+        const conversationKey = createThreadKey(identity)
+        if (![...this.#identities.values()].some(candidate => createThreadKey(candidate) === conversationKey))
           this.#conversationRoots.delete(conversationKey)
       }
     }
@@ -407,7 +408,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
         .filter(([sessionKey]) => sessionKey !== protectedKey)
         .filter(([sessionKey]) => {
           const identity = this.#identities.get(sessionKey)
-          return identity && !this.#activeRuns.has(createConversationKey(identity))
+          return identity && !this.#activeRuns.has(createThreadKey(identity))
         })
         .sort((left, right) => left[1] - right[1])[0]?.[0]
       if (!candidate)
@@ -424,7 +425,7 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     entry: BuddySessionEntry<TSession>,
   ): Promise<void> {
     const identity = this.#identities.get(sessionKey)
-    const conversationKey = identity ? createConversationKey(identity) : undefined
+    const conversationKey = identity ? createThreadKey(identity) : undefined
     const degrade = () => {
       if (conversationKey && this.#runCleanup.has(conversationKey))
         this.#runCleanup.set(conversationKey, 'degraded')
@@ -553,13 +554,13 @@ class BuddySessionLifecycleAbortError extends Error {
   }
 }
 
-function createConversationKey(identity: BuddySessionIdentity): string {
-  return identity.conversationId
+function createThreadKey(identity: BuddySessionIdentity): string {
+  return [identity.conversationId, identity.threadId ?? 'legacy'].join('\0')
 }
 
 function createSessionKey(identity: BuddySessionIdentity): string {
   return [
-    createConversationKey(identity),
+    createThreadKey(identity),
     identity.branchId,
     identity.canonicalRoot,
     identity.approvalPolicy,
@@ -567,6 +568,8 @@ function createSessionKey(identity: BuddySessionIdentity): string {
     identity.sessionMode,
     identity.grantRevision,
     identity.resourceRevision,
+    identity.actorId ?? '',
+    identity.actorFingerprint ?? '',
   ].join('\0')
 }
 

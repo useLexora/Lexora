@@ -17,6 +17,7 @@ export interface ChatDraftState {
   editVersion: number
   executionProfile: LocalComposerDraft['executionConfig']['executionProfile']
   modelSelection: LocalComposerDraft['modelSelection']
+  participants?: LocalComposerDraft['participants']
   revision: number | null
 }
 
@@ -34,6 +35,8 @@ export interface ChatDrafts {
   editorKey: ComputedRef<string>
   executionProfile: ComputedRef<ChatDraftState['executionProfile']>
   modelSelection: ComputedRef<ChatDraftState['modelSelection']>
+  participants: ComputedRef<LocalComposerDraft['participants']>
+  setParticipants: (value: LocalComposerDraft['participants']) => void
   targetKey: ComputedRef<string>
   acknowledgeSend: (receipt: ComposerDraftReceipt, targetKey: string) => boolean
   appendResourcePanel: (draftId: string, resourceIds: readonly string[], editorSessionId?: string) => void

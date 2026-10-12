@@ -3,12 +3,15 @@ import type {
   AutomationExecutionSnapshot,
   AutomationOccurrence,
 } from '../../../shared/automation'
+import type { BuddyConfigurationSnapshot } from '../buddies/BuddyExecutionDefinition'
 import {
   automationExecutionSnapshotSchema,
   automationOccurrenceSchema,
 } from '../../../shared/automation'
+import { buddyConfigurationSnapshotSchema } from '../buddies/BuddyExecutionDefinition'
 
 export interface AutomationOccurrenceRecord extends AutomationOccurrence {
+  actorSnapshot: BuddyConfigurationSnapshot | null
   dedupeKey: string
   executionSnapshot: AutomationExecutionSnapshot
   leaseExpiresAt: string | null
@@ -17,6 +20,7 @@ export interface AutomationOccurrenceRecord extends AutomationOccurrence {
 }
 
 export interface AutomationOccurrenceRow {
+  actor_snapshot_json: string | null
   automation_id: string
   automation_revision: number
   bound_at: string | null
@@ -70,6 +74,7 @@ export function toAutomationOccurrenceRecord(
   })
   return {
     ...occurrence,
+    actorSnapshot: row.actor_snapshot_json ? buddyConfigurationSnapshotSchema.parse(JSON.parse(row.actor_snapshot_json)) : null,
     dedupeKey: row.dedupe_key,
     executionSnapshot: automationExecutionSnapshotSchema.parse(
       JSON.parse(row.execution_snapshot_json),

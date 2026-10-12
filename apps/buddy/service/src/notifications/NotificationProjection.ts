@@ -5,6 +5,7 @@ import type { AutomationService } from '../automations/AutomationService'
 import type { RunEventObservation } from '../events/RunEventPorts'
 import type { ProviderService } from '../providers/ProviderService'
 import type { RunLifecycleService } from '../runs/RunLifecycleService'
+import type { RunRepository } from '../storage/runRepository'
 import type { AttentionNotificationService } from './AttentionNotificationService'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../../shared/events/Emitter'
@@ -25,6 +26,7 @@ export class NotificationProjection {
     providers: Pick<ProviderService, 'onDidCommit'>
     automations: Pick<AutomationService, 'onDidCommit'>
     runs: RunEventObservation
+    runRecords: Pick<RunRepository, 'findById'>
     lifecycle: Pick<RunLifecycleService, 'onDidReconcile'>
     record: ApplicationDiagnosticReporter
   }) {
@@ -40,10 +42,13 @@ export class NotificationProjection {
           this.reconcile()
       }),
       options.runs.onDidCommit((event) => {
-        if (event.type === 'run.completed' || event.type === 'run.failed')
+        if ((event.type === 'run.completed' || event.type === 'run.failed') && options.runRecords.findById(event.runId)?.executionKind === 'root')
           this.reconcile()
       }),
-      options.lifecycle.onDidReconcile(() => this.reconcile()),
+      options.lifecycle.onDidReconcile((event) => {
+        if (options.runRecords.findById(event.runId)?.executionKind === 'root')
+          this.reconcile()
+      }),
     ]
     this.reconcile()
   }

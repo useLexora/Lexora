@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../../shared/conversation/modelSelection'
+import type { ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../../../../shared/executions/executionApi'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalCacheWarmingStatus } from '../../../../shared/runs/conversationStatusApi'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
@@ -36,6 +37,10 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
   abort: () => Promise<void>
   abortCompaction: () => void
   activateTurn: (input: BuddySessionTurnContext) => Promise<() => void>
+  readInternalMessageReceipts: (messages: readonly ExecutionMailboxMessage[]) => Promise<readonly ExecutionMailboxReceipt[]>
+  appendInternalMessages: (messages: readonly ExecutionMailboxMessage[]) => Promise<readonly ExecutionMailboxReceipt[]>
+  resumeInternal: (receipts: readonly ExecutionMailboxReceipt[]) => Promise<void>
+  finishTurn: () => Promise<void>
   canCompact: () => boolean
   compact: (customInstructions?: string) => Promise<CompactionResult>
   prompt: (text: string, options?: {
@@ -48,6 +53,8 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
 }
 
 export interface BuddySessionTurnContext extends BuddySessionModelSelection {
+  generation: number
+  deferQueuedInputs?: boolean
   flushProjectedEvents: () => Promise<void>
   onToolExecutionAuthorized: (event: {
     arguments: unknown

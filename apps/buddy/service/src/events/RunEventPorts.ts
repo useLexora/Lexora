@@ -21,7 +21,8 @@ export interface RunEventReader {
     conversationId: string,
     options?: Pick<ListBuddyRunEventsOptions, 'limit'>,
   ) => BuddyRunEvent[]
-  listForRuns: (runIds: readonly string[]) => BuddyRunEvent[]
+  listForRuns: (runIds: readonly string[], options?: { latestActivityOnly?: boolean }) => BuddyRunEvent[]
+  listToolCounts: (runIds: readonly string[]) => ReadonlyMap<string, number>
   read: (runId: string) => Promise<BuddyRunEvent[]>
 }
 

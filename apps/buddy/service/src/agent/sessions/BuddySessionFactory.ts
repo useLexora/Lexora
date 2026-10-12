@@ -87,15 +87,21 @@ export class BuddySessionFactory {
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     }
 
+    const effectiveModel = run.modelOverride ?? run.actorSnapshot?.model
+    const changedModel = effectiveModel && (effectiveModel.providerId !== run.provider || effectiveModel.modelId !== run.model)
     const selected = await this.#options.models.resolveSession({
-      contextWindow: run.contextWindow,
-      maxTokens: run.maxTokens,
-      modelId: run.model,
-      providerId: run.provider,
+      contextWindow: changedModel ? null : run.contextWindow,
+      maxTokens: changedModel ? null : run.maxTokens,
+      modelId: effectiveModel?.modelId ?? run.model,
+      providerId: effectiveModel?.providerId ?? run.provider,
     })
     const extensions = await events.operation('session.resources', async () => {
-      await this.#options.services.prepareForRun?.(input.signal)
+      if (run.purpose !== 'conversation.compaction')
+        await this.#options.services.prepareForRun?.(input.signal)
       return createBuddySessionExtensions({
+        actorKind: blueprint.actor?.kind,
+        toolScope: run.purpose === 'conversation.compaction' ? { mode: 'none' } : blueprint.actor?.settings.tools,
+        fileAccessLimit: this.#options.getRunPermissionCeiling(run.id) === 'read_only' ? 'read_only' : blueprint.actor?.settings.limits.fileAccess,
         approvalPolicy: blueprint.approvalPolicy,
         canonicalRoot: blueprint.canonicalRoot,
         conversationId: blueprint.conversationId,
@@ -137,32 +143,34 @@ export class BuddySessionFactory {
       let runPermissionCeiling: BuddyExecutionProfile | undefined
       const restrictPermissions = (settings: BuddyPermissionSettings): BuddyPermissionSettings => ({
         ...settings,
-        executionProfile: runPermissionCeiling === 'read_only'
+        executionProfile: runPermissionCeiling === 'read_only' || blueprint.actor?.settings.limits.fileAccess === 'read_only'
           ? 'read_only'
           : settings.executionProfile,
       })
       reusable = createReusableBuddySession({
-        getModelSelection: blueprint.sessionMode === 'interactive'
-          ? async () => {
-            while (true) {
-              const current = this.#options.conversations.findById(blueprint.conversationId)
-              if (!current?.modelSelection)
-                return null
-              const selection = current.modelSelection
-              const model = await this.#options.models.resolveAvailable({ providerId: selection.providerId, modelId: selection.modelId, contextWindow: null, maxTokens: null })
-              if (JSON.stringify(this.#options.conversations.findById(blueprint.conversationId)?.modelSelection) !== JSON.stringify(selection))
-                continue
-              return {
-                provider: selection.providerId,
-                model: selection.modelId,
-                contextWindow: model.contextWindow,
-                maxTokens: model.maxTokens,
-                thinkingLevel: selection.reasoning ?? undefined,
-                serviceTier: selection.serviceTier,
-              }
+        getModelSelection: async () => {
+          while (true) {
+            const activeRun = this.#options.runs.findById(extensions.runContext.current?.runId ?? run.id)
+            const readSelection = () => {
+              const currentRun = this.#options.runs.findById(activeRun?.id ?? run.id)
+              return currentRun?.modelOverride ?? currentRun?.actorSnapshot?.model ?? blueprint.actor?.model
+            }
+            const selection = readSelection()
+            if (!selection)
+              return null
+            const model = await this.#options.models.resolveAvailable({ providerId: selection.providerId, modelId: selection.modelId, contextWindow: null, maxTokens: null })
+            if (JSON.stringify(readSelection()) !== JSON.stringify(selection))
+              continue
+            return {
+              provider: selection.providerId,
+              model: selection.modelId,
+              contextWindow: model.contextWindow,
+              maxTokens: model.maxTokens,
+              thinkingLevel: selection.reasoning ?? undefined,
+              serviceTier: selection.serviceTier,
             }
           }
-          : undefined,
+        },
         getPermissionSettings: (runId) => {
           runPermissionCeiling = this.#options.getRunPermissionCeiling(runId)
           const current = this.#options.conversations.findById(blueprint.conversationId)
@@ -172,7 +180,7 @@ export class BuddySessionFactory {
         },
         updatePermissionSettings: settings => extensions.updatePermissionSettings(restrictPermissions(settings)),
         setCodemodeEnabled: extensions.setCodemodeEnabled,
-        skillReferences: blueprint.resources.skillReferences,
+        skillReferences: blueprint.resources.availableSkillReferences ?? blueprint.resources.skillReferences,
         tree,
         assertModelAccess: async (provider, model, contextWindow, maxTokens) => {
           return this.#options.models.resolveAvailable({

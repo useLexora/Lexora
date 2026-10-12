@@ -51,7 +51,7 @@ export class RunEventQueries {
           events.created_at
         FROM run_events AS events
         INNER JOIN runs ON runs.id = events.run_id
-        WHERE runs.conversation_id = ?
+        WHERE runs.conversation_id = ? AND runs.execution_kind IN ('root', 'maintenance')
         ORDER BY events.created_at DESC, events.run_id DESC, events.sequence DESC
         LIMIT ?
       )
@@ -60,16 +60,39 @@ export class RunEventQueries {
     return (rows as unknown as RunEventRow[]).map(toRunEvent)
   }
 
-  listForRuns(runIds: readonly string[]): BuddyRunEvent[] {
+  listForRuns(runIds: readonly string[], options: { latestActivityOnly?: boolean } = {}): BuddyRunEvent[] {
     const ids = [...new Set(runIds)]
     if (ids.length === 0)
       return []
-    const rows = this.#database.prepare(`
-      SELECT * FROM run_events
-      WHERE run_id IN (${ids.map(() => '?').join(', ')})
-      ORDER BY created_at, run_id, sequence
-    `).all(...ids)
+    const placeholders = ids.map(() => '?').join(', ')
+    const rows = options.latestActivityOnly
+      ? this.#database.prepare(`
+          WITH requested(run_id) AS (VALUES ${ids.map(() => '(?)').join(', ')}), positions(run_id, sequence) AS (
+            SELECT run_id, (SELECT MAX(sequence) FROM run_events WHERE run_events.run_id = requested.run_id) FROM requested
+            UNION
+            SELECT run_id, (SELECT MAX(sequence) FROM run_events WHERE run_events.run_id = requested.run_id AND event_type = 'run.progress') FROM requested
+          )
+          SELECT events.* FROM positions JOIN run_events events ON events.run_id = positions.run_id AND events.sequence = positions.sequence
+          ORDER BY events.created_at, events.run_id, events.sequence
+        `).all(...ids)
+      : this.#database.prepare(`
+          SELECT * FROM run_events
+          WHERE run_id IN (${placeholders})
+          ORDER BY created_at, run_id, sequence
+        `).all(...ids)
     return (rows as unknown as RunEventRow[]).map(toRunEvent)
+  }
+
+  listToolCounts(runIds: readonly string[]): ReadonlyMap<string, number> {
+    const ids = [...new Set(runIds)]
+    if (!ids.length)
+      return new Map()
+    const rows = this.#database.prepare(`
+      SELECT run_id AS runId, COUNT(*) AS count FROM run_events
+      WHERE run_id IN (${ids.map(() => '?').join(', ')}) AND event_type = 'tool.started'
+      GROUP BY run_id
+    `).all(...ids) as { runId: string, count: number }[]
+    return new Map(rows.map(row => [row.runId, row.count]))
   }
 
   listCompactableTerminalRunIds(): string[] {

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import type { Editor } from '@tiptap/core'
-import { buddyUserContentV1Schema, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentV1Schema, createBuddyUserContent, getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { Editor as TiptapEditor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { afterEach, describe, expect, it } from 'vitest'
+import { ChatComposerActorReference, insertChatComposerActorReference } from '../../editor/chatComposerActorEditing'
 import {
   ChatComposerDocument,
   ChatComposerPromptDirective,
@@ -37,6 +38,7 @@ describe('composer product document boundary', () => {
           { type: 'resource_ref', resourceId: 'image-a' },
           { directive: 'skill', type: 'prompt_directive', value: 'review', skill: { id: 'review-id', name: 'review', revision: 'revision-one' } },
           { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/review' },
+          { actorId: 'reviewer', name: '审查伙伴', type: 'actor_ref' },
         ],
         type: 'paragraph',
       }, { type: 'paragraph', content: [] }],
@@ -157,6 +159,7 @@ function createEditor() {
       }),
       ChatComposerPromptDirective,
       ChatComposerSessionReference,
+      ChatComposerActorReference,
     ],
   })
   editors.push(editor)
@@ -199,5 +202,43 @@ describe('session reference document integrity', () => {
     insertChatComposerSessionReferences(editor, [references[0]!])
     expect(chatComposerDocumentToUserContent(editor.getJSON()).body[0]!.content).toHaveLength(17)
     expect(buddyUserContentV1Schema.safeParse({ ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'session_ref', sessionId: 'unknown' }] }] }).success).toBe(false)
+  })
+})
+
+describe('actor reference document integrity', () => {
+  it('preserves stable identity, frozen name and inline position across persistence, deletion and undo', () => {
+    const editor = createEditor()
+    editor.commands.insertContent('请 @星 检查')
+    const reference = { type: 'actor_ref' as const, actorId: 'actor-1', name: '星野' }
+    insertChatComposerActorReference(editor, reference, { from: 3, to: 5 })
+    const saved = chatComposerDocumentToUserContent(editor.getJSON())
+    expect(saved).toEqual({
+      version: 1,
+      body: [{ type: 'paragraph', content: [
+        { type: 'text', text: '请 ' },
+        reference,
+        { type: 'text', text: '  检查' },
+      ] }],
+      panelResourceIds: [],
+    })
+    const restored = createEditor()
+    replaceChatComposerDocument(restored, JSON.parse(JSON.stringify(saved)))
+    expect(restored.getText()).toBe('请 @星野  检查')
+    expect(chatComposerDocumentToUserContent(restored.getJSON())).toEqual(saved)
+    restored.commands.setNodeSelection(3)
+    restored.commands.deleteSelection()
+    expect(getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(restored.getJSON()))).toEqual([])
+    restored.commands.undo()
+    expect(chatComposerDocumentToUserContent(restored.getJSON())).toEqual(saved)
+    restored.commands.redo()
+    expect(restored.getText()).toBe('请   检查')
+  })
+
+  it('treats external mention HTML and handwritten names as plain text', () => {
+    const editor = createEditor()
+    editor.commands.insertContent('<p><span data-type="chat-actor-reference" actorId="actor-1" name="星野">@星野</span> @Lexora</p>')
+    const content = chatComposerDocumentToUserContent(editor.getJSON())
+    expect(content).toEqual(createBuddyUserContent('@星野 @Lexora'))
+    expect(getBuddyUserContentActorReferences(content)).toEqual([])
   })
 })

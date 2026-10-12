@@ -23,7 +23,26 @@ export const modelSelectionSchema = z.object({
   serviceTier: z.enum(BUDDY_SERVICE_TIERS).nullable(),
 }).strict()
 
+export const conversationModelControlsSchema = z.object({
+  current: z.object({
+    runId: idSchema,
+    actorId: idSchema,
+    modelSelection: modelSelectionSchema,
+  }).strict().nullable(),
+  next: z.object({
+    actorId: idSchema,
+    isMember: z.boolean(),
+    modelSelection: modelSelectionSchema.nullable(),
+  }).strict(),
+}).strict()
+
+export type ConversationModelControls = DeepReadonly<z.infer<typeof conversationModelControlsSchema>>
+
+export const conversationMemberSchema = z.object({ actorId: idSchema, joinedAt: timestampSchema }).strict()
+export type LocalConversationMember = DeepReadonly<z.infer<typeof conversationMemberSchema>>
+
 export const conversationSchema = z.object({
+  buddyId: idSchema,
   activeBranchId: z.string().nullable(),
   approvalPolicy: approvalPolicySchema,
   createdAt: timestampSchema,
@@ -110,6 +129,7 @@ export const conversationRequestSchemas = {
     conversationId: idSchema,
   }).strict(),
   conversationId: z.object({ conversationId: idSchema }).strict(),
+  modelControls: z.object({ conversationId: idSchema, actorId: idSchema.optional() }).strict(),
   conversationMessages: z.object({
     branchId: idSchema.optional(),
     conversationId: idSchema,
@@ -125,9 +145,12 @@ export const conversationRequestSchemas = {
     conversationId: idSchema,
     executionProfile: executionProfileSchema,
   }).strict(),
+  conversationBuddy: z.object({ conversationId: idSchema, buddyId: idSchema }).strict(),
   conversationModelSelection: z.object({
     conversationId: idSchema,
-    modelSelection: modelSelectionSchema,
+    actorId: idSchema.optional(),
+    targetRunId: idSchema.optional(),
+    modelSelection: modelSelectionSchema.nullable(),
   }).strict(),
   conversationTimeline: z.object({
     branchId: idSchema.optional(),
@@ -156,14 +179,19 @@ export const conversationResponseSchemas = {
 } as const
 
 export const conversationsRpc = {
+  listMembers: { method: 'conversations.listMembers', input: conversationRequestSchemas.conversationId, response: z.array(conversationMemberSchema) },
+  addMember: { method: 'conversations.addMember', input: conversationRequestSchemas.conversationBuddy, response: z.array(conversationMemberSchema) },
+  removeMember: { method: 'conversations.removeMember', input: conversationRequestSchemas.conversationBuddy, response: z.array(conversationMemberSchema) },
   list: { method: 'conversations.list', input: conversationRequestSchemas.list, response: conversationResponseSchemas.conversations },
   get: { method: 'conversations.get', input: conversationRequestSchemas.conversationId, response: conversationResponseSchemas.conversation },
+  getModelControls: { method: 'conversations.getModelControls', input: conversationRequestSchemas.modelControls, response: conversationModelControlsSchema },
   delete: { method: 'conversations.delete', input: conversationRequestSchemas.conversationId, response: validationResponseSchemas.deleted },
   activateBranch: { method: 'conversations.activateBranch', input: conversationRequestSchemas.conversationBranchActivation, response: conversationResponseSchemas.conversation },
   listBranches: { method: 'conversations.listBranches', input: conversationRequestSchemas.conversationId, response: conversationResponseSchemas.conversationBranches },
   listMessages: { method: 'conversations.listMessages', input: conversationRequestSchemas.conversationMessages, response: conversationResponseSchemas.messagePage },
   rename: { method: 'conversations.rename', input: conversationRequestSchemas.conversationRename, response: conversationResponseSchemas.conversation },
   setPermissionSettings: { method: 'conversations.setPermissionSettings', input: conversationRequestSchemas.conversationPermissionSettings, response: conversationResponseSchemas.conversation },
+  setBuddy: { method: 'conversations.setBuddy', input: conversationRequestSchemas.conversationBuddy, response: conversationResponseSchemas.conversation },
   setModelSelection: { method: 'conversations.setModelSelection', input: conversationRequestSchemas.conversationModelSelection, response: conversationResponseSchemas.conversation },
   listTimeline: { method: 'conversations.listTimeline', input: conversationRequestSchemas.conversationTimeline, response: conversationResponseSchemas.timelinePage },
 } as const satisfies Record<string, RuntimeRequestContract>

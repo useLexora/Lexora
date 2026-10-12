@@ -1,7 +1,9 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
+import type { BuddyCatalog } from '@buddy-shared/buddies/buddyApi'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
+import type { Ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DesktopStores } from '../bootstrap/useDesktopAppState'
 import type { TaskIndexController } from '@/modules/tasks'
@@ -31,7 +33,7 @@ import { useTaskInputLifecycle } from './useTaskInputLifecycle'
 import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
 import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
 
-export function useDesktopWorkbench(options: { api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
+export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
   const dialog = useDialog()
   const language = stores.applicationSettings.language
@@ -51,7 +53,15 @@ export function useDesktopWorkbench(options: { api: LexoraDesktopApi, events: Ap
   const renderers = new ViewRendererRegistry()
   registerDesktopContributions(controller, renderers, copies, () => language.value)
   const persistence = new WorkbenchPersistence(api.workbench, controller, copies, error => backupError.value = error !== null)
-  const pool = new TaskWorkspacePool({ api, index: options.taskIndex, applicationSettings: stores.applicationSettings, modelProviders: stores.modelProviders, runtimeSupervisor: stores.runtimeSupervisor, onDraftCommitted: (draftId, id) => options.resources().adoptDraft(draftId, id) }, (previous, task, id) => {
+  const pool = new TaskWorkspacePool({
+    buddyCatalog: options.buddyCatalog,
+    api,
+    index: options.taskIndex,
+    applicationSettings: stores.applicationSettings,
+    modelProviders: stores.modelProviders,
+    runtimeSupervisor: stores.runtimeSupervisor,
+    onDraftCommitted: (draftId, id) => options.resources().adoptDraft(draftId, id),
+  }, (previous, task, id) => {
     for (const view of Object.values(controller.layout.views)) {
       if (resourceKey(view.resource) === resourceKey(previous))
         controller.updateView(view.id, { resource: { scheme: 'task', id, data: {} }, title: task.session.currentTitle.value })

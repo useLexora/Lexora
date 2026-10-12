@@ -1,4 +1,5 @@
 import type { BashOperations } from '@earendil-works/pi-coding-agent'
+import type { OwnedProcessSettlement } from '../../../platform/process/supervisedShellProcess'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { SandboxLifecycleEvent } from '../../../shared/permissions/sandboxLifecycle'
 import type { SandboxCommand, SandboxNetworkTarget, SandboxResult } from '../../../shared/permissions/shellSandbox'
@@ -48,11 +49,17 @@ export class ShellSandboxClient {
     input: Omit<SandboxCommand, 'requestId'>,
     options: ExecOptions,
     approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>,
+    supervision?: { onSettlement: (settlement: OwnedProcessSettlement) => void },
   ): Promise<{ exitCode: number | null }> {
     if (this.#disposed)
       throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
     options.signal?.throwIfAborted()
     const requestId = randomUUID()
+    const dispatchId = JSON.stringify({ kind: 'sandbox-dispatch', requestId })
+    const processes = new Map<string, OwnedProcessSettlement['settlement']>()
+    let proof = false
+    let noCommandStarted = false
+    let settlementError: unknown
     let dispatched = false
     let returned = false
     let cancelled = false
@@ -76,6 +83,24 @@ export class ShellSandboxClient {
           backendRevision = parsed.data.revision
           const { requestId: _, ...event } = parsed.data
           publish({ kind: 'backend', event })
+          try {
+            const state = event.snapshot.process
+            if (state?.processId) {
+              const settlement = state.phase === 'resources_released' ? 'released' : state.phase === 'cleanup_failed' ? 'unknown' : 'pending'
+              if (processes.get(state.processId) !== 'released') {
+                processes.set(state.processId, settlement)
+                supervision?.onSettlement({ processId: state.processId, settlement })
+              }
+              if (settlement === 'released')
+                proof = true
+            }
+            if (event.kind === 'settled' && !event.snapshot.started && !state?.pid)
+              noCommandStarted = true
+          }
+          catch (error) {
+            settlementError = error
+            cancel()
+          }
         }
         return
       }
@@ -97,9 +122,12 @@ export class ShellSandboxClient {
       if (this.#disposed || cancelled)
         throw new ShellSandboxError('SANDBOX_CANCELLED')
       dispatched = true
+      supervision?.onSettlement({ processId: dispatchId, settlement: 'pending' })
       const result = sandboxResultSchema.parse(await this.#peer.request('host.sandbox.exec', { ...input, requestId }, SANDBOX_RPC_TIMEOUT_MS))
       returned = true
       publish({ kind: 'returned', result })
+      if (settlementError)
+        throw settlementError
       options.signal?.throwIfAborted()
       if (!result.ok)
         throw new ShellSandboxError(result.code)
@@ -113,10 +141,21 @@ export class ShellSandboxClient {
     finally {
       if (!returned)
         cancel()
-      unsubscribe()
-      this.#pending.delete(requestId)
-      options.signal?.removeEventListener('abort', cancel)
-      settle()
+      try {
+        if (dispatched) {
+          for (const [processId, settlement] of processes) {
+            if (settlement !== 'released')
+              supervision?.onSettlement({ processId, settlement: 'unknown' })
+          }
+          supervision?.onSettlement({ processId: dispatchId, settlement: proof || (returned && noCommandStarted) ? 'released' : 'unknown' })
+        }
+      }
+      finally {
+        unsubscribe()
+        this.#pending.delete(requestId)
+        options.signal?.removeEventListener('abort', cancel)
+        settle()
+      }
     }
   }
 

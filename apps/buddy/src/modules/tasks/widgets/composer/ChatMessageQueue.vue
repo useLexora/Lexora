@@ -13,12 +13,14 @@ import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 const props = defineProps<{
   items: readonly LocalChatQueueItem[]
   pending: ReadonlySet<string>
+  activeBuddyId?: string
   language: BuddyLocale
 }>()
 const emit = defineEmits<{ cancel: [id: string], steer: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const rows = computed(() => props.items.map(item => ({
   ...item,
+  differentBuddy: !!props.activeBuddyId && item.buddyId !== props.activeBuddyId,
   text: [buddyUserContentToText(item.content.userContent, () => '').trim(), ...(item.content.userContent.quotes ?? []).map(quote => quote.text)].filter(Boolean).join(' · '),
   visibleAttachments: item.attachments.slice(0, 2),
   attachmentNames: item.attachments.map(attachment => attachment.name).join('\n'),
@@ -58,13 +60,13 @@ function preview(item: LocalChatQueueItem, id: string) {
       <div class="chat-message-queue__actions">
         <NTooltip>
           <template #trigger>
-            <NButton quaternary circle size="small" :loading="pending.has(item.id)" :disabled="pending.has(item.id)" :aria-label="t('desktop.chat.queueSteer')" @click="emit('steer', item.id)">
+            <NButton quaternary circle size="small" :loading="pending.has(item.id)" :disabled="pending.has(item.id) || item.differentBuddy" :aria-label="t('desktop.chat.queueSteer')" @click="emit('steer', item.id)">
               <template #icon>
                 <DesktopIcon :component="ArrowEnterUp20Regular" />
               </template>
             </NButton>
           </template>
-          {{ t('desktop.chat.queueSteer') }}
+          {{ item.differentBuddy ? (language === 'en-US' ? 'Waiting for the selected companion’s next turn' : '等待所选伙伴在下一轮处理') : t('desktop.chat.queueSteer') }}
         </NTooltip>
         <NButton quaternary circle size="small" :disabled="pending.has(item.id)" :title="t('desktop.chat.queueCancel')" :aria-label="t('desktop.chat.queueCancel')" @click="emit('cancel', item.id)">
           <template #icon>

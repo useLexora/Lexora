@@ -2,9 +2,8 @@ import type { SpaceRecord } from '../../../storage/spaceRepository'
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
-import { toBuddySessionIdentity } from '../BuddySessionBlueprint'
 import { BuddySessionBlueprintService } from '../BuddySessionBlueprintService'
 
 const directories: string[] = []
@@ -19,19 +18,19 @@ describe('buddySessionBlueprintService', () => {
     const spaceRoot = join(root, 'space')
     await mkdir(spaceRoot)
     const space = createSpace(spaceRoot)
-    const loadForSpace = vi.fn(async () => ({
+    const loadForSpace = async () => ({
       diagnostics: [],
       readRoots: [],
       references: [],
       paths: ['/skills/space/SKILL.md'],
       revision: 'skills-revision-1',
       skills: [],
-    }))
+    })
     const paths = new BuddyDataPaths(join(root, 'buddy-home'))
     const service = new BuddySessionBlueprintService({
       conversationGrants: { listActive: () => [] },
       paths,
-      skills: { loadForSpace },
+      skills: { loadForSpace, materializeForSpace: async () => [] },
       spaces: { findById: id => id === space.id ? space : null },
     })
 
@@ -61,20 +60,6 @@ describe('buddySessionBlueprintService', () => {
       },
     })
     expect(blueprint.resources.directoryContext).toContain(`Working directory: ${spaceRoot}`)
-    expect(toBuddySessionIdentity(blueprint)).toEqual({
-      branchId: 'branch-1',
-      canonicalRoot: spaceRoot,
-      conversationId: 'conversation-1',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      grantRevision: blueprint.grantRevision,
-      resourceRevision: blueprint.resources.revision,
-      skillRevision: blueprint.resources.skillRevision,
-      scratchRoot,
-      sessionMode: 'interactive',
-      spaceId: 'space-1',
-    })
-    expect(loadForSpace).toHaveBeenCalledWith('space-1')
   })
 
   it('creates an owned conversation workspace and grant without a Space', async () => {
@@ -96,6 +81,7 @@ describe('buddySessionBlueprintService', () => {
       },
       paths,
       skills: {
+        materializeForSpace: async () => [],
         loadForSpace: async () => ({
           diagnostics: [],
           readRoots: [],

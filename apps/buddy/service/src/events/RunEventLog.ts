@@ -12,6 +12,8 @@ import type { RunEventStore } from './RunEventStore'
 import { performance } from 'node:perf_hooks'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { executionMailboxDraftSchema, executionMailboxMessageSchema } from '../../../shared/executions/executionApi'
+import { hashExecutionMailboxMessage } from '../storage/mailboxRepository'
 import {
   buddyRunEventSchema,
   buddyRunIdSchema,
@@ -45,6 +47,7 @@ export type RunEventQueryPort = Pick<
   | 'listCompactableTerminalRunIds'
   | 'listForConversation'
   | 'listForRuns'
+  | 'listToolCounts'
   | 'listRunIds'
 >
 
@@ -121,7 +124,7 @@ export class RunEventLog implements RunEventLogPort {
         runId,
         sequence: nextSequence + index,
         type: input.type,
-        payload: input.payload ?? null,
+        payload: prepareEventPayload(input, nextSequence + index),
         createdAt: input.createdAt ?? new Date().toISOString(),
       }))))
       const committed = events.map(event => copyEventSnapshot(event))
@@ -152,9 +155,14 @@ export class RunEventLog implements RunEventLogPort {
     return this.#queries.listForConversation(conversationId, options)
   }
 
-  listForRuns(runIds: readonly string[]): BuddyRunEvent[] {
+  listForRuns(runIds: readonly string[], options?: { latestActivityOnly?: boolean }): BuddyRunEvent[] {
     this.#assertOpen()
-    return this.#queries.listForRuns(runIds)
+    return this.#queries.listForRuns(runIds, options)
+  }
+
+  listToolCounts(runIds: readonly string[]): ReadonlyMap<string, number> {
+    this.#assertOpen()
+    return this.#queries.listToolCounts(runIds)
   }
 
   replay(runId: string): Promise<number> {
@@ -434,4 +442,12 @@ export class RunEventLog implements RunEventLogPort {
 
 function nextEventSequence(events: readonly BuddyRunEvent[]): number {
   return (events.at(-1)?.sequence ?? 0) + 1
+}
+
+export function prepareEventPayload(input: AppendBuddyRunEventInput, sequence: number): unknown {
+  if (input.type !== 'execution.mailbox.sent')
+    return input.payload ?? null
+  const draft = executionMailboxDraftSchema.parse(input.payload)
+  const message = { ...draft, sourceRunId: input.runId, sourceSequence: sequence }
+  return executionMailboxMessageSchema.parse({ ...message, payloadHash: hashExecutionMailboxMessage(message) })
 }

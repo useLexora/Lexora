@@ -17,6 +17,7 @@ interface ComposerDraftRow {
   execution_profile: BuddyComposerDraft['executionConfig']['executionProfile']
   id: string
   model_selection_json: string | null
+  participants_json: string | null
   revision: number
   scope_kind: BuddyComposerDraftScope['kind']
   source_message_id: string | null
@@ -58,13 +59,13 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
   const insert = database.prepare(`
     INSERT INTO composer_drafts (
       id, scope_kind, space_id, conversation_id, branch_id, source_message_id, revision,
-      content_json, model_selection_json, approval_policy, execution_profile,
+      content_json, model_selection_json, participants_json, approval_policy, execution_profile,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
   `)
   const save = database.prepare(`
     UPDATE composer_drafts
-    SET revision = revision + 1, content_json = ?, model_selection_json = ?,
+    SET revision = revision + 1, content_json = ?, model_selection_json = ?, participants_json = ?,
       approval_policy = ?, execution_profile = ?, updated_at = ?,
       space_id = CASE WHEN scope_kind = 'task' THEN ? ELSE space_id END
     WHERE id = ? AND revision = ?
@@ -129,6 +130,7 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
           binding.sourceMessageId,
           JSON.stringify(input.initialContent),
           input.initialModelSelection ? JSON.stringify(input.initialModelSelection) : null,
+          input.initialParticipants ? JSON.stringify(input.initialParticipants) : null,
           input.initialExecutionConfig.approvalPolicy,
           input.initialExecutionConfig.executionProfile,
           input.now,
@@ -145,6 +147,7 @@ export function createComposerDraftRepository(database: DatabaseSync): ComposerD
       if (Number(save.run(
         JSON.stringify(input.content),
         input.modelSelection ? JSON.stringify(input.modelSelection) : null,
+        input.participants ? JSON.stringify(input.participants) : null,
         input.executionConfig.approvalPolicy,
         input.executionConfig.executionProfile,
         input.now,
@@ -168,6 +171,7 @@ function toDraft(row: ComposerDraftRow): BuddyComposerDraft {
       executionProfile: row.execution_profile,
     },
     modelSelection: row.model_selection_json ? JSON.parse(row.model_selection_json) : null,
+    ...(row.participants_json ? { participants: JSON.parse(row.participants_json) } : {}),
     revision: row.revision,
     scope: row.scope_kind === 'task'
       ? { kind: 'task', draftId: row.id, spaceId: row.space_id }

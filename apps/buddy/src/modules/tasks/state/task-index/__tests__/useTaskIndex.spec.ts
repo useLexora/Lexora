@@ -25,7 +25,21 @@ function fixture() {
   const spaceId = shallowRef<string | null>(null)
   const creation = deferred<LocalSpace>()
   let savedSpaces: LocalSpace[] = []
-  let savedTasks: LocalConversationSummary[] = [{ id: 'task', title: 'Task', activity: 'idle', activeBranchId: 'branch', spaceId: null, deletedAt: null, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z', approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, automationOccurrence: null }]
+  let savedTasks: LocalConversationSummary[] = [{
+    buddyId: 'default',
+    id: 'task',
+    title: 'Task',
+    activity: 'idle',
+    activeBranchId: 'branch',
+    spaceId: null,
+    deletedAt: null,
+    createdAt: '2026-09-18T00:00:00Z',
+    updatedAt: '2026-09-18T00:00:00Z',
+    approvalPolicy: 'policy',
+    executionProfile: 'workspace_write',
+    modelSelection: null,
+    automationOccurrence: null,
+  }]
   const spaceListeners = new Set<(event: SpaceChangeNotice) => void>()
   const listeners = new Set<(event: LocalRunEvent) => void>()
   const beforeDelete = vi.fn(async () => true)

@@ -1,9 +1,10 @@
 import type {
   AutomationModelTarget,
 } from '../../../shared/automation'
-import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { SpaceExecutionContext } from '../../../shared/conversation/space'
 import type { BuddyTurnHandle } from '../agent/execution/turnTypes'
+import type { BuddyConfigurationSnapshot } from '../buddies/BuddyExecutionDefinition'
 import type { AutomationOccurrenceRecord } from '../storage/automationOccurrenceRecord'
 import type { AutomationTurnRepository } from '../storage/automationTurnRepository'
 import type { AutomationActionExecutor } from './AutomationDispatcher'
@@ -20,6 +21,7 @@ export interface ResolvedAutomationModel {
   modelId: string
   providerId: string
   reasoning: BuddyThinkingLevel | null
+  serviceTier?: BuddyServiceTier | null
 }
 
 export interface ResolvedAutomationSpace {
@@ -38,7 +40,7 @@ export interface AgentTaskAutomationActionOptions {
   clock?: AutomationClock
   createId?: () => string
   launchTurn: (runId: string, signal?: AbortSignal) => Promise<BuddyTurnHandle>
-  resolveModel: (target: AutomationModelTarget) => Promise<ResolvedAutomationModel | null>
+  resolveModel: (target: AutomationModelTarget, actorModel: BuddyConfigurationSnapshot['settings']['model']) => Promise<ResolvedAutomationModel | null>
   resolveSpace: (
     spaceId: string,
     executionContext: SpaceExecutionContext,
@@ -76,7 +78,11 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
   async execute(occurrence: AutomationOccurrenceRecord & { leaseOwner: string }, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     const snapshot = occurrence.executionSnapshot
-    const model = await this.#resolveModel(snapshot.model)
+    if (!occurrence.actorSnapshot) {
+      this.#automationService.finishQueued({ id: occurrence.id, leaseOwner: occurrence.leaseOwner, errorCode: 'AUTOMATION_ACTOR_UNAVAILABLE', status: 'skipped' })
+      return
+    }
+    const model = await this.#resolveModel(snapshot.model, occurrence.actorSnapshot.settings.model)
     signal?.throwIfAborted()
     if (!model) {
       const errorCode = snapshot.model.mode === 'pinned'
@@ -146,6 +152,7 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
       spaceId: space?.id ?? null,
       provider: model.providerId,
       reasoning: model.reasoning,
+      serviceTier: model.serviceTier ?? null,
       runId,
     })
     if (binding.kind === 'overlap_skipped')
@@ -157,6 +164,10 @@ export class AgentTaskAutomationAction implements AutomationActionExecutor {
         leaseOwner: occurrence.leaseOwner,
         status: 'skipped',
       })
+      return
+    }
+    if (binding.kind === 'actor_unavailable') {
+      this.#automationService.finishQueued({ id: occurrence.id, leaseOwner: occurrence.leaseOwner, errorCode: 'AUTOMATION_ACTOR_UNAVAILABLE', status: 'skipped' })
       return
     }
     if (binding.kind === 'space_unavailable') {

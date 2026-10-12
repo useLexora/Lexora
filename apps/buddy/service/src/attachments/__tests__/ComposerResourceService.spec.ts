@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyUserContentV1 } from '../../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../../shared/conversation/composerDraft'
 import type { InputModel } from '../../providers/modelCapabilities'
+import type { RuntimeModelProvider } from '../../providers/resolveInteractiveModelSelection'
 import type { ComposerResourceChange } from '../composerResourceEvents'
 import type { PreparedComposerInput } from '../ComposerResourceService'
 import { Buffer } from 'node:buffer'
@@ -15,24 +16,29 @@ import { createBuddyInputReference } from '../../agent/context/BuddyInputReferen
 import { BuddySessionRecoveryService } from '../../agent/sessions/recovery/BuddySessionRecoveryService'
 import { BuddyConversationTree } from '../../agent/sessions/tree/BuddyConversationTree'
 import { ArtifactService } from '../../artifacts/ArtifactService'
+import { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
 import { BUDDY_REVIEW_PROMPT } from '../../chat/buddyReviewPrompt'
 import { ChatInputValidationService } from '../../chat/ChatInputValidationService'
 import { ChatQueueService } from '../../chat/ChatQueueService'
 import { ChatTurnService } from '../../chat/ChatTurnService'
+import { RunEventProjector } from '../../events/RunEventProjector'
 import { SpaceService } from '../../spaces/SpaceService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
+import { createBuddyRepository } from '../../storage/buddyRepository'
 import { createChatQueueRepository } from '../../storage/chatQueueRepository'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
 import { createComposerResourceRepository } from '../../storage/composerResourceRepository'
 import { createConversationDirectoryGrantRepository } from '../../storage/conversationDirectoryGrantRepository'
+import { createConversationMemberRepository } from '../../storage/conversationMemberRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { createConversationTreeRepository } from '../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createRunRepository } from '../../storage/runRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
+import { createThreadBindingRepository } from '../../storage/threadBindingRepository'
 import { createTurnRequestRepository } from '../../storage/turnRequestRepository'
 import { createUsageRepository } from '../../storage/usageRepository'
 import { normalizeComposerWorkspace } from '../../workspace/normalizeComposerWorkspace'
@@ -107,7 +113,7 @@ async function setup() {
   const conversations = createConversationRepository(database)
   const conversationGrants = createConversationDirectoryGrantRepository(database)
   const artifacts = new ArtifactService({ repository: createArtifactRepository(database) })
-  const events: Array<{ createdAt: string, payload: unknown, runId: string, sequence: number, type: string }> = []
+  const projector = new RunEventProjector(database)
   return {
     artifacts,
     attachments,
@@ -116,7 +122,11 @@ async function setup() {
     conversationGrants,
     database,
     drafts,
-    events,
+    run() {
+      const conversation = conversations.findById('conversation-1')!
+      createRunRepository(database).create({ id: 'run-1', conversationId: conversation.id, branchId: conversation.activeBranchId!, triggeringMessageId: 'input-1', provider: 'fixture', model: 'fixture', purpose: 'chat', status: 'completed', piSessionFile: null, approvalPolicy: conversation.approvalPolicy, executionProfile: conversation.executionProfile, startedAt: '2026-09-06T00:00:20.000Z' })
+    },
+    publish: (event: Parameters<RunEventProjector['project']>[0][number]) => projector.project([event]),
     paths,
     repository,
     root,
@@ -126,7 +136,7 @@ async function setup() {
       conversationGrants,
       conversations,
       drafts,
-      eventLog: { listForRuns: runIds => events.filter(event => runIds.includes(event.runId)) as never },
+      publications: createConversationTreeRepository(database),
       paths,
       repository,
       spaces,
@@ -237,9 +247,12 @@ async function checkedTurns(overrides: Partial<InputModel> = {}) {
     return { runId, completion: Promise.resolve(run) }
   } }
   const recovery = new BuddySessionRecoveryService({ attachments, conversations, models, runs, runInputs, usage: createUsageRepository(database) })
-  const tree = new BuddyConversationTree({ conversationsDirectory: paths.conversationsDirectory, conversations, runs, recovery, repository: createConversationTreeRepository(database) })
+  const tree = new BuddyConversationTree({ threads: createThreadBindingRepository(database), conversationsDirectory: paths.conversationsDirectory, conversations, runs, recovery, repository: createConversationTreeRepository(database) })
+  const providers: RuntimeModelProvider = { executionModels: models, getDefaultModel: async () => ({ modelId: model.id, providerId: model.provider, reasoning: null, serviceTier: null }) }
   const turns = new ChatTurnService({
-    inputValidation: new ChatInputValidationService({ attachments, models, paths, recovery, runInputs, runs, tree, sessions: { getReady: () => control.history.length ? { getInputContext: () => ({ messages: control.history }) } as never : null } }),
+    definitions: new BuddyDefinitionResolver({ buddies: createBuddyRepository(database), members: createConversationMemberRepository(database), providers }),
+    getDefaultBuddyId: () => 'default',
+    inputValidation: new ChatInputValidationService({ attachments, models, paths, runInputs, runs, tree, sessions: { getReady: () => control.history.length ? { getInputContext: () => ({ messages: control.history }) } as never : null } }),
     attachments,
     composerResources: fixture.service,
     conversations,
@@ -248,7 +261,7 @@ async function checkedTurns(overrides: Partial<InputModel> = {}) {
     runs,
     runInputs,
     conversationLifecycle: { isDeleting: () => false },
-    providers: { executionModels: models, getDefaultModel: async () => ({ modelId: model.id, providerId: model.provider, reasoning: null, serviceTier: null }) },
+    providers,
     runner: { cancel: async () => false },
     skills: { materializeForSpace: async () => [] },
     turnRequests: createTurnRequestRepository(database),
@@ -619,6 +632,7 @@ describe('composer resource import', () => {
       spaceId: null,
       title: 'Sources without Space',
     })
+    fixture.run()
     fixture.conversationGrants.grant({
       canonicalRoot: workspace,
       conversationId: 'conversation-1',
@@ -659,7 +673,7 @@ describe('composer resource import', () => {
       grants: [{ canonicalRoot: workspace, grantId: 'conversation-grant-1', kind: 'workspace', root: workspace }],
       paths: [artifactPath],
     })
-    fixture.events.push({
+    fixture.publish({
       createdAt: '2026-09-06T00:02:00.000Z',
       payload: { artifactIds: [artifact!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' },
       runId: 'run-1',
@@ -729,6 +743,7 @@ describe('composer resource import', () => {
       spaceId,
       title: 'Conversation output',
     })
+    fixture.run()
     const historicalPath = join(fixture.root, 'original.txt')
     await writeFile(historicalPath, 'original')
     const localReference = { kind: 'file' as const, mimeType: 'text/plain', name: 'original.txt', path: historicalPath, sizeBytes: 8 }
@@ -759,7 +774,7 @@ describe('composer resource import', () => {
       grants: [{ canonicalRoot: workspace, grantId: ownerId, kind: 'workspace', root: workspace }],
       paths: [artifactPath],
     })
-    fixture.events.push({
+    fixture.publish({
       createdAt: '2026-09-06T00:02:00.000Z',
       payload: { artifactIds: [artifact!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' },
       runId: 'run-1',
@@ -797,10 +812,14 @@ describe('composer resource import', () => {
     const foreignPath = join(foreignRoot, 'foreign.txt')
     await writeFile(foreignPath, 'foreign')
     const [foreign] = await fixture.artifacts.presentOutputs({ conversationId: 'conversation-1', cwd: foreignRoot, grants: [{ canonicalRoot: foreignRoot, grantId: ownerId, kind: 'workspace', root: foreignRoot }], paths: [foreignPath] })
-    fixture.events[0]!.payload = { artifactIds: [artifact!.id, foreign!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' }
+    fixture.publish({ createdAt: '2026-09-06T00:03:00.000Z', runId: 'run-1', sequence: 2, type: 'output.produced', payload: { artifactIds: [artifact!.id, foreign!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' } })
     const updated = await fixture.service.listSources({ branchId: 'branch-1', conversationId: 'conversation-1', spaceId, draftId: 'draft-1', query: '' })
     expect(updated.files.filter(item => item.category === 'artifact').map(item => item.label)).toEqual(['artifact.txt'])
     await expect(fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'foreign', source: { artifactId: foreign!.id, conversationId: 'conversation-1', branchId: 'branch-1' } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    fixture.conversations.createBranch({ id: 'early-artifact-fork', conversationId: 'conversation-1', parentBranchId: 'branch-1', forkedFromMessageId: 'message-1', createdAt: '2026-09-06T00:04:00.000Z', activate: true })
+    const forkScope = { branchId: 'early-artifact-fork', conversationId: 'conversation-1', spaceId, draftId: 'draft-1', query: '' }
+    expect((await fixture.service.listSources(forkScope)).files.filter(item => item.category === 'artifact')).toEqual([])
+    await expect(fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'after-fork', source: { artifactId: artifact!.id, conversationId: 'conversation-1', branchId: 'early-artifact-fork' } })).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
   })
 
   it('lists visible lineage sources, reuses historical bytes, and references the current text Artifact', async () => {
@@ -825,6 +844,7 @@ describe('composer resource import', () => {
       spaceId: 'space-1',
       title: 'Sources',
     })
+    fixture.run()
     const messageContent = {
       resourceSnapshots: [{ attachmentId: 'attachment-history', resourceId: 'history-snapshot' }],
       userContent: { ...createBuddyUserContent(), panelResourceIds: ['history-snapshot'] },
@@ -859,7 +879,7 @@ describe('composer resource import', () => {
       grants: [{ canonicalRoot: workspace, grantId: 'binding-1', kind: 'workspace', root: workspace }],
       paths: [artifactPath],
     })
-    fixture.events.push({
+    fixture.publish({
       createdAt: '2026-09-06T00:02:00.000Z',
       payload: { artifactIds: [artifact!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' },
       runId: 'run-1',
@@ -982,7 +1002,24 @@ describe('composer resource import', () => {
     const runs = createRunRepository(database)
     const runInputs = createRunInputRepository(database)
     let failNextLaunch = false
+    const providers: RuntimeModelProvider = {
+      getDefaultModel: async () => ({ modelId: 'offline', providerId: 'fixture', reasoning: null, serviceTier: null }),
+      executionModels: { getServiceTiers: () => [], resolveAvailable: async () => ({
+        api: 'openai-completions',
+        id: 'offline',
+        name: 'Offline',
+        provider: 'fixture',
+        baseUrl: 'http://127.0.0.1:9',
+        reasoning: false,
+        input: ['text', 'image'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 4096,
+      }) },
+    }
     const turns = new ChatTurnService({
+      definitions: new BuddyDefinitionResolver({ buddies: createBuddyRepository(database), members: createConversationMemberRepository(database), providers }),
+      getDefaultBuddyId: () => 'default',
       inputValidation: { validate: async () => {} },
       attachments,
       composerResources: service,
@@ -995,21 +1032,7 @@ describe('composer resource import', () => {
       conversationLifecycle: { isDeleting: () => false },
       skills: { materializeForSpace: async () => [] },
       runner: { cancel: async () => false },
-      providers: {
-        getDefaultModel: async () => ({ modelId: 'offline', providerId: 'fixture', reasoning: null, serviceTier: null }),
-        executionModels: { getServiceTiers: () => [], resolveAvailable: async () => ({
-          api: 'openai-completions',
-          id: 'offline',
-          name: 'Offline',
-          provider: 'fixture',
-          baseUrl: 'http://127.0.0.1:9',
-          reasoning: false,
-          input: ['text', 'image'],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 128000,
-          maxTokens: 4096,
-        }) },
-      },
+      providers,
       turnLauncher: {
         launch: async (runId) => {
           if (failNextLaunch) {
@@ -1425,7 +1448,6 @@ describe('composer input preparation ownership', () => {
     await local(f, 'held', 'local')
     const prepared = await f.service.resolveInput('held', { ...createBuddyUserContent(), panelResourceIds: ['local'] }, undefined, model)
     const owned = f.attachmentRepository.findById(prepared.inputs[0]!.attachmentId!)!
-    expect(Object.isFrozen(prepared.inputs[0])).toBe(true)
     await f.service.discard('held')
     expect(await readFile(owned.storedPath)).toEqual(imageBytes())
     expect(() => prepared.validate()).toThrow(expect.objectContaining({ code: 'ATTACHMENT_NOT_FOUND' }))

@@ -20,6 +20,7 @@ import { createAttachmentRepository } from '../../storage/attachmentRepository'
 import { createChatQueueRepository } from '../../storage/chatQueueRepository'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
+import { createConversationTreeRepository } from '../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createSpaceRepository } from '../../storage/spaceRepository'
@@ -98,7 +99,7 @@ describe('message-bound session retrieval', () => {
     })
     createTurnRequestRepository(f.database).prepare(input('initial', []))
     f.database.exec('UPDATE runs SET status = \'running\'')
-    const capability = createSessionReferenceCapability({ conversationId: 'current', conversations: f.conversations, attachments: createAttachmentRepository(f.database), artifacts: new ArtifactService({ repository: createArtifactRepository(f.database) }), eventLog: { listForRuns: () => [] } })
+    const capability = createSessionReferenceCapability({ conversationId: 'current', conversations: f.conversations, attachments: createAttachmentRepository(f.database), artifacts: new ArtifactService({ repository: createArtifactRepository(f.database) }), publications: createConversationTreeRepository(f.database) })
     const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-session-search-')))
     roots.push(root)
     const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
@@ -156,7 +157,7 @@ describe('message-bound session retrieval', () => {
     const queue = createChatQueueRepository(f.database)
     function deliver(id: string, references: string[]) {
       queue.enqueue(input(id, references))
-      queue.commitInRun(queue.pending({ conversationId: 'current', branchId: 'current-branch', id })!, 'run-initial')
+      queue.commitInRun(queue.pending({ conversationId: 'current', branchId: 'current-branch', id })!, 'run-initial', undefined)
     }
     try {
       await prompt('initial')

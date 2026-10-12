@@ -38,6 +38,7 @@ async function handleSend(payload: ChatComposerSubmitPayload) {
 <template>
   <ChatMessageQueue
     :items="execution.queuedMessages.value"
+    :active-buddy-id="execution.activeRun.value?.buddyId"
     :pending="execution.pendingQueueActions.value"
     :language="language"
     @cancel="execution.cancelQueuedMessage"

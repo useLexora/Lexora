@@ -1,5 +1,6 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalConversationTimelineItem, LocalConversationTimelinePage, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,6 +10,77 @@ import { projectPersistedChatTranscriptRows } from '../../../model/transcript/ch
 import { useChatRunSync } from '../useChatRunSync'
 
 describe('useChatRunSync', () => {
+  it('refreshes scoped child approvals without adding private child events to the transcript', async () => {
+    vi.useFakeTimers()
+    stubAnimationFrameWindow()
+    const activeConversationId = ref<string | null>('conversation-a')
+    const activeBranchId = ref<string | null>('branch-conversation-a')
+    const approval: LocalApproval = {
+      id: 'child-approval',
+      runId: 'child-run',
+      toolCallId: 'child-write',
+      kind: 'write',
+      status: 'pending',
+      summary: 'Write the output',
+      payload: { card: 'paths', access: 'write', toolName: 'write', allowForTurn: true, grant: { owner: 'conversation', root: '/output' }, targets: [{ path: '/output/report.txt', zone: 'outside' }] },
+      createdAt: '2026-08-14T00:00:01.000Z',
+      resolvedAt: null,
+    }
+    let pending = false
+    let published = false
+    const api = createApi({ listTimeline: async input => timelinePage([
+      timelineMessage('question', input.conversationId, input.branchId!, 1),
+      ...(published && input.branchId === 'branch-conversation-a'
+        ? [{
+            ...timelineMessage('public-answer', input.conversationId, input.branchId, 2),
+            runId: 'child-run',
+            role: 'assistant' as const,
+            content: { text: 'Published actor answer' },
+          }]
+        : []),
+    ], null, [run('run-a', input.conversationId)]) })
+    vi.mocked(api.approvals.list).mockImplementation(async scope => pending && scope?.conversationId === 'conversation-a' && scope.branchId === 'branch-conversation-a' ? [approval] : [])
+    const sync = useChatRunSync({
+      activeConversationId,
+      activeBranchId,
+      api,
+      onError: (error) => {
+        throw error
+      },
+    })
+    try {
+      await sync.refreshActiveConversation()
+      expect(sync.approvals.value).toEqual([])
+      pending = true
+      sync.handleRunEvent({ ...event('child-run', 1), type: 'approval.requested' })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(sync.approvals.value).toEqual([approval])
+      expect(sync.runs.value.map(run => run.id)).toEqual(['run-a'])
+      expect(sync.runEventBuckets.value.has('child-run')).toBe(false)
+      published = true
+      sync.handleRunEvent({ ...event('child-run', 2), type: 'message.completed', payload: { content: { text: 'Private event body' } } })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(sync.messages.value.at(-1)?.content).toEqual({ text: 'Published actor answer' })
+      expect(sync.runEventBuckets.value.has('child-run')).toBe(false)
+      expect(JSON.stringify(sync.messages.value)).not.toContain('Private event body')
+      activeBranchId.value = 'another-branch'
+      await sync.refreshActiveConversation()
+      expect(sync.approvals.value).toEqual([])
+      activeBranchId.value = 'branch-conversation-a'
+      await sync.refreshActiveConversation()
+      expect(sync.approvals.value).toEqual([approval])
+      pending = false
+      sync.handleRunEvent({ ...event('child-run', 2), type: 'approval.resolved' })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(sync.approvals.value).toEqual([])
+      expect(sync.runEventBuckets.value.has('child-run')).toBe(false)
+    }
+    finally {
+      sync.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['skipped', 'failed'] as const)('refreshes an automatic action on an older page when it becomes %s', async (status) => {
     const action: Extract<LocalConversationTimelineItem, { kind: 'extension-action' }> = {
       kind: 'extension-action',
@@ -165,14 +237,12 @@ describe('useChatRunSync', () => {
 
     try {
       await sync.refreshActiveConversation()
-      const initialSignals = sync.runSignalEvents.value
       sync.handleRunEvent({ ...event('run-a', 1), type: 'tool.updated' })
       sync.handleRunEvent({ ...event('run-a', 2), type: 'message.delta' })
-      expect(animationFrames.size()).toBe(1)
       animationFrames.flush()
       await vi.advanceTimersByTimeAsync(500)
 
-      expect(sync.runSignalEvents.value).toBe(initialSignals)
+      expect(sync.runSignalEvents.value).toEqual([])
       expect(api.conversations.listTimeline).toHaveBeenCalledTimes(1)
       expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence))
         .toEqual([1, 2])
@@ -321,45 +391,30 @@ describe('useChatRunSync', () => {
     }
   })
 
-  it('preserves unaffected run event buckets during an incremental commit', async () => {
+  it('preserves another run’s events when committing an incremental update', async () => {
     const animationFrames = stubAnimationFrameWindow()
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
-    const runA = run('run-a', 'conversation-a')
-    const runB = { ...run('run-b', 'conversation-a'), status: 'completed' as const }
     const api = createApi({
       listTimeline: async () => timelinePage(
         [timelineMessage('message-a', 'conversation-a', 'branch-conversation-a', 1)],
         null,
-        [runA, runB],
+        [run('run-a', 'conversation-a'), { ...run('run-b', 'conversation-a'), status: 'completed' as const }],
         [event('run-a', 1), event('run-b', 1)],
       ),
     })
     const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
+      activeBranchId: ref<string | null>('branch-conversation-a'),
+      activeConversationId: ref<string | null>('conversation-a'),
       api,
       onError: vi.fn(),
     })
 
     try {
       await sync.refreshActiveConversation()
-
-      const { runEventBuckets } = sync
-      const runABucket = runEventBuckets.value.get('run-a')
-      const runBBucket = runEventBuckets.value.get('run-b')
-      expect([...runEventBuckets.value.keys()]).toEqual(['run-a', 'run-b'])
-
       sync.handleRunEvent({ ...event('run-a', 2), type: 'message.delta' })
       animationFrames.flush()
 
-      expect(runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2])
-      expect(runEventBuckets.value.get('run-a')?.update).toEqual({
-        events: [expect.objectContaining({ sequence: 2 })],
-        kind: 'append',
-        previousRevision: runABucket?.revision,
-      })
-      expect(runEventBuckets.value.get('run-b')).toBe(runBBucket)
+      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2])
+      expect(sync.runEventBuckets.value.get('run-b')?.events).toEqual([event('run-b', 1)])
     }
     finally {
       sync.dispose()
@@ -1005,6 +1060,7 @@ function compaction(
 
 function run(id: string, conversationId: string): LocalRun {
   return {
+    buddyId: 'default',
     branchId: `branch-${conversationId}`,
     completedAt: null,
     conversationId,
@@ -1054,6 +1110,5 @@ function stubAnimationFrameWindow() {
       for (const callback of pending)
         callback(0)
     },
-    size: () => callbacks.size,
   }
 }

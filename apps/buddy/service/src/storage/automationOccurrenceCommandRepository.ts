@@ -4,6 +4,7 @@ import type {
   AutomationOccurrenceRecord,
   AutomationOccurrenceRow,
 } from './automationOccurrenceRecord'
+import { buddyConfigurationSnapshotSchema } from '../buddies/BuddyExecutionDefinition'
 import { toAutomationOccurrenceRecord } from './automationOccurrenceRecord'
 import { withTransaction } from './database'
 
@@ -29,7 +30,7 @@ export interface AutomationOccurrenceCommandRepository {
     limit: number
     now: string
     owner: string
-  }) => AutomationOccurrenceRecord[]
+  }) => { leased: AutomationOccurrenceRecord[], skipped: AutomationOccurrenceRecord[] }
   markOccurrenceDeleted: (id: string, deletedAt: string) => { occurrence: AutomationOccurrenceRecord, previousStatus: AutomationOccurrenceRecord['status'] } | null
 }
 
@@ -51,7 +52,7 @@ export function createAutomationOccurrenceCommandStore(
   `)
   const acquireLease = database.prepare(`
     UPDATE automation_occurrences
-    SET lease_owner = ?, lease_expires_at = ?
+    SET lease_owner = ?, lease_expires_at = ?, actor_snapshot_json = COALESCE(actor_snapshot_json, ?)
     WHERE id = ? AND deleted_at IS NULL AND status = 'queued' AND run_id IS NULL
       AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
   `)
@@ -105,10 +106,24 @@ export function createAutomationOccurrenceCommandStore(
             input.limit,
           ) as unknown as AutomationOccurrenceRow[]
           const leased: AutomationOccurrenceRecord[] = []
+          const skipped: AutomationOccurrenceRecord[] = []
           for (const candidate of candidates) {
+            const captured = toAutomationOccurrenceRecord(candidate)
+            let actorSnapshot = captured.actorSnapshot
+            if (!actorSnapshot) {
+              const actorId = captured.executionSnapshot.actorId ?? (database.prepare('SELECT default_buddy_id FROM buddy_catalog WHERE id = 1').get() as { default_buddy_id: string }).default_buddy_id
+              const actor = database.prepare('SELECT id,kind,revision,settings_json FROM buddies WHERE id = ? AND kind = \'actor\' AND enabled = 1 AND deleted_at IS NULL').get(actorId) as { id: string, kind: 'actor', revision: number, settings_json: string } | undefined
+              if (!actor) {
+                if (tryFinishQueued({ id: candidate.id, finishedAt: input.now, errorCode: 'AUTOMATION_ACTOR_UNAVAILABLE', status: 'skipped' }))
+                  skipped.push(occurrenceRecords.requireById(candidate.id))
+                continue
+              }
+              actorSnapshot = buddyConfigurationSnapshotSchema.parse({ version: 1, id: actor.id, kind: actor.kind, revision: actor.revision, settings: JSON.parse(actor.settings_json) })
+            }
             if (Number(acquireLease.run(
               input.owner,
               input.leaseExpiresAt,
+              JSON.stringify(actorSnapshot),
               candidate.id,
               input.now,
             ).changes) !== 1) {
@@ -116,7 +131,7 @@ export function createAutomationOccurrenceCommandStore(
             }
             leased.push(occurrenceRecords.requireById(candidate.id))
           }
-          return leased
+          return { leased, skipped }
         })
       },
       markOccurrenceDeleted(id, deletedAt) {

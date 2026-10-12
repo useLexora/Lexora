@@ -7,21 +7,24 @@ import type { ReusableBuddySession } from './agent/sessions/ReusableBuddySession
 import type { AutomationClock } from './automations/AutomationScheduleEvaluator'
 import type { BuddyRuntime } from './BuddyRuntime'
 import type { RunEventLogPort } from './events/RunEventPorts'
-
 import type { BuddyServiceRpcServer } from './rpc/BuddyServiceRpcServer'
 import type { BuddyServiceErrorCode } from './rpc/runtimeRequest'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+
 import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
 import { automationNotifications } from '../../shared/automation/automationApi'
+import { buddiesChanged } from '../../shared/buddies/buddyApi'
 import { changesChanged } from '../../shared/changes/changeApi'
 import { connectorNotifications } from '../../shared/connectors/connectorApi'
 import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
+import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../shared/conversation/buddyUserContent'
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
+import { executionsChanged } from '../../shared/executions/executionPresentationApi'
 import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
@@ -39,7 +42,12 @@ import { PiEventBridge } from './agent/events/PiEventBridge'
 import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
 import { BuddyRunExecutionPlanner } from './agent/execution/BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from './agent/execution/BuddyTurnLauncher'
+import { ExecutionCoordinator } from './agent/execution/ExecutionCoordinator'
+import { ExecutionDelegationService } from './agent/execution/ExecutionDelegationService'
+import { ExecutionPresentationService } from './agent/execution/ExecutionPresentationService'
 import { PiTurnExecutor } from './agent/execution/PiTurnExecutor'
+import { readExecutionResult } from './agent/execution/readExecutionResult'
+import { registerExecutionRpc } from './agent/execution/registerExecutionRpc'
 import { observeSessionResourceDiagnostics } from './agent/resources/observeSessionResourceDiagnostics'
 import { SessionResourceReconciler } from './agent/resources/SessionResourceReconciler'
 import { bindRuntimePreferences } from './agent/sessions/bindRuntimePreferences'
@@ -69,8 +77,14 @@ import { AutomationTurnService } from './automations/AutomationTurnService'
 import { registerAutomationRpc } from './automations/registerAutomationRpc'
 import { resolveAutomationModelSelection } from './automations/resolveAutomationModelSelection'
 import { BrowserHostClient } from './browser/BrowserHostClient'
+import { BuddiesService } from './buddies/BuddiesService'
+import { BuddyDefinitionResolver } from './buddies/BuddyDefinitionResolver'
+import { readBuddyToolOptions } from './buddies/readBuddyToolOptions'
+import { registerBuddiesRpc } from './buddies/registerBuddiesRpc'
 import { ChangeCaptureService } from './changes/ChangeCaptureService'
 import { createChangeSetRepository } from './changes/changeSetRepository'
+import { MutationCoordinator } from './changes/MutationCoordinator'
+import { createMutationRepository } from './changes/mutationRepository'
 import { registerChangeRpc } from './changes/registerChangeRpc'
 import { isReviewUserMessage } from './chat/buddyReviewPrompt'
 import { ChatCommandService } from './chat/ChatCommandService'
@@ -118,12 +132,12 @@ import { ExtensionAgentRuntime } from './plugins/ExtensionAgentRuntime'
 import { observeExtensionAgentDiagnostics } from './plugins/observeExtensionAgentDiagnostics'
 import { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import { registerExtensionConditionRpc } from './plugins/registerExtensionConditionRpc'
-
 import { getBuiltinPromptCatalog } from './prompts/builtinPromptCatalog'
 import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
+
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
@@ -149,6 +163,7 @@ import { createAttachmentRepository } from './storage/attachmentRepository'
 import { createAutomationRepositories } from './storage/automationRepository'
 import { createAutomationTurnRepository } from './storage/automationTurnRepository'
 import { BuddyDataPaths } from './storage/BuddyDataPaths'
+import { createBuddyRepository } from './storage/buddyRepository'
 import { createChatQueueRepository } from './storage/chatQueueRepository'
 import { createCommandRequestRepository } from './storage/commandRequestRepository'
 import { createComposerDraftRepository } from './storage/composerDraftRepository'
@@ -157,10 +172,13 @@ import { createConnectorRepository } from './storage/connectorRepository'
 import { createConversationDeletionRepository } from './storage/conversationDeletionRepository'
 import { createConversationDirectoryGrantRepository } from './storage/conversationDirectoryGrantRepository'
 import { createConversationHistoryStore } from './storage/conversationHistoryRepository'
+import { createConversationMemberRepository } from './storage/conversationMemberRepository'
 import { createConversationRepository } from './storage/conversationRepository'
 import { createConversationTreeRepository } from './storage/conversationTreeRepository'
+import { createExecutionRepository } from './storage/executionRepository'
 import { createExtensionInvocationRepository } from './storage/extensionInvocationRepository'
 import { createExtensionTaskContextRepository } from './storage/extensionTaskContextRepository'
+import { createMailboxRepository } from './storage/mailboxRepository'
 import { createNotificationAttentionRepository } from './storage/notificationAttentionRepository'
 import { createProviderRepository } from './storage/providerRepository'
 import { createRunInputRepository } from './storage/runInputRepository'
@@ -168,6 +186,7 @@ import { createRunRepository } from './storage/runRepository'
 import { createSkillRepository } from './storage/skillRepository'
 import { createSpaceRepository } from './storage/spaceRepository'
 import { createTaskMarkRepository } from './storage/taskMarkRepository'
+import { createThreadBindingRepository } from './storage/threadBindingRepository'
 import { createTurnRequestRepository } from './storage/turnRequestRepository'
 import { createUsageAnalyticsRepository } from './storage/usageAnalyticsRepository'
 import { createUsageRepository } from './storage/usageRepository'
@@ -225,6 +244,9 @@ export async function startBuddyService(
     const conversations = createConversationRepository(options.database)
     const conversationHistory = createConversationHistoryStore(options.database)
     const runs = createRunRepository(options.database)
+    const executionRecords = createExecutionRepository(options.database)
+    const threads = createThreadBindingRepository(options.database)
+    const treeRepository = createConversationTreeRepository(options.database)
     await host.start('runtime.run_diagnostics', ({ defer }) => {
       const subscription = observeRunDiagnostics(options.eventLog, runs, record)
       defer(() => subscription.dispose())
@@ -284,6 +306,15 @@ export async function startBuddyService(
       })
       return service
     })
+    const buddies = await host.start('runtime.buddies', ({ defer }) => {
+      const service = new BuddiesService(createBuddyRepository(options.database), () => record({ event: 'buddies.observer.failed', level: 'warn' }))
+      const notices = service.onDidChange(event => options.rpc.notify(buddiesChanged.method, event))
+      defer(() => {
+        service.dispose()
+        notices.dispose()
+      })
+      return service
+    })
     const composerDrafts = createComposerDraftRepository(options.database)
     const commandRequests = createCommandRequestRepository(options.database)
     const connectorsRepository = createConnectorRepository(options.database)
@@ -308,6 +339,8 @@ export async function startBuddyService(
       return service
     }, ['runtime.spaces'])
     let runner!: BuddyAgentRunner
+    let turnLauncher!: BuddyTurnLauncher
+    let delegation!: ExecutionDelegationService
     const approvalService = await host.start('runtime.approvals', ({ defer }) => {
       const service = new ApprovalService({
         eventLog: options.eventLog,
@@ -370,6 +403,11 @@ export async function startBuddyService(
       })
       return service
     })
+    const mutations = await host.start('runtime.mutations', ({ defer }) => {
+      const service = new MutationCoordinator({ repository: createMutationRepository(options.database) })
+      defer(() => service.dispose())
+      return service
+    })
     const changeCaptureService = await host.start('runtime.change_capture', ({ defer }) => {
       const service = new ChangeCaptureService({ paths, repository: createChangeSetRepository(options.database), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.change_capture', level: 'warn' }) })
       service.onDidChange(event => record({ event: `changes.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, toolCallId: event.toolCallId, revision: event.revision, count: event.count, errorCode: event.errorCode }))
@@ -384,11 +422,17 @@ export async function startBuddyService(
       cancelPendingApprovals: () => approvalService.cancelPendingApprovals(),
       captureInterruptedChanges: async (runId) => {
         await changeCaptureService.markInterrupted(runId)
+        const run = runs.findById(runId)
+        const relevant = run?.parentRunId === null ? runs.listTree(run.rootRunId) : run ? [run] : []
+        const degraded = relevant.some(item => mutations.getRunState(item.id).hazards.length > 0)
+        executionRecords.recordCleanup(runId, degraded ? 'degraded' : 'clean', degraded ? 'EXECUTION_CLEANUP_DEGRADED' : null)
       },
       conversations,
       eventLog: options.eventLog,
       lifecycle: runLifecycleService,
       inspectCommittedCompaction: run => inspectCommittedPiCompaction({
+        runId: run.id,
+        threadId: run.threadId,
         branchId: run.branchId,
         conversationsDirectory: paths.conversationsDirectory,
         conversationId: run.conversationId,
@@ -423,7 +467,7 @@ export async function startBuddyService(
       paths,
     }))
     const composerResourceService = await host.start('runtime.composer_resources', ({ defer }) => {
-      const service = new ComposerResourceService({ artifacts: artifactService, attachments: attachmentService, conversationGrants: conversationDirectoryGrants, conversations, drafts: composerDrafts, eventLog: options.eventLog, paths, repository: createComposerResourceRepository(options.database), spaces: spacesRepository })
+      const service = new ComposerResourceService({ artifacts: artifactService, attachments: attachmentService, conversationGrants: conversationDirectoryGrants, conversations, drafts: composerDrafts, publications: treeRepository, paths, repository: createComposerResourceRepository(options.database), spaces: spacesRepository })
       service.onDidChange(event => options.rpc.notify(composerResourcesChanged.method, { revision: event.revision, draftIds: [...new Set(event.resources.map(resource => resource.draftId))] }))
       service.onDidChange(event => record({ event: 'composer.resources.committed', level: 'info', operationId: event.operationId, revision: event.revision, count: event.resources.length }))
       defer(() => service.dispose())
@@ -473,11 +517,14 @@ export async function startBuddyService(
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())
     const conversationMetadata = await host.start('runtime.task_metadata', ({ defer }) => {
       const service = new ConversationMetadataService({
+        buddies,
+        runInputs,
+        runs,
         repository: conversations,
         sessions: {
           invalidateConversation: id => sessions.invalidateConversationWithResult(id),
           applyPermissionSettings: conversation => sessions.applyConversationPermissions(conversation.id, conversation),
-          refreshModelSelection: id => sessions.refreshConversationModel(id),
+          refreshModelSelection: id => sessions.refreshRunModel(id),
         },
         resolveModelSelection: selection => resolveInteractiveModelSelection(providerService, selection),
         onObserverError: () => record({ event: 'task.observer_failed', level: 'warn' }),
@@ -721,7 +768,7 @@ export async function startBuddyService(
       })
       const changed = service.onDidCommit(event => options.rpc.notify(notificationsChanged.method, { revision: event.revision }))
       const diagnostics = service.onDidCommit(event => record({ event: `notifications.${event.reason}`, level: 'info', operationId: event.operationId, revision: event.revision, count: event.changes.length }))
-      const projection = new NotificationProjection({ service, providers: providerService, automations: automationService, runs: options.eventLog, lifecycle: runLifecycleService, record })
+      const projection = new NotificationProjection({ service, providers: providerService, automations: automationService, runs: options.eventLog, runRecords: runs, lifecycle: runLifecycleService, record })
       defer(async () => {
         await projection.dispose()
         service.dispose()
@@ -781,6 +828,7 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
+      delegation: { execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
       prepareForRun: signal => connectorService.prepareForRun(signal),
       shellSandbox: await host.start('runtime.shell_sandbox', ({ defer }) => {
@@ -795,9 +843,12 @@ export async function startBuddyService(
       approvalService,
       attachmentService,
       changeCaptureService,
+      mutations,
       directoryGrants,
       recordPermissions: record,
       createCapabilities: createBuddyCapabilityFactory(currentPlatform, {
+        buddies,
+        getRunBuddyId: runId => runs.findById(runId)?.buddyId ?? null,
         record,
         pluginAuthoring: options.rpc,
         pluginBuilder,
@@ -820,9 +871,11 @@ export async function startBuddyService(
         imageTransformService,
         webService,
         conversations,
-        eventLog: options.eventLog,
+        publications: treeRepository,
       }, petActions),
     }
+    const conversationMembers = createConversationMemberRepository(options.database)
+    const buddyDefinitions = new BuddyDefinitionResolver({ buddies, members: conversationMembers, providers: providerService })
     const sessionBlueprints = new BuddySessionBlueprintService({
       conversationGrants: conversationDirectoryGrants,
       paths,
@@ -841,7 +894,8 @@ export async function startBuddyService(
       const service = new BuddyConversationTree({
         conversationsDirectory: paths.conversationsDirectory,
         conversations,
-        repository: createConversationTreeRepository(options.database),
+        repository: treeRepository,
+        threads,
         runs,
         recovery: sessionRecovery,
         onObserverError: () => record({ event: 'tree.observer_failed', level: 'warn' }),
@@ -869,8 +923,43 @@ export async function startBuddyService(
     })
     const getRunPermissionCeiling = (runId: string): BuddyExecutionProfile | undefined => {
       const run = runs.findById(runId)
+      if (executionRecords.find(runId)?.fileAccessCeiling === 'read_only' || run?.actorSnapshot?.settings.limits.fileAccess === 'read_only')
+        return 'read_only'
       return run?.triggeringMessageId && isReviewUserMessage(conversationHistory.repository.findMessageById(run.triggeringMessageId)?.content) ? 'read_only' : undefined
     }
+    const executionCoordinator = await host.start('runtime.execution_tree', ({ defer }) => {
+      const service = new ExecutionCoordinator({
+        hostShellSupervision: currentPlatform.hostShellSupervision,
+        executions: executionRecords,
+        mailbox: createMailboxRepository(options.database),
+        events: options.eventLog,
+        lifecycle: runLifecycleService,
+        mutations,
+        listIncomplete: () => runs.listIncomplete(),
+        getFileAccessCeiling: runId => getRunPermissionCeiling(runId) === 'read_only' ? 'read_only' : undefined,
+        onObserverError: () => record({ event: 'execution.tree_observer_failed', level: 'error' }),
+        readResult: runId => readExecutionResult(options.eventLog, runId),
+        launchChild: id => turnLauncher.launch(id),
+        stopExecution: id => runner.interruptExecution(id),
+      })
+      defer(() => service.dispose())
+      return service
+    })
+    delegation = new ExecutionDelegationService({
+      readToolOptions: signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal),
+      actorTargets: (rootRunId) => {
+        const run = runs.findById(rootRunId)
+        const content = run ? buddyUserMessageContentV1Schema.safeParse(conversationHistory.repository.findMessageById(run.triggeringMessageId)?.content) : null
+        return content?.success ? getBuddyUserContentActorReferences(content.data.userContent).map(actor => actor.actorId) : []
+      },
+      buddies,
+      members: conversationMembers,
+      definitions: buddyDefinitions,
+      executions: executionRecords,
+      mailbox: createMailboxRepository(options.database),
+      coordinator: executionCoordinator,
+      stopExecution: id => runner.interruptExecution(id),
+    })
     const sessionFactory = await host.start('runtime.session_factory', () => {
       const service = new BuddySessionFactory({
         getRunPermissionCeiling,
@@ -886,6 +975,29 @@ export async function startBuddyService(
       })
       return service
     })
+    const executionPresentation = await host.start('runtime.execution_presentation', ({ defer }) => {
+      const service = new ExecutionPresentationService({
+        conversations,
+        runs,
+        executions: executionRecords,
+        mailbox: createMailboxRepository(options.database),
+        buddies,
+        coordinator: executionCoordinator,
+        mutations,
+        events: options.eventLog,
+        artifacts: artifactsRepository,
+        changes: changeCaptureService,
+        usage: usageRepository,
+        stopExecution: id => runner.interruptExecution(id),
+        onObserverError: () => record({ event: 'execution.presentation_observer_failed', level: 'warn' }),
+      })
+      const subscription = service.onDidChange(event => options.rpc.notify(executionsChanged.method, event))
+      defer(() => {
+        subscription.dispose()
+        service.dispose()
+      })
+      return service
+    })
     const piTurnExecutor = new PiTurnExecutor({
       eventLog: options.eventLog,
       piEvents: piEventBridge,
@@ -896,8 +1008,15 @@ export async function startBuddyService(
     runner = await host.start('runtime.execution', ({ defer }) => {
       const service = new BuddyAgentRunner({
         executor: piTurnExecutor,
+        executions: executionCoordinator,
         lifecycle: runLifecycleService,
-        releaseRunResources: runId => approvalService.clearRunAuthorizations(runId),
+        releaseRunResources: async (runId) => {
+          const effects = await mutations.waitForRun(runId)
+          await changeCaptureService.finalizeRun(runId)
+          approvalService.clearRunAuthorizations(runId)
+          if (effects.hazards.length)
+            throw new Error('EXECUTION_CLEANUP_DEGRADED')
+        },
         onObserverError: () => record({ event: 'execution.observer_failed', level: 'error' }),
         sessions,
       })
@@ -1003,6 +1122,8 @@ export async function startBuddyService(
       return service
     })
     const executionPlanner = new BuddyRunExecutionPlanner({
+      getFileAccessCeiling: runId => getRunPermissionCeiling(runId) === 'read_only' ? 'read_only' : undefined,
+      definitions: buddyDefinitions,
       attachments: attachmentService,
       commands: commandRequests,
       conversations,
@@ -1012,8 +1133,8 @@ export async function startBuddyService(
       sessions: sessionBlueprints,
       skills: skillService,
     })
-    const turnLauncher = new BuddyTurnLauncher({
-      lifecycle: runLifecycleService,
+    turnLauncher = new BuddyTurnLauncher({
+      executions: executionCoordinator,
       planner: executionPlanner,
       runner,
     })
@@ -1061,11 +1182,12 @@ export async function startBuddyService(
     })
     const chatTurnService = await host.start('runtime.chat_turns', ({ defer }) => {
       const service = new ChatTurnService({
+        definitions: buddyDefinitions,
+        getDefaultBuddyId: () => buddies.defaultBuddyId,
         inputValidation: new ChatInputValidationService({
           attachments: attachmentService,
           models: executionModels,
           paths,
-          recovery: sessionRecovery,
           runInputs,
           runs,
           sessions,
@@ -1122,6 +1244,8 @@ export async function startBuddyService(
       startTurn: input => chatTurnService.start(input),
     }
     const contextUsageService = new ContextUsageSnapshotService({
+      definitions: buddyDefinitions,
+      getDefaultActorId: () => buddies.defaultBuddyId,
       getRuntimePreferences: async () => {
         return runtimePreferencesSchema.parse(await options.rpc.request(runtimePreferencesRpc.get, {}))
       },
@@ -1132,7 +1256,6 @@ export async function startBuddyService(
       conversations,
       models: executionModels,
       paths,
-      runs,
       sessionExtensionServices,
     })
     const dispatcher = await host.start('runtime.automation_dispatcher', ({ defer }) => {
@@ -1141,10 +1264,10 @@ export async function startBuddyService(
         cancelRun: (runId, errorCode) => runner.cancel(runId, errorCode),
         clock: automationClock,
         launchTurn: (runId, signal) => turnLauncher.launch(runId, signal),
-        resolveModel: target => resolveAutomationModelSelection({
+        resolveModel: (target, actorModel) => resolveAutomationModelSelection({
           defaults: providerService,
           models: executionModels,
-        }, target),
+        }, target, actorModel),
         resolveSpace: async (spaceId, executionContext) => {
           const space = spacesRepository.findById(spaceId)
           if (!space || space.revokedAt !== null)
@@ -1223,8 +1346,9 @@ export async function startBuddyService(
         registerRunRpc({
           isBusy: () => runner.hasActiveExecutions || runs.hasIncomplete() || approvalsRepository.list({ status: 'pending', limit: 1 }).length > 0,
           getCacheWarmingStatus: (conversationId) => {
-            const branchId = conversations.findById(conversationId)?.activeBranchId
-            return branchId ? sessions.getReady(conversationId, branchId)?.getCacheWarmingStatus?.() ?? null : null
+            const conversation = conversations.findById(conversationId)
+            const branchId = conversation?.activeBranchId
+            return branchId ? sessions.getReady(conversationId, branchId, conversation?.buddyId)?.getCacheWarmingStatus?.() ?? null : null
           },
           eventLog: options.eventLog,
           inputs: runInputs,
@@ -1235,6 +1359,7 @@ export async function startBuddyService(
       )
       register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
+      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation }))
       register(
         registerAttachmentRpc({
           rpc: options.rpc,
@@ -1277,6 +1402,7 @@ export async function startBuddyService(
           service: contextUsageService,
         }),
       )
+      register(registerBuddiesRpc(options.rpc, buddies, signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal)))
       register(registerTaskMarkRpc(options.rpc, taskMarks, taskAttention))
       register(registerConversationTreeRpc({
         database: options.database,

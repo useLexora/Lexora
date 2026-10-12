@@ -1,5 +1,6 @@
 export { default as DesktopChatComposerFrame } from './components/DesktopChatComposerFrame.vue'
 export { default as DesktopFullAccessConfirmationDialog } from './components/DesktopFullAccessConfirmationDialog.vue'
 export { default as DesktopPermissionModeSelector } from './components/DesktopPermissionModeSelector.vue'
+export { ChatComposerActorReference, insertChatComposerActorReference } from './editor/chatComposerActorEditing'
 export { CHAT_COMPOSER_CLIPBOARD_TYPE, ChatComposerDocument, ChatComposerPromptDirective, ChatComposerResourceClipboard, ChatComposerResourceReference, insertChatComposerResources, insertResolvedChatComposerResource, moveChatComposerResourceSelection, pasteChatComposerText, removeChatComposerPanelResource, removeChatComposerResource, restoreChatComposerResourceText, setChatComposerPanelResources } from './editor/chatComposerResourceEditing'
 export { ChatComposerSessionReference, insertChatComposerSessionReferences, removeChatComposerSessionReference } from './editor/chatComposerSessionEditing'

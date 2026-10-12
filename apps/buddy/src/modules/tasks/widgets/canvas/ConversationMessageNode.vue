@@ -72,7 +72,7 @@ function open(event: MouseEvent) {
     @pointerdown.capture="pointerDown"
     @click="open"
   >
-    <div class="conversation-node__card">
+    <div class="conversation-node__card" :class="{ 'buddy-border-beam': message.status === 'running' }">
       <header class="conversation-node__header">
         <DesktopIcon class="conversation-node__role" :component="message.kind === 'answer' ? Wand20Regular : Keyboard20Regular" :title="label" />
         <span v-if="message.toolCount" class="conversation-node__tools">{{ t('desktop.canvas.tools', { count: message.toolCount }) }}</span>
@@ -152,12 +152,6 @@ function open(event: MouseEvent) {
 </template>
 
 <style scoped lang="scss">
-@property --buddy-beam-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-
 .conversation-node { position: relative; display: flex; width: 100%; height: 100%; flex-direction: column; user-select: none; cursor: pointer; }
 .conversation-node__card { position: relative; display: flex; flex: none; width: 100%; height: 100%; flex-direction: column; border: 1px solid var(--buddy-border-subtle); border-radius: 12px; background: var(--buddy-surface-base); color: var(--buddy-text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / 3%); user-select: none; cursor: pointer; transition: border-color 160ms ease, opacity 160ms ease; }
 .conversation-node.question .conversation-node__card { background: var(--buddy-user-message-surface); }
@@ -172,29 +166,6 @@ function open(event: MouseEvent) {
 .conversation-node[data-status="running"] .conversation-node__card {
   border-color: color-mix(in srgb, var(--buddy-accent-text) 24%, var(--buddy-border-subtle));
 }
-.conversation-node.status-running .conversation-node__card::before,
-.conversation-node[data-status="running"] .conversation-node__card::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 12px;
-  padding: 1.5px;
-  background: conic-gradient(
-    from var(--buddy-beam-angle, 0deg),
-    transparent 0deg,
-    transparent 280deg,
-    color-mix(in srgb, var(--buddy-accent-text) 30%, transparent) 320deg,
-    var(--buddy-accent-text) 360deg
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  animation: conversation-node-beam 2.8s linear infinite;
-  z-index: 1;
-}
-
 // Status borders: queued (standby dashed)
 .conversation-node.status-queued .conversation-node__card,
 .conversation-node[data-status="queued"] .conversation-node__card {
@@ -228,22 +199,6 @@ function open(event: MouseEvent) {
   opacity: 0.82;
 }
 
-@keyframes conversation-node-beam {
-  from {
-    --buddy-beam-angle: 0deg;
-  }
-  to {
-    --buddy-beam-angle: 360deg;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .conversation-node.status-running .conversation-node__card::before,
-  .conversation-node[data-status="running"] .conversation-node__card::before {
-    animation: none;
-    background: var(--buddy-accent-text);
-  }
-}
 .conversation-node__header { display: flex; height: 44px; flex: none; align-items: center; gap: 8px; padding: 0 14px; cursor: grab; }
 .conversation-node__role { color: var(--buddy-text-secondary); font-size: 16px; }
 .conversation-node__tools, .conversation-node__status { font-size: 10px; color: var(--buddy-text-muted); }

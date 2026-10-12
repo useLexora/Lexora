@@ -16,6 +16,7 @@ export const automationModelTargetSchema = z.union([
 ])
 
 export const automationDefinitionShape = {
+  actorId: idSchema.nullable().optional(),
   executionProfile: z.enum(BUDDY_EXECUTION_PROFILES).default(BUDDY_DEFAULT_EXECUTION_PROFILE),
   model: automationModelTargetSchema,
   name: automationNameSchema,

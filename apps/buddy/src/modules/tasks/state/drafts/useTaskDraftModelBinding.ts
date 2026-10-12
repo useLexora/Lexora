@@ -33,9 +33,7 @@ export function useTaskDraftModelBinding(options: TaskDraftModelBindingOptions) 
 
   function restoreScope(fallback: ModelSelection = null) {
     const current = options.drafts.snapshot(options.drafts.targetKey.value)
-    options.selection.restoreConversationModelSelection(current.modelSelection ?? fallback)
-    if (current.modelSelection === null && current.revision !== null)
-      options.drafts.setModelSelection(options.selection.currentSelection())
+    options.selection.restoreConversationModelSelection(current.modelSelection ?? fallback ?? options.conversationModel())
   }
 
   function restoreOpenedDraft(targetKey: string) {
@@ -48,7 +46,7 @@ export function useTaskDraftModelBinding(options: TaskDraftModelBindingOptions) 
       stopScopeSync()
       stopCatalogInitialization()
     },
-    initialModelSelection: (targetKey: string) => targetKey === options.drafts.targetKey.value ? options.selection.currentSelection() : null,
+    initialModelSelection: (targetKey: string) => options.drafts.snapshot(targetKey).modelSelection,
     restoreOpenedDraft,
     restoreScope,
   }

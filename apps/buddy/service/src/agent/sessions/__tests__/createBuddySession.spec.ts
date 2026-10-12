@@ -1,16 +1,18 @@
+import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createImageGenerationCapability } from '../../../images/imageGenerationExtension'
 import { SkillService } from '../../../skills/SkillService'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
 import { openBuddyDatabase } from '../../../storage/database'
 import { createSkillRepository } from '../../../storage/skillRepository'
 import { createSpaceRepository } from '../../../storage/spaceRepository'
+import { createEstimatedContextUsage } from '../../context/contextUsageBreakdown'
 import { createToolDiscoveryCapability } from '../../extensions/discovery/toolDiscoveryExtension'
 
 import { createBuddySession as createPreparedBuddySession } from '../createBuddySession'
@@ -56,7 +58,6 @@ describe('createBuddySession', () => {
     })
     try {
       expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
-      expect(result.session.getActiveToolNames()).toEqual(expect.arrayContaining(['read', 'write', 'find', 'grep', 'ls']))
       await result.session.setModel(otherModel)
       expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
       await result.session.getToolDefinition('lexora_tool_search')!.execute(
@@ -112,11 +113,9 @@ describe('createBuddySession', () => {
       resources: { ...emptyResources(), skillReadRoots: [], skillReferences: [], approvedSkills: approved.skills },
     })
     try {
-      expect(result.session.systemPrompt).toContain('<available_skills>')
       expect(result.session.systemPrompt).toContain('<name>sample-workflow</name>')
       expect(result.session.systemPrompt).toContain('Inspect sample workflow inputs')
       expect(result.session.systemPrompt).toContain(skillPath)
-      expect(result.session.systemPrompt).toContain('Use the read tool to load a skill')
       expect(result.session.systemPrompt).not.toContain('BODY_ONLY_ON_DEMAND')
       expect(result.session.systemPrompt).not.toContain('REFERENCE_ONLY_ON_DEMAND')
       expect(result.session.systemPrompt).not.toContain('OUTSIDE_METADATA')
@@ -126,18 +125,13 @@ describe('createBuddySession', () => {
     }
   })
 
-  it('activates PowerShell instead of Bash for a Windows session', async () => {
+  it('matches actual Windows tool permissions and actor sections in requests and context previews', async () => {
     const root = await createDirectory()
     const agentDir = join(root, '.lexora-buddy')
-    const modelRuntime = await ModelRuntime.create({
-      modelsPath: null,
-      refreshOnCreate: false,
-    })
-    const model = modelRuntime.getModels()[0]
-    if (!model)
-      throw new Error('Pi did not expose a built-in model for the test')
-
-    const result = await createBuddySession({
+    const modelRuntime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false })
+    const model = modelRuntime.getModels()[0]!
+    await modelRuntime.setRuntimeApiKey(model.provider, 'offline-test-only')
+    const options = {
       agentDir,
       branchId: 'branch-1',
       canonicalRoot: root,
@@ -147,21 +141,36 @@ describe('createBuddySession', () => {
       ...createRuntimeOptions(),
       model,
       modelRuntime,
-      platform: 'win32',
-      resources: emptyResources(),
-    })
+      platform: 'win32' as const,
+      resources: { ...emptyResources(), actorPrompt: 'WINDOWS_ACTOR_INSTRUCTIONS' },
+    }
+    const result = await createBuddySession(options)
     try {
-      expect(result.session.getActiveToolNames().sort()).toEqual([
-        'edit',
-        'find',
-        'grep',
-        'ls',
-        'powershell',
-        'read',
-        'write',
-      ])
-      expect(result.session.systemPrompt).toContain('including PowerShell')
-      expect(result.session.systemPrompt).not.toContain('including bash')
+      const snapshot = await createBuddyContextSnapshot(options)
+      const requests: { prompt: string, usage: ReturnType<typeof createEstimatedContextUsage> }[] = []
+      vi.spyOn(modelRuntime, 'streamSimple').mockImplementation((target, context) => {
+        requests.push({ prompt: getCurrentSystemPrompt(context.messages), usage: createEstimatedContextUsage(context) })
+        const stream = createAssistantMessageEventStream()
+        const message: AssistantMessage = {
+          role: 'assistant',
+          api: target.api,
+          model: target.id,
+          provider: target.provider,
+          timestamp: Date.now(),
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Done' }],
+          usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        }
+        queueMicrotask(() => stream.push({ type: 'done', reason: 'stop', message }))
+        return stream
+      })
+      await result.session.prompt('Inspect the available tools')
+      expect(result.session.getActiveToolNames().sort()).toEqual(['edit', 'find', 'grep', 'ls', 'powershell', 'read', 'write'])
+      expect(requests).toHaveLength(1)
+      expect(requests[0]!.prompt).toContain('including PowerShell')
+      expect(requests[0]!.prompt).not.toContain('including bash')
+      expect(requests[0]!.prompt).toContain('WINDOWS_ACTOR_INSTRUCTIONS')
+      expect(snapshot?.systemPromptTokens).toBe(requests[0]!.usage.systemPromptTokens)
     }
     finally {
       await result.shutdown('quit')

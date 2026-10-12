@@ -20,6 +20,7 @@
   },
   "platforms": {
     "linux": {
+      "hostShellSupervision": true,
       "features": [
         "nativePet",
         "systemActions"
@@ -58,6 +59,7 @@
       "sandbox": "linux-srt"
     },
     "win32": {
+      "hostShellSupervision": true,
       "features": [
         "systemActions"
       ],
@@ -94,6 +96,7 @@
       "sandbox": "windows-lpac"
     },
     "darwin": {
+      "hostShellSupervision": false,
       "features": [],
       "shell": "bash",
       "transport": "unix",

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buddyUserContentToText,
   buddyUserContentV1Schema,
   createBuddyUserContent,
+  getBuddyUserContentActorReferences,
   hasBuddyUserContent,
 } from '../buddyUserContent'
 import { projectBuddyUserContent } from '../buddyUserContentProjection'
@@ -34,6 +36,9 @@ describe('buddy user content', () => {
     { ...content, body: [{ content: [{ placementId: 'extra', resourceId: 'image-a', type: 'resource_ref' }], type: 'paragraph' }] },
     { ...content, body: [{ content: [{ directive: 'skill', commandMode: 'prompt', type: 'prompt_directive', value: 'review' }], type: 'paragraph' }] },
     { ...content, body: [{ content: [{ directive: 'slash_command', type: 'prompt_directive', value: '/review' }], type: 'paragraph' }] },
+    { ...content, body: [{ content: [{ type: 'actor_ref', actorId: '', name: 'Lexora' }], type: 'paragraph' }] },
+    { ...content, body: [{ content: [{ type: 'actor_ref', actorId: 'actor', name: '' }], type: 'paragraph' }] },
+    { ...content, body: [{ content: [{ type: 'actor_ref', actorId: 'actor', name: 'Lexora', avatar: 'untrusted' }], type: 'paragraph' }] },
   ])('rejects unknown or ambiguous persisted structures: %j', (value) => {
     expect(buddyUserContentV1Schema.safeParse(value).success).toBe(false)
   })
@@ -52,6 +57,22 @@ describe('buddy user content', () => {
         { kind: 'image', marker: '[Image #2]', resourceId: 'image-b' },
       ],
     })
+  })
+
+  it('keeps actor identities in the body without granting identity to names or allocating resources', () => {
+    const actor = { type: 'actor_ref' as const, actorId: 'actor-one', name: '同名伙伴' }
+    const other = { ...actor, actorId: 'actor-two' }
+    const content = buddyUserContentV1Schema.parse({
+      ...createBuddyUserContent(),
+      body: [{ type: 'paragraph', content: [actor, { type: 'text', text: ' 请和 ' }, other, actor, { type: 'text', text: ' 一起检查 @Lexora' }] }],
+    })
+    expect(getBuddyUserContentActorReferences(content)).toEqual([actor, other])
+    expect(getBuddyUserContentActorReferences(createBuddyUserContent('@同名伙伴 @Lexora'))).toEqual([])
+    const projection = projectBuddyUserContent(content, () => {
+      throw new Error('No resources')
+    }, () => '')
+    expect(projection).toEqual({ imageResourceIds: [], resources: [], prompt: '@同名伙伴 请和 @同名伙伴@同名伙伴 一起检查 @Lexora' })
+    expect(buddyUserContentToText(content)).toBe(projection.prompt)
   })
 
   it('keeps handwritten markers literal, including split text nodes and appendix content', () => {

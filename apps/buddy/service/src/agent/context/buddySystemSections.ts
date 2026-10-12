@@ -2,7 +2,7 @@ import type { AgentSession, ToolInfo } from '@earendil-works/pi-coding-agent'
 import { ATTACHMENT_GUIDELINES } from './attachmentGuidelines'
 import { readBuddyInputReference } from './BuddyInputReference'
 
-export const BUDDY_SYSTEM_SECTION_NAMES = ['buddy_tool_guidelines', 'buddy_attachment_resources'] as const
+export const BUDDY_SYSTEM_SECTION_NAMES = ['buddy_tool_guidelines', 'buddy_attachment_resources', 'buddy_actor'] as const
 
 export function buildBuddySystemSections(messages: AgentSession['messages'], tools: readonly ToolInfo[]): Record<string, string> {
   const guidelines = [...new Set(tools.flatMap(tool => !tool.name.startsWith('mcp__')

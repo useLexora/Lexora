@@ -94,9 +94,8 @@ describe('browser session extensions', () => {
       signal: new AbortController().signal,
       spaceId: null,
     })
-    const names = extensions.inProcessExtensions.map(extension => extension.name)
-    expect(names.includes('lexora-automation')).toBe(sessionMode === 'interactive')
-    expect(names).toEqual(expect.arrayContaining(['lexora-tool-policy', 'lexora-change-capture', 'lexora-image-generation', 'lexora-image-transform']))
+    expect(extensions.inProcessExtensions.some(extension => extension.name === 'lexora-automation')).toBe(sessionMode === 'interactive')
+    await extensions.dispose()
   })
 
   it('closes admission immediately and drains every capability even if one cleanup fails', async () => {
@@ -234,6 +233,7 @@ function createCompositionServices(
   return {
     approvalService: { request: requestApproval },
     createCapabilities: createBuddyCapabilityFactory(resolveBuddyPlatform('linux'), {
+      getRunBuddyId: () => 'default',
       browserHost,
       connectorService: {
         getTools() {

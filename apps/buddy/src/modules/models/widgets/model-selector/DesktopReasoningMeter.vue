@@ -5,6 +5,7 @@ import { computed, shallowRef } from 'vue'
 import DesktopReasoningFieldCanvas from '@/modules/models/widgets/model-selector/DesktopReasoningFieldCanvas.vue'
 
 const props = defineProps<{
+  disabled?: boolean
   label: string
   options: ReadonlyArray<ReasoningSelectorOption>
   selectedEffort: BuddyThinkingLevel | null
@@ -31,6 +32,8 @@ const progressRatio = computed(() => (
 ))
 
 function previewSelection(event: Event) {
+  if (props.disabled)
+    return
   const index = readSliderIndex(event)
   const option = props.options[index]
   if (!option)
@@ -40,6 +43,8 @@ function previewSelection(event: Event) {
 }
 
 function commitSelection(event: Event) {
+  if (props.disabled)
+    return
   const index = readSliderIndex(event)
   const option = props.options[index]
   if (!option)
@@ -59,6 +64,19 @@ function updateDragging(value: boolean) {
     return
   isDragging.value = value
   emit('dragging', value)
+}
+
+function startDragging(event: PointerEvent) {
+  if (props.disabled) {
+    event.preventDefault()
+    return
+  }
+  updateDragging(true)
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (props.disabled && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key))
+    event.preventDefault()
 }
 
 function readSliderIndex(event: Event): number {
@@ -100,8 +118,10 @@ function readSliderIndex(event: Event): number {
       step="1"
       :value="visualIndex"
       :aria-label="label"
+      :aria-disabled="disabled"
       :aria-valuetext="visualOption?.label ?? ''"
-      @pointerdown="updateDragging(true)"
+      @pointerdown="startDragging"
+      @keydown="handleKeydown"
       @pointerup="updateDragging(false)"
       @pointercancel="clearPreview"
       @input="previewSelection"

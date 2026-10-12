@@ -6,7 +6,7 @@ import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type { BuddyStartTurnInput } from '../BuddyRuntime'
 import type { RunEventObservation } from '../events/RunEventPorts'
-import type { ChatQueueRepository } from '../storage/chatQueueRepository'
+import type { ChatQueueRepository, QueuedTurnRequestInput } from '../storage/chatQueueRepository'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
@@ -18,13 +18,13 @@ import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
 import { getAttachmentLabels } from '../attachments/attachmentLabels'
+import { buddyExecutionFingerprint } from '../buddies/BuddyExecutionDefinition'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
-import { resolveTurnExecutionProfile } from '../storage/turnRequestRepository'
 
 export interface ChatQueueServiceOptions {
   getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
   queue: ChatQueueRepository
-  turns: Pick<ChatTurnService, 'cancel' | 'prepareStart' | 'validatePreparedInput'>
+  turns: Pick<ChatTurnService, 'cancel' | 'prepareStart' | 'refreshQueuedInput' | 'validatePreparedInput'>
   requests: Pick<TurnRequestRepository, 'prepare'>
   launcher: Pick<BuddyTurnLauncher, 'launch'>
   runner: Pick<BuddyAgentRunner, 'steer' | 'followUp' | 'hasActiveExecution' | 'hasDegradedCleanup' | 'isStopping'>
@@ -175,16 +175,15 @@ export class ChatQueueService {
         return false
       if (!active)
         return this.#dispatch(target, true)
-      const input = this.#options.queue.pending(target)
-      if (!input || this.#options.queue.activeRun(target)?.id !== active.id)
+      const pending = this.#options.queue.pending(target)
+      if (!pending || this.#options.queue.activeRun(target)?.id !== active.id)
         return false
-      if (active.purpose !== 'chat' || active.model !== input.model || active.provider !== input.provider)
-        throw new BuddyServiceError('VALIDATION_FAILED')
+      const input = await this.#options.turns.refreshQueuedInput(pending)
       const run = this.#options.runs.findById(active.id)
-      if (!run || !this.#hasCompatiblePermissions(run, input))
+      if (!run || !this.#canFollowUp(run, input))
         return false
       await this.#options.turns.validatePreparedInput(input, false)
-      if (this.#disposed || this.#isCancelling(target) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || this.#options.queue.activeRun(target)?.id !== active.id)
+      if (this.#disposed || this.#isCancelling(target) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input) || this.#options.queue.activeRun(target)?.id !== active.id)
         return false
       return this.#deliver(input, active.id, 'steer')
     })
@@ -201,8 +200,11 @@ export class ChatQueueService {
         const next = this.#options.queue.list(run)[0]
         if (next?.state !== 'waiting')
           return false
-        const input = this.#options.queue.pending(next)
-        if (!input || !this.#canFollowUp(run, input))
+        const pending = this.#options.queue.pending(next)
+        if (!pending)
+          return false
+        const input = await this.#options.turns.refreshQueuedInput(pending)
+        if (!this.#canFollowUp(run, input))
           return false
         await this.#options.turns.validatePreparedInput(input)
         if (this.#disposed || this.#isCancelling(run) || this.#options.eventLog.state !== 'open' || signal.aborted)
@@ -210,7 +212,7 @@ export class ChatQueueService {
         const head = this.#options.queue.list(run)[0]
         if (this.#options.queue.activeRun(run)?.id !== runId
           || head?.id !== next.id || head.state !== 'waiting'
-          || !this.#options.queue.pending(next)) {
+          || !this.#options.queue.pending(next) || !this.#options.queue.isCurrentInput(input)) {
           return false
         }
         return this.#deliver(input, runId, 'followUp')
@@ -226,20 +228,16 @@ export class ChatQueueService {
   #canFollowUp(run: RunRecord, input: PrepareTurnRequestInput) {
     const current = this.#options.runInputs.findByRunId(run.id)
     return run.status === 'running' && run.branchId === input.branchId
+      && run.buddyId === input.buddyId
+      && (run.actorSnapshot && input.actorSnapshot ? buddyExecutionFingerprint(run.actorSnapshot) === buddyExecutionFingerprint(input.actorSnapshot) : !!run.actorSnapshot === !!input.actorSnapshot)
       && run.model === input.model && run.provider === input.provider
-      && this.#hasCompatiblePermissions(run, input)
+      && this.#options.getRunPermissionCeiling(run.id) === input.runExecutionProfile
       && run.contextWindow === (input.modelParameters?.contextWindow ?? null)
       && run.maxTokens === (input.modelParameters?.maxTokens ?? null)
       && current?.reasoning === input.runInput.reasoning && current.serviceTier === input.runInput.serviceTier
   }
 
-  #hasCompatiblePermissions(run: RunRecord, input: PrepareTurnRequestInput): boolean {
-    return run.approvalPolicy === input.approvalPolicy
-      && run.executionProfile === resolveTurnExecutionProfile(input)
-      && this.#options.getRunPermissionCeiling(run.id) === input.runExecutionProfile
-  }
-
-  #deliver(input: PrepareTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {
+  #deliver(input: QueuedTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {
     return this.#options.runner[mode](runId, () => {
       const documents = input.attachmentBindings.flatMap(binding => isDocumentMimeType(binding.mimeType)
         ? [{ attachmentId: binding.id, mimeType: binding.mimeType }]
@@ -255,7 +253,7 @@ export class ChatQueueService {
           return metadata?.startsWith('image/') && metadata !== 'image/svg+xml' ? [{ attachmentId: binding.id, mimeType: metadata }] : []
         }),
       })
-      this.#options.queue.commitInRun(input, runId)
+      this.#options.queue.commitInRun(input, runId, this.#options.getRunPermissionCeiling(runId))
       this.#changed('delivered', input, { commitId: randomUUID(), requestId: input.requestId, queueId: input.queuedMessageId!, runId, messageId: input.userMessageId, ...(input.attachmentBindings.length ? { attachmentOwnership: { kind: 'message', attachmentIds: input.attachmentBindings.map(binding => binding.id) } } : {}) })
       return reference
     }, input.runInput.contextItems.flatMap(item => item.kind === 'skill' && item.skill ? [item.skill] : []))
@@ -279,11 +277,12 @@ export class ChatQueueService {
   async #dispatch(target: LocalChatQueueTarget, allowPaused = false) {
     if (!this.#canDispatch(target))
       return false
-    const input = this.#options.queue.pending(target)
-    if (!input)
+    const pending = this.#options.queue.pending(target)
+    if (!pending)
       return false
+    const input = await this.#options.turns.refreshQueuedInput(pending)
     await this.#options.turns.validatePreparedInput(input)
-    if (!this.#canDispatch(target) || !this.#options.queue.pending(target))
+    if (!this.#canDispatch(target) || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input))
       return false
     const head = this.#options.queue.list(target)[0]
     if (!allowPaused && (head?.id !== target.id || head.state !== 'waiting'))

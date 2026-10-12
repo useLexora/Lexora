@@ -1,12 +1,16 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
+import type { BuddyCatalog } from '@buddy-shared/buddies/buddyApi'
+import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { JSONContent } from '@tiptap/core'
+import type { Ref } from 'vue'
 import type { TaskCapability } from '../contracts'
 import type { TaskIndexController } from './task-index/useTaskIndex'
 import type { ModelProvidersStore } from '@/modules/models'
 import type { ApplicationSettings } from '@/modules/settings'
 import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
+import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { BUDDY_DEFAULT_PERMISSION_MODE } from '@buddy-shared/permissions/permissionMode'
 import { until } from '@vueuse/core'
 import { computed, readonly, shallowRef, watch } from 'vue'
@@ -31,16 +35,19 @@ import { createDraftScopeKey } from '../model/drafts/draftScope'
 import { useChatConversations } from './conversations/useChatConversations'
 import { useChatSession } from './conversations/useChatSession'
 import { useConversationTree } from './conversations/useConversationTree'
+import { useTaskMembers } from './conversations/useTaskMembers'
 import { useChatDrafts } from './drafts/useChatDrafts'
 import { useChatPermissionSettings } from './drafts/useChatPermissionSettings'
+import { useTaskActorModel } from './drafts/useTaskActorModel'
 import { useTaskDraftModelBinding } from './drafts/useTaskDraftModelBinding'
 import { useTaskModelPersistence } from './drafts/useTaskModelPersistence'
-import { useTaskModelSelection } from './drafts/useTaskModelSelection'
 
+import { useTaskModelSelection } from './drafts/useTaskModelSelection'
 import { useTaskWorkspacePersistence } from './drafts/useTaskWorkspacePersistence'
 import { useTaskLifecycle } from './useTaskLifecycle'
 
 export interface UseTaskCapabilityOptions {
+  buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>
   index: TaskIndexController
   initialTarget: { draftKey?: string, conversationId: string | null, branchId: string | null, spaceId: string | null }
   api: LexoraDesktopApi
@@ -136,8 +143,15 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     defaultPermissionMode,
     onChange: () => persistDraftChanges(),
     targetKey: draftScopeKey,
+    defaultActorId: getDefaultActorId,
   })
   const { composerContent, draft, draftId } = drafts
+  const draftBuddyId = computed(() => drafts.participants.value?.leaderId ?? null)
+  const addressedActorId = computed(() => {
+    const actors = getBuddyUserContentActorReferences(drafts.load(drafts.targetKey.value).content)
+    return actors.length === 1 ? actors[0]!.actorId : null
+  })
+  const resolvedActorModel = shallowRef<{ conversationId: string | null, actorId: string | null, model: LocalConversation['modelSelection'] } | null>(null)
   const draftModelBinding = useTaskDraftModelBinding({
     drafts,
     isModelCatalogReady: computed(() => !modelProviders.isLoadingModelCatalog.value && modelProviders.models.value.length > 0),
@@ -192,9 +206,21 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   function persistWorkspaceState() {
     return workspacePersistence.persist()
   }
-  function getActiveConversationModel() {
-    return activeConversation.value?.modelSelection ?? null
+  function getDefaultActorId() {
+    return activeConversation.value?.buddyId ?? draftBuddyId.value ?? options.buddyCatalog?.value?.defaultBuddyId ?? null
   }
+  function getActiveConversationModel() {
+    const catalog = options.buddyCatalog?.value
+    const id = addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value ?? catalog?.defaultBuddyId
+    const resolved = resolvedActorModel.value
+    const memberModel = id === activeConversation.value?.buddyId ? activeConversation.value?.modelSelection : resolved?.conversationId === activeConversationId.value && resolved?.actorId === id ? resolved?.model : null
+    return memberModel ?? catalog?.buddies.find(buddy => buddy.id === id)?.settings.model ?? null
+  }
+  watch(addressedActorId, () => draftModelBinding.restoreScope(getActiveConversationModel()), { flush: 'sync' })
+  watch(() => [activeConversation.value?.buddyId ?? draftBuddyId.value, draftId.value] as const, ([actorId, id], [previousActorId, previousId]) => {
+    if (id === previousId && actorId !== previousActorId && !addressedActorId.value)
+      drafts.setModelSelection(null)
+  }, { flush: 'sync' })
   const taskSpaces = useTaskSpaces({
     activateDraftScope,
     index: options.index,
@@ -212,6 +238,15 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   watch(activeSpace, (space, previous) => {
     if (!activeConversationId.value && previous && !previous.revokedAt && (!space || space.revokedAt))
       void activateGlobalDraft().catch(setError)
+  })
+  const taskMembers = useTaskMembers({
+    api: api.localChat.conversations,
+    conversationId: activeConversationId,
+    leaderId: computed(() => getDefaultActorId()),
+    ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready' && workspacePersistence.restorationState.value === 'ready'),
+    drafts,
+    persist: persistWorkspaceState,
+    language,
   })
   const { listContextOptions } = useComposerContextOptions({
     activeBranchId,
@@ -231,7 +266,40 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     }),
     listSources: api.localChat.composerResources.listSources,
     listSkills: api.localChat.skills.list,
+    listBuddies: api.localChat.buddies.list,
+    memberIds: taskMembers.memberIds,
   })
+  const isSelectingBuddy = shallowRef(false)
+  async function selectBuddy(buddyId: string) {
+    if (isSelectingBuddy.value || !taskMembers.memberIds.value.includes(buddyId))
+      return false
+    const conversationId = activeConversationId.value
+    const sourceDraftId = drafts.draftId.value
+    if (!conversationId) {
+      drafts.setParticipants({ leaderId: buddyId, actorIds: [...taskMembers.memberIds.value] })
+      if (!addressedActorId.value)
+        drafts.setModelSelection(null)
+      draftModelBinding.restoreScope(getActiveConversationModel())
+      return persistWorkspaceState()
+    }
+    isSelectingBuddy.value = true
+    try {
+      const conversation = await api.localChat.conversations.setBuddy(conversationId, buddyId)
+      applyConversation(conversation)
+      if (activeConversationId.value !== conversationId || drafts.draftId.value !== sourceDraftId)
+        return true
+      if (!addressedActorId.value)
+        drafts.setModelSelection(null)
+      draftModelBinding.restoreScope(getActiveConversationModel())
+      return true
+    }
+    catch (error) {
+      setError(error)
+      return false
+    }
+    finally { isSelectingBuddy.value = false }
+  }
+  watch(() => options.buddyCatalog?.value?.revision, () => draftModelBinding.restoreScope(getActiveConversationModel()))
   const currentTitle = computed(() => activeConversation.value?.title?.trim()
     || t('desktop.tasks.newTask'))
   const permissionSettingsState = useChatPermissionSettings({
@@ -278,7 +346,24 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     resources: composerResources.resources.value,
   }))
   const composerInteractions = useChatComposerInteractions({ runs })
-  const { selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection } = useTaskModelPersistence({
+  const actorModel = useTaskActorModel({
+    activeConversation,
+    api: api.localChat.conversations,
+    buddyCatalog: options.buddyCatalog,
+    draftBuddyId,
+    addressedActorId,
+    restoreModel: (selection) => {
+      resolvedActorModel.value = { conversationId: activeConversationId.value, actorId: addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value, model: selection }
+      if (drafts.modelSelection.value === null)
+        taskModels.restoreConversationModelSelection(selection)
+    },
+    onError: setError,
+  })
+  const { selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection, isUpdating: isUpdatingModel } = useTaskModelPersistence({
+    target: actorModel.target,
+    canUpdate: actorModel.canUpdate,
+    persistTarget: actorModel.persistTarget,
+    onPersisted: actorModel.refresh,
     activeConversationId,
     api: api.localChat.conversations,
     applyConversation,
@@ -287,11 +372,12 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     selection: taskModels,
   })
   const execution = useChatExecution({
+    getNewBuddyId: () => activeConversationId.value ? undefined : draftBuddyId.value ?? undefined,
     flushModelSelection,
     activeRun,
     approvalPolicy: permissionSettingsState.approvalPolicy,
     api: api.localChat,
-    canSendDraft: computed(() => !isClosing.value && workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
+    canSendDraft: computed(() => !isSelectingBuddy.value && !isClosing.value && workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
     taskIndexData,
     session: chatSession,
     drafts,
@@ -393,6 +479,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     lifecycle.dispose()
     workspacePersistence.dispose()
     draftModelBinding.dispose()
+    actorModel.dispose()
     taskModels.dispose()
     contextUsageTracker.dispose()
     runSync.dispose()
@@ -443,6 +530,10 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   } as const
 
   const chatWorkspaceSession = {
+    selectedBuddyId: computed(() => getDefaultActorId()),
+    members: taskMembers,
+    isSelectingBuddy: readonly(isSelectingBuddy),
+    selectBuddy,
     activeBranchId: readonly(activeBranchId),
     activeConversation: readonly(activeConversation),
     activeConversationId: readonly(activeConversationId),
@@ -491,6 +582,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       interaction: composerInteractions.interaction,
       listContextOptions,
       models: modelProviders.models,
+      isLoadingModel: actorModel.isLoading,
+      isUpdatingModel,
       providers: modelProviders.providers,
       selectedEffort: taskModels.selectedEffort,
       selectedModel: taskModels.selectedModel,

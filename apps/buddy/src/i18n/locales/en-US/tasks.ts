@@ -138,6 +138,8 @@ export default {
   'desktop.context.changePreview.oversized': 'This file is too large for a text difference',
   'desktop.context.changePreview.sensitive': 'Sensitive file contents are not previewed',
   'desktop.context.changePreview.unavailable': 'This file difference is unavailable',
+  'desktop.context.changeSource': '{name} · Segment {index}',
+  'desktop.context.changeSourceUnknown': 'Agent',
   'desktop.context.changeRedacted': 'Sensitive values in this preview were redacted',
   'desktop.context.changeType.created': 'Created',
   'desktop.context.changeType.deleted': 'Deleted',

@@ -56,6 +56,7 @@ interface CommandRequestRow {
 }
 
 interface ConversationRow {
+  buddy_id: string
   active_branch_id: string | null
   approval_policy: BuddyApprovalPolicy
   deleted_at: string | null
@@ -63,6 +64,9 @@ interface ConversationRow {
 }
 
 interface SourceRunRow {
+  model_override_json: string | null
+  actor_snapshot_json: string | null
+  buddy_id: string
   approval_policy: BuddyApprovalPolicy
   branch_id: string
   conversation_id: string
@@ -81,17 +85,17 @@ export function createCommandRequestRepository(database: DatabaseSync): CommandR
   const findRequest = database.prepare('SELECT * FROM command_requests WHERE request_id = ?')
   const findRequestByRun = database.prepare('SELECT * FROM command_requests WHERE run_id = ?')
   const findConversation = database.prepare(`
-    SELECT active_branch_id, approval_policy, deleted_at, execution_profile
+    SELECT active_branch_id, approval_policy, deleted_at, execution_profile, buddy_id
     FROM conversations WHERE id = ?
   `)
   const findIncompleteRun = database.prepare(`
     SELECT 1 FROM runs
-    WHERE conversation_id = ? AND status IN ('queued', 'running')
+    WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance') AND status IN ('queued', 'running')
     LIMIT 1
   `)
   const findSourceRun = database.prepare(`
     SELECT * FROM runs
-    WHERE conversation_id = ? AND branch_id = ?
+    WHERE conversation_id = ? AND branch_id = ? AND execution_kind IN ('root', 'maintenance')
       AND pi_session_file IS NOT NULL
       AND status IN ('completed', 'failed', 'cancelled')
     ORDER BY started_at DESC, id DESC
@@ -102,8 +106,8 @@ export function createCommandRequestRepository(database: DatabaseSync): CommandR
     INSERT INTO runs (
       id, conversation_id, branch_id, triggering_message_id, provider, model,
       context_window, max_tokens, purpose, status, pi_session_file, error_code,
-      started_at, completed_at, approval_policy, execution_profile
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'conversation.compaction', 'queued', ?, NULL, ?, NULL, ?, ?)
+      started_at, completed_at, approval_policy, execution_profile, buddy_id, actor_snapshot_json, model_override_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'conversation.compaction', 'queued', ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
   `)
   const insertRequest = database.prepare(`
     INSERT INTO command_requests (
@@ -221,6 +225,9 @@ function insertCompactionRun(
     createdAt,
     approvalPolicy,
     executionProfile,
+    source.buddy_id,
+    source.actor_snapshot_json,
+    source.model_override_json,
   )
 }
 

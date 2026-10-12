@@ -1,21 +1,26 @@
 import type { ChildProcess } from 'node:child_process'
+import type { OwnedProcessSettlement } from '../../../../../platform/process/supervisedShellProcess'
 import type { SrtSandboxInput } from '../../../../../shared/permissions/shellSandbox'
 import type { SandboxExecutionOptions } from '../../sandboxExecutionLifecycle'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
+import { runSupervisedShellProcess } from '../../../../../platform/process/supervisedShellProcess'
 import { createSandboxPolicy } from './createPolicy'
 
 export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExecutionOptions): Promise<number | null> {
   let child: ChildProcess | undefined
+  let supervised = false
+  let settlement: OwnedProcessSettlement | undefined
   const kill = () => killProcessGroup(child?.pid)
   options.signal.addEventListener('abort', kill, { once: true })
   const release = async () => {
-    options.onProcess?.({ phase: 'cleanup_requested', pid: child?.pid })
+    const pid = settlement ? JSON.parse(settlement.processId).pid as number | undefined : child?.pid
+    options.onProcess?.({ phase: 'cleanup_requested', pid, processId: settlement?.processId })
     try {
       kill()
       await SandboxManager.reset()
-      options.onProcess?.({ phase: 'resources_released', pid: child?.pid })
+      options.onProcess?.({ phase: supervised && settlement?.settlement === 'released' ? 'resources_released' : 'cleanup_failed', pid, processId: settlement?.processId })
     }
     catch (error) {
       options.onProcess?.({ phase: 'cleanup_failed', pid: child?.pid })
@@ -34,6 +39,31 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
       { commandId: input.requestId, commandText: input.command },
     )
     options.signal.throwIfAborted()
+    if (process.platform === 'linux') {
+      supervised = true
+      let started = false
+      const result = await runSupervisedShellProcess({
+        shell: launch.argv[0]!,
+        args: launch.argv.slice(1, -1),
+        command: launch.argv.at(-1)!,
+        cwd: input.cwd,
+        environment: { ...launch.env, PATH: path },
+      }, {
+        signal: options.signal,
+        onData: options.onData,
+        onProcess: options.onProcess,
+        onSettlement(next) {
+          settlement = next
+          const pid = JSON.parse(next.processId).pid as number | undefined
+          if (!started && next.settlement === 'pending') {
+            options.onProcess?.({ phase: 'spawned', pid, processId: next.processId })
+            started = true
+            options.onStarted()
+          }
+        },
+      })
+      return result.exitCode
+    }
     return await new Promise<number | null>((resolve, reject) => {
       child = spawn(launch.argv[0]!, launch.argv.slice(1), {
         cwd: input.cwd,

@@ -1,3 +1,5 @@
+import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
+import type { BuddySettings } from '../../../../shared/buddies/buddySettings'
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { ApplicationDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
@@ -5,14 +7,17 @@ import type { BuddyExecutionProfile } from '../../../../shared/permissions/execu
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
 import type { ApprovalService } from '../../approvals/ApprovalService'
+import type { BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { AttachmentService } from '../../attachments/AttachmentService'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
+import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
+import type { ExecutionDelegationService } from '../execution/ExecutionDelegationService'
 import type { BuddyCapability, BuddyCapabilityFactory, BuddyCapabilityResourceRevision } from './BuddyCapability'
-import type { BuddyExtensionRunContextStore } from './BuddyExtensionRunContext'
+import type { BuddyExtensionRunContext, BuddyExtensionRunContextStore } from './BuddyExtensionRunContext'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import type { BuddyToolExposureResolver } from './discovery/toolDiscoveryContract'
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
@@ -23,22 +28,27 @@ import { ToolExecutionPermissions } from '../../permissions/ToolExecutionPermiss
 import { SandboxDirectoryPermissions } from '../../sandbox/SandboxDirectoryPermissions'
 import { createShellCapability } from '../../sandbox/shellCapability'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
-import { createChangeCaptureExtension } from './changeCaptureExtension'
+import { createMutationToolWrapper } from './changeCaptureExtension'
 import { createChatQueueExtension } from './chatQueueExtension'
 import { createCodemodeCapability } from './codemodeExtension'
+import { createDelegationCapability } from './delegationCapability'
 import { observeSessionTools } from './discovery/observeSessionTools'
 import { SessionToolCapabilities } from './discovery/SessionToolCapabilities'
+import { SessionToolScope } from './discovery/SessionToolScope'
 import { createToolDiscoveryCapability } from './discovery/toolDiscoveryExtension'
+import { createFileMutationExtension } from './fileMutationExtension'
 import { createInputReferenceExtension } from './inputReferenceExtension'
 import { createModelSwitchExtension } from './modelSwitchExtension'
 import { createToolPolicyExtension } from './toolPolicyExtension'
 
 export interface BuddySessionExtensionServices {
+  delegation?: Pick<ExecutionDelegationService, 'execute' | 'assertShellExecutionAllowed'>
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
   approvalService: Pick<ApprovalService, 'request'> & Partial<Pick<ApprovalService, 'clearRunAuthorizations'>>
   attachmentService: Pick<AttachmentService, 'prepareInputImages' | 'materializeDocumentInputs' | 'materializeInputResources' | 'getInputMetadata'>
-  changeCaptureService: Pick<ChangeCaptureService, 'beginFileTool' | 'beginWorkspaceTool' | 'finalizeRun' | 'finishFileTool' | 'finishWorkspaceTool' | 'markPartial'>
+  changeCaptureService: Pick<ChangeCaptureService, 'beginInvocation' | 'finishInvocation' | 'markPartial'>
+  mutations: MutationCoordinator
   createCapabilities: BuddyCapabilityFactory
   directoryGrants: Pick<DirectoryGrantService, 'grant' | 'assertCurrent'>
   recordPermissions?: ApplicationDiagnosticReporter
@@ -47,10 +57,13 @@ export interface BuddySessionExtensionServices {
 }
 
 export interface CreateBuddySessionExtensionsOptions {
+  actorKind?: 'actor' | 'npc'
   approvalPolicy: BuddyApprovalPolicy
   canonicalRoot: string
   conversationId: string
   executionProfile: BuddyExecutionProfile
+  toolScope?: BuddySettings['tools']
+  fileAccessLimit?: BuddySettings['limits']['fileAccess']
   grants: readonly DirectoryGrant[]
   skillReadRoots?: readonly string[]
   sessionMode: BuddySessionMode
@@ -84,10 +97,13 @@ export async function createBuddySessionExtensions(
   const runContext: BuddyExtensionRunContextStore = { current: null }
   let permissionSettings: BuddyPermissionSettings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
   let codemodeEnabled = false
+  const fileAccessLimit = options.fileAccessLimit ?? 'inherit'
+  const getExecutionProfile = () => fileAccessLimit === 'read_only' ? 'read_only' : permissionSettings.executionProfile
   const inputReferences: BuddyInputReferenceStore = { pending: null }
   const executionPermissions = new ToolExecutionPermissions()
   const diagnostics = observeSessionPermissions({ grants: grants.onDidChange, sandbox: sandboxDirectories.onDidChange, tools: executionPermissions.onDidChange }, options.conversationId, services.recordPermissions)
   let toolCapabilities: SessionToolCapabilities | undefined
+  let toolScope: SessionToolScope | undefined
   let stopToolDiagnostics: { dispose: () => void } | undefined
   const capabilities: BuddyCapability[] = []
   let disposing: Promise<void> | undefined
@@ -126,7 +142,9 @@ export async function createBuddySessionExtensions(
       approvalService: services.approvalService,
       cwd: options.canonicalRoot,
       executionPermissions,
-      get executionProfile() { return permissionSettings.executionProfile },
+      get executionProfile() { return getExecutionProfile() },
+      fileAccessLimit,
+      getToolScopeDenial: toolName => toolScope ? toolScope.denial(toolName) : 'TOOL_SCOPE_UNAVAILABLE',
       getGrants: () => grants.snapshot,
       owner: options.spaceId
         ? { id: options.spaceId, kind: 'space' }
@@ -135,7 +153,7 @@ export async function createBuddySessionExtensions(
     capabilities.push(createCodemodeCapability(() => codemodeEnabled), ...await services.createCapabilities({
       isCodemodeEnabled: () => codemodeEnabled,
       conversationId: options.conversationId,
-      get executionProfile() { return permissionSettings.executionProfile },
+      get executionProfile() { return getExecutionProfile() },
       cwd: options.canonicalRoot,
       getRunId: () => runContext.current?.runId,
       getExecutionGrants: toolCallId => [...grants.snapshot, ...executionPermissions.get(runContext.current, toolCallId)],
@@ -145,53 +163,83 @@ export async function createBuddySessionExtensions(
     }))
     capabilities.push(createShellCapability({
       cwd: options.canonicalRoot,
-      execution: resolveShellExecution(options.executionProfile),
-      getExecution: () => resolveShellExecution(permissionSettings.executionProfile),
+      execution: resolveShellExecution(getExecutionProfile()),
+      getExecution: () => resolveShellExecution(getExecutionProfile()),
       getGrants: () => grants.snapshot,
       resourceReadRoots: options.skillReadRoots ?? [],
       getRunContext: () => runContext.current,
       authorization,
       sandbox: services.shellSandbox,
       directoryPermissions: sandboxDirectories,
+      mutations: services.mutations,
+      assertExecutionAllowed: ({ run }) => services.delegation?.assertShellExecutionAllowed(run.runId),
     }))
+    if (services.delegation) {
+      capabilities.push(createDelegationCapability({
+        service: services.delegation,
+        runContext,
+        actorKind: options.actorKind ?? 'actor',
+        getPermissions: () => ({ ...permissionSettings, executionProfile: getExecutionProfile() }),
+      }))
+    }
     creationSignal.throwIfAborted()
     const resourceRevisions = copyEventSnapshot(capabilities.flatMap(capability => capability.resourceRevisions ?? []))
-    toolCapabilities = new SessionToolCapabilities(resourceRevisions, services.resolveToolExposure)
+    const disclosurePolicies = capabilities.flatMap(capability => capability.disclosure ?? [])
+    toolScope = new SessionToolScope(disclosurePolicies, options.toolScope, fileAccessLimit)
+    const scope = toolScope
+    toolCapabilities = new SessionToolCapabilities(resourceRevisions, services.resolveToolExposure, scope)
     stopToolDiagnostics = observeSessionTools(toolCapabilities, options.conversationId, () => runContext.current?.runId, services.recordPermissions)
-    const discovery = createToolDiscoveryCapability(capabilities.flatMap(capability => capability.disclosure ?? []), toolCapabilities)
+    const discovery = createToolDiscoveryCapability(disclosurePolicies, toolCapabilities)
     const sessionCapabilities = [...capabilities, discovery]
+    const classifyTool = async (event: ToolCallEvent, run: BuddyExtensionRunContext): Promise<BuddyToolClassificationResult> => {
+      for (const capability of sessionCapabilities) {
+        const classification = await capability.classify(event, run.signal)
+        if (classification)
+          return classification
+      }
+      return {}
+    }
+    const wrapTool = createMutationToolWrapper({
+      conversationId: options.conversationId,
+      cwd: options.canonicalRoot,
+      authorization,
+      changes: services.changeCaptureService,
+      mutations: services.mutations,
+      getRunContext: () => runContext.current,
+      getGrants: (run, toolCallId) => [...grants.snapshot, ...executionPermissions.get(run, toolCallId)],
+      getWorkspaceGrants: run => [...grants.snapshot, ...sandboxDirectories.getWriteGrants(run)],
+      classify: classifyTool,
+      mutationEffect: (event, classification) => {
+        for (const capability of sessionCapabilities) {
+          const effect = capability.mutationEffect?.(event, classification)
+          if (effect)
+            return effect
+        }
+        return null
+      },
+      workspaceMutationTools: capabilities.flatMap(capability => capability.workspaceMutationTools ?? []),
+    })
     const inProcessExtensions: BuddyInProcessExtension[] = [
       createModelSwitchExtension(runContext),
       createInputReferenceExtension(inputReferences),
       ...options.sessionMode === 'interactive' && services.followUp
         ? [createChatQueueExtension({ getRunContext: () => runContext.current, followUp: services.followUp })]
         : [],
-      ...sessionCapabilities.map(capability => capability.extension),
+      scope.wrap(createFileMutationExtension(options.canonicalRoot), wrapTool),
+      ...capabilities.map(capability => scope.wrap(capability.extension, wrapTool)),
+      { ...discovery.extension, factory: (pi) => {
+        scope.assertRegistered()
+        return discovery.extension.factory(pi)
+      } },
       createToolPolicyExtension({
         authorization,
-        classifyTool: async (event, run) => {
-          for (const capability of sessionCapabilities) {
-            const classification = await capability.classify(event, run.signal)
-            if (classification)
-              return classification
-          }
-          return {}
-        },
+        classifyTool,
         getRunContext: () => runContext.current,
-      }),
-      createChangeCaptureExtension({
-        conversationId: options.conversationId,
-        cwd: options.canonicalRoot,
-        getRunContext: () => runContext.current,
-        get grants() { return grants.snapshot },
-        getWorkspaceGrants: () => [...grants.snapshot, ...sandboxDirectories.getWriteGrants(runContext.current)],
-        service: services.changeCaptureService,
-        workspaceMutationTools: capabilities.flatMap(capability => capability.workspaceMutationTools ?? []),
       }),
     ]
 
     return {
-      getPermissionSettings: () => permissionSettings,
+      getPermissionSettings: () => ({ ...permissionSettings, executionProfile: getExecutionProfile() }),
       updatePermissionSettings: (settings) => {
         if (settings.approvalPolicy === permissionSettings.approvalPolicy && settings.executionProfile === permissionSettings.executionProfile)
           return

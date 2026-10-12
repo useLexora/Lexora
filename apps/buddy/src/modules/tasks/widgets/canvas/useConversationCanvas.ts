@@ -8,8 +8,8 @@ import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { conversationCanvasConnection } from '../../model/canvas/conversationCanvasConnections'
 import { createCanvasInteraction, resolveCanvasSimplifiedMode } from '../../model/canvas/conversationCanvasInteraction'
 import { conversationNodeSize, layoutConversationCanvas } from '../../model/canvas/conversationCanvasLayout'
+import { CANVAS_NODE_SHAPE, createCanvasNodeHost } from './canvasNodeHost'
 import { createConversationMinimap } from './conversationCanvasMinimap'
-import { createConversationNodeHost } from './conversationCanvasNodeHost'
 
 const VIEWPORT_MARGIN_PX = 240
 
@@ -28,7 +28,7 @@ export function useConversationCanvas(options: {
   const zoom = shallowRef(100)
   const simplified = shallowRef(false)
   const interacting = shallowRef(false)
-  const nodeHost = createConversationNodeHost()
+  const nodeHost = createCanvasNodeHost()
   const viewportByScope = new Map<string, { tx: number, ty: number, scale: number }>()
   const manualPositions = new Map<string, { x: number, y: number }>()
   const nodeData = new Map<string, ConversationCanvasData>()
@@ -188,7 +188,7 @@ export function useConversationCanvas(options: {
       let node = value.getCellById(message.id)
       if (!node) {
         const data = createNodeData(message)
-        node = value.addNode({ id: message.id, shape: 'buddy-conversation-message', ...position, data, zIndex: 1 })
+        node = value.addNode({ id: message.id, shape: CANVAS_NODE_SHAPE, ...position, data, zIndex: 1 })
         nodeData.set(message.id, data)
       }
       if (node.isNode()) {

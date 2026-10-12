@@ -165,6 +165,7 @@ function createFixture() {
     const drafts = useChatDrafts({ onChange: () => {}, targetKey })
     drafts.updateComposerContent('pending input', null)
     const run: LocalRun = {
+      buddyId: 'default',
       approvalPolicy: 'policy',
       branchId: 'branch-a',
       completedAt: null,
@@ -238,6 +239,7 @@ function createFixture() {
 
 function conversation(id: string): LocalConversation {
   return {
+    buddyId: 'default',
     activeBranchId: 'branch-a',
     approvalPolicy: 'policy',
     createdAt: '2026-09-08T00:00:00.000Z',

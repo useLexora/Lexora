@@ -1,4 +1,4 @@
-import type { AgentSession, SessionEntry } from '@earendil-works/pi-coding-agent'
+import type { AgentSession } from '@earendil-works/pi-coding-agent'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,10 +6,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createBuddyInputReference } from '../../context/BuddyInputReference'
 
-import {
-  canPreparePiCompaction,
-  createReusableBuddySession,
-} from '../createReusableBuddySession'
+import { createReusableBuddySession } from '../createReusableBuddySession'
 
 const directories: string[] = []
 
@@ -45,24 +42,6 @@ describe('createReusableBuddySession', () => {
     expect(reusable.steer?.(prepare, [reference])).toBe(true)
     expect(committed).toBe(1)
     expect(messages).toHaveLength(1)
-  })
-
-  it('matches Pi compaction eligibility for small and already compacted branches', () => {
-    const first = messageEntry('message-1', null, 'first '.repeat(100))
-    const second = messageEntry('message-2', first.id, 'second '.repeat(100))
-    const settings = { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 }
-
-    expect(canPreparePiCompaction([first], settings)).toBe(false)
-    expect(canPreparePiCompaction([first, second], settings)).toBe(true)
-    expect(canPreparePiCompaction([first, second, {
-      firstKeptEntryId: second.id,
-      id: 'compaction-1',
-      parentId: second.id,
-      summary: 'summary',
-      timestamp: '2026-08-15T00:00:02.000Z',
-      tokensBefore: 1_000,
-      type: 'compaction',
-    }], settings)).toBe(false)
   })
 
   it.each(['prompt', 'compact'] as const)(
@@ -110,15 +89,7 @@ describe('createReusableBuddySession', () => {
       shutdown: async () => {},
     })
 
-    await expect(reusable.activateTurn({
-      ...toolLifecycle(),
-      contextWindow: 128_000,
-      maxTokens: 16_384,
-      model: 'model-1',
-      provider: 'anthropic',
-      runId: 'run-1',
-      signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'SESSION_STORAGE_UNAVAILABLE' })
+    await expect(reusable.activateTurn({ generation: 0, ...toolLifecycle(), contextWindow: 128_000, maxTokens: 16_384, model: 'model-1', provider: 'anthropic', runId: 'run-1', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'SESSION_STORAGE_UNAVAILABLE' })
     expect(runContext.current).toBeNull()
   })
 
@@ -198,20 +169,6 @@ async function createSessionWriteFailureFixture() {
   await rm(sessionFile)
   await mkdir(sessionFile)
   return { manager, root }
-}
-
-function messageEntry(id: string, parentId: string | null, content: string): SessionEntry {
-  return {
-    id,
-    message: {
-      content,
-      role: 'user',
-      timestamp: Date.now(),
-    },
-    parentId,
-    timestamp: '2026-08-15T00:00:00.000Z',
-    type: 'message',
-  }
 }
 
 function toolLifecycle() {

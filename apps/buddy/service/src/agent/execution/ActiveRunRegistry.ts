@@ -27,6 +27,7 @@ export interface ActiveRunSession {
 export interface ActiveRunContext {
   activateSession: (session: ActiveRunSession) => void
   getCancellationCode: () => string | null
+  getCleanupState: () => ExecutionSettled['cleanup']
   identity: BuddySessionIdentity
   requestCancellation: (errorCode: string) => void
   markCleanupDegraded: () => void
@@ -55,7 +56,7 @@ interface StartActiveRunInput {
 
 export class ActiveRunRegistry {
   readonly #executions = new Map<string, ActiveRunExecution>()
-  readonly #degradedCleanup = new Set<string>()
+  readonly #degradedCleanup = new Map<string, string>()
   readonly #settled: Emitter<ExecutionSettled>
   readonly onDidSettle: Emitter<ExecutionSettled>['event']
 
@@ -70,6 +71,10 @@ export class ActiveRunRegistry {
     return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId)
   }
 
+  activeRunIds(canonicalRoot: string): string[] {
+    return [...this.#executions.values()].filter(execution => execution.state.identity.canonicalRoot === canonicalRoot).map(execution => execution.state.runId)
+  }
+
   get hasActiveExecutions(): boolean {
     return this.#executions.size > 0
   }
@@ -78,8 +83,12 @@ export class ActiveRunRegistry {
     return this.#disposed
   }
 
+  stopAccepting(): void {
+    this.#disposed = true
+  }
+
   hasDegradedCleanup(conversationId: string): boolean {
-    return this.#degradedCleanup.has(conversationId)
+    return [...this.#degradedCleanup.values()].includes(conversationId)
   }
 
   start(input: StartActiveRunInput): BuddyTurnHandle {
@@ -100,6 +109,7 @@ export class ActiveRunRegistry {
     const context: ActiveRunContext = {
       activateSession: session => this.#activateSession(state, session),
       getCancellationCode: () => state.cancellationCode,
+      getCleanupState: () => cleanup,
       identity: state.identity,
       requestCancellation: errorCode => this.#requestCancellation(state, errorCode),
       markCleanupDegraded: () => { cleanup = 'degraded' },
@@ -117,9 +127,9 @@ export class ActiveRunRegistry {
         if (execution?.state === state)
           this.#executions.delete(state.runId)
         if (cleanup === 'degraded')
-          this.#degradedCleanup.add(state.identity.conversationId)
+          this.#degradedCleanup.set(state.runId, state.identity.conversationId)
         else
-          this.#degradedCleanup.delete(state.identity.conversationId)
+          this.#degradedCleanup.delete(state.runId)
         this.#settled.fire(copyEventSnapshot({
           conversationId: state.identity.conversationId,
           branchId: state.identity.branchId,
@@ -153,18 +163,6 @@ export class ActiveRunRegistry {
     return true
   }
 
-  cancelAndWaitForConversation(conversationId: string): Promise<number> {
-    return this.#cancelAndWait(
-      execution => execution.state.identity.conversationId === conversationId,
-    )
-  }
-
-  cancelAndWaitForRoot(canonicalRoot: string): Promise<number> {
-    return this.#cancelAndWait(
-      execution => execution.state.identity.canonicalRoot === canonicalRoot,
-    )
-  }
-
   async dispose(): Promise<void> {
     this.#disposed = true
     const executions = [...this.#executions.values()]
@@ -177,19 +175,6 @@ export class ActiveRunRegistry {
     this.#executions.clear()
     this.#degradedCleanup.clear()
     this.#settled.dispose()
-  }
-
-  async #cancelAndWait(
-    predicate: (execution: ActiveRunExecution) => boolean,
-  ): Promise<number> {
-    const executions = [...this.#executions.values()].filter(predicate)
-    for (const execution of executions)
-      this.#requestCancellation(execution.state, 'RUN_CANCELLED')
-    await Promise.allSettled(executions.map(async (execution) => {
-      await this.#abortSession(execution.state.session)
-      await execution.completion
-    }))
-    return executions.length
   }
 
   #activateSession(state: ActiveRunState, session: ActiveRunSession): void {

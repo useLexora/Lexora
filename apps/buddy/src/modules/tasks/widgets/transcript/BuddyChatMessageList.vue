@@ -14,11 +14,13 @@ import type {
 } from './chatMessageViewport'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NSpin } from 'naive-ui'
-import { onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import {
   formatChatDayDividerLabel,
 } from '../../model/transcript/chatMessageTime'
+import { useExecutionTree } from '../../state/runs/chatExecutionContext'
+import BuddyExecutionGroup from '../executions/BuddyExecutionGroup.vue'
 import BuddyChatAgentTurn from './BuddyChatAgentTurn.vue'
 import BuddyChatAgentTurnFlow from './BuddyChatAgentTurnFlow.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
@@ -63,6 +65,23 @@ const transcriptViewport = useTemplateRef<BuddyChatTranscriptViewportHandle>('tr
 const OUTLINE_HIGHLIGHT_DURATION_MS = 1_200
 const activeOutlineMessageId = shallowRef<string | null>(null)
 const highlightedOutlineMessageId = shallowRef<string | null>(null)
+const executionTree = useExecutionTree()
+const executionAnchors = computed(() => {
+  const anchors = new Map<string, string>()
+  const seen = new Set<string>()
+  const roots = new Map(executionTree?.records.value.map(record => [record.runId, record.rootRunId]))
+  for (const row of props.displayRows) {
+    const runId = row.kind === 'agent-turn' || row.kind === 'activity'
+      ? row.turn.runId
+      : row.kind === 'message' && row.message.role === 'assistant' ? row.message.runId : null
+    const rootRunId = runId ? roots.get(runId) ?? runId : null
+    if (rootRunId && !seen.has(rootRunId)) {
+      seen.add(rootRunId)
+      anchors.set(row.key, rootRunId)
+    }
+  }
+  return anchors
+})
 let outlineHighlightTimer: number | null = null
 watch([() => props.conversationId, () => props.activeBranchId], () => {
   activeOutlineMessageId.value = null
@@ -259,6 +278,14 @@ onBeforeUnmount(clearOutlineHighlight)
           :data-chat-row-key="item.key"
           class="buddy-chat-transcript-row"
           :node="item.compaction"
+          :language="language"
+        />
+        <BuddyExecutionGroup
+          v-if="executionAnchors.has(item.key)"
+          :key="`${conversationId}:${activeBranchId}:${executionAnchors.get(item.key)}`"
+          class="buddy-chat-transcript-row"
+          :data-chat-row-key="`executions:${executionAnchors.get(item.key)}`"
+          :root-run-id="executionAnchors.get(item.key)!"
           :language="language"
         />
       </template>

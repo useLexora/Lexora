@@ -6,6 +6,7 @@ import { buddyUserContentV1Schema } from '@buddy-shared/conversation/buddyUserCo
 export const CHAT_RESOURCE_REFERENCE_NODE_NAME = 'chatResourceReference'
 export const CHAT_PROMPT_DIRECTIVE_NODE_NAME = 'chatPromptDirective'
 export const CHAT_SESSION_REFERENCE_NODE_NAME = 'chatSessionReference'
+export const CHAT_ACTOR_REFERENCE_NODE_NAME = 'chatActorReference'
 
 export function userContentToChatComposerDocument(content: BuddyUserContentV1): JSONContent {
   const body = content.body.map(paragraph => ({
@@ -56,6 +57,10 @@ function inlineNodeToEditorNode(
       attrs: { resourceId: node.resourceId },
       type: CHAT_RESOURCE_REFERENCE_NODE_NAME,
     }
+    case 'actor_ref': return {
+      attrs: { actorId: node.actorId, name: node.name },
+      type: CHAT_ACTOR_REFERENCE_NODE_NAME,
+    }
     case 'session_ref': {
       const reference = sessionReferences.find(item => item.id === node.sessionId)
       return {
@@ -88,6 +93,11 @@ function editorNodeToInlineNode(node: JSONContent): unknown {
     case CHAT_SESSION_REFERENCE_NODE_NAME: return {
       sessionId: node.attrs?.sessionId,
       type: 'session_ref',
+    }
+    case CHAT_ACTOR_REFERENCE_NODE_NAME: return {
+      actorId: node.attrs?.actorId,
+      name: node.attrs?.name,
+      type: 'actor_ref',
     }
     case CHAT_PROMPT_DIRECTIVE_NODE_NAME: {
       const attrs = node.attrs ?? {}

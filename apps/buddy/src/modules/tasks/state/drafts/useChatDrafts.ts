@@ -5,7 +5,7 @@ import type { BuddyPermissionMode, BuddyPermissionSettings } from '@buddy-shared
 import type { JSONContent } from '@tiptap/core'
 import type { ComputedRef } from 'vue'
 import type { ChatDrafts, ChatDraftSnapshot, ChatDraftState, ComposerDraftReceipt } from './typing'
-import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentToText, createBuddyUserContent, getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { BUDDY_DEFAULT_PERMISSION_MODE, resolveBuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import { computed, shallowReactive, shallowRef, watch } from 'vue'
 import {
@@ -21,6 +21,7 @@ interface UseChatDraftsOptions {
   defaultPermissionMode?: ComputedRef<BuddyPermissionMode>
   onChange: () => void
   targetKey: ComputedRef<string>
+  defaultActorId?: () => string | null
 }
 
 export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
@@ -61,10 +62,16 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     const current = load(targetKey)
     draftsByScope.set(targetKey, {
       ...current,
+      ...(value.content && value.modelSelection === undefined && actorTarget(value.content) !== actorTarget(current.content) ? { modelSelection: null } : {}),
       ...value,
       editVersion: current.editVersion + 1,
     })
     options.onChange()
+  }
+
+  function actorTarget(content: BuddyUserContentV1) {
+    const actors = getBuddyUserContentActorReferences(content)
+    return actors.length === 1 ? actors[0]!.actorId : options.defaultActorId?.() ?? null
   }
 
   function load(key: string): ChatDraftState {
@@ -124,6 +131,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
             editorSessionId: current.draftId === remote.draftId ? current.editorSessionId : crypto.randomUUID(),
             executionProfile: remote.executionConfig.executionProfile,
             modelSelection: remote.modelSelection,
+            participants: remote.participants,
           }
         : {}),
       confirmedSnapshot: createDraftValueFingerprint(remote),
@@ -153,12 +161,13 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         ...current,
         confirmedSnapshot: stateValueFingerprint({ ...current, content: empty }),
         content: wasConfirmed ? empty : current.content,
+        modelSelection: wasConfirmed && actorTarget(empty) !== actorTarget(current.content) ? null : current.modelSelection,
         editorSessionId: crypto.randomUUID(),
         editVersion: current.editVersion + (wasConfirmed ? 1 : 0),
         revision: receipt.committedRevision,
       }
       draftsByScope.set(key, next)
-      if (!wasConfirmed)
+      if (!wasConfirmed || next.modelSelection !== current.modelSelection)
         options.onChange()
       return wasConfirmed
     },
@@ -180,7 +189,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     resumeIsolated(targetKey: string) {
       if (!draftsByScope.has(targetKey)) {
         const current = currentDraft.value
-        draftsByScope.set(targetKey, { ...emptyDraft('', options.defaultPermissionMode?.value), approvalPolicy: current.approvalPolicy, executionProfile: current.executionProfile, modelSelection: current.modelSelection })
+        draftsByScope.set(targetKey, { ...emptyDraft('', options.defaultPermissionMode?.value), approvalPolicy: current.approvalPolicy, executionProfile: current.executionProfile, modelSelection: actorTarget(createBuddyUserContent()) === actorTarget(current.content) ? current.modelSelection : null })
       }
       isolatedDraft.value = { sourceKey: options.targetKey.value, targetKey }
       options.onChange()
@@ -197,7 +206,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         editorSessionId: crypto.randomUUID(),
         editVersion: existing.editVersion + 1,
         executionProfile: current.executionProfile,
-        modelSelection: current.modelSelection,
+        modelSelection: actorTarget(content) === actorTarget(current.content) ? current.modelSelection : null,
       })
       isolatedDraft.value = { sourceKey: options.targetKey.value, targetKey }
       options.onChange()
@@ -225,6 +234,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         ...current,
         confirmedSnapshot: stateValueFingerprint({ ...current, content: empty }),
         content: wasConfirmed ? empty : current.content,
+        modelSelection: wasConfirmed && actorTarget(empty) !== actorTarget(current.content) ? null : current.modelSelection,
         editorSessionId: crypto.randomUUID(),
         editVersion: current.editVersion + (wasConfirmed ? 1 : 0),
         revision: receipt.committedRevision,
@@ -282,6 +292,8 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     listSnapshots: () => [...draftsByScope.keys()].map(snapshot),
     load,
     modelSelection: computed(() => currentDraft.value.modelSelection),
+    participants: computed(() => currentDraft.value.participants),
+    setParticipants: participants => updateCurrentDraft({ participants }),
     rejectResources(draftId: string, resourceIds: readonly string[]) {
       updateSourceDocument(
         draftId,
@@ -347,6 +359,7 @@ function fromRemote(draft: LocalComposerDraft): ChatDraftState {
     editVersion: 0,
     executionProfile: draft.executionConfig.executionProfile,
     modelSelection: draft.modelSelection,
+    participants: draft.participants,
     revision: draft.revision,
   }
 }
@@ -365,7 +378,7 @@ function cloneContent(content: BuddyUserContentV1): BuddyUserContentV1 {
 
 function stateValueFingerprint(draft: Pick<
   ChatDraftState,
-  'approvalPolicy' | 'content' | 'executionProfile' | 'modelSelection'
+  'approvalPolicy' | 'content' | 'executionProfile' | 'modelSelection' | 'participants'
 >): string {
   return createDraftValueFingerprint({
     content: draft.content,
@@ -374,5 +387,6 @@ function stateValueFingerprint(draft: Pick<
       executionProfile: draft.executionProfile,
     },
     modelSelection: draft.modelSelection,
+    participants: draft.participants,
   })
 }

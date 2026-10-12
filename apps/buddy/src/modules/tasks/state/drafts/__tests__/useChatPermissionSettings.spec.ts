@@ -39,6 +39,7 @@ describe('useChatPermissionSettings', () => {
 
   it('updates live conversation permissions while retaining the original run snapshot', async () => {
     const conversation = ref<LocalConversationSummary>({
+      buddyId: 'default',
       activeBranchId: 'branch-1',
       activity: 'running',
       automationOccurrence: null,
@@ -53,6 +54,7 @@ describe('useChatPermissionSettings', () => {
       updatedAt: timestamp,
     })
     const activeRun = ref<LocalRun>({
+      buddyId: 'default',
       branchId: 'branch-1',
       completedAt: null,
       conversationId: 'conversation-1',

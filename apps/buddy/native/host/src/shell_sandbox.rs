@@ -4,7 +4,7 @@ mod filesystem;
 mod metadata;
 mod network;
 mod policy;
-mod process;
+pub(crate) mod process;
 mod security;
 mod setup;
 

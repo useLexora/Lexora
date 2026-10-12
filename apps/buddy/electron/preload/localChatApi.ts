@@ -1,9 +1,11 @@
 import type { LocalChatApi } from '../shared/localChatApi'
 import { createActivityApi } from './local-chat/activity'
 import { createAutomationsApi } from './local-chat/automations'
+import { createBuddiesApi } from './local-chat/buddies'
 import { createComposerApi } from './local-chat/composer'
 import { createConnectorsApi } from './local-chat/connectors'
 import { createConversationApi } from './local-chat/conversation'
+import { createExecutionsApi } from './local-chat/executions'
 import { createPromptsApi } from './local-chat/prompts'
 import { createProvidersApi } from './local-chat/providers'
 import { createRuntimeApi } from './local-chat/runtime'
@@ -14,6 +16,8 @@ import { createWebApi } from './local-chat/web'
 
 export function createLocalChatApi(): LocalChatApi {
   return Object.freeze({
+    ...createBuddiesApi(),
+    ...createExecutionsApi(),
     ...createActivityApi(),
     ...createAutomationsApi(),
     ...createRuntimeApi(),

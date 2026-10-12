@@ -1,8 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { PrepareTurnRequestInput } from '../turnRequestRepository'
 import { afterEach, describe, expect, it } from 'vitest'
+import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { buddyExecutionDefinitionSchema } from '../../buddies/BuddyExecutionDefinition'
 import { createAttachmentRepository } from '../attachmentRepository'
+import { createBuddyRepository } from '../buddyRepository'
 import { createChatQueueRepository } from '../chatQueueRepository'
 import { createComposerDraftRepository } from '../composerDraftRepository'
 import { openBuddyDatabase } from '../database'
@@ -46,6 +49,20 @@ function fixture() {
 }
 
 describe('chat queue ownership and delivery', () => {
+  it('atomically rejects changed definition scope even when actor and model still match the running input', () => {
+    const f = fixture()
+    const buddies = createBuddyRepository(f.database)
+    const buddy = buddies.get('default')
+    const snapshot = buddyExecutionDefinitionSchema.parse({ version: 1, id: buddy.id, kind: 'actor', revision: buddy.revision, settings: buddy.settings, model: { modelId: 'model', providerId: 'provider', reasoning: null, serviceTier: null }, modelSource: 'application' })
+    f.database.prepare('UPDATE runs SET actor_snapshot_json = ?').run(JSON.stringify(snapshot))
+    f.queue.enqueue(f.input('A'))
+    const updated = buddies.update({ buddyId: buddy.id, expectedRevision: buddy.revision, settings: buddySettingsSchema.parse({ ...buddy.settings, tools: { mode: 'none' } }) })
+    const pending = { ...f.queue.pending(f.target('A'))!, actorSnapshot: buddyExecutionDefinitionSchema.parse({ ...snapshot, revision: updated.revision, settings: updated.settings }) }
+    expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow(expect.objectContaining({ code: 'BUDDY_CONFLICT' }))
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
+  })
+
   it('cancels the middle item and submits the last as steering exactly once without consuming the head', () => {
     const f = fixture()
     for (const id of ['A', 'B', 'C'])
@@ -54,8 +71,8 @@ describe('chat queue ownership and delivery', () => {
     expect(f.queue.cancel(f.target('B'))).toBe(true)
     expect(f.queue.cancel(f.target('B'))).toBe(false)
     const c = f.queue.pending(f.target('C'))!
-    f.queue.commitInRun(c, 'run-initial')
-    expect(() => f.queue.commitInRun(c, 'run-initial')).toThrow()
+    f.queue.commitInRun(c, 'run-initial', undefined)
+    expect(() => f.queue.commitInRun(c, 'run-initial', undefined)).toThrow()
     expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
     expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'C' }])
     expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-initial' }])
@@ -67,17 +84,39 @@ describe('chat queue ownership and delivery', () => {
     expect(f.queue.list(f.scope)).toEqual([])
   })
 
-  it('atomically refuses to commit a read-only review into a writable run', () => {
+  it('atomically keeps review and ordinary inputs in runs with matching permission ceilings after live permission changes', () => {
     const f = fixture()
     f.queue.enqueue({ ...f.input('review'), runExecutionProfile: 'read_only' })
     const pending = f.queue.pending(f.target('review'))!
-    expect(() => f.queue.commitInRun(pending, 'run-initial')).toThrow()
+    expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow()
     expect(f.queue.pending(f.target('review'))).toEqual(pending)
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
-    f.database.exec('UPDATE runs SET execution_profile = \'read_only\'')
-    f.queue.commitInRun(pending, 'run-initial')
+    f.queue.commitInRun(pending, 'run-initial', 'read_only')
     expect(f.queue.list(f.scope)).toEqual([])
     expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'review' }])
+    f.queue.enqueue(f.input('ordinary'))
+    f.database.exec('UPDATE conversations SET execution_profile = \'full_access\'')
+    const ordinary = f.queue.pending(f.target('ordinary'))!
+    expect(() => f.queue.commitInRun(ordinary, 'run-initial', 'read_only')).toThrow()
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['ordinary'])
+    expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'review' }])
+  })
+
+  it('rejects a stale permission binding atomically and delivers the refreshed input without rewriting the original run', () => {
+    const f = fixture()
+    f.queue.enqueue(f.input('A'))
+    const stale = f.queue.pending(f.target('A'))!
+    const original = f.database.prepare('SELECT approval_policy, execution_profile FROM runs').get()
+    f.database.exec('UPDATE conversations SET approval_policy = \'manual\', execution_profile = \'full_access\'')
+    expect(() => f.queue.commitInRun(stale, 'run-initial', undefined)).toThrow(expect.objectContaining({ code: 'BUDDY_CONFLICT' }))
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
+    const current = f.queue.pending(f.target('A'))!
+    expect(current).toMatchObject({ approvalPolicy: 'manual', executionProfile: 'full_access' })
+    f.queue.commitInRun(current, 'run-initial', undefined)
+    expect(f.queue.list(f.scope)).toEqual([])
+    expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'A' }])
+    expect(f.database.prepare('SELECT approval_policy, execution_profile FROM runs').get()).toEqual(original)
   })
 
   it('protects queued image snapshots from draft cleanup and binds them to the delivered message', () => {
@@ -95,7 +134,7 @@ describe('chat queue ownership and delivery', () => {
     expect(f.queue.list(f.scope)[0]).toMatchObject({ state: 'paused', attachments: [{ id: 'image', name: 'image.png' }] })
     const runInputs = createRunInputRepository(f.database)
     expect(runInputs.findByMessageId('C')).toBeNull()
-    f.queue.commitInRun(f.queue.pending(f.target('C'))!, 'run-initial')
+    f.queue.commitInRun(f.queue.pending(f.target('C'))!, 'run-initial', undefined)
     expect(runInputs.findByMessageId('C')).toMatchObject({ runId: 'run-initial', attachmentIds: ['image'], prompt: 'C' })
     expect(runInputs.findByTriggeringMessageId('C')).toBeNull()
     expect(runInputs.findByMessageId('initial')).toEqual(runInputs.findByRunId('run-initial'))

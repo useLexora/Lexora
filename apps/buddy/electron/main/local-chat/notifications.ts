@@ -2,10 +2,12 @@ import type { BrowserWindow } from 'electron'
 import type { RegisterLocalChatIpcOptions } from './registrar'
 import { artifactsChanged } from '../../../shared/artifacts/artifactApi'
 import { automationNotifications } from '../../../shared/automation/automationApi'
+import { buddiesChanged } from '../../../shared/buddies/buddyApi'
 import { changesChanged } from '../../../shared/changes/changeApi'
 import { connectorNotifications } from '../../../shared/connectors/connectorApi'
 import { composerResourcesChanged } from '../../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationSchema, conversationTimelineChanged } from '../../../shared/conversation/conversationApi'
+import { executionsChanged } from '../../../shared/executions/executionPresentationApi'
 import { webSettingsChanged } from '../../../shared/network/webApi'
 import { notificationsChanged } from '../../../shared/notifications/notificationApi'
 import { providerNotifications } from '../../../shared/providers/providerApi'
@@ -28,6 +30,18 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const event = contract.params.safeParse(notification.params)
       if (event.success)
         sendToRenderer(options.getWindow(), contract === artifactsChanged ? LOCAL_CHAT_IPC_CHANNELS.artifactsChanged : LOCAL_CHAT_IPC_CHANNELS.changesChanged, event.data)
+      return
+    }
+    if (notification.method === executionsChanged.method) {
+      const event = executionsChanged.params.safeParse(notification.params)
+      if (event.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.executionsChanged, event.data)
+      return
+    }
+    if (notification.method === buddiesChanged.method) {
+      const event = buddiesChanged.params.safeParse(notification.params)
+      if (event.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.buddiesChanged, event.data)
       return
     }
     if (notification.method === spaceChanged.method) {

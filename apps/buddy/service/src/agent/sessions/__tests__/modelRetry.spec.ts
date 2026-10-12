@@ -23,6 +23,11 @@ describe('model retry policy', () => {
     const first = createAssistantMessageEventStream()
     const started = Promise.withResolvers<void>()
     const requests: string[] = []
+    const toolModels: string[] = []
+    fixture.session.subscribe((event) => {
+      if (event.type === 'tool_execution_start')
+        toolModels.push(fixture.runContext.current!.requestModel!.modelId)
+    })
     vi.spyOn(fixture.runtime, 'streamSimple').mockImplementation((model) => {
       requests.push(model.id)
       if (requests.length > 1)
@@ -33,11 +38,15 @@ describe('model retry policy', () => {
     const release = await fixture.activate(2)
     const prompt = fixture.reusable.prompt('Inspect the current directory')
     await started.promise
+    expect(fixture.runContext.current?.requestModel).toEqual({ providerId: fixture.models[0]!.provider, modelId: fixture.models[0]!.id, reasoning: fixture.session.thinkingLevel, serviceTier: null })
     fixture.selectNextModel()
+    expect(fixture.runContext.current?.requestModel?.modelId).toBe(fixture.models[0]!.id)
     const original = await response(fixture.models[0]!).result()
     first.push({ type: 'done', reason: 'toolUse', message: { ...original, stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'inspect', name: 'ls', arguments: { path: '.' } }] } })
     await prompt
     expect(requests).toEqual([fixture.models[0]!.id, fixture.models[1]!.id])
+    expect(fixture.runContext.current?.requestModel?.modelId).toBe(fixture.models[1]!.id)
+    expect(toolModels).toEqual([fixture.models[0]!.id])
     expect(fixture.session.messages.filter(message => message.role === 'user')).toHaveLength(1)
     expect(fixture.session.messages.at(-1)).toMatchObject({ model: fixture.models[1]!.id, stopReason: 'stop' })
     release()
@@ -243,23 +252,14 @@ async function createFixture(failure: (model: Model<Api>) => string | undefined,
   async function activate(limit?: ModelRetryLimit) {
     if (limit !== undefined)
       reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: limit })
-    const release = await reusable.activateTurn({
-      runId: `retry-run-${++run}`,
-      provider: model.provider,
-      model: model.id,
-      contextWindow: null,
-      maxTokens: null,
-      signal: new AbortController().signal,
-      flushProjectedEvents: async () => {},
-      onToolExecutionAuthorized: async () => {},
-      onToolExecutionDenied: async () => {},
-    })
+    const release = await reusable.activateTurn({ generation: 0, runId: `retry-run-${++run}`, provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
     session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     return release
   }
   return {
     session,
     reusable,
+    runContext,
     activate,
     models,
     runtime,

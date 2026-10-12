@@ -11,7 +11,7 @@ export function createChatQueueExtension(options: {
       pi.on('agent_end', async (event) => {
         const run = options.getRunContext()
         const last = event.messages.at(-1)
-        if (!run || run.signal.aborted || last?.role !== 'assistant' || last.stopReason !== 'stop')
+        if (!run || run.deferQueuedInputs || run.signal.aborted || last?.role !== 'assistant' || last.stopReason !== 'stop')
           return
         await run.flushProjectedEvents()
         if (options.getRunContext() !== run || run.signal.aborted)

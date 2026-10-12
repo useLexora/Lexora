@@ -44,7 +44,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
   watch(options.spaces, () => store.retain(isAvailable))
   watch([changeRevision, options.activeBranchId, options.activeConversationId, options.mode], ([revision, branchId]) => {
     store.update((tab) => {
-      if (tab.kind !== 'changes' || tab.conversationId !== options.activeConversationId.value)
+      if (tab.kind !== 'changes' || tab.id !== `changes:${tab.conversationId}` || tab.conversationId !== options.activeConversationId.value)
         return tab
       if (tab.branchId !== branchId)
         return linked.value ? { ...tab, branchId, revision, changeSet: null, source: currentSource() } : tab
@@ -84,8 +84,8 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
       openTab({ ...tab, source })
   }
 
-  function openChanges(target?: string | LocalChangeSetSummary) {
-    const conversationId = options.activeConversationId.value
+  function openChanges(target?: string | LocalChangeSetSummary, source?: ContextPanelSource, branchId = options.activeBranchId.value) {
+    const conversationId = source?.conversationId ?? options.activeConversationId.value
     if (!conversationId)
       return
     const changeSet = typeof target === 'string'
@@ -94,14 +94,14 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     if (target && (!changeSet || changeSet.conversationId !== conversationId))
       return
     openTab({
-      id: `changes:${conversationId}`,
+      id: source && changeSet ? `change-set:${changeSet.changeSetId}` : `changes:${conversationId}`,
       scope: taskContextPanelScope(conversationId),
       kind: 'changes',
       conversationId,
-      branchId: options.activeBranchId.value,
-      revision: changeRevision.value,
+      branchId,
+      revision: source && changeSet ? changeSet.updatedAt : changeRevision.value,
       changeSet: changeSet ?? null,
-      source: currentSource(),
+      source: source ?? currentSource(),
     })
   }
 
@@ -133,7 +133,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     return Boolean(resolveChatToolFileTarget(options.activeSpace?.value ?? null, path))
   }
 
-  function previewFile(path: string) {
+  function previewFile(path: string, source?: ContextPanelSource) {
     const space = options.activeSpace?.value ?? null
     const target = resolveChatToolFileTarget(space, path)
     if (!target || !space?.primaryDirectory)
@@ -143,7 +143,8 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
       tab.kind === 'files'
       && tab.target.spaceId === target.spaceId
       && tab.target.directoryId === target.directoryId
-      && tab.target.path === target.path,
+      && tab.target.path === target.path
+      && (!source || tab.source?.runId === source.runId),
     )
     if (exactTab) {
       store.select(exactTab.id)
@@ -152,12 +153,13 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     }
 
     const active = store.activeTab.value
-    const spaceTab = (active?.kind === 'files' && active.target.spaceId === target.spaceId && active.target.directoryId === target.directoryId)
+    const spaceTab = (active?.kind === 'files' && active.target.spaceId === target.spaceId && active.target.directoryId === target.directoryId && (!source || active.source?.runId === source.runId))
       ? active
       : store.tabs.value.find(tab =>
           tab.kind === 'files'
           && tab.target.spaceId === target.spaceId
-          && tab.target.directoryId === target.directoryId,
+          && tab.target.directoryId === target.directoryId
+          && (!source || tab.source?.runId === source.runId),
         )
 
     if (spaceTab) {
@@ -168,12 +170,12 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     }
 
     openTab({
-      id: `files:${store.scope.value}:${target.spaceId}:${target.directoryId}:preview`,
-      scope: store.scope.value,
+      id: `files:${source ? taskContextPanelScope(source.conversationId) : store.scope.value}:${target.spaceId}:${target.directoryId}:${source?.runId ?? 'preview'}`,
+      scope: source ? taskContextPanelScope(source.conversationId) : store.scope.value,
       kind: 'files',
       rootName: space.primaryDirectory.root.split(/[\\/]/).filter(Boolean).at(-1) ?? space.primaryDirectory.root,
       target,
-      source: currentSource(),
+      source: source ?? currentSource(),
     })
   }
 
@@ -211,7 +213,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     },
     snapshot: store.snapshot,
     restoreSelections: store.restoreSelections,
-    openView: (viewId: string, label: string) => openTab({ kind: 'view', id: viewId, viewId, label, scope: store.scope.value }),
+    openView: (viewId: string, label: string, source?: ContextPanelSource) => openTab({ kind: 'view', id: viewId, viewId, label, scope: source ? taskContextPanelScope(source.conversationId) : store.scope.value, ...(source ? { source } : {}) }),
     updateView: (viewId: string, label: string) => store.update(tab => tab.kind === 'view' && tab.viewId === viewId && tab.label !== label ? { ...tab, label } : tab),
     removeView: store.close,
     allTabs: store.resources,

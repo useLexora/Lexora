@@ -40,6 +40,20 @@ describe('execution settlement', () => {
     await registry.dispose()
   })
 
+  it('retains one child cleanup failure after another child completes', async () => {
+    const registry = new ActiveRunRegistry()
+    const failed = registry.start({ identity, runId: 'failed-child', execute: async (execution) => {
+      execution.markCleanupDegraded()
+      return { id: 'failed-child', status: 'failed' } as RunRecord
+    } })
+    await failed.completion
+    await registry.start({ identity, runId: 'completed-child', execute: async () => ({ id: 'completed-child', status: 'completed' } as RunRecord) }).completion
+    expect(registry.hasActiveExecution(identity.conversationId)).toBe(false)
+    expect(registry.hasDegradedCleanup(identity.conversationId)).toBe(true)
+    expect(registry.hasDegradedCleanup('another-conversation')).toBe(false)
+    await registry.dispose()
+  })
+
   it('reports degraded release without manufacturing a durable terminal', async () => {
     const registry = new ActiveRunRegistry()
     const received: ExecutionSettled[] = []

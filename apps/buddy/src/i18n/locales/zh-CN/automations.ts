@@ -20,6 +20,7 @@ export default {
   'desktop.automations.effectiveStatus.failed': '失败',
   'desktop.automations.effectiveStatus.cancelled': '已取消',
   'desktop.automations.effectiveStatus.skipped': '已跳过',
+  'desktop.automations.effectiveStatus.actorUnavailable': '已跳过：主角不可用',
   'desktop.automations.effectiveStatus.expired': '已过期',
   'desktop.automations.action.edit': '编辑',
   'desktop.automations.action.more': '更多操作',

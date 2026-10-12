@@ -10,6 +10,7 @@ import {
 } from '../../../shared/automation'
 
 export interface AutomationRow {
+  actor_id: string | null
   active_from: string | null
   active_until: string | null
   blocked_reason: Automation['blockedReason']
@@ -40,6 +41,7 @@ export function createAutomationExecutionSnapshot(
 ): AutomationExecutionSnapshot {
   const automation = toAutomationRecord(row)
   return automationExecutionSnapshotSchema.parse({
+    actorId: automation.actorId ?? null,
     executionProfile: automation.executionProfile,
     model: automation.model,
     name: automation.name,
@@ -59,6 +61,7 @@ export function requireAutomationRecord(value: unknown, id: string): Automation 
 
 export function toAutomationRecord(row: AutomationRow): Automation {
   return automationSchema.parse({
+    actorId: row.actor_id ?? null,
     blockedReason: row.blocked_reason,
     createdAt: row.created_at,
     executionProfile: row.execution_profile,

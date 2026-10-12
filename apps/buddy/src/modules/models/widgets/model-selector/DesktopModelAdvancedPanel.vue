@@ -5,6 +5,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
+  disabled?: boolean
   language: BuddyLocale
   modelLabel: string
   selectedEffortLabel: string
@@ -55,6 +56,7 @@ const { t } = useBuddyI18n(() => props.language)
       :class="{ 'is-fast': isFastMode }"
       type="button"
       role="menuitemcheckbox"
+      :disabled="disabled"
       :aria-checked="isFastMode"
       @click="emit('toggleFast')"
     >

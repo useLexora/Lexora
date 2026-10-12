@@ -2,6 +2,7 @@ import type { SpaceExecutionContext } from '../../../../shared/conversation/spac
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
+import type { BuddyExecutionDefinition } from '../../buddies/BuddyExecutionDefinition'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { SkillService } from '../../skills/SkillService'
 import type { BuddyDataPaths } from '../../storage/BuddyDataPaths'
@@ -27,6 +28,9 @@ import {
 import { resolveBuddySessionResources } from '../resources/BuddySessionResources'
 
 export interface CreateConversationSessionBlueprintInput {
+  threadId?: string
+  contextMode?: 'execution' | 'compaction'
+  actor?: BuddyExecutionDefinition
   approvalPolicy: BuddyApprovalPolicy
   branchId: string
   conversationId: string
@@ -37,6 +41,7 @@ export interface CreateConversationSessionBlueprintInput {
 }
 
 export interface CreateDraftSessionBlueprintInput {
+  actor?: BuddyExecutionDefinition
   approvalPolicy: BuddyApprovalPolicy
   draftId: string
   executionProfile: BuddyExecutionProfile
@@ -46,7 +51,7 @@ export interface CreateDraftSessionBlueprintInput {
 export interface BuddySessionBlueprintServiceOptions {
   conversationGrants: Pick<ConversationDirectoryGrantRepository, 'listActive'>
   paths: Pick<BuddyDataPaths, 'conversationWorkspace' | 'draftAttachments' | 'spaceWorkspace'>
-  skills: Pick<SkillService, 'loadForSpace'>
+  skills: Pick<SkillService, 'loadForSpace' | 'materializeForSpace'>
   spaces: Pick<SpaceRepository, 'findById'>
 }
 
@@ -73,6 +78,7 @@ export class BuddySessionBlueprintService {
 
   createForDraft(input: CreateDraftSessionBlueprintInput): Promise<BuddySessionBlueprint> {
     return this.#create({
+      actor: input.actor,
       branchId: 'context-preview',
       approvalPolicy: input.approvalPolicy,
       conversationDirectories: [],
@@ -126,6 +132,8 @@ export class BuddySessionBlueprintService {
           toOwnedDirectoryGrant(scratchRoot, space?.id ?? input.conversationId),
         ]
     const resources = await resolveBuddySessionResources({
+      contextMode: input.contextMode,
+      actor: input.actor,
       additionalDirectories: directories.additionalDirectories,
       canonicalRoot,
       cwd: canonicalRoot,
@@ -140,6 +148,8 @@ export class BuddySessionBlueprintService {
     ])
 
     return {
+      threadId: input.threadId,
+      actor: input.actor,
       approvalPolicy: input.approvalPolicy,
       branchId: input.branchId,
       canonicalRoot,

@@ -24,10 +24,18 @@ export const fileChangeDetailSchema = z.object({
   path: z.string().min(1).max(4096),
   preview: z.enum(['binary', 'oversized', 'sensitive', 'text', 'unavailable']),
   redacted: z.boolean(),
+  source: z.object({
+    actorId: idSchema.nullable(),
+    actorName: z.string().min(1).max(80).nullable(),
+    runId: idSchema,
+    segmentId: idSchema,
+    sequence: z.number().int().positive(),
+    invocationIds: z.array(idSchema).min(1),
+  }).strict().nullable().optional(),
 }).strict()
 
 export const changeSetDetailSchema = changeSetSummarySchema.extend({
-  files: z.array(fileChangeDetailSchema).max(512),
+  files: z.array(fileChangeDetailSchema),
 }).strict()
 
 export type LocalChangeSetDetail = DeepReadonly<z.infer<typeof changeSetDetailSchema>>
@@ -38,7 +46,7 @@ export type LocalFileChangeDetail = DeepReadonly<z.infer<typeof fileChangeDetail
 
 export const changeOverviewSchema = z.object({
   coverage: z.enum(['complete', 'partial']),
-  files: z.array(fileChangeDetailSchema).max(4096),
+  files: z.array(fileChangeDetailSchema),
   status: z.enum(['capturing', 'completed']),
   updatedAt: timestampSchema.nullable(),
 }).strict()

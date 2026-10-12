@@ -32,6 +32,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     await Promise.all([workspace, outside].map(path => mkdir(path, { recursive: true })))
     await writeFile(join(outside, 'preserved'), 'outside-preserved')
     const environment = createSandboxEnvironment(originalEnvironment, privateRoot)
+    environment.LEXORA_BUDDY_PROCESS_CONTROL = originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL
     for (const key of new Set([...Object.keys(process.env), ...Object.keys(environment)]))
       vi.stubEnv(key, environment[key])
     process.chdir(privateRoot)

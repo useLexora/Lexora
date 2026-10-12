@@ -55,6 +55,10 @@ name = "process-control-linux"
 path = "__tests__/process_control_linux.rs"
 
 [[test]]
+name = "supervised-shell-linux"
+path = "__tests__/supervised_shell_linux.rs"
+
+[[test]]
 name = "installer-process-windows"
 path = "__tests__/installer_process_windows.rs"
 

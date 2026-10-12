@@ -3,12 +3,14 @@ import type { LocalRunTokenUsage } from '../../../shared/usage/runTokenUsage'
 import type { BuddyRunEvent } from '../events/BuddyRunEvent'
 import type { MessageRecord } from './conversationHistoryRepository'
 import type { RunRow } from './runRecord'
+import { createConversationPublicationRepository } from './conversationPublicationRepository'
 import { toRunRecord } from './runRecord'
 
 export function createConversationTreeRepository(database: DatabaseSync) {
   const bind = database.prepare('INSERT INTO conversation_pi_trees (conversation_id, session_file, root_entry_id) VALUES (?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET session_file = excluded.session_file, root_entry_id = excluded.root_entry_id')
   return {
     ...createConversationTreeReader(database),
+    ...createConversationPublicationRepository(database),
     bind: (conversationId: string, sessionFile: string, rootEntryId: string) => {
       bind.run(conversationId, sessionFile, rootEntryId)
     },
@@ -26,17 +28,20 @@ export function createConversationTreeReader(database: DatabaseSync) {
       ELSE json_extract(content_json, '$.text') END, ''), 1, 4096))
       ELSE content_json END AS content_json,
     created_at AS createdAt
-    FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant') ORDER BY created_at, id`)
+    FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant')
+    AND (run_id IS NULL OR EXISTS (SELECT 1 FROM conversation_publications WHERE message_id = messages.id) OR EXISTS (SELECT 1 FROM runs WHERE runs.id = messages.run_id AND runs.execution_kind IN ('root', 'actor_child')))
+    ORDER BY created_at, id`)
   const tools = database.prepare(`SELECT run_events.run_id AS runId,
     COUNT(*) AS count
     FROM run_events INNER JOIN runs ON runs.id = run_events.run_id
     WHERE runs.conversation_id = ? AND event_type = 'tool.started' GROUP BY run_events.run_id`)
   const runMessages = database.prepare(`SELECT id, conversation_id AS conversationId,
     branch_id AS branchId, run_id AS runId, role, content_json, created_at AS createdAt
-    FROM messages WHERE conversation_id = ? AND run_id = ? AND role = 'assistant' ORDER BY created_at, id`)
+    FROM messages WHERE conversation_id = ? AND run_id = ? AND role = 'assistant'
+    AND EXISTS (SELECT 1 FROM runs WHERE runs.id = messages.run_id AND runs.execution_kind IN ('root', 'actor_child')) ORDER BY created_at, id`)
   const outputs = database.prepare(`SELECT run_events.run_id AS runId, run_events.created_at AS createdAt, payload_json
     FROM run_events INNER JOIN runs ON runs.id = run_events.run_id
-    WHERE runs.conversation_id = ? AND event_type = 'output.produced' ORDER BY run_events.created_at, sequence`)
+    WHERE runs.conversation_id = ? AND runs.execution_kind IN ('root', 'actor_child') AND event_type = 'output.produced' ORDER BY run_events.created_at, sequence`)
   const usage = database.prepare(`SELECT usage_records.run_id AS runId,
     SUM(input_tokens) AS inputTokens, SUM(output_tokens) AS outputTokens,
     SUM(cache_read_tokens) AS cacheReadTokens, SUM(cache_write_tokens) AS cacheWriteTokens

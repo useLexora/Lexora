@@ -44,7 +44,7 @@ export class TaskAttentionProjection {
           return
         this.#consume(() => {
           const run = options.runs.findById(event.runId)
-          if (run && run.purpose !== 'conversation.compaction')
+          if (run?.executionKind === 'root')
             this.#refresh([run.conversationId])
         })
       }),
@@ -57,8 +57,12 @@ export class TaskAttentionProjection {
 
   start(deletions: Pick<ConversationLifecycleService, 'onDidCommit'>, reconciliations?: Pick<RunLifecycleService, 'onDidReconcile'>): void {
     this.#subscriptions.push(deletions.onDidCommit(event => this.#consume(() => this.#refresh([event.conversationId]))))
-    if (reconciliations)
-      this.#subscriptions.push(reconciliations.onDidReconcile(event => this.#consume(() => this.#refresh([event.conversationId]))))
+    if (reconciliations) {
+      this.#subscriptions.push(reconciliations.onDidReconcile(event => this.#consume(() => {
+        if (this.#options.runs.findById(event.runId)?.executionKind === 'root')
+          this.#refresh([event.conversationId])
+      })))
+    }
     this.reconcile()
   }
 

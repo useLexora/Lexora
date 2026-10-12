@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRunEventLog } from '../../events/createRunEventLog'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
+import { createExecutionStorageFixture } from '../../storage/__tests__/executionFixture'
 import { createApprovalRepository } from '../../storage/approvalRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { ApprovalService } from '../ApprovalService'
@@ -25,6 +26,47 @@ afterEach(async () => {
 })
 
 describe('registerApprovalRpc', () => {
+  it('scopes pending approvals to the requested root tree before applying the limit', async () => {
+    const f = createExecutionStorageFixture()
+    const database = f.database
+    databases.push(database)
+    f.executions.admitChild(f.child('child'))
+    prepareRun(database)
+    const repository = createApprovalRepository(database)
+    const eventLog = await createEventLog(database)
+    const service = new ApprovalService({ eventLog, repository })
+    const harness = createRpcHarness()
+    registerApprovalRpc({ repository, rpc: harness.rpc, service })
+    for (const [index, runId] of ['root', 'child', 'run-approval'].entries()) {
+      await eventLog.append({ runId, type: 'approval.requested', payload: {
+        id: `approval-${runId}`,
+        runId,
+        toolCallId: `tool-${runId}`,
+        kind: 'shell',
+        status: 'pending',
+        summary: 'Confirm this execution',
+        payload: { card: 'shell', command: 'pwd', toolName: 'bash', allowForTurn: true, reuseScopes: ['turn'] },
+        createdAt: `2026-10-12T00:00:0${index}.000Z`,
+        resolvedAt: null,
+      } })
+    }
+    const scope = { conversationId: 'conversation', branchId: 'branch', status: 'pending' }
+    await expect(harness.invoke('approvals.list', scope)).resolves.toEqual([
+      expect.objectContaining({ runId: 'child' }),
+      expect.objectContaining({ runId: 'root' }),
+    ])
+    await expect(harness.invoke('approvals.list', { ...scope, limit: 1 })).resolves.toEqual([expect.objectContaining({ runId: 'child' })])
+    await expect(harness.invoke('approvals.list', { status: 'pending', limit: 1 })).resolves.toEqual([expect.objectContaining({ runId: 'run-approval' })])
+    await expect(harness.invoke('approvals.list', { ...scope, runId: 'run-approval' })).resolves.toEqual([])
+    await expect(harness.invoke('approvals.list', { ...scope, branchId: 'another-branch' })).resolves.toEqual([])
+    await expect(harness.invoke('approvals.list', { conversationId: 'conversation' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(harness.invoke('approvals.list', { branchId: 'branch' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    f.conversations.markDeleted('conversation', '2026-10-12T00:00:03.000Z')
+    await expect(harness.invoke('approvals.list', scope)).resolves.toEqual([])
+    expect(repository.listPending()).toHaveLength(3)
+    await service.dispose()
+  })
+
   it('owns approval validation and resolves the durable request through ApprovalService', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)

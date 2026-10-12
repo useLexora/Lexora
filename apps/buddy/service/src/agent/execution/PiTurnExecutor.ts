@@ -4,6 +4,7 @@ import type { RunRecord } from '../../storage/runRecord'
 import type {
   PiEventBridge,
   PiEventBridgeSettlement,
+  PiTurnEventChannel,
 } from '../events/PiEventBridge'
 import type { BuddySessionIdentity } from '../sessions/BuddySessionBlueprint'
 import type { BuddySessionFactoryInput } from '../sessions/BuddySessionFactory'
@@ -12,6 +13,7 @@ import type {
   BuddySessionRegistry,
 } from '../sessions/BuddySessionRegistry'
 import type { ReusableBuddySession } from '../sessions/ReusableBuddySession'
+import type { ExecutionContinuationPort, ExecutionMailboxReceipt } from './ExecutionContinuationPort'
 import type { RunExecutionBackend, RunExecutionOutcome } from './RunExecutionBackend'
 import type {
   StartBuddyCompactionInput,
@@ -40,6 +42,7 @@ export interface PiTurnExecutorOptions {
 }
 
 interface ExecutePiTurnInput {
+  continuation: ExecutionContinuationPort
   identity: BuddySessionIdentity
   input: StartBuddyTurnInput
   onSessionActivated: (session: ReusableBuddySession) => void
@@ -120,6 +123,8 @@ export class PiTurnExecutor implements RunExecutionBackend {
     })
     const releaseTurn = await binding.session.activateTurn({
       contextWindow: run.contextWindow,
+      generation: run.generation,
+      deferQueuedInputs: true,
       flushProjectedEvents: () => piEvents.flush(),
       maxTokens: run.maxTokens,
       model: run.model,
@@ -132,60 +137,76 @@ export class PiTurnExecutor implements RunExecutionBackend {
       thinkingLevel: input.thinkingLevel,
     })
     const unsubscribe = piEvents.subscribe()
+    const consumed = new Map<string, ExecutionMailboxReceipt>()
+    let continuityFailure: unknown
+
+    const runSegment = async (operation: () => Promise<void>): Promise<RunExecutionOutcome> => {
+      let outcome: RunExecutionOutcome
+      try {
+        signal.throwIfAborted()
+        await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, operation)
+        await binding.session.waitForIdle()
+        await piEvents.flush()
+        outcome = readTurnOutcome(piEvents, signal)
+      }
+      catch (error) {
+        await settlePiEventsAfterFailure(error, piEvents)
+        continuityFailure = error
+        outcome = outcomeFromError(error, signal)
+      }
+      if (!signal.aborted) {
+        try {
+          const snapshot = await execution.continuation.readPending()
+          const receipts = await binding.session.readInternalMessageReceipts(snapshot.messages)
+          await execution.continuation.acceptInContext(receipts)
+          if (outcome.status === 'completed') {
+            for (const receipt of receipts)
+              consumed.set(JSON.stringify([receipt.sourceRunId, receipt.messageId]), receipt)
+          }
+        }
+        catch (error) {
+          await settlePiEventsAfterFailure(error, piEvents)
+          continuityFailure = error
+          outcome = outcomeFromError(error, signal)
+        }
+      }
+      return outcome
+    }
 
     try {
-      signal.throwIfAborted()
-      await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, () => binding.session.prompt(input.userInput.prompt, {
+      let outcome = await runSegment(() => binding.session.prompt(input.userInput.prompt, {
         expandPromptTemplates: false,
         inputReference: input.userInput,
         source: 'rpc',
       }))
-      await binding.session.waitForIdle()
-      await piEvents.flush()
-    }
-    catch (error) {
-      const { eventError, writerError } = await settlePiEventsAfterFailure(
-        error,
-        piEvents,
-      )
-      const outcome = piEvents.outcome
-      if (
-        readStableRunErrorCode(error) === 'SESSION_STORAGE_UNAVAILABLE'
-        && !signal.aborted
-        && !outcome.failureCode
-        && outcome.finalAssistantAnswerProjected
-        && eventError === null
-        && writerError === null
-      ) {
-        await this.#eventLog.append({
-          payload: {
-            errorCode: 'SESSION_STORAGE_UNAVAILABLE',
-            source: 'pi_session',
-          },
-          runId: run.id,
-          type: 'session.continuity.degraded',
-        })
-        await this.#invalidateSessionContinuity(identity, run.id)
-        return { status: 'completed' }
+      outcome = await continueExecution({
+        continuation: execution.continuation,
+        consumed,
+        outcome,
+        runSegment,
+        session: binding.session,
+        signal,
+      })
+      try {
+        await binding.session.finishTurn()
+        await piEvents.flush()
       }
-      throw error
+      catch (error) {
+        await settlePiEventsAfterFailure(error, piEvents)
+        continuityFailure = error
+        outcome = { ...outcomeFromError(error, signal), closingGeneration: outcome.closingGeneration }
+      }
+      if (continuityFailure) {
+        await this.invalidateSessionContinuityAfterFailure({ error: continuityFailure, identity, runId: run.id })
+      }
+      if (signal.aborted)
+        return { status: 'cancelled', errorCode: null, closingGeneration: outcome.closingGeneration }
+      return outcome
     }
     finally {
       unsubscribe()
       releaseTurn()
     }
-
-    const { failureCode, failureMessage } = piEvents.outcome
-    if (signal.aborted || failureCode === 'MODEL_REQUEST_ABORTED')
-      return { errorCode: null, status: 'cancelled' }
-    if (failureCode) {
-      return {
-        errorCode: failureCode,
-        errorMessage: failureMessage,
-        status: 'failed',
-      }
-    }
-    return { status: 'completed' }
   }
 
   async executeCompaction(
@@ -215,6 +236,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
     execution.onSessionActivated(binding.session)
     const releaseTurn = await binding.session.activateTurn({
       contextWindow: run.contextWindow,
+      generation: run.generation,
       flushProjectedEvents: async () => {},
       maxTokens: run.maxTokens,
       model: run.model,
@@ -243,11 +265,13 @@ export class PiTurnExecutor implements RunExecutionBackend {
       const result = await diagnosticContext.run({ ...diagnosticContext.getStore(), runId: run.id, conversationId: run.conversationId, branchId: run.branchId }, () => binding.session.compact(
         input.customInstructions?.trim() || undefined,
       ))
+      await binding.session.finishTurn()
       await piEvents.flush()
       await piEvents.recordCompactionResult(result)
     }
     catch (error) {
       await settlePiEventsAfterFailure(error, piEvents)
+      await binding.session.finishTurn()
       if (signal.aborted || isAbortError(error))
         throw error
       if (readStableRunErrorCode(error) === 'SESSION_STORAGE_UNAVAILABLE')
@@ -332,6 +356,79 @@ export class PiTurnExecutor implements RunExecutionBackend {
     this.#continuity.clearForRun(runId)
     await this.#sessions.invalidateSession(identity)
   }
+}
+
+async function continueExecution(input: {
+  continuation: ExecutionContinuationPort
+  consumed: Map<string, ExecutionMailboxReceipt>
+  outcome: RunExecutionOutcome
+  runSegment: (operation: () => Promise<void>) => Promise<RunExecutionOutcome>
+  session: ReusableBuddySession
+  signal: AbortSignal
+}): Promise<RunExecutionOutcome> {
+  const { continuation, consumed, session, signal } = input
+  let outcome = input.outcome
+  for (;;) {
+    if (signal.aborted)
+      outcome = { errorCode: null, status: 'cancelled' }
+    const closing = await continuation.prepareClose({ outcome, consumedReceipts: [...consumed.values()] })
+    if (closing.kind === 'sealed')
+      return { ...outcome, closingGeneration: closing.closingGeneration }
+    if (outcome.status === 'completed') {
+      let snapshot
+      try {
+        snapshot = await continuation.readPending()
+      }
+      catch (error) {
+        if (error instanceof RunEventLogFatalError || (!signal.aborted && !isAbortError(error)))
+          throw error
+        outcome = { errorCode: null, status: 'cancelled' }
+        continue
+      }
+      if (snapshot.messages.length) {
+        let receipts: readonly ExecutionMailboxReceipt[] = []
+        outcome = await input.runSegment(async () => {
+          receipts = await session.appendInternalMessages(snapshot.messages)
+          await continuation.acceptInContext(receipts)
+          signal.throwIfAborted()
+          await session.resumeInternal(receipts)
+        })
+        if (outcome.status === 'completed') {
+          for (const receipt of receipts)
+            consumed.set(JSON.stringify([receipt.sourceRunId, receipt.messageId]), receipt)
+        }
+        continue
+      }
+      if (snapshot.revision !== closing.revision)
+        continue
+    }
+    try {
+      await continuation.waitForChange({
+        afterRevision: closing.revision,
+        signal: outcome.status === 'completed' ? signal : undefined,
+      })
+    }
+    catch (error) {
+      if (error instanceof RunEventLogFatalError || !signal.aborted)
+        throw error
+      outcome = { errorCode: null, status: 'cancelled' }
+    }
+  }
+}
+
+function readTurnOutcome(channel: PiTurnEventChannel, signal: AbortSignal): RunExecutionOutcome {
+  const { failureCode, failureMessage } = channel.outcome
+  if (signal.aborted || failureCode === 'MODEL_REQUEST_ABORTED')
+    return { errorCode: null, status: 'cancelled' }
+  if (failureCode)
+    return { errorCode: failureCode, errorMessage: failureMessage, status: 'failed' }
+  return { status: 'completed' }
+}
+
+function outcomeFromError(error: unknown, signal: AbortSignal): RunExecutionOutcome {
+  if (signal.aborted || isAbortError(error))
+    return { errorCode: null, status: 'cancelled' }
+  return { errorCode: readStableRunErrorCode(error), status: 'failed' }
 }
 
 async function settlePiEventsAfterFailure(

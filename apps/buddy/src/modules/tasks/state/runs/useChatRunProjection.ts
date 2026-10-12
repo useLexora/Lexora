@@ -61,7 +61,7 @@ export function useChatRunProjection() {
       timelineItems.value = mergeTailTimelineItems(timelineItems.value, page.items)
     }
     mergePage(page)
-    approvals.value = pendingApprovals.filter(approval => knownRunIds.has(approval.runId))
+    approvals.value = pendingApprovals
   }
 
   function prependPage(page: LocalConversationTimelinePage): boolean {

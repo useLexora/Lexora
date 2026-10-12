@@ -1,5 +1,5 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
-import type { FileEntry } from '@earendil-works/pi-coding-agent'
+import type { FileEntry, SessionManager } from '@earendil-works/pi-coding-agent'
 import type { ConversationHistoryRepository } from '../../../storage/conversationHistoryRepository'
 import type { RunRecord } from '../../../storage/runRecord'
 import type { BuddySessionRecoveryService } from '../recovery/BuddySessionRecoveryService'
@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { copyEventSnapshot } from '../../../../../shared/events/eventSnapshot'
 import { BuddyAgentRunError } from '../../../runs/runError'
 import { readBuddyInputReference } from '../../context/BuddyInputReference'
+import { readCheckpoint } from './BuddyTreeStore'
 
 export class BuddyTreeRecovery {
   #recoveredFromProductHistory = false
@@ -40,6 +41,7 @@ export class BuddyTreeRecovery {
       branchId: run.branchId,
       conversationId: run.conversationId,
       fallbackModel: this.#model,
+      threadId: this.#journal.threadId,
       point: position === 'before'
         ? { kind: 'before_message', messageId: run.triggeringMessageId }
         : next ? { kind: 'before_message', messageId: next.id } : { kind: 'branch_head' },
@@ -52,21 +54,15 @@ export class BuddyTreeRecovery {
   }
 
   async #importLegacy(run: RunRecord, position: 'before' | 'after'): Promise<string | null> {
+    this.#journal.assertRun(run)
     const source = await this.#journal.readLegacy(run.piSessionFile)
     if (!source)
       return null
     const { path, manager: legacy } = source
-    const branch = legacy.getBranch()
-    const matches = branch.filter(entry => entry.type === 'message'
-      && readBuddyInputReference(entry.message)?.messageId === run.triggeringMessageId)
-    if (matches.length !== 1)
+    const boundary = findLegacyRunBoundary(legacy, run, position)
+    if (!boundary)
       return null
-    const user = matches[0]!
-    const index = branch.indexOf(user)
-    const nextIndex = branch.findIndex((entry, i) => i > index && entry.type === 'message' && entry.message.role === 'user')
-    const endpoint = position === 'before'
-      ? user.parentId
-      : branch[(nextIndex < 0 ? branch.length : nextIndex) - 1]!.id
+    const endpoint = boundary.entryId
     const mappedId = (id: string) => createHash('sha256').update(`${path}\0${id}`).digest('hex').slice(0, 24)
     const entries = legacy.getEntries()
     const sourceIds = new Set(entries.map(entry => entry.id))
@@ -87,4 +83,21 @@ export class BuddyTreeRecovery {
     this.#journal.appendEntries(run, imported)
     return this.#journal.appendCheckpoint(run, position, endpoint ? mappedId(endpoint) : this.#journal.rootId, { source: 'legacy' })
   }
+}
+
+export function findLegacyRunBoundary(manager: SessionManager, run: RunRecord, position: 'before' | 'after'): { entryId: string | null } | null {
+  const checkpoint = manager.getEntries().findLast((entry) => {
+    const checkpoint = readCheckpoint(entry)
+    return checkpoint?.runId === run.id && checkpoint.position === position
+  })
+  if (checkpoint)
+    return { entryId: checkpoint.id }
+  const branch = manager.getBranch()
+  const matches = branch.filter(entry => entry.type === 'message' && readBuddyInputReference(entry.message)?.messageId === run.triggeringMessageId)
+  if (matches.length !== 1)
+    return null
+  const user = matches[0]!
+  const index = branch.indexOf(user)
+  const nextIndex = branch.findIndex((entry, i) => i > index && entry.type === 'message' && entry.message.role === 'user')
+  return { entryId: position === 'before' ? user.parentId : branch[(nextIndex < 0 ? branch.length : nextIndex) - 1]!.id }
 }

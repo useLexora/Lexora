@@ -8,6 +8,7 @@ import { spacesRequestSchemas, spacesResponseSchemas } from '../../../shared/spa
 describe('localChatResponseSchemas', () => {
   it('separates conversation list activity summaries from conversation mutations', () => {
     const conversation = {
+      buddyId: 'default',
       activeBranchId: 'branch-1',
       approvalPolicy: 'policy',
       createdAt: '2026-08-20T00:00:00.000Z',
@@ -129,6 +130,7 @@ describe('localChatResponseSchemas', () => {
   it('accepts Buddy-owned runs and rejects provider implementation fields', () => {
     const run = {
       approvalPolicy: 'policy',
+      buddyId: 'default',
       branchId: 'branch-1',
       completedAt: null,
       conversationId: 'conversation-1',

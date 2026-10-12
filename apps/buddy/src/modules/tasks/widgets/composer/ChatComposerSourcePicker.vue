@@ -7,6 +7,7 @@ import { ArrowLeft20Regular, Chat20Regular, ChatMultiple20Regular } from '@vicon
 import { NButton, NSwitch } from 'naive-ui'
 import { computed, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { BuddyAvatar } from '@/modules/buddies/ui'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
@@ -75,7 +76,7 @@ const selectionLabel = computed(() => t(visibleOptions.value.every(option => opt
   ? 'desktop.chat.sourcePickerReference'
   : 'desktop.chat.sourcePickerChoose'))
 const directoryCategory = computed(() => props.directory && composerReferencePath(props.directory.path, props.directory.workingDirectory) === props.directory.path ? 'external' : 'space')
-const groupedOptions = computed(() => ['current', 'space', 'external', 'history', 'artifact', 'sessions', ''].flatMap((category) => {
+const groupedOptions = computed(() => ['actors', 'current', 'space', 'external', 'history', 'artifact', 'sessions', ''].flatMap((category) => {
   const options = visibleOptions.value.filter(option => (option.category ?? '') === category)
   const directory = category === directoryCategory.value ? props.directory : undefined
   if (!options.length && !directory)
@@ -109,6 +110,8 @@ function skillScopeLabel(scope?: 'directory' | 'space' | 'global'): string {
 }
 
 function groupLabel(category: string): string {
+  if (category === 'actors')
+    return t('desktop.chat.sourcePickerActors')
   if (category === 'sessions')
     return t('desktop.chat.sessionReferences')
   if (category === 'current')
@@ -185,9 +188,11 @@ function highlight(index: number) {
                 'is-file': option.kind === 'file',
                 'is-skill': option.kind === 'skill',
                 'is-session': option.kind === 'sessionGroup' || option.kind === 'sessionReference',
+                'is-actor': option.kind === 'actorReference',
               }"
             >
-              <DesktopIcon v-if="option.kind === 'sessionGroup' && option.sessionScope?.spaceId === null" :component="ChatMultiple20Regular" :size="18" />
+              <BuddyAvatar v-if="option.kind === 'actorReference'" :buddy-id="option.actorReference?.actorId" :src="option.avatar" class="w-[1.35rem] h-[1.35rem]" />
+              <DesktopIcon v-else-if="option.kind === 'sessionGroup' && option.sessionScope?.spaceId === null" :component="ChatMultiple20Regular" :size="18" />
               <FolderIcon v-else-if="option.entryKind === 'directory' || option.kind === 'sessionGroup'" />
               <FileIcon v-else-if="option.kind === 'file'" :name="option.fileName ?? option.label" />
               <DesktopIcon v-else-if="option.kind === 'skill'" :component="SkillIcon" :size="14" />
@@ -205,7 +210,7 @@ function highlight(index: number) {
                   {{ skillScopeLabel(option.skillScope) }}
                 </span>
               </span>
-              <small v-if="description" :title="description">{{ description }}</small>
+              <small v-if="description">{{ description }}</small>
             </span>
           </button>
           <div v-if="keyboardNavigation" class="chat-composer-source-picker__actions flex flex-none items-center gap-[0.65rem] invisible pr-2 text-muted text-[0.62rem] whitespace-nowrap">
@@ -284,6 +289,7 @@ function highlight(index: number) {
 
 .chat-composer-source-picker__kind {
   &.is-file,
+  &.is-actor,
   &.is-session {
     background: transparent;
   }

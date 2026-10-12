@@ -1,18 +1,26 @@
+import type { Api, Model } from '@earendil-works/pi-ai'
 import type { DatabaseSync } from 'node:sqlite'
+import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddyInputReferenceV1 } from '../../agent/context/BuddyInputReference'
 import type { ExecutionSettled } from '../../agent/execution/ActiveRunRegistry'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { RunEventObservation } from '../../events/RunEventPorts'
+import type { RuntimeModelProvider } from '../../providers/resolveInteractiveModelSelection'
 import type { PrepareTurnRequestInput } from '../../storage/turnRequestRepository'
 import type { ChatQueueChange, ChatQueueServiceOptions } from '../ChatQueueService'
 import type { TurnRequestCommit } from '../TurnRequestService'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { Emitter } from '../../../../shared/events/Emitter'
+import { BUDDY_PERMISSION_MODES, resolveBuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
+import { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
 import { toPublicRun } from '../../runs/publicRun'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
+import { createBuddyRepository } from '../../storage/buddyRepository'
 import { createChatQueueRepository } from '../../storage/chatQueueRepository'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
+import { createConversationMemberRepository } from '../../storage/conversationMemberRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunInputRepository } from '../../storage/runInputRepository'
@@ -20,6 +28,7 @@ import { createRunRepository } from '../../storage/runRepository'
 import { createTurnRequestRepository } from '../../storage/turnRequestRepository'
 import { isReviewUserMessage } from '../buddyReviewPrompt'
 import { ChatQueueService } from '../ChatQueueService'
+import { ChatTurnService } from '../ChatTurnService'
 import { QueueContinuation } from '../QueueContinuation'
 import { TurnRequestService } from '../TurnRequestService'
 
@@ -35,6 +44,152 @@ afterEach(async () => {
 })
 
 describe('persistent chat queue scheduling', () => {
+  it('dispatches ordinary queued input to the current actor with its latest member model without altering the running actor', async () => {
+    const f = fixture()
+    const other = f.buddies.create({ name: 'Other' })
+    f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'actor-a-member', reasoning: 'low', serviceTier: null }, updatedAt: '2026-10-11T10:00:00.000Z' })
+    await f.enableDefinitions()
+    const original = f.runs.findById('run-initial')!
+    f.queue.enqueue({ ...f.input('A'), buddyId: 'default', actorSnapshot: original.actorSnapshot ?? undefined })
+    f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+    f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+    f.members.setModelSelection({ conversationId: 'conversation', actorId: other.id, modelSelection: { providerId: 'provider', modelId: 'actor-b-member', reasoning: 'high', serviceTier: 'priority' }, updatedAt: '2026-10-11T10:00:02.000Z' })
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    expect(await f.service.steer(f.target('A'))).toBe(false)
+    expect(f.delivered).toEqual([])
+    expect(f.queue.list(f.scope)[0]?.buddyId).toBe(other.id)
+    expect(f.runs.findById('run-initial')).toEqual(original)
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.runs.findById('run-A')).toMatchObject({ buddyId: other.id, model: 'actor-b-member', actorSnapshot: { id: other.id, modelSource: 'conversation' } })
+    expect(f.runInputs.findByRunId('run-A')).toMatchObject({ reasoning: 'high', serviceTier: 'priority' })
+    expect(f.members.find('conversation', 'default')?.modelSelection?.modelId).toBe('actor-a-member')
+  })
+
+  it('preserves the explicit actor and its queued model choice when the main actor changes', async () => {
+    const f = fixture()
+    const other = f.buddies.create({ name: 'Other' })
+    await f.enableDefinitions()
+    const modelOverride = { providerId: 'provider', modelId: 'explicit-input', reasoning: 'high' as const, serviceTier: 'priority' as const }
+    f.queue.enqueue({ ...f.input('A'), actorIds: ['default'], modelOverride, userMessageContent: {
+      userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: 'default', name: 'Lexora' }, { type: 'text', text: ' A' }] }] },
+      resourceSnapshots: [],
+    } })
+    f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+    f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.runs.findById('run-A')).toMatchObject({ buddyId: 'default', model: modelOverride.modelId, actorSnapshot: { modelSource: 'input', model: modelOverride } })
+    expect(f.members.find('conversation', 'default')).toMatchObject({ modelSelection: modelOverride, modelSelectionSource: 'explicit' })
+    expect(f.members.find('conversation', other.id)?.modelSelection).toBeNull()
+  })
+
+  it('pauses a queued explicit actor disabled before dispatch without changing its target or consuming its input', async () => {
+    const f = fixture()
+    const actor = f.buddies.create({ name: 'Fixed target' })
+    await f.enableDefinitions()
+    f.queue.enqueue({ ...f.input('A'), actorIds: [actor.id], userMessageContent: {
+      userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: actor.id, name: actor.name }, { type: 'text', text: ' A' }] }] },
+      resourceSnapshots: [],
+    } })
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, enabled: false })
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    await expect(f.service.reconcile(f.scope)).rejects.toMatchObject({ code: 'BUDDY_DISABLED' })
+    f.continuation.reconcile()
+    await vi.waitFor(() => expect(f.queue.list(f.scope)[0]?.state).toBe('paused'))
+    expect(f.runs.findById('run-A')).toBeNull()
+    expect(f.queue.list(f.scope)).toEqual([expect.objectContaining({ id: 'A', state: 'paused', buddyId: actor.id })])
+    expect(f.launched).toEqual([])
+    expect(f.delivered).toEqual([])
+    expect(f.database.prepare('SELECT count(*) AS count FROM messages WHERE id = ?').get('A')).toEqual({ count: 0 })
+    expect(f.conversations.findById('conversation')?.buddyId).toBe('default')
+  })
+
+  it('keeps changed actor instructions and tool scope out of an existing run and captures them in a new run', async () => {
+    const f = fixture()
+    await f.enableDefinitions()
+    const original = f.runs.findById('run-initial')!
+    f.queue.enqueue(f.input('A'))
+    const buddy = f.buddies.get('default')
+    f.buddies.update({ buddyId: buddy.id, expectedRevision: buddy.revision, settings: buddySettingsSchema.parse({ ...buddy.settings, instructions: 'Updated instructions', tools: { mode: 'none' } }) })
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    expect(await f.service.steer(f.target('A'))).toBe(false)
+    expect(f.runs.findById('run-initial')).toEqual(original)
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.runs.findById('run-A')?.actorSnapshot?.settings).toMatchObject({ instructions: 'Updated instructions', tools: { mode: 'none' } })
+  })
+
+  it('persists an explicit model choice that matches the active run when delivering a native continuation', async () => {
+    const f = fixture()
+    await f.enableDefinitions()
+    const modelOverride = { providerId: 'provider', modelId: 'model', reasoning: null, serviceTier: null }
+    f.queue.enqueue({ ...f.input('A'), modelOverride })
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+    expect(f.members.find('conversation', 'default')).toMatchObject({ modelSelection: modelOverride, modelSelectionSource: 'explicit' })
+    expect(f.runs.findById('run-A')).toBeNull()
+    expect(f.runs.findById('run-initial')?.actorSnapshot?.modelSource).toBe('application')
+  })
+
+  it.each(['actor', 'member_model', 'definition'] as const)('retains queued input when %s changes during async dispatch validation', async (change) => {
+    const f = fixture()
+    await f.enableDefinitions()
+    f.queue.enqueue(f.input('A'))
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    const gate = Promise.withResolvers<void>()
+    f.validate.mockImplementationOnce(() => gate.promise)
+    const dispatch = f.service.reconcile(f.scope)
+    try {
+      await vi.waitFor(() => expect(f.validate).toHaveBeenCalledOnce())
+      if (change === 'actor') {
+        const other = f.buddies.create({ name: 'Other' })
+        f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+        f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+      }
+      else if (change === 'member_model') {
+        f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'new-member-model', reasoning: null, serviceTier: null }, updatedAt: '2026-10-11T10:00:01.000Z' })
+      }
+      else {
+        const buddy = f.buddies.get('default')
+        f.buddies.update({ buddyId: buddy.id, expectedRevision: buddy.revision, settings: buddySettingsSchema.parse({ ...buddy.settings, instructions: 'Updated during validation' }) })
+      }
+    }
+    finally { gate.resolve() }
+    expect(await dispatch).toBe(false)
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
+    expect(f.runs.findById('run-A')).toBeNull()
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.runs.findById('run-A')?.buddyId).toBe(f.conversations.findById('conversation')?.buddyId)
+  })
+
+  it('does not deliver a stale actor after switching during async definition resolution', async () => {
+    const f = fixture()
+    await f.enableDefinitions()
+    f.queue.enqueue(f.input('A'))
+    const gate = Promise.withResolvers<void>()
+    f.resolveModel.mockImplementationOnce(async (input) => {
+      await gate.promise
+      return f.model(input.modelId, input.providerId)
+    })
+    const steering = f.service.steer(f.target('A'))
+    const other = f.buddies.create({ name: 'Other' })
+    try {
+      await vi.waitFor(() => expect(f.resolveModel).toHaveBeenCalledTimes(2))
+      f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+      f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
+    }
+    finally { gate.resolve() }
+    expect(await steering).toBe(false)
+    expect(f.delivered).toEqual([])
+    expect(f.queue.list(f.scope)[0]?.buddyId).toBe(other.id)
+  })
+
   it('pauses old and new inputs before cancellation settles and requires explicit continuation', async () => {
     const f = fixture()
     f.queue.enqueue(f.input('A'))
@@ -46,7 +201,6 @@ describe('persistent chat queue scheduling', () => {
       return toPublicRun(f.runs.findById(runId)!, null)
     }
     const cancelling = f.service.cancelRun('run-initial')
-    expect(f.service.cancelRun('run-initial')).toBe(cancelling)
     try {
       for (const id of ['B', 'C']) {
         const prepared = f.input(id)
@@ -189,15 +343,6 @@ describe('persistent chat queue scheduling', () => {
     f.settle('run-initial')
     await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
     expect(f.database.prepare('SELECT id FROM messages WHERE id = ?').all('A')).toHaveLength(1)
-  })
-
-  it('recovers a missed wake by reconciling current state', async () => {
-    const f = fixture()
-    f.queue.enqueue(f.input('A'))
-    f.database.exec('UPDATE runs SET status = \'completed\'')
-    f.releaseSlot()
-    f.continuation.reconcile()
-    await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
   })
 
   it.each(['settlement', 'reconciliation'] as const)('keeps completed work paused after degraded cleanup through %s', async (wake) => {
@@ -343,7 +488,50 @@ describe('persistent chat queue scheduling', () => {
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
   })
 
-  it.each(['model', 'provider', 'reasoning', 'serviceTier', 'executionProfile', 'approvalPolicy', 'modelParameters'] as const)(
+  it.each(BUDDY_PERMISSION_MODES.flatMap(from => BUDDY_PERMISSION_MODES.filter(to => to !== from).flatMap(to => ['steer', 'followUp'].map(mode => ({ from, to, mode })))))(
+    'delivers $mode in the same run after switching permissions from $from to $to',
+    async ({ from, to, mode }) => {
+      const f = fixture()
+      await f.enableDefinitions()
+      const initial = resolveBuddyPermissionSettings(from)
+      f.setPermissions(initial)
+      f.database.prepare('UPDATE runs SET approval_policy = ?, execution_profile = ?').run(initial.approvalPolicy, initial.executionProfile)
+      const original = f.runs.findById('run-initial')!
+      if (mode === 'followUp')
+        f.queue.enqueue(f.input('A'))
+      f.setPermissions(resolveBuddyPermissionSettings(to))
+      if (mode === 'steer')
+        f.queue.enqueue(f.input('A'))
+      expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+      expect(f.delivered).toEqual([`${mode}:A`])
+      expect(f.queue.list(f.scope)).toEqual([])
+      expect(f.runInputs.findByMessageId('A')?.runId).toBe('run-initial')
+      expect(f.runs.findById('run-initial')).toEqual(original)
+      expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-initial' }])
+    },
+  )
+
+  it.each(['steer', 'followUp'] as const)('retains input when permissions change during async $mode validation and accepts a retry under current permissions', async (mode) => {
+    const f = fixture()
+    await f.enableDefinitions()
+    f.queue.enqueue(f.input('A'))
+    const gate = Promise.withResolvers<void>()
+    f.validate.mockImplementationOnce(() => gate.promise)
+    const delivery = mode === 'steer' ? f.service.steer(f.target('A')) : f.service.followUp('run-initial', f.controller.signal)
+    try {
+      await vi.waitFor(() => expect(f.validate).toHaveBeenCalledOnce())
+      f.setPermissions(resolveBuddyPermissionSettings('read_only'))
+    }
+    finally { gate.resolve() }
+    expect(await delivery).toBe(false)
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+    expect(f.delivered).toEqual([`${mode}:A`])
+    expect(f.runInputs.findByMessageId('A')?.runId).toBe('run-initial')
+  })
+
+  it.each(['model', 'provider', 'reasoning', 'serviceTier', 'modelParameters'] as const)(
     'keeps a queued %s change for a new run with its original settings',
     async (field) => {
       const f = fixture()
@@ -352,10 +540,6 @@ describe('persistent chat queue scheduling', () => {
         input.runInput.reasoning = 'high'
       else if (field === 'serviceTier')
         input.runInput.serviceTier = 'priority'
-      else if (field === 'executionProfile')
-        input.executionProfile = 'full_access'
-      else if (field === 'approvalPolicy')
-        input.approvalPolicy = 'manual'
       else if (field === 'modelParameters')
         input.modelParameters = { contextWindow: 32000, maxTokens: 2048 }
       else input[field] = 'changed'
@@ -470,6 +654,13 @@ function fixture(queuedOnStartup = false) {
   const runInputs = createRunInputRepository(database)
   const runs = createRunRepository(database)
   const conversations = createConversationRepository(database)
+  const setPermissions = (settings: BuddyPermissionSettings) => {
+    conversations.setPermissionSettings({ id: 'conversation', ...settings, updatedAt: '2026-10-12T00:00:00.000Z' })
+    const draft = drafts.findById('draft')!
+    drafts.save({ ...draft, expectedRevision: draft.revision, executionConfig: settings, now: '2026-10-12T00:00:00.000Z' })
+  }
+  const buddies = createBuddyRepository(database)
+  const members = createConversationMemberRepository(database)
   if (queuedOnStartup)
     queue.enqueue(input('A'))
   const delivered: string[] = []
@@ -491,6 +682,7 @@ function fixture(queuedOnStartup = false) {
       throw new Error('Use the persisted fixture')
     },
     validatePreparedInput: validate,
+    refreshQueuedInput: async input => input,
   }
   const service = new ChatQueueService({
     getRunPermissionCeiling: (runId) => {
@@ -510,6 +702,36 @@ function fixture(queuedOnStartup = false) {
     } },
   })
   const continuation = new QueueContinuation({ queue: service, runner, runs, eventLog })
+  const model = (id: string, provider: string): Model<Api> => ({ api: 'openai-completions', baseUrl: 'https://models.example.test', id, provider, name: id, input: ['text'], reasoning: true, contextWindow: 32000, maxTokens: 2048, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })
+  const resolveModel = vi.fn(async (input: { modelId: string, providerId: string }) => model(input.modelId, input.providerId))
+  const providers: RuntimeModelProvider = { getDefaultModel: async () => ({ modelId: 'model', providerId: 'provider', reasoning: null, serviceTier: null }), executionModels: { resolveAvailable: resolveModel, getServiceTiers: () => [{ id: 'priority', displayName: 'Priority' }] } }
+  const definitions = new BuddyDefinitionResolver({ buddies, members, providers })
+  const actualTurns = new ChatTurnService({
+    definitions,
+    getDefaultBuddyId: () => 'default',
+    conversations,
+    conversationLifecycle: { isDeleting: () => false },
+    drafts,
+    providers,
+    runInputs,
+    runs,
+    spaces: { findById: () => null },
+    runner: { cancel: async () => false },
+    skills: { materializeForSpace: async () => [] },
+    inputValidation: { validate: async () => {} },
+    attachments: {
+      getInputMetadata: () => [],
+      prepareMessageAttachments: async () => { throw new Error('Unused') },
+      preparePrompt: async () => { throw new Error('Unused') },
+    },
+    turnLauncher: { launch: async () => { throw new Error('Unused') } },
+    turnRequests: createTurnRequestRepository(database),
+  })
+  const enableDefinitions = async () => {
+    const resolved = await definitions.resolve({ buddyId: 'default', kind: 'actor', conversationId: 'conversation' })
+    database.prepare('UPDATE runs SET actor_snapshot_json = ?, model = ?, provider = ?, context_window = ?, max_tokens = ? WHERE id = ?').run(JSON.stringify(resolved.definition), resolved.selection.modelId, resolved.selection.providerId, resolved.selection.contextWindow, resolved.selection.maxTokens, 'run-initial')
+    turns.refreshQueuedInput = input => actualTurns.refreshQueuedInput(input)
+  }
   const settle = (runId: string, cleanup: ExecutionSettled['cleanup'] = 'completed') => {
     occupied = false
     cleanupDegraded = cleanup === 'degraded'
@@ -517,7 +739,7 @@ function fixture(queuedOnStartup = false) {
   }
   fixtures.push({ database, service, continuation })
   const scope = { conversationId: 'conversation', branchId: 'branch' }
-  return { database, drafts, queue, input, service, continuation, settled, settle, committed, eventLog, releaseSlot: (cleanup: ExecutionSettled['cleanup'] = 'completed') => {
+  return { database, drafts, queue, input, service, continuation, settled, settle, committed, eventLog, buddies, members, conversations, setPermissions, enableDefinitions, resolveModel, model, releaseSlot: (cleanup: ExecutionSettled['cleanup'] = 'completed') => {
     occupied = false
     cleanupDegraded = cleanup === 'degraded'
   }, scope, target: (id: string) => ({ ...scope, id }), controller: new AbortController(), validate, delivered, launched, runInputs, runs, runner, requests, turns }

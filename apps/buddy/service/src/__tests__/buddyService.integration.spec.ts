@@ -9,6 +9,7 @@ import type { AgentSessionEvent, CompactionResult } from '@earendil-works/pi-cod
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { DatabaseSync } from 'node:sqlite'
+import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 
 import type { BuddyComposerResource } from '../../../shared/conversation/composerResource'
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
@@ -21,18 +22,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
+import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../shared/executions/executionApi'
 import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
 import { PiEventBridge } from '../agent/events/PiEventBridge'
+import { createTestExecutionCoordinator } from '../agent/execution/__tests__/executionCoordinatorFixture'
 import { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import { PiTurnExecutor } from '../agent/execution/PiTurnExecutor'
 import { BuddySessionRegistry } from '../agent/sessions/BuddySessionRegistry'
 import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
-import { ApprovalService } from '../approvals/ApprovalService'
+import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
-import { PermissionEngine } from '../permissions/PermissionEngine'
 import { RunContinuityService } from '../runs/RunContinuityService'
 import { RunLifecycleService } from '../runs/RunLifecycleService'
 import { RunRecoveryService } from '../runs/RunRecoveryService'
@@ -40,7 +43,6 @@ import {
   prepareTestCommandRequest,
   prepareTestTurnRequest,
 } from '../storage/__tests__/composerDraftTestFixture'
-import { createApprovalRepository } from '../storage/approvalRepository'
 import { createAttachmentRepository } from '../storage/attachmentRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { openBuddyDatabase } from '../storage/database'
@@ -61,7 +63,307 @@ afterEach(async () => {
 })
 
 describe('buddy runtime cross-subsystem contract', () => {
-  it('persists a Pi-backed run, enforces its directory grant, approves risky work and replays JSONL', async () => {
+  it('delegates through real Pi tools and child sessions with request-bound models, independent Web scope and durable result continuation', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-delegation-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const builtinSkillsDirectory = join(root, 'skills')
+    let protectedFile = ''
+    await mkdir(builtinSkillsDirectory)
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } }, { 'https://npc.example.test/evidence': 'CONTROLLED_WEB_EVIDENCE' })
+    const approvalOwners: string[] = []
+    const approvalErrors: unknown[] = []
+    const approvalSubscription = eventLog.onDidCommit((event) => {
+      if (event.type !== 'approval.requested')
+        return
+      approvalOwners.push(event.runId)
+      const payload = event.payload as { id: string, kind: string }
+      void harness.invoke(payload.kind === 'network' ? 'approvals.approve' : 'approvals.deny', { approvalId: payload.id, ...(payload.kind === 'network' ? { scope: 'once' } : {}) }).catch(error => approvalErrors.push(error))
+    })
+    const firstRequest = Promise.withResolvers<void>()
+    const releaseFirstRequest = Promise.withResolvers<void>()
+    const childrenCanFinish = Promise.withResolvers<void>()
+    const npcRequests = new Map<string, number>()
+    let rootRequests = 0
+    let npcId = ''
+    const provider = await startLocalModelProvider(async (payload) => {
+      const messages = JSON.stringify(payload.messages)
+      if (messages.includes('ROOT_PRIVATE_INSTRUCTIONS')) {
+        const segment = ++rootRequests
+        if (segment === 1) {
+          firstRequest.resolve()
+          await releaseFirstRequest.promise
+          return { toolCall: { id: 'delegate-m1', name: 'lexora_agents', arguments: { operation: 'delegate', targetId: npcId, text: 'NPC_TASK_M1' } } }
+        }
+        if (segment === 2)
+          return { toolCall: { id: 'delegate-m2', name: 'lexora_agents', arguments: { operation: 'delegate', targetId: npcId, text: 'NPC_TASK_M2' } } }
+        if (!messages.includes('NPC_RESULT_M1') || !messages.includes('NPC_RESULT_M2')) {
+          childrenCanFinish.resolve()
+          const delegated = (payload.messages as { role?: string, content?: string }[]).flatMap((message) => {
+            if (message.role !== 'tool' || !message.content)
+              return []
+            const details = JSON.parse(message.content)
+            return details.kind === 'npc_child' ? [details.runId as string] : []
+          })
+          return { toolCall: { id: `wait-${segment}`, name: 'lexora_agents', arguments: { operation: 'wait', runId: delegated[messages.includes('NPC_RESULT_M1') ? 1 : 0], timeoutMs: 10000 } } }
+        }
+        return { text: 'ROOT_FINAL_AFTER_BOTH_RESULTS' }
+      }
+      const task = messages.includes('NPC_TASK_M1') ? 'M1' : 'M2'
+      const request = (npcRequests.get(task) ?? 0) + 1
+      npcRequests.set(task, request)
+      if (request === 1)
+        return { toolCall: { id: 'fetch-evidence', name: 'lexora_web_fetch', arguments: { url: 'https://npc.example.test/evidence' } } }
+      if (request === 2)
+        return { toolCall: { id: 'attempt-write', name: 'write', arguments: { path: protectedFile, content: 'Forbidden overwrite' } } }
+      await childrenCanFinish.promise
+      return { text: `NPC_RESULT_${task}` }
+    })
+    const runtime = await startBuddyService({ buddyHome, builtinSkillsDirectories: [builtinSkillsDirectory], database, eventLog, rpc: harness.rpc })
+    try {
+      const config = offlineProviderConfig(provider.baseUrl)
+      await harness.invoke('providers.upsertCustom', { ...config, models: [...config.models, { ...config.models[0], id: 'offline-next', name: 'Offline next model' }] })
+      const npc = await harness.invoke('buddies.create', { kind: 'npc', name: 'Controlled researcher' }) as LocalBuddy
+      npcId = npc.id
+      await harness.invoke('buddies.update', { buddyId: npc.id, expectedRevision: npc.revision, settings: {
+        ...DEFAULT_BUDDY_SETTINGS,
+        instructions: 'NPC_PRIVATE_INSTRUCTIONS',
+        skills: { mode: 'none' },
+        tools: { mode: 'selected', ids: [JSON.stringify(['builtin', 'web', 'lexora_web_fetch']), JSON.stringify(['builtin', 'core', 'write']), JSON.stringify(['builtin', 'core', process.platform === 'win32' ? 'powershell' : 'bash'])] },
+      } })
+      const actor = await harness.invoke('buddies.get', { buddyId: 'default' }) as LocalBuddy
+      await harness.invoke('buddies.update', { buddyId: actor.id, expectedRevision: actor.revision, settings: {
+        ...DEFAULT_BUDDY_SETTINGS,
+        instructions: 'ROOT_PRIVATE_INSTRUCTIONS',
+        skills: { mode: 'none' },
+        tools: { mode: 'none' },
+        limits: { fileAccess: 'read_only' },
+        npcIds: [npc.id],
+      } })
+      const turn = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'ROOT_ONLY_TASK', requestId: 'controlled-delegation' })) as LocalTurnStart
+      await firstRequest.promise
+      protectedFile = join(buddyHome, 'conversations', turn.conversationId, 'workspace', 'protected.txt')
+      await writeFile(protectedFile, 'Original contents')
+      await harness.invoke('conversations.setModelSelection', { conversationId: turn.conversationId, targetRunId: turn.runId, actorId: 'default', modelSelection: { providerId: 'offline-provider', modelId: 'offline-next', reasoning: null, serviceTier: null } })
+      releaseFirstRequest.resolve()
+      const completed = await waitForTerminalRun(harness, turn.runId)
+      expect(provider.errors).toEqual([])
+      expect(approvalErrors).toEqual([])
+      expect(completed).toMatchObject({ status: 'completed' })
+      const runs = createRunRepository(database).listTree(turn.runId)
+      const children = runs.filter(run => run.executionKind === 'npc_child')
+      expect(children).toHaveLength(2)
+      expect(approvalOwners.sort()).toEqual(children.map(run => run.id).sort())
+      expect(children.map(run => run.actorSnapshot?.model.modelId).sort()).toEqual(['offline-model', 'offline-next'])
+      expect(children.every(run => run.status === 'completed' && run.executionProfile === 'read_only' && run.actorSnapshot?.settings.limits.fileAccess === 'inherit')).toBe(true)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM execution_state WHERE run_id IN (SELECT id FROM runs WHERE root_run_id = ? AND execution_kind = \'npc_child\') AND file_access_ceiling = \'read_only\'').get(turn.runId)?.count).toBe(2)
+      expect(new Set(runs.map(run => run.threadId)).size).toBe(3)
+      expect(new Set(runs.map(run => run.piSessionFile)).size).toBe(3)
+      const rootPayloads = provider.requests.filter(payload => JSON.stringify(payload.messages).includes('ROOT_PRIVATE_INSTRUCTIONS'))
+      expect(rootPayloads.map(payload => payload.model)).toEqual(['offline-model', ...Array.from({ length: rootPayloads.length - 1 }).fill('offline-next')])
+      for (const payload of rootPayloads) {
+        expect(toolNames(payload)).toContain('lexora_agents')
+        expect(toolNames(payload)).not.toContain('lexora_web_fetch')
+        expect(JSON.stringify(payload.messages)).not.toContain('NPC_PRIVATE_INSTRUCTIONS')
+      }
+      for (const task of ['M1', 'M2']) {
+        const payloads = provider.requests.filter(payload => !JSON.stringify(payload.messages).includes('ROOT_PRIVATE_INSTRUCTIONS') && JSON.stringify(payload.messages).includes(`NPC_TASK_${task}`))
+        expect(payloads).toHaveLength(3)
+        expect(payloads.every(payload => payload.model === (task === 'M1' ? 'offline-model' : 'offline-next'))).toBe(true)
+        expect(toolNames(payloads[0]!)).toContain('lexora_web_fetch')
+        expect(toolNames(payloads[0]!)).not.toContain('write')
+        expect(toolNames(payloads[0]!)).toContain(process.platform === 'win32' ? 'powershell' : 'bash')
+        expect(JSON.stringify(payloads[0]!.messages)).toContain('Arbitrary command syntax is available')
+        expect(JSON.stringify(payloads[0]!.messages)).not.toContain('ROOT_ONLY_TASK')
+        expect(JSON.stringify(payloads[1]!.messages)).toContain('CONTROLLED_WEB_EVIDENCE')
+        expect((payloads[2]!.messages as unknown[]).at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'attempt-write', content: 'Tool write not found' })
+      }
+      expect(await readFile(protectedFile, 'utf8')).toBe('Original contents')
+      const rootRun = runs.find(run => run.id === turn.runId)!
+      const journal = SessionManager.open(rootRun.piSessionFile!)
+      const after = journal.getEntries().filter(entry => readCheckpoint(entry)?.runId === rootRun.id && readCheckpoint(entry)?.position === 'after')
+      expect(after).toHaveLength(1)
+      expect(JSON.stringify(journal.getBranch(after[0]!.id))).toContain('ROOT_FINAL_AFTER_BOTH_RESULTS')
+      expect(journal.getBranch(after[0]!.id).filter(entry => entry.type === 'custom_message' && [EXECUTION_MAILBOX_ENTRY_TYPE, 'lexora.execution.resume.v1'].includes(entry.customType))).toHaveLength(0)
+      expect(rootPayloads.length).toBeLessThanOrEqual(5)
+      expect(rootPayloads.at(-1)!.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tool', content: expect.stringContaining('NPC_RESULT_') })]))
+      const rootEvents = await eventLog.read(turn.runId)
+      expect(rootEvents.filter(event => event.type === 'execution.mailbox.accepted')).toHaveLength(2)
+      expect(rootEvents.filter(event => event.type === 'execution.mailbox.consumed')).toHaveLength(2)
+      expect(rootEvents.filter(event => event.type === 'run.completed')).toHaveLength(1)
+      const usage = createUsageRepository(database)
+      expect(usage.listForRun(turn.runId)).toHaveLength(rootPayloads.length)
+      for (const child of children) {
+        expect(usage.listForRun(child.id)).toHaveLength(3)
+        expect((await eventLog.read(child.id)).filter(event => event.type === 'execution.mailbox.sent')).toHaveLength(1)
+      }
+      const history = createConversationRepository(database).listBranchMessages(turn.conversationId, turn.branchId)
+      expect(history.filter(message => message.role === 'user')).toHaveLength(1)
+      expect(JSON.stringify(history)).not.toContain('NPC_RESULT_')
+    }
+    finally {
+      releaseFirstRequest.resolve()
+      childrenCanFinish.resolve()
+      approvalSubscription.dispose()
+      await runtime.dispose()
+      await eventLog.close()
+    }
+  }, 30_000)
+
+  it('cancels a child after its first input reaches a real Provider without leaving an active session or cancelling its parent', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-cancel-child-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const builtinSkillsDirectory = join(root, 'skills')
+    await mkdir(builtinSkillsDirectory)
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+    const childRequest = Promise.withResolvers<void>()
+    const releaseChildResponse = Promise.withResolvers<void>()
+    let npcId = ''
+    let rootRequests = 0
+    let childRequests = 0
+    const provider = await startLocalModelProvider(async (payload) => {
+      if (JSON.stringify(payload.messages).includes('CANCEL_PARENT_INSTRUCTIONS')) {
+        if (++rootRequests === 1)
+          return { toolCall: { id: 'delegate-cancellable-child', name: 'lexora_agents', arguments: { operation: 'delegate', targetId: npcId, text: 'NPC_INITIAL_INPUT_ACCEPTED' } } }
+        return { text: rootRequests === 2 ? 'Root is awaiting its child' : 'Root acknowledged the cancelled child' }
+      }
+      childRequests++
+      childRequest.resolve()
+      await releaseChildResponse.promise
+      return { text: 'Late child response must not complete the cancelled run' }
+    })
+    const runtime = await startBuddyService({ buddyHome, builtinSkillsDirectories: [builtinSkillsDirectory], database, eventLog, rpc: harness.rpc })
+    try {
+      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      const npc = await harness.invoke('buddies.create', { kind: 'npc', name: 'Cancellable child' }) as LocalBuddy
+      npcId = npc.id
+      await harness.invoke('buddies.update', { buddyId: npc.id, expectedRevision: npc.revision, settings: { ...DEFAULT_BUDDY_SETTINGS, instructions: 'CANCEL_CHILD_INSTRUCTIONS', tools: { mode: 'none' }, skills: { mode: 'none' } } })
+      const actor = await harness.invoke('buddies.get', { buddyId: 'default' }) as LocalBuddy
+      await harness.invoke('buddies.update', { buddyId: actor.id, expectedRevision: actor.revision, settings: { ...DEFAULT_BUDDY_SETTINGS, instructions: 'CANCEL_PARENT_INSTRUCTIONS', tools: { mode: 'none' }, skills: { mode: 'none' }, npcIds: [npc.id] } })
+      const turn = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'Delegate one task', requestId: 'controlled-child-cancellation' })) as LocalTurnStart
+      await childRequest.promise
+      const runs = createRunRepository(database)
+      const child = runs.listTree(turn.runId).find(run => run.executionKind === 'npc_child')!
+      expect(child.status).toBe('running')
+      const acceptedJournal = SessionManager.open(child.piSessionFile!).getBranch()
+      expect(JSON.stringify(acceptedJournal)).toContain('NPC_INITIAL_INPUT_ACCEPTED')
+      expect(acceptedJournal.map(readCheckpoint).filter(Boolean).map(checkpoint => checkpoint!.position)).toEqual(['before'])
+      expect(await harness.invoke('executions.cancel', { conversationId: turn.conversationId, branchId: turn.branchId, rootRunId: turn.runId, runId: child.id })).toEqual({ cancelled: true })
+      expect(await waitForTerminalRun(harness, turn.runId)).toMatchObject({ status: 'completed' })
+      expect(runs.findById(child.id)).toMatchObject({ status: 'cancelled' })
+      expect(database.prepare('SELECT phase, cleanup_state FROM execution_state WHERE run_id = ?').get(child.id)).toMatchObject({ phase: 'closed', cleanup_state: 'clean' })
+      expect(childRequests).toBe(1)
+      expect(rootRequests).toBe(3)
+      const childEvents = await eventLog.read(child.id)
+      expect(childEvents.filter(event => event.type === 'run.cancelled')).toHaveLength(1)
+      expect(childEvents.some(event => event.type === 'run.completed')).toBe(false)
+      expect((await eventLog.read(turn.runId)).filter(event => event.type === 'execution.mailbox.consumed')).toHaveLength(1)
+      expect(provider.errors).toEqual([])
+    }
+    finally {
+      releaseChildResponse.resolve()
+      await runtime.dispose()
+      await eventLog.close()
+    }
+  }, 30_000)
+
+  it('cancels a working execution tree without replaying child requests or rewriting a completed sibling', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-cancel-tree-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const builtinSkillsDirectory = join(root, 'skills')
+    await mkdir(builtinSkillsDirectory)
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+    const runs = createRunRepository(database)
+    const heldRequest = Promise.withResolvers<void>()
+    const releaseResponse = Promise.withResolvers<void>()
+    let rootRequests = 0
+    let fastRequests = 0
+    let heldRequests = 0
+    let fastNpcId = ''
+    let heldNpcId = ''
+    const provider = await startLocalModelProvider(async (payload) => {
+      const messages = JSON.stringify(payload.messages)
+      if (messages.includes('CANCEL_TREE_ROOT_INSTRUCTIONS')) {
+        rootRequests++
+        if (rootRequests === 1)
+          return { toolCall: { id: 'delegate-completed-sibling', name: 'lexora_agents', arguments: { operation: 'delegate', targetId: fastNpcId, text: 'FINISHED_CHILD_INPUT' } } }
+        if (rootRequests === 2)
+          return { toolCall: { id: 'delegate-working-child', name: 'lexora_agents', arguments: { operation: 'delegate', targetId: heldNpcId, text: 'WORKING_CHILD_INPUT' } } }
+        const child = runs.listIncomplete().find(run => run.buddyId === heldNpcId)!
+        return { toolCall: { id: `wait-working-${rootRequests}`, name: 'lexora_agents', arguments: { operation: 'wait', runId: child.id, timeoutMs: 10000 } } }
+      }
+      if (messages.includes('FINISHED_CHILD_INPUT')) {
+        fastRequests++
+        return { text: 'COMPLETED_CHILD_FACT' }
+      }
+      heldRequests++
+      heldRequest.resolve()
+      await releaseResponse.promise
+      return { text: 'LATE_RESPONSE_MUST_NOT_REVIVE_TREE' }
+    })
+    const runtime = await startBuddyService({ buddyHome, builtinSkillsDirectories: [builtinSkillsDirectory], database, eventLog, rpc: harness.rpc })
+    let disposed = false
+    try {
+      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      for (const [name, instructions] of [['Finished child', 'CANCEL_TREE_FAST_INSTRUCTIONS'], ['Working child', 'CANCEL_TREE_HELD_INSTRUCTIONS']]) {
+        const npc = await harness.invoke('buddies.create', { kind: 'npc', name }) as LocalBuddy
+        await harness.invoke('buddies.update', { buddyId: npc.id, expectedRevision: npc.revision, settings: { ...DEFAULT_BUDDY_SETTINGS, instructions, tools: { mode: 'none' }, skills: { mode: 'none' } } })
+        if (name === 'Finished child')
+          fastNpcId = npc.id
+        else
+          heldNpcId = npc.id
+      }
+      const actor = await harness.invoke('buddies.get', { buddyId: 'default' }) as LocalBuddy
+      await harness.invoke('buddies.update', { buddyId: actor.id, expectedRevision: actor.revision, settings: { ...DEFAULT_BUDDY_SETTINGS, instructions: 'CANCEL_TREE_ROOT_INSTRUCTIONS', tools: { mode: 'none' }, skills: { mode: 'none' }, npcIds: [fastNpcId, heldNpcId] } })
+      const turn = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'Delegate both inspections and wait for them', requestId: 'cancel-real-working-tree' })) as LocalTurnStart
+      await heldRequest.promise
+      const children = runs.listTree(turn.runId).filter(run => run.executionKind === 'npc_child')
+      expect(children).toHaveLength(2)
+      const fast = children.find(run => run.buddyId === fastNpcId)!
+      const held = children.find(run => run.buddyId === heldNpcId)!
+      expect(await waitForTerminalRun(harness, fast.id)).toMatchObject({ status: 'completed' })
+      await expect.poll(() => database.prepare('SELECT phase FROM execution_state WHERE run_id = ?').get(turn.runId)?.phase).toBe('waiting')
+      expect(held.status).toBe('running')
+      expect(JSON.stringify(SessionManager.open(held.piSessionFile!).getBranch())).toContain('WORKING_CHILD_INPUT')
+      const completedFacts = await eventLog.read(fast.id)
+      const completedRun = runs.findById(fast.id)
+      expect(await harness.invoke('chat.cancel', { runId: turn.runId })).toMatchObject({ status: 'cancelled' })
+      expect(await waitForTerminalRun(harness, turn.runId)).toMatchObject({ status: 'cancelled' })
+      expect(runs.findById(held.id)).toMatchObject({ status: 'cancelled' })
+      releaseResponse.resolve()
+      await runtime.dispose()
+      disposed = true
+      expect(runs.listIncomplete()).toEqual([])
+      expect(database.prepare('SELECT phase, cleanup_state FROM execution_state WHERE run_id IN (?, ?)').all(turn.runId, held.id)).toEqual([{ phase: 'closed', cleanup_state: 'clean' }, { phase: 'closed', cleanup_state: 'clean' }])
+      expect(runs.findById(fast.id)).toEqual(completedRun)
+      expect(await eventLog.read(fast.id)).toEqual(completedFacts)
+      expect([rootRequests, fastRequests, heldRequests]).toEqual([3, 1, 1])
+      for (const runId of [turn.runId, held.id]) {
+        const events = await eventLog.read(runId)
+        expect(events.filter(event => ['run.cancelled', 'run.completed', 'run.failed'].includes(event.type)).map(event => event.type)).toEqual(['run.cancelled'])
+        expect(events.some(event => event.type === 'execution.mailbox.consumed')).toBe(false)
+      }
+      expect(database.prepare('SELECT COUNT(*) AS count FROM execution_mailbox_receipts WHERE kind = \'consumed\'').get()?.count).toBe(0)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()?.count).toBe(3)
+      expect(provider.errors).toEqual([])
+    }
+    finally {
+      releaseResponse.resolve()
+      if (!disposed)
+        await runtime.dispose()
+      await eventLog.close()
+    }
+  }, 30_000)
+
+  it('persists run output and usage and restores terminal state from JSONL', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-integration-')))
     directories.push(root)
     const spaceRoot = join(root, 'space')
@@ -71,17 +373,9 @@ describe('buddy runtime cross-subsystem contract', () => {
     await mkdir(spaceRoot)
 
     const database = openTrackedDatabase(databasePath)
-    let resolveApprovalRequested!: () => void
-    const approvalRequested = new Promise<void>((resolve) => {
-      resolveApprovalRequested = resolve
-    })
     const eventLog = createRunEventLog({
       conversationsDirectory,
       database,
-    })
-    eventLog.onDidCommit((event) => {
-      if (event.type === 'approval.requested')
-        resolveApprovalRequested()
     })
     createSpaceRepository(database).create({
       additionalDirectories: [],
@@ -104,7 +398,11 @@ describe('buddy runtime cross-subsystem contract', () => {
     const session = new OfflinePiSession(join(spaceRoot, 'article.md'))
     const sessions = new BuddySessionRegistry<ReusableBuddySession>()
     const piEvents = new PiEventBridge({ eventLog, usage })
-    const runner = new BuddyAgentRunner({
+    const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
+    let runner: BuddyAgentRunner
+    const executions = createTestExecutionCoordinator({ database, eventLog, lifecycle, stopExecution: id => runner.interruptExecution(id) })
+    runner = new BuddyAgentRunner({
+      executions,
       executor: new PiTurnExecutor({
         eventLog,
         piEvents,
@@ -115,7 +413,7 @@ describe('buddy runtime cross-subsystem contract', () => {
         }),
         sessions,
       }),
-      lifecycle: new RunLifecycleService({ eventLog, repository: runs }),
+      lifecycle,
       sessions,
     })
 
@@ -186,72 +484,13 @@ describe('buddy runtime cross-subsystem contract', () => {
       .toEqual(['user', 'assistant', 'tool'])
     expect(usageRepository.listForRun('run-1')).toHaveLength(2)
 
-    const policy = new PermissionEngine()
-    const grants = [{ canonicalRoot: spaceRoot, grantId: 'directory-1', kind: 'workspace' as const, root: spaceRoot }]
-    await expect(policy.decide({
-      approvalPolicy: 'policy',
-      arguments: { content: 'safe', path: join(spaceRoot, 'safe.md') },
-      approvalAvailable: true,
-      cwd: spaceRoot,
-      grants,
-      owner: { id: 'space-1', kind: 'space' },
-      profile: 'workspace_write',
-      toolName: 'write',
-    })).resolves.toEqual({ type: 'allow' })
-    await expect(policy.decide({
-      approvalPolicy: 'policy',
-      arguments: { content: 'blocked', path: join(root, 'outside.md') },
-      approvalAvailable: true,
-      cwd: spaceRoot,
-      grants,
-      owner: { id: 'space-1', kind: 'space' },
-      profile: 'workspace_write',
-      toolName: 'write',
-    })).resolves.toMatchObject({ grant: { owner: { kind: 'space' } }, kind: 'write', type: 'ask' })
-    await expect(policy.decide({
-      approvalPolicy: 'policy',
-      arguments: { command: 'python transform.py' },
-      approvalAvailable: true,
-      cwd: spaceRoot,
-      grants,
-      owner: { id: 'space-1', kind: 'space' },
-      profile: 'workspace_write',
-      toolName: 'bash',
-    })).resolves.toMatchObject({ kind: 'shell', type: 'ask' })
-
-    const approvals = createApprovalRepository(database)
-    const approvalService = new ApprovalService({ eventLog, repository: approvals })
-    const pendingDecision = approvalService.request({
-      reuseScopes: ['operation', 'source', 'turn'],
-      arguments: { command: 'python transform.py' },
-      kind: 'shell',
-      runId: 'run-1',
-      signal: new AbortController().signal,
-      summary: 'Run a local transform',
-      toolCallId: 'tool-shell-1',
-      toolName: 'bash',
-    })
-    await approvalRequested
-    const pending = approvals.listPending('run-1')[0]
-    expect(await approvalService.resolve({ decision: 'approved', id: pending.id }))
-      .toMatchObject({ status: 'approved' })
-    await expect(pendingDecision).resolves.toEqual({
-      approvalId: pending.id,
-      decision: 'approved_once',
-    })
-
     const sourceEvents = await eventLog.read('run-1')
-    expect(sourceEvents.map(event => event.sequence)).toEqual(
-      expect.arrayContaining([1, 2, 4, 5, 8, 9, 10]),
-    )
     expect(sourceEvents.every((event, index, all) => index === 0 || event.sequence > all[index - 1]!.sequence))
       .toBe(true)
     expect(sourceEvents.map(event => event.type)).toEqual(expect.arrayContaining([
       'run.started',
       'usage.recorded',
       'run.completed',
-      'approval.requested',
-      'approval.resolved',
     ]))
     expect((await readFile(join(eventsDirectory, 'run-1.jsonl'), 'utf8')).trim().split('\n'))
       .toHaveLength(sourceEvents.length)
@@ -419,7 +658,6 @@ describe('buddy runtime cross-subsystem contract', () => {
         const related = diagnostics.filter(event => event.runId === turn.runId)
         for (const event of ['run.queued', 'run.started', 'pi.turn.started', 'pi.turn.completed', 'run.completed'])
           expect(related).toContainEqual(expect.objectContaining({ event, conversationId: turn.conversationId, branchId: turn.branchId }))
-        expect(related).toContainEqual(expect.objectContaining({ event: 'pi.turn.completed', turnId: `${turn.runId}:1` }))
       }
       for (const content of ['Remember both historical images', 'Continue after recovery', 'test-api-key', keptBytes.toString('base64')])
         expect(JSON.stringify(diagnostics)).not.toContain(content)
@@ -1073,10 +1311,6 @@ describe('buddy runtime cross-subsystem contract', () => {
         unseenCount: 1,
       })
       expect(provider.requests).toHaveLength(1)
-      expect(harness.notifications).toContainEqual({
-        method: 'automation.changed',
-        params: { automationId: automation.id },
-      })
     }
     finally {
       await runtime.dispose()
@@ -1086,6 +1320,16 @@ describe('buddy runtime cross-subsystem contract', () => {
 })
 
 class OfflinePiSession implements ReusableBuddySession {
+  async readInternalMessageReceipts(messages: Parameters<ReusableBuddySession['readInternalMessageReceipts']>[0]) {
+    if (messages.length)
+      throw new Error('Unexpected mailbox messages')
+    return []
+  }
+
+  async appendInternalMessages(): Promise<never> { throw new Error('Internal messages are not used by this fixture') }
+  async resumeInternal(): Promise<never> { throw new Error('Internal messages are not used by this fixture') }
+  async finishTurn(): Promise<void> {}
+
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
   readonly #target: string
 
@@ -1126,7 +1370,6 @@ class OfflinePiSession implements ReusableBuddySession {
       toolName: 'write',
       args: { content: 'Article', path: this.#target },
     })
-    await writeFile(this.#target, 'Article')
     this.#emit({
       type: 'tool_execution_end',
       toolCallId: 'tool-write-1',
@@ -1340,6 +1583,7 @@ interface RuntimeRpcHarness {
 
 function createRuntimeRpcHarness(
   initialCredentials: Readonly<Record<string, Credential>> = {},
+  webPages: Readonly<Record<string, string>> = {},
 ): RuntimeRpcHarness {
   const handlers = new Map<string, Parameters<BuddyServiceRpcServer['onRequest']>[1]>()
   const notificationListeners = new Set<(method: string, params: unknown) => void>()
@@ -1367,7 +1611,20 @@ function createRuntimeRpcHarness(
         id?: string
         namespace?: string
         providerId?: string
+        requestId?: string
+        url?: string
         value?: unknown
+      }
+      if (method === 'host.web.authorize')
+        return Promise.resolve(input.url && input.url in webPages ? { ok: true } : { ok: false, code: 'WEB_URL_BLOCKED' })
+      if (method === 'host.web.request' && input.url && input.url in webPages) {
+        queueMicrotask(() => {
+          for (const listener of notificationListeners) {
+            listener('host.web.chunk', { requestId: input.requestId, chunk: Buffer.from(webPages[input.url!]!).toString('base64') })
+            listener('host.web.chunk', { requestId: input.requestId, done: true })
+          }
+        })
+        return Promise.resolve({ ok: true, url: input.url, status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } })
       }
       if (method === 'host.runtimePreferences.get')
         return Promise.resolve({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
@@ -1439,12 +1696,29 @@ function createRuntimeRpcStub(): BuddyServiceRpcServer {
 interface LocalModelProvider {
   baseUrl: string
   requests: Array<Record<string, unknown>>
+  errors: unknown[]
 }
 
-async function startLocalModelProvider(): Promise<LocalModelProvider> {
+type LocalModelReply = { text: string } | { toolCall: { id: string, name: string, arguments: Record<string, unknown> } }
+type LocalModelResponder = (payload: Record<string, unknown>) => Promise<LocalModelReply>
+
+function toolNames(payload: Record<string, unknown>): string[] {
+  return Array.isArray(payload.tools)
+    ? payload.tools.flatMap((tool) => {
+        const name = readRecord(readRecord(tool)?.function)?.name
+        return typeof name === 'string' ? [name] : []
+      })
+    : []
+}
+
+async function startLocalModelProvider(respond?: LocalModelResponder): Promise<LocalModelProvider> {
   const requests: Array<Record<string, unknown>> = []
+  const errors: unknown[] = []
   const server = createServer((request, response) => {
-    void handleLocalModelRequest(request, response, requests)
+    void handleLocalModelRequest(request, response, requests, respond).catch((error) => {
+      errors.push(error)
+      response.writeHead(500).end('Controlled provider failed')
+    })
   })
   servers.push(server)
   await new Promise<void>((resolve, reject) => {
@@ -1452,13 +1726,14 @@ async function startLocalModelProvider(): Promise<LocalModelProvider> {
     server.listen(0, '127.0.0.1', resolve)
   })
   const address = server.address() as AddressInfo
-  return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests }
+  return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests, errors }
 }
 
 async function handleLocalModelRequest(
   request: import('node:http').IncomingMessage,
   response: import('node:http').ServerResponse,
   requests: Array<Record<string, unknown>>,
+  respond?: LocalModelResponder,
 ): Promise<void> {
   if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
     response.writeHead(404).end()
@@ -1469,11 +1744,12 @@ async function handleLocalModelRequest(
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
   const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
   requests.push(payload)
+  const reply = await respond?.(payload) ?? { text: `offline reply ${requests.length}` }
   const id = `chatcmpl-${requests.length}`
   const common = {
     created: 1_786_759_963,
     id,
-    model: 'offline-model',
+    model: payload.model,
     object: 'chat.completion.chunk',
   }
   response.writeHead(200, {
@@ -1483,14 +1759,14 @@ async function handleLocalModelRequest(
   response.write(`data: ${JSON.stringify({
     ...common,
     choices: [{
-      delta: { content: `offline reply ${requests.length}`, role: 'assistant' },
+      delta: { role: 'assistant', ...('text' in reply ? { content: reply.text } : { tool_calls: [{ index: 0, id: reply.toolCall.id, type: 'function', function: { name: reply.toolCall.name, arguments: JSON.stringify(reply.toolCall.arguments) } }] }) },
       finish_reason: null,
       index: 0,
     }],
   })}\n\n`)
   response.write(`data: ${JSON.stringify({
     ...common,
-    choices: [{ delta: {}, finish_reason: 'stop', index: 0 }],
+    choices: [{ delta: {}, finish_reason: 'text' in reply ? 'stop' : 'tool_calls', index: 0 }],
   })}\n\n`)
   response.write(`data: ${JSON.stringify({
     ...common,

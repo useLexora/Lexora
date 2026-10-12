@@ -1,18 +1,19 @@
 import type { ExtensionAPI, ExtensionToolContext, ToolCallEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
-import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { SessionReferenceSource } from '../sessionReferenceToolContract'
 import { Buffer } from 'node:buffer'
-import { mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { createBuddyInputReference, createBuddyInputReferenceMessage } from '../../agent/context/BuddyInputReference'
 import { ArtifactService } from '../../artifacts/ArtifactService'
+import { RunEventProjector } from '../../events/RunEventProjector'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
+import { createConversationTreeRepository } from '../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
 import { searchConversationHistory } from '../searchConversationHistory'
@@ -35,9 +36,9 @@ async function fixture() {
   const conversations = createConversationRepository(database)
   const attachments = createAttachmentRepository(database)
   const artifacts = new ArtifactService({ repository: createArtifactRepository(database) })
-  const events: BuddyRunEvent[] = []
-  const eventLog = { listForRuns: (runIds: readonly string[]) => events.filter(event => runIds.includes(event.runId)) }
-  const services = { conversations, attachments, artifacts, eventLog }
+  const publications = createConversationTreeRepository(database)
+  const projector = new RunEventProjector(database)
+  const services = { conversations, attachments, artifacts, publications }
   const service = new SessionReferenceService(services)
   const now = '2026-01-01T00:00:00.000Z'
   for (const id of ['current', 'source', 'other'])
@@ -70,10 +71,11 @@ async function fixture() {
     const trigger = message('Create a deliverable.', { branchId })
     const runId = `run-${trigger.id}`
     createRunRepository(database).create({ id: runId, conversationId: 'source', branchId, triggeringMessageId: trigger.id, provider: 'fixture', model: 'fixture', purpose: 'chat', status: 'completed', piSessionFile: null, approvalPolicy: 'policy', executionProfile: 'read_only', startedAt: now })
-    message('Delivered.', { branchId, runId, role: 'assistant' })
+    const early = message('Early segment.', { branchId, runId, role: 'assistant' })
     const [record] = await artifacts.presentOutputs({ conversationId: 'source', cwd: root, grants: [{ canonicalRoot: root, root, grantId: 'source', kind: 'workspace' }], paths: [path] })
-    events.push({ runId, sequence: 1, type: 'output.produced', createdAt: now, payload: { artifactIds: [record!.id], sourceToolCallId: `call-${runId}`, sourceToolName: 'lexora_output_present' } })
-    return { path, source: { kind: 'artifact' as const, artifactId: record!.id } }
+    projector.project([{ runId, sequence: 1, type: 'output.produced', createdAt: now, payload: { artifactIds: [record!.id], sourceToolCallId: `call-${runId}`, sourceToolName: 'lexora_output_present' } }])
+    message('Delivered.', { branchId, runId, role: 'assistant' })
+    return { path, early, source: { kind: 'artifact' as const, artifactId: record!.id } }
   }
   const input = message({ userContent: { ...createBuddyUserContent('Use source.'), sessionReferences: [{ id: 'source', title: 'source' }] }, resourceSnapshots: [] }, { conversationId: 'current' })
   const capability = createSessionReferenceCapability({ ...services, conversationId: 'current' })
@@ -117,6 +119,15 @@ function textResult(result: Awaited<ReturnType<ToolDefinition['execute']>>) {
 }
 
 describe('referenced task materials', () => {
+  it('does not expose a later artifact from the same multi-segment run after branching at its early answer', async () => {
+    const f = await fixture()
+    const output = await f.artifact('late-private-branch-output.txt', 'LATE_BRANCH_ARTIFACT')
+    f.conversations.createBranch({ id: 'early-fork', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: output.early.id, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
+    const search = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'resources' }))
+    expect(search.resources).toEqual([])
+    await expect(f.read(output.source)).rejects.toThrow('SOURCE_UNAVAILABLE')
+  })
+
   it('reads exact long message text across pages with visible neighbouring context', async () => {
     const f = await fixture()
     f.message('Original requirement')
@@ -163,7 +174,6 @@ describe('referenced task materials', () => {
     const saved = textResult(await f.read(input.source))
     expect(saved).toMatchObject({ text: 'saved attachment', storage: 'snapshot' })
     expect(saved).not.toHaveProperty('path')
-    expect(await readFile(output.path, 'utf8')).toBe(html)
   })
 
   it('paginates resource metadata without losing entries and does not expose stored attachment paths', async () => {

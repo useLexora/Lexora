@@ -8,6 +8,7 @@ import { publicRunEventSchema } from './publicRunEvent'
 export const runStatusSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled'])
 
 export const runSchema = z.object({
+  buddyId: idSchema,
   approvalPolicy: approvalPolicySchema,
   branchId: idSchema,
   completedAt: nullableTimestampSchema,

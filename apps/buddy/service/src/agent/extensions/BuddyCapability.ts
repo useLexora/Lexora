@@ -1,9 +1,10 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
-import type { BuddyToolClassificationResult } from '../../approvals/toolClassification'
+import type { BuddyToolClassification, BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
+import type { BuddyMutationEffect } from './changeCaptureExtension'
 import type { BuddyToolDisclosurePolicy } from './discovery/toolDiscoveryContract'
 
 export interface BuddyCapabilityResourceRevision {
@@ -19,6 +20,7 @@ export interface BuddyCapability {
   classify: (event: ToolCallEvent, signal: AbortSignal) =>
     BuddyToolClassificationResult | null | Promise<BuddyToolClassificationResult | null>
   workspaceMutationTools?: readonly string[]
+  mutationEffect?: (event: ToolCallEvent, classification: BuddyToolClassification) => BuddyMutationEffect | null
   disclosure?: readonly BuddyToolDisclosurePolicy[]
 }
 

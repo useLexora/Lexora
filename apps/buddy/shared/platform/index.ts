@@ -14,6 +14,7 @@ export const buddyCapabilitiesSchema = z.object({
 }).strict()
 
 const platformSchema = buddyCapabilitiesSchema.extend({
+  hostShellSupervision: z.boolean(),
   sandbox: z.enum(SHELL_SANDBOX_BACKEND),
   transport: z.enum(['unix', 'namedPipe']),
   environment: z.object({ caseSensitive: z.boolean(), names: z.array(z.string()) }).strict(),

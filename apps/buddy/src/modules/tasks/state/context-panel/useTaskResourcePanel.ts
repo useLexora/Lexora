@@ -130,7 +130,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     retainBrowserSession,
     addBrowser: () => act(taskContext.addBrowser),
     openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
-    previewFile: (path: string) => act(() => taskContext.previewFile(path)),
+    previewFile: (...args: Parameters<typeof taskContext.previewFile>) => act(() => taskContext.previewFile(...args)),
     closeTab,
     discardDraft: (id: string) => {
       operation += 1
@@ -153,7 +153,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     }),
     openArtifact,
     openBrowser: () => act(taskContext.openBrowser),
-    openChanges: (target?: Parameters<typeof taskContext.openChanges>[0]) => act(() => taskContext.openChanges(target)),
+    openChanges: (...args: Parameters<typeof taskContext.openChanges>) => act(() => taskContext.openChanges(...args)),
     selectTab: (id: string) => act(() => taskContext.selectTab(id)),
     toggle: () => act(taskContext.toggle),
   }

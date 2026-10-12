@@ -29,6 +29,7 @@ import { containsCanonicalPath } from '../../../../platform/filesystem/filePaths
 import { buildBuddyRequestContext } from '../context/buildBuddyRequestContext'
 import { createEstimatedContextUsage } from '../context/contextUsageBreakdown'
 import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
+import { withRequestSystemSection } from '../context/withRequestSystemSection'
 import { readToolDiscoveryState, TOOL_DISCOVERY_STATE } from '../extensions/discovery/toolDiscoveryState'
 import {
   getActivePiBuiltinToolNames,
@@ -163,11 +164,14 @@ export async function createBuddyContextSnapshot(
       name: tool.name,
       parameters: tool.parameters,
     }))
-    return createEstimatedContextUsage(buildBuddyRequestContext({
+    let requestContext = buildBuddyRequestContext({
       messages: convertToLlm(prepareBuddyInputHistory(result.session.messages)).filter(message => message.role !== 'system'),
       systemPrompt: result.session.systemPrompt,
       tools,
-    }, result.session.getAllTools()))
+    }, result.session.getAllTools())
+    requestContext = withRequestSystemSection(requestContext, 'buddy_actor', options.resources.actorPrompt ?? '')
+    requestContext = withRequestSystemSection(requestContext, 'buddy_permissions', createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, tools.map(tool => tool.name)))
+    return createEstimatedContextUsage(requestContext)
   }
   finally {
     await createSessionShutdown(result.session)('quit')
@@ -225,6 +229,7 @@ async function createConfiguredBuddySession(
   const context = options.resources.context
   const settingsManager = createBuddySettingsManager()
   const resourceLoader = await createBuddyResourceLoader({
+    actorPrompt: options.resources.actorPrompt,
     getPendingInput: options.getPendingInput,
     approvedSkills: [...options.resources.approvedSkills],
     agentDir: runtime.agentDir,
@@ -262,7 +267,7 @@ async function createConfiguredBuddySession(
     throw error
   }
   const previousPayloadTransform = result.session.agent.onPayload
-  installBuddySystemSections(result.session, options.getInputMessages, options.getPermissionSettings ? () => createPermissionPrompt(options.getPermissionSettings!(), options.platform) : undefined)
+  installBuddySystemSections(result.session, options.getInputMessages, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.resources.actorPrompt ?? '')
   result.session.agent.onPayload = async (payload, model) => {
     const previousPayload = await previousPayloadTransform?.(payload, model)
     return applyBuddyOpenAiRequestOptions(

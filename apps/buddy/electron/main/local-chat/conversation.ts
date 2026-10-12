@@ -31,6 +31,7 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsList, (_event, input) => request(conversationsRpc.list, conversationRequestSchemas.list.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGet, (_event, input) => request(conversationsRpc.get, conversationRequestSchemas.conversationId.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, (_event, input) => request(conversationsRpc.getModelControls, conversationRequestSchemas.modelControls.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, (_event, input) => request(conversationsRpc.delete, conversationRequestSchemas.conversationId.parse(input)))
 
@@ -43,6 +44,12 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsRename, (_event, input) => request(conversationsRpc.rename, conversationRequestSchemas.conversationRename.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetPermissionSettings, (_event, input) => request(conversationsRpc.setPermissionSettings, conversationRequestSchemas.conversationPermissionSettings.parse(input)))
+
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsListMembers, (_event, input) => request(conversationsRpc.listMembers, conversationsRpc.listMembers.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsAddMember, (_event, input) => request(conversationsRpc.addMember, conversationsRpc.addMember.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsRemoveMember, (_event, input) => request(conversationsRpc.removeMember, conversationsRpc.removeMember.input.parse(input)))
+
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetBuddy, (_event, input) => request(conversationsRpc.setBuddy, conversationRequestSchemas.conversationBuddy.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetModelSelection, (_event, input) => request(conversationsRpc.setModelSelection, conversationRequestSchemas.conversationModelSelection.parse(input)))
 

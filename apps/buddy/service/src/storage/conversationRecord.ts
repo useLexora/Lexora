@@ -10,6 +10,7 @@ export interface ConversationModelSelection {
 }
 
 export interface ConversationRecord {
+  buddyId: string
   approvalPolicy: BuddyApprovalPolicy
   id: string
   spaceId: string | null
@@ -24,6 +25,7 @@ export interface ConversationRecord {
 }
 
 export interface ConversationRow {
+  buddy_id: string
   approval_policy: BuddyApprovalPolicy
   id: string
   space_id: string | null
@@ -31,11 +33,13 @@ export interface ConversationRow {
   active_branch_id: string | null
   created_at: string
   execution_profile: BuddyExecutionProfile
-  model_selection_json: string | null
+  actor_model_selection_json?: string | null
   origin: ConversationRecord['origin']
   deleted_at: string | null
   updated_at: string
 }
+
+export const CONVERSATION_CURRENT_MODEL_SELECTION_SQL = '(SELECT model_selection_json FROM conversation_members WHERE conversation_id = conversations.id AND actor_id = conversations.buddy_id)'
 
 export function requireConversationRecord(value: unknown, id: string): ConversationRecord {
   const row = value as ConversationRow | undefined
@@ -46,6 +50,7 @@ export function requireConversationRecord(value: unknown, id: string): Conversat
 
 export function toConversationRecord(row: ConversationRow): ConversationRecord {
   return {
+    buddyId: row.buddy_id,
     approvalPolicy: row.approval_policy,
     id: row.id,
     spaceId: row.space_id,
@@ -53,8 +58,8 @@ export function toConversationRecord(row: ConversationRow): ConversationRecord {
     activeBranchId: row.active_branch_id,
     createdAt: row.created_at,
     executionProfile: row.execution_profile,
-    modelSelection: row.model_selection_json
-      ? JSON.parse(row.model_selection_json) as ConversationModelSelection
+    modelSelection: row.actor_model_selection_json
+      ? JSON.parse(row.actor_model_selection_json) as ConversationModelSelection
       : null,
     origin: row.origin,
     deletedAt: row.deleted_at,

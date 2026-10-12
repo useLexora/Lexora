@@ -1,4 +1,4 @@
-import type { BuddyComposerDraftSend } from '../../shared/conversation/composerDraft'
+import type { LocalStartTurnRequest } from '../../shared/conversation/chatApi'
 import type { SkillReference } from '../../shared/skills/skillApi'
 import type { toPublicRun } from './runs/publicRun'
 
@@ -8,7 +8,7 @@ export interface BuddyTurnContextItem {
   value: string
 }
 
-export type BuddyStartTurnInput = BuddyComposerDraftSend
+export type BuddyStartTurnInput = LocalStartTurnRequest
 
 export interface BuddyTurnStart {
   branchId: string

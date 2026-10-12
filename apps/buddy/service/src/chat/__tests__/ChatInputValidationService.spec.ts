@@ -87,9 +87,8 @@ function createFixture(overrides: Partial<InputModel> = {}) {
           shutdown: async () => {},
         })
       : null },
-    tree: { preview: async () => history, snapshot: async () => null },
-    recovery: { create: async () => ({ messages: [], recoveredImageCount: 0, missingAttachmentIds: [] }) },
-    runs: { findById: () => null, findLatestForBranch: () => null },
+    tree: { preview: async () => history, snapshot: async () => history },
+    runs: { findById: () => null },
     runInputs: { findByTriggeringMessageId: () => null },
   })
   return { service, history, active, attach(mimeType: string, sizeBytes: number) {
@@ -109,5 +108,5 @@ function reference(record: AttachmentRecord) {
 }
 
 function input(): ChatInputValidationInput {
-  return { conversationId: 'conversation-1', branchId: 'branch-1', modelId: 'fixture', providerId: 'fixture', contextWindow: null, maxTokens: null, prompt: 'Inspect this', attachments: [] }
+  return { actorId: 'default', conversationId: 'conversation-1', branchId: 'branch-1', modelId: 'fixture', providerId: 'fixture', contextWindow: null, maxTokens: null, prompt: 'Inspect this', attachments: [] }
 }

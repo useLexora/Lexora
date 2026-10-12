@@ -3,6 +3,7 @@ import { sandboxResultSchema } from './shellSandbox'
 
 export const sandboxProcessStateSchema = z.object({
   pid: z.number().int().positive().optional(),
+  processId: z.string().min(1).max(8192).optional(),
   exitCode: z.number().int().nullable().optional(),
   phase: z.enum(['spawned', 'exited', 'closed', 'cleanup_requested', 'resources_released', 'cleanup_failed']),
 }).strict()

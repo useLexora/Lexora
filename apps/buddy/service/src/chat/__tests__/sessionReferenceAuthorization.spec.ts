@@ -4,6 +4,7 @@ import { resolveAuthorizedSessionReferences } from '../sessionReferenceAuthoriza
 
 function conversation(id: string, spaceId: string | null, title: string | null = 'Session'): ConversationRecord {
   return {
+    buddyId: 'default',
     id,
     spaceId,
     title,

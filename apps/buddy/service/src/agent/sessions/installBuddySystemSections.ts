@@ -3,14 +3,16 @@ import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { BUDDY_SYSTEM_SECTION_NAMES, buildBuddySystemSections } from '../context/buddySystemSections'
 
-export function installBuddySystemSections(session: AgentSession, getInputMessages?: () => AgentSession['messages'], getPermissionPrompt?: () => string): void {
+export function installBuddySystemSections(session: AgentSession, getInputMessages?: () => AgentSession['messages'], getPermissionPrompt?: (activeToolNames: readonly string[]) => string, getActorPrompt?: () => string): void {
   function changesFor(context: { messages: AgentSession['messages'] }) {
     const current = getCurrentSystemMessage(context.messages)?.sections ?? {}
     const active = new Set(session.getActiveToolNames())
-    const sections = buildBuddySystemSections([...context.messages, ...getInputMessages?.() ?? []], session.model && supportsModelToolCalls(session.model) ? session.getAllTools().filter(tool => active.has(tool.name)) : [])
+    const tools = session.model && supportsModelToolCalls(session.model) ? session.getAllTools().filter(tool => active.has(tool.name)) : []
+    const sections = buildBuddySystemSections([...context.messages, ...getInputMessages?.() ?? []], tools)
     const names: readonly string[] = getPermissionPrompt ? [...BUDDY_SYSTEM_SECTION_NAMES, 'buddy_permissions'] : BUDDY_SYSTEM_SECTION_NAMES
+    sections.buddy_actor = getActorPrompt?.() ?? ''
     if (getPermissionPrompt)
-      sections.buddy_permissions = getPermissionPrompt()
+      sections.buddy_permissions = getPermissionPrompt(tools.map(tool => tool.name))
     const changes: Record<string, string | null> = {}
     for (const name of names) {
       const value = sections[name] ? `<${name}>\n${sections[name]}\n</${name}>` : null

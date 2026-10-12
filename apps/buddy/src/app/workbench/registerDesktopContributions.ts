@@ -5,6 +5,7 @@ import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCa
 import { computed } from 'vue'
 import { panes } from '@/workbench/common/workbench'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
+import DesktopExecutionContribution from './DesktopExecutionContribution.vue'
 import DesktopFileContribution from './DesktopFileContribution.vue'
 import DesktopTaskContribution from './DesktopTaskContribution.vue'
 
@@ -12,6 +13,8 @@ export function registerDesktopContributions(controller: WorkbenchController, re
   const presentation = computed(() => workbenchLabels(language()))
   const labels = () => presentation.value
   controller.registry.register('lexora.tasks', (scope) => {
+    scope.cleanup(renderers.register('tasks.execution', DesktopExecutionContribution))
+    scope.view({ id: 'tasks.execution', renderer: 'tasks.execution', locations: ['context'], label: 'Subtask', supports: resource => resource.scheme === 'execution', multiple: false })
     scope.cleanup(renderers.register('tasks.editor', DesktopTaskContribution))
     scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false, prepareBeforeOpen: false })
   })

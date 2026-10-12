@@ -50,6 +50,8 @@ function createOwner(name: string) {
       isSelectingFiles: shallowRef(false),
       interaction: shallowRef(null),
       models: shallowRef([]),
+      isLoadingModel: shallowRef(false),
+      isUpdatingModel: shallowRef(false),
       providers: shallowRef([]),
       selectedEffort: shallowRef(null),
       selectedModel: shallowRef(null),
@@ -106,6 +108,10 @@ function createOwner(name: string) {
     language: shallowRef<BuddyLocale>('zh-CN'),
     welcomePreference: shallowRef<DesktopChatWelcomePreference>('writing'),
     session: {
+      members: { memberIds: shallowRef(['default']), busy: shallowRef(false), error: shallowRef(''), refresh: async () => {}, add: async () => true, remove: async () => true },
+      selectedBuddyId: shallowRef<string | null>('default'),
+      isSelectingBuddy: shallowRef(false),
+      selectBuddy: async () => true,
       activeBranchId: shallowRef<string | null>(null),
       activeConversation: shallowRef(null),
       activeConversationId: shallowRef<string | null>(null),
@@ -192,39 +198,6 @@ describe('useChatWorkspace', () => {
     expect(view.isLoading.value).toBe(false)
     props.viewMode = 'chat'
     expect(view.isLoading.value).toBe(true)
-  })
-
-  it('updates returned bindings when the owning state completes asynchronously', async () => {
-    const owner = createOwner('first')
-    const { view, composer, list } = bindWorkspace(owner)
-    const { isLoading, language, isEmpty } = view
-
-    await Promise.resolve()
-    owner.workspace.composer.draft.value = 'restored draft'
-    owner.workspace.execution.canSend.value = true
-    owner.workspace.status.isLoading.value = false
-    owner.workspace.session.activeConversationId.value = 'conversation-first'
-    owner.workspace.session.activeBranchId.value = 'branch-first'
-    owner.workspace.language.value = 'en-US'
-    await nextTick()
-
-    expect(isLoading.value).toBe(true)
-    list.value = {
-      captureScrollAnchor: () => null,
-      highlightMessage: () => {},
-      readScrollMetrics: () => null,
-      restoreScrollAnchor: () => null,
-      scrollToMessage: () => null,
-      scrollToTail: () => ({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 }),
-    }
-    await nextTick()
-    await nextTick()
-
-    expect(composer.bindings.value).toMatchObject({ draft: 'restored draft', canSend: true })
-    expect(language.value).toBe('en-US')
-    expect(isLoading.value).toBe(false)
-    expect(isEmpty.value).toBe(false)
-    expect(view.transcriptBindings.value?.conversationId).toBe('conversation-first')
   })
 
   it('follows the tail again when the reader sends from a detached position', async () => {

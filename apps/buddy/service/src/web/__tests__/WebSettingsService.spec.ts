@@ -1,14 +1,13 @@
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_WEB_SETTINGS, webSettingsSchema } from '../../../../shared/network/webProtocol'
+import { openBuddyDatabase } from '../../storage/database'
 import { BUDDY_SCHEMA_MIGRATIONS } from '../../storage/schema'
 import { createWorkspaceRepository } from '../../storage/workspaceRepository'
 import { WebSettingsService } from '../WebSettingsService'
 
 function fixture() {
-  const database = new DatabaseSync(':memory:')
-  for (const migration of BUDDY_SCHEMA_MIGRATIONS)
-    database.exec(migration.sql)
+  const database = openBuddyDatabase({ databasePath: ':memory:' })
   let key: string | null = null
   let failing = false
   const service = new WebSettingsService(createWorkspaceRepository(database), {
@@ -100,8 +99,7 @@ describe('web settings ownership', () => {
         database.exec(migration.sql)
       const repository = createWorkspaceRepository(database)
       repository.set('buddy.web', { search: { native: false, tavily: true, bing: true, brave: false }, fetch: { local: true, render: false, tavily: true } }, '2026-09-05T00:00:00Z')
-      for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(m => m.version > 7))
-        database.exec(migration.sql)
+      database.exec(BUDDY_SCHEMA_MIGRATIONS.find(m => m.version === 8)!.sql)
       expect(repository.get('buddy.web')).toEqual({
         search: [
           { provider: 'native', enabled: false },

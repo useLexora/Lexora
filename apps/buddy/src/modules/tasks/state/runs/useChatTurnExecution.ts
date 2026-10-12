@@ -28,6 +28,7 @@ interface ValueRef<T> {
 }
 
 export interface UseChatTurnExecutionOptions {
+  getNewBuddyId?: () => string | undefined
   activeRun: ValueRef<LocalRun | null>
   approvalPolicy: ValueRef<BuddyApprovalPolicy>
   api: { chat: Pick<LocalChatApi['chat'], 'cancel' | 'executeCommand' | 'startTurn' | 'enqueue' | 'listQueue' | 'cancelQueued' | 'steerQueued'> }
@@ -117,6 +118,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     if (isRunCommand && command)
       return executeActionCommand(command, contextItems)
 
+    const buddyId = options.getNewBuddyId?.()
     const sourceScopeKey = options.draftScopeKey.value
     const navigationVersion = options.session.generation()
     const isSourceViewCurrent = () => options.session.isCurrent(navigationVersion)
@@ -133,7 +135,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         return false
       }
       const expectedRevision = confirmedDraft.revision!
-      const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}`
+      const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}`
       const requestId = requestIds.resolve(operationKey)
       if (stoppingRunId.value || options.activeRun.value || queue.queuedMessages.value.length) {
         const result = await options.api.chat.enqueue({ draftId: confirmedDraft.draftId, expectedRevision, requestId })
@@ -143,6 +145,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         return true
       }
       const result = await options.api.chat.startTurn({
+        ...(buddyId ? { buddyId } : {}),
         draftId: confirmedDraft.draftId,
         expectedRevision,
         requestId,

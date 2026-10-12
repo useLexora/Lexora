@@ -19,7 +19,6 @@ import type {
   BuddySpaceFileSource,
 } from '../../../shared/conversation/composerResource'
 import type { ArtifactResource, ArtifactService } from '../artifacts/ArtifactService'
-import type { RunEventReader } from '../events/RunEventPorts'
 import type { ResolvedInteractiveModelSelection } from '../providers/resolveInteractiveModelSelection'
 import type { AttachmentRecord } from '../storage/attachmentRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
@@ -27,6 +26,7 @@ import type { ComposerDraftRepository } from '../storage/composerDraftRepository
 import type { ComposerResourceRecord, ComposerResourceRepository } from '../storage/composerResourceRepository'
 import type { ConversationDirectoryGrantRepository } from '../storage/conversationDirectoryGrantRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
+import type { ConversationTreeRepository } from '../storage/conversationTreeRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
 import type { AttachmentService, PreparedAttachmentUploads } from './AttachmentService'
 import type { ComposerResourceChange, ComposerResourceChangeReason } from './composerResourceEvents'
@@ -39,7 +39,6 @@ import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../
 import { buddyComposerResourceAcceptSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from '../../../shared/conversation/composerResource'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
@@ -57,7 +56,7 @@ export interface ComposerResourceServiceOptions {
   conversationGrants?: Pick<ConversationDirectoryGrantRepository, 'listActive'>
   conversations?: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
   drafts?: Pick<ComposerDraftRepository, 'findById'>
-  eventLog?: Pick<RunEventReader, 'listForRuns'>
+  publications: Pick<ConversationTreeRepository, 'listPublications'>
   paths: Pick<BuddyDataPaths, 'conversationWorkspace' | 'draftAttachments' | 'spaceWorkspace'>
   repository: ComposerResourceRepository
   spaces?: Pick<SpaceRepository, 'findById'>
@@ -88,7 +87,7 @@ export class ComposerResourceService {
   readonly #conversationGrants: ComposerResourceServiceOptions['conversationGrants']
   readonly #conversations: ComposerResourceServiceOptions['conversations']
   readonly #drafts: ComposerResourceServiceOptions['drafts']
-  readonly #eventLog: ComposerResourceServiceOptions['eventLog']
+  readonly #publications: ComposerResourceServiceOptions['publications']
   readonly #paths: ComposerResourceServiceOptions['paths']
   readonly #repository: ComposerResourceRepository
   readonly #importing = new Set<string>()
@@ -102,7 +101,7 @@ export class ComposerResourceService {
     this.#conversationGrants = options.conversationGrants
     this.#conversations = options.conversations
     this.#drafts = options.drafts
-    this.#eventLog = options.eventLog
+    this.#publications = options.publications
     this.#paths = options.paths
     this.#repository = options.repository
     this.#spaces = options.spaces
@@ -338,7 +337,7 @@ export class ComposerResourceService {
       return []
     const history = this.#requireVisibleHistory(scope.conversationId, scope.branchId)
     const historical = historicalComposerSources(history, this.#attachments.listForConversation(scope.conversationId), scope.conversationId, scope.branchId)
-    const visibleArtifactIds = this.#visibleArtifactIds(history)
+    const visibleArtifactIds = this.#visibleArtifactIds(scope.conversationId, scope.branchId)
     const artifacts = (await Promise.all((this.#artifacts?.listConversationArtifacts(scope.conversationId) ?? []).map(async (artifact): Promise<BuddyComposerSourceOption | null> => {
       if (!visibleArtifactIds.has(artifact.id))
         return null
@@ -519,19 +518,13 @@ export class ComposerResourceService {
     return this.#conversations!.listBranchMessages(conversationId, branchId)
   }
 
-  #visibleArtifactIds(history: ReturnType<NonNullable<ComposerResourceServiceOptions['conversations']>['listBranchMessages']>): Set<string> {
-    const runIds = history.flatMap(message => message.runId ? [message.runId] : [])
-    return new Set((this.#eventLog?.listForRuns(runIds) ?? []).flatMap((event) => {
-      if (event.type !== 'output.produced')
-        return []
-      const output = buddyRunOutputPayloadSchema.safeParse(event.payload)
-      return output.success ? output.data.artifactIds : []
-    }))
+  #visibleArtifactIds(conversationId: string, branchId: string): Set<string> {
+    return new Set(this.#publications.listPublications(conversationId, branchId).flatMap(material => material.kind === 'output' ? material.artifacts.map(artifact => artifact.artifactId) : []))
   }
 
   #requireVisibleArtifact(source: BuddyArtifactSource): void {
-    const history = this.#requireVisibleHistory(source.conversationId, source.branchId)
-    if (!this.#visibleArtifactIds(history).has(source.artifactId))
+    this.#requireVisibleHistory(source.conversationId, source.branchId)
+    if (!this.#visibleArtifactIds(source.conversationId, source.branchId).has(source.artifactId))
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
   }
 

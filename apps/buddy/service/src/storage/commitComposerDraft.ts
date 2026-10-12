@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
-import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
+import { buddyUserContentV1Schema, createBuddyUserContent, getBuddyUserContentActorReferences } from '../../../shared/conversation/buddyUserContent'
 
 export interface CommitComposerDraftInput {
   approvalPolicy: BuddyApprovalPolicy
@@ -36,7 +36,8 @@ export function createComposerDraftCommitter(database: DatabaseSync) {
     UPDATE composer_drafts
     SET scope_kind = 'conversation_branch', space_id = NULL, source_message_id = NULL,
       conversation_id = ?, branch_id = ?, revision = revision + 1,
-      content_json = ?, updated_at = ?
+      content_json = ?, updated_at = ?,
+      model_selection_json = CASE WHEN ? THEN NULL ELSE model_selection_json END
     WHERE id = ? AND revision = ?
       AND approval_policy = ? AND execution_profile = ?
       AND (
@@ -54,11 +55,18 @@ export function createComposerDraftCommitter(database: DatabaseSync) {
   `)
 
   return (input: CommitComposerDraftInput): ComposerDraftCommitReceipt => {
+    const draft = database.prepare('SELECT content_json FROM composer_drafts WHERE id = ? AND revision = ?').get(input.draftId, input.expectedRevision) as { content_json: string } | undefined
+    if (!draft)
+      throw new ComposerDraftCommitConflictError()
+    const actorIds = [...new Set(getBuddyUserContentActorReferences(buddyUserContentV1Schema.parse(JSON.parse(draft.content_json))).map(reference => reference.actorId))]
+    const mainActor = database.prepare('SELECT buddy_id FROM conversations WHERE id = ?').get(input.conversationId) as { buddy_id: string } | undefined
+    const clearModelSelection = actorIds.length === 1 && actorIds[0] !== mainActor?.buddy_id
     if (Number(clearDraft.run(
       input.conversationId,
       input.branchId,
       JSON.stringify(createBuddyUserContent()),
       input.updatedAt,
+      Number(clearModelSelection),
       input.draftId,
       input.expectedRevision,
       input.approvalPolicy,

@@ -65,6 +65,8 @@ export function formatAutomationSchedule(
 export function automationEffectiveStatusKey(
   occurrence: AutomationOccurrenceView,
 ) {
+  if (occurrence.errorCode === 'AUTOMATION_ACTOR_UNAVAILABLE')
+    return 'desktop.automations.effectiveStatus.actorUnavailable' as const
   return `desktop.automations.effectiveStatus.${occurrence.effectiveStatus}` as const
 }
 

@@ -48,7 +48,7 @@ export const chatRequestSchemas = {
     requestId: z.string().min(1).max(128),
     sourceRunId: idSchema,
   }).strict(),
-  startTurn: buddyComposerDraftSendSchema,
+  startTurn: buddyComposerDraftSendSchema.unwrap().extend({ buddyId: idSchema.optional() }).strict(),
 } as const
 
 export const chatResponseSchemas = {

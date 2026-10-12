@@ -20,6 +20,10 @@ export function projectConversationTree(input: {
   attachments?: readonly AttachmentRecord[]
   outputs?: readonly LocalRunOutput[]
 }): LocalConversationTree {
+  const publicMessages = input.messages.filter((message) => {
+    const run = message.runId ? input.runs.find(run => run.id === message.runId) : null
+    return !run || run.executionKind === 'root' || (run.executionKind === 'actor_child' && message.role === 'assistant')
+  })
   const readAttachments = createMessageAttachmentReader(input.attachments ?? [])
   const outputsByRun = new Map<string, LocalRunOutput['artifacts'][number][]>()
   for (const output of input.outputs ?? []) {
@@ -30,11 +34,13 @@ export function projectConversationTree(input: {
     }
     outputsByRun.set(output.runId, artifacts)
   }
-  const answerRuns = input.runs.filter(run => run.purpose !== 'conversation.compaction')
+  const publicRuns = new Set(publicMessages.filter(message => message.role === 'assistant').map(message => message.runId))
+  const answerRuns = input.runs.filter(run => run.purpose !== 'conversation.compaction'
+    && (run.executionKind === 'root' || (run.executionKind === 'actor_child' && (publicRuns.has(run.id) || outputsByRun.has(run.id)))))
   const runNodes = new Map(answerRuns.map(run => [run.id, `answer:${run.id}`]))
-  const messageNodes = new Map(input.messages.map(message => [message.id, message.role === 'user' ? `question:${message.id}` : message.runId ? runNodes.get(message.runId) ?? null : null]))
+  const messageNodes = new Map(publicMessages.map(message => [message.id, message.role === 'user' ? `question:${message.id}` : message.runId ? runNodes.get(message.runId) ?? null : null]))
   const messagesByRun = new Map<string, MessageRecord[]>()
-  for (const message of input.messages) {
+  for (const message of publicMessages) {
     if (!message.runId)
       continue
     const messages = messagesByRun.get(message.runId) ?? []
@@ -49,7 +55,7 @@ export function projectConversationTree(input: {
     items.push({ node, createdAt })
     itemsByBranch.set(node.branchId, items)
   }
-  for (const message of input.messages) {
+  for (const message of publicMessages) {
     if (message.role !== 'user')
       continue
     const attachments = readAttachments(message.content)
@@ -84,7 +90,7 @@ export function projectConversationTree(input: {
     const artifacts = outputsByRun.get(run.id) ?? []
     add({
       id: runNodes.get(run.id)!,
-      parentId: `question:${run.triggeringMessageId}`,
+      parentId: `question:${run.executionKind === 'actor_child' ? input.runs.find(root => root.id === run.rootRunId)?.triggeringMessageId ?? run.triggeringMessageId : run.triggeringMessageId}`,
       branchId: run.branchId,
       kind: 'answer',
       messageId: answers.at(-1)?.id ?? null,

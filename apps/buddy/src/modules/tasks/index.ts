@@ -1,6 +1,7 @@
 export type { TaskCapability, TaskChatWorkspace } from './contracts'
 export type { TaskContextTab } from './model/context-panel/taskContextPanel'
 export { useTaskResourcePanel } from './state/context-panel/useTaskResourcePanel'
+export { provideExecutionEnvironment } from './state/runs/chatExecutionContext'
 export { useTaskIndex } from './state/task-index/useTaskIndex'
 export type { TaskIndexController } from './state/task-index/useTaskIndex'
 
@@ -11,3 +12,5 @@ export type { TaskContext } from './taskContext'
 export { useProvideTaskContext, useProvideTaskEnvironment, useTaskContext, useTaskEnvironment } from './taskContext'
 
 export { sessionReferenceNavigationKey } from './widgets/references/sessionReferenceNavigation'
+
+export { useProvideChatContent } from './widgets/transcript/chatContentContext'

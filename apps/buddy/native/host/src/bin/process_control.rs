@@ -3,6 +3,19 @@ use std::{io, process::ExitCode};
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().skip(1);
     if let Some(command) = arguments.next() {
+        #[cfg(any(windows, target_os = "linux"))]
+        if command == "--supervise-shell" && arguments.next().is_none() {
+            return match lexora_buddy_host::supervised_shell::run() {
+                Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"type":"failed","code":"SHELL_SUPERVISION_FAILED","nativeCode":error.raw_os_error()})
+                    );
+                    ExitCode::FAILURE
+                }
+            };
+        }
         #[cfg(windows)]
         if command == "--check-running" {
             return check_running(arguments);

@@ -1,14 +1,20 @@
+import type { BashOperations } from '@earendil-works/pi-coding-agent'
+import type { OwnedProcessSettlement } from '../../../platform/process/supervisedShellProcess'
 import type { SandboxNetworkTarget } from '../../../shared/permissions/shellSandbox'
 import type { BuddyCapability } from '../agent/extensions/BuddyCapability'
 import type { BuddyExtensionRunContext } from '../agent/extensions/BuddyExtensionRunContext'
+import type { MutationCoordinator } from '../changes/MutationCoordinator'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ToolAuthorizationService } from '../permissions/ToolAuthorizationService'
 import type { SandboxDirectoryPermissions } from './SandboxDirectoryPermissions'
 import type { ShellExecution } from './shellExecution'
 import type { ShellSandboxClient } from './ShellSandboxClient'
 import { Buffer } from 'node:buffer'
-import { createBashToolDefinition, createPowerShellToolDefinition, defineTool } from '@earendil-works/pi-coding-agent'
+import process from 'node:process'
+import { createBashToolDefinition, createPowerShellToolDefinition, defineTool, getPowerShellConfig, getShellConfig } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
+import { currentPlatform } from '../../../platform/currentPlatform'
+import { runSupervisedShellProcess } from '../../../platform/process/supervisedShellProcess'
 import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../approvals/ApprovalService'
@@ -27,6 +33,8 @@ export function createShellCapability(options: {
   authorization: ToolAuthorizationService
   sandbox: Pick<ShellSandboxClient, 'exec'> | undefined
   directoryPermissions: SandboxDirectoryPermissions
+  mutations?: Pick<MutationCoordinator, 'getCurrentInvocation' | 'recordOwnedProcessSettlement'>
+  assertExecutionAllowed?: (input: { run: BuddyExtensionRunContext, boundary: 'host' | 'sandbox', readOnly: boolean }) => void | Promise<void>
 }): BuddyCapability {
   const shellName = options.execution.dialect
   const createShell = shellName === 'powershell' ? createPowerShellToolDefinition : createBashToolDefinition
@@ -41,6 +49,13 @@ export function createShellCapability(options: {
       { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: [HOST_TOOLS.shell] },
     ],
     workspaceMutationTools: ['lexora_host_shell'],
+    mutationEffect(event, classification) {
+      if (event.toolName !== shellName && event.toolName !== 'lexora_host_shell')
+        return null
+      if (!currentPlatform.hostShellSupervision)
+        return { kind: 'host', ownedProcess: false }
+      return { kind: event.toolName === 'lexora_host_shell' || classification.shellBoundary !== 'sandbox' ? 'host' : 'workspace', ownedProcess: true }
+    },
     async classify(event) {
       if (event.toolName === shellName)
         return { access: 'execute', get shellBoundary() { return (options.getExecution?.() ?? options.execution).boundary === 'sandbox' ? 'sandbox' as const : undefined } }
@@ -53,7 +68,26 @@ export function createShellCapability(options: {
     extension: {
       name: SHELL_SANDBOX_EXTENSION,
       factory(pi) {
-        const native = createShell(options.cwd, { exposeSessionEnvironment: false })
+        const native = createShell(options.cwd, {
+          exposeSessionEnvironment: false,
+          ...(currentPlatform.hostShellSupervision
+            ? {
+                operations: {
+                  exec: async (command: string, cwd: string, execOptions: Parameters<BashOperations['exec']>[2]) => {
+                    const invocation = options.mutations?.getCurrentInvocation()
+                    const shell = shellName === 'powershell' ? getPowerShellConfig() : getShellConfig()
+                    return runSupervisedShellProcess({ ...shell, command, cwd, environment: execOptions.env ?? process.env }, {
+                      ...execOptions,
+                      onSettlement(settlement) {
+                        if (invocation && !options.mutations!.recordOwnedProcessSettlement({ ...settlement, invocationId: invocation.invocationId }))
+                          throw new Error('SHELL_INVOCATION_EXPIRED')
+                      },
+                    })
+                  },
+                },
+              }
+            : {}),
+        })
         pi.registerTool({
           ...native,
           description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Sandbox reads, writes and network destinations require the corresponding authorization. No automatic host fallback.`,
@@ -66,6 +100,7 @@ export function createShellCapability(options: {
             const execution = options.getExecution?.() ?? options.execution
             if (!run)
               throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+            await options.assertExecutionAllowed?.({ run, boundary: execution.boundary, readOnly: execution.readOnly })
             if (execution.boundary === 'host')
               return native.execute(toolCallId, parameters, AbortSignal.any([run.signal, ...signal ? [signal] : []]), onUpdate, context)
             if (!options.sandbox)
@@ -111,6 +146,14 @@ export function createShellCapability(options: {
                         recordFailure(target, error instanceof ApprovalCancelledError || error instanceof ApprovalExpiredError ? error.code : 'NETWORK_APPROVAL_FAILED')
                         throw error
                       }
+                    }, {
+                      onSettlement: (() => {
+                        const invocation = options.mutations?.getCurrentInvocation()
+                        return (settlement: OwnedProcessSettlement) => {
+                          if (invocation && !options.mutations!.recordOwnedProcessSettlement({ ...settlement, invocationId: invocation.invocationId }))
+                            throw new Error('SHELL_INVOCATION_EXPIRED')
+                        }
+                      })(),
                     })
                   }
                   finally {
@@ -134,6 +177,13 @@ export function createShellCapability(options: {
           description: 'Run a command OUTSIDE the sandbox with the desktop service user permissions, including host files, credentials, network and desktop IPC. Requires user authorization; reusable grants expire with the current run. Use only when isolation prevents an operation required by the user, never to evade a declined request. Supply command and optional timeout in seconds.',
           promptSnippet: 'Run an authorized host command outside the sandbox',
           promptGuidelines: [],
+          async execute(toolCallId, parameters, signal, onUpdate, context) {
+            const run = options.getRunContext()
+            if (!run)
+              throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+            await options.assertExecutionAllowed?.({ run, boundary: 'host', readOnly: false })
+            return native.execute(toolCallId, parameters, AbortSignal.any([run.signal, ...signal ? [signal] : []]), onUpdate, context)
+          },
         })
         pi.registerTool(defineTool({
           name: 'lexora_authorize_directory',

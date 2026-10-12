@@ -11,6 +11,7 @@ import type {
   AttachmentService,
 } from '../attachments/AttachmentService'
 import type { ComposerResourceService } from '../attachments/ComposerResourceService'
+import type { BuddyDefinitionResolver } from '../buddies/BuddyDefinitionResolver'
 import type {
   BuddyStartTurnInput,
   BuddyTurnContextItem,
@@ -22,6 +23,7 @@ import type {
   RuntimeModelProvider,
 } from '../providers/resolveInteractiveModelSelection'
 import type { SkillService } from '../skills/SkillService'
+import type { QueuedTurnRequestInput } from '../storage/chatQueueRepository'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { ConversationRecord } from '../storage/conversationRecord'
@@ -54,6 +56,7 @@ import {
   bindResourceAttachments,
   buddyUserContentToText,
   buddyUserMessageContentV1Schema,
+  getBuddyUserContentActorReferences,
   getResourceAttachmentIds,
 } from '../../../shared/conversation/buddyUserContent'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
@@ -93,6 +96,8 @@ export interface RegenerateChatAssistantInput {
 }
 
 export interface ChatTurnServiceOptions {
+  definitions: Pick<BuddyDefinitionResolver, 'resolve' | 'validateActors'>
+  getDefaultBuddyId: () => string
   composerResources?: Pick<ComposerResourceService, 'resolveInput'>
   attachments: Pick<
     AttachmentService,
@@ -128,6 +133,7 @@ interface TurnModelSelection extends Omit<InteractiveModelSelection, 'reasoning'
 }
 
 interface PrepareTurnMaterializationInput {
+  actorId: string
   composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[] }
   attachmentIds: readonly string[]
   content: string
@@ -187,6 +193,13 @@ export class ChatTurnService {
       : null
     if (scope.conversationId && !existingConversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
+    if (existingConversation && input.buddyId !== undefined)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const leaderId = existingConversation?.buddyId ?? input.buddyId ?? draft.participants?.leaderId ?? this.#options.getDefaultBuddyId()
+    const actorIds = [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))]
+    if (!existingConversation && actorIds.some(id => !(draft.participants?.actorIds ?? [leaderId]).includes(id)))
+      throw new BuddyServiceError('BUDDY_NOT_MEMBER')
+    const buddyId = actorIds.length === 1 ? actorIds[0]! : leaderId
     const spaceId = scope.spaceId ?? existingConversation?.spaceId ?? null
     const space = spaceId
       ? requireActiveSpace(this.#options.spaces.findById(spaceId))
@@ -223,7 +236,11 @@ export class ChatTurnService {
     if (this.#options.conversationLifecycle.isDeleting(conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
 
-    const selectedModel = await this.#resolveSelection(null, null, draft.modelSelection)
+    const resolvedActor = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: existingConversation?.id ?? null, requestedModel: draft.modelSelection })
+    const selectedModel = resolvedActor.selection
+    this.#options.definitions.validateActors(actorIds, existingConversation?.id)
+    if (!existingConversation)
+      this.#options.definitions.validateActors(draft.participants?.actorIds ?? [leaderId])
     const materialized = await requireValue(this.#options.composerResources ?? null)
       .resolveInput(input.draftId, draft.content, {
         branchId: existingConversation ? parentBranchId : null,
@@ -245,6 +262,7 @@ export class ChatTurnService {
         selection,
         thinkingLevel,
       } = await this.#prepareTurnMaterialization({
+        actorId: buddyId,
         attachmentIds,
         composer: {
           content: { ...draft.content, sessionReferences },
@@ -272,6 +290,12 @@ export class ChatTurnService {
       }), materialized)
       const persistedAttachmentIds = stagedAttachments.bindings.map(binding => binding.id)
       const prepared: PrepareTurnRequestInput = {
+        leaderId,
+        expectedActorModelSelection: resolvedActor.memberModelSelection,
+        actorSnapshot: resolvedActor.definition,
+        actorIds,
+        ...(draft.modelSelection ? { modelOverride: draft.modelSelection } : {}),
+        buddyId,
         followup,
         approvalPolicy: draft.executionConfig.approvalPolicy,
         attachmentBindings: stagedAttachments.bindings,
@@ -313,10 +337,33 @@ export class ChatTurnService {
     }
   }
 
+  async refreshQueuedInput(input: QueuedTurnRequestInput): Promise<QueuedTurnRequestInput> {
+    const conversation = this.#options.conversations.findById(input.conversationId)
+    if (!conversation || conversation.activeBranchId !== input.branchId || this.#options.conversationLifecycle.isDeleting(input.conversationId))
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const buddyId = input.queueRouting?.mode === 'actor' ? input.queueRouting.actorId : conversation.buddyId
+    if (buddyId !== input.buddyId)
+      throw new BuddyServiceError('BUDDY_CONFLICT')
+    const resolved = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: input.modelOverride ?? null })
+    const selection = resolved.selection
+    return {
+      ...input,
+      expectedActorModelSelection: resolved.memberModelSelection,
+      actorSnapshot: resolved.definition,
+      buddyId,
+      model: selection.modelId,
+      provider: selection.providerId,
+      modelParameters: toModelParameters(selection),
+      runInput: { ...input.runInput, reasoning: normalizeThinkingLevel(selection.reasoning) ?? null, serviceTier: selection.serviceTier },
+    }
+  }
+
   async validatePreparedInput(input: PrepareTurnRequestInput, validateSkills = true): Promise<void> {
+    this.#options.definitions.validateActors([input.buddyId ?? this.#options.getDefaultBuddyId(), ...input.actorIds ?? []])
     if (validateSkills)
       input.runInput.contextItems = await this.#validateSkillItems(input.spaceId, input.runInput.contextItems)
     await this.#options.inputValidation.validate({
+      actorId: input.buddyId ?? this.#options.getDefaultBuddyId(),
       conversationId: input.conversationId,
       branchId: input.branchId,
       modelId: input.model,
@@ -370,7 +417,11 @@ export class ChatTurnService {
       ? resolveAuthorizedSessionReferences(draft.content.sessionReferences ?? [], this.#options.conversations)
       : []
     const content = draft ? buddyUserContentToText(draft.content).trim() : ''
-    const selectedModel = draft ? await this.#resolveSelection(null, null, draft.modelSelection) : undefined
+    const actorIds = draft ? [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))] : []
+    const buddyId = actorIds.length === 1 ? actorIds[0]! : conversation.buddyId
+    const resolvedActor = draft && !replay ? await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: draft.modelSelection }) : undefined
+    const selectedModel = resolvedActor?.selection
+    this.#options.definitions.validateActors(actorIds, conversation.id)
     const materialized = draft && !replay
       ? await requireValue(this.#options.composerResources ?? null).resolveInput(
           draft.draftId,
@@ -395,6 +446,7 @@ export class ChatTurnService {
         selection,
         thinkingLevel,
       } = await this.#prepareTurnMaterialization({
+        actorId: buddyId,
         attachmentIds,
         composer: draft
           ? { content: { ...draft.content, sessionReferences }, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs }
@@ -434,6 +486,11 @@ export class ChatTurnService {
               runId,
             })
           : this.#options.turnRequests.edit({
+              expectedActorModelSelection: resolvedActor?.memberModelSelection,
+              actorSnapshot: resolvedActor?.definition,
+              actorIds,
+              ...(draft?.modelSelection ? { modelOverride: draft.modelSelection } : {}),
+              buddyId,
               approvalPolicy: conversation.approvalPolicy,
               attachmentBindings: stagedAttachments?.bindings ?? [],
               branchId: randomUUID(),
@@ -500,10 +557,15 @@ export class ChatTurnService {
       throw new BuddyServiceError('VALIDATION_FAILED')
 
     const storedInput = this.#requireRunInput(requireValue(replay?.run ?? sourceRun).id)
-    const selectedModel = await this.#resolveSelection(replay?.run ?? null, replay ? storedInput : null, conversation.modelSelection)
+    const sourceContent = buddyUserMessageContentV1Schema.safeParse(history[triggerIndex]!.content)
+    const actorIds = sourceContent.success ? [...new Set(getBuddyUserContentActorReferences(sourceContent.data.userContent).map(reference => reference.actorId))] : []
+    const buddyId = actorIds.length === 1 ? actorIds[0]! : conversation.buddyId
+    const resolvedActor = !replay ? await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id }) : undefined
+    const selectedModel = resolvedActor?.selection ?? await this.#resolveSelection(replay?.run ?? null, replay ? storedInput : null, conversation.modelSelection)
     await this.#validateSkillItems(conversation.spaceId, storedInput.contextItems)
     assertPromptSize(storedInput.prompt)
     await this.#options.inputValidation.validate({
+      actorId: replay?.run.buddyId ?? buddyId,
       conversationId: conversation.id,
       branchId: parentBranchId,
       point: { kind: 'before_message', messageId: sourceRun.triggeringMessageId },
@@ -523,6 +585,10 @@ export class ChatTurnService {
           runId,
         })
       : this.#options.turnRequests.regenerate({
+          actorIds,
+          expectedActorModelSelection: resolvedActor?.memberModelSelection,
+          actorSnapshot: resolvedActor?.definition,
+          buddyId,
           approvalPolicy: conversation.approvalPolicy,
           branchId: randomUUID(),
           conversationId: conversation.id,
@@ -640,6 +706,7 @@ export class ChatTurnService {
       : [
           legacyContext?.prompt ?? '',
           directives?.contextSuffix ?? '',
+          input.composer && this.#options.definitions ? formatActorReferences(this.#options.definitions.validateActors(getBuddyUserContentActorReferences(input.composer.content).map(reference => reference.actorId))) : '',
         ].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
     const prompt = replayInput?.prompt
       ?? [attachmentPrompt.prompt, context].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
@@ -650,6 +717,7 @@ export class ChatTurnService {
       input.requestedModel,
     )
     await this.#options.inputValidation.validate({
+      actorId: input.replay?.run.buddyId ?? input.actorId,
       conversationId: input.conversationId,
       branchId: input.branchId,
       point: input.point,
@@ -911,4 +979,13 @@ function requireValue<T>(value: T | null): T {
   if (value === null)
     throw new BuddyServiceError('VALIDATION_FAILED')
   return value
+}
+
+function formatActorReferences(actors: readonly { id: string, name: string }[]): string {
+  if (!actors.length)
+    return ''
+  const routing = actors.length === 1
+    ? 'This request is addressed directly to the named actor. This does not change the conversation leader.'
+    : 'The conversation leader coordinates these explicitly requested actors. Delegate relevant tasks only to these named actors; bound NPCs may help as private workers.'
+  return `${routing}\nRequested conversation actors (stable IDs):\n${JSON.stringify(actors)}`
 }

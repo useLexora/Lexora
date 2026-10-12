@@ -48,6 +48,25 @@ describe('native Pi follow-up extension', () => {
     expect(f.session.agent.hasQueuedMessages()).toBe(false)
   })
 
+  it('keeps ordinary inputs pending through an execution continuation while applying explicit steering', async () => {
+    const f = await fixture({ toolCalls: [1], deferQueuedInputs: true })
+    const completion = f.prompt()
+    await f.toolStarted.promise
+    f.pending.splice(f.pending.indexOf('B'), 1)
+    expect(f.reusable.steer?.(() => f.reference('B'))).toBe(true)
+    f.toolRelease.resolve()
+    await completion
+    expect(f.contexts).toHaveLength(2)
+    expect(f.contexts[1]!.messages.filter(message => message.role === 'user').map(message => message.content)).toEqual([
+      [{ type: 'text', text: 'initial' }],
+      [{ type: 'text', text: 'B' }],
+    ])
+    expect(f.pending).toEqual(['A', 'C'])
+    expect(f.events).toEqual(['user:initial', 'tool', 'user:B', 'agent_end', 'agent_settled'])
+    await f.reusable.finishTurn()
+    expect(f.pending).toEqual(['A', 'C'])
+  })
+
   it.each(['error', 'aborted'] as const)('retains every pending input after native %s', async (stopReason) => {
     const f = await fixture({ stopReason })
     await f.prompt()
@@ -104,6 +123,7 @@ async function fixture(options: {
   stopReason?: 'error' | 'aborted'
   validate?: () => Promise<void>
   skillMismatch?: boolean
+  deferQueuedInputs?: boolean
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-native-queue-'))
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
@@ -184,7 +204,7 @@ async function fixture(options: {
     shutdown: async () => { session.dispose() },
   })
   enqueue = prepare => reusable.followUp!(prepare, options.skillMismatch ? [{ ...skill, revision: 'two' }] : [])
-  await reusable.activateTurn({ runId: 'run-initial', model: model.id, provider: model.provider, contextWindow: null, maxTokens: null, signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
+  await reusable.activateTurn({ generation: 0, deferQueuedInputs: options.deferQueuedInputs, runId: 'run-initial', model: model.id, provider: model.provider, contextWindow: null, maxTokens: null, signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
   session.subscribe((event) => {
     if (event.type === 'agent_end' || event.type === 'agent_settled')
       events.push(event.type)

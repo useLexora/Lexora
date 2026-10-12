@@ -43,7 +43,7 @@ export interface RegisterConversationRpcOptions {
   attachments: Pick<AttachmentService, 'listForConversation'>
   changes: Pick<ChangeCaptureService, 'listSummariesForRuns'>
   conversations: ConversationRpcRepository
-  metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'activateBranch'>
+  metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'getModelControls' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'activateBranch'>
   deleteConversation: (conversationId: string) => Promise<boolean>
   eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] }
   isDeleting: (conversationId: string) => boolean
@@ -54,6 +54,9 @@ export interface RegisterConversationRpcOptions {
 
 export function registerConversationRpc(options: RegisterConversationRpcOptions): () => void {
   const disposers: Array<() => void> = []
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listMembers, input => options.metadata.listMembers(input.conversationId)))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.addMember, input => options.metadata.addMember({ id: input.conversationId, buddyId: input.buddyId })))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.removeMember, input => options.metadata.removeMember({ id: input.conversationId, buddyId: input.buddyId })))
 
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.list, (input) => {
     return input.filter
@@ -63,6 +66,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.get, (input) => {
     return requireActiveConversation(options, input.conversationId)
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.getModelControls, input => options.metadata.getModelControls(input.conversationId, input.actorId)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.rename, (input) => {
     return options.metadata.rename({
       id: input.conversationId,
@@ -76,10 +80,13 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       id: input.conversationId,
     })
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.setBuddy, input => options.metadata.setBuddy({ id: input.conversationId, buddyId: input.buddyId })))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.setModelSelection, async (input) => {
     return options.metadata.setModelSelection({
       id: input.conversationId,
       modelSelection: input.modelSelection,
+      actorId: input.actorId,
+      runId: input.targetRunId,
     })
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.delete, async (input) => {

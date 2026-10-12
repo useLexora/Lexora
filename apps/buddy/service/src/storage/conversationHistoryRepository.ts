@@ -124,7 +124,8 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
     SELECT active_branch_id, deleted_at FROM conversations WHERE id = ?
   `)
   const findBranch = database.prepare('SELECT * FROM conversation_branches WHERE id = ?')
-  const findMessage = database.prepare('SELECT * FROM messages WHERE id = ?')
+  const publicMessage = `(run_id IS NULL OR EXISTS (SELECT 1 FROM conversation_publications WHERE message_id = messages.id) OR EXISTS (SELECT 1 FROM runs WHERE runs.id = messages.run_id AND (runs.execution_kind = 'root' OR (runs.execution_kind = 'actor_child' AND messages.role = 'assistant'))))`
+  const findMessage = database.prepare(`SELECT * FROM messages WHERE id = ? AND ${publicMessage}`)
   const insertBranch = database.prepare(`
     INSERT INTO conversation_branches (
       id, conversation_id, parent_branch_id, forked_from_message_id, created_at
@@ -140,25 +141,25 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
   `)
   const listAllMessagesForBranch = database.prepare(`
     SELECT * FROM messages
-    WHERE conversation_id = ? AND branch_id = ?
+    WHERE conversation_id = ? AND branch_id = ? AND ${publicMessage}
     ORDER BY created_at, id
   `)
   const listNewestMessagesForBranch = database.prepare(`
     SELECT * FROM messages
-    WHERE conversation_id = ? AND branch_id = ?
+    WHERE conversation_id = ? AND branch_id = ? AND ${publicMessage}
     ORDER BY created_at DESC, id DESC
     LIMIT ?
   `)
   const listMessagesForBranchBefore = database.prepare(`
     SELECT * FROM messages
-    WHERE conversation_id = ? AND branch_id = ?
+    WHERE conversation_id = ? AND branch_id = ? AND ${publicMessage}
       AND (created_at < ? OR (created_at = ? AND id < ?))
     ORDER BY created_at DESC, id DESC
     LIMIT ?
   `)
   const listMessagesForBranchThrough = database.prepare(`
     SELECT * FROM messages
-    WHERE conversation_id = ? AND branch_id = ?
+    WHERE conversation_id = ? AND branch_id = ? AND ${publicMessage}
       AND (created_at < ? OR (created_at = ? AND id <= ?))
     ORDER BY created_at DESC, id DESC
     LIMIT ?
@@ -170,7 +171,7 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
   `)
   const findIncompleteRun = database.prepare(`
     SELECT 1 FROM runs
-    WHERE conversation_id = ? AND status IN ('queued', 'running')
+    WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance') AND status IN ('queued', 'running')
     LIMIT 1
   `)
   const collectBranchMessages = (
@@ -297,16 +298,10 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
         })
       },
       createMessage(input) {
-        insertMessage.run(
-          input.id,
-          input.conversationId,
-          input.branchId,
-          input.runId,
-          input.role,
-          JSON.stringify(input.content),
-          input.createdAt,
-        )
-        return toMessage(requireRow<MessageRow>(findMessage.get(input.id), input.id))
+        return withTransaction(database, () => {
+          insertMessage.run(input.id, input.conversationId, input.branchId, input.runId, input.role, JSON.stringify(input.content), input.createdAt)
+          return toMessage(requireRow<MessageRow>(findMessage.get(input.id), input.id))
+        })
       },
       findMessageById(id) {
         const row = findMessage.get(id) as MessageRow | undefined

@@ -6,8 +6,10 @@ describe('desktopNotificationService', () => {
     let click: (() => void) | null = null
     const show = vi.fn()
     const openTarget = vi.fn()
+    const notifications: { body: string, title: string }[] = []
     const service = new DesktopNotificationService({
-      createNotification() {
+      createNotification(input) {
+        notifications.push(input)
         return {
           onClick(listener) {
             click = listener
@@ -23,6 +25,7 @@ describe('desktopNotificationService', () => {
         if (method === 'runs.get') {
           return {
             approvalPolicy: 'policy',
+            buddyId: 'default',
             branchId: 'branch-1',
             completedAt: '2026-08-19T08:00:00.000Z',
             conversationId: 'conversation-1',
@@ -39,6 +42,7 @@ describe('desktopNotificationService', () => {
           }
         }
         return {
+          buddyId: 'default',
           activeBranchId: 'branch-1',
           approvalPolicy: 'policy',
           createdAt: '2026-08-19T07:58:00.000Z',
@@ -66,6 +70,7 @@ describe('desktopNotificationService', () => {
     await service.handle(notification)
     await service.handle(notification)
 
+    expect(notifications).toEqual([{ body: '任务已完成', title: '整理发布说明' }])
     expect(show).toHaveBeenCalledOnce()
     expect(click).not.toBeNull()
     click!()

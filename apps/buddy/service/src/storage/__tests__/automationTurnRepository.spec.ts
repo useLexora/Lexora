@@ -80,6 +80,7 @@ describe('automationTurnRepository', () => {
     expect(database.prepare(`
       SELECT prompt, reasoning FROM run_inputs WHERE run_id = 'run-1'
     `).get()).toEqual({ prompt: 'Run daily', reasoning: 'high' })
+    expect(database.prepare('SELECT actor_id, model_selection_json FROM conversation_members WHERE conversation_id = ?').get('conversation-1')).toEqual({ actor_id: 'default', model_selection_json: null })
   })
 
   it('rolls the whole binding back when the queued lease cannot be validated', () => {

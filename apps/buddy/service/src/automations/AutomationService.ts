@@ -286,8 +286,11 @@ export class AutomationService {
     ) <= 0) {
       throw new AutomationServiceError('AUTOMATION_CONFLICT')
     }
-    const leased = this.#occurrences.leaseQueued({ leaseExpiresAt, limit, now, owner })
-    this.#publish(leased.map(occurrence => ({ kind: 'lease.acquired', automationId: occurrence.automationId, occurrenceId: occurrence.id, leaseOwner: owner, leaseExpiresAt })))
+    const { leased, skipped } = this.#occurrences.leaseQueued({ leaseExpiresAt, limit, now, owner })
+    this.#publish([
+      ...leased.map(occurrence => ({ kind: 'lease.acquired' as const, automationId: occurrence.automationId, occurrenceId: occurrence.id, leaseOwner: owner, leaseExpiresAt })),
+      ...skipped.map(occurrenceFact),
+    ])
     return leased
   }
 
@@ -521,6 +524,7 @@ export class AutomationService {
     return {
       blockedReason: null,
       createdAt: input.createdAt,
+      actorId: draft.actorId ?? null,
       executionProfile: draft.executionProfile,
       id: input.id,
       lastRunAt: input.lastRunAt,

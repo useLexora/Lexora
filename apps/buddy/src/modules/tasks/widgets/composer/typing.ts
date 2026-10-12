@@ -60,6 +60,8 @@ export interface ChatComposerEditorOptions {
 }
 
 export interface DesktopChatComposerProps {
+  isLoadingModel?: boolean
+  isUpdatingModel?: boolean
   pasteTextAsAttachment: boolean
   manageSkills?: () => void
   hasQueuedMessages?: boolean

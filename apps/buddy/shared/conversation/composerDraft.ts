@@ -45,8 +45,14 @@ export const buddyComposerDraftExecutionConfigSchema = z.object({
   executionProfile: z.enum(BUDDY_EXECUTION_PROFILES),
 }).strict().readonly()
 
+export const buddyDraftParticipantsSchema = z.object({
+  leaderId: scopeIdentitySchema,
+  actorIds: z.array(scopeIdentitySchema).readonly(),
+}).strict().refine(value => value.actorIds.includes(value.leaderId) && new Set(value.actorIds).size === value.actorIds.length).readonly()
+
 export const buddyComposerDraftSchema = z.object({
   content: buddyUserContentV1Schema,
+  participants: buddyDraftParticipantsSchema.nullable().optional(),
   draftId: draftIdentitySchema,
   executionConfig: buddyComposerDraftExecutionConfigSchema,
   modelSelection: buddyComposerDraftModelSelectionSchema.nullable(),
@@ -58,6 +64,7 @@ export const buddyComposerDraftSchema = z.object({
 export const buddyComposerDraftOpenSchema = z.object({
   draftId: draftIdentitySchema,
   initialContent: buddyUserContentV1Schema,
+  initialParticipants: buddyDraftParticipantsSchema.nullable().optional(),
   initialExecutionConfig: buddyComposerDraftExecutionConfigSchema,
   initialModelSelection: buddyComposerDraftModelSelectionSchema.nullable(),
   scope: buddyComposerDraftScopeSchema,
@@ -66,6 +73,7 @@ export const buddyComposerDraftOpenSchema = z.object({
 export const buddyComposerDraftSaveSchema = z.object({
   spaceId: scopeIdentitySchema.nullable().optional(),
   content: buddyUserContentV1Schema,
+  participants: buddyDraftParticipantsSchema.nullable().optional(),
   draftId: draftIdentitySchema,
   executionConfig: buddyComposerDraftExecutionConfigSchema,
   expectedRevision: z.number().int().nonnegative(),

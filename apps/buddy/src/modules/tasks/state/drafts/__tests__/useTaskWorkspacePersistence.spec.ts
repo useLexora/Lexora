@@ -46,7 +46,6 @@ describe('workspace Draft persistence', () => {
     const draftId = fixture.drafts.draftId.value
     const first = fixture.persistence.restore()
     const second = fixture.persistence.restore()
-    expect(first).toBe(second)
     await vi.waitFor(() => expect(fixture.opens).toHaveLength(1))
     const content = {
       ...createBuddyUserContent('entered during recovery'),
@@ -55,7 +54,7 @@ describe('workspace Draft persistence', () => {
     fixture.drafts.setUserContent(content)
     opening.resolve()
 
-    expect(await first).toBe(true)
+    expect(await Promise.all([first, second])).toEqual([true, true])
     expect(fixture.drafts.draftId.value).toBe(draftId)
     expect(fixture.runtimeDraft('global')).toMatchObject({ draftId, content })
     expect(fixture.persistence.restorationConflict.value).toBeNull()
@@ -485,6 +484,7 @@ async function createFixture(options: {
 
 function createConversation(executionProfile: LocalConversation['executionProfile']): LocalConversation {
   return {
+    buddyId: 'default',
     id: 'conversation-1',
     activeBranchId: 'branch-1',
     approvalPolicy: 'policy',

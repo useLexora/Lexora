@@ -14,10 +14,13 @@ export interface LineChangeCounts {
 
 export interface ChangeFilePresentation extends LocalFileChangeDetail {
   lineCounts: LineChangeCounts | null
+  sourceOrder: number | null
 }
 
 export function presentChangeFiles(files: readonly LocalFileChangeDetail[], previous: readonly ChangeFilePresentation[]): ChangeFilePresentation[] {
   const previousFiles = new Map(previous.map(file => [file.id, file]))
+  const sources = [...new Set(files.flatMap(file => file.source ? [`${file.source.runId}:${file.source.segmentId}`] : []))]
+  const order = new Map(sources.map((source, index) => [source, index + 1]))
   return files.map((file) => {
     const cached = previousFiles.get(file.id)
     const lineCounts = file.preview !== 'text'
@@ -25,7 +28,8 @@ export function presentChangeFiles(files: readonly LocalFileChangeDetail[], prev
       : cached?.preview === 'text' && cached.beforeText === file.beforeText && cached.afterText === file.afterText
         ? cached.lineCounts
         : countChangedLines(file.beforeText ?? '', file.afterText ?? '')
-    return { ...file, lineCounts }
+    const sourceOrder = sources.length > 1 && file.source ? order.get(`${file.source.runId}:${file.source.segmentId}`) ?? null : null
+    return { ...file, lineCounts, sourceOrder }
   })
 }
 
@@ -111,7 +115,7 @@ function buildDirectoryChildren(directory: DirectoryNode): ChangeFileTreeNode[] 
       isLeaf: true,
       key: file.id,
       kind: 'file' as const,
-      label: fileNameFromPath(file.path),
+      label: file.sourceOrder ? `${fileNameFromPath(file.path)} · ${file.source?.actorName ?? ''} #${file.sourceOrder}` : fileNameFromPath(file.path),
       lineCounts: file.lineCounts ?? undefined,
     }))
   return [...directories, ...files]

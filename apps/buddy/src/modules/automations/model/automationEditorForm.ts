@@ -16,6 +16,7 @@ export function buildAutomationDraft(
   if (!timing || !model)
     return null
   const result = automationDefinitionDraftSchema.safeParse({
+    actorId: value.actorId,
     executionProfile: value.executionProfile,
     model,
     name: value.name,
@@ -124,6 +125,7 @@ export function createAutomationEditorForm(currentTime: Temporal.ZonedDateTime):
     .add({ hours: 1 })
     .with({ minute: 0, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 })
   return {
+    actorId: null,
     activeFrom: null,
     activeUntil: null,
     anchorLocal: formatWallTime(now),
@@ -153,6 +155,7 @@ export function automationEditorFormFromDefinition(
   currentTime: Temporal.ZonedDateTime,
 ): AutomationEditorForm {
   const next = createAutomationEditorForm(currentTime.withTimeZone(automation.timing.timezone))
+  next.actorId = automation.actorId ?? null
   next.activeFrom = automation.timing.activeFrom
   next.activeUntil = automation.timing.activeUntil
   next.executionProfile = automation.executionProfile

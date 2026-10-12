@@ -82,6 +82,7 @@ const messageText = computed(() => getChatMessageDisplayText(
   >
     <BuddyChatAgentIdentity
       v-if="showAssistantIdentity"
+      :run-id="message.runId"
       :language="language"
     />
     <span

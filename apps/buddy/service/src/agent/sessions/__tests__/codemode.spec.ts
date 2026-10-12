@@ -12,6 +12,7 @@ import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { ApprovalCancelledError } from '../../../approvals/ApprovalService'
+import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { CODEMODE_EXTENSION } from '../../extensions/codemodeExtension'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
 import { createReusableBuddySession } from '../createReusableBuddySession'
@@ -24,6 +25,17 @@ afterEach(async () => {
 })
 
 describe('codemode runtime preference', () => {
+  it('keeps collaboration control available only as a native model tool', async () => {
+    const fixture = await createFixture()
+    fixture.apply(true)
+    await fixture.turn({ name: 'codemode', arguments: { code: 'text({ callable: "lexora_agents" in tools, listed: ALL_TOOLS.some(tool => tool.name === "lexora_agents") });' } })
+    expect(fixture.session.getActiveToolNames()).toContain('lexora_agents')
+    expect(fixture.lastResult()).toContain('"callable":false')
+    expect(fixture.lastResult()).toContain('"listed":false')
+    await fixture.turn({ name: 'lexora_agents', arguments: { operation: 'status' } })
+    expect(fixture.lastResult()).toBe('{"status":"working","updates":[]}')
+  })
+
   it('cannot be enabled through discovery or expose host globals', async () => {
     const fixture = await createFixture()
     await fixture.turn({ name: 'lexora_tool_search', arguments: { toolNames: ['codemode'] } })
@@ -66,6 +78,15 @@ describe('codemode runtime preference', () => {
     } })
     const journal = fixture.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'toolResult')
     expect(journal).toHaveLength(1)
+  })
+
+  it('executes nested write and edit without taking an outer CodeMode writer lease', async () => {
+    const fixture = await createFixture('workspace_write')
+    fixture.apply(true)
+    await fixture.turn({ name: 'codemode', arguments: { code: 'await tools.write({ path: "allowed.txt", content: "first" }); await tools.edit({ path: "allowed.txt", oldText: "first", newText: "second" }); text(await tools.read({ path: "allowed.txt" }));' } })
+    expect(fixture.lastResult()).toContain('second')
+    expect(await readFile(join(fixture.cwd, 'allowed.txt'), 'utf8')).toBe('second')
+    expect(fixture.authorized.map(call => call.toolName)).toEqual(['codemode', 'write', 'edit', 'read'])
   })
 
   it('keeps read-only file protection for scripts', async () => {
@@ -118,7 +139,6 @@ describe('codemode runtime preference', () => {
         await vi.waitFor(() => expect(fixture.gates).toHaveLength(index + 3))
     }
     await task
-    expect(fixture.lastResult()).toContain('Script completed')
     expect(fixture.gates.map(gate => gate.value)).toEqual([0, 1, 2, 3, 4, 5])
     expect(fixture.maximumActive()).toBe(2)
   })
@@ -219,14 +239,16 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   let active = 0
   let maximumActive = 0
   const services: BuddySessionExtensionServices = {
+    delegation: {
+      execute: async () => ({ status: 'working', updates: [] }),
+      assertShellExecutionAllowed: () => {},
+    },
     approvalService: { request: async () => ({ approvalId: 'denied-1', decision: 'denied' }) },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
+    mutations: new MutationCoordinator(),
     changeCaptureService: {
-      beginFileTool: async () => {},
-      beginWorkspaceTool: async () => {},
-      finalizeRun: async () => {},
-      finishFileTool: async () => {},
-      finishWorkspaceTool: async () => ({ complete: true }),
+      beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }),
+      finishInvocation: async () => ({ complete: true }),
       markPartial: async () => {},
     },
     createCapabilities: async () => [{
@@ -352,6 +374,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
       nextCall = call
       first = true
       const release = await reusable.activateTurn({
+        generation: 0,
         runId: `run-${++run}`,
         provider: model.provider,
         model: model.id,

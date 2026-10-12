@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ConversationListFilter } from '../../../shared/conversation/conversationApi'
 import type { ConversationRecord, ConversationRow } from './conversationRecord'
-import { toConversationRecord } from './conversationRecord'
+import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, toConversationRecord } from './conversationRecord'
 
 export type ConversationActivity = 'idle' | 'running' | 'awaiting_approval'
 
@@ -29,7 +29,7 @@ export function createConversationIndexRepository(
   database: DatabaseSync,
 ): ConversationIndexRepository {
   const listRecent = database.prepare(`
-    SELECT conversations.*,
+    SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json,
       automation_occurrences.id AS automation_occurrence_id,
       automation_occurrences.automation_id AS automation_id,
       automation_occurrences.scheduled_for AS automation_scheduled_for,

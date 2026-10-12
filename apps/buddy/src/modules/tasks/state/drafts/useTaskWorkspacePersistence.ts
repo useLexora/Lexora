@@ -167,6 +167,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     const remote = await options.api.composerDrafts.open({
       draftId: snapshot.draftId,
       initialContent: snapshot.content,
+      initialParticipants: snapshot.participants,
       initialExecutionConfig: {
         approvalPolicy: snapshot.approvalPolicy,
         executionProfile: snapshot.executionProfile,
@@ -222,6 +223,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
       const remote = await options.api.composerDrafts.save({
         spaceId: taskSpace,
         content: snapshot.content,
+        participants: snapshot.participants,
         draftId: snapshot.draftId,
         executionConfig: {
           approvalPolicy: snapshot.approvalPolicy,
@@ -295,6 +297,7 @@ function sameDraftValue(remote: LocalComposerDraft, snapshot: ChatDraftSnapshot)
       executionProfile: snapshot.executionProfile,
     },
     modelSelection: snapshot.modelSelection,
+    participants: snapshot.participants,
   })
 }
 

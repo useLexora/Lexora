@@ -6,6 +6,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
+  disabled?: boolean
   language: BuddyLocale
   isMeterDragging: boolean
   effortTransitionDirection: 'increasing' | 'decreasing'
@@ -55,6 +56,7 @@ const { t } = useBuddyI18n(() => props.language)
             class="desktop-model-selector__fast-toggle grid w-7 h-7 place-items-center border-0 rounded-icon bg-transparent cursor-pointer p-0 transition-state-colors hover:(bg-hover outline-0) focus-visible:(bg-hover outline-0)"
             :class="isFastMode ? 'is-active text-gold hover:text-gold focus-visible:text-gold' : 'text-muted hover:text-strong focus-visible:text-strong'"
             type="button"
+            :disabled="disabled"
             role="switch"
             :aria-checked="isFastMode"
             :aria-label="t('desktop.chat.fastMode')"

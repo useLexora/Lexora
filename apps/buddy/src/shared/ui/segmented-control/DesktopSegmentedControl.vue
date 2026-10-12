@@ -9,10 +9,13 @@ const props = defineProps<{
 const value = defineModel<T>({ required: true })
 const themeOverrides: GlobalThemeOverrides['Tabs'] = {
   colorSegment: 'var(--buddy-surface-subtle)',
+  tabColorSegment: 'var(--buddy-surface-raised)',
   tabTextColorSegment: 'var(--buddy-text-secondary)',
+  tabTextColorActiveSegment: 'var(--buddy-text-primary)',
+  tabTextColorHoverSegment: 'var(--buddy-text-primary)',
   tabFontSizeSmall: '13px',
-  tabFontWeight: '580',
-  fontWeightStrong: '580',
+  tabFontWeight: '400',
+  fontWeightStrong: '400',
   tabBorderRadius: 'var(--buddy-radius-micro)',
   tabPaddingSmallSegment: '4px 12px',
 }
@@ -54,6 +57,18 @@ function select(next: string | number) {
 
 <style scoped lang="scss">
 .desktop-segmented-control {
+  :deep(.n-tabs-rail) {
+    border-radius: 8px;
+  }
+
+  :deep(.n-tabs-capsule) {
+    box-shadow: var(--buddy-shadow-soft);
+  }
+
+  :deep(.n-tabs-tab) {
+    transition: color 0.15s ease;
+  }
+
   :deep(.n-tabs-tab:focus-visible) {
     outline: 2px solid var(--buddy-focus-ring);
     outline-offset: -2px;

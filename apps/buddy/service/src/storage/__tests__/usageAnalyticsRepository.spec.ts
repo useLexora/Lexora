@@ -5,8 +5,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { usageAnalyticsSchema, usagePeriodSchema, usageTopTasksRequestSchema, usageTrendRequestSchema, usageTrendSchema } from '../../../../shared/usage/usageAnalyticsApi'
 import { openBuddyDatabase } from '../database'
-import { BUDDY_RUN_EVENT_CHECKPOINT_TRIGGER_NAMES } from '../migrations/v24RunEventCheckpoints'
+import { BUDDY_SCHEMA_MIGRATIONS } from '../schema'
 import { createUsageAnalyticsRepository } from '../usageAnalyticsRepository'
+import { openMigrationFixtureDatabase } from './migrationFixture'
 
 const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
@@ -115,47 +116,23 @@ describe('usage analytics', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-usage-upgrade-'))
     try {
       const path = join(directory, 'buddy.sqlite3')
-      const f = fixture(path)
-      f.run('retained')
-      f.usage('retained')
-      const before = f.repository.analytics(period)
-      f.database.exec(`
-        ${BUDDY_RUN_EVENT_CHECKPOINT_TRIGGER_NAMES.map(name => `DROP TRIGGER ${name};`).join('\n        ')}
-        DROP TABLE run_event_checkpoints;
-        DROP TABLE extension_invocations;
-        DROP TABLE connector_tool_catalogs;
-        DROP INDEX idx_mcp_tool_namespace;
-        ALTER TABLE mcp_servers DROP COLUMN tool_namespace;
-        ALTER TABLE mcp_servers DROP COLUMN tool_exposure;
-        DROP TABLE skill_file_cleanup;
-        DROP TABLE skill_space_exclusions;
-        DROP TABLE skill_installations;
-        DROP INDEX idx_messages_run;
-        DROP INDEX idx_usage_created_at;
-        DROP TABLE builtin_provider_configs;
-        ALTER TABLE provider_states DROP COLUMN request_headers_json;
-        ALTER TABLE provider_model_states DROP COLUMN thinking_level_map_json;
-        ALTER TABLE provider_model_states DROP COLUMN sampling_params_json;
-        ALTER TABLE provider_model_states DROP COLUMN compat_json;
-        ALTER TABLE provider_model_states DROP COLUMN catalog_provider_id;
-        ALTER TABLE provider_model_states DROP COLUMN source_fingerprint;
-        ALTER TABLE provider_model_states DROP COLUMN catalog_model_id;
-        ALTER TABLE provider_model_states DROP COLUMN catalog_selection_json;
-        ALTER TABLE provider_model_states DROP COLUMN capability_overrides_json;
-        ALTER TABLE attachments DROP COLUMN name_source;
-        ALTER TABLE composer_resources DROP COLUMN name_source;
-        ALTER TABLE attachments DROP COLUMN source_path;
-        ALTER TABLE composer_resources DROP COLUMN source_path;
+      const legacy = openMigrationFixtureDatabase(path)
+      for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(value => value.version <= 13))
+        legacy.exec(migration.sql)
+      legacy.exec(`
         PRAGMA user_version = 13;
-        ALTER TABLE conversations DROP COLUMN title_source;
-        ALTER TABLE conversations DROP COLUMN title_revision;
+        INSERT INTO conversations (id,title,created_at,updated_at) VALUES ('retained','Retained','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
+        INSERT INTO conversation_branches (id,conversation_id,created_at) VALUES ('retained','retained','2026-01-01T00:00:00.000Z');
+        INSERT INTO runs (id,conversation_id,branch_id,triggering_message_id,provider,model,purpose,status,started_at) VALUES ('retained','retained','retained','message','provider','model','chat','completed','2026-01-01T00:00:00.000Z');
+        INSERT INTO usage_records (id,run_id,source_entry_id,provider,model,purpose,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,total_tokens,input_cost,output_cost,cache_read_cost,cache_write_cost,total_cost,created_at)
+        VALUES ('usage','retained','usage','provider','model','turn',10,5,3,4,2,22,0,0,0,0,0,'2026-01-01T00:00:00.000Z');
       `)
-      f.database.close()
-      databases.splice(databases.indexOf(f.database), 1)
+      const records = legacy.prepare('SELECT * FROM usage_records').all()
+      legacy.close()
       const upgraded = openBuddyDatabase({ databasePath: path })
       try {
-        expect(createUsageAnalyticsRepository(upgraded).analytics(period)).toEqual(before)
-        expect(upgraded.prepare('SELECT name FROM sqlite_master WHERE type = \'index\' AND name = \'idx_usage_created_at\'').get()).toBeTruthy()
+        expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(records.map(record => ({ ...record, invocation_id: null })))
+        expect(createUsageAnalyticsRepository(upgraded).analytics(period).days).toMatchObject([{ recordCount: 1, totalTokens: 22 }])
         expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([])
       }
       finally {

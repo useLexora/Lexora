@@ -123,7 +123,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
           conversationId: request.conversationId,
           limit: TIMELINE_PAGE_SIZE,
         }),
-        options.api.approvals.list({ limit: 100, status: 'pending' }),
+        options.api.approvals.list({ conversationId: request.conversationId, branchId: request.branchId, limit: 100, status: 'pending' }),
       ])
       if (!isCurrent(request))
         return
@@ -204,8 +204,13 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
 
   function handleRunEvent(event: LocalRunEvent) {
     const request = currentRequest()
-    if (!request || !projection.hasRun(event.runId))
+    if (!request)
       return
+    if (!projection.hasRun(event.runId)) {
+      if (SNAPSHOT_RECONCILIATION_EVENT_TYPES.has(event.type))
+        scheduleRefresh()
+      return
+    }
     pendingRunEvents.push(event)
     if (SNAPSHOT_RECONCILIATION_EVENT_TYPES.has(event.type)) {
       cancelEventFrame()

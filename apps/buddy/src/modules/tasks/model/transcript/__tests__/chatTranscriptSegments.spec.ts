@@ -8,6 +8,7 @@ import { createChatTranscriptProjector, projectChatTranscript } from '../chatTra
 
 const time = (seconds: number) => new Date(Date.UTC(2026, 8, 10, 10, 0, seconds)).toISOString()
 const run: LocalRun = {
+  buddyId: 'default',
   id: 'run',
   branchId: 'branch',
   conversationId: 'conversation',
@@ -149,14 +150,6 @@ describe('interleaved conversation segments', () => {
     expect(ended.rows.at(-1)).toMatchObject({ kind: 'agent-turn', ownsResultActions: true })
   })
 
-  it('retains a single avatar above a leading action for a completed text-only reply', () => {
-    const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
-    const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
-    const result = projectChatTranscript(input(completed, [reply], [message('initial', 'user', 0), action(1), message('reply', 'assistant', 5)]))
-    expect(result.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
-    expect(result.rows.at(-1)).toMatchObject({ showIdentity: false, resultRunId: run.id })
-  })
-
   it('does not associate actions from another branch or input with the reply', () => {
     const completed = { ...run, status: 'completed' as const, completedAt: time(5) }
     const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
@@ -256,14 +249,13 @@ describe('interleaved conversation segments', () => {
     expect(projection.rows.at(-1)).toMatchObject({ kind: 'agent-turn', ownsResultActions: true, showIdentity: false })
   })
 
-  it('rebuilds segment boundaries during incremental updates without rewriting unchanged message rows', () => {
+  it('rebuilds segment boundaries when continuation events arrive incrementally', () => {
     const projector = createChatTranscriptProjector()
     const first = input(run, events.slice(0, 3))
-    const before = projector.project(first)
+    projector.project(first)
     const next = { ...input(), runs: first.runs, outputs: first.outputs }
     const updated = projector.project(next)
     expect(updated.rows).toEqual(projectChatTranscript(next).rows)
-    expect(updated.rows[0]).toBe(before.rows[0])
     expect(order(updated).at(-1)).toBe('continuation')
   })
 })

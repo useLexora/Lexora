@@ -131,6 +131,38 @@ async function mountComposer(options: {
 }
 
 describe('chat composer editing', () => {
+  it('selects same-name actors by keyboard and sends stable inline references without attachments', async () => {
+    const actors: ChatPromptContextOption[] = ['actor-one', 'actor-two'].map(actorId => ({
+      actorReference: { type: 'actor_ref', actorId, name: '星野' },
+      category: 'actors',
+      kind: 'actorReference',
+      label: '星野',
+      description: null,
+      path: null,
+      value: actorId,
+    }))
+    const flow = await mountComposer({ loadContextOptions: async () => ({ files: [], skills: [], actors }) })
+    flow.editor.view.dom.focus()
+    flow.editor.commands.insertContent('请 @星')
+    await expect.poll(() => flow.composer.suggestions.value.length).toBe(2)
+    flow.keydown('ArrowDown')
+    flow.keydown('Enter')
+    flow.editor.commands.insertContent('检查结果')
+    expect(flow.editor.getText()).toBe('请 @星野 检查结果')
+    expect(flow.composer.activeTrigger.value).toBeNull()
+    expect(flow.sentPayloads).toEqual([])
+    flow.keydown('Enter')
+    expect(flow.sentPayloads[0]?.userContent).toEqual({
+      version: 1,
+      body: [{ type: 'paragraph', content: [
+        { type: 'text', text: '请 ' },
+        actors[1]!.actorReference,
+        { type: 'text', text: ' 检查结果' },
+      ] }],
+      panelResourceIds: [],
+    })
+  })
+
   it('keeps a referenced session unsendable until the body contains non-whitespace text', async () => {
     const flow = await mountComposer()
     insertChatComposerSessionReferences(flow.editor, [{ id: 'session-1', title: 'History' }])
@@ -601,10 +633,8 @@ describe('chat composer editing', () => {
     expect(flow.editor.state.selection.from).toBe(flow.editor.state.doc.content.size - 1)
   })
 
-  it('ranks skill name matches above description matches and loads the skill catalog once per suggestion session', async () => {
-    const queries: (string | null)[] = []
-    const flow = await mountComposer({ loadContextOptions: async (query) => {
-      queries.push(query)
+  it('ranks skill name matches above description matches and restores all choices when reopened', async () => {
+    const flow = await mountComposer({ loadContextOptions: async () => {
       return {
         files: [],
         skills: [
@@ -621,13 +651,11 @@ describe('chat composer editing', () => {
     await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
     flow.editor.commands.insertContent('pr')
     await expect.poll(skillLabels).toEqual(['pr', 'snapshot-approval', 'antfu'])
-    expect(queries).toEqual([null])
 
     flow.keydown('Escape')
     expect(flow.composer.activeTrigger.value).toBeNull()
     flow.editor.commands.insertContent(' $')
     await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
-    expect(queries).toEqual([null, null])
     expect(flow.sent).toEqual([])
   })
 

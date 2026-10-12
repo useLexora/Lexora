@@ -60,6 +60,23 @@ describe('useTaskContextPanel', () => {
     expect(panel.fileEntry.value).toBeNull()
   })
 
+  it('retains an execution detail and change snapshot in their original task when the active task or branch changes', async () => {
+    const conversation = shallowRef<string | null>('other-task')
+    const branch = shallowRef<string | null>('other-branch')
+    const panel = createTaskPanel({ activeConversationId: conversation, activeBranchId: branch })
+    const source = { conversationId: 'execution-task', runId: 'child' }
+    panel.openView('child-detail', 'Researcher', source)
+    panel.openChanges({ ...changeSet('child-changes', 'execution-task', 1), runId: 'child' }, source, 'execution-branch')
+    expect(panel.allTabs.value).toEqual([
+      expect.objectContaining({ id: 'child-detail', scope: 'task:execution-task', source }),
+      expect.objectContaining({ id: 'change-set:child-changes', scope: 'task:execution-task', source, branchId: 'execution-branch', changeSet: expect.objectContaining({ changeSetId: 'child-changes', runId: 'child' }) }),
+    ])
+    conversation.value = 'execution-task'
+    branch.value = 'new-branch'
+    await nextTick()
+    expect(panel.allTabs.value[1]).toMatchObject({ source, branchId: 'execution-branch', changeSet: { changeSetId: 'child-changes' } })
+  })
+
   it('isolates manual tabs and restores each task selection without changing panel visibility', async () => {
     const activeConversationId = shallowRef<string | null>(null)
     const panel = createTaskPanel({

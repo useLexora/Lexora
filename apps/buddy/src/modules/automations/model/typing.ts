@@ -22,6 +22,7 @@ export interface AutomationScheduleForm {
 }
 
 export interface AutomationEditorForm extends AutomationScheduleForm {
+  actorId: string | null
   executionProfile: BuddyExecutionProfile
   modelMode: 'default' | 'pinned'
   name: string

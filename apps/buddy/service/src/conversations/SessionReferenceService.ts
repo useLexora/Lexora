@@ -1,11 +1,10 @@
 import type { ArtifactService } from '../artifacts/ArtifactService'
 import type { AttachmentService } from '../attachments/AttachmentService'
-import type { RunEventReader } from '../events/RunEventPorts'
 import type { ConversationRecord } from '../storage/conversationRecord'
 import type { ConversationRepository } from '../storage/conversationRepository'
+import type { ConversationTreeRepository } from '../storage/conversationTreeRepository'
 import type { SessionReferenceSource } from './sessionReferenceToolContract'
 import { readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
-import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
 import { historicalComposerSources } from '../attachments/historicalComposerSources'
 
 import { createSessionQuery, readSessionText, sessionMessageText } from './sessionReferenceText'
@@ -14,7 +13,7 @@ export interface SessionReferenceServices {
   conversations: Pick<ConversationRepository, 'findById' | 'findMessageById' | 'listBranchMessages' | 'listMessagePage'>
   attachments: Pick<AttachmentService, 'listForConversation'>
   artifacts: Pick<ArtifactService, 'resolveConversationArtifactLocation'>
-  eventLog: Pick<RunEventReader, 'listForRuns'>
+  publications: Pick<ConversationTreeRepository, 'listPublications'>
 }
 
 interface SessionResource {
@@ -122,15 +121,7 @@ export class SessionReferenceService {
         path,
       })
     }
-    const runIds = [...new Set(history.flatMap(message => message.runId ? [message.runId] : []))]
-    const artifactIds = new Set<string>()
-    for (const event of this.#services.eventLog.listForRuns(runIds)) {
-      if (event.type !== 'output.produced')
-        continue
-      const output = buddyRunOutputPayloadSchema.safeParse(event.payload)
-      if (output.success)
-        output.data.artifactIds.forEach(id => artifactIds.add(id))
-    }
+    const artifactIds = new Set(this.#services.publications.listPublications(target.id, target.activeBranchId!).flatMap(material => material.kind === 'output' ? material.artifacts.map(artifact => artifact.artifactId) : []))
     for (const artifactId of artifactIds) {
       const location = this.#services.artifacts.resolveConversationArtifactLocation(target.id, artifactId)
       const artifact = location.resource

@@ -25,10 +25,12 @@ export const approvalsRequestSchemas = {
   approvalId: z.object({ approvalId: idSchema }).strict(),
   approvalGrant: z.object({ approvalId: idSchema, scope: z.enum(APPROVAL_GRANT_SCOPES) }).strict(),
   listApprovals: z.object({
+    conversationId: idSchema.optional(),
+    branchId: idSchema.optional(),
     limit: optionalLimitSchema,
-    runId: z.string().nullable().optional(),
+    runId: idSchema.nullable().optional(),
     status: z.enum(['pending', 'approved', 'denied', 'cancelled']).nullable().optional(),
-  }).strict(),
+  }).strict().refine(input => Boolean(input.conversationId) === Boolean(input.branchId), { message: 'Conversation and branch must be supplied together' }),
 } as const
 
 export const approvalsResponseSchemas = {
@@ -37,7 +39,7 @@ export const approvalsResponseSchemas = {
 } as const
 
 export const approvalsRpc = {
-  list: { method: 'approvals.list', input: z.object({ limit: optionalLimitSchema, runId: idSchema.nullable().optional(), status: z.enum(['pending', 'approved', 'denied', 'cancelled']).nullable().optional() }).strict(), response: approvalsResponseSchemas.approvals },
+  list: { method: 'approvals.list', input: approvalsRequestSchemas.listApprovals, response: approvalsResponseSchemas.approvals },
   approve: { method: 'approvals.approve', input: approvalsRequestSchemas.approvalGrant, response: approvalsResponseSchemas.approval },
   deny: { method: 'approvals.deny', input: approvalsRequestSchemas.approvalId, response: approvalsResponseSchemas.approval },
 } as const satisfies Record<string, RuntimeRequestContract>

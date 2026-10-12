@@ -6,15 +6,18 @@ import type {
   ConversationHistoryRepository,
 } from './conversationHistoryRepository'
 import type { ConversationIndexRepository } from './conversationIndexRepository'
+import type { ConversationMemberRecord, ConversationMemberRepository } from './conversationMemberRepository'
 import type {
   ConversationModelSelection,
   ConversationRecord,
   ConversationRow,
 } from './conversationRecord'
 import type { ConversationTimelineRepository } from './conversationTimelineRepository'
+import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { createConversationHistoryStore } from './conversationHistoryRepository'
 import { createConversationIndexRepository } from './conversationIndexRepository'
-import { requireConversationRecord, toConversationRecord } from './conversationRecord'
+import { createConversationMemberRepository } from './conversationMemberRepository'
+import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, requireConversationRecord, toConversationRecord } from './conversationRecord'
 import { createConversationTimelineRepository } from './conversationTimelineRepository'
 import { withTransaction } from './database'
 
@@ -49,7 +52,8 @@ export interface SetConversationPermissionSettingsInput {
 
 export interface SetConversationModelSelectionInput {
   id: string
-  modelSelection: ConversationModelSelection
+  actorId?: string
+  modelSelection: ConversationModelSelection | null
   updatedAt: string
 }
 
@@ -57,6 +61,7 @@ export interface ConversationRepository
   extends ConversationHistoryRepository, ConversationIndexRepository, ConversationTimelineRepository {
   activateBranch: (input: ActivateConversationBranchInput) => ConversationRecord
   create: (input: CreateConversationInput) => ConversationRecord
+  findMember: (conversationId: string, actorId: string) => ConversationMemberRecord | null
   findById: (id: string) => ConversationRecord | null
   isDeleted: (id: string) => boolean
   markDeleted: (id: string, deletedAt: string) => boolean
@@ -66,18 +71,23 @@ export interface ConversationRepository
   setPermissionSettings: (
     input: SetConversationPermissionSettingsInput,
   ) => ConversationRecord | null
+  listMembers: ConversationMemberRepository['list']
+  addMember: (input: { id: string, buddyId: string, updatedAt: string }) => void
+  removeMember: (input: { id: string, buddyId: string, updatedAt: string }) => void
+  setBuddy: (input: { id: string, buddyId: string, updatedAt: string }) => ConversationRecord | null
   setModelSelection: (
     input: SetConversationModelSelectionInput,
   ) => ConversationRecord | null
 }
 
 export function createConversationRepository(database: DatabaseSync): ConversationRepository {
-  const findConversation = database.prepare('SELECT * FROM conversations WHERE id = ?')
+  const findConversation = database.prepare(`SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations WHERE id = ?`)
+  const members = createConversationMemberRepository(database)
   const insertConversation = database.prepare(`
     INSERT INTO conversations (
       id, space_id, title, active_branch_id, created_at, updated_at,
-      approval_policy, execution_profile, origin, deleted_at, title_source, title_revision
-    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'manual', 1)
+      approval_policy, execution_profile, origin, deleted_at, title_source, title_revision, buddy_id
+    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'manual', 1, (SELECT default_buddy_id FROM buddy_catalog WHERE id = 1))
   `)
   const renameConversation = database.prepare(`
     UPDATE conversations
@@ -94,11 +104,6 @@ export function createConversationRepository(database: DatabaseSync): Conversati
     SET approval_policy = ?, execution_profile = ?, updated_at = ?
     WHERE id = ?
       AND deleted_at IS NULL
-  `)
-  const setModelSelection = database.prepare(`
-    UPDATE conversations
-    SET model_selection_json = ?, updated_at = ?
-    WHERE id = ? AND deleted_at IS NULL
   `)
   const markDeleted = database.prepare(`
     UPDATE conversations
@@ -131,6 +136,8 @@ export function createConversationRepository(database: DatabaseSync): Conversati
           input.executionProfile,
           input.origin ?? 'interactive',
         )
+        const current = findConversation.get(input.id) as unknown as ConversationRow
+        members.join({ conversationId: input.id, actorId: current.buddy_id, joinedAt: input.createdAt })
         history.insertRootBranch({
           branchId: input.branchId,
           conversationId: input.id,
@@ -144,6 +151,20 @@ export function createConversationRepository(database: DatabaseSync): Conversati
     },
     createBranch: history.repository.createBranch,
     createMessage: history.repository.createMessage,
+    findMember: members.find,
+    listMembers: members.list,
+    addMember(input) {
+      withTransaction(database, () => {
+        members.join({ conversationId: input.id, actorId: input.buddyId, joinedAt: input.updatedAt })
+        database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(input.updatedAt, input.id)
+      })
+    },
+    removeMember(input) {
+      withTransaction(database, () => {
+        members.remove({ conversationId: input.id, actorId: input.buddyId, removedAt: input.updatedAt })
+        database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(input.updatedAt, input.id)
+      })
+    },
     findById(id) {
       const row = findConversation.get(id) as ConversationRow | undefined
       return row ? toConversationRecord(row) : null
@@ -203,18 +224,40 @@ export function createConversationRepository(database: DatabaseSync): Conversati
         )
       })
     },
+    setBuddy(input) {
+      return withTransaction(database, () => {
+        const current = findConversation.get(input.id) as ConversationRow | undefined
+        if (!current || current.deleted_at !== null)
+          return null
+        const actor = database.prepare('SELECT kind, enabled, deleted_at FROM buddies WHERE id = ?').get(input.buddyId)
+        if (!actor)
+          throw new BuddyServiceError('BUDDY_NOT_FOUND')
+        if (actor.deleted_at)
+          throw new BuddyServiceError('BUDDY_DELETED')
+        if (actor.kind !== 'actor')
+          throw new BuddyServiceError('BUDDY_NOT_ACTOR')
+        if (!actor.enabled)
+          throw new BuddyServiceError('BUDDY_DISABLED')
+        if (members.find(input.id, input.buddyId) === null)
+          throw new BuddyServiceError('BUDDY_NOT_MEMBER')
+        if (current.buddy_id === input.buddyId)
+          return toConversationRecord(current)
+        if (!database.prepare('UPDATE conversations SET buddy_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(input.buddyId, input.updatedAt, input.id).changes)
+          return null
+        return requireConversationRecord(findConversation.get(input.id), input.id)
+      })
+    },
     setModelSelection(input) {
-      if (Number(setModelSelection.run(
-        JSON.stringify(input.modelSelection),
-        input.updatedAt,
-        input.id,
-      ).changes) !== 1) {
+      const current = findConversation.get(input.id) as ConversationRow | undefined
+      if (!current || current.deleted_at !== null)
         return null
-      }
-      return requireConversationRecord(
-        findConversation.get(input.id),
-        input.id,
-      )
+      members.setModelSelection({
+        conversationId: input.id,
+        actorId: input.actorId ?? current.buddy_id,
+        modelSelection: input.modelSelection,
+        updatedAt: input.updatedAt,
+      })
+      return requireConversationRecord(findConversation.get(input.id), input.id)
     },
   }
 }

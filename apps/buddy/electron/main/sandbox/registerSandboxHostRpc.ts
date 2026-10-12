@@ -21,6 +21,7 @@ export interface SandboxHostOptions {
   sandboxDirectory?: string
   windowsSandbox?: string
   windowsShell?: string
+  processControl?: string
 }
 
 export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: SandboxHostOptions) {
@@ -92,6 +93,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           cwd: directory,
           env: {
             ...createSandboxEnvironment(process.env, directory),
+            ...(options.processControl ? { LEXORA_BUDDY_PROCESS_CONTROL: options.processControl } : {}),
             ...(options.proxyUrl ? createProxyEnvironment(options.proxyUrl) : {}),
           },
           serviceName: 'Buddy Shell Sandbox',

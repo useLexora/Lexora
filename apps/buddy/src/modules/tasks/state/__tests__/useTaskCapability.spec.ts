@@ -116,7 +116,7 @@ describe('useTaskCapability', () => {
     chat.dispose()
   })
 
-  it('initializes a confirmed model-less Draft when the first model becomes available', async () => {
+  it('displays the first available model without persisting an inherited Draft selection', async () => {
     const api = createDesktopApi()
     const models = await api.localChat.providers.listModels()
     vi.mocked(api.localChat.providers.listModels).mockReset().mockResolvedValueOnce([]).mockResolvedValue(models)
@@ -134,12 +134,7 @@ describe('useTaskCapability', () => {
 
     expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-1')
     expect(await chat.flushDrafts()).toBe(true)
-    expect((await api.localChat.composerDrafts.get(draftId)).modelSelection).toEqual({
-      modelId: 'model-1',
-      providerId: 'provider-1',
-      reasoning: 'medium',
-      serviceTier: null,
-    })
+    expect((await api.localChat.composerDrafts.get(draftId)).modelSelection).toBeNull()
     chat.workspace.composer.updateComposerContent('first configured task', null)
     expect(await chat.workspace.execution.send('first configured task')).toBe(true)
   })
@@ -224,8 +219,7 @@ describe('useTaskCapability', () => {
 
     const first = chat.refreshRuntimeDependentState()
     const second = chat.refreshRuntimeDependentState()
-    expect(first).toBe(second)
-    await first
+    await Promise.all([first, second])
 
     expect(chat.workspace.composer.draftId.value).toBe(draftId)
     expect(chat.workspace.composer.draft.value).toBe('typed after Runtime failure')
@@ -282,9 +276,10 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.composer.composerContent.value).toMatchObject({ attrs: { panelResourceIds: ['resource-selected'] } })
   })
 
-  it('does not let a slow conversation model response overwrite the latest selection', async () => {
+  it('keeps the model control disabled until its captured target is saved', async () => {
     const api = createDesktopApi()
     const conversation = {
+      buddyId: 'default',
       activeBranchId: 'branch-1',
       activity: 'idle' as const,
       automationOccurrence: null,
@@ -318,8 +313,14 @@ describe('useTaskCapability', () => {
 
     const firstSelection = chat.workspace.composer.selectModel('provider-1:model-2')
     await vi.waitUntil(() => callCount === 1)
-    const secondSelection = chat.workspace.composer.selectModel('provider-1:model-1')
+    expect(chat.workspace.composer.isUpdatingModel.value).toBe(true)
+    await chat.workspace.composer.selectModel('provider-1:model-1')
+    expect(callCount).toBe(1)
     first.resolve({ ...conversation, modelSelection: { modelId: 'model-2', providerId: 'provider-1', reasoning: 'medium', serviceTier: null } })
+    await firstSelection
+    expect(chat.workspace.composer.isUpdatingModel.value).toBe(false)
+    expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-2')
+    const secondSelection = chat.workspace.composer.selectModel('provider-1:model-1')
     await vi.waitUntil(() => callCount === 2)
     second.resolve(conversation)
 
@@ -344,6 +345,7 @@ describe('useTaskCapability', () => {
         sourceRevision: input.expectedRevision,
       },
       run: {
+        buddyId: 'default',
         branchId: 'branch-1',
         completedAt: '2026-08-17T00:00:01.000Z',
         conversationId: 'conversation-1',
@@ -465,6 +467,7 @@ describe('useTaskCapability', () => {
     const api = createDesktopApi()
     const pendingTurn = deferred<Awaited<ReturnType<typeof api.localChat.chat.startTurn>>>()
     const conversationB = {
+      buddyId: 'default',
       activeBranchId: 'branch-b',
       activity: 'idle' as const,
       automationOccurrence: null,
@@ -513,6 +516,7 @@ describe('useTaskCapability', () => {
         sourceRevision: request.expectedRevision,
       },
       run: {
+        buddyId: 'default',
         branchId: 'branch-a',
         completedAt: null,
         conversationId: 'conversation-a',
@@ -540,6 +544,7 @@ describe('useTaskCapability', () => {
     const api = createDesktopApi()
     const pendingTurn = deferred<Awaited<ReturnType<typeof api.localChat.chat.startTurn>>>()
     const conversationB = {
+      buddyId: 'default',
       activeBranchId: 'branch-b',
       activity: 'idle' as const,
       automationOccurrence: null,
@@ -751,6 +756,7 @@ describe('useTaskCapability', () => {
     await expect(chat.workspace.execution.send('must wait')).resolves.toBe(false)
 
     pendingPermissionSettings.resolve({
+      buddyId: 'default',
       activeBranchId: 'branch-root',
       createdAt: '2026-08-14T00:00:00.000Z',
       deletedAt: null,
@@ -775,6 +781,7 @@ describe('useTaskCapability', () => {
   it.each(['text', 'structured'])('routes %s compact input through the command lifecycle without creating a turn', async (inputKind) => {
     const api = createBranchingDesktopApi()
     const compactRun = {
+      buddyId: 'default',
       branchId: 'branch-root',
       completedAt: null,
       conversationId: 'conversation-1',
@@ -898,6 +905,7 @@ function createBranchingDesktopApi() {
   const api = createDesktopApi()
   let activeBranchId = 'branch-root'
   const conversation = () => ({
+    buddyId: 'default',
     activeBranchId,
     activity: 'idle' as const,
     automationOccurrence: null,
@@ -931,6 +939,7 @@ function createBranchingDesktopApi() {
       '2026-08-15T00:00:00.000Z',
     ))
     const editedRun = {
+      buddyId: 'default',
       branchId: 'branch-edited',
       completedAt: null,
       conversationId: 'conversation-1',
@@ -967,6 +976,7 @@ function createBranchingDesktopApi() {
       '2026-08-15T00:00:00.000Z',
     ))
     const regeneratedRun = {
+      buddyId: 'default',
       branchId: 'branch-regenerated',
       completedAt: null,
       conversationId: 'conversation-1',
@@ -995,6 +1005,7 @@ function createBranchingDesktopApi() {
 
 function conversationSummary(activity: 'idle' | 'running' | 'awaiting_approval') {
   return {
+    buddyId: 'default',
     activeBranchId: 'branch-background',
     activity,
     automationOccurrence: null,
@@ -1065,6 +1076,7 @@ function message(id: string, role: 'assistant' | 'user', branchId: string) {
 
 function queuedRun() {
   return {
+    buddyId: 'default',
     branchId: 'branch-1',
     completedAt: null,
     conversationId: 'conversation-1',
@@ -1096,6 +1108,7 @@ function createDesktopApi() {
     },
     lifecycle: { quit: vi.fn() },
     localChat: {
+      buddies: { list: vi.fn(async () => ({ revision: 1, defaultBuddyId: 'default', buddies: [] })) },
       taskMarks: { list: async () => [], states: async () => [] },
       composerDrafts: {
         get: vi.fn(async (draftId: string) => {
@@ -1235,6 +1248,7 @@ function createDesktopApi() {
         listTimeline: vi.fn(async () => ({ changeSets: [], items: [], nextCursor: null, outputs: [], runEvents: [], runs: [] })),
         setPermissionSettings: vi.fn(),
         setModelSelection: vi.fn(),
+        getModelControls: vi.fn(async () => ({ current: null, next: { actorId: 'default', isMember: true, modelSelection: null } })),
       },
       spaces: {
         onChanged: () => () => {},

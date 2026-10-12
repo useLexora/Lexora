@@ -50,7 +50,23 @@ describe('conversation node detail', () => {
   })
 
   it('shows an output process and incremental text without adding its triggering input', async () => {
-    const run: LocalRun = { id: 'run', conversationId: 'conversation', branchId: 'branch', triggeringMessageId: 'input', status: 'running', startedAt: now, completedAt: null, modelId: 'model', providerId: 'provider', purpose: 'chat', reasoningLevel: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', errorCode: null }
+    const run: LocalRun = {
+      buddyId: 'default',
+      id: 'run',
+      conversationId: 'conversation',
+      branchId: 'branch',
+      triggeringMessageId: 'input',
+      status: 'running',
+      startedAt: now,
+      completedAt: null,
+      modelId: 'model',
+      providerId: 'provider',
+      purpose: 'chat',
+      reasoningLevel: null,
+      approvalPolicy: 'policy',
+      executionProfile: 'workspace_write',
+      errorCode: null,
+    }
     const buckets = shallowRef<ChatRunEventBuckets>(new Map())
     const scope = effectScope()
     const detail = scope.run(() => useConversationNodeDetail({

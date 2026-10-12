@@ -1,6 +1,10 @@
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { BuddiesService } from '../buddies/BuddiesService'
 import type { ConversationModelSelection, ConversationRecord } from '../storage/conversationRecord'
 import type { ConversationRepository, RenameConversationInput, SetConversationPermissionSettingsInput } from '../storage/conversationRepository'
+import type { RunInputRepository } from '../storage/runInputRepository'
+import type { RunRecord } from '../storage/runRecord'
+import type { RunRepository } from '../storage/runRepository'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -8,19 +12,23 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 
 export type ConversationMetadataCommit = EventSnapshot<{
   commitId: string
-  kind: 'title' | 'permissions' | 'model' | 'branch'
+  kind: 'title' | 'permissions' | 'model' | 'branch' | 'buddy'
   conversation: ConversationRecord
+  actorId?: string
   titleRevision?: number
   titleSource?: 'legacy' | 'manual' | 'fallback' | 'generated'
 }>
 
 export interface ConversationMetadataServiceOptions {
-  repository: Pick<ConversationRepository, 'findById' | 'rename' | 'renameGenerated' | 'getTitleState' | 'setPermissionSettings' | 'setModelSelection' | 'activateBranch'>
+  buddies?: Pick<BuddiesService, 'get'>
+  runInputs?: Pick<RunInputRepository, 'findByRunId'>
+  runs?: Pick<RunRepository, 'findById' | 'setModelSelection' | 'findActiveForConversation'>
+  repository: Pick<ConversationRepository, 'findById' | 'rename' | 'renameGenerated' | 'getTitleState' | 'setPermissionSettings' | 'setModelSelection' | 'findMember' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'activateBranch'>
   resolveModelSelection: (selection: ConversationModelSelection) => Promise<ConversationModelSelection>
   sessions: {
     invalidateConversation: (conversationId: string) => Promise<{ pending: number, degraded: number }>
     applyPermissionSettings?: (conversation: ConversationRecord) => Promise<{ pending: number, degraded: number }>
-    refreshModelSelection?: (conversationId: string) => void
+    refreshModelSelection?: (runId: string) => void
   }
   onObserverError?: (error: unknown) => void
 }
@@ -79,29 +87,123 @@ export class ConversationMetadataService {
     return conversation
   }
 
-  setModelSelection(input: { id: string, modelSelection: ConversationModelSelection }): Promise<ConversationRecord> {
-    return this.#run(() => this.#setModelSelection({ id: input.id, modelSelection: { ...input.modelSelection } }))
+  listMembers(conversationId: string) {
+    this.#requireActive(conversationId)
+    return this.#options.repository.listMembers(conversationId).map(({ actorId, joinedAt }) => ({ actorId, joinedAt }))
   }
 
-  async #setModelSelection(input: { id: string, modelSelection: ConversationModelSelection }): Promise<ConversationRecord> {
-    const id = input.id
-    this.#requireActive(id)
-    const resolved = await this.#options.resolveModelSelection({ ...input.modelSelection })
-    const current = this.#requireActive(id)
-    const selection: ConversationModelSelection = {
-      providerId: resolved.providerId,
-      modelId: resolved.modelId,
-      reasoning: resolved.reasoning,
-      serviceTier: resolved.serviceTier,
-    }
-    if (sameSelection(current.modelSelection, selection))
-      return current
-    const conversation = this.#options.repository.setModelSelection({ id, modelSelection: selection, updatedAt: new Date().toISOString() })
+  addMember(input: { id: string, buddyId: string }) {
+    this.#requireActive(input.id)
+    this.#options.repository.addMember({ ...input, updatedAt: new Date().toISOString() })
+    this.#publish('buddy', this.#requireActive(input.id))
+    return this.listMembers(input.id)
+  }
+
+  removeMember(input: { id: string, buddyId: string }) {
+    this.#requireActive(input.id)
+    this.#options.repository.removeMember({ ...input, updatedAt: new Date().toISOString() })
+    this.#publish('buddy', this.#requireActive(input.id))
+    return this.listMembers(input.id)
+  }
+
+  setBuddy(input: { id: string, buddyId: string }): ConversationRecord {
+    const current = this.#requireActive(input.id)
+    const conversation = this.#options.repository.setBuddy({ ...input, updatedAt: new Date().toISOString() })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    this.#publish('model', conversation)
-    this.#options.sessions.refreshModelSelection?.(id)
+    if (current.buddyId !== conversation.buddyId)
+      this.#publish('buddy', conversation)
     return conversation
+  }
+
+  getModelControls(conversationId: string, actorId?: string) {
+    const conversation = this.#requireActive(conversationId)
+    const run = this.#options.runs?.findActiveForConversation(conversationId)
+    const nextActorId = actorId ?? conversation.buddyId
+    const buddy = this.#options.buddies?.get(nextActorId)
+    if (buddy && (buddy.kind !== 'actor' || !buddy.enabled || buddy.deletedAt))
+      throw new BuddyServiceError('BUDDY_NOT_ACTOR')
+    const member = this.#options.repository.findMember(conversationId, nextActorId)
+    return {
+      current: run ? { runId: run.id, actorId: run.buddyId, modelSelection: this.#runModelSelection(run) } : null,
+      next: { actorId: nextActorId, isMember: Boolean(member), modelSelection: member?.modelSelection ?? (nextActorId === conversation.buddyId ? conversation.modelSelection : null) ?? buddy?.settings.model ?? null },
+    }
+  }
+
+  #runModelSelection(run: RunRecord): ConversationModelSelection {
+    const stored = this.#options.runInputs?.findByRunId(run.id)
+    return run.modelOverride ?? run.actorSnapshot?.model ?? { providerId: run.provider, modelId: run.model, reasoning: stored?.reasoning ?? null, serviceTier: stored?.serviceTier ?? null }
+  }
+
+  setModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }): Promise<ConversationRecord> {
+    return this.#run(() => this.#setModelSelection({
+      id: input.id,
+      actorId: input.actorId,
+      runId: input.runId,
+      modelSelection: input.modelSelection === null ? null : { ...input.modelSelection },
+    }))
+  }
+
+  async #setModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }): Promise<ConversationRecord> {
+    const id = input.id
+    const actorId = input.actorId ?? this.#targetRunActor(input.runId, id) ?? this.#requireActive(id).buddyId
+    this.#targetRunActor(input.runId, id, actorId)
+    this.#requireActive(id)
+    if (!input.runId && !this.#options.repository.findMember(id, actorId))
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const resolved = input.modelSelection === null ? null : await this.#options.resolveModelSelection({ ...input.modelSelection })
+    const current = this.#requireActive(id)
+    const selection: ConversationModelSelection | null = resolved === null
+      ? null
+      : {
+          providerId: resolved.providerId,
+          modelId: resolved.modelId,
+          reasoning: resolved.reasoning,
+          serviceTier: resolved.serviceTier,
+        }
+    if (input.runId) {
+      this.#targetRunActor(input.runId, id, actorId)
+      if (!this.#options.runs?.setModelSelection(input.runId, selection))
+        throw new BuddyServiceError('VALIDATION_FAILED')
+      this.#publish('model', current, actorId)
+      this.#options.sessions.refreshModelSelection?.(input.runId)
+      return current
+    }
+    const member = this.#options.repository.findMember(id, actorId)
+    if (!member)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    this.#targetRunActor(input.runId, id, actorId)
+    if (sameSelection(member.modelSelection, selection)
+      && (selection === null || member.modelSelectionSource === 'explicit')) {
+      if (this.#refreshActorModel(id, actorId, selection))
+        this.#publish('model', current, actorId)
+      return current
+    }
+    const conversation = this.#options.repository.setModelSelection({ id, actorId, modelSelection: selection, updatedAt: new Date().toISOString() })
+    if (!conversation)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    this.#refreshActorModel(id, actorId, selection)
+    this.#publish('model', conversation, actorId)
+    return conversation
+  }
+
+  #refreshActorModel(conversationId: string, actorId: string, selection: ConversationModelSelection | null): boolean {
+    const run = this.#options.runs?.findActiveForConversation(conversationId)
+    if (!run || run.buddyId !== actorId || sameSelection(this.#runModelSelection(run), selection))
+      return false
+    if (!this.#options.runs?.setModelSelection(run.id, selection))
+      return false
+    this.#options.sessions.refreshModelSelection?.(run.id)
+    return true
+  }
+
+  #targetRunActor(runId: string | undefined, conversationId: string, actorId?: string): string | undefined {
+    if (!runId)
+      return undefined
+    const run = this.#options.runs?.findById(runId)
+    if (!run || run.conversationId !== conversationId || !['queued', 'running'].includes(run.status) || (actorId && actorId !== run.buddyId))
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    return run.buddyId
   }
 
   activateBranch(input: { conversationId: string, branchId: string }): ConversationRecord {
@@ -154,12 +256,13 @@ export class ConversationMetadataService {
       this.#pendingPermissions.delete(id)
   }
 
-  #publish(kind: ConversationMetadataCommit['kind'], conversation: ConversationRecord): void {
+  #publish(kind: ConversationMetadataCommit['kind'], conversation: ConversationRecord, actorId?: string): void {
     const title = kind === 'title' ? this.#options.repository.getTitleState(conversation.id) : null
     this.#committed.fire(copyEventSnapshot({
       commitId: randomUUID(),
       kind,
       conversation,
+      ...(actorId ? { actorId } : {}),
       ...(title ? { titleRevision: title.revision, titleSource: title.source } : {}),
     }))
   }
@@ -175,7 +278,9 @@ class ConversationSettingsApplicationError extends Error {
   }
 }
 
-function sameSelection(left: ConversationModelSelection | null, right: ConversationModelSelection): boolean {
+function sameSelection(left: ConversationModelSelection | null, right: ConversationModelSelection | null): boolean {
+  if (left === null || right === null)
+    return left === right
   return left?.modelId === right.modelId && left.providerId === right.providerId
     && left.reasoning === right.reasoning && left.serviceTier === right.serviceTier
 }

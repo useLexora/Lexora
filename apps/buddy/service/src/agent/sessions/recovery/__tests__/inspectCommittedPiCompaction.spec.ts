@@ -1,4 +1,5 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +15,27 @@ afterEach(async () => {
 })
 
 describe('inspectCommittedPiCompaction', () => {
+  it('binds compaction evidence to its actor thread and exact run even after another run completes', async () => {
+    const fixture = await createFixture()
+    const threadId = 'actor:conversation-1:actor-a'
+    const directory = join(fixture.conversationsDirectory, 'conversation-1', 'session', 'threads', createHash('sha256').update(threadId).digest('hex'))
+    await mkdir(directory, { recursive: true })
+    const manager = SessionManager.create(fixture.root, directory)
+    manager.appendCustomEntry('lexora.conversation.root.v1', { conversationId: 'conversation-1', threadId })
+    manager.appendCustomEntry('lexora.conversation.checkpoint.v1', { runId: 'compact-a', branchId: 'branch-1', position: 'before' })
+    const user = manager.appendMessage({ role: 'user', content: 'Own context', timestamp: Date.now() })
+    manager.appendMessage(assistant('Own answer'))
+    const first = manager.appendCompaction('PRIVATE_A_SUMMARY', user, 500)
+    manager.appendCustomEntry('lexora.conversation.checkpoint.v1', { runId: 'compact-a', branchId: 'branch-1', position: 'after' })
+    manager.appendCustomEntry('lexora.conversation.checkpoint.v1', { runId: 'compact-b', branchId: 'branch-1', position: 'before' })
+    manager.appendCompaction('LATER_SAME_THREAD_SUMMARY', user, 900)
+    manager.appendCustomEntry('lexora.conversation.checkpoint.v1', { runId: 'compact-b', branchId: 'branch-1', position: 'after' })
+    const input = { conversationsDirectory: fixture.conversationsDirectory, conversationId: 'conversation-1', branchId: 'branch-1', piSessionFile: manager.getSessionFile()!, startedAt: '2026-08-15T00:00:00.000Z', threadId, runId: 'compact-a' }
+    expect(await inspectCommittedPiCompaction(input)).toMatchObject({ compactionEntryId: first, tokensBefore: 500 })
+    await expect(inspectCommittedPiCompaction({ ...input, threadId: 'actor:conversation-1:actor-b' })).rejects.toMatchObject({ code: 'SESSION_BINDING_INVALID' })
+    await expect(inspectCommittedPiCompaction({ ...input, runId: 'unknown-run' })).resolves.toBeNull()
+  })
+
   it('returns non-summary evidence from a real committed Pi compaction entry', async () => {
     const fixture = await createFixture()
     const firstKeptEntryId = fixture.manager.appendMessage({

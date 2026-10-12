@@ -9,10 +9,12 @@ import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useThemeMaterial } from '@/theme/useThemeMaterial'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
+import { useChatExecutionTree } from '../../state/runs/useChatExecutionTree'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
 import { useChatQuoteNavigation } from '../quotes/useChatQuoteNavigation'
 import { useTaskResultRead } from '../task-index/useTaskResultRead'
+import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
 import DesktopChatTranscript from '../transcript/DesktopChatTranscript.vue'
 import DesktopChatWelcome from '../welcome/DesktopChatWelcome.vue'
 import ChatSelectionQuoteMenu from './ChatSelectionQuoteMenu.vue'
@@ -25,6 +27,14 @@ const emit = defineEmits<ChatWorkspaceEmits>()
 defineSlots<{
   composerLeadingContext?: () => unknown
 }>()
+const executionTree = useChatExecutionTree({
+  conversationId: computed(() => props.workspace.session.activeConversationId.value),
+  branchId: computed(() => props.workspace.session.activeBranchId.value),
+})
+provideChatBuddyIdentity(() => [
+  ...props.workspace.transcript.runs.value,
+  ...executionTree.records.value.map(execution => ({ id: execution.runId, buddyId: execution.buddyId })),
+])
 const DesktopConversationCanvas = defineAsyncComponent(() => import('../canvas/DesktopConversationCanvas.vue'))
 const composerRef = useTemplateRef<InstanceType<typeof DesktopTaskComposer>>('composerRef')
 const canvasRef = useTemplateRef<InstanceType<typeof DesktopConversationCanvas>>('canvasRef')

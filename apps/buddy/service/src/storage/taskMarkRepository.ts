@@ -30,7 +30,7 @@ const STATE_QUERY = `
     COALESCE(attention.read_revision, 0) AS read_revision,
     (SELECT runs.id FROM runs
       WHERE runs.conversation_id = conversations.id
-        AND runs.status IN ('completed', 'failed') AND runs.purpose <> 'conversation.compaction'
+        AND runs.execution_kind = 'root' AND runs.status IN ('completed', 'failed') AND runs.purpose <> 'conversation.compaction'
       ORDER BY runs.completed_at DESC, runs.rowid DESC LIMIT 1) AS result_run_id
   FROM conversations
   LEFT JOIN task_attention AS attention ON attention.conversation_id = conversations.id

@@ -51,7 +51,7 @@ describe('useTaskModelSelection', () => {
     catalog.dispose()
   })
 
-  it('keeps task selections independent when another task changes the application default', async () => {
+  it('follows application defaults until the task has an explicit selection', async () => {
     const api = {
       getDefaultModel: async () => ({ providerId: 'anthropic', modelId: 'model-1', reasoning: null }),
       list: async () => [provider('anthropic', true, 'available')],
@@ -65,16 +65,20 @@ describe('useTaskModelSelection', () => {
     await catalog.loadModelCatalog()
     const first = useTaskModelSelection(catalog)
     const second = useTaskModelSelection(catalog)
+    const pinned = useTaskModelSelection(catalog)
+    pinned.restoreConversationModelSelection({ providerId: 'anthropic', modelId: 'model-1', reasoning: null, serviceTier: null })
 
     await first.selectModel('anthropic:model-2')
     expect(first.selectedModelId.value).toBe('anthropic:model-2')
-    expect(second.selectedModelId.value).toBe('anthropic:model-1')
+    expect(second.selectedModelId.value).toBe('anthropic:model-2')
+    expect(pinned.selectedModelId.value).toBe('anthropic:model-1')
     expect(catalog.defaultModelId.value).toBe('anthropic:model-2')
 
     second.selectDefaultModel()
     expect(second.selectedModelId.value).toBe('anthropic:model-2')
     first.dispose()
     second.dispose()
+    pinned.dispose()
     catalog.dispose()
   })
 
@@ -99,36 +103,19 @@ describe('useTaskModelSelection', () => {
       reasoning: string | null
     } | null) => value)
     const api = {
-      localChat: {
-        automations: emptyAutomationApi(),
-        chat: emptyChatApi(),
-        notifications: emptyNotificationApi(),
-        providers: {
-          getDefaultModel: async () => ({
-            modelId: 'model-1',
-            providerId: 'anthropic',
-            reasoning: 'high',
-          }),
-          list: async () => [provider('anthropic', true, 'available')],
-          listBuiltinPresets: async () => [],
-          listModels: async () => models,
-          onChanged: () => () => {},
-          onAuthChallenge: () => () => {},
-          setDefaultModel,
-        },
-        runtime: {
-          getStatus: async () => ({
-            lastError: null,
-            pid: 42,
-            restartAttempt: 0,
-            status: 'ready',
-          }),
-          onStateChanged: () => () => {},
-        },
-      },
-      settings: { get: () => Promise.reject(new Error('settings unavailable')) },
-    } as unknown as LexoraDesktopApi
-    const catalog = useModelProvidersStore({ api: api.localChat.providers, language: shallowRef('zh-CN') })
+      getDefaultModel: async () => ({
+        modelId: 'model-1',
+        providerId: 'anthropic',
+        reasoning: 'high',
+      }),
+      list: async () => [provider('anthropic', true, 'available')],
+      listBuiltinPresets: async () => [],
+      listModels: async () => models,
+      onChanged: () => () => {},
+      onAuthChallenge: () => () => {},
+      setDefaultModel,
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const catalog = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
     const selection = useTaskModelSelection(catalog)
 
     await catalog.loadModelCatalog()
@@ -229,24 +216,5 @@ function model(providerId: string): LocalRuntimeModelOption {
     sourceContextWindow: 4096,
     sourceMaxTokens: 1024,
     sourceParametersUpdated: false,
-  }
-}
-
-function emptyNotificationApi() {
-  return {
-    onChanged: () => () => {},
-    list: async () => ({ items: [], unseenCount: 0 }),
-  }
-}
-
-function emptyAutomationApi() {
-  return {
-    onChanged: () => () => {},
-  }
-}
-
-function emptyChatApi() {
-  return {
-    onRunEvent: () => () => {},
   }
 }
