@@ -223,7 +223,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     })
   }
 
-  async wait(runId: string, targetRunIds: readonly string[], timeoutMs: number, signal: AbortSignal): Promise<void> {
+  async wait(runId: string, targetRunIds: readonly string[], timeoutMs: number, signal: AbortSignal, deliveredMessageIds: readonly string[] = []): Promise<void> {
     await this.#options.mutations.waitForRun(runId)
     const deadline = AbortSignal.timeout(timeoutMs)
     try {
@@ -233,7 +233,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         this.#options.executions.assertCurrent(this.#fence(caller))
         const revision = this.#revision(caller.run.rootRunId)
         const pending = this.#options.mailbox.listUnconsumed(runId).some(message =>
-          !targetRunIds.length || message.kind !== 'result' || targetRunIds.includes(message.sourceRunId),
+          !deliveredMessageIds.includes(message.messageId)
+          && (!targetRunIds.length || message.kind !== 'result' || targetRunIds.includes(message.sourceRunId)),
         )
         if (pending || targetRunIds.some(id => this.#require(id).phase === 'closed') || deadline.aborted)
           return

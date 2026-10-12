@@ -239,10 +239,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   let active = 0
   let maximumActive = 0
   const services: BuddySessionExtensionServices = {
-    delegation: {
-      execute: async () => ({ status: 'working', updates: [] }),
-      assertShellExecutionAllowed: () => {},
-    },
+    delegation: { pending: () => [], execute: async () => ({ status: 'working', updates: [] }), assertShellExecutionAllowed: () => {} },
     approvalService: { request: async () => ({ approvalId: 'denied-1', decision: 'denied' }) },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
     mutations: new MutationCoordinator(),

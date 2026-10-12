@@ -20,7 +20,10 @@ function fixture() {
   const definitions = new BuddyDefinitionResolver({ buddies: f.buddies, members, providers: { getDefaultModel: async () => null, executionModels: { resolveAvailable: async () => {
     throw new Error('Preflight must follow durable admission')
   }, getServiceTiers: () => [] } } })
+  const readResult = vi.fn(async () => 'Completed report')
+  const send = vi.fn()
   const service = new ExecutionDelegationService({
+    readResult,
     readToolOptions: async () => ['read', 'write', getPiShellToolName(process.platform)].map(name => ({ name, id: JSON.stringify(['builtin', 'core', name]), title: name, source: { kind: 'builtin', id: 'core', title: 'Core' } })),
     buddies: f.buddies,
     members,
@@ -30,7 +33,7 @@ function fixture() {
     coordinator: {
       assertShellExecutionAllowed: () => {},
       admitChild: async input => f.executions.admitChild(input).execution,
-      send: vi.fn(),
+      send,
       wait: vi.fn(),
       answerQuestion: vi.fn(),
       cancel: async () => false,
@@ -41,12 +44,42 @@ function fixture() {
   const run: BuddyExtensionRunContext = { runId: 'root', signal: controller.signal, requestModel: { providerId: 'current-provider', modelId: 'M1', reasoning: 'high', serviceTier: null }, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
   let permissions: BuddyPermissionSettings = { approvalPolicy: 'policy', executionProfile: 'workspace_write' }
   const caller = { run, getPermissions: () => permissions }
-  return { ...f, caller, controller, service, setPermissions: (value: BuddyPermissionSettings) => {
+  return { ...f, caller, controller, service, send, readResult, setPermissions: (value: BuddyPermissionSettings) => {
     permissions = value
   } }
 }
 
 describe('execution delegation boundary', () => {
+  it('routes child progress only to its caller and preserves separate inspection permissions', async () => {
+    const f = fixture()
+    f.executions.admitChild(f.child('child'))
+    f.executions.claimWorking(f.fence('child'))
+    const child = { ...f.caller, run: { ...f.caller.run, runId: 'child' } }
+    const report = { operation: 'report', text: 'Validated the first boundary; continuing the task' }
+    await expect(f.service.execute(child, 'progress', report, f.controller.signal)).resolves.toEqual({ runId: 'root', status: 'queued' })
+    expect(f.send.mock.calls[0]).toEqual(['child', expect.objectContaining({ kind: 'supplement', targetRunId: 'root', text: report.text })])
+    await expect(f.service.execute(child, 'legacy', { operation: 'send', runId: 'root', text: 'More progress' }, f.controller.signal)).resolves.toMatchObject({ status: 'queued' })
+    await expect(f.service.execute(child, 'inspect-parent', { operation: 'status', runId: 'root' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+    await expect(f.service.execute(child, 'override', { ...report, runId: 'root' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+    await expect(f.service.execute(f.caller, 'root-report', report, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+    f.executions.admitChild(f.child('sibling'))
+    await expect(f.service.execute(child, 'sibling', { operation: 'send', runId: 'sibling', text: 'Forbidden' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+  })
+
+  it('reads completed reports in pages without reopening the child or reading siblings', async () => {
+    const f = fixture()
+    f.executions.admitChild(f.child('child'))
+    await expect(f.service.execute(f.caller, 'pending-result', { operation: 'result', runId: 'child' }, f.controller.signal)).resolves.toMatchObject({ result: null })
+    expect(f.readResult).not.toHaveBeenCalled()
+    f.executions.beginClosing(f.fence('child'), 'failure')
+    f.executions.finishClosing(f.fence('child'), 'failed', '2026-10-12T00:01:00.000Z', 'MODEL_UNAVAILABLE')
+    f.readResult.mockResolvedValue('A'.repeat(32000).concat('Complete remaining findings'))
+    const first = await f.service.execute(f.caller, 'result', { operation: 'result', runId: 'child' }, f.controller.signal)
+    expect(first).toMatchObject({ status: 'failed', result: 'A'.repeat(32000), nextOffset: 32000 })
+    await expect(f.service.execute(f.caller, 'remaining', { operation: 'result', runId: 'child', offset: 32000 }, f.controller.signal)).resolves.toMatchObject({ result: 'Complete remaining findings', nextOffset: null })
+    expect(f.executions.find('child')?.phase).toBe('closed')
+    expect(f.send).not.toHaveBeenCalled()
+  })
   it('accepts an isolated child before capability preflight and captures the actual request model', async () => {
     const f = fixture()
     const request = { operation: 'delegate', targetId: f.npc.id, text: 'Inspect only the named file' }

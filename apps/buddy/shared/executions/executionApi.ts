@@ -3,6 +3,7 @@ import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../conversation/buddyMessageConte
 import { idSchema } from '../runtime/apiValidation'
 
 export const EXECUTION_MAILBOX_ENTRY_TYPE = 'lexora.execution.message.v1'
+export const EXECUTION_DELEGATION_TOOL_NAME = 'lexora_agents'
 
 export const executionPhaseSchema = z.enum(['queued', 'preparing', 'working', 'waiting', 'closing', 'closed'])
 export type ExecutionPhase = z.infer<typeof executionPhaseSchema>

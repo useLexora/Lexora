@@ -1,3 +1,4 @@
+import type { SessionEntry } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolOption } from '../../../../shared/buddies/buddyApi'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddiesService } from '../../buddies/BuddiesService'
@@ -15,15 +16,18 @@ import { resolveShellExecution } from '../../sandbox/shellExecution'
 import { ExecutionAdmissionError, executionFence, hashChildAdmissionRequest } from '../../storage/executionRepository'
 import { getRoleToolDenial } from '../extensions/discovery/SessionToolScope'
 import { isPiShellToolName } from '../extensions/piBuiltinTools'
+import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
+import { readExecutionMailboxEntries } from './executionMailboxEntries'
 
 export const delegationInputSchema = z.object({
-  operation: z.enum(['list', 'delegate', 'status', 'send', 'wait', 'question', 'answer', 'cancel']),
+  operation: z.enum(['list', 'delegate', 'status', 'result', 'report', 'send', 'wait', 'question', 'answer', 'cancel']),
   targetId: z.string().min(1).max(256).optional(),
   runId: z.string().min(1).max(256).optional(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH).optional(),
   questionId: z.string().min(1).max(128).optional(),
   audience: z.enum(['caller', 'user']).optional(),
   timeoutMs: z.number().int().min(1).max(60000).optional(),
+  offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict()
 
 export type DelegationInput = z.infer<typeof delegationInputSchema>
@@ -42,6 +46,7 @@ export interface ExecutionDelegationServiceOptions {
   coordinator: Pick<ExecutionCoordinator, 'admitChild' | 'send' | 'wait' | 'answerQuestion' | 'cancel' | 'assertShellExecutionAllowed'>
   readToolOptions: (signal: AbortSignal) => Promise<readonly BuddyToolOption[]>
   stopExecution: (runId: string) => Promise<boolean>
+  readResult: (runId: string) => Promise<string>
   actorTargets?: (rootRunId: string) => readonly string[]
 }
 
@@ -56,7 +61,7 @@ export class ExecutionDelegationService {
     this.#options.coordinator.assertShellExecutionAllowed(runId)
   }
 
-  async execute(caller: DelegationCaller, requestKey: string, value: unknown, signal: AbortSignal): Promise<unknown> {
+  async execute(caller: DelegationCaller, requestKey: string, value: unknown, signal: AbortSignal, entries: readonly SessionEntry[] = []): Promise<unknown> {
     const input = delegationInputSchema.parse(value)
     signal.throwIfAborted()
     const source = this.#require(caller.run.runId)
@@ -65,6 +70,13 @@ export class ExecutionDelegationService {
       return this.#list(caller, source, signal)
     if (input.operation === 'delegate')
       return this.#delegate(caller, source, requestKey, input, signal)
+    if (input.operation === 'report' || (input.operation === 'send' && input.runId === source.run.parentRunId)) {
+      if (!source.run.parentRunId || !input.text || (input.operation === 'report' && (input.runId || input.targetId)))
+        throw new ExecutionAdmissionError('unauthorized')
+      const parent = this.#require(source.run.parentRunId)
+      await this.#options.coordinator.send(source.run.id, { messageId: createHash('sha256').update(JSON.stringify([source.run.id, requestKey])).digest('hex'), kind: 'supplement', targetRunId: parent.run.id, targetGeneration: parent.run.generation, text: input.text })
+      return { runId: parent.run.id, status: 'queued' }
+    }
     if (input.operation === 'question') {
       if (!input.text)
         throw new ExecutionAdmissionError('conflict')
@@ -82,6 +94,14 @@ export class ExecutionDelegationService {
       return { questionId: input.questionId, status: 'accepted' }
     }
     const target = input.runId ? this.#requireRelated(source, input.runId) : source
+    if (input.operation === 'result') {
+      if (!input.runId || target.run.parentRunId !== source.run.id)
+        throw new ExecutionAdmissionError('unauthorized')
+      const report = target.phase === 'closed' ? await this.#options.readResult(target.run.id) : null
+      const offset = input.offset ?? 0
+      const end = Math.min(offset + 32000, report?.length ?? 0)
+      return { runId: target.run.id, phase: target.phase, status: target.run.status, errorCode: target.run.errorCode, result: report === null ? null : report.slice(offset, end), totalChars: report?.length ?? 0, nextOffset: report !== null && end < report.length ? end : null }
+    }
     if (input.operation === 'send') {
       if (!input.text)
         throw new ExecutionAdmissionError('conflict')
@@ -94,18 +114,34 @@ export class ExecutionDelegationService {
       await this.#options.coordinator.cancel(target.run.id, 'RUN_CANCELLED', this.#options.stopExecution)
     }
     if (input.operation === 'wait') {
-      const pendingResults = new Set(this.#options.mailbox.listUnconsumed(source.run.id).filter(message => message.kind === 'result').map(message => message.sourceRunId))
+      const pending = this.pending(source.run.id, entries)
+      const pendingResults = new Set(pending.filter(message => message.kind === 'result').map(message => message.sourceRunId))
       const targets = input.runId
         ? [target.run.id]
         : this.#options.executions.listTree(source.run.rootRunId)
             .filter(item => item.run.parentRunId === source.run.id && (item.phase !== 'closed' || pendingResults.has(item.run.id)))
             .map(item => item.run.id)
-      await this.#options.coordinator.wait(source.run.id, targets, input.timeoutMs ?? 30000, signal)
+      const unseen = new Set(pending.map(message => message.messageId))
+      const delivered = this.#options.mailbox.listUnconsumed(source.run.id).filter(message => !unseen.has(message.messageId)).map(message => message.messageId)
+      if (targets.length || pending.length)
+        await this.#options.coordinator.wait(source.run.id, targets, input.timeoutMs ?? 30000, signal, delivered)
     }
-    return this.status(source.run.id, target.run.id)
+    return this.status(source.run.id, target.run.id, entries)
   }
 
-  status(callerId: string, targetId: string) {
+  pending(callerId: string, entries: readonly SessionEntry[]) {
+    const source = this.#require(callerId)
+    const delivered = readExecutionMailboxEntries(entries, { runId: callerId, generation: source.run.generation })
+    const seen = new Map(delivered.map(entry => [entry.message.messageId, entry.message]))
+    return this.#options.mailbox.listUnconsumed(callerId).filter((message) => {
+      const previous = seen.get(message.messageId)
+      if (previous && JSON.stringify(previous) !== JSON.stringify(message))
+        throw new BuddySessionStorageError()
+      return !previous
+    })
+  }
+
+  status(callerId: string, targetId: string, entries: readonly SessionEntry[] = []) {
     const source = this.#require(callerId)
     const target = this.#requireRelated(source, targetId)
     const summarize = (record: ExecutionStateRecord) => ({
@@ -122,7 +158,7 @@ export class ExecutionDelegationService {
     return {
       ...summarize(target),
       children: this.#options.executions.listTree(target.run.rootRunId).filter(record => record.run.parentRunId === target.run.id).map(summarize),
-      updates: this.#options.mailbox.listUnconsumed(callerId),
+      updates: this.pending(callerId, entries),
     }
   }
 

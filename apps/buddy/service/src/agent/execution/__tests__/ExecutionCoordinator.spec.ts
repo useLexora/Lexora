@@ -2,8 +2,10 @@ import type { RunRecord } from '../../../storage/runRecord'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buddySettingsSchema } from '../../../../../shared/buddies/buddySettings'
+import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../../../shared/executions/executionApi'
 import { BuddyDefinitionResolver } from '../../../buddies/BuddyDefinitionResolver'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { createRunEventLog } from '../../../events/createRunEventLog'
@@ -13,6 +15,7 @@ import { createConversationMemberRepository } from '../../../storage/conversatio
 import { createMailboxRepository } from '../../../storage/mailboxRepository'
 import { ExecutionCoordinator } from '../ExecutionCoordinator'
 import { ExecutionDelegationService } from '../ExecutionDelegationService'
+import { renderMailboxMessage } from '../executionMailboxEntries'
 
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -50,6 +53,14 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
     await rm(directory, { recursive: true, force: true })
   })
   return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone }
+}
+
+function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
+  const members = createConversationMemberRepository(f.database)
+  const definitions = new BuddyDefinitionResolver({ buddies: f.buddies, members, providers: { getDefaultModel: async () => null, executionModels: { getServiceTiers: () => [], resolveAvailable: async () => {
+    throw new Error('Unexpected model request')
+  } } } })
+  return new ExecutionDelegationService({ readResult: async () => '', readToolOptions: async () => [], buddies: f.buddies, members, definitions, executions: f.executions, mailbox: f.mailbox, coordinator: f.coordinator, stopExecution: async () => false })
 }
 
 describe('execution coordination', () => {
@@ -201,6 +212,29 @@ describe('execution coordination', () => {
     expect(f.database.prepare('SELECT count(*) AS count FROM messages').get()?.count).toBe(0)
   })
 
+  it('waits for new child work when an earlier result is journaled but not yet consumed', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('earlier'))
+    f.executions.admitChild(f.child('pending'))
+    await f.coordinator.failBeforeStart('earlier', new Error('Earlier result'))
+    const message = f.mailbox.listUnconsumed('root')[0]!
+    const journal = SessionManager.inMemory()
+    journal.appendCustomEntry('lexora.conversation.checkpoint.v1', { runId: 'root', branchId: 'branch', position: 'before' })
+    journal.appendCustomMessageEntry(EXECUTION_MAILBOX_ENTRY_TYPE, renderMailboxMessage(message), false, message)
+    const service = delegationService(f)
+    expect(service.status('root', 'root', journal.getBranch()).updates).toEqual([])
+    expect(f.mailbox.find(message.messageId)?.state).toBe('pending')
+    const caller = { run: { runId: 'root', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
+    const waiting = service.execute(caller, 'new-result', { operation: 'wait', timeoutMs: 10000 }, signal, journal.getBranch())
+    await vi.waitFor(() => expect(f.executions.find('root')?.phase).toBe('waiting'))
+    await f.coordinator.failBeforeStart('pending', new Error('New result'))
+    await expect(waiting).resolves.toMatchObject({ updates: [{ sourceRunId: 'pending', kind: 'result' }] })
+    expect(f.mailbox.find(message.messageId)?.state).toBe('pending')
+    expect(f.mailbox.find(message.messageId)?.receipt).toBeNull()
+  })
+
   it('waits past consumed children by default while preserving unread results and explicit completed targets', async () => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -208,11 +242,7 @@ describe('execution coordination', () => {
     f.executions.admitChild(f.child('earlier'))
     f.executions.admitChild(f.child('pending'))
     await f.coordinator.failBeforeStart('earlier', new Error('Earlier result'))
-    const members = createConversationMemberRepository(f.database)
-    const definitions = new BuddyDefinitionResolver({ buddies: f.buddies, members, providers: { getDefaultModel: async () => null, executionModels: { getServiceTiers: () => [], resolveAvailable: async () => {
-      throw new Error('Unexpected model request')
-    } } } })
-    const service = new ExecutionDelegationService({ readToolOptions: async () => [], buddies: f.buddies, members, definitions, executions: f.executions, mailbox: f.mailbox, coordinator: f.coordinator, stopExecution: async () => false })
+    const service = delegationService(f)
     const caller = { run: { runId: 'root', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
     const unread = await service.execute(caller, 'unread', { operation: 'wait', timeoutMs: 10000 }, signal)
     expect(unread).toMatchObject({ updates: [{ sourceRunId: 'earlier', kind: 'result' }] })

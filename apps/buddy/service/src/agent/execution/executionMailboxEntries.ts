@@ -1,8 +1,7 @@
 import type { SessionEntry } from '@earendil-works/pi-coding-agent'
 import type { ExecutionMailboxMessage } from '../../../../shared/executions/executionApi'
-import { EXECUTION_MAILBOX_ENTRY_TYPE, executionMailboxMessageSchema } from '../../../../shared/executions/executionApi'
+import { EXECUTION_DELEGATION_TOOL_NAME, EXECUTION_MAILBOX_ENTRY_TYPE, executionMailboxMessageSchema } from '../../../../shared/executions/executionApi'
 import { hashExecutionMailboxMessage } from '../../storage/mailboxRepository'
-import { DELEGATION_TOOL_NAME } from '../extensions/delegationCapability'
 import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
 import { readCheckpoint } from '../sessions/tree/BuddyTreeStore'
 
@@ -44,12 +43,12 @@ export function readExecutionMailboxEntries(
       if (message.role === 'toolResult') {
         const caller = calls.get(message.toolCallId)
         calls.delete(message.toolCallId)
-        if (message.toolName !== DELEGATION_TOOL_NAME || message.isError)
+        if (message.toolName !== EXECUTION_DELEGATION_TOOL_NAME || message.isError)
           continue
         const details = message.details
         if (!details || typeof details !== 'object' || !('updates' in details))
           continue
-        if (caller !== DELEGATION_TOOL_NAME || !Array.isArray(details.updates)
+        if (caller !== EXECUTION_DELEGATION_TOOL_NAME || !Array.isArray(details.updates)
           || message.content.length !== 1 || message.content[0]?.type !== 'text'
           || message.content[0].text !== JSON.stringify(details)) {
           throw new BuddySessionStorageError()

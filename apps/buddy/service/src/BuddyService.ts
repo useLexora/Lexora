@@ -828,7 +828,7 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
-      delegation: { execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
+      delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
       prepareForRun: signal => connectorService.prepareForRun(signal),
       shellSandbox: await host.start('runtime.shell_sandbox', ({ defer }) => {
@@ -946,6 +946,7 @@ export async function startBuddyService(
       return service
     })
     delegation = new ExecutionDelegationService({
+      readResult: runId => readExecutionResult(options.eventLog, runId),
       readToolOptions: signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal),
       actorTargets: (rootRunId) => {
         const run = runs.findById(rootRunId)
