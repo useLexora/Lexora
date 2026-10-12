@@ -76,6 +76,7 @@ const BUDDY_CURRENT_SCHEMA_COLUMNS = {
     'catalog_model_id',
     'catalog_selection_json',
     'capability_overrides_json',
+    'service_metadata_json',
     'source_fingerprint',
   ],
   run_tree_sources: ['run_id', 'source_run_id', 'position'],

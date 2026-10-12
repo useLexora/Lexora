@@ -33,6 +33,7 @@ describe('provider request headers', () => {
       }
       headers.save('first', [])
       expect(headers.resolve('first', { Authorization: 'restored' })).toEqual({ authorization: 'restored' })
+      headers.save('first', input)
       states.remove('first')
       expect(headers.list('first')).toEqual([])
     }
@@ -58,10 +59,10 @@ describe('provider request headers', () => {
         name: 'Custom',
         models: [{ id: 'model', name: 'Model', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 1024 }],
       })
-      const captured: Array<{ url: string, headers: Headers }> = []
+      const captured: Headers[] = []
       const request: typeof fetch = async (input, init) => {
-        captured.push({ url: String(input), headers: new Headers(init?.headers) })
-        if (String(input).endsWith('/models'))
+        captured.push(new Headers(init?.headers))
+        if (new URL(String(input)).pathname.endsWith('/models'))
           return Response.json({ data: [{ id: 'model' }] })
         return new Response(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'accepted' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
       }
@@ -74,21 +75,20 @@ describe('provider request headers', () => {
           const context = { messages: [{ role: 'user' as const, content: 'hello', timestamp: 1 }] }
           const result = await (simple ? runtime.completeSimple(model, context, { fetch: request }) : runtime.complete(model, context, { fetch: request }))
           expect(result.stopReason, result.errorMessage).not.toBe('error')
-          expect(captured.at(-1)!.headers.get('authorization')).toBeNull()
-          expect(captured.at(-1)!.headers.get('api-key')).toBe(`fixture-${providerId}`)
-          expect(captured.at(-1)!.headers.get('x-service')).toBe(providerId)
+          expect(captured.at(-1)!.get('authorization')).toBeNull()
+          expect(captured.at(-1)!.get('api-key')).toBe(`fixture-${providerId}`)
+          expect(captured.at(-1)!.get('x-service')).toBe(providerId)
         }
         expect(JSON.stringify(runtime.getModels(providerId))).not.toContain(`fixture-${providerId}`)
       }
       const discovery = new OpenAiCompatibleModelDiscovery({ credentials, requestHeaders: headers, request })
       await discovery.discover({ providerId: 'custom', api: 'openai-completions', baseUrl: 'https://fixture.example.test/v1' })
-      expect(captured.at(-1)!.headers.get('authorization')).toBeNull()
-      expect(captured.at(-1)!.headers.get('api-key')).toBe('fixture-custom')
+      expect(captured.at(-1)!.get('authorization')).toBeNull()
+      expect(captured.at(-1)!.get('api-key')).toBe('fixture-custom')
       await credentials.modify('custom', async () => ({ type: 'api_key', key: 'rotated-fixture' }))
       await discovery.discover({ providerId: 'custom', api: 'openai-completions', baseUrl: 'https://fixture.example.test/v1' })
-      expect(captured.at(-1)!.headers.get('api-key')).toBe('rotated-fixture')
+      expect(captured.at(-1)!.get('api-key')).toBe('rotated-fixture')
       expect(headers.list('custom')[0]!.value).toBe(`\${apiKey}`)
-      await runtime.refresh({ allowNetwork: false })
     }
     finally {
       database.close()

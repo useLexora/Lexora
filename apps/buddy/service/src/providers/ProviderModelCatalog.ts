@@ -1,6 +1,7 @@
 import type { Api, Model, Provider } from '@earendil-works/pi-ai'
 import type { ModelCapabilityOverrides } from '../../../shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
+import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
 import type { ProviderModelInput } from '../../../shared/providers/providerInput'
 import type {
   ProviderConfigRecord,
@@ -12,11 +13,14 @@ import type {
 } from '../storage/providerModelStateRepository'
 import type { InputModel } from './modelCapabilities'
 import type { CatalogModel, ModelMetadataCatalog } from './ModelsDevCatalog'
+import type { ProviderModelDefinition } from './ProviderModelDiscovery'
 import type { BuddyModel, ModelParametersOverride } from './providerSchemas'
 import { createHash } from 'node:crypto'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
 import { supportsPdfInputApi } from '../../../shared/providers/pdfInput'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
+import { modelDiscoveryBaseUrl, serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
 import { providerModelInputSchema, storedCustomProviderModelSchema } from '../../../shared/providers/providerInput'
 import { applyModelCapabilities, getModelFileInputMimeTypes, readModelCapabilities, supportsModelAudioInput, supportsModelPdfInput, supportsModelVideoInput } from './modelCapabilities'
 import { serializeModelMetadata } from './modelMetadata'
@@ -214,7 +218,7 @@ export class ProviderModelCatalog {
 
   reconcileSyncedModels(
     provider: ProviderConfigRecord,
-    definitions: ReadonlyArray<{ id: string, name?: string }>,
+    definitions: readonly ProviderModelDefinition[],
   ): void {
     const now = new Date().toISOString()
     const seen = new Set(definitions.map(model => model.id))
@@ -222,7 +226,14 @@ export class ProviderModelCatalog {
       const current = this.#models.find(provider.id, definition.id)
       if (current?.source === 'manual')
         continue
-      const source = this.#syncedSourceMetadata(provider, definition, current)
+      const serviceMetadata = definition.metadata
+        ? serviceModelMetadataSchema.parse({
+            api: provider.api,
+            baseUrl: modelDiscoveryBaseUrl(provider.baseUrl),
+            metadata: definition.metadata,
+          })
+        : null
+      const source = this.#syncedSourceMetadata(provider, definition, current, serviceMetadata)
       this.#models.upsert({
         catalogSelection: current?.catalogSelection ?? null,
         capabilityOverrides: current?.capabilityOverrides ?? null,
@@ -447,15 +458,16 @@ export class ProviderModelCatalog {
       : undefined
     const sameEndpoint = Boolean(metadata?.baseUrl
       && normalizeProviderBaseUrl(metadata.baseUrl) === normalizeProviderBaseUrl(baseUrl))
+    const serviceInput = provider ? this.#serviceMetadata(provider, model)?.metadata.input : undefined
     const codexPdf = model.source === 'builtin' && api === 'openai-codex-responses'
       && model.catalogProviderId === 'openai' && ['https://chatgpt.com/backend-api', 'https://chatgpt.com/backend-api/codex'].includes(normalizeProviderBaseUrl(baseUrl))
     return {
       ...runtimeModel,
       api,
       baseUrl,
-      pdfInput: supportsPdfInputApi(api) && metadata?.pdfInput === true && (sameEndpoint || codexPdf),
-      audioInput: metadata?.audioInput === true && sameEndpoint,
-      videoInput: metadata?.videoInput === true && sameEndpoint,
+      pdfInput: supportsPdfInputApi(api) && (serviceInput ? serviceInput.includes('pdf') : metadata?.pdfInput === true && (sameEndpoint || codexPdf)),
+      audioInput: serviceInput ? serviceInput.includes('audio') : metadata?.audioInput === true && sameEndpoint,
+      videoInput: serviceInput ? serviceInput.includes('video') : metadata?.videoInput === true && sameEndpoint,
       toolCall: metadata?.toolCall,
       provider: model.providerId,
       id: model.modelId,
@@ -516,7 +528,7 @@ export class ProviderModelCatalog {
           compatibility: null,
         })) ?? [],
       },
-      metadataKnown: model.source !== 'synced' || model.catalogProviderId !== null,
+      metadataKnown: model.source !== 'synced' || model.catalogProviderId !== null || hasServiceMetadata(model),
       contextWindow: effectiveModel.contextWindow,
       displayName: model.displayName,
       enabled: model.enabled,
@@ -535,10 +547,19 @@ export class ProviderModelCatalog {
     })
   }
 
+  #serviceMetadata(provider: ProviderConfigRecord, model: ProviderModelStateRecord | null): ServiceModelMetadata | null {
+    const source = model?.serviceMetadata
+    return source && source.api === provider.api
+      && source.baseUrl === modelDiscoveryBaseUrl(provider.baseUrl)
+      ? source
+      : null
+  }
+
   #syncedSourceMetadata(
     provider: ProviderConfigRecord,
-    definition: { id: string, name?: string },
+    definition: ProviderModelDefinition,
     current: ProviderModelStateRecord | null,
+    serviceMetadata = this.#serviceMetadata(provider, current),
   ): ModelSourceMetadata {
     const match = this.#catalogMatcher.match({
       api: provider.api,
@@ -548,24 +569,25 @@ export class ProviderModelCatalog {
     })
     if (match.status === 'matched') {
       const sameEndpoint = normalizeProviderBaseUrl(provider.baseUrl) === normalizeProviderBaseUrl(match.model.baseUrl)
-      return sourceMetadataFromCatalogModel(provider.api, match.model, sameEndpoint ? match.model.cost : current?.cost ?? emptyModelCost(), current)
+      return sourceMetadataFromCatalogModel(provider.api, match.model, sameEndpoint ? match.model.cost : current?.cost ?? emptyModelCost(), current, serviceMetadata)
     }
 
-    const compatibleCurrent = current?.api === provider.api ? current : null
+    const previousSource = current?.serviceMetadata ? null : current
+    const compatibleCurrent = previousSource?.api === provider.api ? previousSource : null
     return createSourceMetadata({
       api: provider.api,
       catalogProviderId: compatibleCurrent?.catalogProviderId ?? null,
       catalogModelId: compatibleCurrent?.catalogModelId ?? null,
-      compat: compatibleCurrent?.compat ?? null,
+      compat: current?.api === provider.api ? current.compat : null,
       cost: current?.cost ?? emptyModelCost(),
       displayName: definition.name?.trim() || current?.displayName || definition.id,
-      input: current?.input ?? ['text'],
+      input: previousSource?.input ?? ['text'],
       reasoning: compatibleCurrent?.reasoning ?? false,
-      samplingParams: compatibleCurrent?.samplingParams ?? null,
-      sourceContextWindow: current?.sourceContextWindow ?? 128_000,
-      sourceMaxTokens: current?.sourceMaxTokens ?? 16_384,
+      samplingParams: current?.api === provider.api ? current.samplingParams : null,
+      sourceContextWindow: previousSource?.sourceContextWindow ?? 128_000,
+      sourceMaxTokens: previousSource?.sourceMaxTokens ?? 16_384,
       thinkingLevelMap: compatibleCurrent?.thinkingLevelMap ?? null,
-    })
+    }, serviceMetadata)
   }
 
   #requireModelState(providerId: string, modelId: string): ProviderModelStateRecord {
@@ -600,6 +622,7 @@ function nextSourceRevision(previous: string | undefined, candidate: string): st
 }
 
 interface ModelSourceMetadata {
+  serviceMetadata: ServiceModelMetadata | null
   api: string
   catalogProviderId: string | null
   catalogModelId: string | null
@@ -615,7 +638,7 @@ interface ModelSourceMetadata {
   thinkingLevelMap: Model<Api>['thinkingLevelMap'] | null
 }
 
-function sourceMetadataFromCatalogModel(api: string, model: CatalogModel, cost: Model<Api>['cost'], current: ProviderModelStateRecord | null = null): ModelSourceMetadata {
+function sourceMetadataFromCatalogModel(api: string, model: CatalogModel, cost: Model<Api>['cost'], current: ProviderModelStateRecord | null = null, serviceMetadata: ServiceModelMetadata | null = null): ModelSourceMetadata {
   return createSourceMetadata({
     api,
     catalogProviderId: model.provider,
@@ -629,7 +652,7 @@ function sourceMetadataFromCatalogModel(api: string, model: CatalogModel, cost: 
     sourceContextWindow: model.contextWindow,
     sourceMaxTokens: model.maxTokens,
     thinkingLevelMap: model.thinkingLevelMap ?? null,
-  })
+  }, serviceMetadata)
 }
 
 function emptyModelCost(): Model<Api>['cost'] {
@@ -637,9 +660,30 @@ function emptyModelCost(): Model<Api>['cost'] {
 }
 
 function createSourceMetadata(
-  input: Omit<ModelSourceMetadata, 'sourceFingerprint' | 'catalogModelId'> & { catalogModelId?: string | null },
+  input: Omit<ModelSourceMetadata, 'sourceFingerprint' | 'catalogModelId' | 'serviceMetadata'> & { catalogModelId?: string | null },
+  serviceMetadata: ServiceModelMetadata | null = null,
 ): ModelSourceMetadata {
-  const metadata = { ...input, catalogModelId: input.catalogModelId ?? null }
+  const declared = serviceMetadata?.metadata
+  const reasoningOptions = declared?.reasoningOptions
+  const contextWindow = declared?.contextWindow ?? input.sourceContextWindow
+  const maxTokens = declared?.maxTokens ?? input.sourceMaxTokens
+  const metadata = {
+    ...input,
+    catalogModelId: input.catalogModelId ?? null,
+    serviceMetadata,
+    ...(declared
+      ? {
+          displayName: declared.name ?? input.displayName,
+          input: declared.input ? declared.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image') : input.input,
+          reasoning: reasoningOptions !== undefined ? reasoningOptions.some(level => level !== 'off') : input.reasoning,
+          thinkingLevelMap: reasoningOptions !== undefined
+            ? Object.fromEntries(BUDDY_THINKING_LEVELS.map(level => [level, reasoningOptions.includes(level) ? level === 'off' ? 'none' : level : null]))
+            : input.thinkingLevelMap,
+          sourceContextWindow: declared.contextWindow === undefined ? Math.max(contextWindow, maxTokens) : contextWindow,
+          sourceMaxTokens: declared.maxTokens === undefined ? Math.min(maxTokens, contextWindow) : maxTokens,
+        }
+      : {}),
+  }
   return {
     ...metadata,
     sourceFingerprint: createHash('sha256')
@@ -655,4 +699,8 @@ function sourceParametersChanged(
   return !current
     || current.sourceContextWindow !== next.sourceContextWindow
     || current.sourceMaxTokens !== next.sourceMaxTokens
+}
+
+function hasServiceMetadata(model: ProviderModelStateRecord): boolean {
+  return Boolean(model.serviceMetadata && Object.entries(model.serviceMetadata.metadata).some(([key, value]) => key !== 'name' && value !== undefined))
 }

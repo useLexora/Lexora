@@ -24,6 +24,7 @@ import { BUDDY_V23_PROVIDERS_SCHEMA_SQL } from './migrations/v23Providers'
 import { BUDDY_V24_RUN_EVENT_CHECKPOINTS_SCHEMA_SQL } from './migrations/v24RunEventCheckpoints'
 import { BUDDY_V25_MCP_TOOLS_SCHEMA_SQL } from './migrations/v25McpTools'
 import { BUDDY_V26_BUDDIES_SCHEMA_SQL } from './migrations/v26Buddies'
+import { BUDDY_V27_PROVIDER_METADATA_SCHEMA_SQL } from './migrations/v27ProviderMetadata'
 
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
@@ -31,7 +32,7 @@ export interface BuddySchemaMigration {
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 26 as const
+export const BUDDY_SCHEMA_VERSION = 27 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -60,4 +61,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V24_RUN_EVENT_CHECKPOINTS_SCHEMA_SQL, version: 24 },
   { sql: BUDDY_V25_MCP_TOOLS_SCHEMA_SQL, version: 25 },
   { sql: BUDDY_V26_BUDDIES_SCHEMA_SQL, version: 26 },
+  { sql: BUDDY_V27_PROVIDER_METADATA_SCHEMA_SQL, version: 27 },
 ]

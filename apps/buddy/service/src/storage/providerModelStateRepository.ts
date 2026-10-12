@@ -2,8 +2,10 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import type { DatabaseSync } from 'node:sqlite'
 import type { ModelCapabilityOverrides } from '../../../shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
+import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogReferenceSchema } from '../../../shared/providers/providerCatalog'
+import { serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
 
 export type ProviderModelSource = 'builtin' | 'manual' | 'synced'
 
@@ -14,6 +16,7 @@ export interface ProviderModelStateRecord {
   api: string
   catalogProviderId: string | null
   catalogModelId: string | null
+  serviceMetadata?: ServiceModelMetadata | null
   catalogSelection: ModelCatalogReference | null
   capabilityOverrides: ModelCapabilityOverrides | null
   compat: Model<Api>['compat'] | null
@@ -52,6 +55,7 @@ interface ProviderModelStateRow {
   api: string
   catalog_provider_id: string | null
   catalog_model_id: string | null
+  service_metadata_json: string | null
   catalog_selection_json: string | null
   capability_overrides_json: string | null
   compat_json: string | null
@@ -102,8 +106,8 @@ export function createProviderModelStateRepository(
       source_revision, acknowledged_source_revision, source, enabled, available,
       last_seen_at, created_at, updated_at, thinking_level_map_json,
       sampling_params_json, compat_json, catalog_provider_id, source_fingerprint,
-      catalog_model_id, catalog_selection_json, capability_overrides_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      catalog_model_id, catalog_selection_json, capability_overrides_json, service_metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (provider_id, model_id) DO UPDATE SET
       display_name = excluded.display_name,
       api = excluded.api,
@@ -127,6 +131,7 @@ export function createProviderModelStateRepository(
       catalog_model_id = excluded.catalog_model_id,
       catalog_selection_json = excluded.catalog_selection_json,
       capability_overrides_json = excluded.capability_overrides_json,
+      service_metadata_json = excluded.service_metadata_json,
       source_fingerprint = excluded.source_fingerprint,
       updated_at = excluded.updated_at
   `)
@@ -175,6 +180,7 @@ export function createProviderModelStateRepository(
         record.catalogModelId,
         serializeJson(record.catalogSelection),
         serializeJson(record.capabilityOverrides),
+        serializeJson(record.serviceMetadata),
       )
       return requireProviderModelState(find.get(record.providerId, record.modelId))
     },
@@ -196,6 +202,7 @@ function toProviderModelState(row: ProviderModelStateRow): ProviderModelStateRec
     api: row.api,
     catalogProviderId: row.catalog_provider_id,
     catalogModelId: row.catalog_model_id,
+    serviceMetadata: row.service_metadata_json ? serviceModelMetadataSchema.parse(JSON.parse(row.service_metadata_json)) : null,
     catalogSelection: row.catalog_selection_json
       ? modelCatalogReferenceSchema.parse(JSON.parse(row.catalog_selection_json))
       : null,
