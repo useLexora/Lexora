@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
 import { useMessage } from 'naive-ui'
 import { onScopeDispose, shallowRef } from 'vue'
 import { useExtensionContext } from '../extensionContext'
 import { extensionLabels } from '../extensionLabels'
 import { extensionErrorCode } from '../state/useExtensionState'
+import DesktopExtensionIncompatibleReview from './DesktopExtensionIncompatibleReview.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 
 const { state, language } = useExtensionContext()
 const message = useMessage()
 const review = shallowRef<ExtensionReview | null>(null)
+const incompatibleReview = shallowRef<ExtensionIncompatibleReview | null>(null)
 const busy = shallowRef(false)
 function cancel() {
   const current = review.value
@@ -19,7 +22,8 @@ function cancel() {
 }
 onScopeDispose(state.api.onReview((next) => {
   cancel()
-  review.value = next
+  incompatibleReview.value = 'incompatibility' in next ? next : null
+  review.value = 'token' in next ? next : null
 }))
 onScopeDispose(cancel)
 async function install(applyUpdate: boolean) {
@@ -44,4 +48,5 @@ async function install(applyUpdate: boolean) {
 
 <template>
   <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="incompatibleReview = null" />
 </template>

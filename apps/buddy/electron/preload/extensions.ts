@@ -9,6 +9,7 @@ export function createExtensionApi(): ExtensionApi {
     taskActions: () => request({ action: 'taskActions' }),
     invokeTaskAction: input => request({ action: 'invokeTaskAction', input }),
     list: () => request({ action: 'list' }),
+    unavailable: () => request({ action: 'unavailable' }),
     configuration: id => request({ action: 'configuration', id }),
     configurationSnapshot: id => request({ action: 'configurationSnapshot', id }),
     settingConditions: (id, items, form) => request({ action: 'settingConditions', id, items, form }),

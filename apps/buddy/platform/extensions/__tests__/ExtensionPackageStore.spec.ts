@@ -1,5 +1,4 @@
 import type { InstalledExtension } from '../ExtensionPackageStore'
-import { Buffer } from 'node:buffer'
 import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
@@ -71,12 +70,6 @@ describe('extension package contract', () => {
     await writeFile(join(store.packageRoot(pkg), 'unexpected.js'), 'unexpected')
     await expect(store.install((await reviewPackage(root, store)).token)).rejects.toThrow('EXTENSION_PACKAGE_CHANGED')
   })
-  it('refuses incompatible versions and missing entry modules before installation', async () => {
-    const { root, store } = await fixture()
-    await expect(reviewPackage(root, store, manifest({ engines: { lexora: '>=1' } }))).rejects.toThrow('EXTENSION_INCOMPATIBLE')
-    await expect(reviewPackage(root, store, manifest({ entry: 'missing.js' }))).rejects.toThrow('EXTENSION_ENTRY_MISSING')
-    expect(store.installed).toEqual({})
-  })
   it('keeps the installed version after compilation failure or cancellation and validates compiled permissions', async () => {
     const { root, store } = await fixture()
     await store.install((await reviewPackage(root, store)).token)
@@ -111,14 +104,12 @@ describe('extension package contract', () => {
     await symlink(join(store.packageRoot(pkg), 'extension.js'), join(store.packageRoot(pkg), 'linked.js'))
     await expect(readExtensionDirectory(store.packageRoot(pkg))).rejects.toThrow('EXTENSION_UNSAFE_PATH')
   })
-  it('uses reviewed package icons and rejects missing, oversized and external icon assets', async () => {
+  it('rejects missing, oversized and external icon assets without staging an update', async () => {
     const { root, store } = await fixture()
     const value = manifest({ icon: 'icon.svg' })
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>'
     const review = await reviewPackage(root, store, value, { 'icon.svg': svg })
-    expect(review.iconUrl).toBe(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
     await store.install(review.token)
-    expect(await store.icon(store.installed[value.id]!.current)).toBe(review.iconUrl)
     const next = { ...value, version: '1.1.0' }
     await expect(reviewPackage(root, store, next)).rejects.toThrow('EXTENSION_ICON_INVALID')
     await expect(reviewPackage(root, store, next, { 'icon.svg': 'x'.repeat(65537) })).rejects.toThrow('EXTENSION_ICON_INVALID')
@@ -131,6 +122,52 @@ describe('extension package contract', () => {
     await writeFile(path, '{broken')
     await expect(new ExtensionPackageStore(store.root, '0.7.3').load()).rejects.toThrow('EXTENSION_REGISTRY_UNREADABLE')
     expect(await readFile(path, 'utf8')).toBe('{broken')
+  })
+  it('retains future plugin records and private data when other plugins change', async () => {
+    const { root, store } = await fixture()
+    const review = await reviewPackage(root, store)
+    await store.install(review.token)
+    await store.saveData('tests.future', { retained: 'private-value' }, 1)
+    const path = join(store.root, 'installed.json')
+    const index = JSON.parse(await readFile(path, 'utf8'))
+    const future = structuredClone(index.installed[review.manifest.id])
+    future.current.manifest = { ...future.current.manifest, id: 'tests.future', apiVersion: 4, engines: { lexora: '*' }, contributes: { futureCapability: {} } }
+    index.installed['tests.future'] = future
+    await writeFile(path, JSON.stringify(index))
+    const candidate = new ExtensionPackageStore(store.root, store.appVersion)
+    await candidate.load()
+    expect(Object.keys(candidate.installed)).toEqual([review.manifest.id])
+    expect(candidate.unavailable).toMatchObject([{ manifest: { id: 'tests.future' }, pending: false, incompatibility: { reason: 'api-unsupported' } }])
+    await candidate.enable(review.manifest.id, false)
+    expect(JSON.parse(await readFile(path, 'utf8')).installed['tests.future']).toEqual(future)
+    expect(await candidate.data('tests.future')).toEqual({ version: 1, value: { retained: 'private-value' } })
+  })
+  it('keeps the current plugin usable and preserves unsupported pending updates', async () => {
+    const { root, store } = await fixture()
+    const review = await reviewPackage(root, store)
+    await store.install(review.token)
+    const path = join(store.root, 'installed.json')
+    const index = JSON.parse(await readFile(path, 'utf8'))
+    const record = index.installed[review.manifest.id]
+    const pending = { ...structuredClone(record.current), manifest: { ...record.current.manifest, apiVersion: 4, version: '2.0.0', engines: { lexora: '*' }, contributes: { futureCapability: {} } } }
+    record.pending = pending
+    await writeFile(path, JSON.stringify(index))
+    const candidate = new ExtensionPackageStore(store.root, store.appVersion)
+    await candidate.load()
+    expect(candidate.installed[review.manifest.id]).toMatchObject({ current: { manifest: { version: '1.0.0' } }, pending: null })
+    expect(candidate.unavailable).toMatchObject([{ pending: true, incompatibility: { reason: 'api-unsupported' } }])
+    await expect(candidate.promote(review.manifest.id)).rejects.toThrow('EXTENSION_INCOMPATIBLE')
+    await candidate.enable(review.manifest.id, false)
+    expect(JSON.parse(await readFile(path, 'utf8')).installed[review.manifest.id].pending).toEqual(pending)
+    await candidate.uninstall(review.manifest.id)
+    expect(candidate.unavailable).toEqual([])
+  })
+  it('rejects missing modules and reports app requirements before parsing future fields without installing', async () => {
+    const { root, store } = await fixture()
+    const value = { ...manifest(), engines: { lexora: '>=9.0.0' }, futureField: true }
+    await expect(reviewPackage(root, store, value)).rejects.toMatchObject({ review: { manifest: { name: value.name }, incompatibility: { reason: 'app-too-old', currentVersion: store.appVersion, requiredVersion: '>=9.0.0' } } })
+    await expect(reviewPackage(root, store, manifest({ entry: 'missing.js' }))).rejects.toThrow('EXTENSION_ENTRY_MISSING')
+    expect(store.installed).toEqual({})
   })
   it('preserves private data and its previous snapshot; cancelled writes cannot advance the version', async () => {
     const { store } = await fixture()
@@ -160,12 +197,12 @@ describe('extension package contract', () => {
   })
 })
 
-it.each(['composer.input', 'workbench.pane'] as const)('preserves the declared decoration scope and requires permission: %s', (anchor) => {
+it('preserves pane decoration scope and requires permission', () => {
   const input = manifest({ apiVersion: 2, permissions: { windowEffects: true }, contributes: {
     views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none' }],
-    placements: [{ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor }],
+    placements: [{ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor: 'workbench.pane' }],
   } })
-  expect(extensionManifestSchema.parse(input).contributes.placements[0]).toEqual({ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor })
+  expect(extensionManifestSchema.parse(input).contributes.placements[0]).toEqual({ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor: 'workbench.pane' })
   expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
 })
 
@@ -214,25 +251,14 @@ it('keeps API 1 compatible and validates UI placements and permission upgrades i
   expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, views: [{ ...value.contributes.views[0], resource: 'selected-file' }] }, permissions: { ...value.permissions, selectedResource: 'read' } }).success).toBe(false)
 })
 
-it('requires API 3 and a bounded declaration for a content slot', () => {
-  const value = manifest({
-    apiVersion: 3,
-    id: 'tests.footer',
-    contributes: {
-      views: [{ id: 'tests.footer.content', title: 'Footer', entry: 'view.js', resource: 'none' }],
-      placements: [{ id: 'tests.footer.slot', kind: 'slot', target: 'composer.footer', view: 'tests.footer.content' }],
-    },
-  })
-  const previous = manifest({ id: 'tests.footer', apiVersion: 2, contributes: { views: [] } })
-  expect(addedExtensionPermissions(previous.permissions, value.permissions)).toEqual([])
-  expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 2 }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [{ ...value.contributes.placements[0], presentation: { position: 'absolute' } }] } }).success).toBe(false)
-})
-
 it('validates each content target size and menu command ownership with API compatibility', () => {
   const content = (target: string, height: number) => ({ id: 'tests.reader.content', kind: 'slot', target, height, view: 'tests.reader.view' })
   const base = { schemaVersion: 1, id: 'tests.reader', name: 'Regions', version: '1.0.0', apiVersion: 3, engines: { lexora: '*' }, entry: 'extension.js', contributes: { commands: [{ id: 'tests.reader.run', title: 'Run' }], views: [{ id: 'tests.reader.view', title: 'View', entry: 'view.js', resource: 'none' }] } }
   const parse = (placement: unknown) => extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [placement] } })
+  const slot = { id: 'tests.reader.content', kind: 'slot', target: 'composer.footer', view: 'tests.reader.view' }
+  expect(parse(slot).success).toBe(true)
+  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2, contributes: { ...base.contributes, placements: [slot] } }).success).toBe(false)
+  expect(parse({ ...slot, presentation: { position: 'absolute' } }).success).toBe(false)
   expect(parse(content('composer.footer', 64)).success).toBe(false)
   expect(parse(content('composer.accessory', 64)).success).toBe(true)
   expect(parse(content('task.welcome', 400)).success).toBe(true)

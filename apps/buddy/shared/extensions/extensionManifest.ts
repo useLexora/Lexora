@@ -74,9 +74,8 @@ export const extensionPermissionsSchema = z.object({
     return url.protocol === 'https:' && url.origin === value && !url.username && !url.password
   }, 'Expected an HTTPS origin')).max(16).default([]),
 }).strict()
-export const extensionManifestSchema = z.object({
-  schemaVersion: z.literal(1),
-  format: z.enum(['compiled', 'source']).default('compiled'),
+export const extensionMetadataSchema = z.object({
+  schemaVersion: z.number().int().positive(),
   id: extensionIdSchema,
   name: z.string().min(1).max(100),
   author: extensionAuthorSchema.optional(),
@@ -85,8 +84,15 @@ export const extensionManifestSchema = z.object({
   categories: z.array(z.string().min(1).max(40)).max(8).default([]),
   tags: z.array(z.string().min(1).max(40)).max(16).default([]),
   version: extensionVersionSchema,
-  apiVersion: z.union([z.literal(1), z.literal(2), z.literal(EXTENSION_API_VERSION)]),
+  apiVersion: z.number().int().positive(),
   engines: z.object({ lexora: z.string().max(100).refine(value => validRange(value) !== null) }).strict(),
+})
+export type ExtensionMetadata = z.infer<typeof extensionMetadataSchema>
+
+export const extensionManifestSchema = extensionMetadataSchema.extend({
+  schemaVersion: z.literal(1),
+  format: z.enum(['compiled', 'source']).default('compiled'),
+  apiVersion: z.union([z.literal(1), z.literal(2), z.literal(EXTENSION_API_VERSION)]),
   entry: extensionPathSchema.optional(),
   styles: z.object({
     uno: z.literal(true),

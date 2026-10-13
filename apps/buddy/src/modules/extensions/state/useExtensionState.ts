@@ -1,14 +1,16 @@
 import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
-import type { ExtensionApi, ExtensionReview, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionApi, ExtensionReview, ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 
 export function useExtensionState(api: ExtensionApi) {
   const taskActions = shallowRef<ExtensionTaskAction[]>([])
   const installed = shallowRef<ExtensionStatus[]>([])
+  const unavailable = shallowRef<ExtensionUnavailableInstallation[]>([])
+  const unavailableError = shallowRef('')
   const installedError = shallowRef('')
   const installationsError = shallowRef('')
-  const error = computed(() => installedError.value || installationsError.value)
+  const error = computed(() => installedError.value || unavailableError.value || installationsError.value)
   const installations = shallowRef<ExtensionInstallation[]>([])
   let revision = 0
   let disposed = false
@@ -16,6 +18,15 @@ export function useExtensionState(api: ExtensionApi) {
     const current = ++revision
     const currentResult = () => !disposed && current === revision
     await Promise.all([
+      api.unavailable().then((items) => {
+        if (currentResult()) {
+          unavailable.value = items
+          unavailableError.value = ''
+        }
+      }).catch((reason) => {
+        if (currentResult())
+          unavailableError.value = extensionErrorCode(reason)
+      }),
       api.taskActions().then((items) => {
         if (currentResult())
           taskActions.value = items
@@ -53,7 +64,7 @@ export function useExtensionState(api: ExtensionApi) {
     if (review.currentVersion && applyUpdate)
       await api.applyUpdate(review.manifest.id)
   }
-  return { api, taskActions, installed, installations, error, refresh, install }
+  return { api, taskActions, installed, unavailable, installations, error, refresh, install }
 }
 
 export function extensionErrorCode(reason: unknown): string {

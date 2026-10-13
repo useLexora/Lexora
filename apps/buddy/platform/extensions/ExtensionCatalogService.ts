@@ -1,9 +1,9 @@
-import type { ExtensionCatalogEntry, ExtensionCatalogSnapshot } from '../../shared/extensions/extensionCatalog'
+import type { ExtensionCatalogEntry, ExtensionCatalogListing, ExtensionCatalogSnapshot } from '../../shared/extensions/extensionCatalog'
 import { join } from 'node:path'
 import { rcompare } from 'semver'
 import { z } from 'zod'
-import { EXTENSION_CATALOG_URL, extensionCatalogSchema } from '../../shared/extensions/extensionCatalog'
-import { extensionCompatible } from '../../shared/extensions/extensionManifest'
+import { EXTENSION_CATALOG_URL, extensionCatalogEntrySchema, extensionCatalogListingSchema, extensionCatalogSchema } from '../../shared/extensions/extensionCatalog'
+import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { readExtensionJson, sha256, writeExtensionJson } from './extensionFiles'
 
@@ -36,9 +36,22 @@ export class ExtensionCatalogService {
 
   async download(id: string, version: string, signal: AbortSignal): Promise<{ entry: ExtensionCatalogEntry, bytes: Uint8Array }> {
     await this.list()
-    const entry = this.#cache?.catalog.plugins.find(item => item.manifest.id === id && item.manifest.version === version)
-    if (!entry || !extensionCompatible(entry.manifest, this.#version))
+    if (this.#snapshot(false, null).plugins.find(item => item.manifest.id === id)?.manifest.version !== version)
       throw new Error('EXTENSION_CATALOG_ENTRY_UNAVAILABLE')
+    const raw = this.#cache?.catalog.plugins.find((item) => {
+      const parsed = extensionCatalogListingSchema.safeParse(item)
+      return parsed.success && parsed.data.manifest.id === id && parsed.data.manifest.version === version
+    })
+    if (!raw)
+      throw new Error('EXTENSION_CATALOG_ENTRY_UNAVAILABLE')
+    const listing = extensionCatalogListingSchema.parse(raw)
+    const issue = extensionCompatibilityIssue(listing.manifest, this.#version)
+    if (issue)
+      throw new ExtensionCompatibilityError(listing.manifest, issue)
+    const parsed = extensionCatalogEntrySchema.safeParse(raw)
+    if (!parsed.success)
+      throw new Error('EXTENSION_MANIFEST_INVALID')
+    const entry = parsed.data
     const bytes = await this.#fetch(entry.artifact.url, entry.artifact.size, signal)
     if (bytes.byteLength !== entry.artifact.size || sha256(bytes) !== entry.artifact.sha256)
       throw new Error('EXTENSION_DOWNLOAD_CHECKSUM_FAILED')
@@ -64,14 +77,24 @@ export class ExtensionCatalogService {
   }
 
   #snapshot(stale: boolean, error: string | null): ExtensionCatalogSnapshot {
-    const selected = new Map<string, ExtensionCatalogEntry & { compatible: boolean }>()
-    for (const entry of [...this.#cache?.catalog.plugins ?? []].sort((a, b) => rcompare(a.manifest.version, b.manifest.version))) {
-      const compatible = extensionCompatible(entry.manifest, this.#version)
+    const selected = new Map<string, ExtensionCatalogListing>()
+    let invalidEntries = 0
+    const entries = (this.#cache?.catalog.plugins ?? []).flatMap((raw) => {
+      const parsed = extensionCatalogListingSchema.safeParse(raw)
+      if (!parsed.success) {
+        invalidEntries++
+        return []
+      }
+      return [{ raw, entry: parsed.data }]
+    })
+    for (const { raw, entry } of entries.sort((a, b) => rcompare(a.entry.manifest.version, b.entry.manifest.version))) {
+      const incompatibility = extensionCompatibilityIssue(entry.manifest, this.#version) ?? (extensionCatalogEntrySchema.safeParse(raw).success ? null : { reason: 'manifest-invalid' as const, currentVersion: this.#version, requiredVersion: entry.manifest.engines.lexora, requiredApiVersion: entry.manifest.apiVersion })
+      const compatible = !incompatibility
       const previous = selected.get(entry.manifest.id)
-      if (!previous || (!previous.compatible && compatible))
-        selected.set(entry.manifest.id, { ...entry, compatible })
+      if (!previous)
+        selected.set(entry.manifest.id, { ...entry, compatible, incompatibility })
     }
-    return { plugins: [...selected.values()], cachedAt: this.#cache?.cachedAt ?? null, stale, error }
+    return { plugins: [...selected.values()], invalidEntries, cachedAt: this.#cache?.cachedAt ?? null, stale, error }
   }
 
   async #fetch(raw: string, limit: number, signal: AbortSignal): Promise<Uint8Array> {

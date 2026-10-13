@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { deferred } from '@buddy-tests/deferred'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
@@ -15,13 +16,6 @@ const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const action of cleanup.splice(0).reverse()) await action()
 })
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((yes) => {
-    resolve = yes
-  })
-  return { promise, resolve }
-}
 async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialManifest = manifest()) {
   const { root, store } = await createStore()
   cleanup.push(() => rm(root, { recursive: true, force: true }))
@@ -190,7 +184,7 @@ it('binds every view to its token and resource, and acknowledges only persisted 
   await expect(service.viewRequest(second.id, second.generation, second.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
-it('keeps pending versions and permissions inactive across restarts until the update is applied', async () => {
+it('keeps pending versions and permissions inactive across restarts and incompatible updates until applied', async () => {
   const get = vi.fn(async () => new Response('allowed'))
   const { root, store, service, hosts } = await fixture({ get })
   await service.execute('tests.reader', 'tests.reader.open', null)
@@ -206,6 +200,14 @@ it('keeps pending versions and permissions inactive across restarts until the up
   expect(hosts[0]!.disposed).toBe(true)
   await expect(hosts[0]!.broker('storage.get', {})).rejects.toThrow('EXTENSION_HOST_STOPPED')
   await expect(hosts[1]!.broker('network.get', { url: 'https://example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  const generation = (await service.list())[0]!.generation
+  const pending = store.installed['tests.reader']!.pending!
+  const range = pending.manifest.engines.lexora
+  pending.manifest.engines.lexora = '>=9.0.0'
+  await expect(service.applyUpdate('tests.reader')).rejects.toMatchObject({ review: { incompatibility: { reason: 'app-too-old' } } })
+  await service.execute('tests.reader', 'tests.reader.open', null)
+  expect((await service.list())[0]).toMatchObject({ state: 'active', generation, manifest: { version: '1.0.0' }, pending: { manifest: { version: '1.1.0' }, incompatibility: { reason: 'app-too-old' } } })
+  pending.manifest.engines.lexora = range
   await service.applyUpdate('tests.reader')
   expect((await service.list())[0]).toMatchObject({ manifest: { version: '1.1.0' }, pending: null })
   expect(hosts[1]!.disposed).toBe(true)

@@ -13,6 +13,7 @@ async function writePackage(directory, version, accent) {
     id,
     name: '更新验收插件',
     description: '验证更新生效与配置保留。',
+    tags: ['主题', '效率'],
     version,
     apiVersion: 3,
     engines: { lexora: '*' },
@@ -42,15 +43,17 @@ test('plugin updates apply separately from restart and preserve preferences and 
     await page.getByTestId('extension-install-options').click()
     await page.getByTestId('extension-install').click()
     if (version !== '1.0.0') {
-      const checkbox = page.getByRole('checkbox', { name: '安装完成后立即应用更新' })
+      const checkbox = page.getByRole('checkbox', { name: '安装完成后立即切换插件版本' })
       await expect(checkbox).toBeChecked()
       await checkbox.setChecked(apply)
-      await expect(page.getByTestId('extension-confirm-install')).toHaveText(apply ? '更新并应用' : '安装更新')
+      await expect(page.getByTestId('extension-confirm-install')).toHaveText(apply ? '安装并切换版本' : '安装新版本')
     }
     await page.getByTestId('extension-confirm-install').click()
-    await expect.poll(status).toMatchObject(apply ? { manifest: { version }, pending: null } : { pending: { manifest: { version } } })
+    await expect.poll(status).toMatchObject(apply ? { manifest: { version, tags: ['主题', '效率'] }, pending: null } : { pending: { manifest: { version, tags: ['主题', '效率'] } } })
   }
   await install('1.0.0', '#506a8f')
+  await expect(card().getByTestId('extension-tags')).toContainText('主题')
+  await expect(card().getByTestId('extension-tags')).toContainText('效率')
   await page.evaluate(async ({ id, themeId }) => {
     await window.lexoraDesktop.extensions.configure(id, { preference: 'retain-this-value' })
     await window.lexoraDesktop.themes.request({ action: 'preference', preference: { id: themeId } })
@@ -60,9 +63,9 @@ test('plugin updates apply separately from restart and preserve preferences and 
   expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), id)).toEqual({ preference: 'retain-this-value' })
   await install('1.0.2', '#7654a4', false)
   await expect(card().getByTestId('extension-apply-update')).toBeVisible()
-  await expect(card()).toContainText('新版本已就绪')
+  await expect(card().getByTestId('extension-apply-update')).toHaveText('更新')
   await card().getByTestId('extension-card-more').click()
-  await expect(page.getByTestId('extension-apply-update-menu')).toHaveText('应用更新')
+  await expect(page.getByTestId('extension-apply-update-menu')).toHaveText('更新')
   await expect(page.getByTestId('extension-restart')).toHaveText('重启插件')
   await page.screenshot({ path: path.join(instance.artifactDirectory, 'update-and-restart-menu.png'), animations: 'disabled' })
   await page.getByTestId('extension-restart').click()
@@ -89,7 +92,7 @@ test('plugin updates apply separately from restart and preserve preferences and 
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   await instance.stop()
   ;({ app, page, diagnostics } = await instance.launch())
-  expect(await status()).toMatchObject({ manifest: { version: '1.0.4' }, pending: null, enabled: false })
+  expect(await status()).toMatchObject({ manifest: { version: '1.0.4', tags: ['主题', '效率'] }, pending: null, enabled: false })
   expect(await page.evaluate(id => window.lexoraDesktop.extensions.configuration(id), id)).toEqual({ preference: 'retain-this-value' })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

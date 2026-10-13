@@ -21,6 +21,7 @@ import { extensionAgentInvocationLimits, extensionAgentRequestSchema } from '../
 import { extensionAgentCapabilities } from '../../shared/extensions/extensionAgentCapabilities'
 import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
+import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
@@ -201,15 +202,18 @@ export class ExtensionService {
       const diagnostics = this.#diagnostics.get(id) ?? { error: null, activationMs: null, logs: [] }
       const running = this.#running.get(id)
       let blocked: string | null = null
+      let incompatibility = extensionCompatibilityIssue(record.current.manifest, this.store.appVersion)
       if (record.enabled) {
         try {
           this.#order(id)
         }
         catch (error) {
           blocked = extensionError(error)
+          if (error instanceof ExtensionCompatibilityError)
+            incompatibility = error.review.incompatibility
         }
       }
-      return { source: record.current.source ?? undefined, manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
+      return { source: record.current.source ?? undefined, manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), incompatibility, pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision, incompatibility: extensionCompatibilityIssue(record.pending.manifest, this.store.appVersion) } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
     }))
   }
 
@@ -526,6 +530,9 @@ export class ExtensionService {
         throw new Error('EXTENSION_NOT_INSTALLED')
       if (!installed.pending)
         throw new Error('EXTENSION_UPDATE_UNAVAILABLE')
+      const incompatibility = extensionCompatibilityIssue(installed.pending.manifest, this.store.appVersion)
+      if (incompatibility)
+        throw new ExtensionCompatibilityError(installed.pending.manifest, incompatibility)
       await this.#stopClosure(id)
       await this.store.promote(id)
       this.#publish({ kind: 'package', action: 'promoted', extensionId: id, packageRevision: this.store.installed[id]!.current.revision })
@@ -1024,8 +1031,12 @@ export class ExtensionService {
     const order = extensionActivationOrder(this.store.installed, id)
     if (order.some(next => next !== id && this.#diagnostics.get(next)?.error))
       throw new Error('EXTENSION_DEPENDENCY_FAILED')
-    if (order.some(next => !extensionCompatible(this.store.installed[next]!.current.manifest, this.store.appVersion)))
-      throw new Error('EXTENSION_INCOMPATIBLE')
+    for (const next of order) {
+      const manifest = this.store.installed[next]!.current.manifest
+      const issue = extensionCompatibilityIssue(manifest, this.store.appVersion)
+      if (issue)
+        throw new ExtensionCompatibilityError(manifest, issue)
+    }
     return order
   }
 

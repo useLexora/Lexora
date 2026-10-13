@@ -3,7 +3,7 @@ import type { ThemeService } from '../../../platform/themes/ThemeService'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
 import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
-import type { ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
+import type { ExtensionReview, ExtensionReviewResult, ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { ExtensionConditionRuntime } from '../../../shared/extensions/extensionConditionContext'
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
@@ -17,6 +17,7 @@ import { observeExtensionDiagnostics } from '../../../platform/extensions/observ
 import { seedBundledThemes } from '../../../platform/themes/bundledThemes'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../../shared/extensions/extensionApi'
+import { ExtensionCompatibilityError } from '../../../shared/extensions/extensionCompatibility'
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
 import { ExtensionProtocol } from './ExtensionProtocol'
@@ -39,6 +40,16 @@ export function registerExtensionIpc(options: {
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
 }): { themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
+  async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
+    try {
+      return await operation()
+    }
+    catch (error) {
+      if (error instanceof ExtensionCompatibilityError)
+        return error.review
+      throw error
+    }
+  }
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
   const hosts = new Set<SandboxedExtensionHost>()
@@ -207,20 +218,21 @@ export function registerExtensionIpc(options: {
         case 'taskActions': return await options.taskActions()
         case 'invokeTaskAction': return await options.invokeTaskAction(input.input)
         case 'list': return await service.list()
+        case 'unavailable': return store.unavailable
         case 'configuration': return await service.configuration(input.id)
         case 'configurationSnapshot': return await service.configurationSnapshot(input.id)
         case 'settingConditions': return await service.conditions.settings(input.id, input.items, input.form)
         case 'configure': return await service.configure(input.id, input.patch)
         case 'installations': return service.installations.list()
         case 'catalog': return service.catalog.list(input.refresh)
-        case 'reviewCatalog': return service.reviewCatalog(input.id, input.version)
+        case 'reviewCatalog': return reviewResult(() => service.reviewCatalog(input.id, input.version))
         case 'cancelInstallation': return service.installations.cancel(input.id)
         case 'selectPackage': {
           const owner = window()
           if (!owner)
             throw new Error('EXTENSION_WINDOW_UNAVAILABLE')
           const result = await dialog.showOpenDialog(owner, { properties: input.development ? ['openDirectory'] : ['openFile'], ...(input.development ? {} : { filters: [{ name: 'Lexora Extension', extensions: ['lexora-extension', 'zip'] }] }) })
-          return result.canceled || !result.filePaths[0] ? null : await service.review(result.filePaths[0], input.development)
+          return result.canceled || !result.filePaths[0] ? null : await reviewResult(() => service.review(result.filePaths[0]!, input.development))
         }
         case 'install': return await service.install(input.token)
         case 'cancelInstall': return service.cancelInstall(input.token)
@@ -314,10 +326,11 @@ export function registerExtensionIpc(options: {
     },
     async reviewPackage(path: string) {
       await prepared
-      const review = await service.review(path, false)
+      const review = await reviewResult(() => service.review(path, false))
       const current = window()
       if (!current || current.isDestroyed()) {
-        service.cancelInstall(review.token)
+        if ('token' in review)
+          service.cancelInstall(review.token)
         return
       }
       current.webContents.send(EXTENSION_IPC.review, review)

@@ -10,7 +10,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { gt, satisfies } from 'semver'
 import { z } from 'zod'
 import { extensionResourceSchema } from '../../shared/extensions/extensionApi'
-import { addedExtensionPermissions, extensionCompatible, extensionIdSchema, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
+import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
+import { addedExtensionPermissions, extensionIdSchema, extensionManifestSchema, extensionMetadataSchema } from '../../shared/extensions/extensionManifest'
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
@@ -24,6 +25,9 @@ const sourceSchema = z.object({ catalog: z.string().url(), artifact: z.string().
 const packageSchema = z.object({ manifest: extensionManifestSchema, revision: revisionSchema, hashes: z.record(z.string(), revisionSchema), source: sourceSchema.nullable().default(null) }).strict()
 const recordSchema = z.object({ current: packageSchema, pending: packageSchema.nullable(), enabled: z.boolean(), development: z.boolean() }).strict()
 const indexSchema = z.object({ version: z.literal(1), installed: z.record(extensionIdSchema, recordSchema) }).strict()
+const storedPackageSchema = packageSchema.extend({ manifest: z.unknown() })
+const storedRecordSchema = recordSchema.extend({ current: storedPackageSchema, pending: storedPackageSchema.nullable() })
+const storedIndexSchema = indexSchema.extend({ installed: z.record(extensionIdSchema, storedRecordSchema) })
 const grantSchema = z.object({ resource: extensionResourceSchema, target: spaceFileTargetSchema }).strict()
 export type ExtensionPackage = z.infer<typeof packageSchema>
 export type InstalledExtension = z.infer<typeof recordSchema>
@@ -47,6 +51,8 @@ export class ExtensionPackageStore {
   readonly #candidates = new Map<string, ExtensionCandidate>()
   readonly #icons = new Map<string, { revision: string, url: Promise<string | undefined> }>()
   #index: z.infer<typeof indexSchema> = { version: 1, installed: {} }
+  readonly #unavailable = new Map<string, { record: z.infer<typeof storedRecordSchema>, error: ExtensionCompatibilityError }>()
+  readonly #unavailablePending = new Map<string, { package: z.infer<typeof storedPackageSchema>, error: ExtensionCompatibilityError }>()
   #tail = Promise.resolve()
   readonly #dataWrites = new Map<string, Promise<unknown>>()
   #loaded = false
@@ -62,9 +68,35 @@ export class ExtensionPackageStore {
       return
     await mkdir(this.root, { recursive: true, mode: 0o700 })
     try {
-      this.#index = indexSchema.parse(await readExtensionJson(join(this.root, 'installed.json')))
+      const stored = storedIndexSchema.parse(await readExtensionJson(join(this.root, 'installed.json')))
+      const installed: Record<string, InstalledExtension> = {}
+      for (const [id, record] of Object.entries(stored.installed)) {
+        const currentMetadata = extensionMetadataSchema.parse(record.current.manifest)
+        const pendingMetadata = record.pending ? extensionMetadataSchema.parse(record.pending.manifest) : null
+        if (currentMetadata.id !== id || (pendingMetadata && pendingMetadata.id !== id))
+          throw new Error('EXTENSION_REGISTRY_UNREADABLE')
+        const current = packageSchema.safeParse(record.current)
+        if (!current.success) {
+          const issue = extensionCompatibilityIssue(currentMetadata, this.appVersion)
+          if (!issue)
+            throw current.error
+          this.#unavailable.set(id, { record, error: new ExtensionCompatibilityError(currentMetadata, issue) })
+          continue
+        }
+        const pending = record.pending ? packageSchema.safeParse(record.pending) : null
+        if (pending && !pending.success) {
+          const issue = extensionCompatibilityIssue(pendingMetadata!, this.appVersion)
+          if (!issue)
+            throw pending.error
+          this.#unavailablePending.set(id, { package: record.pending!, error: new ExtensionCompatibilityError(pendingMetadata!, issue) })
+        }
+        installed[id] = { ...record, current: current.data, pending: pending?.success ? pending.data : null }
+      }
+      this.#index = { version: 1, installed }
     }
     catch (error) {
+      this.#unavailable.clear()
+      this.#unavailablePending.clear()
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
         throw new Error('EXTENSION_REGISTRY_UNREADABLE', { cause: error })
     }
@@ -77,6 +109,13 @@ export class ExtensionPackageStore {
 
   get installed(): Readonly<Record<string, InstalledExtension>> {
     return this.#index.installed
+  }
+
+  get unavailable() {
+    return [
+      ...[...this.#unavailable.values()].map(item => ({ ...item.error.review, pending: false })),
+      ...[...this.#unavailablePending.values()].map(item => ({ ...item.error.review, pending: true })),
+    ]
   }
 
   async review(path: string, development = false) {
@@ -95,13 +134,18 @@ export class ExtensionPackageStore {
       throw new Error('EXTENSION_REVIEW_LIMIT')
     let manifest: ExtensionManifest
     try {
-      manifest = extensionManifestSchema.parse(JSON.parse(Buffer.from(files.get('extension.json') ?? []).toString('utf8')))
+      const raw = JSON.parse(Buffer.from(files.get('extension.json') ?? []).toString('utf8'))
+      const metadata = extensionMetadataSchema.parse(raw)
+      const issue = extensionCompatibilityIssue(metadata, this.appVersion)
+      if (issue)
+        throw new ExtensionCompatibilityError(metadata, issue)
+      manifest = extensionManifestSchema.parse(raw)
     }
-    catch {
+    catch (error) {
+      if (error instanceof ExtensionCompatibilityError)
+        throw error
       throw new Error('EXTENSION_MANIFEST_INVALID')
     }
-    if (!extensionCompatible(manifest, this.appVersion))
-      throw new Error('EXTENSION_INCOMPATIBLE')
     for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)]) {
       if (entry && (!files.has(entry) || !(manifest.format === 'source' ? /\.m?[jt]s$/.test(entry) : /\.m?js$/.test(entry))))
         throw new Error('EXTENSION_ENTRY_MISSING')
@@ -110,6 +154,9 @@ export class ExtensionPackageStore {
       throw new Error('EXTENSION_STYLES_MISSING')
     validateThemeFiles(files, manifest.contributes.themes)
     const current = this.installed[manifest.id]
+    const unavailable = this.#unavailable.get(manifest.id) ?? this.#unavailablePending.get(manifest.id)
+    if (unavailable)
+      throw unavailable.error
     if (current && !development && !gt(manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
     const hashes = Object.fromEntries([...files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
@@ -216,11 +263,17 @@ export class ExtensionPackageStore {
   }
 
   async promote(id: string): Promise<void> {
+    const pending = this.#unavailablePending.get(id)
+    if (pending)
+      throw pending.error
     await this.#update((index) => {
       const record = index.installed[id]
       if (!record)
         throw new Error('EXTENSION_NOT_INSTALLED')
       if (record.pending) {
+        const issue = extensionCompatibilityIssue(record.pending.manifest, this.appVersion)
+        if (issue)
+          throw new ExtensionCompatibilityError(record.pending.manifest, issue)
         record.current = record.pending
         record.pending = null
       }
@@ -359,10 +412,21 @@ export class ExtensionPackageStore {
         throw new Error('EXTENSION_REGISTRY_UNREADABLE')
       const next = structuredClone(this.#index)
       change(next)
-      if (Buffer.byteLength(JSON.stringify(next)) > 4 * 1024 * 1024)
+      const stored = {
+        version: 1,
+        installed: {
+          ...Object.fromEntries([...this.#unavailable].map(([id, item]) => [id, item.record])),
+          ...Object.fromEntries(Object.entries(next.installed).map(([id, record]) => [id, { ...record, pending: this.#unavailablePending.get(id)?.package ?? record.pending }])),
+        },
+      }
+      if (Buffer.byteLength(JSON.stringify(stored)) > 4 * 1024 * 1024)
         throw new Error('EXTENSION_REGISTRY_LIMIT')
-      await writeExtensionJson(join(this.root, 'installed.json'), next, assertCurrent)
+      await writeExtensionJson(join(this.root, 'installed.json'), stored, assertCurrent)
       this.#index = next
+      for (const id of this.#unavailablePending.keys()) {
+        if (!next.installed[id])
+          this.#unavailablePending.delete(id)
+      }
     })
     this.#tail = operation
     return operation

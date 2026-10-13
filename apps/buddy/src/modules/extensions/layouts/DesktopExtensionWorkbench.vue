@@ -12,8 +12,8 @@ defineSlots<{
 const section = defineModel<'marketplace' | 'installed'>('section', { required: true })
 const labels = computed(() => extensionLabels(props.language))
 const sections = computed(() => [
-  { label: labels.value.marketplace, value: 'marketplace' },
   { label: labels.value.installed, value: 'installed' },
+  { label: labels.value.marketplace, value: 'marketplace' },
 ] as const)
 </script>
 

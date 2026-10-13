@@ -3,6 +3,7 @@ import type { JsonValue } from '../workbench/workbenchState'
 import type { ControlProposal, WorkbenchPresentation } from '../workbench/workbenchUi'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from './extensionActionApi'
 import type { ExtensionCatalogSnapshot } from './extensionCatalog'
+import type { ExtensionCompatibilityIssue, ExtensionIncompatibleReview } from './extensionCompatibility'
 import type { ExtensionConditionsChanged, ExtensionConditionState } from './extensionConditions'
 import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
@@ -74,7 +75,8 @@ export interface ExtensionStatus {
   enabled: boolean
   development: boolean
   compatible: boolean
-  pending: { manifest: ExtensionManifest, revision: string } | null
+  incompatibility?: ExtensionCompatibilityIssue | null
+  pending: { manifest: ExtensionManifest, revision: string, incompatibility?: ExtensionCompatibilityIssue | null } | null
   state: 'disabled' | 'inactive' | 'activating' | 'active' | 'failed' | 'blocked'
   generation: string | null
   error: string | null
@@ -92,6 +94,8 @@ export interface ExtensionReview {
   currentVersion: string | null
   addedPermissions: string[]
 }
+export type ExtensionReviewResult = ExtensionReview | ExtensionIncompatibleReview
+export type ExtensionUnavailableInstallation = ExtensionIncompatibleReview & { pending: boolean }
 export type ExtensionWorkbenchEvent
   = | { kind: 'cancel', requestId: string }
     | { kind: 'clear-data', requestId: string, extensionId: string }
@@ -107,6 +111,7 @@ export type ExtensionWorkbenchEvent
 
 export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
+  z.object({ action: z.literal('unavailable') }).strict(),
   z.object({ action: z.literal('configuration'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('configurationSnapshot'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('settingConditions'), id: extensionIdSchema, items: z.array(z.string().max(180)).max(64), form: extensionConfigurationSchema.optional() }).strict(),
@@ -145,14 +150,15 @@ export interface ExtensionApi {
   taskActions: () => Promise<ExtensionTaskAction[]>
   invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
   list: () => Promise<ExtensionStatus[]>
+  unavailable: () => Promise<ExtensionUnavailableInstallation[]>
   configuration: (id: string) => Promise<ExtensionConfiguration>
   configurationSnapshot: (id: string) => Promise<ExtensionConfigurationSnapshot>
   configure: (id: string, patch: ExtensionConfiguration) => Promise<void>
   installations: () => Promise<ExtensionInstallation[]>
   catalog: (refresh?: boolean) => Promise<ExtensionCatalogSnapshot>
-  reviewCatalog: (id: string, version: string) => Promise<ExtensionReview>
+  reviewCatalog: (id: string, version: string) => Promise<ExtensionReviewResult>
   cancelInstallation: (id: string) => Promise<void>
-  selectPackage: (development?: boolean) => Promise<ExtensionReview | null>
+  selectPackage: (development?: boolean) => Promise<ExtensionReviewResult | null>
   install: (token: string) => Promise<void>
   cancelInstall: (token: string) => Promise<void>
   enable: (id: string, enabled: boolean) => Promise<void>
@@ -170,7 +176,7 @@ export interface ExtensionApi {
   closeView: (viewId: string, generation: string, token: string) => Promise<void>
   viewRequest: (viewId: string, generation: string, token: string, method: string, params: JsonValue) => Promise<JsonValue>
   onChanged: (listener: () => void) => () => void
-  onReview: (listener: (review: ExtensionReview) => void) => () => void
+  onReview: (listener: (review: ExtensionReviewResult) => void) => () => void
   onWorkbench: (listener: (event: ExtensionWorkbenchEvent) => void) => () => void
   replyWorkbench: (requestId: string, viewId: string | null) => void
 }

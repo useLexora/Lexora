@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ExtensionReview, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionReview, ExtensionReviewResult, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
 import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
 import { NAlert, NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
@@ -13,12 +14,16 @@ import { extensionErrorCode } from '../state/useExtensionState'
 import DesktopExtensionAuthoringSettings from './DesktopExtensionAuthoringSettings.vue'
 import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
+import DesktopExtensionIncompatibleReview from './DesktopExtensionIncompatibleReview.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
+import DesktopExtensionUnavailableCard from './DesktopExtensionUnavailableCard.vue'
 import DesktopExtensionUninstallDialog from './DesktopExtensionUninstallDialog.vue'
 
 const { state, language, startCreation, authoring, settingsLocation } = useExtensionContext()
-const { installed } = state
+const { installed, unavailable } = state
+const unavailableCurrent = computed(() => unavailable.value.filter(item => !item.pending))
+const unavailablePending = computed(() => new Map(unavailable.value.filter(item => item.pending).map(item => [item.manifest.id, item])))
 const labels = computed(() => extensionLabels(language.value))
 const section = shallowRef<'marketplace' | 'installed'>('installed')
 const toolbarActions = computed(() => [{ key: 'author', label: language.value === 'en-US' ? 'Author signature' : '作者署名', props: { 'role': 'menuitem', 'data-testid': 'extension-author-settings' } }, { key: 'history', label: language.value === 'en-US' ? 'Installation log' : '安装记录', props: { 'role': 'menuitem', 'data-testid': 'extension-installation-history' } }])
@@ -29,6 +34,7 @@ const acquisitionActions = computed(() => [
 const acquisitionMenuOpen = shallowRef(false)
 const busy = shallowRef(false)
 const review = shallowRef<ExtensionReview | null>(null)
+const incompatibleReview = shallowRef<ExtensionIncompatibleReview | null>(null)
 const diagnostics = shallowRef<string | null>(null)
 const installationLog = shallowRef(false)
 const authorSettings = shallowRef(false)
@@ -65,8 +71,13 @@ async function run(action: () => Promise<unknown>) {
 }
 function select(development = false) {
   void run(async () => {
-    review.value = await state.api.selectPackage(development)
+    acceptReview(await state.api.selectPackage(development))
   })
+}
+function acceptReview(next: ExtensionReviewResult | null) {
+  cancel()
+  incompatibleReview.value = next && 'incompatibility' in next ? next : null
+  review.value = next && 'token' in next ? next : null
 }
 function create() {
   void run(() => startCreation(labels.value.creationPrompt))
@@ -145,8 +156,8 @@ onScopeDispose(cancel)
         {{ language === 'en-US' ? 'View progress' : '查看进度' }}
       </NButton>
     </NAlert>
-    <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { review = await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version) })" @apply-update="applyUpdate" />
-    <NEmpty v-else-if="!installed.length && !state.error.value" class="extension-manager__empty">
+    <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { acceptReview(await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version)) })" @apply-update="applyUpdate" />
+    <NEmpty v-else-if="!installed.length && !unavailable.length && !state.error.value" class="extension-manager__empty">
       <template #default>
         <strong>{{ labels.empty }}</strong>
         <p>{{ labels.emptyDescription }}</p>
@@ -155,11 +166,13 @@ onScopeDispose(cancel)
         </NButton>
       </template>
     </NEmpty>
-    <div v-else-if="section === 'installed' && installed.length" class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] items-stretch gap-[12px]">
+    <div v-else-if="section === 'installed' && (installed.length || unavailable.length)" class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] items-stretch gap-[12px]">
+      <DesktopExtensionUnavailableCard v-for="item in unavailableCurrent" :key="item.manifest.id" :item="item" :language="language" />
       <DesktopExtensionCard
         v-for="item in installed"
         :key="item.manifest.id"
         :item="item"
+        :unavailable-pending="unavailablePending.get(item.manifest.id)"
         :language="language"
         :busy="busy"
         :can-open="!!openLocation(item)"
@@ -180,6 +193,7 @@ onScopeDispose(cancel)
     <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />
   </NModal>
   <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="incompatibleReview = null" />
   <DesktopExtensionUninstallDialog v-if="removing" :name="removing.manifest.name" :language="language" :busy="busy" @cancel="removing = null" @remove="remove" />
   <NModal :show="!!selected" preset="card" :title="labels.diagnostics" class="extension-dialog" @update:show="value => { if (!value) diagnostics = null }">
     <template v-if="selected">
