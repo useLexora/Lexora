@@ -32,7 +32,7 @@ describe('theme data and lifecycle', () => {
     ['1.0.1', 'Lexora 主题', true],
   ])('upgrades bundled themes from %s and preserves their enabled state', async (version, name, enabled) => {
     const home = await createTemporaryDirectory('lexora-bundled-upgrade-')
-    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.2')
     const files = bundledThemeFiles()
     const current = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
     const manifest = { ...current }
@@ -58,7 +58,7 @@ describe('theme data and lifecycle', () => {
     ['1.0.1', true],
   ])('preserves a newer or development theme package: %s, development=%s', async (version, development) => {
     const home = await createTemporaryDirectory('lexora-bundled-preserve-')
-    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.2')
     const files = bundledThemeFiles()
     const manifest = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
     manifest.version = version
@@ -72,7 +72,7 @@ describe('theme data and lifecycle', () => {
 
   it('preserves a pending theme update during bundled seeding', async () => {
     const home = await createTemporaryDirectory('lexora-bundled-pending-')
-    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.2')
     const files = bundledThemeFiles()
     const manifest = JSON.parse(Buffer.from(files.get('extension.json')!).toString('utf8'))
     for (const version of ['1.0.1', '1.1.0']) {
@@ -238,7 +238,7 @@ describe('theme data and lifecycle', () => {
 
   it('loads bundled packages, preserves missing selections, restores enabled themes and honors uninstall across restart', async () => {
     const { home, service } = await fixture()
-    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.1')
+    const store = new ExtensionPackageStore(join(home, 'extensions'), '0.10.2')
     await store.load()
     await seedBundledThemes(store)
     const pkg = store.installed['lexora.themes']!.current
@@ -266,7 +266,7 @@ describe('theme data and lifecycle', () => {
     expect(service.snapshot.active.descriptor.appearance).toBe('dark')
     expect(service.snapshot.unavailable).toBeNull()
     await store.uninstall('lexora.themes')
-    const reopened = new ExtensionPackageStore(store.root, '0.10.1')
+    const reopened = new ExtensionPackageStore(store.root, '0.10.2')
     await reopened.load()
     await seedBundledThemes(reopened)
     expect(reopened.installed['lexora.themes']).toBeUndefined()

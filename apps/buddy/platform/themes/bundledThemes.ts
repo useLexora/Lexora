@@ -14,6 +14,7 @@ import roseDark from '../../extensions/bundled/lexora.themes/themes/rose-dark.js
 import roseLight from '../../extensions/bundled/lexora.themes/themes/rose-light.json'
 import violetDark from '../../extensions/bundled/lexora.themes/themes/violet-dark.json'
 import violetLight from '../../extensions/bundled/lexora.themes/themes/violet-light.json'
+import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { readExtensionJson, writeExtensionJson } from '../extensions/extensionFiles'
 
 export function bundledThemeFiles(): Map<string, Uint8Array> {
@@ -28,6 +29,8 @@ export function bundledThemeFiles(): Map<string, Uint8Array> {
 }
 
 export async function seedBundledThemes(store: ExtensionPackageStore): Promise<void> {
+  if (!extensionCompatible(extensionManifestSchema.parse(manifest), store.appVersion))
+    return
   const marker = join(store.root, 'bundled-themes.json')
   let seeded = false
   try {

@@ -9,7 +9,7 @@
   "name": "Ocean",
   "version": "1.0.0",
   "apiVersion": 3,
-  "engines": { "lexora": ">=0.10.1" },
+  "engines": { "lexora": ">0.10.1" },
   "contributes": {
     "themes": [
       { "id": "author.ocean.day", "label": "Ocean Day", "appearance": "light", "path": "themes/day.json" },

@@ -4,14 +4,17 @@
   "name": "Lexora 主题",
   "author": "Lexora",
   "description": "经典、森林、鸢尾、玫瑰与琥珀，各含浅色和深色。",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "icon": "icon.svg",
   "apiVersion": 3,
   "engines": {
-    "lexora": ">=0.10.1"
+    "lexora": ">0.10.1"
   },
   "categories": [
-    "themes"
+    "主题"
+  ],
+  "tags": [
+    "主题"
   ],
   "contributes": {
     "themes": [
