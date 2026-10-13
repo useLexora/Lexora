@@ -34,7 +34,7 @@ const BUDDY_CURRENT_SCHEMA_COLUMNS = {
   execution_thread_bindings: ['thread_id', 'session_file', 'root_entry_id'],
   execution_mailbox_sources: ['id', 'source_run_id', 'source_sequence', 'target_run_id', 'target_generation', 'payload_json', 'payload_hash'],
   execution_mailbox_receipts: ['mailbox_id', 'target_run_id', 'target_sequence', 'source_run_id', 'payload_hash', 'kind', 'context_entry_id'],
-  buddies: ['enabled', 'settings_json', 'id', 'kind', 'name', 'avatar', 'description', 'deleted_at', 'revision', 'created_at', 'updated_at'],
+  buddies: ['enabled', 'settings_json', 'id', 'kind', 'name', 'avatar', 'custom_avatars_json', 'description', 'deleted_at', 'revision', 'created_at', 'updated_at'],
   buddy_catalog: ['id', 'default_buddy_id', 'revision'],
   conversation_members: ['conversation_id', 'actor_id', 'model_selection_json', 'model_selection_source', 'joined_at', 'removed_at'],
   mcp_servers: ['tool_namespace', 'tool_exposure'],

@@ -12,7 +12,7 @@ const props = defineProps<BuddyProfileFormOptions & { language: string }>()
 const emit = defineEmits<{ saved: [buddy: LocalBuddy], busy: [value: boolean], cancel: [] }>()
 const labels = computed(() => buddyLabels(props.language))
 const id = useId()
-const { kind, name, description, avatar, customAvatar, busy, reading, error, disabled, canSave, selectAvatar, uploadAvatar, reload, save } = useBuddyProfileForm(props, buddy => emit('saved', buddy))
+const { kind, name, description, avatar, customAvatars, busy, reading, error, disabled, canSave, selectAvatar, removeAvatar, uploadAvatars, reload, save } = useBuddyProfileForm(props, buddy => emit('saved', buddy))
 const kindOptions = computed(() => [{ value: 'actor' as const, label: labels.value.actor }, { value: 'npc' as const, label: labels.value.npc }])
 const kindHint = computed(() => kind.value === 'actor' ? labels.value.actorHint : labels.value.npcHint)
 
@@ -32,7 +32,7 @@ watch(() => busy.value || reading.value, value => emit('busy', value), { flush: 
         </p>
       </div>
       <div>
-        <BuddyAvatarPicker :kind="kind" :buddy-id="buddy?.id" :avatar="avatar" :custom-avatar="customAvatar" :language="language" :disabled="disabled" @select="selectAvatar" @upload="uploadAvatar" />
+        <BuddyAvatarPicker :kind="kind" :buddy-id="buddy?.id" :avatar="avatar" :custom-avatars="customAvatars" :language="language" :disabled="disabled" @select="selectAvatar" @remove="removeAvatar" @upload="uploadAvatars" />
         <p v-if="error === 'invalidImage'" class="m-0 mt-2 text-[13px] leading-relaxed text-danger" role="alert">
           {{ labels.invalidImage }}
         </p>

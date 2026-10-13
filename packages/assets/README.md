@@ -4,9 +4,10 @@
 
 ## 当前结构
 
-- `brand/lexora-avatar.png`：Lexora 的透明高清品牌头像，README 直接消费它。
-- `brand/lexora-avatar-closeup.png`：从高清品牌头像裁切、优化得到的近景变体，当前只保留，不作为运行时资源。
-- `brand/app-icon.png`：Buddy 应用图标的品牌真源。
+- `brand/lexora-avatar.png`：Lexora 的高清品牌头像，带简约青蓝背景，README 直接消费它。
+- `brand/lexora-avatar-classic.png`：古典形象的高清备份。
+- `brand/app-icon.png`：基于新 Lexora 头像的应用图标。
+- `brand/tray-icon.png`：同一新形象的小尺寸托盘图标，保留独立资源。
 - `sources/default-reference.png`：默认 Buddy 的初始参考原图，带粉色背景，不是运行时资源。
 - `buddy/pets/default/pet.png`：透明静态角色图，用于桌宠预览和动画身份参考；它是派生物，不是 native 桌宠运行时入口。
 - `buddy/pets/default/manifest.json`：Buddy 默认形象的帧尺寸、sheet 布局和语义动画契约；`animations` 是数组，每个动作条目包含 `name`、`description`、`row` 和自己的 `frames`。
@@ -17,6 +18,7 @@
 - 未被产品直接消费的原图、可编辑源和参考材料放在 `sources/` 下。
 - 应用直接消费的最终品牌与身份资产放在 `brand/`。
 - 派生出的 Buddy 运行时资源放在 `buddy/pets/<id>/`。
-- `apps/buddy/resources/brand/lexora-avatar.png` 是 Buddy 自有的品牌头像副本，对话身份从这里消费；发布校验保证它与 `brand/lexora-avatar.png` 字节一致。
-- `apps/buddy/resources/icons/app-icon.png` 是 Buddy 自有的单一运行与打包副本，Electron、Tray、Renderer、Linux 安装包、standalone pet 与 native pet 从这里消费。发布校验保证它与 `brand/app-icon.png` 字节一致；源码中不维护多尺寸派生图。
+- `apps/buddy/resources/brand/lexora-avatar.png` 是 Buddy 启动页使用的品牌头像副本；发布校验保证它与 `brand/lexora-avatar.png` 字节一致。
+- `apps/buddy/resources/icons/app-icon.png` 是窗口、界面及安装包使用的应用图标副本，与 `brand/app-icon.png` 字节一致。
+- `apps/buddy/resources/icons/tray-icon.png` 是独立的托盘图标副本，与 `brand/tray-icon.png` 字节一致。
 - 本地候选图、私有源、临时 sheet 和生成脚本不是最终资产，不放在这个包的公开结构里。

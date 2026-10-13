@@ -7,7 +7,7 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { withTransaction } from './database'
 
 export function createBuddyRepository(database: DatabaseSync) {
-  const select = 'SELECT id, kind, enabled, name, avatar, description, settings_json, deleted_at AS deletedAt, revision, created_at AS createdAt, updated_at AS updatedAt FROM buddies'
+  const select = 'SELECT id, kind, enabled, name, avatar, custom_avatars_json, description, settings_json, deleted_at AS deletedAt, revision, created_at AS createdAt, updated_at AS updatedAt FROM buddies'
 
   function get(id: string): LocalBuddy {
     const row = database.prepare(`${select} WHERE id = ?`).get(id)
@@ -46,6 +46,7 @@ export function createBuddyRepository(database: DatabaseSync) {
     const current = writable(input)
     const name = input.name ?? current.name
     const avatar = input.avatar === undefined ? current.avatar : input.avatar
+    const customAvatars = avatarGallery(input.customAvatars ?? current.customAvatars, avatar)
     const description = input.description ?? current.description
     const enabled = input.enabled ?? current.enabled
     if (!enabled && state().defaultBuddyId === current.id)
@@ -62,10 +63,10 @@ export function createBuddyRepository(database: DatabaseSync) {
       }
     }
     const settings = JSON.stringify({ ...parsedSettings, npcIds })
-    if (enabled === current.enabled && name === current.name && avatar === current.avatar && description === current.description && settings === JSON.stringify(current.settings))
+    if (enabled === current.enabled && name === current.name && avatar === current.avatar && customAvatars === JSON.stringify(current.customAvatars) && description === current.description && settings === JSON.stringify(current.settings))
       return current
-    database.prepare('UPDATE buddies SET name = ?, avatar = ?, description = ?, settings_json = ?, enabled = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
-      .run(name, avatar, description, settings, Number(enabled), new Date().toISOString(), current.id)
+    database.prepare('UPDATE buddies SET name = ?, avatar = ?, custom_avatars_json = ?, description = ?, settings_json = ?, enabled = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
+      .run(name, avatar, customAvatars, description, settings, Number(enabled), new Date().toISOString(), current.id)
     changed()
     return get(current.id)
   }
@@ -80,8 +81,8 @@ export function createBuddyRepository(database: DatabaseSync) {
         const now = new Date().toISOString()
         const kind = input.kind ?? 'actor'
         const settings = { ...DEFAULT_BUDDY_SETTINGS, tools: { mode: kind === 'npc' ? 'none' : 'all' } }
-        database.prepare('INSERT INTO buddies (id, kind, name, avatar, description, settings_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, kind, input.name, input.avatar ?? null, input.description ?? '', JSON.stringify(settings), now, now)
+        database.prepare('INSERT INTO buddies (id, kind, name, avatar, custom_avatars_json, description, settings_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, kind, input.name, input.avatar ?? null, avatarGallery(input.customAvatars ?? [], input.avatar), input.description ?? '', JSON.stringify(settings), now, now)
         changed()
         return get(id)
       })
@@ -129,14 +130,22 @@ export function createBuddyRepository(database: DatabaseSync) {
 
 export type BuddyRepository = ReturnType<typeof createBuddyRepository>
 
+function avatarGallery(avatars: readonly string[], avatar: string | null | undefined) {
+  const gallery = new Set(avatars)
+  if (avatar?.startsWith('data:image/'))
+    gallery.add(avatar)
+  return JSON.stringify([...gallery])
+}
+
 function toBuddy(row: Record<string, unknown>): LocalBuddy {
-  const { settings_json: settings, enabled, ...value } = row
+  const { settings_json: settings, custom_avatars_json: customAvatars, enabled, ...value } = row
   return buddySchema.parse({
     ...value,
     createdAt: normalizeStoredUtcTimestamp(value.createdAt),
     updatedAt: normalizeStoredUtcTimestamp(value.updatedAt),
     deletedAt: normalizeStoredUtcTimestamp(value.deletedAt),
     enabled: enabled === 1,
+    customAvatars: JSON.parse(customAvatars as string),
     settings: JSON.parse(settings as string),
   })
 }

@@ -82,6 +82,34 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('retains existing and deleted profile avatars when upgrading to custom galleries', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-avatar-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 27))
+      previous.exec(migration.sql)
+    const avatar = 'data:image/png;base64,AAAA'
+    previous.prepare('UPDATE buddies SET avatar = ?, revision = 3 WHERE id IN (?, ?)').run(avatar, 'default', 'npc-reviewer')
+    previous.prepare('UPDATE buddies SET deleted_at = ? WHERE id = ?').run('2026-10-13T00:00:00.000Z', 'npc-reviewer')
+    const before = previous.prepare('SELECT * FROM buddies ORDER BY id').all()
+    previous.exec('PRAGMA user_version = 27')
+    previous.close()
+
+    const migrated = openBuddyDatabase({ databasePath })
+    const after = migrated.prepare('SELECT * FROM buddies ORDER BY id').all()
+    expect(after.map(({ custom_avatars_json: gallery, ...profile }) => {
+      expect(JSON.parse(gallery as string)).toEqual(profile.avatar ? [avatar] : [])
+      return profile
+    })).toEqual(before)
+    expect(migrated.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    migrated.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT * FROM buddies ORDER BY id').all()).toEqual(after)
+  })
+
   it('upgrades Azure source identifiers without changing account identities, selections or history', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-azure-migration-'))
     directories.push(directory)

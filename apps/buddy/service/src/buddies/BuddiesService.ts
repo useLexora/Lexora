@@ -36,7 +36,7 @@ export class BuddiesService {
   async create(input: BuddyCreate, signal?: AbortSignal) {
     this.#check(signal)
     const request = parse(buddyCreateSchema, input)
-    await this.#validateAvatar(request.avatar, signal)
+    await this.#validateAvatars([request.avatar, ...request.customAvatars ?? []], signal)
     this.#check(signal)
     return this.#changeProfile(() => this.#repository.create(request))
   }
@@ -49,7 +49,8 @@ export class BuddiesService {
       throw new BuddyServiceError('BUDDY_DELETED')
     if (before.revision !== request.expectedRevision)
       throw new BuddyServiceError('BUDDY_CONFLICT')
-    await this.#validateAvatar(request.avatar, signal)
+    const existingAvatars = new Set([before.avatar, ...before.customAvatars])
+    await this.#validateAvatars([request.avatar, ...request.customAvatars ?? []].filter(avatar => !existingAvatars.has(avatar ?? null)), signal)
     this.#check(signal)
     return this.#changeProfile(() => this.#repository.update(request))
   }
@@ -95,7 +96,7 @@ export class BuddiesService {
   }
 
   async #validateAvatar(avatar: string | null | undefined, signal?: AbortSignal) {
-    if (!avatar)
+    if (!avatar || avatar.startsWith('preset:'))
       return
     const [header, data] = avatar.split(',')
     const bytes = Buffer.from(data!, 'base64')
@@ -107,6 +108,13 @@ export class BuddiesService {
     catch {
       signal?.throwIfAborted()
       throw new BuddyServiceError('VALIDATION_FAILED')
+    }
+  }
+
+  async #validateAvatars(avatars: Array<string | null | undefined>, signal?: AbortSignal) {
+    for (const avatar of new Set(avatars)) {
+      this.#check(signal)
+      await this.#validateAvatar(avatar, signal)
     }
   }
 

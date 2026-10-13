@@ -45,7 +45,7 @@ const stars = [
       </div>
     </div>
     <div class="startup-art__portrait w-[var(--startup-avatar-size)]">
-      <img :src="avatar" alt="" width="1254" height="1254" draggable="false" fetchpriority="high">
+      <img :src="avatar" class="rounded-full" alt="" width="1254" height="1254" draggable="false" fetchpriority="high">
     </div>
     <i
       v-for="(star, index) in stars"

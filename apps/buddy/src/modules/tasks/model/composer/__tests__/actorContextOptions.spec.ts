@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { createActorContextOptions } from '../actorContextOptions'
 
 function buddy(id: string, changes: Partial<LocalBuddy> = {}): LocalBuddy {
-  return { id, kind: 'actor', enabled: true, name: 'Lexora', avatar: null, description: '', deletedAt: null, settings: DEFAULT_BUDDY_SETTINGS, revision: 1, createdAt: '2026-10-11T00:00:00.000Z', updatedAt: '2026-10-11T00:00:00.000Z', ...changes }
+  return { id, kind: 'actor', enabled: true, name: 'Lexora', avatar: null, customAvatars: [], description: '', deletedAt: null, settings: DEFAULT_BUDDY_SETTINGS, revision: 1, createdAt: '2026-10-11T00:00:00.000Z', updatedAt: '2026-10-11T00:00:00.000Z', ...changes }
 }
 
 describe('actor mention choices', () => {

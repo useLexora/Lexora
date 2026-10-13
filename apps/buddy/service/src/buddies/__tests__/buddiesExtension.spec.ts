@@ -57,14 +57,24 @@ it('edits through the registered tools, hides avatar bytes and preserves concurr
   const updated = await f.call('update', { buddyId: 'default', expectedRevision: f.initial.revision, name: '小海', avatarPath: 'avatar.png' })
   expect(updated.details).toEqual({ ok: true })
   expect(service.get('default')).toMatchObject({ name: '小海', revision: f.initial.revision + 1, avatar: expect.stringMatching(/^data:image\/png;base64,/) })
+  const avatar = service.get('default').avatar!
+  expect(service.get('default').customAvatars).toEqual([avatar])
   const snapshot = await f.call('get', { buddyId: 'default' })
   expect(JSON.stringify(snapshot)).toContain('hasCustomAvatar')
-  expect(JSON.stringify(snapshot)).not.toContain('base64')
+  for (const result of [updated, snapshot, await f.call('list', {})]) {
+    expect(JSON.stringify(result)).toContain('customAvatarCount')
+    expect(JSON.stringify(result)).not.toContain('base64')
+    expect(JSON.stringify(result)).not.toContain('customAvatars')
+  }
   const stale = await f.call('update', { buddyId: 'default', expectedRevision: f.initial.revision, name: 'Old draft' })
   expect(stale.details).toMatchObject({ ok: false, code: 'BUDDY_CONFLICT' })
   expect(service.get('default').name).toBe('小海')
   await f.call('update', { buddyId: 'default', expectedRevision: f.initial.revision + 1, avatarPath: null })
-  expect(service.get('default')).toMatchObject({ avatar: null, name: '小海' })
+  expect(service.get('default')).toMatchObject({ avatar: null, name: '小海', customAvatars: [avatar] })
+  await service.update({ buddyId: 'default', expectedRevision: service.get('default').revision, avatar: 'preset:actor-classic' })
+  const preset = await f.call('get', { buddyId: 'default' })
+  expect(JSON.parse(preset.content.filter(part => part.type === 'text').map(part => part.text).join(''))).toMatchObject({ hasCustomAvatar: false, customAvatarCount: 1 })
+  expect(JSON.stringify(preset)).not.toContain('base64')
 })
 
 it('keeps mutations behind write permission and rejects avatar symlinks outside grants', async () => {

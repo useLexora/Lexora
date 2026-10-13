@@ -23,6 +23,15 @@ afterEach(() => {
 })
 
 describe('companion profiles', () => {
+  it('preserves preset identities and rejects unknown presets and invalid gallery images', async () => {
+    const initial = setup()
+    const updated = await service.update({ buddyId: initial.id, expectedRevision: initial.revision, avatar: 'preset:actor-classic', customAvatars: [] })
+    expect(service.get(initial.id)).toMatchObject({ avatar: 'preset:actor-classic', customAvatars: [] })
+    for (const patch of [{ avatar: 'preset:unknown' }, { customAvatars: ['https://example.com/avatar.png'] }, { customAvatars: ['data:image/png;base64,AAAA'] }])
+      await expect(service.update({ buddyId: initial.id, expectedRevision: updated.revision, ...patch })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect(service.get(initial.id)).toEqual(updated)
+  })
+
   it('persists preferences independently of basic-profile restoration and rejects stale or malformed settings', async () => {
     const initial = setup()
     const settings = buddySettingsSchema.parse({ ...DEFAULT_BUDDY_SETTINGS, instructions: 'Prefer concise answers', model: { providerId: 'fixture', modelId: 'unavailable-model', reasoning: 'high', serviceTier: null }, tools: { mode: 'none' } })

@@ -176,8 +176,8 @@ async function readAvatar(context: BuddyCapabilityContext, id: string, avatarPat
 }
 
 function profile(buddy: LocalBuddy) {
-  const { avatar, ...value } = buddy
-  return { ...value, hasCustomAvatar: avatar !== null }
+  const { avatar, customAvatars, ...value } = buddy
+  return { ...value, hasCustomAvatar: avatar?.startsWith('data:image/') ?? false, customAvatarCount: customAvatars.length }
 }
 
 async function respond(operation: () => unknown): Promise<{ content: { type: 'text', text: string }[], details: { ok: boolean, code?: string }, isError: boolean }> {

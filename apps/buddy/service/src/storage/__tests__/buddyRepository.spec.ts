@@ -11,6 +11,26 @@ afterEach(() => {
   database = undefined
 })
 
+it('saves avatar galleries atomically, preserves them on reset and rejects stale deletion', () => {
+  database = openBuddyDatabase({ databasePath: ':memory:' })
+  let repository = createBuddyRepository(database)
+  const first = 'data:image/png;base64,AAAA'
+  const second = 'data:image/webp;base64,AQID'
+  let buddy = repository.create({ name: 'Gallery', avatar: first, customAvatars: [first, second, first] })
+  expect(buddy.customAvatars).toEqual([first, second])
+  repository = createBuddyRepository(database)
+  expect(repository.get(buddy.id)).toEqual(buddy)
+  const revision = buddy.revision
+  buddy = repository.update({ buddyId: buddy.id, expectedRevision: revision, avatar: 'preset:actor-classic', customAvatars: [second] })
+  expect(buddy).toMatchObject({ avatar: 'preset:actor-classic', customAvatars: [second], revision: revision + 1 })
+  expect(() => repository.update({ buddyId: buddy.id, expectedRevision: revision, customAvatars: [] })).toThrow(expect.objectContaining({ code: 'BUDDY_CONFLICT' }))
+  expect(repository.get(buddy.id)).toEqual(buddy)
+  expect(repository.update({ buddyId: buddy.id, expectedRevision: buddy.revision, customAvatars: [second, second] })).toEqual(buddy)
+  const builtin = repository.get('default')
+  const edited = repository.update({ buddyId: builtin.id, expectedRevision: builtin.revision, avatar: first, customAvatars: [first, second] })
+  expect(repository.resetProfile({ buddyId: builtin.id, expectedRevision: edited.revision })).toMatchObject({ avatar: null, customAvatars: [first, second] })
+})
+
 it('reads equivalent UTC timestamps without rewriting history or bypassing deletion and configuration validation', () => {
   database = openBuddyDatabase({ databasePath: ':memory:' })
   const repository = createBuddyRepository(database)

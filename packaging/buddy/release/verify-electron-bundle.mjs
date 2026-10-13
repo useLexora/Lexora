@@ -29,6 +29,7 @@ export function verifyElectronBundle(cwd = repoRoot) {
 
   for (const [source, runtime, size] of [
     ['packages/assets/brand/app-icon.png', 'apps/buddy/resources/icons/app-icon.png', 512],
+    ['packages/assets/brand/tray-icon.png', 'apps/buddy/resources/icons/tray-icon.png', 256],
     ['packages/assets/brand/lexora-avatar.png', 'apps/buddy/resources/brand/lexora-avatar.png', 1254],
   ]) {
     const bytes = readFileSync(resolve(cwd, source))

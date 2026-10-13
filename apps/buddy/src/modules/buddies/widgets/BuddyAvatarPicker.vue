@@ -5,28 +5,29 @@ import { NButton } from 'naive-ui'
 import { computed, useTemplateRef } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { buddyLabels } from '../buddyLabels'
-import { buddyAvatarPresets } from '../model/buddyAvatarPresets'
+import { buddyAvatarPresets, buddyPresetAvatar, defaultBuddyAvatar } from '../model/buddyAvatarPresets'
 import BuddyAvatar from './BuddyAvatar.vue'
 
 const props = defineProps<{
   kind: LocalBuddy['kind']
   buddyId?: string
   avatar: string | null
-  customAvatar: string | null
+  customAvatars: readonly string[]
   language: string
   disabled: boolean
 }>()
-const emit = defineEmits<{ select: [source: string | null], upload: [file: File] }>()
+const emit = defineEmits<{ select: [source: string | null], upload: [files: File[]], remove: [source: string] }>()
 const labels = computed(() => buddyLabels(props.language))
 const presets = computed(() => buddyAvatarPresets(props.kind))
-const defaultSource = computed(() => props.buddyId ? null : presets.value[0]?.src ?? null)
+const defaultSource = computed(() => defaultBuddyAvatar(props.kind, props.buddyId))
+const selectedAvatar = computed(() => props.avatar ?? (props.kind === 'actor' ? buddyPresetAvatar('actor-lexora') : null))
 const input = useTemplateRef<HTMLInputElement>('file')
 function upload(event: Event) {
   const field = event.target as HTMLInputElement
-  const file = field.files?.[0]
+  const files = Array.from(field.files ?? [])
   field.value = ''
-  if (file)
-    emit('upload', file)
+  if (files.length)
+    emit('upload', files)
 }
 </script>
 
@@ -40,42 +41,54 @@ function upload(event: Event) {
         {{ labels.chooseAvatarHint }}
       </p>
     </div>
-    <div class="flex min-w-0 items-center gap-4">
+    <div class="flex min-w-0 items-start gap-4">
       <BuddyAvatar :buddy-id="buddyId" :src="avatar" class="size-[80px] bg-subtle" data-testid="buddy-avatar" />
-      <div class="buddy-avatar-gallery grid min-w-0 flex-1 grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-2 max-h-[180px] overflow-y-auto p-1 -m-1" role="group" :aria-label="labels.presetAvatars">
+      <div class="buddy-avatar-gallery grid min-w-0 flex-1 grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-2" role="group" :aria-label="labels.presetAvatars">
         <NButton
           v-for="preset in presets"
           :key="preset.id"
           class="buddy-avatar-choice relative h-auto min-w-0 py-3"
-          :type="avatar === preset.src ? 'primary' : 'default'"
-          :secondary="avatar === preset.src"
+          :type="selectedAvatar === buddyPresetAvatar(preset.id) ? 'primary' : 'default'"
+          :secondary="selectedAvatar === buddyPresetAvatar(preset.id)"
           :disabled="disabled"
-          :aria-pressed="avatar === preset.src"
+          :aria-pressed="selectedAvatar === buddyPresetAvatar(preset.id)"
           :data-testid="`buddy-avatar-preset-${preset.id}`"
-          @click="emit('select', preset.src)"
+          @click="emit('select', buddyPresetAvatar(preset.id))"
         >
           <span class="flex min-w-0 flex-col items-center gap-2">
             <BuddyAvatar :src="preset.src" class="size-[48px]" />
             <span class="text-[12px]">{{ labels[preset.label] }}</span>
           </span>
-          <DesktopIcon v-if="avatar === preset.src" :component="Checkmark16Regular" :size="14" class="absolute right-1 top-1" />
+          <DesktopIcon v-if="selectedAvatar === buddyPresetAvatar(preset.id)" :component="Checkmark16Regular" :size="14" class="absolute right-1 top-1" />
         </NButton>
-        <NButton
-          v-if="customAvatar"
-          class="buddy-avatar-choice relative h-auto min-w-0 py-3"
-          :type="avatar === customAvatar ? 'primary' : 'default'"
-          :secondary="avatar === customAvatar"
-          :disabled="disabled"
-          :aria-pressed="avatar === customAvatar"
-          data-testid="buddy-avatar-custom"
-          @click="emit('select', customAvatar)"
-        >
-          <span class="flex min-w-0 flex-col items-center gap-2">
-            <BuddyAvatar :src="customAvatar" class="size-[48px]" />
-            <span class="text-[12px]">{{ labels.customAvatar }}</span>
-          </span>
-          <DesktopIcon v-if="avatar === customAvatar" :component="Checkmark16Regular" :size="14" class="absolute right-1 top-1" />
-        </NButton>
+        <div v-for="(source, index) in customAvatars" :key="source" class="relative min-w-0" data-testid="buddy-avatar-custom">
+          <NButton
+            class="buddy-avatar-choice relative h-auto w-full min-w-0 py-3"
+            :type="avatar === source ? 'primary' : 'default'"
+            :secondary="avatar === source"
+            :disabled="disabled"
+            :aria-pressed="avatar === source"
+            @click="emit('select', source)"
+          >
+            <span class="flex min-w-0 flex-col items-center gap-2">
+              <BuddyAvatar :src="source" class="size-[48px]" />
+              <span class="text-[12px]">{{ labels.customAvatarName(index + 1) }}</span>
+            </span>
+            <DesktopIcon v-if="avatar === source" :component="Checkmark16Regular" :size="14" class="absolute left-1 top-1" />
+          </NButton>
+          <NButton
+            class="buddy-icon-button absolute right-1 top-1"
+            quaternary
+            size="tiny"
+            :disabled="disabled"
+            :aria-label="labels.deleteAvatar(index + 1)"
+            @click="emit('remove', source)"
+          >
+            <template #icon>
+              <DesktopIcon name="delete" :size="14" />
+            </template>
+          </NButton>
+        </div>
         <NButton class="buddy-avatar-choice h-auto min-w-0 py-3" dashed :disabled="disabled" @click="input?.click()">
           <span class="flex flex-col items-center gap-2">
             <span class="flex size-[48px] items-center justify-center text-muted">
@@ -94,7 +107,7 @@ function upload(event: Event) {
         {{ labels.reset }}
       </NButton>
     </div>
-    <input ref="file" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" :aria-label="labels.avatar" :disabled="disabled" @change="upload">
+    <input ref="file" class="hidden" type="file" multiple accept="image/png,image/jpeg,image/webp" :aria-label="labels.avatar" :disabled="disabled" @change="upload">
   </section>
 </template>
 

@@ -6,7 +6,9 @@ import { buddySettingsSchema } from './buddySettings'
 
 export const BUILTIN_BUDDY_ID = 'default'
 export const BUDDY_AVATAR_MAX_BYTES = 2 * 1024 * 1024
-export const buddyAvatarSchema = z.string().max(Math.ceil(BUDDY_AVATAR_MAX_BYTES / 3) * 4 + 32).regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/).nullable()
+export const BUDDY_AVATAR_PRESET_IDS = ['actor-lexora', 'actor-classic', 'actor-claude', 'actor-deepseek', 'actor-chatgpt', 'npc-slate', 'npc-lilac'] as const
+export const buddyAvatarImageSchema = z.string().max(Math.ceil(BUDDY_AVATAR_MAX_BYTES / 3) * 4 + 32).regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/)
+export const buddyAvatarSchema = z.union([z.templateLiteral(['preset:', z.enum(BUDDY_AVATAR_PRESET_IDS)]), buddyAvatarImageSchema]).nullable()
 
 export const buddySchema = z.object({
   id: idSchema,
@@ -14,6 +16,7 @@ export const buddySchema = z.object({
   enabled: z.boolean(),
   name: z.string().trim().min(1).max(80),
   avatar: buddyAvatarSchema,
+  customAvatars: z.array(buddyAvatarImageSchema),
   description: z.string().trim().max(500),
   deletedAt: timestampSchema.nullable(),
   settings: buddySettingsSchema,
@@ -28,6 +31,7 @@ export const buddyCreateSchema = z.object({
   kind: buddySchema.shape.kind.optional(),
   name: buddySchema.shape.name,
   avatar: buddyAvatarSchema.optional(),
+  customAvatars: buddySchema.shape.customAvatars.optional(),
   description: buddySchema.shape.description.optional(),
 }).strict()
 export const buddyUpdateSchema = buddyMutationSchema.extend({
@@ -35,8 +39,9 @@ export const buddyUpdateSchema = buddyMutationSchema.extend({
   settings: buddySettingsSchema.optional(),
   name: buddySchema.shape.name.optional(),
   avatar: buddyAvatarSchema.optional(),
+  customAvatars: buddySchema.shape.customAvatars.optional(),
   description: buddySchema.shape.description.optional(),
-}).strict().refine(input => input.enabled !== undefined || input.name !== undefined || input.avatar !== undefined || input.description !== undefined || input.settings !== undefined)
+}).strict().refine(input => input.enabled !== undefined || input.name !== undefined || input.avatar !== undefined || input.customAvatars !== undefined || input.description !== undefined || input.settings !== undefined)
 export const buddyCatalogSchema = z.object({
   buddies: z.array(buddySchema),
   defaultBuddyId: idSchema,
