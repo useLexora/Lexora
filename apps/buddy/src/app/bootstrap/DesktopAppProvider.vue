@@ -151,6 +151,7 @@ provideExecutionEnvironment({
     const view = await workbench.controller.open({ scheme: 'execution', id: `${target.branchId}:${target.runId}`, data: { ...target } }, label)
     if (!view)
       throw new Error('Execution detail is unavailable')
+    resources.openView(view, label, { conversationId: target.conversationId, runId: target.runId })
   },
   onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')),
 })
