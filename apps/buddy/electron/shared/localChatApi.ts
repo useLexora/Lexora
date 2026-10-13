@@ -23,7 +23,7 @@ import type { ConversationListFilter, ConversationModelControls, ConversationTim
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
-import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
+import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
 import type { LocalNotificationList, NotificationsChanged } from '../../shared/notifications/notificationApi'
@@ -53,6 +53,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   executionsCancel: 'lexora:local-chat:executions:cancel',
   executionsEvents: 'lexora:local-chat:executions:events',
   executionsSend: 'lexora:local-chat:executions:send',
+  executionsSendDraft: 'lexora:local-chat:executions:send-draft',
   executionsCancelChildren: 'lexora:local-chat:executions:cancel-children',
   executionsChanged: 'lexora:local-chat:executions:changed',
   buddiesList: 'lexora:local-chat:buddies:list',
@@ -242,6 +243,7 @@ export interface LocalChatApi {
     detail: (input: ExecutionTarget) => Promise<LocalExecutionDetail>
     events: (input: ExecutionEventsRequest) => Promise<LocalExecutionEventsPage>
     send: (input: ExecutionSend) => Promise<{ accepted: boolean }>
+    sendDraft: (input: ExecutionSendDraft) => Promise<LocalComposerDraft | null>
     cancelChildren: (input: ExecutionTarget) => Promise<{ cancelledRunIds: string[] }>
     answer: (input: ExecutionAnswer) => Promise<{ accepted: boolean }>
     cancel: (input: ExecutionTarget) => Promise<{ cancelled: boolean }>

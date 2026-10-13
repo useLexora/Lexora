@@ -17,6 +17,7 @@ import { createChatRunTranscriptProjector } from '@/modules/tasks/model/transcri
 import { createChatTranscriptProjector } from '@/modules/tasks/model/transcript/chatTranscriptProjection'
 import BuddyChatMessageList from '@/modules/tasks/widgets/transcript/BuddyChatMessageList.vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
+import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import { useConversationOutline } from '../workspace/useConversationOutline'
 
 const props = defineProps<{
@@ -56,6 +57,7 @@ const { chat } = useDesktopUi()
 const activeBranchId = computed(() => props.activeBranchId)
 const activeConversationId = computed(() => props.conversationId)
 const runTranscriptProjector = createChatRunTranscriptProjector()
+const executionTree = useExecutionTree()
 const transcriptProjector = createChatTranscriptProjector()
 const displayRowProjector = createChatTranscriptDisplayRowProjector()
 const branchNavigatorProjector = createChatMessageBranchNavigatorProjector()
@@ -64,6 +66,7 @@ const runProjections = computed(() => runTranscriptProjector.project(
   props.runs,
 ))
 const transcriptProjection = computed(() => transcriptProjector.project({
+  executionGroups: executionTree?.groups.value,
   changeSets: props.changeSets,
   outputs: props.runOutputs,
   runProjections: runProjections.value,

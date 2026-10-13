@@ -8,6 +8,7 @@ import type { LocalConversation, LocalConversationBranch, LocalConversationSumma
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-shared/conversation/taskMarkApi'
+import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
@@ -16,6 +17,7 @@ import type { LocalBuddyServiceSupervisorState } from '@buddy-shared/runtime/ser
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { JSONContent } from '@tiptap/core'
 import type { DeepReadonly, Ref } from 'vue'
+import type { ExecutionGroups } from './model/executions/executionGroups'
 import type { ChatApprovalDecision, ChatContextUsage, ChatRunEventBuckets } from './model/runs/typing'
 import type { ChatBlocker } from './model/status/typing'
 import type { ChatComposerInteraction, ComposerResourceView } from './state/composer/typing'
@@ -142,6 +144,7 @@ export interface TaskComposer {
 }
 
 export interface TaskExecution {
+  isActorInput: State<boolean>
   stoppingRunId: State<string | null>
   queuedMessages: State<readonly LocalChatQueueItem[]>
   pendingQueueActions: State<ReadonlySet<string>>
@@ -210,7 +213,22 @@ export interface TaskConversationTree {
   setVisible: (value: boolean) => void
 }
 
+export interface TaskExecutionTree {
+  groups: State<ExecutionGroups>
+  records: State<readonly LocalExecution[]>
+  revision: State<number>
+  ready: State<boolean>
+  conversationId: State<string | null>
+  branchId: State<string | null>
+  byParent: State<ReadonlyMap<string, readonly LocalExecution[]>>
+  target: (record: LocalExecution) => ExecutionTarget
+  onError: (error: unknown) => void
+  refresh: () => Promise<void>
+  api: LocalChatApi['executions']
+}
+
 export interface TaskChatWorkspace {
+  executionTree: TaskExecutionTree
   marks: TaskMarks
   tree: TaskConversationTree
   restoration: TaskDraftRestoration

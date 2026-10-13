@@ -22,12 +22,14 @@ import {
   reconcileDismissedChatBlocker,
   resolveChatBlocker,
 } from '@/modules/tasks/model/status/chatBlocker'
+import { useActorInputTarget } from '@/modules/tasks/state/composer/useActorInputTarget'
 import { useChatComposerInteractions } from '@/modules/tasks/state/composer/useChatComposerInteractions'
 import { useComposerContextOptions } from '@/modules/tasks/state/composer/useComposerContextOptions'
 import { useComposerResources } from '@/modules/tasks/state/composer/useComposerResources'
 import { useChatApprovals } from '@/modules/tasks/state/runs/useChatApprovals'
 import { useChatContextUsage } from '@/modules/tasks/state/runs/useChatContextUsage'
 import { useChatExecution } from '@/modules/tasks/state/runs/useChatExecution'
+import { useChatExecutionTree } from '@/modules/tasks/state/runs/useChatExecutionTree'
 import { useChatRunSync } from '@/modules/tasks/state/runs/useChatRunSync'
 import { useTaskSpaces } from '@/modules/tasks/state/task-index/useTaskSpaces'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
@@ -119,6 +121,13 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     timelineItems,
   } = runSync
 
+  const executionTree = useChatExecutionTree({
+    conversationId: activeConversationId,
+    branchId: activeBranchId,
+    ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready'),
+    api: api.localChat.executions,
+    onError: setError,
+  })
   const activeRun = computed(() => runs.value.find(
     run => run.status === 'queued' || run.status === 'running',
   ) ?? null)
@@ -162,6 +171,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     const actors = getBuddyUserContentActorReferences(drafts.load(drafts.targetKey.value).content)
     return actors.length === 1 ? actors[0]!.actorId : null
   })
+  const actorInput = useActorInputTarget({ content: computed(() => drafts.load(drafts.targetKey.value).content), scopeKey: drafts.targetKey, tree: executionTree })
   const resolvedActorModel = shallowRef<{ conversationId: string | null, actorId: string | null, model: LocalConversation['modelSelection'] } | null>(null)
   const draftModelBinding = useTaskDraftModelBinding({
     drafts,
@@ -383,6 +393,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     selection: taskModels,
   })
   const execution = useChatExecution({
+    actorInput,
     getNewBuddyId: () => activeConversationId.value ? undefined : draftBuddyId.value ?? undefined,
     flushModelSelection,
     activeRun,
@@ -563,6 +574,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     runs,
   })
   const workspace = {
+    executionTree,
     marks: taskMarks,
     tree,
     context: {
@@ -612,6 +624,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       },
     },
     execution: {
+      isActorInput: computed(() => actorInput.target.value !== null),
       activeRun: readonly(activeRun),
       approvalViews: readonly(approvalViews),
       canMutateBranch: readonly(canMutateBranch),

@@ -82,6 +82,10 @@ export function projectChatMessageBranchNavigators(
     return new Map()
 
   const messages = rows.flatMap(row => row.kind === 'message' ? [row.message] : [])
+  const actionMessageIds = new Set(rows.flatMap(row => row.kind === 'message'
+    && (row.message.role === 'user' || row.resultRunId || (row.message.role === 'assistant' && !row.message.runId))
+    ? [row.message.id]
+    : []))
   const actionTurns = rows.flatMap(row => (
     row.kind === 'agent-turn' && row.ownsResultActions ? [row.turn] : []
   ))
@@ -94,7 +98,7 @@ export function projectChatMessageBranchNavigators(
     const activeGroupBranchId = resolveActiveGroupBranchId(group, activePath, activePathIds)
     if (!activeGroupBranchId)
       continue
-    const targetId = resolveNavigatorTargetId(group, activeGroupBranchId, messages, actionTurns)
+    const targetId = resolveNavigatorTargetId(group, activeGroupBranchId, messages, actionTurns, actionMessageIds)
     if (!targetId)
       continue
     const index = group.branchIds.indexOf(activeGroupBranchId)
@@ -127,6 +131,7 @@ function preservesBranchNavigation(
       && previous.message.branchId === next.message.branchId
       && previous.message.role === next.message.role
       && previous.message.runId === next.message.runId
+      && previous.resultRunId === next.resultRunId
   }
   if (previous.kind === 'agent-turn' && next.kind === 'agent-turn') {
     if (previous.ownsResultActions !== next.ownsResultActions)
@@ -209,22 +214,23 @@ function resolveNavigatorTargetId(
   activeGroupBranchId: string,
   messages: ReadonlyArray<LocalMessage>,
   actionTurns: ReadonlyArray<ChatAgentTurn>,
+  actionMessageIds: ReadonlySet<string>,
 ): string | null {
   if (group.baseBranchId === null)
-    return messages.find(message => message.branchId === activeGroupBranchId)?.id ?? null
+    return messages.find(message => message.branchId === activeGroupBranchId && actionMessageIds.has(message.id))?.id ?? null
   const forkMessage = messages.find(message => message.id === group.forkedFromMessageId)
   const terminalTurnTarget = forkMessage?.role === 'user'
     ? resolveTerminalTurnTarget(activeGroupBranchId, forkMessage.id, actionTurns)
     : null
   if (activeGroupBranchId !== group.baseBranchId) {
     return terminalTurnTarget
-      ?? messages.find(message => message.branchId === activeGroupBranchId)?.id
+      ?? messages.find(message => message.branchId === activeGroupBranchId && actionMessageIds.has(message.id))?.id
       ?? null
   }
   if (terminalTurnTarget)
     return terminalTurnTarget
   const forkIndex = messages.findIndex(message => message.id === group.forkedFromMessageId)
-  return forkIndex >= 0 ? messages[forkIndex + 1]?.id ?? null : null
+  return forkIndex >= 0 ? messages.slice(forkIndex + 1).find(message => message.branchId === activeGroupBranchId && actionMessageIds.has(message.id))?.id ?? null : null
 }
 
 function resolveTerminalTurnTarget(

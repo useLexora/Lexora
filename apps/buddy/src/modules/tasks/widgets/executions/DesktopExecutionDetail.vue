@@ -15,6 +15,7 @@ import BuddyChatTurnChanges from '../transcript/BuddyChatTurnChanges.vue'
 import BuddyChatTurnOutputs from '../transcript/BuddyChatTurnOutputs.vue'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
 import { useChatContent } from '../transcript/chatContentContext'
+import BuddyExecutionInputs from './BuddyExecutionInputs.vue'
 import BuddyExecutionQuestion from './BuddyExecutionQuestion.vue'
 import BuddyExecutionStatus from './BuddyExecutionStatus.vue'
 import { executionLabels } from './executionLabels'
@@ -27,6 +28,9 @@ const detail = state.detail
 const execution = computed(() => detail.value?.execution)
 const displayName = computed(() => execution.value ? executionDisplayName(execution.value) : null)
 const labels = computed(() => executionLabels(props.language))
+const supplementLabels = computed(() => execution.value?.kind === 'actor_child'
+  ? { title: labels.value.actorSupplement, placeholder: labels.value.actorSupplementPlaceholder, send: labels.value.actorSend }
+  : { title: labels.value.supplement, placeholder: labels.value.supplementPlaceholder, send: labels.value.send })
 const content = useChatContent()
 const draft = shallowRef('')
 const sending = shallowRef(false)
@@ -34,13 +38,15 @@ const stopping = shallowRef(false)
 const failed = shallowRef(false)
 const retry = shallowRef<{ messageId: string, text: string } | null>(null)
 const live = computed(() => state.environment?.ready.value && props.visible && execution.value?.canSend)
+const showSupplement = computed(() => execution.value?.kind === 'npc_child'
+  || (execution.value?.kind === 'actor_child' && (execution.value.phase !== 'closed' || !!draft.value.trim())))
 const updated = computed(() => execution.value ? new Intl.DateTimeFormat(props.language, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(execution.value.updatedAt)) : '')
 provideChatBuddyIdentity(() => detail.value ? [detail.value.run] : [])
 watch(displayName, (title) => {
   if (title)
     emit('titleChange', title)
 }, { immediate: true })
-watch(target, () => {
+watch(() => target.value && [target.value.conversationId, target.value.branchId, target.value.rootRunId, target.value.runId].join(':'), () => {
   draft.value = ''
   retry.value = null
   failed.value = false
@@ -145,26 +151,19 @@ async function answer(questionId: string, text: string) {
         <BuddyChatTokenUsage v-if="detail.usage" :usage="detail.usage" :language="language" />
         <BuddyChatTurnOutputs v-if="detail.artifacts.length" :artifacts="detail.artifacts" :language="language" @open-artifact="emit('openArtifact', $event)" />
         <BuddyChatTurnChanges v-if="detail.changes" :change-set="detail.changes" :language="language" @open-changes="emit('openChanges', $event)" />
-        <section v-if="detail.inputs.length" class="grid grid-cols-1 min-w-0 gap-3 border-t-1 border-t-solid border-t-border pt-3" data-testid="execution-inputs">
-          <div v-for="input in detail.inputs" :key="input.messageId" class="grid grid-cols-1 min-w-0 gap-1">
-            <span class="text-[11px]" :class="input.state === 'undelivered' ? 'text-warning' : 'text-muted'" role="status">{{ input.kind === 'answer' ? labels.reply : labels.supplement }} · {{ labels[input.state] }}</span>
-            <p class="m-0 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-fg text-[13px]">
-              {{ input.text }}
-            </p>
-          </div>
-        </section>
+        <BuddyExecutionInputs :inputs="detail.inputs" :language="language" />
       </template>
     </div>
     <p v-if="failed" role="alert" class="m-0 p-3 text-danger text-[12px]">
       {{ labels.actionFailed }}
     </p>
-    <form v-if="execution?.kind === 'npc_child' || execution?.kind === 'actor_child'" class="flex-none grid grid-cols-1 min-w-0 gap-2 p-3 border-t-1 border-t-solid border-t-border" data-testid="execution-supplement" @submit.prevent="send">
+    <form v-if="showSupplement && execution" class="flex-none grid grid-cols-1 min-w-0 gap-2 p-3 border-t-1 border-t-solid border-t-border" data-testid="execution-supplement" @submit.prevent="send">
       <label class="text-muted text-[12px]">{{ labels.recipient }}<strong class="text-fg">{{ displayName }}</strong></label>
-      <NInput v-model:value="draft" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :maxlength="MAX_BUDDY_MESSAGE_TEXT_LENGTH" :placeholder="labels.supplementPlaceholder" :readonly="!live" :disabled="sending" />
+      <NInput v-model:value="draft" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :maxlength="MAX_BUDDY_MESSAGE_TEXT_LENGTH" :placeholder="supplementLabels.placeholder" :readonly="!live" :disabled="sending" />
       <div class="flex flex-wrap min-w-0 items-center justify-between gap-2">
         <span v-if="!live" class="text-muted text-[11px]">{{ execution.canSend ? labels.unavailable : labels.readOnly }}</span>
         <NButton class="ml-auto" size="small" :loading="sending" :disabled="!live || !draft.trim()" attr-type="submit">
-          {{ labels.send }}
+          {{ supplementLabels.send }}
         </NButton>
       </div>
     </form>

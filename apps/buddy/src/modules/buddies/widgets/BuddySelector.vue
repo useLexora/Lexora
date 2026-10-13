@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import { Add16Regular, ChevronLeft16Regular, Search16Regular } from '@vicons/fluent'
-import { NButton, NInput, NPopover } from 'naive-ui'
+import { NBadge, NButton, NInput, NPopover } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef } from 'vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -12,6 +12,7 @@ import BuddyIcon from './BuddyIcon.vue'
 import BuddyTaskMember from './BuddyTaskMember.vue'
 
 const props = defineProps<{
+  activity?: { count: number, label: string, byBuddy: ReadonlyMap<string, 'working' | 'waiting'> }
   buddyId: string | null
   disabled: boolean
   select: (id: string) => Promise<boolean>
@@ -36,7 +37,7 @@ const searchButton = useTemplateRef<InstanceType<typeof NButton>>('searchButton'
 const addButton = useTemplateRef<InstanceType<typeof NButton>>('addButton')
 const backButton = useTemplateRef<InstanceType<typeof NButton>>('backButton')
 const selecting = shallowRef(false)
-const memberIds = computed(() => [...props.members.memberIds.value].sort((a, b) => Number(b === props.buddyId) - Number(a === props.buddyId)))
+const memberIds = computed(() => [...new Set([...props.members.memberIds.value, ...(props.activity?.byBuddy.keys() ?? [])])].sort((a, b) => Number(b === props.buddyId) - Number(a === props.buddyId)))
 const busy = computed(() => props.disabled || props.members.busy.value || selecting.value)
 const candidates = computed(() => buddies.value.filter(buddy => buddy.kind === 'actor' && buddy.enabled && !buddy.deletedAt
   && !props.members.memberIds.value.includes(buddy.id) && buddy.name.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
@@ -93,15 +94,17 @@ async function closeSearch() {
 <template>
   <NPopover v-model:show="open" trigger="click" placement="bottom-end" :animated="false" :show-arrow="false" :style="{ padding: 0 }" @update:show="show">
     <template #trigger>
-      <NButton class="buddy-icon-button" quaternary :theme-overrides="{ heightMedium: '2rem' }" :aria-label="labels.title" :aria-expanded="open" :disabled="!ready || disabled" data-testid="conversation-buddy-toggle">
-        <template #icon>
-          <DesktopIcon :size="18">
-            <BuddyIcon variant="toolbar" />
-          </DesktopIcon>
-        </template>
-      </NButton>
+      <NBadge class="buddy-partner-badge" :show="(activity?.count ?? 0) > 0" :value="`+${activity?.count ?? 0}`" color="var(--buddy-accent-solid)" :theme-overrides="{ fontSize: '10px' }">
+        <NButton class="buddy-icon-button" quaternary :theme-overrides="{ heightMedium: '2rem' }" :aria-label="activity?.label || labels.title" :aria-expanded="open" :disabled="!ready || disabled" data-testid="conversation-buddy-toggle" @keydown.esc.stop="open = false">
+          <template #icon>
+            <DesktopIcon :size="18" :class="{ 'text-accent-on-surface': (activity?.count ?? 0) > 0 }">
+              <BuddyIcon variant="toolbar" />
+            </DesktopIcon>
+          </template>
+        </NButton>
+      </NBadge>
     </template>
-    <div class="w-[312px] max-w-[calc(100vw-32px)]" data-testid="conversation-buddy-picker">
+    <div class="w-[312px] max-w-[calc(100vw-32px)]" data-testid="conversation-buddy-picker" @keydown.esc.stop="open = false">
       <header class="box-border flex h-11 items-center gap-2 px-3 border-b-1 border-b-solid border-b-border">
         <div class="flex min-w-0 flex-1 items-center gap-1">
           <NButton v-if="adding" ref="backButton" size="small" quaternary class="buddy-icon-button text-muted" :theme-overrides="{ heightSmall: '24px' }" :aria-label="labels.back" @click="returnToMembers">
@@ -148,7 +151,14 @@ async function closeSearch() {
       </template>
       <template v-else>
         <div class="max-h-[300px] overflow-y-auto py-1" :aria-label="labels.members">
-          <BuddyTaskMember v-for="id in memberIds" :key="id" :buddy-id="id" :leader="id === buddyId" :disabled="busy" @select="choose(id)" @remove="members.remove(id)" />
+          <BuddyTaskMember v-for="id in memberIds" :key="id" :buddy-id="id" :leader="id === buddyId" :activity="activity?.byBuddy.get(id)" :removed="!members.memberIds.value.includes(id)" :disabled="busy" @select="choose(id)" @remove="members.remove(id)">
+            <template #actions>
+              <slot name="member-actions" :buddy-id="id" />
+            </template>
+            <template #activity>
+              <slot name="member-activity" :buddy-id="id" />
+            </template>
+          </BuddyTaskMember>
         </div>
         <p class="m-0 px-3 py-2.5 text-[12px] text-muted border-t-1 border-t-solid border-t-border">
           {{ labels.nextTurnOnly }}
@@ -159,6 +169,20 @@ async function closeSearch() {
 </template>
 
 <style scoped lang="scss">
+.buddy-partner-badge :deep(.n-badge-sup) {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  box-sizing: border-box;
+  justify-content: center;
+  height: 14px;
+  min-width: 16px;
+  padding: 0 3px;
+  line-height: 14px;
+  transform: translate(0, -10%);
+}
+
 .buddy-selector-search.n-input {
   width: 9rem;
 }

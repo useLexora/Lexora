@@ -1,3 +1,4 @@
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 
@@ -14,6 +15,25 @@ export function cleanChatToolFilePath(path: string): string {
   }
   catch {}
   return cleaned.split('#')[0]!.split('?')[0]!
+}
+
+export function resolveChatArtifactTarget(artifacts: readonly LocalArtifact[], path: string): LocalArtifact | null {
+  const normalized = cleanChatToolFilePath(path).replaceAll('\\', '/').replace(/^\/+([a-z]:\/)/i, '$1').replace(/^(\.\/)+/, '')
+  if (!normalized || normalized.includes('\0') || normalized.split('/').includes('..')
+    || (/^[a-z][a-z\d+.-]*:/i.test(normalized) && !/^[a-z]:\//i.test(normalized))) {
+    return null
+  }
+  const absolute = normalized.startsWith('/') || /^[a-z]:\//i.test(normalized)
+  const matches = new Map<string, LocalArtifact>()
+  for (const artifact of artifacts) {
+    const target = artifact.path.replaceAll('\\', '/')
+    const windows = /^[a-z]:\//i.test(target) || target.startsWith('//')
+    const candidate = windows ? normalized.toLowerCase() : normalized
+    const stored = windows ? target.toLowerCase() : target
+    if (absolute ? stored === candidate : stored.endsWith(`/${candidate}`))
+      matches.set(artifact.artifactId, artifact)
+  }
+  return matches.size === 1 ? matches.values().next().value! : null
 }
 
 export function resolveChatToolFileTarget(space: LocalSpace | null, path: string): SpaceFileTarget | null {

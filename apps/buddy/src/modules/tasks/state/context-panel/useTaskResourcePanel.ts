@@ -1,8 +1,10 @@
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
+import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
 import type { UseTaskContextPanelOptions } from './typing'
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { browserTabId, isBrowserArtifact } from '../../model/context-panel/taskContextPanel'
+import { resolveChatArtifactTarget } from '../../model/transcript/chatToolFileTarget'
 import { useTaskContextPanel } from './useTaskContextPanel'
 
 interface TaskResourcePanelOptions extends UseTaskContextPanelOptions {
@@ -122,6 +124,24 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     }
   }
 
+  function fileArtifact(path: string, source?: ContextPanelSource) {
+    const conversationId = source?.conversationId ?? options.activeConversationId.value
+    return resolveChatArtifactTarget(options.runOutputs.value.flatMap(output => output.artifacts)
+      .filter(artifact => artifact.conversationId === conversationId), path)
+  }
+
+  function canPreviewFile(path: string) {
+    return Boolean(fileArtifact(path)) || taskContext.canPreviewFile(path)
+  }
+
+  async function previewFile(path: string, source?: ContextPanelSource) {
+    const artifact = fileArtifact(path, source)
+    if (artifact)
+      await openArtifact(artifact)
+    else
+      act(() => taskContext.previewFile(path, source))
+  }
+
   return {
     ...taskContext,
     activeBrowserState,
@@ -130,7 +150,8 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     retainBrowserSession,
     addBrowser: () => act(taskContext.addBrowser),
     openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
-    previewFile: (...args: Parameters<typeof taskContext.previewFile>) => act(() => taskContext.previewFile(...args)),
+    canPreviewFile,
+    previewFile,
     closeTab,
     discardDraft: (id: string) => {
       operation += 1

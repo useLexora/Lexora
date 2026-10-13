@@ -32,6 +32,7 @@ function setup() {
     detail: vi.fn(async input => detail(input.runId)),
     events: vi.fn(async input => ({ events: [message(input.runId, 1, `${input.runId} private output`)], nextSequence: 1, hasMore: false })),
     answer: vi.fn(async () => ({ accepted: true })),
+    sendDraft: async () => { throw new Error('No draft') },
     send: vi.fn(async () => ({ accepted: true })),
     cancel: vi.fn(async () => ({ cancelled: true })),
     cancelChildren: vi.fn(async () => ({ cancelledRunIds: [] })),
@@ -61,7 +62,7 @@ describe('execution detail lifecycle', () => {
     expect(JSON.stringify(f.state.rows.value)).not.toContain('Late first output')
   })
 
-  it('drains paged history once and resumes its cursor after hiding while retaining the execution identity', async () => {
+  it('retains paged history and its cursor across same-identity refreshes and hiding', async () => {
     const f = setup()
     let finish = false
     vi.mocked(f.api.events).mockImplementation(async input => (input.afterSequence ?? 0) === 0
@@ -70,6 +71,10 @@ describe('execution detail lifecycle', () => {
         ? { events: [message(input.runId, 2, 'Second page')], nextSequence: 2, hasMore: false }
         : finish ? { events: [message(input.runId, 3, 'Resumed output')], nextSequence: 3, hasMore: false } : { events: [], nextSequence: input.afterSequence ?? 0, hasMore: false })
     await vi.waitFor(() => expect(JSON.stringify(f.state.rows.value)).toContain('Second page'))
+    f.selected.value = { ...f.selected.value }
+    await nextTick()
+    await f.state.refresh()
+    expect(vi.mocked(f.api.events).mock.calls.at(-1)?.[0].afterSequence).toBe(2)
     f.visible.value = false
     await nextTick()
     finish = true

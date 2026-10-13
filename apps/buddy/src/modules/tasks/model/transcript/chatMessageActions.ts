@@ -13,13 +13,14 @@ export interface ChatMessageActions {
 export function projectChatMessageActions(
   message: LocalMessage,
   disabled: boolean,
+  ownsResultActions: boolean,
 ): ChatMessageActions {
   const lifecycleMessage = message.role === 'user' || message.role === 'assistant'
   return {
     disabled,
     showCopy: lifecycleMessage,
     showEdit: message.role === 'user',
-    showRegenerate: message.role === 'assistant' && message.runId !== null,
+    showRegenerate: ownsResultActions && message.role === 'assistant' && message.runId !== null,
     showTime: lifecycleMessage,
   }
 }

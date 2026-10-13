@@ -5,7 +5,6 @@ import { NButton, NPopover } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { BuddySelector } from '@/modules/buddies'
 import { DesktopMcpDialog } from '@/modules/settings/ui'
 import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
@@ -19,6 +18,7 @@ import DesktopConversationStatusPanel from '@/modules/tasks/widgets/workspace/De
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopTaskPartners from './DesktopTaskPartners.vue'
 
 withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
 const emit = defineEmits<{ ready: [] }>()
@@ -81,7 +81,7 @@ useProvideChatContent({
         <slot name="title" />
       </template>
       <template #leadingActions>
-        <BuddySelector :buddy-id="chatSession.selectedBuddyId.value" :members="chatSession.members" :disabled="chatSession.isSelectingBuddy.value || workspace.execution.isSending.value" :select="chatSession.selectBuddy" />
+        <DesktopTaskPartners :workspace="workspace" />
         <NPopover
           v-model:show="statusPanelOpen"
           placement="bottom-end"

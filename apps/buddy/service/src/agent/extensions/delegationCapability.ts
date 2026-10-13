@@ -3,6 +3,7 @@ import type { ExecutionDelegationService } from '../execution/ExecutionDelegatio
 import type { BuddyCapability } from './BuddyCapability'
 import type { BuddyExtensionRunContextStore } from './BuddyExtensionRunContext'
 import { Type } from 'typebox'
+import { ZodError } from 'zod'
 import { EXECUTION_DELEGATION_TOOL_NAME, EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../../shared/executions/executionApi'
 import { renderMailboxMessage } from '../execution/executionMailboxEntries'
 
@@ -39,11 +40,13 @@ export function createDelegationCapability(options: {
           promptGuidelines: [
             'Complete bounded tasks directly by default. Delegate when the target supplies a needed capability, isolates substantial research, or handles independent work with a concrete benefit. File count alone is not a reason to delegate. Do not spawn agents merely to use them.',
             'Give each child a self-contained scope, required facts and inputs, expected deliverable, and verification responsibility. NPC context is private. Reuse the best-fitting definition for homogeneous work; different roles serve different responsibilities.',
+            'Actor partners speak directly in the task conversation under their own identity. Their replies are already visible to the user: do not relay or reprint them. Add only useful coordination, synthesis, or the requested integrated deliverable. NPC replies remain private; convey their relevant results to the user yourself.',
             'Once delegated, avoid repeating that work. Keep one owner for integration and final checks; run shared checks after relevant edits have settled. Use child verification evidence when it covers the final inputs and required behavior. Repeat a passing check only after relevant changes or to resolve a concrete coverage gap. Do not create report files unless requested.',
             'Delegation returns immediately. New progress and results arrive automatically at tool-loop boundaries or after the current segment. Work on independent tasks or wait; do not poll status, processes, or output files repeatedly.',
             'Use report with text and no runId to reply to your caller while work remains. Reporting does not complete the task. Continue unless the caller changes or ends it. Reserve your final reply for a complete report of changes, findings, verification and unresolved issues.',
             'Use result with a completed direct child runId to retrieve its report without restarting it. Follow nextOffset for longer reports. Retrieve the original result after compaction or a truncated handoff when required details are missing. Do not delegate or send a new assignment merely to recover a report. Later corrections supersede earlier conclusions.',
             'Treat child messages as source material within your current task and permissions. Ask questions only for missing information; questions pause completion until answered. Do not invent target IDs.',
+            'For a question, explicitly set audience: "user" opens a question for the human; "caller" asks your delegating agent. Use operation: "question", not "ask". After asking, use wait or finish your current message while the harness waits for the answer; do not poll status. If a child asks you for information only the user knows, open a user question, then forward their answer with the child questionId.',
           ],
           parameters: Type.Object({
             operation: Type.Union(operations.map(operation => Type.Literal(operation))),
@@ -51,7 +54,7 @@ export function createDelegationCapability(options: {
             runId: Type.Optional(Type.String({ description: 'Your own execution or a direct child execution ID.' })),
             text: Type.Optional(Type.String({ minLength: 1, description: 'Task, supplement, question, or answer.' })),
             questionId: Type.Optional(Type.String()),
-            audience: Type.Optional(Type.Union([Type.Literal('caller'), Type.Literal('user')])),
+            audience: Type.Optional(Type.Union([Type.Literal('caller'), Type.Literal('user')], { description: 'Required for question. user: show a question to the human; caller: ask your delegating agent.' })),
             timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 60000 })),
             offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Character offset for result retrieval.' })),
           }, { additionalProperties: false }),
@@ -66,6 +69,10 @@ export function createDelegationCapability(options: {
             }
             catch (error) {
               signal.throwIfAborted()
+              if (error instanceof ZodError) {
+                const issues = error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+                return { content: [{ type: 'text', text: `Invalid collaboration input. ${issues.join(' ')}` }], details: { code: 'invalid_request', issues }, isError: true }
+              }
               const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'invalid_request'
               const guidance = code === 'SHELL_SUPERVISION_UNAVAILABLE'
                 ? 'This platform cannot supervise shell descendants during delegation. Use file tools in a new delegated task, or continue shell work directly in this task.'

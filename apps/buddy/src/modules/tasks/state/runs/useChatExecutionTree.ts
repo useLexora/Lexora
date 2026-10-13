@@ -1,13 +1,20 @@
+import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { Ref } from 'vue'
+import type { TaskExecutionTree } from '../../contracts'
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
-import { executionDisplayName } from '../../model/executions/executionDisplayName'
-import { provideExecutionTree, useExecutionEnvironment } from './chatExecutionContext'
+import { projectExecutionGroups } from '../../model/executions/executionGroups'
 
-export function useChatExecutionTree(options: { conversationId: Readonly<Ref<string | null>>, branchId: Readonly<Ref<string | null>> }) {
-  const environment = useExecutionEnvironment()
+export function useChatExecutionTree(options: {
+  conversationId: Readonly<Ref<string | null>>
+  branchId: Readonly<Ref<string | null>>
+  ready: Readonly<Ref<boolean>>
+  api: LocalChatApi['executions']
+  onError: (error: unknown) => void
+}): TaskExecutionTree {
   const records = shallowRef<readonly LocalExecution[]>([])
   const revision = shallowRef(0)
+  const groups = computed(() => projectExecutionGroups(records.value))
   let generation = 0
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -28,7 +35,7 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
   async function refresh() {
     const conversationId = options.conversationId.value
     const branchId = options.branchId.value
-    if (!environment?.ready.value || disposed || !conversationId || !branchId)
+    if (!options.ready.value || disposed || !conversationId || !branchId)
       return
     if (loading) {
       again = true
@@ -38,7 +45,7 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
     const request = ++generation
     const scope = { conversationId, branchId }
     try {
-      const value = await environment.api.list(scope)
+      const value = await options.api.list(scope)
       if (!disposed && request === generation && scope.conversationId === options.conversationId.value && scope.branchId === options.branchId.value) {
         records.value = value
         revision.value++
@@ -46,7 +53,7 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
     }
     catch (error) {
       if (!disposed && request === generation)
-        environment.onError(error)
+        options.onError(error)
     }
     finally {
       loading = false
@@ -57,7 +64,7 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
     }
   }
 
-  const stop = environment?.api.onChanged((notice) => {
+  const stop = options.api.onChanged((notice) => {
     if (notice.conversationId !== options.conversationId.value || timer)
       return
     timer = setTimeout(() => {
@@ -65,7 +72,7 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
       void refresh()
     }, 60)
   })
-  watch(() => [options.conversationId.value, options.branchId.value, environment?.ready.value], () => {
+  watch(() => [options.conversationId.value, options.branchId.value, options.ready.value], () => {
     generation++
     records.value = []
     void refresh()
@@ -85,20 +92,17 @@ export function useChatExecutionTree(options: { conversationId: Readonly<Ref<str
     return { conversationId, branchId, rootRunId: record.rootRunId, runId: record.runId }
   }
   const tree = {
+    groups,
     records: readonly(records),
     revision: readonly(revision),
-    ready: computed(() => environment?.ready.value ?? false),
-    selectedRunId: computed(() => {
-      const selected = environment?.selectedTarget.value
-      return selected?.conversationId === options.conversationId.value && selected?.branchId === options.branchId.value ? selected.runId : null
-    }),
+    ready: options.ready,
+    conversationId: options.conversationId,
+    branchId: options.branchId,
     byParent,
     target,
-    open: async (record: LocalExecution) => environment?.open(target(record), executionDisplayName(record)),
-    onError: environment?.onError,
+    onError: options.onError,
     refresh,
-    api: environment?.api,
+    api: options.api,
   }
-  provideExecutionTree(tree)
   return tree
 }

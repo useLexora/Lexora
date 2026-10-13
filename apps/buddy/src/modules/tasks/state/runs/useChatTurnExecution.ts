@@ -2,6 +2,7 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ParsedBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalPromptContextItem } from '@buddy-shared/conversation/chatApi'
+import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
 import type { BuddyApprovalPolicy } from '@buddy-shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '@buddy-shared/permissions/executionProfile'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
@@ -28,10 +29,11 @@ interface ValueRef<T> {
 }
 
 export interface UseChatTurnExecutionOptions {
+  actorInput?: { target: ValueRef<ExecutionTarget | null> }
   getNewBuddyId?: () => string | undefined
   activeRun: ValueRef<LocalRun | null>
   approvalPolicy: ValueRef<BuddyApprovalPolicy>
-  api: { chat: Pick<LocalChatApi['chat'], 'cancel' | 'executeCommand' | 'startTurn' | 'enqueue' | 'listQueue' | 'cancelQueued' | 'steerQueued'> }
+  api: { chat: Pick<LocalChatApi['chat'], 'cancel' | 'executeCommand' | 'startTurn' | 'enqueue' | 'listQueue' | 'cancelQueued' | 'steerQueued'>, executions?: Pick<LocalChatApi['executions'], 'sendDraft'> }
   canSendDraft: ValueRef<boolean>
   taskIndexData: Pick<TaskIndexData, 'refreshIndex'>
   session: Pick<ChatSession, | 'acceptTurn'
@@ -42,6 +44,7 @@ export interface UseChatTurnExecutionOptions {
   | 'isCurrent'
   | 'upsertBranch'>
   drafts: Pick<ChatDrafts, | 'acknowledgeSend'
+  | 'confirmOpen'
   | 'draftId'
   | 'isPersisted'
   | 'resourceIdsForDraft'
@@ -119,6 +122,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       return executeActionCommand(command, contextItems)
 
     const buddyId = options.getNewBuddyId?.()
+    const supplementTarget = options.actorInput?.target.value
     const sourceScopeKey = options.draftScopeKey.value
     const navigationVersion = options.session.generation()
     const isSourceViewCurrent = () => options.session.isCurrent(navigationVersion)
@@ -135,6 +139,15 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         return false
       }
       const expectedRevision = confirmedDraft.revision!
+      if (supplementTarget) {
+        if (!options.api.executions)
+          throw new Error('Execution input service unavailable')
+        const remote = await options.api.executions.sendDraft({ ...supplementTarget, draftId: confirmedDraft.draftId, expectedRevision })
+        if (remote) {
+          options.drafts.confirmOpen(confirmedDraft, remote)
+          return true
+        }
+      }
       const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}`
       const requestId = requestIds.resolve(operationKey)
       if (stoppingRunId.value || options.activeRun.value || queue.queuedMessages.value.length) {

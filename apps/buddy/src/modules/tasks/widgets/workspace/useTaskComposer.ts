@@ -9,6 +9,7 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
     const composer = props.composer
     const execution = props.execution
     return {
+      isActorInput: !execution.editingMessageId.value && execution.isActorInput.value,
       canUpdatePermissionSettings: composer.canUpdatePermissionSettings.value,
       canSend: execution.canSend.value && !execution.isMutatingBranch.value,
       composerContent: composer.composerContent.value,

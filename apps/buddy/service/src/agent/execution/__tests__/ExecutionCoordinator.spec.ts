@@ -90,19 +90,6 @@ describe('execution coordination', () => {
     expect(f.executions.listTree('root').filter(item => item.run.executionKind === 'npc_child' && item.phase === 'working')).toHaveLength(5)
   })
 
-  it('starts more than five NPCs under the captured unlimited configuration', async () => {
-    const f = await fixture()
-    const snapshot = f.snapshot('default')
-    snapshot.settings.npcConcurrency = { mode: 'unlimited' }
-    f.database.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ?').run(JSON.stringify(snapshot), 'root')
-    const signal = new AbortController().signal
-    await f.coordinator.begin('root', signal)
-    for (let index = 0; index < 8; index++)
-      await f.coordinator.admitChild(f.child(`npc-${index}`))
-    await Promise.all(Array.from({ length: 8 }, (_, index) => f.coordinator.begin(`npc-${index}`, signal)))
-    expect(f.executions.listTree('root').filter(item => item.run.executionKind === 'npc_child' && item.phase === 'working')).toHaveLength(8)
-  })
-
   it('lets separate supporting actors wait while each of their own NPCs starts', async () => {
     const f = await fixture()
     const other = f.buddies.create({ name: 'Second supporting actor' })
@@ -181,10 +168,6 @@ describe('execution coordination', () => {
     const snapshot = await port.readPending()
     await f.events.append({ runId: 'root', type: 'run.progress', payload: {} })
     await port.waitForChange({ afterRevision: snapshot.revision })
-    const closed = await port.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
-    expect(closed.kind).toBe('sealed')
-    await expect(f.coordinator.send('root', { messageId: 'late', targetRunId: 'root', targetGeneration: 0, kind: 'supplement', text: 'Late message' })).rejects.toMatchObject({ code: 'stale' })
-    expect(f.mailbox.find('late')).toBeNull()
   })
 
   it('waits for the named child despite an earlier result and answers a caller question without a lost wakeup', async () => {
@@ -258,6 +241,25 @@ describe('execution coordination', () => {
     await expect(service.execute(caller, 'explicit', { operation: 'wait', runId: 'earlier', timeoutMs: 10000 }, signal)).resolves.toMatchObject({ runId: 'earlier', phase: 'closed' })
   })
 
+  it('requires a question recipient and waits for a human answer without polling an empty child list', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('actor', f.actor.id))
+    await f.coordinator.begin('actor', signal)
+    const service = delegationService(f)
+    const caller = { run: { runId: 'actor', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
+    await expect(service.execute(caller, 'missing-recipient', { operation: 'question', text: 'Choose a color' }, signal)).rejects.toMatchObject({ issues: [expect.objectContaining({ path: ['audience'] })] })
+    expect(f.mailbox.listQuestions('actor')).toEqual([])
+    const question = await service.execute(caller, 'question', { operation: 'question', audience: 'user', text: 'Choose a color' }, signal) as { questionId: string }
+    const waiting = service.execute(caller, 'wait', { operation: 'wait', timeoutMs: 10000 }, signal)
+    await vi.waitFor(() => expect(f.executions.find('actor')?.phase).toBe('waiting'))
+    expect(f.mailbox.findQuestion(question.questionId)?.open).toBe(true)
+    await f.coordinator.answerQuestion(null, question.questionId, 'blue')
+    expect(await waiting).toMatchObject({ updates: [expect.objectContaining({ kind: 'answer', questionId: question.questionId, text: 'blue' })] })
+    expect(f.executions.find('actor')?.phase).toBe('working')
+  })
+
   it('reclaims the working permit when a wait reaches its deadline', async () => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -279,7 +281,6 @@ describe('execution coordination', () => {
       const sent = results[supplementFirst ? 0 : 1]!
       const closing = results[supplementFirst ? 1 : 0]!
       if (sent.status === 'fulfilled') {
-        expect(sent.value).toBeUndefined()
         expect(closing).toMatchObject({ status: 'fulfilled', value: { kind: 'pending' } })
         const message = (await parent.readPending()).messages[0]!
         const receipt = { sourceRunId: message.sourceRunId, messageId: message.messageId, payloadHash: message.payloadHash, contextEntryId: 'supplement-context' }

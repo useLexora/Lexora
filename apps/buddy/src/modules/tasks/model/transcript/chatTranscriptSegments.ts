@@ -1,6 +1,6 @@
 import type { ChatAgentTurnNode } from './chatAgentTurn'
 import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './chatTranscriptActivities'
-import type { ChatTranscriptAgentTurnRow, ChatTranscriptRow } from './chatTranscriptTypes'
+import type { ChatTranscriptAgentTurnRow } from './chatTranscriptTypes'
 import { mergeChatTranscriptActivities } from './chatTranscriptActivities'
 
 export function interleaveChatTranscriptSegments(
@@ -37,6 +37,11 @@ export function interleaveChatTranscriptSegments(
     }
     if (!groups.size)
       groups.set(trigger, [])
+    const lastOtherSpeaker = timeline.findLastIndex(candidate => candidate.kind === 'message'
+      && candidate.message.role === 'assistant'
+      && candidate.message.runId !== row.turn.runId
+      && timestamp(candidate) >= row.turn.startedAt
+      && (!row.turn.completedAt || timestamp(candidate) <= row.turn.completedAt))
     if (row.ownsResultActions) {
       const outcomePosition = timeline.findLastIndex(candidate => candidate.kind === 'message' && (
         candidate.message.runId === row.turn.runId
@@ -46,8 +51,9 @@ export function interleaveChatTranscriptSegments(
           && row.turn.completedAt !== null
           && timestamp(candidate) <= row.turn.completedAt)
       ))
-      if (outcomePosition > Math.max(...groups.keys()))
-        groups.set(outcomePosition, [])
+      const position = Math.max(outcomePosition, lastOtherSpeaker)
+      if (position > Math.max(...groups.keys()))
+        groups.set(position, [])
     }
     const ordered = [...groups].sort(([left], [right]) => left - right)
     ordered.forEach(([position, nodes], index) => {
@@ -55,32 +61,12 @@ export function interleaveChatTranscriptSegments(
       const isLast = index === ordered.length - 1
       siblings.push({
         ...row,
-        ...(isLast ? {} : { ownsResultActions: undefined, showOutcome: false as const }),
+        ...(isLast && position >= lastOtherSpeaker ? {} : { ownsResultActions: undefined, showOutcome: false as const }),
         key: index === 0 ? row.key : `${row.key}:${timeline[position]!.key}`,
         turn: ordered.length === 1 ? row.turn : { ...row.turn, nodes },
       })
       segments.set(position, siblings)
     })
   }
-  return alignChatAssistantIdentity(mergeChatTranscriptActivities([...(segments.get(-1) ?? []), ...timeline.flatMap((row, index) => [row, ...(segments.get(index) ?? [])])]))
-}
-
-function alignChatAssistantIdentity(rows: PresentedChatTranscriptRow[]): PresentedChatTranscriptRow[] {
-  const visibleRunIds = new Set<string>()
-  return rows.map((row) => {
-    const runId = row.kind === 'agent-turn'
-      ? row.turn.runId
-      : row.kind === 'message' && row.message.role === 'assistant' ? row.message.runId : null
-    if (runId === null)
-      return row
-    const continuation = visibleRunIds.has(runId)
-    visibleRunIds.add(runId)
-    return continuation ? { ...row, showIdentity: false as const } : row
-  })
-}
-
-export function hasChatAssistantIdentity(rows: readonly ChatTranscriptRow[], runId: string | null): boolean {
-  return runId !== null && rows.some(row => row.kind === 'agent-turn'
-    ? row.turn.runId === runId
-    : row.kind === 'message' && row.message.role === 'assistant' && !row.streaming && row.message.runId === runId)
+  return mergeChatTranscriptActivities([...(segments.get(-1) ?? []), ...timeline.flatMap((row, index) => [row, ...(segments.get(index) ?? [])])])
 }

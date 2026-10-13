@@ -42,6 +42,7 @@ import { PiEventBridge } from './agent/events/PiEventBridge'
 import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
 import { BuddyRunExecutionPlanner } from './agent/execution/BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from './agent/execution/BuddyTurnLauncher'
+import { ExecutionComposerInputService } from './agent/execution/ExecutionComposerInputService'
 import { ExecutionCoordinator } from './agent/execution/ExecutionCoordinator'
 import { ExecutionDelegationService } from './agent/execution/ExecutionDelegationService'
 import { ExecutionPresentationService } from './agent/execution/ExecutionPresentationService'
@@ -978,6 +979,7 @@ export async function startBuddyService(
     })
     const executionPresentation = await host.start('runtime.execution_presentation', ({ defer }) => {
       const service = new ExecutionPresentationService({
+        approvals: approvalsRepository,
         conversations,
         runs,
         executions: executionRecords,
@@ -1360,7 +1362,7 @@ export async function startBuddyService(
       )
       register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
-      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation }))
+      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) }))
       register(
         registerAttachmentRpc({
           rpc: options.rpc,

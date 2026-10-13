@@ -89,7 +89,7 @@ export function useExecutionDetail(target: Readonly<Ref<ExecutionTarget | null>>
       void refresh()
     }, 80)
   })
-  watch(target, () => {
+  watch(() => target.value && [target.value.conversationId, target.value.branchId, target.value.rootRunId, target.value.runId].join(':'), () => {
     generation++
     sequence = 0
     detail.value = null

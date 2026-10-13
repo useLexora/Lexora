@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { artifactSchema } from '../artifacts/artifactApi'
 import { changeSetSummarySchema } from '../changes/changeApi'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../conversation/buddyMessageContent'
+import { buddyComposerDraftDiscardSchema, buddyComposerDraftSchema } from '../conversation/composerDraft'
 import { runEventSchema, runSchema, runStatusSchema } from '../runs/runApi'
 import { buddyRunProgressSchema } from '../runs/runProgress'
 import { idSchema, timestampSchema } from '../runtime/apiValidation'
@@ -60,9 +61,11 @@ export const executionSendSchema = executionTargetSchema.extend({
   messageId: z.uuid(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH),
 }).strict()
+export const executionSendDraftSchema = executionTargetSchema.extend(buddyComposerDraftDiscardSchema.unwrap().shape).strict()
 export const executionEventsRequestSchema = executionTargetSchema.extend({ afterSequence: z.number().int().nonnegative().default(0) }).strict()
 export const executionEventsPageSchema = z.object({ events: z.array(runEventSchema), nextSequence: z.number().int().nonnegative(), hasMore: z.boolean() }).strict()
 export const executionAnswerSchema = executionTargetSchema.extend({
+  messageId: z.uuid().optional(),
   questionId: z.string().min(1).max(256),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH),
 }).strict()
@@ -71,6 +74,7 @@ export type ExecutionScope = z.infer<typeof executionScopeSchema>
 export type ExecutionTarget = z.infer<typeof executionTargetSchema>
 export type ExecutionAnswer = z.infer<typeof executionAnswerSchema>
 export type ExecutionSend = z.infer<typeof executionSendSchema>
+export type ExecutionSendDraft = z.infer<typeof executionSendDraftSchema>
 export type ExecutionEventsRequest = z.input<typeof executionEventsRequestSchema>
 export type LocalExecutionEventsPage = DeepReadonly<z.infer<typeof executionEventsPageSchema>>
 export type LocalExecution = DeepReadonly<z.infer<typeof executionPresentationSchema>>
@@ -81,6 +85,7 @@ export const executionPresentationRpc = {
   detail: { method: 'executions.detail', input: executionTargetSchema, response: executionDetailSchema },
   answer: { method: 'executions.answer', input: executionAnswerSchema, response: z.object({ accepted: z.boolean() }).strict() },
   send: { method: 'executions.send', input: executionSendSchema, response: z.object({ accepted: z.boolean() }).strict() },
+  sendDraft: { method: 'executions.sendDraft', input: executionSendDraftSchema, response: buddyComposerDraftSchema.nullable() },
   events: { method: 'executions.events', input: executionEventsRequestSchema, response: executionEventsPageSchema },
   cancel: { method: 'executions.cancel', input: executionTargetSchema, response: z.object({ cancelled: z.boolean() }).strict() },
   cancelChildren: { method: 'executions.cancelChildren', input: executionTargetSchema, response: z.object({ cancelledRunIds: z.array(idSchema) }).strict() },

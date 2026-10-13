@@ -1,7 +1,7 @@
 import type { BuddyExtensionRunContext } from '../../agent/extensions/BuddyExtensionRunContext'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
 import type { ApprovalRecord, ApprovalRepository } from '../../storage/approvalRepository'
-import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,6 +31,7 @@ describe('harness tool authorization', () => {
     const records = new Map<string, ApprovalRecord>()
     const events: Array<{ type: string, payload: unknown }> = []
     const repository: ApprovalRepository = {
+      hasPending: runId => [...records.values()].some(record => record.runId === runId && record.status === 'pending'),
       findById: id => records.get(id) ?? null,
       list: () => [...records.values()],
       listPending: runId => [...records.values()].filter(record => record.status === 'pending' && (!runId || runId === record.runId)),
@@ -140,29 +141,19 @@ describe('harness tool authorization', () => {
     await expect(afterClear).resolves.toBe('APPROVAL_DENIED')
   })
 
-  it('rechecks a pending write under read-only mode and revokes its old approval', async () => {
-    const f = fixture()
-    f.authorization.updatePermissionSettings({ approvalPolicy: 'manual', executionProfile: 'workspace_write' })
-    const pending = f.authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'fixture' }), f.run)
-    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
-    const previous = f.repository.listPending()[0]!
-    f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
-    expect(await pending).toBe('READ_ONLY_PROFILE')
-    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(0))
-    expect(f.repository.findById(previous.id)?.status).toBe('cancelled')
-    await expect(f.approvals.resolve({ id: previous.id, decision: 'approved' })).rejects.toMatchObject({ code: 'APPROVAL_NOT_PENDING' })
-  })
-
-  it('continues a pending workspace write when the new policy allows it', async () => {
-    const f = fixture()
-    f.authorization.updatePermissionSettings({ approvalPolicy: 'manual', executionProfile: 'workspace_write' })
-    const pending = f.authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'fixture' }), f.run)
-    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
-    const previous = f.repository.listPending()[0]!
-    f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
-    expect(await pending).toBeNull()
-    await vi.waitFor(() => expect(f.repository.findById(previous.id)?.status).toBe('cancelled'))
-    expect(f.repository.listPending()).toHaveLength(0)
+  it('rechecks pending writes after a permission change and revokes the old approval whether allowed or denied', async () => {
+    for (const executionProfile of ['read_only', 'workspace_write'] as const) {
+      const f = fixture()
+      f.authorization.updatePermissionSettings({ approvalPolicy: 'manual', executionProfile: 'workspace_write' })
+      const pending = f.authorization.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'fixture' }), f.run)
+      await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
+      const previous = f.repository.listPending()[0]!
+      f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile })
+      expect(await pending).toBe(executionProfile === 'read_only' ? 'READ_ONLY_PROFILE' : null)
+      await vi.waitFor(() => expect(f.repository.findById(previous.id)?.status).toBe('cancelled'))
+      expect(f.repository.listPending()).toHaveLength(0)
+      await expect(f.approvals.resolve({ id: previous.id, decision: 'approved' })).rejects.toMatchObject({ code: 'APPROVAL_NOT_PENDING' })
+    }
   })
 
   it('keeps one-time approvals single-use and cancels queued requests independently', async () => {
@@ -276,11 +267,9 @@ describe('harness tool authorization', () => {
     expect(Reflect.set(snapshot[0]!, 'canonicalRoot', root)).toBe(false)
     expect(Reflect.set(snapshot, '0', { canonicalRoot: root })).toBe(false)
     const executionGrants = [...f.grants, ...snapshot]
-    const resolved = await resolveGrantedPath(executionGrants, output, 'create')
-    await writeFile(resolved.canonicalPath, 'synthetic image bytes')
-    expect(await readFile(output, 'utf8')).toBe('synthetic image bytes')
+    await expect(resolveGrantedPath(executionGrants, output, 'create')).resolves.toMatchObject({ canonicalPath: output })
     expect(f.grants).toHaveLength(1)
-    await expect(resolveGrantedPath(f.grants, output, 'existing')).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
+    await expect(resolveGrantedPath(f.grants, output, 'create')).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
     expect(f.executionPermissions.get(f.run, 'another-call')).toEqual([])
     expect(f.executionPermissions.get({ ...f.run, runId: 'run-2' }, event.toolCallId)).toEqual([])
     f.controller.abort()

@@ -19,8 +19,7 @@ import { isPiShellToolName } from '../extensions/piBuiltinTools'
 import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
 import { readExecutionMailboxEntries } from './executionMailboxEntries'
 
-export const delegationInputSchema = z.object({
-  operation: z.enum(['list', 'delegate', 'status', 'result', 'report', 'send', 'wait', 'question', 'answer', 'cancel']),
+const delegationFields = z.object({
   targetId: z.string().min(1).max(256).optional(),
   runId: z.string().min(1).max(256).optional(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH).optional(),
@@ -29,6 +28,14 @@ export const delegationInputSchema = z.object({
   timeoutMs: z.number().int().min(1).max(60000).optional(),
   offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict()
+
+export const delegationInputSchema = z.discriminatedUnion('operation', [
+  delegationFields.extend({ operation: z.enum(['list', 'delegate', 'status', 'result', 'report', 'send', 'wait', 'answer', 'cancel']) }),
+  delegationFields.extend({
+    operation: z.literal('question'),
+    audience: z.enum(['caller', 'user'], { error: 'Required for question: use "user" to ask the human, or "caller" to ask the delegating agent.' }),
+  }),
+])
 
 export type DelegationInput = z.infer<typeof delegationInputSchema>
 
@@ -84,8 +91,8 @@ export class ExecutionDelegationService {
       if (!target)
         throw new ExecutionAdmissionError('unauthorized')
       const questionId = createHash('sha256').update(JSON.stringify([source.run.id, requestKey])).digest('hex')
-      await this.#options.coordinator.send(source.run.id, { messageId: questionId, questionId, kind: 'question', audience: input.audience ?? 'caller', targetRunId: target.run.id, targetGeneration: target.run.generation, text: input.text })
-      return { questionId, status: 'waiting_for_answer', audience: input.audience ?? 'caller' }
+      await this.#options.coordinator.send(source.run.id, { messageId: questionId, questionId, kind: 'question', audience: input.audience, targetRunId: target.run.id, targetGeneration: target.run.generation, text: input.text })
+      return { questionId, status: 'waiting_for_answer', audience: input.audience }
     }
     if (input.operation === 'answer') {
       if (!input.questionId || !input.text)
@@ -123,7 +130,9 @@ export class ExecutionDelegationService {
             .map(item => item.run.id)
       const unseen = new Set(pending.map(message => message.messageId))
       const delivered = this.#options.mailbox.listUnconsumed(source.run.id).filter(message => !unseen.has(message.messageId)).map(message => message.messageId)
-      if (targets.length || pending.length)
+      const awaitingAnswer = this.#options.mailbox.listQuestions(source.run.id)
+        .some(message => message.kind === 'question' && this.#options.mailbox.findQuestion(message.questionId)?.open)
+      if (targets.length || pending.length || awaitingAnswer)
         await this.#options.coordinator.wait(source.run.id, targets, input.timeoutMs ?? 30000, signal, delivered)
     }
     return this.status(source.run.id, target.run.id, entries)

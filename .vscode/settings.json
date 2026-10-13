@@ -9,6 +9,10 @@
     "source.organizeImports": "never"
   },
 
+  "files.watcherExclude": {
+    "**/.output/**": true
+  },
+
   "files.associations": {
     "**/.SRCINFO": "properties"
   },

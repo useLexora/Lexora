@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ExecutionGroup } from '../../model/executions/executionGroups'
 import type { ChatAgentTurn } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Clock20Regular } from '@vicons/fluent'
@@ -9,11 +10,13 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { describeChatCurrentActivity } from '../../model/transcript/chatCurrentActivity'
 import { formatChatRunDuration } from '../../model/transcript/chatRunDuration'
 import BuddyChatActivityStatus from './BuddyChatActivityStatus.vue'
+import BuddyChatActorActivity from './BuddyChatActorActivity.vue'
 
 const props = defineProps<{
   language: BuddyLocale
   turn: ChatAgentTurn
   stopping?: boolean
+  executionGroup?: ExecutionGroup
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const now = shallowRef(Date.now())
@@ -25,7 +28,11 @@ const duration = computed(() => formatChatRunDuration(props.turn.startedAt, prop
 </script>
 
 <template>
-  <div v-if="activity" class="buddy-chat-run-activity min-w-0 pb-[var(--buddy-chat-gap-turn)]" :class="{ 'is-retrying': activity.retry }">
+  <div v-if="executionGroup?.mode === 'collaboration'" class="buddy-chat-collaboration-activity grid min-w-0 gap-1 pb-[var(--buddy-chat-gap-turn)]" data-testid="collaboration-activity">
+    <BuddyChatActorActivity v-for="actor in executionGroup.activeActors" :key="actor.runId" :execution="actor" :language="language" :now="now" :stopping="stopping" />
+  </div>
+  <BuddyChatActorActivity v-else-if="executionGroup?.root.questions.some(question => question.open && question.audience === 'user')" :execution="executionGroup.root" :language="language" :now="now" :stopping="stopping" class="pb-[var(--buddy-chat-gap-turn)]" />
+  <div v-else-if="activity" class="buddy-chat-run-activity min-w-0 pb-[var(--buddy-chat-gap-turn)]" :class="{ 'is-retrying': activity.retry }">
     <BuddyChatActivityStatus :label="activity.label" :warning="activity.warning" :active="activity.active">
       <template #icon>
         <DesktopIcon :component="Clock20Regular" class="buddy-chat-run-activity__waiting" aria-hidden="true" />

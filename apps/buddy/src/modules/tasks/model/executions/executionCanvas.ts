@@ -9,7 +9,6 @@ export interface ExecutionCanvasNode {
   height: number
 }
 
-const NODE_HEIGHT = 96
 const ROW_GAP = 16
 
 export function projectExecutionCanvas(records: readonly LocalExecution[], rootRunId: string): readonly ExecutionCanvasNode[] {
@@ -29,22 +28,24 @@ export function projectExecutionCanvas(records: readonly LocalExecution[], rootR
 
   const nodes: ExecutionCanvasNode[] = []
   const visited = new Set<string>()
-  let row = 0
+  let nextY = 0
   function visit(execution: LocalExecution, depth: number): ExecutionCanvasNode {
     visited.add(execution.runId)
     const node: ExecutionCanvasNode = {
       execution,
       parentId: depth ? execution.parentRunId : null,
-      x: depth ? 216 + (depth - 1) * 312 : 0,
+      x: depth * 312,
       y: 0,
-      width: depth ? 272 : 176,
-      height: NODE_HEIGHT,
+      width: 272,
+      height: execution.kind === 'npc_child' ? 96 : 56,
     }
     nodes.push(node)
+    const startY = nextY
     const descendants = (children.get(execution.runId) ?? []).filter(child => !visited.has(child.runId)).map(child => visit(child, depth + 1))
     node.y = descendants.length
-      ? (descendants[0]!.y + descendants.at(-1)!.y) / 2
-      : row++ * (NODE_HEIGHT + ROW_GAP)
+      ? Math.max(startY, (descendants[0]!.y + descendants[0]!.height / 2 + descendants.at(-1)!.y + descendants.at(-1)!.height / 2) / 2 - node.height / 2)
+      : nextY
+    nextY = Math.max(nextY, node.y + node.height + ROW_GAP)
     return node
   }
   visit(root, 0)

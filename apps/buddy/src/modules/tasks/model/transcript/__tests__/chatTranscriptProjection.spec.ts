@@ -95,23 +95,7 @@ describe('chat transcript projection', () => {
 
   it('uses cached run projections for streaming messages and recovery notices', () => {
     const user = message('message-run-1', 'user')
-    const activeRun: LocalRun = {
-      buddyId: 'default',
-      branchId: 'branch-1',
-      completedAt: null,
-      conversationId: 'conversation-1',
-      errorCode: null,
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      id: 'run-1',
-      modelId: 'model-1',
-      providerId: 'provider-1',
-      purpose: 'chat',
-      reasoningLevel: null,
-      startedAt: '2026-08-20T00:00:00.000Z',
-      status: 'running',
-      triggeringMessageId: user.id,
-    }
+    const activeRun = localRun('run-1', user.id, 'running')
     const events = [
       runEvent(1, 'session.recovery.degraded', { missingAttachmentCount: 2 }),
       runEvent(2, 'message.started', {
@@ -134,7 +118,7 @@ describe('chat transcript projection', () => {
       runProjections,
       runs: [activeRun],
       timelineItems: [user],
-    } as Parameters<typeof projectChatTranscript>[0] & { runProjections: typeof runProjections })
+    })
 
     expect(projection.rows.map(row => row.kind)).toEqual([
       'message',
@@ -204,7 +188,6 @@ describe('chat transcript projection', () => {
       },
       { key: `agent-turn:${reasoningTurn.runId}`, kind: 'agent-turn', turn: reasoningTurn },
       {
-        showIdentity: false,
         resultRunId: 'run-1',
         key: `message:${assistant.id}`,
         kind: 'message',
@@ -236,23 +219,7 @@ describe('chat transcript projection', () => {
 
   it('keeps the same message row identity from streaming through persistence', () => {
     const user = message('user-1', 'user')
-    const activeRun: LocalRun = {
-      buddyId: 'default',
-      branchId: 'branch-1',
-      completedAt: null,
-      conversationId: 'conversation-1',
-      errorCode: null,
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      id: 'run-1',
-      modelId: 'model-1',
-      providerId: 'provider-1',
-      purpose: 'chat',
-      reasoningLevel: null,
-      startedAt: '2026-08-20T00:00:00.000Z',
-      status: 'running',
-      triggeringMessageId: user.id,
-    }
+    const activeRun = localRun('run-1', user.id, 'running')
     const events: LocalRunEvent[] = [
       runEvent(1, 'message.started', {
         messageId: 'assistant-stable',
@@ -301,7 +268,7 @@ describe('chat transcript projection', () => {
     expect(completed).not.toHaveProperty('streaming')
   })
 
-  it('attaches run outputs to the final result instead of projecting an output message', () => {
+  it('attaches outputs and nonempty changes only to the final result, without extra messages', () => {
     const user = message('user-1', 'user')
     const final = message('assistant-final', 'assistant')
     const turn: ChatAgentTurn = {
@@ -319,7 +286,7 @@ describe('chat transcript projection', () => {
       triggeringMessageId: user.id,
     }
 
-    const rows = projectPersistedChatTranscriptRows([user, final], [turn], [{
+    const outputs: LocalRunOutput[] = [{
       artifacts: [{
         artifactId: 'generated-image-1',
         conversationId: 'conversation-1',
@@ -338,59 +305,7 @@ describe('chat transcript projection', () => {
       createdAt: '2026-08-20T00:00:02.000Z',
       runId: 'run-1',
       sourceToolCallId: 'tool-image-1',
-    }])
-
-    expect(rows).toEqual([
-      {
-        key: 'message:user-1',
-        kind: 'message',
-        message: user,
-        turnOutputs: null,
-      },
-      {
-        resultRunId: 'run-1',
-        key: 'message:assistant-final',
-        kind: 'message',
-        message: final,
-        turnOutputs: {
-          artifacts: [{
-            artifactId: 'generated-image-1',
-            conversationId: 'conversation-1',
-            createdAt: '2026-08-20T00:00:02.000Z',
-            kind: 'file',
-            mimeType: 'image/png',
-            name: 'generated-image.png',
-            path: '/workspace/generated-image.png',
-            previewUrl: null,
-            runId: 'run-1',
-            sizeBytes: 12_345,
-            sourceArtifactId: null,
-            sourceToolCallId: 'tool-image-1',
-            updatedAt: '2026-08-20T00:00:02.000Z',
-          }],
-          runId: 'run-1',
-        },
-      },
-    ])
-  })
-
-  it('attaches the run change summary only to the final assistant result', () => {
-    const user = message('user-1', 'user')
-    const final = message('assistant-final', 'assistant')
-    const turn: ChatAgentTurn = {
-      branchId: 'branch-1',
-      completedAt: '2026-08-20T00:00:03.000Z',
-      finalMessageId: final.id,
-      nodes: [],
-      processMessageIds: [],
-      usage: null,
-      progress: null,
-      reasoningLevel: null,
-      runId: 'run-1',
-      startedAt: '2026-08-20T00:00:01.000Z',
-      status: 'completed',
-      triggeringMessageId: user.id,
-    }
+    }]
     const changeSet: LocalChangeSetSummary = {
       changeSetId: 'changes-1',
       conversationId: 'conversation-1',
@@ -401,55 +316,18 @@ describe('chat transcript projection', () => {
       updatedAt: '2026-08-20T00:00:03.000Z',
     }
 
-    const rows = projectPersistedChatTranscriptRows(
-      [user, final],
-      [turn],
-      [],
-      [changeSet],
-    )
-
+    const rows = projectPersistedChatTranscriptRows([user, final], [turn], outputs, [changeSet])
+    expect(rows.map(row => row.key)).toEqual(['message:user-1', 'message:assistant-final'])
+    expect(rows[0]).toMatchObject({ turnOutputs: null })
     expect(rows[0]).not.toHaveProperty('turnChanges')
     expect(rows[1]).toMatchObject({
-      message: { id: final.id },
+      resultRunId: turn.runId,
+      turnOutputs: { runId: turn.runId, artifacts: outputs[0]!.artifacts },
       turnChanges: changeSet,
     })
-  })
 
-  it('omits an empty run change summary from the final assistant result', () => {
-    const user = message('user-1', 'user')
-    const final = message('assistant-final', 'assistant')
-    const turn: ChatAgentTurn = {
-      branchId: 'branch-1',
-      completedAt: '2026-08-20T00:00:03.000Z',
-      finalMessageId: final.id,
-      nodes: [],
-      processMessageIds: [],
-      usage: null,
-      progress: null,
-      reasoningLevel: null,
-      runId: 'run-1',
-      startedAt: '2026-08-20T00:00:01.000Z',
-      status: 'completed',
-      triggeringMessageId: user.id,
-    }
-    const emptyChangeSet: LocalChangeSetSummary = {
-      changeSetId: 'changes-1',
-      conversationId: 'conversation-1',
-      coverage: 'partial',
-      fileCount: 0,
-      runId: 'run-1',
-      status: 'completed',
-      updatedAt: '2026-08-20T00:00:03.000Z',
-    }
-
-    const rows = projectPersistedChatTranscriptRows(
-      [user, final],
-      [turn],
-      [],
-      [emptyChangeSet],
-    )
-
-    expect(rows[1]).not.toHaveProperty('turnChanges')
+    const emptyChanges = projectPersistedChatTranscriptRows([user, final], [turn], outputs, [{ ...changeSet, fileCount: 0, coverage: 'partial' }])
+    expect(emptyChanges[1]).not.toHaveProperty('turnChanges')
   })
 })
 

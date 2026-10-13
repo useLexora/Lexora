@@ -10,7 +10,7 @@ import peekingIllustrationUrl from '@/shared/branding/welcome/assets/peeking.png
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useThemeMaterial } from '@/theme/useThemeMaterial'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
-import { useChatExecutionTree } from '../../state/runs/useChatExecutionTree'
+import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
 import { useChatQuoteNavigation } from '../quotes/useChatQuoteNavigation'
@@ -28,10 +28,7 @@ const emit = defineEmits<ChatWorkspaceEmits>()
 defineSlots<{
   composerLeadingContext?: () => unknown
 }>()
-const executionTree = useChatExecutionTree({
-  conversationId: computed(() => props.workspace.session.activeConversationId.value),
-  branchId: computed(() => props.workspace.session.activeBranchId.value),
-})
+const executionTree = provideExecutionTree(props.workspace.executionTree)
 provideChatBuddyIdentity(() => [
   ...props.workspace.transcript.runs.value,
   ...executionTree.records.value.map(execution => ({ id: execution.runId, buddyId: execution.buddyId })),

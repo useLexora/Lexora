@@ -13,6 +13,7 @@ import { createChatTranscriptProjectionCache, projectIncrementalChatTranscript }
 import { projectPersistedChatTranscriptRows } from './chatPersistedTranscriptRows'
 import { projectChatRecoveryNotices, selectChatRecoveryNotices } from './chatRunRecovery'
 import { projectStreamingAssistantMessage, selectChatStreamingMessage } from './chatRunStreamingMessages'
+import { presentChatTranscript } from './chatTranscriptPresentation'
 
 export { projectPersistedChatTranscriptRows } from './chatPersistedTranscriptRows'
 export type {
@@ -32,6 +33,10 @@ export type {
 export function projectChatTranscript(
   input: ChatTranscriptProjectionInput,
 ): ChatTranscriptProjection {
+  return projectChatTranscriptState(input).projection
+}
+
+function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
   const messages = input.timelineItems.filter(
     (item): item is Extract<LocalConversationTimelineItem, { kind: 'message' }> =>
       item.kind === 'message',
@@ -112,7 +117,11 @@ export function projectChatTranscript(
     })
   }
 
-  return { rows, update: { kind: 'replace' } }
+  const presented = presentChatTranscript(rows, input.executionGroups)
+  return {
+    projection: { rows: presented.rows, update: { kind: 'replace' as const } },
+    continuation: presented.continuation,
+  }
 }
 
 export function createChatTranscriptProjector() {
@@ -125,7 +134,8 @@ export function createChatTranscriptProjector() {
         cached = incremental.cache
         return incremental.projection
       }
-      const projection = projectChatTranscript(input)
+      const state = projectChatTranscriptState(input)
+      const projection = state.projection
       if (cached) {
         const previous = new Map(cached.projection.rows.map(row => [row.key, row]))
         projection.rows = projection.rows.map((row) => {
@@ -139,7 +149,7 @@ export function createChatTranscriptProjector() {
             : row
         })
       }
-      cached = createChatTranscriptProjectionCache(input, projection)
+      cached = createChatTranscriptProjectionCache(input, projection, state.continuation)
       return projection
     },
   }

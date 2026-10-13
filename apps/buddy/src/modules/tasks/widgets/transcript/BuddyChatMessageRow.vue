@@ -14,6 +14,7 @@ import {
   getChatMessageDisplayText,
 } from '../../model/transcript/chatMessageContent'
 import BuddyChatActionToolbar from './BuddyChatActionToolbar.vue'
+import BuddyChatActorProcess from './BuddyChatActorProcess.vue'
 import BuddyChatAgentIdentity from './BuddyChatAgentIdentity.vue'
 import BuddyChatMessageBody from './BuddyChatMessageBody.vue'
 import { useChatContent } from './chatContentContext'
@@ -24,7 +25,10 @@ const props = defineProps<{
   editing: boolean
   isIntermediate?: boolean
   showIdentity?: boolean
+  showActions?: boolean
+  actionMessages?: readonly LocalMessage[]
   resultRunId?: string
+  processRunId?: string
   language: BuddyLocale
   message: LocalMessage
   streaming?: boolean
@@ -43,13 +47,13 @@ const emit = defineEmits<{
 
 const { t } = useBuddyI18n(() => props.language)
 const { writeClipboardText } = useChatContent()
-const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled))
+const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled, !!props.resultRunId))
 const showAssistantIdentity = computed(() => (
   props.message.role === 'assistant' && props.showIdentity !== false
 ))
-const showActions = computed(() => (
-  !props.streaming
-  && !props.isIntermediate
+const hasActions = computed(() => (
+  props.showActions !== false
+  && !props.streaming
   && (
     actions.value.showCopy
     || actions.value.showEdit
@@ -60,10 +64,10 @@ const showActions = computed(() => (
 ))
 const roleLabel = computed(() => t(`message.role.${props.message.role}`))
 const presentedArtifacts = computed(() => props.turnOutputs?.artifacts ?? [])
-const messageText = computed(() => getChatMessageDisplayText(
-  props.message,
-  presentedArtifacts.value,
-))
+const messageText = computed(() => (props.actionMessages ?? [props.message]).map(message => getChatMessageDisplayText(
+  message,
+  message.id === props.message.id ? presentedArtifacts.value : [],
+)).join('\n\n'))
 </script>
 
 <template>
@@ -100,8 +104,9 @@ const messageText = computed(() => getChatMessageDisplayText(
       :turn-outputs="turnOutputs" :turn-changes="turnChanges" :write-clipboard-text="writeClipboardText"
       @open-artifact="emit('openArtifact', $event)" @open-changes="emit('openChanges', $event)"
     />
+    <BuddyChatActorProcess v-if="processRunId" :run-id="processRunId" :language="language" @open-artifact="emit('openArtifact', $event)" @open-changes="emit('openChanges', $event)" />
     <BuddyChatActionToolbar
-      v-if="showActions"
+      v-if="hasActions"
       :actions="actions"
       :branch-navigator="branchNavigator"
       class="buddy-chat-message__actions"

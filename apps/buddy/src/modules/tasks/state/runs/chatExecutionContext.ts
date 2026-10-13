@@ -1,8 +1,10 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
+import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { InjectionKey, Ref } from 'vue'
 import type { useChatExecutionTree } from './useChatExecutionTree'
-import { inject, provide } from 'vue'
+import { computed, inject, provide } from 'vue'
+
+import { executionDisplayName } from '../../model/executions/executionDisplayName'
 
 interface ExecutionEnvironment {
   api: LocalChatApi['executions']
@@ -12,7 +14,7 @@ interface ExecutionEnvironment {
   onError: (error: unknown) => void
 }
 const environmentKey: InjectionKey<ExecutionEnvironment> = Symbol('executionEnvironment')
-const treeKey: InjectionKey<ReturnType<typeof useChatExecutionTree>> = Symbol('executionTree')
+const treeKey: InjectionKey<ReturnType<typeof provideExecutionTree>> = Symbol('executionTree')
 
 export function provideExecutionEnvironment(environment: ExecutionEnvironment) {
   provide(environmentKey, environment)
@@ -23,7 +25,17 @@ export function useExecutionEnvironment() {
 }
 
 export function provideExecutionTree(tree: ReturnType<typeof useChatExecutionTree>) {
-  provide(treeKey, tree)
+  const environment = useExecutionEnvironment()
+  const context = {
+    ...tree,
+    selectedRunId: computed(() => {
+      const selected = environment?.selectedTarget.value
+      return selected?.conversationId === tree.conversationId.value && selected?.branchId === tree.branchId.value ? selected.runId : null
+    }),
+    open: async (record: LocalExecution) => environment?.open(tree.target(record), executionDisplayName(record)),
+  }
+  provide(treeKey, context)
+  return context
 }
 
 export function useExecutionTree() {

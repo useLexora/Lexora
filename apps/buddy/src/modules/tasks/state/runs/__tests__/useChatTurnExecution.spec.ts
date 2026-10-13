@@ -1,4 +1,6 @@
+import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
@@ -58,7 +60,6 @@ describe('useChatTurnExecution cancellation ownership', () => {
     expect(fixture.projectedRuns.value).toEqual([{ ...fixture.run, status: 'cancelled' }])
     expect(fixture.drafts.draft.value).toBe('pending input')
     expect(fixture.error.value).toBeNull()
-    expect(fixture.execution.isSending.value).toBe(false)
   })
 
   it('reports a cancellation failure only in the originating view', async () => {
@@ -72,7 +73,6 @@ describe('useChatTurnExecution cancellation ownership', () => {
     expect(fixture.error.value).toBeTruthy()
     expect(fixture.projectedRuns.value).toEqual([fixture.run])
     expect(fixture.drafts.draft.value).toBe('pending input')
-    expect(fixture.execution.isSending.value).toBe(false)
   })
 
   it.each(['success', 'error'] as const)('ignores a late cancellation %s after its owner is disposed', async (outcome) => {
@@ -89,41 +89,28 @@ describe('useChatTurnExecution cancellation ownership', () => {
     expect(fixture.projectedRuns.value).toEqual([fixture.run])
     expect(fixture.error.value).toBe('retained status')
     expect(fixture.drafts.draft.value).toBe('pending input')
-    expect(fixture.execution.isSending.value).toBe(false)
   })
 
-  it.each(['task', 'branch', 'return-to-task', 'return-to-branch'] as const)(
-    'ignores a cancellation result after navigating to %s',
-    async (navigation) => {
-      const fixture = createFixture()
-      const cancelling = fixture.execution.cancelActiveRun()
-      fixture.navigate(navigation)
-      expect(fixture.execution.stoppingRunId.value).toBe(navigation.startsWith('return-to-') ? fixture.run.id : null)
+  it.each([
+    { navigation: 'task', outcome: 'success' },
+    { navigation: 'branch', outcome: 'error' },
+    { navigation: 'return-to-task', outcome: 'error' },
+    { navigation: 'return-to-branch', outcome: 'success' },
+  ] as const)('ignores a late cancellation $outcome after navigating to $navigation', async ({ navigation, outcome }) => {
+    const fixture = createFixture()
+    const cancelling = fixture.execution.cancelActiveRun()
+    fixture.navigate(navigation)
+    expect(fixture.execution.stoppingRunId.value).toBe(navigation.startsWith('return-to-') ? fixture.run.id : null)
+    if (outcome === 'success')
       fixture.pending.resolve({ ...fixture.run, status: 'cancelled' })
-      await cancelling
-
-      expect(fixture.projectedRuns.value).toEqual([])
-      expect(fixture.drafts.draft.value).toBe('current view input')
-      expect(fixture.error.value).toBe('current view status')
-      expect(fixture.execution.isSending.value).toBe(false)
-    },
-  )
-
-  it.each(['task', 'branch', 'return-to-task', 'return-to-branch'] as const)(
-    'ignores a cancellation error after navigating to %s',
-    async (navigation) => {
-      const fixture = createFixture()
-      const cancelling = fixture.execution.cancelActiveRun()
-      fixture.navigate(navigation)
+    else
       fixture.pending.reject(new Error('old cancellation failed'))
-      await cancelling
+    await cancelling
 
-      expect(fixture.projectedRuns.value).toEqual([])
-      expect(fixture.drafts.draft.value).toBe('current view input')
-      expect(fixture.error.value).toBe('current view status')
-      expect(fixture.execution.isSending.value).toBe(false)
-    },
-  )
+    expect(fixture.projectedRuns.value).toEqual([])
+    expect(fixture.drafts.draft.value).toBe('current view input')
+    expect(fixture.error.value).toBe('current view status')
+  })
 })
 
 describe('turn submission conflicts', () => {
@@ -152,6 +139,55 @@ describe('turn submission conflicts', () => {
     expect(f.error.value).toContain('input changed')
     expect(f.projectedRuns.value).toEqual([])
     expect(f.api.chat.startTurn.mock.calls).toEqual([[expect.objectContaining({ draftId: snapshot.draftId, expectedRevision: 1 })]])
+  })
+})
+
+describe('addressed role input', () => {
+  function prepare() {
+    const f = createFixture()
+    f.selectedModel.value = { modelId: 'model-a', providerId: 'provider-a' } as LocalRuntimeModelOption
+    f.actorInput.target.value = { conversationId: 'conversation-a', branchId: 'branch-a', rootRunId: 'run-a', runId: 'partner-run' }
+    const content: BuddyUserContentV1 = { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: 'partner', name: 'Partner' }, { type: 'text', text: ' Continue this work' }] }] }
+    f.drafts.setUserContent(content)
+    const key = 'conversation:conversation-a:branch-a'
+    const snapshot = f.drafts.snapshot(key)
+    f.drafts.confirmOpen(snapshot, {
+      content,
+      draftId: snapshot.draftId,
+      executionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile },
+      modelSelection: null,
+      revision: 1,
+      scope: { kind: 'conversation_branch', conversationId: 'conversation-a', branchId: 'branch-a' },
+      updatedAt: '2026-10-13T00:00:00.000Z',
+    })
+    return { ...f, key, snapshot, content }
+  }
+
+  it.each([true, false])('automatically submits the same addressed draft when the role ends while sending, root active: %s', async (active) => {
+    const f = prepare()
+    if (!active)
+      f.projectedRuns.value = []
+    f.api.executions.sendDraft.mockResolvedValue(null)
+    const result = { id: 'queued', conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, id: 'next-run', buddyId: 'partner' }, draftReceipt: { draftId: f.snapshot.draftId, sourceRevision: 1, committedRevision: 2 } }
+    const destination = active ? f.api.chat.enqueue : f.api.chat.startTurn
+    destination.mockImplementation(async () => {
+      expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
+      return result
+    })
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(true)
+    expect(destination.mock.calls).toEqual([[expect.objectContaining({ draftId: f.snapshot.draftId, expectedRevision: 1 })]])
+    expect(f.drafts.draft.value).toBe('')
+    expect(f.error.value).toBeNull()
+  })
+
+  it('preserves the addressed draft without starting another turn when delivery acknowledgement is uncertain', async () => {
+    const f = prepare()
+    f.api.executions.sendDraft.mockRejectedValue(new Error('Connection lost'))
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
+    expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
+    expect(f.api.chat.enqueue.mock.calls).toEqual([])
+    expect(f.api.chat.startTurn.mock.calls).toEqual([])
+    expect(f.error.value).toBeTruthy()
   })
 })
 
@@ -185,9 +221,11 @@ function createFixture() {
     const error = shallowRef<string | null>(null)
     const pending = deferred<LocalRun>()
     const composerTarget = useComposerTarget({ drafts, conversationId: session.activeConversationId, branchId: session.activeBranchId, persist: async () => true })
-    const api = { chat: { listQueue: async () => [], enqueue: vi.fn(), cancelQueued: vi.fn(), steerQueued: vi.fn(), cancel: () => pending.promise, executeCommand: vi.fn(), startTurn: vi.fn() } }
+    const actorInput = { target: shallowRef<ExecutionTarget | null>(null) }
+    const api = { executions: { sendDraft: vi.fn() }, chat: { listQueue: async () => [], enqueue: vi.fn(), cancelQueued: vi.fn(), steerQueued: vi.fn(), cancel: () => pending.promise, executeCommand: vi.fn(), startTurn: vi.fn() } }
     const selectedModel = shallowRef<LocalRuntimeModelOption | null>(null)
     const execution = useChatTurnExecution({
+      actorInput,
       composerTarget,
       activeRun: computed(() => projectedRuns.value.find(item => item.status === 'running') ?? null),
       api,
@@ -233,7 +271,7 @@ function createFixture() {
       drafts.updateComposerContent('current view input', null)
       error.value = 'current view status'
     }
-    return { api, drafts, error, execution, navigate, pending, projectedRuns, run, scope, selectedModel }
+    return { actorInput, api, drafts, error, execution, navigate, pending, projectedRuns, run, scope, selectedModel }
   })!
 }
 

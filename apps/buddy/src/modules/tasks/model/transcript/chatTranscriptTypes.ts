@@ -4,12 +4,17 @@ import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
+import type { ExecutionGroups } from '../executions/executionGroups'
 import type { ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
 import type { ChatRecoveryNotice } from './chatRunRecovery'
 import type { ChatRunTranscriptProjection } from './chatRunTranscriptProjector'
 
 export interface ChatTranscriptMessageRow {
+  endsSpeech?: true
   isIntermediate?: true
+  showActions?: false
+  actionMessages?: readonly LocalMessage[]
+  processRunId?: string
   showIdentity?: false
   resultRunId?: string
   key: string
@@ -46,6 +51,7 @@ export interface ChatTranscriptActivityFlowRow {
 }
 
 export interface ChatTranscriptAgentTurnRow {
+  endsSpeech?: true
   showIdentity?: false
   showOutcome?: false
   key: string
@@ -94,6 +100,7 @@ export type ChatTranscriptProjectionUpdate
     }
 
 export interface ChatTranscriptProjectionInput {
+  executionGroups?: ExecutionGroups
   includeUnanchoredTurns?: boolean
   agentTurns?: ReadonlyArray<ChatAgentTurn>
   changeSets?: ReadonlyArray<LocalChangeSetSummary>

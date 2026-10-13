@@ -74,7 +74,16 @@ export class ComposerDraftService {
 
   save(input: BuddyComposerDraftSave): Promise<BuddyComposerDraft> {
     input = structuredClone(input)
-    return this.run(input.draftId, () => {
+    return this.update(input.draftId, () => input)
+  }
+
+  update(draftId: string, prepare: (draft: BuddyComposerDraft) => BuddyComposerDraftSave | null | Promise<BuddyComposerDraftSave | null>): Promise<BuddyComposerDraft> {
+    return this.run(draftId, async () => {
+      const input = await prepare(this.get(draftId))
+      if (!input)
+        return this.get(draftId)
+      if (input.draftId !== draftId)
+        throw new BuddyServiceError('VALIDATION_FAILED')
       const draft = this.#repository.save({ ...input, now: new Date().toISOString() })
       this.#publish('saved', draft)
       return draft

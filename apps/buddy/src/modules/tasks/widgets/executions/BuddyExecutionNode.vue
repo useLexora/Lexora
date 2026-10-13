@@ -14,8 +14,12 @@ const emit = defineEmits<{ open: [], stop: [] }>()
 const labels = computed(() => executionLabels(props.language))
 const identity = useBuddyIdentity(computed(() => props.execution.buddyId))
 const root = computed(() => props.execution.kind === 'root')
+const actor = computed(() => props.execution.kind !== 'npc_child')
 const isStopping = computed(() => props.execution.phase !== 'closed' && (props.stopping || props.execution.stopping))
-const phase = computed(() => isStopping.value ? labels.value.stopping : props.execution.waitingFor && !root.value ? executionStatus(props.execution, props.language, props.now) : executionPhaseLabel(props.execution, props.language, props.now))
+const phase = computed(() => {
+  const status = isStopping.value ? labels.value.stopping : props.execution.waitingFor ? executionStatus(props.execution, props.language, props.now) : executionPhaseLabel(props.execution, props.language, props.now)
+  return actor.value && props.execution.cleanup === 'degraded' ? `${status} · ${labels.value.cleanupBadge}` : status
+})
 const action = computed(() => executionStatus(props.execution, props.language, props.now))
 const tools = computed(() => labels.value.toolCount.replace('{count}', new Intl.NumberFormat(props.language, { notation: 'compact', maximumFractionDigits: 1 }).format(props.execution.toolCount)))
 const active = computed(() => props.execution.status === 'running' && (props.execution.phase === 'preparing' || props.execution.phase === 'working') && !props.execution.waitingFor && !isStopping.value)
@@ -39,22 +43,23 @@ function open(event: MouseEvent) {
 <template>
   <article
     class="execution-node relative grid h-full w-full min-w-0 content-center gap-1 p-[10px] border-1 border-solid border-border rounded-micro bg-raised select-none"
-    :class="[{ selected, root, 'buddy-border-beam': busy }, tone]"
+    :class="[{ 'selected': selected && !actor, root, 'buddy-border-beam': busy }, tone]"
+    :data-execution-kind="execution.kind"
     :data-execution-id="execution.runId" :data-execution-status="execution.status" :data-execution-phase="execution.phase"
-    :data-selected="selected"
+    :data-selected="selected && !actor"
   >
-    <button type="button" data-testid="execution-node-open" :aria-pressed="selected" class="execution-node__open grid w-full min-w-0 gap-1 p-0 border-0 rounded-micro bg-transparent text-left cursor-grab active:cursor-grabbing" @pointerdown="pointerDown" @click="open">
+    <component :is="actor ? 'div' : 'button'" :type="actor ? undefined : 'button'" :data-testid="actor ? 'execution-actor-status' : 'execution-node-open'" :aria-pressed="actor ? undefined : selected" class="grid w-full min-w-0 gap-1 p-0 border-0 rounded-micro bg-transparent text-left cursor-grab active:cursor-grabbing" :class="{ 'execution-node__open': !actor }" @pointerdown="pointerDown" @click="!actor && open($event)">
       <span class="flex min-w-0 items-center gap-[6px]">
         <BuddyAvatar :buddy-id="execution.buddyId" :src="identity?.avatar" class="size-5 flex-none" />
         <strong class="flex min-w-0 flex-1 items-center gap-1 text-fg text-[13px] font-600">
-          <span v-if="execution.ordinal !== null" class="flex-none tabular-nums">#{{ execution.ordinal }}</span>
+          <span v-if="!actor && execution.ordinal !== null" class="flex-none tabular-nums">#{{ execution.ordinal }}</span>
           <span class="truncate">{{ identity?.name ?? execution.buddyName }}</span>
         </strong>
         <span role="status" class="flex-none whitespace-nowrap text-[11px]" :class="tone === 'failed' ? 'text-danger' : tone === 'attention' ? 'text-warning' : 'text-muted'">{{ phase }}</span>
       </span>
-      <span class="block truncate text-muted text-[12px] leading-[18px]">{{ root ? execution.waitingFor ? action : labels.mainTask : execution.task || labels.subtasks }}</span>
-    </button>
-    <div class="flex min-w-0 min-h-6 items-center gap-2 text-[11px] leading-[18px]">
+      <span v-if="!actor" class="block truncate text-muted text-[12px] leading-[18px]">{{ execution.task || labels.subtasks }}</span>
+    </component>
+    <div v-if="!actor" class="flex min-w-0 min-h-6 items-center gap-2 text-[11px] leading-[18px]">
       <span v-if="failed" role="alert" class="min-w-0 flex-1 truncate text-danger">{{ labels.actionFailed }}</span>
       <span v-else-if="execution.cleanup === 'degraded'" role="alert" class="min-w-0 flex-1 truncate text-warning">{{ labels.cleanupBadge }}</span>
       <template v-else>

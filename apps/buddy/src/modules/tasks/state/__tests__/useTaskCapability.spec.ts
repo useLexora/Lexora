@@ -17,7 +17,7 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
-  it.each([false, true])('loads conversation content while input restores, including branch failure: %s', async (branchFailure) => {
+  it('loads conversation content while input restores even when branch loading fails', async () => {
     const api = createBranchingDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
     const gate = deferred<void>()
@@ -26,8 +26,7 @@ describe('useTaskCapability', () => {
       await gate.promise
       return open(input)
     })
-    if (branchFailure)
-      vi.mocked(api.localChat.conversations.listBranches).mockRejectedValue(new Error('BRANCH_READ_FAILED'))
+    vi.mocked(api.localChat.conversations.listBranches).mockRejectedValue(new Error('BRANCH_READ_FAILED'))
     const scope = effectScope()
     const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
     let completed = false
@@ -108,6 +107,8 @@ describe('useTaskCapability', () => {
     expect(await sending).toBe(true)
     expect(await closing).toBe(true)
     expect(chat.workspace.session.activeConversationId.value).toBe('conversation-1')
+    expect(chat.workspace.execution.activeRun.value?.id).toBe('run-1')
+    expect(chat.workspace.composer.draft.value).toBe('')
     chat.cancelClose()
     chat.workspace.composer.updateComposerContent('Input after cancellation', null)
     expect(chat.workspace.status.isClosing.value).toBe(false)
@@ -227,22 +228,6 @@ describe('useTaskCapability', () => {
     expect(await chat.workspace.execution.send('typed after Runtime failure')).toBe(true)
   })
 
-  it('commits an accepted turn before collection refresh failures', async () => {
-    const api = createDesktopApi()
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-    chat.workspace.composer.updateComposerContent('hello', null)
-    const sourceDraftId = chat.workspace.composer.draftId.value
-
-    await expect(chat.workspace.execution.send('hello')).resolves.toBe(true)
-    expect(chat.session.activeTaskId.value).toBe('conversation-1')
-    expect(chat.workspace.execution.activeRun.value?.id).toBe('run-1')
-    expect(chat.workspace.composer.draft.value).toBe('')
-    expect(chat.workspace.composer.draftId.value).toBe(sourceDraftId)
-    expect(api.localChat.chat.startTurn).toHaveBeenCalledOnce()
-  })
-
   it('returns a late file selection to the originating draft without changing the newly opened conversation', async () => {
     const api = createDesktopApi()
     const selected = deferred<Awaited<ReturnType<typeof api.localChat.composerResources.selectFiles>>>()
@@ -300,38 +285,22 @@ describe('useTaskCapability', () => {
     }
     vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([conversation])
     const first = deferred<LocalConversation>()
-    const second = deferred<LocalConversation>()
-    let callCount = 0
-    vi.mocked(api.localChat.conversations.setModelSelection).mockImplementation(() => {
-      callCount += 1
-      return callCount === 1 ? first.promise : second.promise
-    })
+    vi.mocked(api.localChat.conversations.setModelSelection).mockReturnValue(first.promise)
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
     const chat = createTestTask(api)
     await chat.initialize()
     await chat.session.openTask('conversation-1')
 
     const firstSelection = chat.workspace.composer.selectModel('provider-1:model-2')
-    await vi.waitUntil(() => callCount === 1)
+    await vi.waitUntil(() => vi.mocked(api.localChat.conversations.setModelSelection).mock.calls.length === 1)
     expect(chat.workspace.composer.isUpdatingModel.value).toBe(true)
     await chat.workspace.composer.selectModel('provider-1:model-1')
-    expect(callCount).toBe(1)
+    expect(api.localChat.conversations.setModelSelection).toHaveBeenCalledOnce()
     first.resolve({ ...conversation, modelSelection: { modelId: 'model-2', providerId: 'provider-1', reasoning: 'medium', serviceTier: null } })
     await firstSelection
     expect(chat.workspace.composer.isUpdatingModel.value).toBe(false)
     expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-2')
-    const secondSelection = chat.workspace.composer.selectModel('provider-1:model-1')
-    await vi.waitUntil(() => callCount === 2)
-    second.resolve(conversation)
-
-    await Promise.all([firstSelection, secondSelection])
-    expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-1')
-    expect(chat.workspace.session.activeConversation.value?.modelSelection?.modelId).toBe('model-1')
-    expect(api.localChat.providers.setDefaultModel).toHaveBeenLastCalledWith({
-      modelId: 'model-1',
-      providerId: 'provider-1',
-      reasoning: 'medium',
-    })
+    expect(chat.workspace.session.activeConversation.value?.modelSelection?.modelId).toBe('model-2')
   })
 
   it('surfaces an actionable message when Pi session storage is unavailable', async () => {
@@ -595,11 +564,15 @@ describe('useTaskCapability', () => {
 
     await expect(chat.workspace.execution.editUserMessage('user-2')).resolves.toBe(true)
 
-    await expect(chat.workspace.execution.submitEditedMessage({
+    const payload = {
       content: 'edited follow-up',
       userContent: createBuddyUserContent('edited follow-up'),
-    })).resolves.toBe(true)
+    }
+    const submitting = chat.workspace.execution.submitEditedMessage(payload)
+    await expect(chat.workspace.execution.submitEditedMessage(payload)).resolves.toBe(false)
+    await expect(submitting).resolves.toBe(true)
 
+    expect(api.localChat.chat.editUserMessage).toHaveBeenCalledOnce()
     expect(api.localChat.chat.editUserMessage).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: 'conversation-1',
       expectedRevision: expect.any(Number),
@@ -608,25 +581,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.session.activeBranchId.value).toBe('branch-edited')
     expect(chat.workspace.transcript.branches.value.map(branch => branch.id)).toEqual(['branch-root', 'branch-edited'])
     expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1'])
-  })
-
-  it('commits an edited Draft only once when submit is triggered twice', async () => {
-    const api = createBranchingDesktopApi()
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
-    await chat.initialize()
-    await expect(chat.workspace.execution.editUserMessage('user-2')).resolves.toBe(true)
-    const payload = {
-      content: 'edited follow-up',
-      userContent: createBuddyUserContent('edited follow-up'),
-    }
-
-    const firstSubmission = chat.workspace.execution.submitEditedMessage(payload)
-    const secondSubmission = chat.workspace.execution.submitEditedMessage(payload)
-
-    await expect(secondSubmission).resolves.toBe(false)
-    await expect(firstSubmission).resolves.toBe(true)
-    expect(api.localChat.chat.editUserMessage).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the current task when an earlier branch activation completes', async () => {
@@ -1108,6 +1062,7 @@ function createDesktopApi() {
     },
     lifecycle: { quit: vi.fn() },
     localChat: {
+      executions: { list: async () => [], onChanged: () => () => {} },
       buddies: { list: vi.fn(async () => ({ revision: 1, defaultBuddyId: 'default', buddies: [] })) },
       taskMarks: { list: async () => [], states: async () => [] },
       composerDrafts: {

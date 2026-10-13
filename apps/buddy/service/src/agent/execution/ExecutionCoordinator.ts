@@ -169,13 +169,6 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     return this.#serialize(source.run.rootRunId, async () => {
       const current = this.#require(sourceRunId)
       const target = this.#require(message.targetRunId)
-      this.#options.executions.assertCurrent(this.#fence(current))
-      this.#options.executions.assertCurrent(this.#fence(target))
-      if (current.run.rootRunId !== target.run.rootRunId || current.phase === 'closed' || current.phase === 'closing' || current.cancelRequestedAt
-        || target.phase === 'closed' || target.phase === 'closing' || target.cancelRequestedAt
-        || target.run.generation !== message.targetGeneration) {
-        throw new ExecutionAdmissionError('stale')
-      }
       const previous = this.#options.mailbox.find(message.messageId)
       if (previous) {
         const expected = previous.message
@@ -188,11 +181,18 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         }
         return
       }
+      this.#options.executions.assertCurrent(this.#fence(current))
+      this.#options.executions.assertCurrent(this.#fence(target))
+      if (current.run.rootRunId !== target.run.rootRunId || current.phase === 'closed' || current.phase === 'closing' || current.cancelRequestedAt
+        || target.phase === 'closed' || target.phase === 'closing' || target.cancelRequestedAt
+        || target.run.generation !== message.targetGeneration) {
+        throw new ExecutionAdmissionError('stale')
+      }
       await this.#options.events.append({ runId: sourceRunId, type: 'execution.mailbox.sent', payload: message })
     })
   }
 
-  answerQuestion(sourceRunId: string | null, questionId: string, text: string): Promise<void> {
+  answerQuestion(sourceRunId: string | null, questionId: string, text: string, messageId?: string): Promise<void> {
     const question = this.#options.mailbox.findQuestion(questionId)
     if (!question || question.message.kind !== 'question')
       return Promise.reject(new ExecutionAdmissionError('stale'))
@@ -204,7 +204,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         throw new ExecutionAdmissionError('unauthorized')
       }
       if (current.answer) {
-        if (current.answer.text !== text)
+        if (current.answer.text !== text || (messageId && current.answer.messageId !== messageId))
           throw new ExecutionAdmissionError('conflict')
         return
       }
@@ -213,7 +213,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       const receiver = this.#require(target.run.id)
       this.#options.executions.assertCurrent(this.#fence(receiver))
       await this.#options.events.append({ runId: sourceRunId ?? receiver.run.id, type: 'execution.mailbox.sent', payload: {
-        messageId: `answer:${questionId}`,
+        messageId: messageId ?? `answer:${questionId}`,
         questionId,
         kind: 'answer',
         targetRunId: receiver.run.id,

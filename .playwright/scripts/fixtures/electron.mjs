@@ -5,8 +5,9 @@ import { test as base } from '@playwright/test'
 import { createBuddyTestRun } from '../buddy-test.mjs'
 
 export const test = base.extend({
-  buddy: [async ({ playwright: _playwright }, use, testInfo) => {
-    const run = await createBuddyTestRun({ artifactRoot: testInfo.outputPath('desktop') })
+  passwordStore: [undefined, { option: true }],
+  buddy: [async ({ playwright: _playwright, passwordStore }, use, testInfo) => {
+    const run = await createBuddyTestRun({ artifactRoot: testInfo.outputPath('desktop'), passwordStore })
     try {
       await use(run)
     }

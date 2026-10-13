@@ -16,6 +16,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     persist: options.persistWorkspaceState,
   })
   const turnExecution = useChatTurnExecution({
+    actorInput: options.actorInput,
     getNewBuddyId: options.getNewBuddyId,
     activeRun: options.activeRun,
     approvalPolicy: options.approvalPolicy,

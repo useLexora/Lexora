@@ -2,6 +2,7 @@ import type { LocalConversationBranch, LocalConversationTimelineItem } from '@bu
 
 import type { ChatAgentTurn } from '../chatStreamingMessage'
 import { describe, expect, it } from 'vitest'
+import { projectChatMessageActions } from '../chatMessageActions'
 
 import {
   projectChatMessageBranchNavigators,
@@ -53,11 +54,27 @@ describe('projectChatMessageBranchNavigators', () => {
   })
 
   it('keeps repeated regenerations at the same message node in one version group', () => {
+    const final = message('assistant-4', 'assistant', 'branch-retry-3')
+    const turn: ChatAgentTurn = {
+      branchId: final.branchId,
+      completedAt: final.createdAt,
+      finalMessageId: final.id,
+      nodes: [],
+      processMessageIds: [],
+      usage: null,
+      progress: null,
+      reasoningLevel: null,
+      runId: final.runId!,
+      startedAt: final.createdAt,
+      status: 'completed',
+      triggeringMessageId: 'user-1',
+    }
     const actual = projectChatMessageBranchNavigators(
       projectPersistedChatTranscriptRows([
         message('user-1', 'user', 'branch-root'),
-        message('assistant-4', 'assistant', 'branch-retry-3'),
-      ], []),
+        message('actor-reply', 'assistant', 'branch-retry-3', 'actor-run'),
+        final,
+      ], [turn]),
       [
         branch('branch-root', null, null, 1),
         branch('branch-retry-1', 'branch-root', 'user-1', 2),
@@ -74,64 +91,33 @@ describe('projectChatMessageBranchNavigators', () => {
       nextBranchId: null,
       previousBranchId: 'branch-retry-2',
     })
+    expect(actual.has('actor-reply')).toBe(false)
+    expect(projectChatMessageActions(message('actor-reply', 'assistant', 'branch-retry-3', 'actor-run'), false, false)).toMatchObject({ showCopy: true, showTime: true, showRegenerate: false })
+    expect(projectChatMessageActions(final, false, true).showRegenerate).toBe(true)
   })
 
-  it('attaches retry siblings to a failed turn without a final assistant message', () => {
-    const user = message('user-1', 'user', 'branch-root')
-    const failedTurn = {
-      branchId: 'branch-root',
-      completedAt: '2026-08-20T00:00:02.000Z',
-      finalMessageId: null,
-      nodes: [],
-      processMessageIds: [],
-      usage: null,
-      progress: null,
-      reasoningLevel: null,
-      runId: 'run-failed',
-      startedAt: '2026-08-20T00:00:01.000Z',
-      status: 'failed',
-      triggeringMessageId: user.id,
-    } as ChatAgentTurn
-    const actual = projectChatMessageBranchNavigators(
-      projectPersistedChatTranscriptRows([user], [failedTurn]),
-      [
-        branch('branch-root', null, null, 1),
-        branch('branch-retry', 'branch-root', user.id, 2),
-      ],
-      'branch-root',
-    )
-
-    expect(actual.get(failedTurn.runId)).toEqual({
-      activeBranchId: 'branch-root',
-      count: 2,
-      index: 1,
-      nextBranchId: 'branch-retry',
-      previousBranchId: null,
-    })
-  })
-
-  it('attaches retry siblings to a cancelled turn whose final assistant message is empty', () => {
+  it.each(['failed', 'cancelled'] as const)('keeps retry navigation on a %s turn without a visible result', (status) => {
     const user = message('user-1', 'user', 'branch-root')
     const emptyFinal = {
-      ...message('assistant-empty', 'assistant', 'branch-root', 'run-cancelled'),
+      ...message('assistant-empty', 'assistant', 'branch-root', `run-${status}`),
       content: { text: '' },
     }
-    const cancelledTurn = {
+    const turn: ChatAgentTurn = {
       branchId: 'branch-root',
       completedAt: '2026-08-20T00:00:02.000Z',
-      finalMessageId: emptyFinal.id,
+      finalMessageId: status === 'cancelled' ? emptyFinal.id : null,
       nodes: [],
       processMessageIds: [],
       usage: null,
       progress: null,
       reasoningLevel: null,
-      runId: 'run-cancelled',
+      runId: `run-${status}`,
       startedAt: '2026-08-20T00:00:01.000Z',
-      status: 'cancelled',
+      status,
       triggeringMessageId: user.id,
-    } as ChatAgentTurn
+    }
     const actual = projectChatMessageBranchNavigators(
-      projectPersistedChatTranscriptRows([user, emptyFinal], [cancelledTurn]),
+      projectPersistedChatTranscriptRows(status === 'cancelled' ? [user, emptyFinal] : [user], [turn]),
       [
         branch('branch-root', null, null, 1),
         branch('branch-retry', 'branch-root', user.id, 2),
@@ -139,7 +125,7 @@ describe('projectChatMessageBranchNavigators', () => {
       'branch-root',
     )
 
-    expect(actual.get(cancelledTurn.runId)).toEqual({
+    expect(actual.get(turn.runId)).toEqual({
       activeBranchId: 'branch-root',
       count: 2,
       index: 1,

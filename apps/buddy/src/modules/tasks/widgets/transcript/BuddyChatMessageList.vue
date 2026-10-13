@@ -69,12 +69,11 @@ const executionTree = useExecutionTree()
 const executionAnchors = computed(() => {
   const anchors = new Map<string, string>()
   const seen = new Set<string>()
-  const roots = new Map(executionTree?.records.value.map(record => [record.runId, record.rootRunId]))
   for (const row of props.displayRows) {
     const runId = row.kind === 'agent-turn' || row.kind === 'activity'
       ? row.turn.runId
       : row.kind === 'message' && row.message.role === 'assistant' ? row.message.runId : null
-    const rootRunId = runId ? roots.get(runId) ?? runId : null
+    const rootRunId = runId ? executionTree?.groups.value.byRun.get(runId)?.rootRunId ?? runId : null
     if (rootRunId && !seen.has(rootRunId)) {
       seen.add(rootRunId)
       anchors.set(row.key, rootRunId)
@@ -212,10 +211,13 @@ onBeforeUnmount(clearOutlineHighlight)
           :actions-disabled="actionsDisabled ?? false"
           :branch-navigator="branchNavigators.get(item.message.id) ?? null"
           class="buddy-chat-transcript-row" :class="[
-            { 'is-outline-highlighted': item.message.id === highlightedOutlineMessageId },
+            { 'is-outline-highlighted': item.message.id === highlightedOutlineMessageId, 'is-speech-end': item.endsSpeech },
           ]"
           :is-intermediate="item.isIntermediate"
           :show-identity="item.showIdentity"
+          :show-actions="item.showActions"
+          :action-messages="item.actionMessages"
+          :process-run-id="item.processRunId"
           :result-run-id="item.resultRunId"
           :editing="item.message.id === editingMessageId"
           :language="language"
@@ -237,6 +239,7 @@ onBeforeUnmount(clearOutlineHighlight)
           :actions-disabled="actionsDisabled ?? false"
           :branch-navigator="branchNavigators.get(item.turn.runId) ?? null"
           class="buddy-chat-transcript-row"
+          :class="{ 'is-speech-end': item.endsSpeech }"
           :language="language"
           :owns-result-actions="item.ownsResultActions === true"
           :show-identity="item.showIdentity"
@@ -253,6 +256,7 @@ onBeforeUnmount(clearOutlineHighlight)
           :language="language"
           :turn="item.turn"
           :stopping="stoppingRunId === item.turn.runId"
+          :execution-group="executionTree?.groups.value.byRoot.get(item.turn.runId)"
         />
 
         <div
@@ -339,6 +343,11 @@ onBeforeUnmount(clearOutlineHighlight)
 
 .buddy-chat-agent-turn.has-visible-process.buddy-chat-transcript-row {
   padding-bottom: var(--buddy-chat-gap-section);
+}
+
+.buddy-chat-agent-turn.buddy-chat-transcript-row.is-speech-end,
+.buddy-chat-message.buddy-chat-transcript-row.is-speech-end {
+  padding-bottom: var(--buddy-chat-gap-turn);
 }
 
 .buddy-chat-system-event {

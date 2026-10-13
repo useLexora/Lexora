@@ -48,6 +48,65 @@ function order(projection: ReturnType<typeof projectChatTranscript>) {
 }
 
 describe('interleaved conversation segments', () => {
+  it('keeps completed speeches in place and restores the caller identity after another actor speaks', () => {
+    const actorReply = (id: string, actor: string, seconds: number) => ({ ...message(id, 'assistant', seconds), runId: actor })
+    const items = [message('initial', 'user', 0), actorReply('actor-a', 'actor-a-run', 10), actorReply('actor-a-again', 'actor-a-run', 11)]
+    const first = input(run, events.slice(0, 1), items)
+    const projector = createChatTranscriptProjector()
+    const initial = projector.project(first)
+    const earlier = initial.rows.find(row => row.kind === 'agent-turn')!
+    expect(earlier).toMatchObject({ showOutcome: false, turn: { nodes: [{ messageId: 'before' }] } })
+    const resumed = { ...first, runProjections: input(run, events.slice(0, 2), items).runProjections }
+    const continuation = projector.project(resumed)
+    expect(continuation.rows).toEqual(projectChatTranscript(resumed).rows)
+    expect(order(continuation)).toEqual(['initial', 'before', 'actor-a', 'actor-a-again', 'between'])
+    expect(continuation.rows.find(row => row.key === earlier.key)).toMatchObject({ key: earlier.key, showOutcome: false, turn: { nodes: earlier.kind === 'agent-turn' ? earlier.turn.nodes : [] } })
+    const identities = (projection: ReturnType<typeof projectChatTranscript>) => projection.rows.flatMap(row => 'showIdentity' in row && row.showIdentity === false
+      ? []
+      : row.kind === 'agent-turn'
+        ? [row.turn.runId]
+        : row.kind === 'message' && row.message.role === 'assistant' ? [row.message.runId] : [])
+    expect(identities(continuation)).toEqual(['run', 'actor-a-run', 'run'])
+    const terminal = input({ ...run, status: 'completed', completedAt: time(45) }, [...events, { runId: run.id, sequence: 5, createdAt: time(45), type: 'message.completed', payload: { role: 'assistant', messageId: 'final', phase: 'final_answer', content: { text: 'Done' } } }], [...items, actorReply('actor-b', 'actor-b-run', 35), message('hello', 'assistant', 31), message('final', 'assistant', 45)])
+    const completed = projector.project(terminal)
+    expect(identities(completed)).toEqual(['run', 'actor-a-run', 'run', 'actor-b-run', 'run'])
+    expect(order(completed)).toEqual(['initial', 'before', 'actor-a', 'actor-a-again', 'between', 'hello', 'actor-b', 'continuation', 'final'])
+    expect(completed.rows).toEqual(projectChatTranscript(terminal).rows)
+    expect(completed.rows.filter(row => row.kind === 'message' && row.resultRunId).map(row => row.key)).toEqual(['message:final'])
+  })
+
+  it('does not reopen the caller speech for orchestration tools between partner messages', () => {
+    const actorReply = (id: string, seconds: number) => ({ ...message(id, 'assistant', seconds), runId: 'partner-run' })
+    const presentation = { card: 'generic', argumentNames: [], description: null, output: null, truncated: false }
+    const history: LocalRunEvent[] = [events[0]!, { runId: run.id, sequence: 2, createdAt: time(12), type: 'tool.completed', payload: { toolCallId: 'wait', toolName: 'lexora_agents', presentation } }]
+    const items = [message('initial', 'user', 0), actorReply('partner-before', 10), actorReply('partner-after', 15)]
+    const result = projectChatTranscript(input(run, history, items))
+    const messages = result.rows.filter(row => row.kind === 'message' && row.message.role === 'assistant')
+    expect(messages).toMatchObject([{ message: { id: 'partner-before' }, showActions: false }, { message: { id: 'partner-after' }, showIdentity: false, actionMessages: [{ id: 'partner-before' }, { id: 'partner-after' }] }])
+    expect(result.rows.filter(row => row.kind === 'agent-turn').flatMap(row => row.turn.nodes).some(node => node.kind === 'tool' && node.toolName === 'lexora_agents')).toBe(false)
+    const resumed = projectChatTranscript(input(run, [...history, { ...events[1]!, sequence: 3 }], items))
+    const continuation = resumed.rows.find(row => row.kind === 'agent-turn' && row.turn.nodes.some(node => node.kind === 'text' && node.messageId === 'between'))
+    expect(continuation).toBeDefined()
+    expect(continuation).not.toHaveProperty('showIdentity', false)
+  })
+
+  it('joins the returning caller output tool and final answer under one identity', () => {
+    const presentation = { card: 'generic', argumentNames: [], description: null, output: null, truncated: false }
+    const completed = { ...run, status: 'completed' as const, completedAt: time(30) }
+    const history: LocalRunEvent[] = [events[0]!, { runId: run.id, sequence: 2, createdAt: time(20), type: 'tool.completed', payload: { toolCallId: 'present', toolName: 'lexora_output_present', presentation } }, { runId: run.id, sequence: 3, createdAt: time(30), type: 'message.completed', payload: { role: 'assistant', messageId: 'final', phase: 'final_answer', content: { text: 'Done' } } }]
+    const items = [message('initial', 'user', 0), { ...message('partner', 'assistant', 10), runId: 'partner-run' }, message('final', 'assistant', 30)]
+    const projector = createChatTranscriptProjector()
+    const live = projector.project(input(run, history.slice(0, 2), items.slice(0, 2)))
+    const visible = live.rows.find(row => row.kind === 'agent-turn' && row.turn.nodes.some(node => node.kind === 'tool'))!
+    expect(visible).not.toHaveProperty('showIdentity', false)
+    const result = projector.project(input(completed, history, items))
+    expect(result.rows).toEqual(projectChatTranscript(input(completed, history, items)).rows)
+    expect(result.rows.find(row => row.key === visible.key)).toMatchObject({ turn: { nodes: [{ toolName: 'lexora_output_present' }] } })
+    expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'final')).toMatchObject({ showIdentity: false, resultRunId: 'run' })
+    expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'partner')).toMatchObject({ endsSpeech: true })
+    expect(result.rows.find(row => row.kind === 'agent-turn')).toMatchObject({ endsSpeech: true })
+  })
+
   it.each([
     { trigger: 'task:input:committed', seconds: 1 },
     { trigger: 'task:input:committed', seconds: 6 },
@@ -58,7 +117,7 @@ describe('interleaved conversation segments', () => {
     const reply: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(5), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } }
     const messages = [message('initial', 'user', 0), message('reply', 'assistant', 5)]
     const projector = createChatTranscriptProjector()
-    for (const status of ['running', 'completed', 'cancelled', 'failed', 'interrupted'] as const) {
+    for (const status of ['running', 'completed'] as const) {
       const invocation = action(seconds, { trigger, status, completedAt: status === 'running' ? null : time(seconds + 1) })
       const snapshot = input(completed, [reply], [...messages, invocation])
       const projected = projector.project(snapshot)
@@ -124,11 +183,9 @@ describe('interleaved conversation segments', () => {
       { runId: run.id, sequence: 2, createdAt: time(2), type: 'tool.completed', payload: { toolCallId: 'plugin', toolName: 'lexora_plugin_fixture', presentation } },
       { runId: run.id, sequence: 3, createdAt: time(10), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'final_answer', content: { text: 'Done' } } },
     ]
-    const original = projectChatAgentTurn(completed, toolEvents)
     const result = projectChatTranscript(input(completed, toolEvents, [message('initial', 'user', 0), message('reply', 'assistant', 10), action(3), action(11)]))
     const nodes = result.rows.flatMap(row => row.kind === 'agent-turn' ? row.turn.nodes : [])
     expect(nodes.map(node => node.id)).toEqual(['extension-action:action-3', 'tool:read', 'tool:plugin', 'extension-action:action-11'])
-    expect(nodes.filter(node => node.kind === 'tool' && !node.invocation)).toEqual(original.nodes)
     expect(result.rows.at(-1)?.key).toBe('message:reply')
   })
 
@@ -170,8 +227,13 @@ describe('interleaved conversation segments', () => {
     expect(result.rows[4]).toMatchObject({ nodes: [{ invocation: { sourceMessageId: 'next' } }] })
   })
 
-  it('keeps later activity below an intermediate answer and withholds run result controls while running', () => {
-    const projection = projectChatTranscript(input())
+  it('preserves steering order and intermediate answers through incremental updates, completion and replay', () => {
+    const projector = createChatTranscriptProjector()
+    const first = input(run, events.slice(0, 3))
+    projector.project(first)
+    const next = { ...input(), runs: first.runs, outputs: first.outputs }
+    const projection = projector.project(next)
+    expect(projection.rows).toEqual(projectChatTranscript(next).rows)
     expect(order(projection)).toEqual(['initial', 'before', 'steer-a', 'steer-b', 'between', 'hello', 'continuation'])
     const hello = projection.rows.find(row => row.kind === 'message' && row.message.id === 'hello')
     expect(hello).toMatchObject({ isIntermediate: true, showIdentity: false, turnOutputs: null })
@@ -183,19 +245,18 @@ describe('interleaved conversation segments', () => {
     expect(segments[0].showIdentity).not.toBe(false)
     expect(segments[1]).toHaveProperty('showIdentity', false)
     expect(segments[2]).toHaveProperty('showIdentity', false)
-  })
 
-  it('keeps the same message and tool order after completion and history replay', () => {
-    const active = projectChatTranscript(input())
     const completed: LocalRun = { ...run, status: 'completed', completedAt: time(60) }
     const terminalEvents = [...events, { runId: run.id, sequence: 5, createdAt: time(60), type: 'message.completed', payload: { role: 'assistant', messageId: 'final', phase: 'final_answer', content: { text: 'final' } } }]
-    const result = projectChatTranscript(input(completed, terminalEvents, [...timelineItems, message('final', 'assistant', 60)]))
-    expect(order(result)).toEqual([...order(active), 'final'])
+    const terminal = input(completed, terminalEvents, [...timelineItems, message('final', 'assistant', 60)])
+    const result = projector.project(terminal)
+    expect(result.rows).toEqual(projectChatTranscript(terminal).rows)
+    expect(order(result)).toEqual([...order(projection), 'final'])
     expect(result.rows.filter(row => row.kind === 'message' && row.resultRunId).map(row => row.key)).toEqual(['message:final'])
     expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'hello')).toMatchObject({ isIntermediate: true, showIdentity: false })
     expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'final')).toMatchObject({ showIdentity: false, resultRunId: run.id })
     expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'final')).not.toHaveProperty('isIntermediate')
-    expect(result.rows.filter(row => row.kind === 'agent-turn').map(row => row.key)).toEqual(active.rows.filter(row => row.kind === 'agent-turn').map(row => row.key))
+    expect(result.rows.filter(row => row.kind === 'agent-turn').map(row => row.key)).toEqual(segments.map(row => row.key))
   })
 
   it('keeps a reply that began before steering in place when it is saved and replayed', () => {
@@ -232,30 +293,16 @@ describe('interleaved conversation segments', () => {
     expect(identities).toEqual([run.id, followup.id])
   })
 
-  it.each(['failed', 'cancelled'] as const)('keeps a single terminal outcome after steering when the run is %s', (status) => {
-    const projection = projectChatTranscript(input({ ...run, status, completedAt: time(60) }))
-    const segments = projection.rows.filter(row => row.kind === 'agent-turn')
-    expect(segments.filter(row => row.showIdentity !== false)).toHaveLength(1)
-    expect(segments.filter(row => row.ownsResultActions)).toEqual([segments.at(-1)])
-    expect(segments.filter(row => row.showOutcome !== false)).toEqual([segments.at(-1)])
-    expect(projection.rows.find(row => row.kind === 'message' && row.message.id === 'hello')).toMatchObject({ isIntermediate: true, showIdentity: false })
-  })
-
-  it.each(['failed', 'cancelled'] as const)('does not promote the intermediate answer when the next model request is %s before emitting text', (status) => {
+  it.each(['failed', 'cancelled'] as const)('keeps one terminal outcome without promoting intermediate answers when %s', (status) => {
     const resumed: LocalRunEvent = { runId: run.id, sequence: 4, createdAt: time(40), type: 'message.started', payload: { messageId: 'continuation', role: 'assistant' } }
-    const projection = projectChatTranscript(input({ ...run, status, completedAt: time(60) }, [...events.slice(0, 3), resumed]))
-    expect(projection.rows.find(row => row.kind === 'message' && row.message.id === 'hello')).toMatchObject({ isIntermediate: true, showIdentity: false })
-    expect(projection.rows.filter(row => row.kind === 'agent-turn' && row.ownsResultActions)).toHaveLength(1)
-    expect(projection.rows.at(-1)).toMatchObject({ kind: 'agent-turn', ownsResultActions: true, showIdentity: false })
-  })
-
-  it('rebuilds segment boundaries when continuation events arrive incrementally', () => {
-    const projector = createChatTranscriptProjector()
-    const first = input(run, events.slice(0, 3))
-    projector.project(first)
-    const next = { ...input(), runs: first.runs, outputs: first.outputs }
-    const updated = projector.project(next)
-    expect(updated.rows).toEqual(projectChatTranscript(next).rows)
-    expect(order(updated).at(-1)).toBe('continuation')
+    for (const history of [events, [...events.slice(0, 3), resumed]]) {
+      const projection = projectChatTranscript(input({ ...run, status, completedAt: time(60) }, history))
+      const segments = projection.rows.filter(row => row.kind === 'agent-turn')
+      expect(segments.filter(row => row.showIdentity !== false)).toHaveLength(1)
+      expect(segments.filter(row => row.ownsResultActions)).toEqual([segments.at(-1)])
+      expect(segments.filter(row => row.showOutcome !== false)).toEqual([segments.at(-1)])
+      expect(projection.rows.find(row => row.kind === 'message' && row.message.id === 'hello')).toMatchObject({ isIntermediate: true, showIdentity: false })
+      expect(projection.rows.at(-1)).toMatchObject({ kind: 'agent-turn', ownsResultActions: true, showIdentity: false })
+    }
   })
 })

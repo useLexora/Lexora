@@ -342,6 +342,7 @@ function pathRequest(runId: string, toolCallId: string, path: string, signal: Ab
 
 function createRepository(records: Map<string, ApprovalRecord>): ApprovalRepository {
   return {
+    hasPending: runId => [...records.values()].some(record => record.runId === runId && record.status === 'pending'),
     findById: id => records.get(id) ?? null,
     list: (options = {}) => [...records.values()]
       .filter(record => options.runId == null || record.runId === options.runId)

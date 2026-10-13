@@ -2,6 +2,7 @@ import type { LocalExecution } from '@buddy-shared/executions/executionPresentat
 import { describe, expect, it } from 'vitest'
 import { executionPhaseLabel, executionStatus } from '../../../widgets/executions/executionPresentation'
 import { executionNeedsAttention, projectExecutionCanvas } from '../executionCanvas'
+import { projectExecutionGroups, projectTaskPartners } from '../executionGroups'
 
 function execution(runId: string, overrides: Partial<LocalExecution> = {}): LocalExecution {
   return {
@@ -37,6 +38,31 @@ const root = () => execution('root', { kind: 'root', parentRunId: null, ordinal:
 const question = { questionId: 'question', text: 'Choose a color', audience: 'user' as const, open: true, answered: false }
 
 describe('execution canvas projection', () => {
+  it('distinguishes public actor collaboration from private subtask work using execution kinds', () => {
+    const records = [root(), execution('npc'), execution('actor', { kind: 'actor_child', ordinal: 2 }), execution('actor-again', { kind: 'actor_child', buddyId: 'actor', ordinal: 3, phase: 'closed', status: 'completed' })]
+    const group = projectExecutionGroups(records).byRoot.get('root')!
+    expect(group.mode).toBe('collaboration')
+    expect(group.participantCount).toBe(1)
+    expect(group.actors.map(actor => actor.runId)).toEqual(['root', 'actor', 'actor-again'])
+    expect(group.activeActors.map(actor => actor.runId)).toEqual(['root', 'actor'])
+    expect(group.subtasks.map(child => child.runId)).toEqual(['npc'])
+    expect(projectExecutionGroups(records.slice(0, 2)).byRoot.get('root')?.mode).toBe('subtasks')
+    expect(projectExecutionGroups([root()]).byRoot.get('root')?.mode).toBe('single')
+  })
+
+  it('counts active partners once through waiting and stopping, excluding the actual lead actor and NPCs', () => {
+    const records = [root(), execution('first', { kind: 'actor_child', buddyId: 'partner', waitingFor: 'approval' }), execution('second', { kind: 'actor_child', buddyId: 'partner', waitingFor: 'answer' }), execution('third', { kind: 'actor_child', buddyId: 'other', stopping: true, phase: 'closing' }), execution('self', { kind: 'actor_child', buddyId: 'root' }), execution('npc')]
+    expect(projectTaskPartners(projectExecutionGroups(records)).activeCount).toBe(2)
+    records[1] = { ...records[1]!, phase: 'closed', status: 'cancelled' }
+    expect(projectTaskPartners(projectExecutionGroups(records)).activeCount).toBe(2)
+    records[2] = { ...records[2]!, phase: 'closed', status: 'completed' }
+    expect(projectTaskPartners(projectExecutionGroups(records)).activeCount).toBe(1)
+    records[3] = { ...records[3]!, phase: 'closed', status: 'cancelled' }
+    expect(projectTaskPartners(projectExecutionGroups(records)).activeCount).toBe(0)
+    const next = execution('next', { rootRunId: 'next', kind: 'root', parentRunId: null, startedAt: '2026-10-13T00:00:00.000Z' })
+    expect([...projectTaskPartners(projectExecutionGroups([...records, next])).byBuddy.keys()]).toEqual(['next'])
+  })
+
   it('retains the true nested call tree and terminal nodes while excluding other roots and maintenance', () => {
     const records = [
       execution('sibling', { ordinal: 3, status: 'completed', phase: 'closed', startedAt: '2026-10-12T00:00:01.000Z' }),

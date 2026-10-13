@@ -20,6 +20,29 @@ function createOwner(name: string) {
   const delivered: { mode: 'send' | 'edit', content: string }[] = []
   const draft = shallowRef(`${name} draft`)
   const workspace = {
+    executionTree: {
+      groups: shallowRef({ byRoot: new Map(), byRun: new Map() }),
+      records: shallowRef([]),
+      revision: shallowRef(0),
+      ready: shallowRef(true),
+      conversationId: shallowRef(null),
+      branchId: shallowRef(null),
+      byParent: shallowRef(new Map()),
+      target: record => ({ conversationId: 'conversation', branchId: 'branch', rootRunId: record.rootRunId, runId: record.runId }),
+      onError: () => {},
+      refresh: async () => {},
+      api: {
+        sendDraft: async () => { throw new Error('No draft') },
+        list: async () => [],
+        detail: async () => { throw new Error('No execution') },
+        events: async () => ({ events: [], nextSequence: 0, hasMore: false }),
+        send: async () => ({ accepted: true }),
+        answer: async () => ({ accepted: true }),
+        cancel: async () => ({ cancelled: true }),
+        cancelChildren: async () => ({ cancelledRunIds: [] }),
+        onChanged: () => () => {},
+      },
+    },
     marks: {
       items: shallowRef([]),
       states: shallowRef(new Map()),
@@ -73,6 +96,7 @@ function createOwner(name: string) {
       updateComposerContent: (text: string) => { draft.value = text },
     },
     execution: {
+      isActorInput: shallowRef(false),
       queuedMessages: shallowRef([]),
       pendingQueueActions: shallowRef(new Set<string>()),
       cancelQueuedMessage: async () => {},

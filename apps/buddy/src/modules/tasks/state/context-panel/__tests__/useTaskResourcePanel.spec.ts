@@ -1,4 +1,4 @@
-import type { DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
+import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import { afterEach, describe, expect, it } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
@@ -14,7 +14,7 @@ function fixture() {
   const activeConversationId = shallowRef<string | null>('conversation')
   const gate = deferred<DesktopBrowserState>()
   let sessionOpen = true
-  const browser = {
+  const browser: Pick<DesktopBrowserApi, 'onStateChanged' | 'ensureSession' | 'close' | 'openArtifact'> = {
     onStateChanged: () => () => {},
     ensureSession: () => gate.promise,
     close: async () => { sessionOpen = false },
@@ -28,10 +28,40 @@ function fixture() {
   }])
   const panel = scope.run(() => useTaskResourcePanel({ ...contextPanelFixture({ activeConversationId }).options, spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs }))!
   const release = () => gate.resolve({ sessionId: 'session' } as DesktopBrowserState)
-  return { activeConversationId, browser, panel, release, scope, sessionOpen: () => sessionOpen }
+  return { activeConversationId, browser, panel, release, runOutputs, scope, sessionOpen: () => sessionOpen }
 }
 
 describe('resource panel operations', () => {
+  it('opens a task HTML link in its browser without requiring a bound space', async () => {
+    const f = fixture()
+    let displayedArtifact: string | null = null
+    f.browser.openArtifact = async (sessionId, artifactId) => {
+      displayedArtifact = artifactId
+      return { sessionId } as DesktopBrowserState
+    }
+    expect(f.panel.canPreviewFile('./page.html')).toBe(true)
+    const opening = f.panel.previewFile('./page.html')
+    f.release()
+    await opening
+    expect(displayedArtifact).toBe('html')
+    expect(f.panel.activeTab.value).toMatchObject({ kind: 'browser', conversationId: 'conversation', source: { runId: 'run' } })
+    f.activeConversationId.value = 'other'
+    expect(f.panel.canPreviewFile('page.html')).toBe(false)
+  })
+
+  it('does not guess between artifacts with the same relative path', () => {
+    const f = fixture()
+    const output = f.runOutputs.value[0]!
+    const artifact = output.artifacts[0]!
+    f.runOutputs.value = [{ ...output, artifacts: [artifact, { ...artifact, artifactId: 'other-html', path: '/other/page.html' }] }]
+    expect(f.panel.canPreviewFile('page.html')).toBe(false)
+    expect(f.panel.canPreviewFile('/workspace/page.html')).toBe(true)
+    expect(f.panel.canPreviewFile('file:///workspace/page.html')).toBe(true)
+    expect(f.panel.canPreviewFile('https://example.com/page.html')).toBe(false)
+    expect(f.panel.canPreviewFile('../workspace/page.html')).toBe(false)
+    expect(f.panel.canPreviewFile('/unknown/page.html')).toBe(false)
+  })
+
   it('updates the owning manual session across task changes without changing another tab', async () => {
     const f = fixture()
     f.activeConversationId.value = null

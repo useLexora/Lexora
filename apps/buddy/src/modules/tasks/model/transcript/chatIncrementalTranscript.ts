@@ -4,6 +4,7 @@ import type { LocalRun, LocalRunOutput } from '@buddy-shared/runs/runApi'
 
 import type { ChatAgentTurn } from './chatAgentTurn'
 import type { ChatRunTranscriptProjection } from './chatRunTranscriptProjector'
+import type { ChatTranscriptContinuation } from './chatTranscriptPresentation'
 import type {
   ChatTranscriptMessageRow,
   ChatTranscriptProjection,
@@ -13,9 +14,10 @@ import type {
 } from './chatTranscriptTypes'
 import { isVisibleExtensionAction, shouldShowAgentTurn } from './chatPersistedTranscriptRows'
 import { selectChatStreamingMessage } from './chatRunStreamingMessages'
-import { hasChatAssistantIdentity } from './chatTranscriptSegments'
 
 export interface CachedChatTranscriptProjection {
+  executionGroups: ChatTranscriptProjectionInput['executionGroups']
+  continuation: ChatTranscriptContinuation
   includeUnanchoredTurns: boolean
   interleavedRunIds: ReadonlySet<string>
   activityRowIndex: number | null
@@ -44,6 +46,7 @@ export function projectIncrementalChatTranscript(
   const runProjections = input.runProjections
   if (
     !runProjections
+    || cached.executionGroups !== input.executionGroups
     || cached.includeUnanchoredTurns !== (input.includeUnanchoredTurns ?? false)
     || !cached.runProjections
     || cached.timelineItems !== input.timelineItems
@@ -116,8 +119,9 @@ export function projectIncrementalChatTranscript(
   let activityRowIndex = cached.activityRowIndex
   if (streamingMessage) {
     const nextStreamingRow: ChatTranscriptMessageRow = {
-      ...(hasChatAssistantIdentity(rows ?? cached.projection.rows, streamingMessage.runId) ? { showIdentity: false as const } : {}),
+      ...(streamingMessage.runId !== null && cached.continuation.precedingAssistantRunId === streamingMessage.runId ? { showIdentity: false as const } : {}),
       isIntermediate: true,
+      showActions: false,
       key: `message:${streamingMessage.id}`,
       kind: 'message',
       message: streamingMessage,
@@ -194,6 +198,7 @@ export function projectIncrementalChatTranscript(
 export function createChatTranscriptProjectionCache(
   input: ChatTranscriptProjectionInput,
   projection: ChatTranscriptProjection,
+  continuation: ChatTranscriptContinuation,
 ): CachedChatTranscriptProjection {
   const agentTurnRowIndexByRunId = new Map<string, number>()
   let activityRowIndex: number | null = null
@@ -218,7 +223,7 @@ export function createChatTranscriptProjectionCache(
       && item.branchId === run.branchId
       && item.sourceMessageId === run.triggeringMessageId
       : item.kind === 'message'
-        && item.role === 'user'
+        && (item.role === 'user' || (item.role === 'assistant' && item.runId !== run.id))
         && item.id !== run.triggeringMessageId
         && item.branchId === run.branchId
         && item.createdAt >= run.startedAt
@@ -233,6 +238,8 @@ export function createChatTranscriptProjectionCache(
     seenTurns.add(row.turn.runId)
   }
   return {
+    executionGroups: input.executionGroups,
+    continuation,
     includeUnanchoredTurns: input.includeUnanchoredTurns ?? false,
     interleavedRunIds,
     activityRowIndex,

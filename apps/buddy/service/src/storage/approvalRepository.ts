@@ -15,6 +15,7 @@ export interface ApprovalRecord {
 }
 
 export interface ApprovalRepository {
+  hasPending: (runId: string) => boolean
   findById: (id: string) => ApprovalRecord | null
   list: (options?: { limit?: number, runId?: string | null, status?: ApprovalStatus | null, conversationId?: string, branchId?: string }) => ApprovalRecord[]
   listPending: (runId?: string) => ApprovalRecord[]
@@ -33,6 +34,7 @@ interface ApprovalRow {
 }
 
 export function createApprovalRepository(database: DatabaseSync): ApprovalRepository {
+  const pending = database.prepare('SELECT 1 FROM approvals WHERE run_id = ? AND status = \'pending\' LIMIT 1')
   const find = database.prepare('SELECT * FROM approvals WHERE id = ?')
   const listAllPending = database.prepare(`
     SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at, id
@@ -59,6 +61,7 @@ export function createApprovalRepository(database: DatabaseSync): ApprovalReposi
   `)
 
   return {
+    hasPending: runId => pending.get(runId) !== undefined,
     findById(id) {
       const row = find.get(id) as ApprovalRow | undefined
       return row ? toApproval(row) : null

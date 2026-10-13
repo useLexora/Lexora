@@ -4,6 +4,7 @@ import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { RunEventObservation, RunEventReader } from '../../events/RunEventPorts'
+import type { ApprovalRepository } from '../../storage/approvalRepository'
 import type { ArtifactRepository } from '../../storage/artifactRepository'
 import type { ConversationRepository } from '../../storage/conversationRepository'
 import type { ExecutionRepository, ExecutionStateRecord } from '../../storage/executionRepository'
@@ -22,6 +23,7 @@ import { toPublicRun } from '../../runs/publicRun'
 import { readExecutionResult } from './readExecutionResult'
 
 export interface ExecutionPresentationOptions {
+  approvals: Pick<ApprovalRepository, 'hasPending'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'listBranchMessages'>
   runs: Pick<RunRepository, 'listForTimeline'>
   executions: Pick<ExecutionRepository, 'find' | 'listTree'>
@@ -53,7 +55,7 @@ export class ExecutionPresentationService {
     this.#subscriptions = [
       options.events.onDidCommit((event) => {
         const record = options.executions.find(event.runId)
-        if (!record || record.run.executionKind === 'root' || this.#pending.has(record.run.rootRunId))
+        if (!record || this.#pending.has(record.run.rootRunId))
           return
         const rootId = record.run.rootRunId
         this.#pending.set(rootId, setTimeout(() => {
@@ -131,10 +133,13 @@ export class ExecutionPresentationService {
 
   async send(input: ExecutionSend): Promise<{ accepted: boolean }> {
     const target = parse(executionSendSchema, input)
-    const record = this.#requireLiveTarget(target)
+    const record = this.#requireTarget(target)
     if (record.run.executionKind === 'root' || record.run.executionKind === 'maintenance')
       throw new BuddyServiceError('VALIDATION_FAILED')
-    await this.#options.coordinator.send(target.runId, { kind: 'supplement', origin: 'user', messageId: target.messageId, text: target.text, targetRunId: target.runId, targetGeneration: record.run.generation })
+    const previous = this.#options.mailbox.find(target.messageId)
+    if (previous === null)
+      this.#requireLiveTarget(target)
+    await this.#options.coordinator.send(target.runId, { kind: 'supplement', origin: 'user', messageId: target.messageId, text: target.text, targetRunId: target.runId, targetGeneration: previous?.message.targetGeneration ?? record.run.generation })
     return { accepted: true }
   }
 
@@ -148,11 +153,13 @@ export class ExecutionPresentationService {
 
   async answer(input: ExecutionAnswer): Promise<{ accepted: boolean }> {
     const target = parse(executionAnswerSchema, input)
-    this.#requireLiveTarget(target)
+    this.#requireTarget(target)
     const question = this.#options.mailbox.findQuestion(target.questionId)
     if (!question || question.message.kind !== 'question' || question.message.audience !== 'user' || question.message.sourceRunId !== target.runId)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    await this.#options.coordinator.answerQuestion(null, target.questionId, target.text)
+    if (!question.answer)
+      this.#requireLiveTarget(target)
+    await this.#options.coordinator.answerQuestion(null, target.questionId, target.text, target.messageId)
     return { accepted: true }
   }
 
@@ -247,7 +254,7 @@ export class ExecutionPresentationService {
       toolCount,
       stopping: record.cancelRequestedAt !== null && record.phase !== 'closed',
       task: record.initialInput?.prompt.slice(0, 300) ?? '',
-      waitingFor: questions.some(question => question.open) ? 'answer' : progress?.phase === 'awaiting_approval' && isLive(record) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,
+      waitingFor: questions.some(question => question.open) ? 'answer' : isLive(record) && this.#options.approvals.hasPending(run.id) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,
       activeChildren,
       canCancel: isCancellable(record) && tree.find(member => member.run.id === run.rootRunId)?.phase !== 'closed'
         && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.activeBranchId === scope.branchId,

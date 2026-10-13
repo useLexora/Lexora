@@ -11,13 +11,16 @@ const BuddyExecutionCanvas = defineAsyncComponent(() => import('./BuddyExecution
 const canvas = useTemplateRef<{ focus: (id: string) => void }>('canvas')
 const tree = useExecutionTree()
 const labels = computed(() => executionLabels(props.language))
-const nodes = computed(() => projectExecutionCanvas(tree?.records.value ?? [], props.rootRunId))
-const root = computed(() => nodes.value[0]?.execution)
+const group = computed(() => tree?.groups.value.byRoot.get(props.rootRunId))
+const nodes = computed(() => projectExecutionCanvas(group.value?.records ?? [], props.rootRunId))
+const root = computed(() => group.value?.root)
 const children = computed(() => nodes.value.slice(1).map(node => node.execution))
+const collaborating = computed(() => group.value?.mode === 'collaboration')
+const npcCount = computed(() => group.value?.subtasks.length ?? 0)
 const visible = computed(() => children.value.length > 0 || (!!root.value && (root.value.questions.length > 0 || root.value.cleanup === 'degraded')))
 const unfinished = computed(() => children.value.filter(child => child.phase !== 'closed').length)
-const attention = computed(() => nodes.value.filter(node => executionNeedsAttention(node.execution)))
-const canStopAll = computed(() => root.value?.canCancel && children.value.some(child => child.canCancel))
+const attention = computed(() => nodes.value.filter(node => node.execution.kind === 'npc_child' && executionNeedsAttention(node.execution)))
+const canStopAll = computed(() => !collaborating.value && root.value?.canCancel && children.value.some(child => child.canCancel))
 const stoppingAll = shallowRef(false)
 const failedAll = shallowRef(false)
 const stopping = shallowReactive(new Set<string>())
@@ -70,6 +73,9 @@ async function stop(runId: string) {
 async function open(runId: string) {
   const record = nodes.value.find(node => node.execution.runId === runId)?.execution
   if (record) {
+    if (record.kind !== 'npc_child') {
+      return
+    }
     try {
       await tree?.open(record)
     }
@@ -89,21 +95,25 @@ function focusAttention() {
 </script>
 
 <template>
-  <div v-if="visible" class="grid gap-2 pb-[var(--buddy-chat-gap-block)]" data-testid="execution-tree">
+  <div v-if="visible" class="grid gap-2 pb-[var(--buddy-chat-gap-turn)]" data-testid="execution-tree">
     <header class="flex flex-wrap items-center justify-between gap-2 text-muted text-[12px]">
       <div class="flex flex-wrap items-center gap-2">
         <strong class="flex items-center gap-1 font-600">
-          {{ children.length ? labels.subtasks : labels.mainTask }}
-          <span v-if="children.length" class="px-1 rounded-micro bg-subtle font-normal tabular-nums">{{ children.length }}</span>
+          {{ collaborating ? labels.collaboration : children.length ? labels.subtasks : labels.mainTask }}
+          <span v-if="children.length && !collaborating" class="px-1 rounded-micro bg-subtle font-normal tabular-nums">{{ children.length }}</span>
         </strong>
-        <span v-if="children.length && unfinished < children.length">· {{ unfinished ? labels.unfinishedCount.replace('{count}', String(unfinished)) : labels.allFinished }}</span>
+        <span v-if="collaborating">{{ labels.participants.replace('{count}', String(group?.participantCount ?? 0)) }}</span>
+        <span v-if="collaborating && npcCount">· {{ labels.subtasks }} {{ npcCount }}</span>
+        <span v-if="children.length && unfinished < children.length && (unfinished || root?.phase === 'closed')">· {{ unfinished ? labels.unfinishedCount.replace('{count}', String(unfinished)) : labels.allFinished }}</span>
         <NButton v-if="attention.length" quaternary size="tiny" type="warning" @click="focusAttention">
           {{ labels.needsYouCount.replace('{count}', String(attention.length)) }}
         </NButton>
       </div>
-      <NButton v-if="canStopAll" quaternary size="tiny" :loading="stoppingAll" :disabled="!tree?.ready.value" @click="stopAll">
-        {{ stoppingAll ? labels.stopping : labels.stopAll }}
-      </NButton>
+      <div class="flex items-center gap-2">
+        <NButton v-if="canStopAll" quaternary size="tiny" :loading="stoppingAll" :disabled="!tree?.ready.value" @click="stopAll">
+          {{ stoppingAll ? labels.stopping : collaborating ? labels.stopParticipants : labels.stopAll }}
+        </NButton>
+      </div>
     </header>
     <p v-if="failedAll" role="alert" class="m-0 text-danger text-[12px]">
       {{ labels.actionFailed }}
@@ -113,5 +123,8 @@ function focusAttention() {
       :stopping="stopping" :failed="failed" :enabled="!!tree?.ready.value && !stoppingAll"
       @open="open" @stop="stop"
     />
+    <p v-if="root?.cleanup === 'degraded'" class="m-0 text-warning text-[12px]" role="alert">
+      {{ labels.cleanup }}
+    </p>
   </div>
 </template>

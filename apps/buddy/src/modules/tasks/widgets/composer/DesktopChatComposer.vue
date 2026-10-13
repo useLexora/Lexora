@@ -101,7 +101,7 @@ const {
   onLocateResource: resourceId => resourceStrip.value?.highlightResource(resourceId),
 })
 
-const queuesSubmission = computed(() => !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
+const queuesSubmission = computed(() => !props.isActorInput && !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
 const collaborationCount = computed(() => isLocalCommand.value ? 0 : getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(props.composerContent)).length)
 const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
 

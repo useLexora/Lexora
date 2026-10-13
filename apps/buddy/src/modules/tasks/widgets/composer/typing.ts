@@ -60,6 +60,7 @@ export interface ChatComposerEditorOptions {
 }
 
 export interface DesktopChatComposerProps {
+  isActorInput?: boolean
   isLoadingModel?: boolean
   isUpdatingModel?: boolean
   pasteTextAsAttachment: boolean
