@@ -3,11 +3,11 @@ import type { NodeRendererProps, SmoothMarkdownStreamOptions } from 'markstream-
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import MarkdownRender from 'markstream-vue'
-import { computed, onBeforeUnmount } from 'vue'
-import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { computed } from 'vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { markdownThemeVariables } from '@/theme/markdownTheme'
+import 'katex/dist/katex.min.css'
 import 'markstream-vue/index.css'
 
 const props = withDefaults(defineProps<{
@@ -26,16 +26,12 @@ const emit = defineEmits<{
   openLink: [href: string]
 }>()
 
-interface CopyButtonState {
-  ariaLabel: string | null
-  resetTimer: number
-}
-
-const { t } = useBuddyI18n(() => props.language)
 const { isDark } = useDesktopUi()
 const themeVariables = computed(() => markdownThemeVariables(desktopThemeSnapshot.value.active.colors))
 const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
-const copyButtonStates = new Map<HTMLButtonElement, CopyButtonState>()
+const codeBlockProps = computed<NonNullable<NodeRendererProps['codeBlockProps']>>(() => ({
+  clipboardWriter: props.writeClipboardText,
+}))
 
 const smoothStreamingOptions = {
   minCharsPerSecond: 30,
@@ -52,28 +48,6 @@ const reducedMotion = usePreferredReducedMotion()
 const animateStreaming = computed(() => (
   !props.final && reducedMotion.value !== 'reduce'
 ))
-
-async function copyCodeBlock(event: MouseEvent) {
-  if (!(event.target instanceof Element))
-    return
-
-  const button = event.target.closest<HTMLButtonElement>('.code-block-header .code-action-btn')
-  const codeBlock = button?.closest<HTMLElement>('.code-block-container')
-  const code = codeBlock?.querySelector<HTMLElement>('pre.code-pre-fallback > code')
-  if (!button || !code)
-    return
-
-  event.preventDefault()
-  event.stopImmediatePropagation()
-
-  try {
-    await props.writeClipboardText(code.textContent ?? '')
-    showCopiedState(button)
-  }
-  catch (error) {
-    console.error('[Lexora Buddy] Failed to copy code block.', error)
-  }
-}
 
 function handleLinkClick(event: MouseEvent) {
   if (event.defaultPrevented || !(event.target instanceof Element))
@@ -97,42 +71,10 @@ function handleLinkClick(event: MouseEvent) {
 
   emit('openLink', href)
 }
-
-function showCopiedState(button: HTMLButtonElement) {
-  const currentState = copyButtonStates.get(button)
-  if (currentState)
-    window.clearTimeout(currentState.resetTimer)
-
-  const ariaLabel = currentState?.ariaLabel ?? button.getAttribute('aria-label')
-  button.classList.add('is-buddy-copied')
-  button.setAttribute('aria-label', t('desktop.chat.copied'))
-  const resetTimer = window.setTimeout(resetCopiedState, 1_000, button)
-  copyButtonStates.set(button, { ariaLabel, resetTimer })
-}
-
-function resetCopiedState(button: HTMLButtonElement) {
-  const state = copyButtonStates.get(button)
-  if (!state)
-    return
-
-  button.classList.remove('is-buddy-copied')
-  if (state.ariaLabel === null)
-    button.removeAttribute('aria-label')
-  else
-    button.setAttribute('aria-label', state.ariaLabel)
-  copyButtonStates.delete(button)
-}
-
-onBeforeUnmount(() => {
-  for (const [button, state] of copyButtonStates) {
-    window.clearTimeout(state.resetTimer)
-    resetCopiedState(button)
-  }
-})
 </script>
 
 <template>
-  <div class="buddy-chat-markdown-host w-full min-w-0" @click="handleLinkClick" @click.capture="copyCodeBlock">
+  <div class="buddy-chat-markdown-host w-full min-w-0" @click="handleLinkClick">
     <MarkdownRender
       :style="themeVariables"
       class="buddy-chat-markdown"
@@ -140,6 +82,7 @@ onBeforeUnmount(() => {
       :content="content"
       :custom-markdown-it="allowImages ? undefined : disableImages"
       :code-block-options="codeOverflow ? { overflow: codeOverflow } : undefined"
+      :code-block-props="codeBlockProps"
       :fade="false"
       :final="final"
       html-policy="escape"
@@ -247,27 +190,5 @@ onBeforeUnmount(() => {
 
 :global(.buddy-chat-markdown.typewriter-simple-cursor .typewriter-simple-cursor-target::after) {
   display: none;
-}
-
-:global(.buddy-chat-markdown .code-action-btn.is-buddy-copied) {
-  position: relative;
-  background: var(--code-action-active-bg);
-  color: var(--code-action-active-fg);
-}
-
-:global(.buddy-chat-markdown .code-action-btn.is-buddy-copied svg) {
-  visibility: hidden;
-}
-
-:global(.buddy-chat-markdown .code-action-btn.is-buddy-copied::after) {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0.5rem;
-  height: 0.25rem;
-  border-bottom: 1.5px solid currentcolor;
-  border-left: 1.5px solid currentcolor;
-  content: '';
-  transform: translate(-50%, -65%) rotate(-45deg);
 }
 </style>

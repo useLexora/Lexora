@@ -17,7 +17,8 @@ overrides:
   find-my-way: 9.7.0
   ioredis: 5.10.1
   js-beautify>glob: 10.5.0
-  monaco-editor>dompurify: 3.4.15
+  micromark-extension-math>katex: 0.19.0
+  monaco-editor>dompurify: 3.4.16
   prisma>mysql2: 3.24.4
   tar: 7.5.22
   undici@>=8.0.0 <8.10.2: 8.10.2
@@ -39,12 +40,12 @@ allowBuilds:
   tree-sitter-bash: false
   vue-demi: true
 patchedDependencies:
-  '@anthropic-ai/sandbox-runtime@0.0.77': patches/@anthropic-ai__sandbox-runtime@0.0.77.patch
+  '@anthropic-ai/sandbox-runtime@0.0.79': patches/@anthropic-ai__sandbox-runtime@0.0.79.patch
   '@earendil-works/pi-ai@1.1.0': patches/@earendil-works__pi-ai@1.1.0.patch
   '@earendil-works/pi-codemode@1.1.0': patches/@earendil-works__pi-codemode@1.1.0.patch
   '@earendil-works/pi-coding-agent@1.1.0': patches/@earendil-works__pi-coding-agent@1.1.0.patch
 catalog:
-  '@types/node': ^25.6.0
+  '@types/node': ^26.6.5
   dotenv: ^17.4.2
   fastify: 5.12.1
   ioredis: 5.10.1
@@ -61,6 +62,7 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-mcp@1.1.0'
   - '@earendil-works/pi-telemetry@1.1.0'
   - '@earendil-works/pi-tui@1.1.0'
-  - markstream-core@2.0.17
-  - markstream-vue@2.0.17
-  - stream-markdown-parser@1.2.19
+  - markstream-core@2.0.19
+  - markstream-vue@2.0.19
+  - stream-markdown-parser@1.2.20
+  - markdown-it-ts@1.1.3

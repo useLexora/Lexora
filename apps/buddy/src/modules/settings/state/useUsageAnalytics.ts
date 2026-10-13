@@ -110,5 +110,5 @@ export function useUsageAnalytics(options: UsageAnalyticsOptions) {
 export type UsageAnalyticsState = ReturnType<typeof useUsageAnalytics>
 
 function readClock() {
-  return { today: localUsageDate(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+  return { today: localUsageDate(), timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone }
 }

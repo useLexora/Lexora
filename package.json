@@ -50,10 +50,10 @@
     "type-check:web-stack": "pnpm --filter '@haohaoxue/lexora-web...' --filter '@haohaoxue/lexora-api...' --filter '@haohaoxue/lexora-agent...' --recursive --if-present type-check"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^8.2.0",
-    "@playwright/test": "1.60.0",
-    "eslint": "^10.2.1",
+    "@antfu/eslint-config": "^9.5.1",
+    "@playwright/test": "1.64.0",
+    "eslint": "^10.12.0",
     "typescript": "catalog:",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.3"
   }
 }

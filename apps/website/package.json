@@ -16,7 +16,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "axios": "^1.20.0",
     "typescript": "catalog:",
-    "vue-tsc": "^3.2.7"
+    "vue-tsc": "^3.3.13"
   }
 }

@@ -2,11 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { AuthorizationServerMismatchError, IssuerMismatchError } from '@modelcontextprotocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createConnectorRepository } from '../../../storage/connectorRepository'
 import { openBuddyDatabase } from '../../../storage/database'
 import { McpClientSession } from '../McpClientSession'
 import { McpConnectorService } from '../McpConnectorService'
+import { mcpErrorCode } from '../mcpErrors'
 import { loginMcpOAuth, McpOAuthProvider } from '../McpOAuthProvider'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -15,7 +17,7 @@ afterEach(async () => {
     await close()
 })
 
-async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403, toolNames?: string[] } = {}) {
+async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403, toolNames?: string[], pageSize?: number } = {}) {
   const requests: Array<{ method: string, toolName?: string, authorization?: string, version?: string }> = []
   const registered: Record<string, unknown> = {}
   let annotations = { readOnlyHint: true, openWorldHint: false, destructiveHint: false }
@@ -68,12 +70,14 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
     requests.push({ method: message.method, toolName: message.params?.name, authorization: request.headers.authorization, version: request.headers['mcp-protocol-version'] as string | undefined })
     if (message.id === undefined)
       return response.writeHead(202).end()
+    const pageStart = Number(message.params?.cursor ?? 0)
+    const pageEnd = options.pageSize ? pageStart + options.pageSize : toolNames.length
     const result = message.method === 'server/discover' && options.modern
       ? { supportedVersions: ['2026-07-28'], capabilities: { tools: {} }, _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'fixture', version: '1.0' } } }
       : message.method === 'initialize' && !options.modern
         ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0' } }
         : message.method === 'tools/list'
-          ? { ttlMs: 60000, cacheScope: 'private', tools: toolNames.map(name => ({ name, annotations, inputSchema: { type: 'object', properties: { value: { type: 'string' } } } })) }
+          ? { ttlMs: 60000, cacheScope: 'private', tools: toolNames.slice(pageStart, pageEnd).map(name => ({ name, annotations, inputSchema: { type: 'object', properties: { value: { type: 'string' } } } })), ...(pageEnd < toolNames.length ? { nextCursor: String(pageEnd) } : {}) }
           : message.method === 'tools/call'
             ? { content: [{ type: 'text', text: message.params.arguments.value }] }
             : null
@@ -105,6 +109,27 @@ function session(base: string, credential = { type: 'http' as const, bearerToken
 }
 
 describe('mCP HTTP and authorization', () => {
+  it.each([
+    new AuthorizationServerMismatchError('https://original.example', 'https://changed.example'),
+    new IssuerMismatchError('authorization_response', 'https://original.example', 'https://changed.example'),
+    new IssuerMismatchError('metadata', 'https://original.example', 'https://changed.example'),
+  ])('reports an issuer mismatch as failed authentication', (error) => {
+    expect(mcpErrorCode(error)).toBe('MCP_AUTHENTICATION_FAILED')
+  })
+
+  it.each([true, false])('discovers every tool across modern=%s paginated catalogs', async (modern) => {
+    const names = ['first', 'second', 'third', 'fourth', 'fifth']
+    const fixture = await serverFixture({ modern, toolNames: names, pageSize: 2 })
+    expect((await session(fixture.base).listTools()).map(tool => tool.name)).toEqual(names)
+    expect(fixture.requests.filter(request => request.method === 'tools/list')).toHaveLength(3)
+  })
+
+  it('rejects a catalog exceeding the page budget instead of publishing a partial list', async () => {
+    const fixture = await serverFixture({ toolNames: Array.from({ length: 21 }, (_, index) => `tool_${index}`), pageSize: 1 })
+    await expect(session(fixture.base).listTools()).rejects.toMatchObject({ data: { listMaxPages: 20 } })
+    expect(fixture.requests.filter(request => request.method === 'tools/list')).toHaveLength(20)
+  })
+
   it('keeps global tool ownership through reconnects, catalog changes and cached restart', async () => {
     const maps = await serverFixture({ toolNames: ['routing__search'] })
     const routing = await serverFixture({ toolNames: ['search'] })

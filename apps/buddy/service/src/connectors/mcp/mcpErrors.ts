@@ -1,5 +1,5 @@
 import type { ConnectorErrorCode } from '../../../../shared/connectors/connectorState'
-import { SdkError, SdkErrorCode, SdkHttpError, UnauthorizedError } from '@modelcontextprotocol/client'
+import { AuthorizationServerMismatchError, IssuerMismatchError, SdkError, SdkErrorCode, SdkHttpError, UnauthorizedError } from '@modelcontextprotocol/client'
 
 export class McpClientError extends Error {
   readonly code: ConnectorErrorCode
@@ -14,6 +14,8 @@ export class McpClientError extends Error {
 export function mcpErrorCode(error: unknown, fallback: ConnectorErrorCode = 'MCP_SERVER_UNAVAILABLE'): ConnectorErrorCode {
   if (error instanceof McpClientError)
     return error.code
+  if (error instanceof AuthorizationServerMismatchError || error instanceof IssuerMismatchError)
+    return 'MCP_AUTHENTICATION_FAILED'
   if (error instanceof UnauthorizedError)
     return 'MCP_AUTHENTICATION_REQUIRED'
   if (error instanceof SdkHttpError && error.status === 401)

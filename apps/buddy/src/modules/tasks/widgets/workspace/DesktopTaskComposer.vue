@@ -33,6 +33,9 @@ const { withSubmissionFocus } = useComposerSubmissionFocus({
 async function handleSend(payload: ChatComposerSubmitPayload) {
   await withSubmissionFocus(() => sendMessage(payload))
 }
+function manageSkills() {
+  void router.push(desktopRouteLocations.skills(props.skillScopeId ?? null))
+}
 </script>
 
 <template>
@@ -49,7 +52,7 @@ async function handleSend(payload: ChatComposerSubmitPayload) {
     :key="editorKey"
     v-bind="bindings"
     :paste-text-as-attachment="chat.pasteTextAsAttachment"
-    :manage-skills="() => { void router.push(desktopRouteLocations.skills(skillScopeId ?? null)) }"
+    :manage-skills="manageSkills"
     :has-queued-messages="execution.queuedMessages.value.length > 0"
     @attach="composer.selectAttachments"
     @retry-resource="composer.retryResource"

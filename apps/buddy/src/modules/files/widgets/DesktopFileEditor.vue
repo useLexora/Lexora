@@ -28,6 +28,9 @@ function resourceIdentity(resource: ResourceRef): string {
   return JSON.stringify([scheme, id, data.spaceId, data.directoryId, data.revision, data.path])
 }
 const identity = computed(() => resourceIdentity(props.view.resource))
+function captureResource() {
+  return { resource: spaceFileTargetSchema.parse(props.view.resource.data) }
+}
 const viewId = computed(() => props.view.id)
 let editor: Monaco.editor.IStandaloneCodeEditor | undefined
 const attempt = shallowRef(0)
@@ -144,7 +147,7 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
-          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
+          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
           <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
             {{ labels.save }}
           </NButton>

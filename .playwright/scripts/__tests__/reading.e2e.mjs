@@ -96,6 +96,14 @@ test('reading retains history anchors, outline navigation and independent stream
       }
       finally { db.close() }
     }, path.join(instance.home, 'buddy/buddy.sqlite3'))
+    await page.evaluate(async () => {
+      const api = window.lexoraDesktop.localChat
+      const { defaultBuddyId } = await api.buddies.list()
+      for (const id of ['a', 'b']) {
+        await api.conversations.addMember(id, defaultBuddyId)
+        await api.conversations.setBuddy(id, defaultBuddyId)
+      }
+    })
     await page.reload()
     await page.locator('[data-task-id="a"] .desktop-task-sidebar__task').click()
     const first = pane(page, 'Reading A')
@@ -138,6 +146,10 @@ test('reading retains history anchors, outline navigation and independent stream
     await editor.fill('Continue this reading example.')
     await second.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(second).toContainText('Streaming start.')
+    stream('说明**「A」**。和**「B')
+    await expect(second.locator('.buddy-chat-markdown strong').filter({ hasText: '「A」' })).toHaveCount(1)
+    stream('」**。\n\n')
+    await expect(second.locator('.buddy-chat-markdown strong')).toHaveText(['「A」', '「B」'])
     for (let index = 0; index < 6; index++) {
       stream(`Paragraph ${index}: ${'Keep reading. '.repeat(24)}\n\n`)
       await expect(second).toContainText(`Paragraph ${index}:`)
@@ -174,6 +186,7 @@ test('reading retains history anchors, outline navigation and independent stream
     await expect.poll(() => scrollport(second).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(5)
     finished.resolve()
     await expect(second.getByRole('button', { name: '停止', exact: true })).toHaveCount(0)
+    await expect(second.locator('.buddy-chat-markdown strong')).toHaveText(['「A」', '「B」'])
     expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   }
   finally {

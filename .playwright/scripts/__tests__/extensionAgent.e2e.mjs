@@ -111,7 +111,7 @@ test('agent plugin uses the originating model, persists settings and protects ma
     expect(requests.filter(body => !body.tools?.length).map(body => body.model)).toEqual(['primary'])
     expect(JSON.stringify(requests[0].messages)).not.toContain('proactively')
     expect(requests[0].tools.some(tool => tool.function.name.startsWith('lexora_plugin_'))).toBe(false)
-    expect(requests[0].tools.find(tool => tool.function.name === 'lexora_tool_search').function.description).toContain('生成标题')
+    expect(requests[0].tools.find(tool => tool.function.name === 'lexora_tool_search').function.description).toContain('Generate and save a concise title')
     const disclosed = requests.find(body => body.tools?.some(tool => tool.function.name.startsWith('lexora_plugin_')))
     expect(JSON.stringify(disclosed.messages)).toContain('proactively')
     const pluginToolName = disclosed.tools.find(tool => tool.function.description.includes('Generate and save a concise title')).function.name

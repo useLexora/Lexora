@@ -39,6 +39,9 @@ watch([identity, attempt], async (_, __, onCleanup) => {
 function loadPreview() {
   attempt.value++
 }
+function captureResource() {
+  return { resource: spaceFileTargetSchema.parse(props.view.resource.data) }
+}
 </script>
 
 <template>
@@ -46,7 +49,7 @@ function loadPreview() {
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
-          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="() => ({ resource: spaceFileTargetSchema.parse(view.resource.data) })" />
+          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
         </template>
       </DesktopDocumentToolbar>
     </Teleport>
