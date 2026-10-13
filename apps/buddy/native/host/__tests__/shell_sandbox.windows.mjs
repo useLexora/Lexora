@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import * as nativeTest from 'node:test'
@@ -13,12 +13,12 @@ import * as nativeTest from 'node:test'
 const executable = join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Lexora Buddy Sandbox', 'lexora-buddy-sandbox.exe')
 const quote = value => `'${value.replaceAll('\'', '\'\'')}'`
 
-async function listener() {
+async function listener(host = '127.0.0.1') {
   const server = createServer((socket) => {
     socket.on('error', () => {})
     socket.end('FIXTURE')
   })
-  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve))
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, host, resolve))
   return { server, port: server.address().port }
 }
 
@@ -90,16 +90,19 @@ nativeTest.test('Windows LPAC enforcement', { skip: process.platform !== 'win32'
   await writeFile(outside, 'OUTSIDE_PRIVATE_FIXTURE')
   await writeFile(secret, 'SECRET_FIXTURE')
   const proxy = await listener()
-  const other = await listener()
+  const other = await listener('0.0.0.0')
+  const ipv6 = await listener('::1')
+  const remote = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address
   try {
-    await t.test('restricts files, secrets and network destinations', async () => {
+    assert.ok(remote, 'Windows acceptance requires a non-loopback network interface')
+    await t.test('protects files and permits loopback TCP while denying direct non-loopback access', async () => {
       const command = `
 $r=@{}
 try { $r.outside=[IO.File]::ReadAllText(${quote(outside)}) } catch { $r.outside='denied' }
 try { $r.secret=[IO.File]::ReadAllText(${quote(secret)}) } catch { $r.secret='denied' }
 [IO.File]::WriteAllText(${quote(join(workspace, 'result.txt'))},'WORKSPACE_WRITE_FIXTURE')
-foreach($target in @(@{key='proxy';port=${proxy.port}},@{key='otherPort';port=${other.port}})) {
-  try { $c=[Net.Sockets.TcpClient]::new(); $t=$c.ConnectAsync('127.0.0.1',$target.port); if(!$t.Wait(1500)){throw 'timeout'}; $r[$target.key]='connected'; $c.Dispose() }
+foreach($target in @(@{key='proxy';host='127.0.0.1';port=${proxy.port}},@{key='otherPort';host='127.0.0.1';port=${other.port}},@{key='ipv6';host='::1';port=${ipv6.port}},@{key='nonLoopback';host=${quote(remote)};port=${other.port}})) {
+  try { $c=[Net.Sockets.TcpClient]::new(); $t=$c.ConnectAsync($target.host,$target.port); if(!$t.Wait(1500)){throw 'timeout'}; $r[$target.key]='connected'; $c.Dispose() }
   catch { $r[$target.key]='denied' }
 }
 [Console]::Out.Write(($r | ConvertTo-Json -Compress))
@@ -107,7 +110,7 @@ foreach($target in @(@{key='proxy';port=${proxy.port}},@{key='otherPort';port=${
       const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
       await writeFile(join(root, 'report.json'), JSON.stringify(result, null, 2))
       assert.equal(result.exitCode, 0, JSON.stringify(result))
-      assert.deepEqual(JSON.parse(result.output), { outside: 'denied', secret: 'denied', proxy: 'connected', otherPort: 'denied' })
+      assert.deepEqual(JSON.parse(result.output), { outside: 'denied', secret: 'denied', proxy: 'connected', otherPort: 'connected', ipv6: 'connected', nonLoopback: 'denied' })
       assert.equal(await readFile(join(workspace, 'result.txt'), 'utf8'), 'WORKSPACE_WRITE_FIXTURE')
     })
     await t.test('supports PowerShell paths, file operations and native children', async () => {
@@ -132,6 +135,75 @@ try { Remove-Item -LiteralPath ${quote(join(workspace, 'result.txt'))}; $r.remov
       assert.equal(tools.nativeExit, 0)
       assert.equal(tools.read, 'ROUNDTRIP_FIXTURE')
       assert.equal(tools.removed, true)
+    })
+    await t.test('supports IPv4 and IPv6 loopback listeners while denying wildcard binding in both modes', async () => {
+      const command = `
+$ErrorActionPreference='Stop'
+$r=@{}
+foreach($address in @('127.0.0.1','::1')) {
+  $l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($address),0)
+  $l.Start()
+  $c=[Net.Sockets.TcpClient]::new()
+  $c.Connect($address,$l.LocalEndpoint.Port)
+  $peer=$l.AcceptTcpClient()
+  $peer.GetStream().WriteByte(85)
+  $r[$address]=$c.GetStream().ReadByte()
+  $peer.Dispose(); $c.Dispose(); $l.Stop()
+}
+foreach($address in @('0.0.0.0','::')) {
+  $l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($address),0)
+  try { $l.Start(); $r[$address]='bound' } catch { $r[$address]='denied' }
+  finally { $l.Stop() }
+}
+[Console]::Out.Write(($r | ConvertTo-Json -Compress))
+`
+      for (const access of ['read', 'write']) {
+        const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access }, { path: secret, access: 'denyRead' }] })
+        assert.equal(result.exitCode, 0, JSON.stringify(result))
+        assert.deepEqual(JSON.parse(result.output), { '127.0.0.1': 85, '::1': 85, '0.0.0.0': 'denied', '::': 'denied' })
+      }
+    })
+    await t.test('supports Node children with ignored streams and private named pipes', async () => {
+      const node = join(workspace, 'node.exe')
+      const script = join(workspace, 'private-ipc.cjs')
+      await copyFile(process.execPath, node)
+      await writeFile(script, String.raw`
+const net = require('node:net')
+const { spawn } = require('node:child_process')
+const { randomUUID } = require('node:crypto')
+const timer = setTimeout(() => process.exit(40), 8000)
+if (process.argv[2] === 'child') {
+  const socket = net.connect(process.argv[3])
+  socket.on('error', () => process.exit(41))
+  socket.once('data', data => {
+    if (data.toString() !== 'PRIVATE_PIPE') process.exit(42)
+    socket.end('ACK')
+    clearTimeout(timer)
+  })
+} else {
+  const pipe = '\\\\.\\pipe\\LOCAL\\lexora-' + randomUUID()
+  let acknowledged = false
+  const server = net.createServer(socket => {
+    socket.write('PRIVATE_PIPE')
+    socket.once('data', data => { acknowledged = data.toString() === 'ACK' })
+    socket.on('error', () => process.exit(43))
+  })
+  server.on('error', error => { console.error(error.code); process.exit(44) })
+  server.listen(pipe, () => {
+    const child = spawn(process.execPath, [__filename, 'child', pipe], { stdio: 'ignore', windowsHide: true })
+    child.on('error', error => { console.error(error.code); process.exit(45) })
+    child.once('exit', code => {
+      clearTimeout(timer)
+      server.close()
+      console.log(JSON.stringify({ code, acknowledged }))
+      if (code !== 0 || !acknowledged) process.exitCode = 46
+    })
+  })
+}
+`)
+      const result = await execute({ command: `& ${quote(node)} ${quote(script)}; exit $LASTEXITCODE`, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }] })
+      assert.equal(result.exitCode, 0, JSON.stringify(result))
+      assert.deepEqual(JSON.parse(result.output), { code: 0, acknowledged: true })
     })
     await t.test('does not let descendants discard the enforcement identity', async () => {
       const adversary = join(workspace, 'sandbox-adversary.exe')
@@ -246,6 +318,7 @@ try { Remove-Item -LiteralPath ${quote(join(workspace, 'result.txt'))}; $r.remov
   finally {
     proxy.server.close()
     other.server.close()
+    ipv6.server.close()
     if (process.env.BUDDY_SANDBOX_TEST_KEEP_FILES !== '1')
       await rm(root, { recursive: true, force: true })
   }

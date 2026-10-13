@@ -225,7 +225,7 @@ export default {
   'desktop.chat.permissionModeManualSandboxDescription': '命令仍在沙盒内；修改、命令与外部交互均需批准。',
   'desktop.chat.permissionModePolicy': '智能审批',
   'desktop.chat.permissionModePolicyDescription': '自动放行安全查询，以及授权目录内的文件编辑和已验证的普通文件删除；其他操作按规则审批。',
-  'desktop.chat.permissionModePolicySandboxDescription': '命令在沙盒内自动执行，可修改授权目录；网络、追加目录及本机直接执行另行确认。',
+  'desktop.chat.permissionModePolicySandboxDescription': '命令在沙盒内自动执行，可修改授权目录；外部网络、追加目录及本机直接执行另行确认。',
   'desktop.chat.permissionModeReadOnlyDescription': '读取文件并运行安全的只读诊断。',
   'desktop.chat.permissionModeReadOnlySandboxDescription': '读取文件；命令在只读沙盒内执行，不能修改本机文件。',
   'desktop.chat.permissionModeTitle': '如何审批 Buddy 操作？',

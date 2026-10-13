@@ -92,17 +92,15 @@ impl Network {
         existing(unsafe { FwpmSubLayerAdd0(self.0, &layer, ptr::null_mut()) })
     }
 
-    pub(super) fn grant(&self, profile: &str, port: u16) -> io::Result<Vec<u64>> {
+    pub(super) fn grant(&self, profile: &str) -> io::Result<Vec<u64>> {
         let sid = derive_sid(profile)?;
         // SAFETY: The engine is live; the transaction is closed on every path below.
         check(unsafe { FwpmTransactionBegin0(self.0, 0) })?;
         let result: io::Result<Vec<u64>> = (|| {
             let mut filters = Vec::new();
-            for (index, layer) in LAYERS.iter().enumerate() {
-                filters.push(self.filter(*layer, profile, &sid, None)?);
-                if index == 0 {
-                    filters.push(self.filter(*layer, profile, &sid, Some(port))?);
-                }
+            for index in 0..LAYERS.len() {
+                filters.push(self.filter(index, profile, &sid, false)?);
+                filters.push(self.filter(index, profile, &sid, true)?);
             }
             // SAFETY: All filters were added to this engine's active transaction.
             check(unsafe { FwpmTransactionCommit0(self.0) })?;
@@ -120,7 +118,14 @@ impl Network {
         Ok(filters)
     }
 
-    fn filter(&self, layer: GUID, profile: &str, sid: &Sid, port: Option<u16>) -> io::Result<u64> {
+    fn filter(
+        &self,
+        index: usize,
+        profile: &str,
+        sid: &Sid,
+        allow_loopback: bool,
+    ) -> io::Result<u64> {
+        let layer = LAYERS[index];
         let mut conditions = vec![condition(
             FWPM_CONDITION_ALE_PACKAGE_ID,
             FWP_SID,
@@ -128,28 +133,50 @@ impl Network {
                 sid: sid.as_ptr().cast(),
             },
         )];
-        if let Some(port) = port {
-            conditions.extend([
+        let mut v4 = FWP_V4_ADDR_AND_MASK {
+            addr: 0x7f000000,
+            mask: 0xff000000,
+        };
+        let mut v6 = FWP_V6_ADDR_AND_MASK {
+            addr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            prefixLength: 128,
+        };
+        if allow_loopback {
+            let listening = index >= 4;
+            let ipv6 = index % 2 == 1;
+            let address = if listening {
+                FWPM_CONDITION_IP_LOCAL_ADDRESS
+            } else {
+                FWPM_CONDITION_IP_REMOTE_ADDRESS
+            };
+            conditions.push(if ipv6 {
                 condition(
+                    address,
+                    FWP_V6_ADDR_MASK,
+                    FWP_CONDITION_VALUE0_0 {
+                        v6AddrMask: &mut v6,
+                    },
+                )
+            } else {
+                condition(
+                    address,
+                    FWP_V4_ADDR_MASK,
+                    FWP_CONDITION_VALUE0_0 {
+                        v4AddrMask: &mut v4,
+                    },
+                )
+            });
+            if !listening {
+                conditions.push(condition(
                     FWPM_CONDITION_IP_PROTOCOL,
                     FWP_UINT8,
                     FWP_CONDITION_VALUE0_0 { uint8: 6 },
-                ),
-                condition(
-                    FWPM_CONDITION_IP_REMOTE_ADDRESS,
-                    FWP_UINT32,
-                    FWP_CONDITION_VALUE0_0 { uint32: 0x7f000001 },
-                ),
-                condition(
-                    FWPM_CONDITION_IP_REMOTE_PORT,
-                    FWP_UINT16,
-                    FWP_CONDITION_VALUE0_0 { uint16: port },
-                ),
-            ]);
+                ));
+            }
         }
         let mut provider = PROVIDER;
         let mut name = wide("Lexora Buddy command boundary");
-        let mut weight = if port.is_some() { 100u64 } else { 1 };
+        let mut weight = if allow_loopback { 100u64 } else { 1 };
         let filter = FWPM_FILTER0 {
             flags: FWPM_FILTER_FLAG_PERSISTENT,
             providerKey: &mut provider,
@@ -172,7 +199,7 @@ impl Network {
             numFilterConditions: conditions.len() as u32,
             filterCondition: conditions.as_mut_ptr(),
             action: FWPM_ACTION0 {
-                r#type: if port.is_some() {
+                r#type: if allow_loopback {
                     FWP_ACTION_PERMIT
                 } else {
                     FWP_ACTION_BLOCK

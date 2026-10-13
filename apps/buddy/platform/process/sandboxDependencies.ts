@@ -13,10 +13,11 @@ import { checkWindowsSandbox } from './windowsSandbox'
 const execute = promisify(execFile)
 type SrtBackend = SrtSandboxInput['backend']
 
-export async function resolveSandboxDependencies(options: { backend: SrtBackend, searchDirectory: string }, signal?: AbortSignal) {
+export async function resolveSandboxDependencies(options: { backend: SrtBackend, searchDirectory: string, processControl?: string }, signal?: AbortSignal) {
   signal?.throwIfAborted()
   const shared = {
     rg: join(options.searchDirectory, 'rg'),
+    processControl: options.processControl,
     srtRoot: dirname(dirname(fileURLToPath(import.meta.resolve('@anthropic-ai/sandbox-runtime')))).replace(/\.asar(?=\/)/, '.asar.unpacked'),
   }
   if (options.backend.kind === SHELL_SANDBOX_BACKEND.Linux && isLinux(currentTarget.platform))
@@ -28,7 +29,7 @@ export async function resolveSandboxDependencies(options: { backend: SrtBackend,
 
 export type SrtSandboxDependencies = Awaited<ReturnType<typeof resolveSandboxDependencies>>
 
-export async function checkSandboxEnvironment(options: { sandboxDirectory?: string, searchDirectory: string, windowsSandbox?: string }): Promise<SandboxEnvironmentStatus> {
+export async function checkSandboxEnvironment(options: { sandboxDirectory?: string, searchDirectory: string, windowsSandbox?: string, processControl?: string }): Promise<SandboxEnvironmentStatus> {
   if (isWindows(currentTarget.platform))
     return checkWindowsSandbox(options.windowsSandbox)
   try {
@@ -37,7 +38,7 @@ export async function checkSandboxEnvironment(options: { sandboxDirectory?: stri
     const backend: SrtBackend = isLinux(currentTarget.platform)
       ? { kind: SHELL_SANDBOX_BACKEND.Linux, sandboxDirectory: options.sandboxDirectory! }
       : { kind: SHELL_SANDBOX_BACKEND.MacOS }
-    const { probe } = await resolveSandboxDependencies({ backend, searchDirectory: options.searchDirectory })
+    const { probe } = await resolveSandboxDependencies({ backend, searchDirectory: options.searchDirectory, processControl: options.processControl })
     await execute(probe.command, probe.args, { cwd: '/', env: { LANG: 'C' }, timeout: 5_000 })
     return 'available'
   }

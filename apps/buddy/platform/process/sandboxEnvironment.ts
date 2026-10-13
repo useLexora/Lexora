@@ -2,6 +2,8 @@ import { delimiter, dirname, join } from 'node:path'
 import process from 'node:process'
 import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
 
+export const SANDBOX_LOOPBACK_NO_PROXY = 'localhost,127.0.0.1,::1'
+
 export function createWindowsSandboxEnvironment(options: { shell: string, systemRoot: string, privateRoot: string, path: string, proxyUrl?: string }): Record<string, string> {
   const home = join(options.privateRoot, 'home')
   const temporary = join(options.privateRoot, 'tmp')
@@ -19,7 +21,7 @@ export function createWindowsSandboxEnvironment(options: { shell: string, system
     LOCALAPPDATA: home,
     TEMP: temporary,
     TMP: temporary,
-    ...(options.proxyUrl ? { HTTP_PROXY: options.proxyUrl, HTTPS_PROXY: options.proxyUrl, ALL_PROXY: options.proxyUrl, NO_PROXY: '', NODE_USE_ENV_PROXY: '1' } : {}),
+    ...(options.proxyUrl ? { HTTP_PROXY: options.proxyUrl, HTTPS_PROXY: options.proxyUrl, ALL_PROXY: options.proxyUrl, NO_PROXY: SANDBOX_LOOPBACK_NO_PROXY, NODE_USE_ENV_PROXY: '1' } : {}),
   }
 }
 

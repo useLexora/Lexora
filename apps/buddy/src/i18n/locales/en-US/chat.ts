@@ -227,7 +227,7 @@ export default {
   'desktop.chat.permissionModeManualSandboxDescription': 'Keep commands in the sandbox; ask before changes, commands and external interactions.',
   'desktop.chat.permissionModePolicy': 'Smart approval',
   'desktop.chat.permissionModePolicyDescription': 'Automatically allow safe queries, file edits and verified ordinary-file deletions in authorized directories; review other operations according to policy.',
-  'desktop.chat.permissionModePolicySandboxDescription': 'Run commands in a sandbox with writes to authorized directories; ask separately for network, extra directories and host execution.',
+  'desktop.chat.permissionModePolicySandboxDescription': 'Run commands in a sandbox with writes to authorized directories; ask separately for external network access, extra directories and host execution.',
   'desktop.chat.permissionModeReadOnlyDescription': 'Read files and run safe read-only diagnostics.',
   'desktop.chat.permissionModeReadOnlySandboxDescription': 'Read files; run commands in a read-only sandbox that cannot modify host files.',
   'desktop.chat.permissionModeTitle': 'How should Buddy approve actions?',

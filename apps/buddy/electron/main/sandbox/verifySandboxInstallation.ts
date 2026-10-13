@@ -84,11 +84,18 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
       if (!address || typeof address === 'string')
         throw new Error('Installed sandbox network fixture did not start')
       const curl = `${powershell ? 'curl.exe' : 'curl'} --silent --fail --max-time 3 http://127.0.0.1:${address.port}`
-      const denied = await execute(curl)
-      if (denied.exitCode === 0 || hits !== 0)
+      if (powershell) {
+        const local = await execute(curl)
+        if (local.exitCode !== 0 || local.output !== 'approved' || Number(hits) !== 1)
+          throw new Error('Installed sandbox could not reach a host loopback service')
+      }
+      const previousHits = hits
+      const proxied = `${curl} --noproxy lexora-proxy-required.invalid`
+      const denied = await execute(proxied)
+      if (denied.exitCode === 0 || hits !== previousHits)
         throw new Error('Installed sandbox bypassed network approval')
-      const allowed = await execute(curl, false, true)
-      if (allowed.exitCode !== 0 || allowed.output !== 'approved' || Number(hits) !== 1)
+      const allowed = await execute(proxied, false, true)
+      if (allowed.exitCode !== 0 || allowed.output !== 'approved' || Number(hits) !== previousHits + 1)
         throw new Error('Installed sandbox network approval did not reach its destination')
     }
     finally {

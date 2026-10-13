@@ -321,7 +321,7 @@ fn launch(
     let registry = capability("registryRead")?;
     let com = capability("lpacCom")?;
     let instrumentation = capability("lpacInstrumentation")?;
-    let internet = capability("internetClient")?;
+    let internet = capability("internetClientServer")?;
     let volume_metadata = metadata::capability(&profile.name)?;
     let mut entries = [
         &registry,

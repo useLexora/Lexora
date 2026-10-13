@@ -17,8 +17,9 @@ use windows_sys::Win32::{
         TOKEN_QUERY,
     },
     Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
+        WRITE_DAC,
     },
     System::{
         SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
@@ -29,7 +30,7 @@ use windows_sys::Win32::{
 use super::{
     filesystem::{self, Access, AclLock, Grant},
     network::valid_profile,
-    security::{boolean, owned, sid_text},
+    security::{boolean, derive_sid, owned, sid_text},
     setup,
 };
 use crate::windows_security::{Sid, process_user_sid};
@@ -69,12 +70,16 @@ struct Record {
     profile: String,
     user: String,
     directories: Vec<Directory>,
+    #[serde(default)]
+    null_device: bool,
 }
 
 pub(super) struct Lease {
     sid: Sid,
     user: String,
     handles: Vec<File>,
+    null_device: File,
+    profile_sid: Sid,
     _roots: Vec<File>,
     journal: Option<PathBuf>,
 }
@@ -85,6 +90,8 @@ impl Lease {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         let sid = capability(profile)?;
+        let profile_sid = derive_sid(profile)?;
+        let null_device = open_null()?;
         let user = sid_text(&process_user_sid(owner)?)?;
         let _lock = AclLock::for_user(&user)?;
         let pinned_roots = {
@@ -139,17 +146,29 @@ impl Lease {
                 profile: profile.to_owned(),
                 user: user.clone(),
                 directories,
+                null_device: true,
             },
         )?;
         let mut lease = Self {
             sid,
             user,
             handles,
+            null_device,
+            profile_sid,
             _roots: pinned_roots,
             journal: Some(journal),
         };
         let result = lease.handles.iter().try_for_each(|file| {
             filesystem::change_acl(file, &lease.sid, FILE_READ_ATTRIBUTES, GRANT_ACCESS, false)
+        });
+        let result = result.and_then(|()| {
+            filesystem::change_acl(
+                &lease.null_device,
+                &lease.profile_sid,
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+                GRANT_ACCESS,
+                false,
+            )
         });
         if let Err(error) = result {
             lease.finish()?;
@@ -168,6 +187,15 @@ impl Lease {
             if let Err(error) = revoke(file, &self.sid) {
                 failure.get_or_insert(error);
             }
+        }
+        if let Err(error) = filesystem::change_acl(
+            &self.null_device,
+            &self.profile_sid,
+            0,
+            REVOKE_ACCESS,
+            false,
+        ) {
+            failure.get_or_insert(error);
         }
         if let Some(error) = failure {
             return Err(error);
@@ -211,6 +239,13 @@ fn open(path: &str) -> io::Result<File> {
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
+}
+
+fn open_null() -> io::Result<File> {
+    OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(r"\\.\NUL")
 }
 
 fn has_capability(file: &File, sid: &Sid) -> io::Result<bool> {
@@ -354,6 +389,15 @@ fn recover_record(path: &Path, profile: &str) -> io::Result<()> {
     }
     let _lock = AclLock::for_user(&record.user)?;
     let sid = capability(profile)?;
+    if record.null_device {
+        filesystem::change_acl(
+            &open_null()?,
+            &derive_sid(profile)?,
+            0,
+            REVOKE_ACCESS,
+            false,
+        )?;
+    }
     for node in record.directories {
         revoke(&node.open()?, &sid)?;
     }

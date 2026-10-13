@@ -59,6 +59,10 @@ name = "supervised-shell-linux"
 path = "__tests__/supervised_shell_linux.rs"
 
 [[test]]
+name = "sandbox-ipc-linux"
+path = "__tests__/sandbox_ipc_linux.rs"
+
+[[test]]
 name = "installer-process-windows"
 path = "__tests__/installer_process_windows.rs"
 
@@ -70,6 +74,7 @@ path = "__tests__/sandbox_adversary.rs"
 tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 rustix = { version = "1.1", features = [
   "fs",
   "process",

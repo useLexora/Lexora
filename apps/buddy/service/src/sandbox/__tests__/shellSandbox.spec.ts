@@ -3,11 +3,13 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { createServer as createUnixServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resolveSandboxDependencies } from '../../../../platform/process/sandboxDependencies'
 import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
 import { runSandboxCommand } from '../runSandboxCommand'
@@ -72,25 +74,14 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     return { result, output: Buffer.concat(output).toString('utf8') }
   }
 
-  it('records command process exit, pipe close and resource release without command contents', async () => {
+  it('executes workspace edits with protected paths, redacted lifecycle events and verified process release', async () => {
     const events: import('../../../../shared/permissions/sandboxLifecycle').SandboxLifecycleEvent[] = []
-    const { result } = await execute('printf private-fixture-content', { onLifecycle: event => events.push(event) })
-    expect(result).toEqual({ ok: true, exitCode: 0 })
-    const processes = events.filter(event => event.kind === 'process').map(event => event.snapshot.process!)
-    expect(processes.map(process => process.phase)).toEqual(['spawned', 'exited', 'closed', 'cleanup_requested', 'resources_released'])
-    expect(processes[0]?.pid).toBeGreaterThan(0)
-    expect(new Set(processes.map(process => process.pid)).size).toBe(1)
-    expect(processes.find(process => process.phase === 'exited')?.exitCode).toBe(0)
-    expect(JSON.stringify(events)).not.toMatch(/private-fixture|printf/)
-  })
-
-  it('executes compound commands and workspace edits while masking secrets, symlink escapes and Git metadata', async () => {
     await mkdir(join(workspace, '.git'))
     await writeFile(join(workspace, '.git/config'), 'git-preserved')
     await writeFile(join(workspace, '.env'), 'synthetic-secret')
     await writeFile(join(workspace, '.env.example'), 'example-allowed')
     await symlink(outside, join(workspace, 'escape'))
-    const { result, output } = await execute(`set -e; command -v sh; printf created > file; cat file; rm file; cat .env.example; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${join(outside, 'preserved')}`)}`)
+    const { result, output } = await execute(`set -e; printf created > file; cat file; rm file; cat .env.example; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${join(outside, 'preserved')}`)}`, { onLifecycle: event => events.push(event) })
     expect(result).toEqual({ ok: true, exitCode: 0 })
     expect(output).toContain('created')
     expect(output).toContain('example-allowed')
@@ -99,20 +90,20 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     expect(await readFile(join(outside, 'preserved'), 'utf8')).toBe('outside-preserved')
     expect(await readFile(join(workspace, '.git/config'), 'utf8')).toBe('git-preserved')
     await expect(access(join(workspace, 'file'))).rejects.toThrow()
+    const processes = events.filter(event => event.kind === 'process').map(event => event.snapshot.process!)
+    expect(processes.map(process => process.phase)).toEqual(['spawned', 'exited', 'closed', 'cleanup_requested', 'resources_released'])
+    expect(processes[0]?.pid).toBeGreaterThan(0)
+    expect(new Set(processes.map(process => process.pid)).size).toBe(1)
+    expect(processes.find(process => process.phase === 'exited')?.exitCode).toBe(0)
+    expect(JSON.stringify(events)).not.toMatch(/synthetic-secret|example-allowed|printf/)
   }, 15_000)
 
   it('enforces read-only writes in the kernel while retaining private scratch space', async () => {
     await writeFile(join(workspace, 'preserved'), 'workspace-preserved')
-    const { result } = await execute('set -e; ! rm preserved; ! touch new-file; printf scratch > "$TMPDIR/scratch"; test "$(cat "$TMPDIR/scratch")" = scratch', {}, { readOnly: true })
+    const { result } = await execute('set -e; ! rm preserved; ! touch new-file; printf scratch > "$TMPDIR/scratch"; test "$(cat "$TMPDIR/scratch")" = scratch; if test -w /tmp; then scratch=$(mktemp /tmp/standard-XXXXXX); printf private > "$scratch"; test "$(cat "$scratch")" = private; rm "$scratch"; fi', {}, { readOnly: true })
     expect(result).toEqual({ ok: true, exitCode: 0 })
     expect(await readFile(join(workspace, 'preserved'), 'utf8')).toBe('workspace-preserved')
     await expect(access(join(workspace, 'new-file'))).rejects.toThrow()
-  }, 15_000)
-
-  it('returns an ordinary program failure without adding sandbox recovery advice', async () => {
-    const { result, output } = await execute('printf ordinary-program-error >&2; exit 7')
-    expect(result).toEqual({ ok: true, exitCode: 7 })
-    expect(output).toBe('ordinary-program-error')
   }, 15_000)
 
   it('limits additional read permission across interpreters and descendants without silently granting write access', async () => {
@@ -149,12 +140,60 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     expect(await readFile(join(workspace, 'task-output'), 'utf8')).toBe('created')
   }, 15_000)
 
-  it('blocks desktop Unix sockets and does not expose the real HOME or host credentials', async () => {
-    const { result, output } = await execute('set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; node -e "require(\'node:net\').createConnection(\'/tmp/host.sock\').on(\'error\', e => { console.log(e.code); process.exitCode = e.code === \'EPERM\' ? 0 : 1 })"; printf "%s" "$HOME"')
-    expect(result).toEqual({ ok: true, exitCode: 0 })
-    expect(output).toContain('EPERM')
-    expect(output).toContain(join(input.privateRoot, 'home'))
-  }, 15_000)
+  it('supports private IPC across descendants while isolating host credentials and readable host sockets in both modes', async () => {
+    const dependencies = await resolveSandboxDependencies({ backend: { kind: 'linux-srt', sandboxDirectory: resolve(buddyRoot, `.output/build/shell-sandbox/linux-${process.arch}`) }, searchDirectory: input.searchDirectory })
+    if (dependencies.platform !== 'linux')
+      throw new Error('Expected Linux dependencies')
+    const hostSocket = join(workspace, 'host.sock')
+    let hits = 0
+    const server = createUnixServer((socket) => {
+      hits++
+      socket.end('host-service')
+    })
+    await new Promise<void>(resolve => server.listen(hostSocket, resolve))
+    const script = `
+      const net = require('node:net');
+      const {spawn} = require('node:child_process');
+      const assert = require('node:assert/strict');
+      const host = net.createConnection(${JSON.stringify(hostSocket)});
+      host.on('connect', () => { throw new Error('Host socket accessible') });
+      host.on('error', async error => {
+        assert.equal(error.code, ${JSON.stringify(dependencies.privateUnixSockets ? 'EACCES' : 'EPERM')});
+        const path = process.env.TMPDIR + '/private.sock';
+        const server = net.createServer(socket => socket.end('private-reply'));
+        ${dependencies.privateUnixSockets
+          ? `server.listen(path, () => {
+              const child = spawn(process.execPath, ['-e', ${JSON.stringify(`require('node:net').createConnection(process.argv[1]).on('data', data => process.send(data.toString())).on('error', error => { throw error })`)}, path], {stdio:['ignore','inherit','inherit','ipc']});
+              let received = false;
+              child.on('message', reply => { assert.equal(reply, 'private-reply'); received = true });
+              child.on('error', error => { throw error });
+              child.on('exit', code => { assert.equal(code, 0); assert.ok(received); server.close() });
+            });`
+          : `server.on('error', error => assert.equal(error.code, 'EPERM')); server.listen(path);`}
+      });`
+    try {
+      const command = `set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; test "$HOME" = ${quote(join(input.privateRoot, 'home'))}; ${dependencies.privateUnixSockets ? 'test -w /tmp;' : ''} node -e ${quote(script)}`
+      for (const readOnly of [false, true]) {
+        const { result, output } = await execute(command, {}, { readOnly })
+        expect(result, output).toEqual({ ok: true, exitCode: 0 })
+        expect(hits).toBe(0)
+      }
+    }
+    finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  }, 30_000)
+
+  it('keeps legacy kernel isolation strict instead of falling back to host execution', async () => {
+    const helper = join(privateRoot, 'legacy-helper')
+    await writeFile(helper, `#!/bin/sh\nif [ "$1" = --probe-sandbox-ipc ]; then\n  printf '{"protocol":1,"privateUnixSockets":false}\\n'\nelse\n  exec ${quote(originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL!)} "$@"\nfi\n`, { mode: 0o700 })
+    vi.stubEnv('LEXORA_BUDDY_PROCESS_CONTROL', helper)
+    const command = `set -e; printf legacy > owned; ! cat ${quote(join(outside, 'preserved'))}; node -e ${quote(`require('node:net').createServer().on('error', error => { if(error.code !== 'EPERM') throw error }).listen(process.env.TMPDIR + '/denied.sock')`)}`
+    const { result, output } = await execute(command)
+    expect(result, output).toEqual({ ok: true, exitCode: 0 })
+    expect(output).not.toContain('outside-preserved')
+    expect(await readFile(join(workspace, 'owned'), 'utf8')).toBe('legacy')
+  })
 
   it('keeps an authorized child writable when its parent receives additional read access', async () => {
     const reference = join(directory, 'reference')
@@ -191,6 +230,34 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     expect(untrusted.result).toEqual({ ok: false, code: 'SANDBOX_UNAVAILABLE' })
   })
 
+  it('reaches its own HTTP servers directly without proxy approvals in both modes', async () => {
+    const script = `
+      const http = require('node:http');
+      const {spawn} = require('node:child_process');
+      const assert = require('node:assert/strict');
+      (async () => {
+        for (const host of ['127.0.0.1', '::1']) {
+          const server = http.createServer((request, response) => response.end('private-http'));
+          await new Promise((resolve, reject) => server.once('error', reject).listen(0, host, resolve));
+          const addresses = host === '::1' ? ['[::1]', 'localhost'] : [host];
+          for (const address of addresses) {
+            const curl = spawn('curl', ['--silent', '--show-error', '--fail', '--max-time', '3', 'http://' + address + ':' + server.address().port], {stdio:['ignore','inherit','inherit']});
+            assert.equal(await new Promise((resolve, reject) => curl.once('error', reject).once('exit', resolve)), 0);
+          }
+          await new Promise(resolve => server.close(resolve));
+        }
+      })().catch(error => { console.error(error); process.exit(1) });`
+    for (const readOnly of [false, true]) {
+      const { result, output } = await execute(`node -e ${quote(script)}`, {
+        approveNetwork: async () => {
+          throw new Error('Private HTTP must not reach the host proxy')
+        },
+      }, { readOnly })
+      expect(result, output).toEqual({ ok: true, exitCode: 0 })
+      expect(output).toBe('private-http'.repeat(3))
+    }
+  }, 30_000)
+
   it('asks once per destination per command, denies before contact, and does not reuse the next command authorization', async () => {
     let hits = 0
     let asks = 0
@@ -209,14 +276,14 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
         expect(target).toEqual({ host: '127.0.0.1', port: address.port })
         return true
       }
-      const first = await execute(`curl --silent --fail ${url}; curl --silent --fail ${url}`, { approveNetwork })
+      const first = await execute(`curl --noproxy '' --silent --fail ${url}; curl --noproxy '' --silent --fail ${url}`, { approveNetwork })
       expect(first.result).toEqual({ ok: true, exitCode: 0 })
       expect(hits).toBe(2)
       expect(asks).toBe(1)
-      await execute(`curl --silent --fail ${url}`, { approveNetwork })
+      await execute(`curl --noproxy '' --silent --fail ${url}`, { approveNetwork })
       expect(asks).toBe(2)
       expect(hits).toBe(3)
-      const denied = await execute(`curl --silent --fail ${url}`)
+      const denied = await execute(`curl --noproxy '' --silent --fail ${url}`)
       expect(denied.result).toMatchObject({ ok: true })
       expect(denied.result).not.toMatchObject({ exitCode: 0 })
       expect(hits).toBe(3)

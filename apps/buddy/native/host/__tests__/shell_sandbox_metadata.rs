@@ -9,6 +9,7 @@ fn record(path: &Path, profile: &str) -> Record {
     Record {
         profile: profile.to_owned(),
         user: sid_text(&process_user_sid(current_process()).unwrap()).unwrap(),
+        null_device: false,
         directories: vec![Directory {
             path: text.to_owned(),
             device,

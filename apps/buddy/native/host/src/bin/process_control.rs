@@ -2,7 +2,28 @@ use std::{io, process::ExitCode};
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().skip(1);
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("ARGV0").as_deref() == Some(std::ffi::OsStr::new("lexora-sandbox-ipc")) {
+        return ipc_result(lexora_buddy_host::sandbox_ipc::launch(arguments));
+    }
     if let Some(command) = arguments.next() {
+        #[cfg(target_os = "linux")]
+        if command == "--sandbox-ipc-worker" {
+            return ipc_result(lexora_buddy_host::sandbox_ipc::execute(arguments));
+        }
+        #[cfg(target_os = "linux")]
+        if command == "--probe-sandbox-ipc" && arguments.next().is_none() {
+            return match lexora_buddy_host::sandbox_ipc::probe() {
+                Ok(available) => {
+                    println!(
+                        "{}",
+                        serde_json::json!({"protocol":1,"privateUnixSockets":available})
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => ipc_result(Err(error)),
+            };
+        }
         #[cfg(any(windows, target_os = "linux"))]
         if command == "--supervise-shell" && arguments.next().is_none() {
             return match lexora_buddy_host::supervised_shell::run() {
@@ -31,6 +52,14 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn ipc_result(result: io::Result<()>) -> ExitCode {
+    if let Err(error) = result {
+        eprintln!("SANDBOX_IPC_ISOLATION_FAILED: {error}");
+    }
+    ExitCode::FAILURE
 }
 
 #[cfg(windows)]

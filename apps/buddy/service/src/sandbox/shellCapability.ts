@@ -16,6 +16,7 @@ import { Type } from 'typebox'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { runSupervisedShellProcess } from '../../../platform/process/supervisedShellProcess'
 import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
+import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../approvals/ApprovalService'
 
@@ -36,6 +37,11 @@ export function createShellCapability(options: {
   mutations?: Pick<MutationCoordinator, 'getCurrentInvocation' | 'recordOwnedProcessSettlement'>
   assertExecutionAllowed?: (input: { run: BuddyExtensionRunContext, boundary: 'host' | 'sandbox', readOnly: boolean }) => void | Promise<void>
 }): BuddyCapability {
+  const networkBoundary = currentPlatform.id === OPERATING_SYSTEM.Windows
+    ? 'Loopback TCP connections and listeners are allowed, including host services. Other network destinations require approval.'
+    : currentPlatform.id === OPERATING_SYSTEM.Linux
+      ? 'Commands can use private loopback servers. Host services and other network destinations require proxy approval.'
+      : 'Network destinations require authorization.'
   const shellName = options.execution.dialect
   const createShell = shellName === 'powershell' ? createPowerShellToolDefinition : createBashToolDefinition
   const directoryParameters = Type.Object({
@@ -90,7 +96,7 @@ export function createShellCapability(options: {
         })
         pi.registerTool({
           ...native,
-          description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Sandbox reads, writes and network destinations require the corresponding authorization. No automatic host fallback.`,
+          description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Sandbox reads and writes require the corresponding directory authorization. ${networkBoundary} No automatic host fallback.`,
           promptGuidelines: [
             `Use ${shellName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. In isolated modes, read failures outside granted directories require a directory authorization; do not disguise paths or use another interpreter to evade a denial.`,
             'In isolated modes, the sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',

@@ -134,7 +134,7 @@ enum State {
     Active {
         profile: String,
         filters: Vec<u64>,
-        metadata: metadata::Lease,
+        metadata: Box<metadata::Lease>,
     },
 }
 struct Client {
@@ -306,7 +306,7 @@ fn handle_client(client: &mut Client, network: &Network) -> io::Result<bool> {
             }
             let request: Request =
                 serde_json::from_slice(&bytes[..end]).map_err(|_| io::ErrorKind::InvalidData)?;
-            let (profile, proxy_port, roots) = match request {
+            let (profile, roots) = match request {
                 Request::Health { protocol } if protocol == PROTOCOL_VERSION => {
                     client.pipe.write_all(b"ready\n")?;
                     return Ok(false);
@@ -317,16 +317,16 @@ fn handle_client(client: &mut Client, network: &Network) -> io::Result<bool> {
                     proxy_port,
                     roots,
                 } if protocol == PROTOCOL_VERSION && valid_profile(&profile) && proxy_port != 0 => {
-                    (profile, proxy_port, roots)
+                    (profile, roots)
                 }
                 _ => return Ok(false),
             };
             let metadata = metadata::Lease::apply(&profile, &roots, client.owner.as_raw_handle())?;
-            let filters = network.grant(&profile, proxy_port)?;
+            let filters = network.grant(&profile)?;
             client.state = State::Active {
                 profile,
                 filters,
-                metadata,
+                metadata: Box::new(metadata),
             };
             client.pipe.write_all(b"ready\n")?;
             Ok(true)

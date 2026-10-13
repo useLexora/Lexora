@@ -10,11 +10,17 @@ export async function createLinuxSystemPolicy(dependencies: Extract<SrtSandboxDe
     .filter(entry => !entry.isSymbolicLink() && !['proc', 'dev', 'sys'].includes(entry.name))
     .map(entry => `/${entry.name}`)
   return {
-    readPaths: [...SYSTEM_READ_PATHS, join(dependencies.srtRoot, 'vendor')],
+    readPaths: [...SYSTEM_READ_PATHS, join(dependencies.srtRoot, 'vendor'), ...(dependencies.privateUnixSockets ? [dependencies.bwrap, dependencies.processControl] : [])],
     denyRead,
     denyWrite: [dependencies.sandboxDirectory],
     pathRoots: ['/usr', '/bin'],
     pathEntries: ['/usr/local/bin', '/usr/bin', '/bin'],
-    runtime: { bwrapPath: dependencies.bwrap, socatPath: dependencies.socat, seccomp: { applyPath: dependencies.seccomp } },
+    runtime: {
+      bwrapPath: dependencies.bwrap,
+      socatPath: dependencies.socat,
+      seccomp: dependencies.privateUnixSockets
+        ? { applyPath: dependencies.processControl, argv0: 'lexora-sandbox-ipc' }
+        : { applyPath: dependencies.seccomp },
+    },
   }
 }
