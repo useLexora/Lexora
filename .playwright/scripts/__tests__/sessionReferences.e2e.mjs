@@ -67,20 +67,6 @@ test('referenced task resources are discovered, read through the runtime and ope
       }
       return
     }
-    if (phase === 'revoked') {
-      const current = step++
-      if (current === 0) {
-        call('lexora_tool_search', { toolNames: ['lexora_session_read'] })
-      }
-      else if (current === 1) {
-        call('lexora_session_read', { sessionId: 'earlier', source: earlierSource })
-      }
-      else {
-        chainTexts.push(body.messages.findLast(message => message.role === 'tool').content)
-        send({ content: '引用已撤销，不能继续检索更早的任务。' })
-      }
-      return
-    }
     if (step++ === 0) {
       call('lexora_tool_search', { toolNames: ['lexora_session_search', 'lexora_session_read'] })
       return
@@ -185,37 +171,7 @@ test('referenced task resources are discovered, read through the runtime and ope
     expect(chainTexts[0]).toContain('[SESSION:earlier]')
     expect(chainTexts[0]).toContain('Referenced tasks:')
     expect(chainTexts[1]).toContain('EARLIER_DECISION')
-    const referenceButton = page.getByTestId('task-reference-access')
-    await referenceButton.click()
-    const panel = page.locator('.task-reference-access')
-    const earlier = panel.locator('[data-reference-id="earlier"]')
-    await expect(earlier).toHaveAttribute('data-reference-status', 'available')
-    await expect(earlier).toContainText('经')
-    await page.screenshot({ path: testInfo.outputPath('session-references-light.png'), animations: 'disabled' })
-    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.classic-dark' } } }))
-    await page.screenshot({ path: testInfo.outputPath('session-references-dark.png'), animations: 'disabled' })
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(780, 700))
-    await expect(panel).toBeVisible()
-    expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-    await page.screenshot({ path: testInfo.outputPath('session-references-narrow.png'), animations: 'disabled' })
-    await earlier.getByRole('button', { name: '取消引用', exact: true }).click()
-    await expect(earlier).toHaveAttribute('data-reference-status', 'revoked')
-    await referenceButton.click()
-    phase = 'revoked'
-    step = 0
-    await editor.fill('尝试再次读取已经取消引用的更早任务。')
-    await page.getByRole('button', { name: '发送消息', exact: true }).click()
-    await expect(page.getByText('引用已撤销，不能继续检索更早的任务。', { exact: true })).toBeVisible({ timeout: 60000 })
-    expect(chainTexts.at(-1)).toContain('SESSION_REFERENCE_REVOKED')
-    await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
-    await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
-    await referenceButton.click()
-    await expect(earlier).toHaveAttribute('data-reference-status', 'revoked')
-    await earlier.getByRole('button', { name: '恢复引用', exact: true }).click()
-    await expect(earlier).toHaveAttribute('data-reference-status', 'available')
-    await referenceButton.click()
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(1280, 900))
-    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.classic-light' } } }))
+    await page.screenshot({ path: testInfo.outputPath('session-reference-chain.png'), animations: 'disabled' })
     await editor.fill('保留在当前任务的后续修改要求')
     await page.getByRole('button', { name: `打开来源任务 · ${title}`, exact: true }).click()
     await expect(page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveCount(2)

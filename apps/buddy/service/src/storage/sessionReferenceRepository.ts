@@ -73,16 +73,6 @@ export function createSessionReferenceRepository(database: DatabaseSync) {
       return (database.prepare('SELECT session_id AS id FROM session_reference_exclusions WHERE conversation_id = ? AND branch_id = ? ORDER BY session_id')
         .all(conversationId, branchId) as { id: string }[]).map(row => row.id)
     },
-    setExcluded(scope: Pick<SessionReferenceScope, 'conversationId' | 'branchId'>, sessionId: string, excluded: boolean): void {
-      if (excluded) {
-        database.prepare(`INSERT INTO session_reference_exclusions (conversation_id, branch_id, session_id, created_at)
-          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`).run(scope.conversationId, scope.branchId, sessionId, new Date().toISOString())
-      }
-      else {
-        database.prepare('DELETE FROM session_reference_exclusions WHERE conversation_id = ? AND branch_id = ? AND session_id = ?')
-          .run(scope.conversationId, scope.branchId, sessionId)
-      }
-    },
   }
 }
 

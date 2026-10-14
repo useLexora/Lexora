@@ -124,6 +124,17 @@ function textResult(result: Awaited<ReturnType<ToolDefinition['execute']>>) {
 }
 
 describe('referenced task materials', () => {
+  it('discovers only directly referenced tasks on demand and preserves chain references in search results', async () => {
+    const f = await fixture()
+    f.message({ userContent: { ...createBuddyUserContent('Continue earlier work.'), sessionReferences: [{ id: 'other', title: 'other' }] }, resourceSnapshots: [] })
+    await f.nextInput()
+    expect(textResult(await f.call(SESSION_SEARCH_TOOL, {})).directReferences).toEqual([{ sessionId: 'source', title: 'source', branchId: 'source-branch' }])
+    const result = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', query: 'Referenced tasks' }))
+    expect(result.matches[0].sessionReferences).toEqual([{ id: 'other', title: 'other' }])
+    expect(textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'other' })).sessionId).toBe('other')
+    await expect(f.call(SESSION_SEARCH_TOOL, { query: 'needle' })).rejects.toThrow('VALIDATION_FAILED')
+  })
+
   it('does not expose a later artifact from the same multi-segment run after branching at its early answer', async () => {
     const f = await fixture()
     const output = await f.artifact('late-private-branch-output.txt', 'LATE_BRANCH_ARTIFACT')

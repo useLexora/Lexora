@@ -114,7 +114,6 @@ import { ExtensionTaskContext } from './conversations/ExtensionTaskContext'
 import { registerConversationRpc } from './conversations/registerConversationRpc'
 import { registerConversationTreeRpc } from './conversations/registerConversationTreeRpc'
 import { registerTaskMarkRpc } from './conversations/registerTaskMarkRpc'
-import { SessionReferenceSettingsService } from './conversations/SessionReferenceSettingsService'
 import { TaskAttentionProjection } from './conversations/TaskAttentionProjection'
 import { TaskMarkService } from './conversations/TaskMarkService'
 import { createBuddyCapabilityFactory } from './createBuddyCapabilityFactory'
@@ -525,7 +524,6 @@ export async function startBuddyService(
         runInputs,
         runs,
         repository: conversations,
-        references: new SessionReferenceSettingsService(conversations, sessionReferences),
         sessions: {
           invalidateConversation: id => sessions.invalidateConversationWithResult(id),
           applyPermissionSettings: conversation => sessions.applyConversationPermissions(conversation.id, conversation),

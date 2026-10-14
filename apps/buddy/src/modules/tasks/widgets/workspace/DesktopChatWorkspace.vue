@@ -14,7 +14,6 @@ import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
 import { useChatQuoteNavigation } from '../quotes/useChatQuoteNavigation'
-import TaskSessionReferenceAccess from '../references/TaskSessionReferenceAccess.vue'
 import { useTaskResultRead } from '../task-index/useTaskResultRead'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
 import DesktopChatTranscript from '../transcript/DesktopChatTranscript.vue'
@@ -286,10 +285,6 @@ function openDetailChanges(id: string) {
               :language="language"
             >
               <template #leadingContext>
-                <TaskSessionReferenceAccess
-                  :api="workspace.context.references" :conversation-id="workspace.session.activeConversationId.value"
-                  :branch-id="workspace.session.activeBranchId.value" :language="language" :active="active"
-                />
                 <slot name="composerLeadingContext" />
               </template>
             </DesktopTaskComposer>

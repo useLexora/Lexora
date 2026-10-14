@@ -28,8 +28,6 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetTree, (_event, input) => request(conversationTreeRpc.get, conversationTreeRpc.get.input.parse(input)))
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsListReferenceAccess, (_event, input) => request(conversationsRpc.listReferenceAccess, conversationsRpc.listReferenceAccess.input.parse(input)))
-  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetReferenceExcluded, (_event, input) => request(conversationsRpc.setReferenceExcluded, conversationsRpc.setReferenceExcluded.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsList, (_event, input) => request(conversationsRpc.list, conversationRequestSchemas.list.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGet, (_event, input) => request(conversationsRpc.get, conversationRequestSchemas.conversationId.parse(input)))

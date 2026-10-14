@@ -233,7 +233,6 @@ export interface TaskChatWorkspace {
   tree: TaskConversationTree
   restoration: TaskDraftRestoration
   context: {
-    references: Pick<LocalChatApi['conversations'], 'listReferenceAccess' | 'setReferenceExcluded' | 'onChanged'>
     getChangeOverview: LocalChatApi['changes']['overview']
     files: Pick<LocalChatApi['spaces'], 'listDirectory' | 'readFile' | 'revealFile'>
     getNodeDetail: LocalChatApi['conversations']['getNodeDetail']

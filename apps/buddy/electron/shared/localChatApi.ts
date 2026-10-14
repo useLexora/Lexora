@@ -21,7 +21,6 @@ import type {
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
 import type { ConversationListFilter, ConversationModelControls, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
-import type { SessionReferenceAccessList } from '../../shared/conversation/sessionReferenceAccess'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
 import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
@@ -149,8 +148,6 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsGetNodeDetail: 'lexora:buddy:conversations:get-node-detail',
   conversationsGetTree: 'lexora:buddy:conversations:get-tree',
   conversationsList: 'lexora:buddy:conversations:list',
-  conversationsListReferenceAccess: 'lexora:buddy:conversations:list-reference-access',
-  conversationsSetReferenceExcluded: 'lexora:buddy:conversations:set-reference-excluded',
   conversationsListBranches: 'lexora:buddy:conversations:list-branches',
   conversationsListMessages: 'lexora:buddy:conversations:list-messages',
   conversationsRename: 'lexora:buddy:conversations:rename',
@@ -441,8 +438,6 @@ export interface LocalChatApi {
     write: (value: LocalWorkspaceStateValue) => Promise<LocalWorkspaceSetting>
   }
   conversations: {
-    listReferenceAccess: (input: { conversationId: string, branchId: string }) => Promise<SessionReferenceAccessList>
-    setReferenceExcluded: (input: { conversationId: string, branchId: string, sessionId: string, excluded: boolean }) => Promise<SessionReferenceAccessList>
     onChanged: (listener: (conversation: LocalConversation) => void) => () => void
     onTimelineChanged: (listener: (event: ConversationTimelineChangeNotice) => void) => () => void
     getNodeDetail: (input: ConversationNodeDetailRequest) => Promise<LocalConversationTimelinePage>

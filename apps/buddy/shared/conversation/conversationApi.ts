@@ -7,7 +7,6 @@ import { runEventSchema, runOutputSchema, runSchema, runStatusSchema } from '../
 import { approvalPolicySchema, executionProfileSchema, idSchema, nullableTimestampSchema, optionalCursorSchema, optionalLimitSchema, timestampSchema, validationRequestSchemas, validationResponseSchemas } from '../runtime/apiValidation'
 import { attachmentSchema } from './attachmentApi'
 import { BUDDY_SERVICE_TIERS, BUDDY_THINKING_LEVELS } from './modelSelection'
-import { sessionReferenceAccessListSchema } from './sessionReferenceAccess'
 
 export const CONVERSATION_CHANGED = 'conversations.changed'
 
@@ -180,8 +179,6 @@ export const conversationResponseSchemas = {
 } as const
 
 export const conversationsRpc = {
-  listReferenceAccess: { method: 'conversations.listReferenceAccess', input: conversationRequestSchemas.conversationBranchActivation, response: sessionReferenceAccessListSchema },
-  setReferenceExcluded: { method: 'conversations.setReferenceExcluded', input: conversationRequestSchemas.conversationBranchActivation.extend({ sessionId: idSchema, excluded: z.boolean() }).strict(), response: sessionReferenceAccessListSchema },
   listMembers: { method: 'conversations.listMembers', input: conversationRequestSchemas.conversationId, response: z.array(conversationMemberSchema) },
   addMember: { method: 'conversations.addMember', input: conversationRequestSchemas.conversationBuddy, response: z.array(conversationMemberSchema) },
   removeMember: { method: 'conversations.removeMember', input: conversationRequestSchemas.conversationBuddy, response: z.array(conversationMemberSchema) },

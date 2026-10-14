@@ -15,8 +15,6 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
       write: value => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.workspaceStateWrite, { value }),
     }),
     conversations: Object.freeze({
-      listReferenceAccess: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListReferenceAccess, { conversationId: input.conversationId, branchId: input.branchId }),
-      setReferenceExcluded: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetReferenceExcluded, { conversationId: input.conversationId, branchId: input.branchId, sessionId: input.sessionId, excluded: input.excluded }),
       onChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.conversationsChanged, listener),
       onTimelineChanged: listener => subscribe(LOCAL_CHAT_IPC_CHANNELS.conversationsTimelineChanged, listener),
       getNodeDetail: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetNodeDetail, input),

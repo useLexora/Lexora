@@ -5,7 +5,6 @@ import type { ConversationRepository, RenameConversationInput, SetConversationPe
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
-import type { SessionReferenceSettingsService } from './SessionReferenceSettingsService'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -13,7 +12,7 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 
 export type ConversationMetadataCommit = EventSnapshot<{
   commitId: string
-  kind: 'title' | 'permissions' | 'model' | 'branch' | 'buddy' | 'references'
+  kind: 'title' | 'permissions' | 'model' | 'branch' | 'buddy'
   conversation: ConversationRecord
   actorId?: string
   titleRevision?: number
@@ -21,7 +20,6 @@ export type ConversationMetadataCommit = EventSnapshot<{
 }>
 
 export interface ConversationMetadataServiceOptions {
-  references?: SessionReferenceSettingsService
   buddies?: Pick<BuddiesService, 'get'>
   runInputs?: Pick<RunInputRepository, 'findByRunId'>
   runs?: Pick<RunRepository, 'findById' | 'setModelSelection' | 'findActiveForConversation'>
@@ -87,20 +85,6 @@ export class ConversationMetadataService {
     this.#publish('permissions', conversation)
     await this.#applyPermissions(id)
     return conversation
-  }
-
-  listReferenceAccess(input: { conversationId: string, branchId: string }) {
-    if (!this.#options.references || this.#disposed)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    return this.#options.references.list(input)
-  }
-
-  setReferenceExcluded(input: { conversationId: string, branchId: string, sessionId: string, excluded: boolean }) {
-    if (!this.#options.references || this.#disposed)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    const result = this.#options.references.setExcluded(input)
-    this.#publish('references', this.#requireActive(input.conversationId))
-    return result
   }
 
   listMembers(conversationId: string) {

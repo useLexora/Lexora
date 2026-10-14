@@ -31,7 +31,6 @@ import { createTurnRequestRepository } from '../../storage/turnRequestRepository
 import { searchConversationHistory } from '../searchConversationHistory'
 import { SessionReferenceAccessResolver } from '../SessionReferenceAccess'
 import { createSessionReferenceCapability } from '../sessionReferenceExtension'
-import { SessionReferenceSettingsService } from '../SessionReferenceSettingsService'
 import { sessionMessageText } from '../sessionReferenceText'
 import { SESSION_READ_TOOL, SESSION_SEARCH_TOOL, sessionSearchParameters } from '../sessionReferenceToolContract'
 
@@ -428,20 +427,18 @@ describe('persistent bounded session reference access', () => {
     expect(f.read().references.find(reference => reference.id === 'w')?.status).toBe('unavailable')
   })
 
-  it('persists branch-local revocation, restores explicit reattachments and rejects stale UI scopes', () => {
+  it('preserves existing branch-local exclusions and restores explicit reattachments', () => {
     const f = referenceAccessFixture()
     f.session('a')
     f.session('w')
     referenceMessage(f, 'a', ['w'])
     const anchor = referenceMessage(f, 'current', ['a'])
-    const service = new SessionReferenceSettingsService(f.conversations, f.repository)
     const input = { conversationId: 'current', branchId: 'current-branch' }
-    expect(service.setExcluded({ ...input, sessionId: 'w', excluded: true }).references.find(reference => reference.id === 'w')?.status).toBe('revoked')
+    f.database.prepare('INSERT INTO session_reference_exclusions VALUES (?, ?, ?, ?)').run(input.conversationId, input.branchId, 'w', '2026-02-01T00:00:00.000Z')
     expect(f.read().references.find(reference => reference.id === 'w')?.status).toBe('revoked')
     expect(new SessionReferenceAccessResolver(f.conversations, createSessionReferenceRepository(f.database)).resolve(f.scope()).references.find(reference => reference.id === 'w')?.status).toBe('revoked')
     f.conversations.createBranch({ id: 'fork', conversationId: 'current', parentBranchId: input.branchId, forkedFromMessageId: anchor.id, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
     expect(f.read().references.find(reference => reference.id === 'w')?.status).toBe('revoked')
-    expect(() => service.setExcluded({ ...input, sessionId: 'w', excluded: false })).toThrow(expect.objectContaining({ code: 'VALIDATION_FAILED' }))
     referenceMessage(f, 'current', ['w'], { branchId: 'fork' })
     expect(f.read().references.find(reference => reference.id === 'w')).toMatchObject({ status: 'available', depth: 0 })
     expect(f.repository.exclusions('current', input.branchId)).toEqual(['w'])

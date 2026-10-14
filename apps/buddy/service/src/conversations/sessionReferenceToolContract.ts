@@ -21,7 +21,7 @@ export const sessionReferenceSourceSchema = Type.Union([
 export type SessionReferenceSource = Static<typeof sessionReferenceSourceSchema>
 
 export const sessionSearchParameters = Type.Object({
-  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of an available task in the current reference access catalogue.' }),
+  sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'ID of a user-referenced task. Call with no arguments to discover direct references; follow references returned in historical messages to reach earlier tasks.' })),
   branchId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Branch ID returned by an earlier search. Supply it when continuing that search; a changed branch requires a new authorized search.' })),
   query: Type.Optional(Type.String({ minLength: 1, maxLength: 500, description: 'Keywords in messages or resource names and paths. Omit to browse recent messages and the resource catalogue. Does not search inside files.' })),
   kind: Type.Optional(Type.Union([Type.Literal('all'), Type.Literal('messages'), Type.Literal('resources')], { description: 'Defaults to all. Select a kind when continuing its results.' })),
@@ -30,7 +30,7 @@ export const sessionSearchParameters = Type.Object({
 }, { additionalProperties: false })
 
 export const sessionReadParameters = Type.Object({
-  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of an available task in the current reference access catalogue.' }),
+  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of a user-referenced task discovered through search or a structured reference in historical messages.' }),
   branchId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Branch ID returned by search. Supply it to prevent reading a source from another branch.' })),
   source: sessionReferenceSourceSchema,
   offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Zero-based text offset. Use nextOffset to continue reading the same source.' })),

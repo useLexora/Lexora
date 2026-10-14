@@ -43,7 +43,7 @@ export interface RegisterConversationRpcOptions {
   attachments: Pick<AttachmentService, 'listForConversation'>
   changes: Pick<ChangeCaptureService, 'listSummariesForRuns'>
   conversations: ConversationRpcRepository
-  metadata: Pick<ConversationMetadataService, 'listReferenceAccess' | 'setReferenceExcluded' | 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'getModelControls' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'activateBranch'>
+  metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'getModelControls' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'activateBranch'>
   deleteConversation: (conversationId: string) => Promise<boolean>
   eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] }
   isDeleting: (conversationId: string) => boolean
@@ -54,8 +54,6 @@ export interface RegisterConversationRpcOptions {
 
 export function registerConversationRpc(options: RegisterConversationRpcOptions): () => void {
   const disposers: Array<() => void> = []
-  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listReferenceAccess, input => options.metadata.listReferenceAccess(input)))
-  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.setReferenceExcluded, input => options.metadata.setReferenceExcluded(input)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listMembers, input => options.metadata.listMembers(input.conversationId)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.addMember, input => options.metadata.addMember({ id: input.conversationId, buddyId: input.buddyId })))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.removeMember, input => options.metadata.removeMember({ id: input.conversationId, buddyId: input.buddyId })))
