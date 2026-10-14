@@ -6,7 +6,6 @@ import type {
 import type { DesktopCommandId } from '@buddy-electron/shared/desktopCommands'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { DESKTOP_COMMAND_REGISTRY, getDesktopCommand } from '@buddy-electron/shared/desktopCommands'
-import { PanelRight20Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
 import { computed, onBeforeUnmount, onMounted, onScopeDispose, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
@@ -178,7 +177,7 @@ function applyWindowState(state: DesktopWindowState) {
           type="button"
           @click="emit('toggleContext')"
         >
-          <DesktopIcon :component="PanelRight20Regular" />
+          <DesktopIcon :name="contextOpen ? 'contextPanelActive' : 'contextPanel'" />
         </button>
         <button
           :aria-label="t('desktop.window.minimize')"
