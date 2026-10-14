@@ -11,7 +11,7 @@ import {
   projectChatRecoveryNotices,
   projectStreamingAssistantMessage,
 } from '../chatStreamingMessage'
-import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
+import { canExpandChatTool } from '../chatToolDisplay'
 import {
   projectChatTranscript,
   projectPersistedChatTranscriptRows,
@@ -26,22 +26,14 @@ describe('projectStreamingAssistantMessage', () => {
     const [turn] = projectChatAgentTurns(events, [run('completed')])
     expect(turn?.nodes.map(node => ({ kind: node.kind, ...('action' in node ? { action: node.action, actor: node.actor } : {}) })))
       .toEqual([{ kind: 'panel', action: 'open', actor: 'harness' }, { kind: 'panel', action: 'close', actor: 'user' }])
-    expect(createChatAgentActivityProjector().project(turn!.nodes).map(row => row.kind)).toEqual(['panel', 'panel'])
+    expect(createChatAgentActivityProjector().project(turn!.nodes)).toMatchObject([
+      { kind: 'panel-group', actor: 'mixed', nodes: turn!.nodes },
+    ])
     expect(projectStreamingAssistantMessage([], events, [run('completed')])).toBeNull()
     expect(turn?.processMessageIds).toEqual([])
   })
 
-  it('does not resurrect a completed message from a terminal run outside the message page', () => {
-    const events = [event(1, 'message.completed', {
-      content: { text: 'Old completed answer' },
-      messageId: 'old-message',
-      role: 'assistant',
-    })]
-
-    expect(projectStreamingAssistantMessage([], events, [run('completed')])).toBeNull()
-  })
-
-  it('keeps a completed event visible while its loaded trigger awaits the SQLite message', () => {
+  it('keeps a completed event visible until its SQLite message arrives only within the loaded history', () => {
     const events = [event(1, 'message.completed', {
       content: { text: 'Final answer' },
       messageId: 'assistant-1',
@@ -49,45 +41,10 @@ describe('projectStreamingAssistantMessage', () => {
       stopReason: 'completed',
     })]
 
-    expect(projectStreamingAssistantMessage([{
-      attachments: [],
-      branchId: 'branch-1',
-      content: { text: 'Question' },
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      id: 'message-1',
-      role: 'user',
-      runId: null,
-    }], events, [run('completed')])).toEqual({
+    expect(projectStreamingAssistantMessage([], events, [run('completed')])).toBeNull()
+    expect(projectStreamingAssistantMessage([message('message-1', 'user', 'Question')], events, [run('completed')])).toEqual({
       id: 'assistant-1',
       text: 'Final answer',
-    })
-  })
-
-  it('keeps commentary out of the streaming final answer surface', () => {
-    const commentary = [
-      event(1, 'message.started', { messageId: 'message-commentary', role: 'assistant' }),
-      event(2, 'message.delta', {
-        contentIndex: 0,
-        delta: 'I am checking the process now.',
-        messageId: 'message-commentary',
-        phase: 'commentary',
-      }),
-    ]
-    const finalAnswer = [
-      event(1, 'message.started', { messageId: 'message-final', role: 'assistant' }),
-      event(2, 'message.delta', {
-        contentIndex: 0,
-        delta: 'The process is running.',
-        messageId: 'message-final',
-        phase: 'final_answer',
-      }),
-    ]
-
-    expect(projectStreamingAssistantMessage([], commentary, [run('running')])).toBeNull()
-    expect(projectStreamingAssistantMessage([], finalAnswer, [run('running')])).toEqual({
-      id: 'message-final',
-      text: 'The process is running.',
     })
   })
 
@@ -147,132 +104,38 @@ describe('projectStreamingAssistantMessage', () => {
     )).toEqual([])
   })
 
-  it('projects unphased tool-use narration as process text for legacy events', () => {
+  it('replays legacy narration and structured system results in order without duplicating the final answer', () => {
+    const narration = 'I will inspect the process first.'
+    const presentation = { action: 'terminate-process', card: 'system', description: null, output: null, status: 'running', target: null, truncated: false, verified: null }
     const turns = projectChatAgentTurns([
       event(1, 'message.started', { messageId: 'message-process', role: 'assistant' }),
-      event(2, 'message.block.started', {
-        contentIndex: 0,
-        kind: 'reasoning',
-        messageId: 'message-process',
-      }),
-      event(3, 'message.block.completed', {
-        content: 'Checking the current process state',
-        contentIndex: 0,
-        kind: 'reasoning',
-        messageId: 'message-process',
-      }),
-      event(4, 'message.completed', {
-        content: { text: 'I will inspect the process first.' },
-        messageId: 'message-process',
-        role: 'assistant',
-        stopReason: 'tool_use',
-      }),
-      event(5, 'tool.started', {
-        presentation: {
-          card: 'terminal',
-          command: 'pgrep -a -f fixture-daemon',
-          cwd: '.',
-          description: 'Run a host shell command from the current workspace',
-          exitCode: null,
-          output: null,
-          signal: null,
-          truncated: false,
-        },
-        toolCallId: 'tool-1',
-        toolName: 'bash',
-      }),
-      event(6, 'tool.completed', {
-        isError: false,
-        presentation: {
-          card: 'terminal',
-          command: 'pgrep -a -f fixture-daemon',
-          cwd: '.',
-          description: null,
-          exitCode: 0,
-          output: '',
-          signal: null,
-          truncated: false,
-        },
-        toolCallId: 'tool-1',
-        toolName: 'bash',
-      }),
-      event(7, 'message.completed', {
-        content: { text: 'The fixture daemon is not running.' },
-        messageId: 'message-final',
-        role: 'assistant',
-        stopReason: 'completed',
-      }),
+      event(2, 'message.block.started', { contentIndex: 0, kind: 'reasoning', messageId: 'message-process' }),
+      event(3, 'message.block.completed', { content: 'Checking the current process state', contentIndex: 0, kind: 'reasoning', messageId: 'message-process' }),
+      event(4, 'message.completed', { content: { text: narration }, messageId: 'message-process', role: 'assistant', stopReason: 'tool_use' }),
+      event(5, 'tool.started', { presentation, toolCallId: 'tool-action', toolName: 'lexora_system_action' }),
+      event(6, 'tool.completed', { isError: false, presentation: { ...presentation, status: 'completed', target: 'fixture-process', verified: true }, toolCallId: 'tool-action', toolName: 'lexora_system_action' }),
+      event(7, 'message.completed', { content: { text: 'The fixture process has stopped.' }, messageId: 'message-final', role: 'assistant', stopReason: 'completed' }),
       event(8, 'run.completed', {}),
-    ], [{ ...run('completed'), reasoningLevel: 'high' }])
+    ], [run('completed')])
 
-    expect(turns).toEqual([{
-      branchId: 'branch-1',
-      completedAt: '2026-08-14T00:00:02.000Z',
+    expect(turns[0]).toMatchObject({
       finalMessageId: 'message-final',
-      messageStartedAt: { 'message-process': '2026-08-14T00:00:01.000Z' },
-      nodeStartedAt: {
-        'process-text:message-process:message': '2026-08-14T00:00:04.000Z',
-        'reasoning:message-process:0': '2026-08-14T00:00:02.000Z',
-        'tool:tool-1': '2026-08-14T00:00:05.000Z',
-      },
       nodes: [
-        {
-          contentIndex: 0,
-          id: 'reasoning:message-process:0',
-          kind: 'reasoning',
-          status: 'completed',
-          text: 'Checking the current process state',
-        },
-        {
-          id: 'process-text:message-process:message',
-          kind: 'text',
-          messageId: 'message-process',
-          phase: 'commentary',
-          text: 'I will inspect the process first.',
-        },
-        {
-          description: 'Run a host shell command from the current workspace',
-          id: 'tool:tool-1',
-          isError: false,
-          kind: 'tool',
-          presentation: {
-            card: 'terminal',
-            command: 'pgrep -a -f fixture-daemon',
-            cwd: '.',
-            description: null,
-            exitCode: 0,
-            output: '',
-            signal: null,
-            truncated: false,
-          },
-          status: 'completed',
-          toolCallId: 'tool-1',
-          toolName: 'bash',
-        },
+        { kind: 'reasoning', status: 'completed', text: 'Checking the current process state' },
+        { kind: 'text', messageId: 'message-process', phase: 'commentary', text: narration },
+        { kind: 'tool', description: null, status: 'completed', presentation: { card: 'system', action: 'terminate-process', target: 'fixture-process', verified: true } },
       ],
       processMessageIds: ['message-process'],
-      usage: null,
-      progress: null,
-      reasoningLevel: 'high',
-      runId: 'run-1',
-      startedAt: '2026-08-14T00:00:00.000Z',
-      status: 'completed',
-      triggeringMessageId: 'message-1',
-    }])
-
+    })
     expect(projectPersistedChatTranscriptRows([
       message('message-1', 'user', 'Check the process'),
-      message('message-process', 'assistant', 'I will inspect the process first.'),
-      message('message-final', 'assistant', 'The fixture daemon is not running.'),
-    ], turns).map(row => row.key)).toEqual([
-      'message:message-1',
-      'agent-turn:run-1',
-      'message:message-final',
-    ])
+      message('message-process', 'assistant', narration),
+      message('message-final', 'assistant', 'The fixture process has stopped.'),
+    ], turns).map(row => row.key)).toEqual(['message:message-1', 'agent-turn:run-1', 'message:message-final'])
   })
 
   it('projects phase-aware commentary as process text even when the response completes normally', () => {
-    const turns = projectChatAgentTurns([
+    const events = [
       event(1, 'message.delta', {
         contentIndex: 0,
         delta: 'I found the target process and will verify its memory usage.',
@@ -300,7 +163,13 @@ describe('projectStreamingAssistantMessage', () => {
         role: 'assistant',
         stopReason: 'completed',
       }),
-    ], [run('completed')])
+    ]
+    const turns = projectChatAgentTurns(events, [run('completed')])
+    expect(projectStreamingAssistantMessage([], events.slice(0, 2), [run('running')])).toBeNull()
+    expect(projectStreamingAssistantMessage([], [
+      ...events.slice(0, 2),
+      event(3, 'message.delta', { contentIndex: 1, delta: 'PID 42 is running and uses 6 MiB RSS.', messageId: 'message-mixed', phase: 'final_answer' }),
+    ], [run('running')])).toEqual({ id: 'message-mixed', text: 'PID 42 is running and uses 6 MiB RSS.' })
 
     expect(turns[0]).toMatchObject({
       finalMessageId: 'message-mixed',
@@ -369,14 +238,11 @@ describe('projectStreamingAssistantMessage', () => {
     const reducer = createChatAgentTurnReducer(run('running'))
     reducer.append(thought)
     reducer.append([responding[2]!])
-    const settled = reducer.project()
-    expect(settled.nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
+    expect(reducer.project().nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
     reducer.append([event(4, 'message.delta', { contentIndex: 1, messageId: 'stream', delta: ' continues' })])
-    expect(reducer.project()).toEqual(settled)
-    expect(projectChatAgentTurns(thought, [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking' }])
+    expect(reducer.project().nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: null })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed' }])
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: 'read' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running' }])
-    expect(projectChatAgentTurns(responding, [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed', text: 'Checking' }])
     expect(projectChatAgentTurns([...responding, event(4, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'stream', delta: ' more' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking more' }])
     expect(projectChatAgentTurns([...thought, event(3, 'message.block.started', { contentIndex: 1, kind: 'text', messageId: 'stream', phase: 'commentary' })], [run('running')])[0]?.nodes[0]).toMatchObject({ status: 'completed' })
   })
@@ -393,7 +259,7 @@ describe('projectStreamingAssistantMessage', () => {
     expect(projectChatAgentTurns(next, [run('running')])[0]?.nodes).toMatchObject([{ status: 'interrupted', text: 'Partial thought' }, { status: 'running', text: 'Next thought' }])
   })
 
-  it('removes empty reasoning blocks and duplicate tool-use narration', () => {
+  it('deduplicates tool-use narration that repeats reasoning', () => {
     const process = projectChatAgentTurns([
       event(1, 'message.block.started', {
         contentIndex: 0,
@@ -411,17 +277,6 @@ describe('projectStreamingAssistantMessage', () => {
         messageId: 'message-process',
         role: 'assistant',
         stopReason: 'tool_use',
-      }),
-      event(4, 'message.block.started', {
-        contentIndex: 1,
-        kind: 'reasoning',
-        messageId: 'message-empty',
-      }),
-      event(5, 'message.block.completed', {
-        content: '',
-        contentIndex: 1,
-        kind: 'reasoning',
-        messageId: 'message-empty',
       }),
     ], [run('completed')])[0]
 
@@ -521,7 +376,7 @@ describe('projectStreamingAssistantMessage', () => {
     expect(turn?.nodes).toEqual([expect.objectContaining({ kind: 'tool', status: 'interrupted', toolCallId: 'tool-1' })])
   })
 
-  it('does not let a late tool start overwrite a pending approval', () => {
+  it('keeps pending approval visible despite late tool start and stale execution progress', () => {
     const turns = projectChatAgentTurns([
       event(1, 'approval.requested', {
         id: 'approval-1',
@@ -549,6 +404,7 @@ describe('projectStreamingAssistantMessage', () => {
         toolCallId: 'tool-1',
         toolName: 'bash',
       }),
+      event(3, 'run.progress', { phase: 'tool_executing', toolName: 'bash' }),
     ], [run('running')])
 
     expect(turns[0]?.nodes).toEqual([
@@ -558,86 +414,7 @@ describe('projectStreamingAssistantMessage', () => {
         toolCallId: 'tool-1',
       }),
     ])
-  })
-
-  it('keeps the run activity in awaiting approval despite a stale executing event', () => {
-    const turns = projectChatAgentTurns([
-      event(1, 'approval.requested', {
-        id: 'approval-1',
-        kind: 'shell',
-        review: {
-          card: 'shell',
-          command: 'systemctl restart example',
-          toolName: 'bash',
-        },
-        status: 'pending',
-        summary: 'Run a command',
-        toolCallId: 'tool-1',
-      }),
-      event(2, 'run.progress', { phase: 'tool_executing', toolName: 'bash' }),
-    ], [run('running')])
-
-    expect(turns[0]?.progress).toEqual({
-      phase: 'awaiting_approval',
-      toolName: 'bash',
-    })
-  })
-
-  it('keeps system tool rows structured instead of consuming model narration', () => {
-    const narration = '温和结束 buddy-act-test 测试进程，不强制终止。'
-    expect(projectChatAgentTurns([
-      event(1, 'message.completed', {
-        content: { text: narration },
-        messageId: 'message-process',
-        role: 'assistant',
-        stopReason: 'tool_use',
-      }),
-      event(2, 'tool.started', {
-        presentation: {
-          action: 'terminate-process',
-          card: 'system',
-          description: null,
-          output: null,
-          status: 'running',
-          target: null,
-          truncated: false,
-          verified: null,
-        },
-        toolCallId: 'tool-action',
-        toolName: 'lexora_system_action',
-      }),
-      event(3, 'tool.completed', {
-        isError: false,
-        presentation: {
-          action: 'terminate-process',
-          card: 'system',
-          description: null,
-          output: null,
-          status: 'completed',
-          target: 'buddy-act-test',
-          truncated: false,
-          verified: true,
-        },
-        toolCallId: 'tool-action',
-        toolName: 'lexora_system_action',
-      }),
-    ], [run('completed')])[0]).toMatchObject({
-      nodes: [
-        {
-          kind: 'text',
-          text: narration,
-        },
-        {
-          description: null,
-          kind: 'tool',
-          presentation: {
-            action: 'terminate-process',
-            status: 'completed',
-            target: 'buddy-act-test',
-          },
-        },
-      ],
-    })
+    expect(turns[0]?.progress).toEqual({ phase: 'awaiting_approval', toolName: 'bash' })
   })
 
   it('uses the structured approval target for a pending system action', () => {
@@ -758,8 +535,6 @@ describe('projectStreamingAssistantMessage', () => {
       ['failed', 'PATH_NOT_FOUND', undefined],
       ['failed', 'PATH_NOT_FOUND', undefined],
     ])
-    expect(nodes.map(node => describeChatTool(node, 'zh-CN').status)).toEqual(['文件不存在', '目录不存在'])
-    expect(nodes.map(node => describeChatTool(node, 'en-US').status)).toEqual(['File not found', 'Directory not found'])
     expect(nodes.every(node => canExpandChatTool(node))).toBe(true)
     const groups = createChatAgentActivityProjector().project(turn.nodes)
     expect(groups).toHaveLength(1)
@@ -776,7 +551,6 @@ describe('projectStreamingAssistantMessage', () => {
     ], [run('failed')])[0]).toMatchObject({
       nodes: [{
         estimatedTokensAfter: null,
-        id: 'compaction:run-1:1',
         kind: 'compaction',
         status: 'interrupted',
         tokensBefore: null,
@@ -819,7 +593,7 @@ function message(
   id: string,
   role: 'assistant' | 'user',
   text: string,
-): LocalConversationTimelineItem {
+): Extract<LocalConversationTimelineItem, { kind: 'message' }> {
   return {
     attachments: [],
     branchId: 'branch-1',

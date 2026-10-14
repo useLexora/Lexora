@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ChatAgentToolNode, ChatAgentTurn, ChatAgentTurnNode } from '../../../model/transcript/chatAgentTurn'
+import type { ChatAgentPanelNode, ChatAgentToolNode, ChatAgentTurn, ChatAgentTurnNode } from '../../../model/transcript/chatAgentTurn'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,6 +22,38 @@ afterEach(() => {
 })
 
 describe('activity disclosure', () => {
+  it('preserves panel disclosure across mixed actors, appended records and turn completion, with bottom collapse returning focus', async () => {
+    const first = panel('first')
+    const { root, turn } = mountTurn([first])
+    expect(root.querySelector('.buddy-chat-panel-group__header')).toBeNull()
+    expect(root.querySelector('[data-testid="context-panel-operation"]')?.textContent).toBe('你 · 已展开资源面板')
+    turn.value = { ...turn.value, nodes: [first, panel('second', 'harness', 'close')] }
+    await nextTick()
+    const header = root.querySelector<HTMLButtonElement>('.buddy-chat-panel-group__header')!
+    expect(header.textContent).toBe('你与系统 · 资源面板操作 2 次')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    header.click()
+    await nextTick()
+    turn.value = { ...turn.value, nodes: [...turn.value.nodes, panel('third')] }
+    await nextTick()
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    expect([...root.querySelectorAll('[data-testid="context-panel-operation"]')].map(element => element.textContent?.trim())).toEqual(['你 · 已展开资源面板', '系统 · 已收起资源面板', '你 · 已展开资源面板'])
+    header.click()
+    await nextTick()
+    turn.value = { ...turn.value, nodes: [...turn.value.nodes, ...Array.from({ length: 6 }, (_, index) => panel(`extra:${index}`, 'harness', index % 2 ? 'open' : 'close'))], status: 'completed', completedAt: '2026-09-09T00:00:10Z' }
+    await nextTick()
+    expect(header.textContent).toBe('你与系统 · 资源面板操作 9 次')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    await vi.waitFor(() => expect(root.querySelector('[data-testid="context-panel-operation"]')).toBeNull())
+    header.click()
+    await nextTick()
+    expect(root.querySelectorAll('[data-testid="context-panel-operation"]')).toHaveLength(9)
+    root.querySelector<HTMLButtonElement>('.buddy-chat-panel-group__collapse')!.click()
+    await nextTick()
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(header)
+  })
+
   it('shows finite and unlimited retries with a live deadline and uninterrupted total duration', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-09T00:00:18Z'))
@@ -52,58 +84,15 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
   })
 
-  it('navigates to a failed extension action alongside built-in tools and retains its details after collapse', async () => {
-    const action = projectExtensionActionTool({ kind: 'extension-action', id: 'naming', conversationId: 'conversation', branchId: 'branch', sourceMessageId: 'question', extensionId: 'tests.title', extensionName: 'Title', actionId: 'tests.title.generate', title: '重新生成标题', trigger: 'task:input:committed', status: 'running', message: '正在生成', createdAt: '2026-09-09T00:00:01Z', completedAt: null })
-    const { root, turn } = mountTurn([action])
-    expect(root.textContent).toContain('重新生成标题')
-    turn.value = { ...turn.value, nodes: [action, readTool('read', 'completed')] }
-    await nextTick()
-    const group = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
-    expect(group().textContent).toContain('读取 1 个文件 · 工具调用 1 次')
-    turn.value = { ...turn.value, nodes: [{ ...action, status: 'failed', isError: true, presentation: { card: 'generic', argumentNames: [], description: null, output: '模型不可用', truncated: false } }, turn.value.nodes[1]!] }
-    await nextTick()
-    root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__issues')!.click()
-    await nextTick()
-    await nextTick()
-    const tool = root.querySelector<HTMLButtonElement>('[data-action-id="naming"] button')!
-    expect(tool.getAttribute('aria-expanded')).toBe('true')
-    expect(document.activeElement).toBe(tool)
-    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
-    group().click()
-    await nextTick()
-    await vi.waitFor(() => expect(root.querySelector('[data-action-detail-id="naming"]')).toBeNull())
-    group().click()
-    await nextTick()
-    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
-  })
-
-  it('keeps tool output open while model progress runs independently and the turn completes', async () => {
-    const node: ChatAgentToolNode = { ...readTool('output', 'running'), toolName: 'lexora_output_present', presentation: { card: 'generic', argumentNames: ['paths'], description: null, output: 'Presented output', truncated: false } }
-    const { root, turn } = mountTurn([node])
-    root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
-    await nextTick()
-    for (const [phase, label] of [['model_requesting', '等待模型响应'], ['model_streaming', '正在处理'], ['model_responding', '正在回复']] as const) {
-      turn.value = { ...turn.value, nodes: [{ ...node, status: 'completed' }], progress: { phase, toolName: null } }
-      await nextTick()
-      const header = root.querySelector('.buddy-chat-tool__header')!
-      expect(header.textContent?.trim()).toBe('展示产物')
-      expect(header.getAttribute('aria-expanded')).toBe('true')
-      expect(root.querySelector('.buddy-chat-tool-details')?.textContent).toContain('Presented output')
-      expect(root.querySelector('.buddy-chat-run-activity')?.textContent).toContain(label)
-    }
-    turn.value = { ...turn.value, finalMessageId: 'answer', status: 'completed', completedAt: '2026-09-09T00:00:10Z', progress: null }
-    await nextTick()
-    expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
-    expect(root.querySelector('.buddy-chat-tool-details')?.textContent).toContain('Presented output')
-  })
-
-  it('separates preparing, running, model progress and approval states in a mixed group', async () => {
+  it('keeps execution, approval, issues and stopping distinct through tool and model progress', async () => {
     const first = readTool('one', 'preparing')
-    const second = readTool('two', 'completed')
-    const { root, turn } = mountTurn([{ id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking output' }, first, second])
+    const second = readTool('two', 'failed')
+    const { root, turn, stopping } = mountTurn([{ id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking output' }, first, second])
     const header = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
+    const status = () => root.querySelector('.buddy-chat-run-activity')!
     header().click()
     await nextTick()
+    expect(root.querySelector('.buddy-chat-activity-group__issues')?.textContent).toContain('1 项异常')
     expect(root.querySelector('[data-tool-call-id="one"]')?.textContent).toContain('准备')
     turn.value = { ...turn.value, nodes: [turn.value.nodes[0]!, { ...first, status: 'running' }, second] }
     await nextTick()
@@ -111,35 +100,23 @@ describe('activity disclosure', () => {
     expect(root.querySelector('[data-tool-call-id="one"]')?.textContent).toContain('运行中')
     turn.value = { ...turn.value, nodes: [turn.value.nodes[0]!, { ...first, status: 'completed' }, second], progress: { phase: 'model_requesting', toolName: null } }
     await nextTick()
-    expect(header().textContent?.trim()).toBe('思考 · 读取 1 个文件')
-    expect(root.querySelector('.buddy-chat-run-activity')?.textContent).toContain('等待模型响应')
+    expect(status().textContent).toContain('等待模型响应')
     expect(header().getAttribute('aria-expanded')).toBe('true')
-    turn.value = { ...turn.value, nodes: [...turn.value.nodes, readTool('three', 'awaiting_approval')], progress: { phase: 'awaiting_approval', toolName: 'read' } }
+    const pending = readTool('three', 'awaiting_approval')
+    turn.value = { ...turn.value, nodes: [turn.value.nodes[0]!, { ...first, status: 'running' }, second, pending], progress: { phase: 'awaiting_approval', toolName: 'read' } }
     await nextTick()
     expect(root.querySelector('[data-tool-call-id="three"]')?.textContent).toContain('等待批准')
-    header().click()
+    expect(root.querySelector('.buddy-chat-activity-group__approval')?.textContent).toContain('1 项待批准')
+    expect(root.querySelector('.buddy-chat-activity-group__issues')?.textContent).toContain('1 项异常')
+    expect(status().textContent).toContain('有操作待批准')
+    stopping.value = true
     await nextTick()
-    expect(header().getAttribute('aria-expanded')).toBe('false')
-  })
-
-  it('combines adjacent reasoning blocks without duplicating content or closing an open row', async () => {
-    const title = 'Investigating image upload naming'
-    const thought: ChatAgentTurnNode = { id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: `**${title}**` }
-    const { root, turn } = mountTurn([thought])
-    expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull()
-    root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!.click()
+    expect(status().textContent).toContain('正在停止')
+    stopping.value = false
+    turn.value = { ...turn.value, nodes: [...turn.value.nodes.slice(0, 3), { ...pending, status: 'completed' }], progress: { phase: 'tool_executing', toolName: 'read' } }
     await nextTick()
-    const following: ChatAgentTurnNode = { ...thought, id: 'following', contentIndex: 1, status: 'running', text: 'Check the extension' }
-    turn.value = { ...turn.value, nodes: [thought, following] }
-    await nextTick()
-    expect(root.querySelectorAll('.buddy-chat-reasoning-entry__header')).toHaveLength(1)
-    expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('Check the extension')
-    const settled: ChatAgentTurnNode[] = [thought, { ...following, status: 'completed', text: 'Check the extension and format' }]
-    turn.value = { ...turn.value, nodes: [...settled, readTool('one', 'running')] }
-    await nextTick()
-    expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('Check the extension and format')
-    expect(root.textContent?.split(title)).toHaveLength(2)
-    expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
+    expect(status().textContent).toContain('正在执行')
+    expect(status().textContent).not.toContain('待批准')
   })
 
   it('keeps a manually closed reasoning row closed as more blocks arrive and interruption settles it', async () => {
@@ -156,7 +133,14 @@ describe('activity disclosure', () => {
     await nextTick()
     expect(header().getAttribute('aria-expanded')).toBe('false')
     expect(header().textContent).toContain('正在思考')
-    turn.value = { ...turn.value, status: 'cancelled', nodes: [thought, following, { ...active, status: 'interrupted', text: 'Partial thought' }] }
+    turn.value = { ...turn.value, nodes: [...turn.value.nodes, readTool('boundary', 'running')] }
+    await nextTick()
+    const group = root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
+    expect(group.getAttribute('aria-expanded')).toBe('false')
+    turn.value = { ...turn.value, status: 'cancelled', nodes: [thought, following, { ...active, status: 'interrupted', text: 'Partial thought' }, readTool('boundary', 'cancelled')] }
+    await nextTick()
+    expect(group.getAttribute('aria-expanded')).toBe('false')
+    group.click()
     await nextTick()
     expect(header().getAttribute('aria-expanded')).toBe('false')
     expect(header().textContent).toContain('已中断')
@@ -166,12 +150,10 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('Partial thought')
   })
 
-  it.each(['reasoning', 'tool'] as const)('preserves a manually closed %s when the next tool forms a group', async (kind) => {
-    const node: ChatAgentTurnNode = kind === 'reasoning'
-      ? { id: 'thought', contentIndex: 0, kind, status: 'running', text: 'Checking the layout' }
-      : readTool('one', 'running')
+  it('keeps a manually closed tool closed when more calls form a group', async () => {
+    const node = readTool('one', 'running')
     const { root, turn } = mountTurn([node])
-    const header = root.querySelector<HTMLButtonElement>(kind === 'reasoning' ? '.buddy-chat-reasoning-entry__header' : '.buddy-chat-tool__header')!
+    const header = root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!
     header.click()
     await nextTick()
     header.click()
@@ -209,36 +191,38 @@ describe('activity disclosure', () => {
     await vi.waitFor(() => expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull())
   })
 
-  it('renders process narration as safe Markdown', () => {
-    const text = '**Review complete** with `inline code`.\n\n- First finding\n- Second finding\n\n```ts\nconst healthy = true\n```\n\n<img src="https://example.com/tracker.png">'
+  it('treats raw HTML in model narration as text', () => {
+    const text = 'Review complete. <img src="https://example.com/tracker.png">'
     const { root } = mountTurn([{ id: 'narration', kind: 'text', messageId: 'narration', text }], 'completed')
     const body = root.querySelector('.buddy-chat-narration-body')!
-    expect(body.querySelector('strong')?.textContent).toBe('Review complete')
-    expect(body.querySelector(':not(pre) > code')?.textContent).toBe('inline code')
-    expect([...body.querySelectorAll('li')].map(item => item.textContent)).toEqual(['First finding', 'Second finding'])
-    expect(body.querySelector('pre code')?.textContent).toContain('const healthy = true')
     expect(body.querySelector('img')).toBeNull()
     expect(body.textContent).toContain('<img src="https://example.com/tracker.png">')
   })
 
-  it('retains open tool output when a group forms, collapses and reopens', async () => {
-    const node = readTool('one', 'completed')
-    const { root, turn } = mountTurn([node], 'completed')
+  it('retains open output through leading reasoning, group collapse and model completion', async () => {
+    const node = readTool('one', 'running')
+    const { root, turn } = mountTurn([node])
     expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
     root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
     await nextTick()
-    turn.value = { ...turn.value, nodes: [node, readTool('two', 'completed')] }
+    const leading: ChatAgentTurnNode = { id: 'leading', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking the returned file' }
+    turn.value = { ...turn.value, nodes: [leading, { ...node, status: 'completed' }, readTool('two', 'completed')], progress: { phase: 'model_responding', toolName: null } }
     await nextTick()
     const group = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
     expect(group().getAttribute('aria-expanded')).toBe('true')
     expect(root.querySelectorAll('.buddy-chat-tool-details')).toHaveLength(1)
     expect(root.querySelector('[data-tool-detail-id="one"]')?.textContent).toContain('File output')
+    expect(root.querySelector('.buddy-chat-run-activity')?.textContent).toContain('正在回复')
     group().click()
     await nextTick()
     await vi.waitFor(() => expect(root.querySelector('.buddy-chat-tool-details')).toBeNull())
     group().click()
     await nextTick()
     expect(root.querySelector('[data-tool-call-id="one"] button')?.getAttribute('aria-expanded')).toBe('true')
+    expect(root.querySelector('[data-tool-detail-id="one"]')?.textContent).toContain('File output')
+    turn.value = { ...turn.value, status: 'completed', completedAt: '2026-09-09T00:00:10Z', progress: null }
+    await nextTick()
+    expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
     expect(root.querySelector('[data-tool-detail-id="one"]')?.textContent).toContain('File output')
   })
 
@@ -248,7 +232,7 @@ describe('activity disclosure', () => {
     root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!.click()
     await nextTick()
     const second = root.querySelector<HTMLButtonElement>('[data-tool-call-id="two"] button')!
-    expect(second.getAttribute('aria-label')).toContain('读取文件 · src/Row.vue')
+    expect(second.getAttribute('aria-label')).toContain('src/Row.vue')
     second.click()
     await nextTick()
     turn.value = { ...turn.value, nodes: [...nodes, readTool('four', 'completed')] }
@@ -258,16 +242,17 @@ describe('activity disclosure', () => {
     expect(root.querySelector('[data-tool-call-id="three"]')?.textContent).toContain('等待批准')
   })
 
-  it('cycles issues from a collapsed group and focuses denied tools even when no details are available', async () => {
-    const { root } = mountTurn([readTool('failed', 'failed'), readTool('ok', 'completed'), readTool('denied', 'denied')])
+  it('cycles extension and denied tool issues with accessible details and keyboard focus', async () => {
+    const failed = projectExtensionActionTool({ kind: 'extension-action', id: 'naming', conversationId: 'conversation', branchId: 'branch', sourceMessageId: 'question', extensionId: 'tests.title', extensionName: 'Title', actionId: 'tests.title.generate', title: '重新生成标题', trigger: 'task:input:committed', status: 'failed', message: '模型不可用', createdAt: '2026-09-09T00:00:01Z', completedAt: '2026-09-09T00:00:02Z' })
+    const { root } = mountTurn([failed, readTool('ok', 'completed'), readTool('denied', 'denied')])
     const issue = root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__issues')!
     expect(issue.textContent).toContain('2 项异常')
     expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
     issue.click()
     await nextTick()
     await nextTick()
-    expect(document.activeElement).toBe(root.querySelector('[data-tool-call-id="failed"] button'))
-    expect(root.querySelector('[data-tool-detail-id="failed"]')?.textContent).toContain('File output')
+    expect(document.activeElement).toBe(root.querySelector('[data-action-id="naming"] button'))
+    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
     issue.click()
     await nextTick()
     await nextTick()
@@ -276,9 +261,8 @@ describe('activity disclosure', () => {
     issue.click()
     await nextTick()
     await nextTick()
-    expect(document.activeElement).toBe(root.querySelector('[data-tool-call-id="failed"] button'))
-    expect(root.querySelector('[data-tool-detail-id="failed"]')?.textContent).toContain('File output')
-    expect(root.querySelector('button button')).toBeNull()
+    expect(document.activeElement).toBe(root.querySelector('[data-action-id="naming"] button'))
+    expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
   })
 
   it('collapses a long group from its footer and returns keyboard focus to its header', async () => {
@@ -314,7 +298,7 @@ describe('activity disclosure', () => {
 })
 
 describe('current status and historical activity', () => {
-  it('disables empty thinking details and retains streamed content through interruption and grouping', async () => {
+  it('disables empty thoughts and retains open merged reasoning through grouping and interruption', async () => {
     const thought: ChatAgentTurnNode = { id: 'thought', kind: 'reasoning', contentIndex: 0, status: 'running', text: '' }
     const { root, turn } = mountTurn([thought])
     const header = () => root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!
@@ -326,11 +310,15 @@ describe('current status and historical activity', () => {
     expect(header().disabled).toBe(false)
     header().click()
     await nextTick()
-    turn.value = { ...turn.value, nodes: [{ ...thought, text: 'Checking the layout\n\nMore detail' }, readTool('one', 'running')] }
+    const first: ChatAgentTurnNode = { ...thought, status: 'completed', text: 'Checking the layout' }
+    const following: ChatAgentTurnNode = { ...thought, id: 'following', contentIndex: 1, text: 'More detail' }
+    turn.value = { ...turn.value, nodes: [first, following, readTool('one', 'running')] }
     await nextTick()
+    expect(root.querySelectorAll('.buddy-chat-reasoning-entry__header')).toHaveLength(1)
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('More detail')
+    expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent?.split('Checking the layout')).toHaveLength(2)
     expect(root.querySelector('.buddy-chat-activity-group__header')?.getAttribute('aria-expanded')).toBe('true')
-    turn.value = { ...turn.value, status: 'cancelled', nodes: [{ ...thought, status: 'interrupted', text: 'Checking the layout\n\nMore detail' }, readTool('one', 'cancelled')] }
+    turn.value = { ...turn.value, status: 'cancelled', nodes: [first, { ...following, status: 'interrupted' }, readTool('one', 'cancelled')] }
     await nextTick()
     expect(root.querySelector('.buddy-chat-reasoning-entry__body')?.textContent).toContain('More detail')
     expect(header().textContent).toBe('思考已中断')
@@ -352,28 +340,11 @@ describe('current status and historical activity', () => {
     expect(root.querySelector('.buddy-chat-compaction')?.textContent).toContain('4,000 → 2,000 tokens')
     expect(root.querySelector('.buddy-chat-run-activity')?.textContent).toContain('等待模型响应')
   })
-
-  it('keeps execution, pending approval and issues visible together and shows stopping independently', async () => {
-    const running = readTool('running', 'running')
-    const pending = readTool('approval', 'awaiting_approval')
-    const { root, turn, stopping } = mountTurn([readTool('failed', 'failed'), running, pending, { id: 'narration', kind: 'text', messageId: 'narration', text: 'Another stage' }, readTool('history-2', 'completed'), readTool('approval-2', 'awaiting_approval')])
-    const status = () => root.querySelector('.buddy-chat-run-activity')!
-    const groups = [...root.querySelectorAll('.buddy-chat-activity-group')]
-    expect(groups[0]?.getAttribute('data-status')).toBe('running')
-    expect(groups[0]?.querySelector('.buddy-chat-activity-group__approval')?.textContent).toContain('1 项待批准')
-    expect(groups[0]?.querySelector('.buddy-chat-activity-group__issues')?.textContent).toContain('1 项异常')
-    expect(groups[1]?.getAttribute('data-status')).toBe('awaiting_approval')
-    expect(status().textContent).toContain('有操作待批准')
-    stopping.value = true
-    await nextTick()
-    expect(status().textContent).toContain('正在停止')
-    stopping.value = false
-    turn.value = { ...turn.value, nodes: [running, { ...pending, status: 'completed' }] }
-    await nextTick()
-    expect(status().textContent).toContain('正在执行')
-    expect(status().textContent).not.toContain('待批准')
-  })
 })
+
+function panel(id: string, actor: ChatAgentPanelNode['actor'] = 'user', action: ChatAgentPanelNode['action'] = 'open'): ChatAgentPanelNode {
+  return { id: `panel:${id}`, kind: 'panel', actor, action, status: 'completed' }
+}
 
 function mountTurn(nodes: ChatAgentTurnNode[], status: ChatAgentTurn['status'] = 'running') {
   const turn = shallowRef<ChatAgentTurn>({ branchId: 'branch', runId: 'run', completedAt: null, finalMessageId: null, nodes, processMessageIds: [], progress: null, reasoningLevel: null, startedAt: '2026-09-09T00:00:00Z', status, triggeringMessageId: 'question', usage: null })

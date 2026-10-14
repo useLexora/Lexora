@@ -5,6 +5,8 @@ export default {
   'desktop.chat.panelClosed': 'Resource panel closed',
   'desktop.chat.panelActorSystem': 'System',
   'desktop.chat.panelActorUser': 'You',
+  'desktop.chat.panelActorMixed': 'You and system',
+  'desktop.chat.panelOperationCount': 'Resource panel actions: {count}',
   'desktop.context.controlFailed': 'Could not control the resource panel. Try again.',
   'desktop.marks.name': 'Name',
   'desktop.marks.description': 'Description (optional)',

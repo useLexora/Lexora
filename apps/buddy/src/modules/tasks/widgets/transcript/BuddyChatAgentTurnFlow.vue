@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import type { ChatAgentTurnNode } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { PanelRight20Regular } from '@vicons/fluent'
 import { computed, shallowReactive } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { createChatAgentActivityProjector } from '../../model/transcript/chatAgentActivities'
 import BuddyChatActivityGroup from './BuddyChatActivityGroup.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
 import BuddyChatNarrationBody from './BuddyChatNarrationBody.vue'
+import BuddyChatPanelGroup from './BuddyChatPanelGroup.vue'
 
 const props = defineProps<{
   failureDetailText: string | null
@@ -46,10 +45,7 @@ const rows = computed(() => rowProjector.project(props.nodes))
         :language="language"
         :text="row.text"
       />
-      <p v-else-if="row.kind === 'panel'" class="buddy-chat-agent-turn__panel-operation flex items-center gap-[6px] my-[4px] mx-0 text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)]" data-testid="context-panel-operation">
-        <DesktopIcon :component="PanelRight20Regular" />
-        <span>{{ t(row.actor === 'harness' ? 'desktop.chat.panelActorSystem' : 'desktop.chat.panelActorUser') }} · {{ t(row.action === 'open' ? 'desktop.chat.panelOpened' : 'desktop.chat.panelClosed') }}</span>
-      </p>
+      <BuddyChatPanelGroup v-else-if="row.kind === 'panel-group'" :group="row" :language="language" />
     </template>
     <p v-if="failureDetailText" class="buddy-chat-agent-turn__failure-detail m-0 text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)] [overflow-wrap:anywhere] whitespace-pre-wrap">
       <span>{{ t('desktop.chat.failureDetail') }}</span>
@@ -65,16 +61,6 @@ const rows = computed(() => rowProjector.project(props.nodes))
   span {
     color: var(--buddy-chat-process-color);
     font-weight: 600;
-  }
-}
-
-.buddy-chat-agent-turn__panel-operation {
-  color: var(--buddy-chat-process-color);
-
-  svg {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
   }
 }
 </style>

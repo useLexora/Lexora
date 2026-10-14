@@ -16,7 +16,14 @@ export interface ChatAgentActivityGroup {
   counts: ReadonlyArray<{ category: ChatToolCategory, count: number, files: number | null }>
 }
 
-export type ChatAgentActivityRow = ChatAgentActivityGroup | ChatAgentNarrationNode | ChatAgentCompactionNode | ChatAgentPanelNode
+export interface ChatAgentPanelGroup {
+  id: string
+  kind: 'panel-group'
+  actor: ChatAgentPanelNode['actor'] | 'mixed'
+  nodes: ReadonlyArray<ChatAgentPanelNode>
+}
+
+export type ChatAgentActivityRow = ChatAgentActivityGroup | ChatAgentNarrationNode | ChatAgentCompactionNode | ChatAgentPanelGroup
 
 export function createChatAgentActivityProjector() {
   let source: ReadonlyArray<ChatAgentTurnNode> | null = null
@@ -30,6 +37,7 @@ export function createChatAgentActivityProjector() {
       const next: ChatAgentActivityRow[] = []
       let boundary = 'start'
       let members: Array<ChatAgentReasoningNode | ChatAgentToolNode> = []
+      let panels: ChatAgentPanelNode[] = []
       function flush() {
         if (!members.length)
           return
@@ -42,16 +50,37 @@ export function createChatAgentActivityProjector() {
           : summarizeGroup(id, members))
         members = []
       }
+      function flushPanels() {
+        const first = panels[0]
+        if (!first)
+          return
+        const id = `panel-group:${first.id}`
+        const cached = previous.get(id)
+        next.push(cached?.kind === 'panel-group'
+          && cached.nodes.length === panels.length
+          && cached.nodes.every((node, index) => node === panels[index])
+          ? cached
+          : { id, kind: 'panel-group', actor: panels.every(node => node.actor === first.actor) ? first.actor : 'mixed', nodes: panels })
+        panels = []
+      }
       for (const node of nodes) {
         if (node.kind === 'reasoning' || node.kind === 'tool') {
+          flushPanels()
           members.push(node)
           continue
         }
         flush()
+        if (node.kind === 'panel') {
+          panels.push(node)
+          boundary = node.id
+          continue
+        }
+        flushPanels()
         next.push(node)
         boundary = node.id
       }
       flush()
+      flushPanels()
       source = nodes
       rows = next
       return rows
