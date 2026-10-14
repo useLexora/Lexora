@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { useDesktopUpdates } from '../useDesktopUpdates'
 
 const result: DesktopUpdateCheckResult = { currentVersion: '1.0.0', latestVersion: '1.1.0', status: 'update_available', releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.1.0', releaseNotes: 'Update' }
-const empty: DesktopUpdateState = { revision: 0, checking: false, enabled: true, result: null, notification: null, reminderDueAt: null }
+const empty: DesktopUpdateState = { revision: 0, checking: false, enabled: true, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }
 
 it('does not let a late startup snapshot overwrite newer availability or re-enable disabled notifications', async () => {
   const loading = deferred<DesktopUpdateState>()
@@ -12,6 +12,13 @@ it('does not let a late startup snapshot overwrite newer availability or re-enab
   const store = useDesktopUpdates({
     checkForUpdates: async () => result,
     updates: {
+      download: async () => {},
+      cancelDownload: async () => {},
+      install: async () => {},
+      openDownloadDirectory: async () => {},
+      openPackage: async () => {},
+      getCacheSummary: async () => ({ bytes: 0, files: 0 }),
+      clearCache: async () => {},
       getState: () => loading.promise,
       onChanged: (listener) => {
         emit = listener
@@ -36,7 +43,7 @@ it('keeps manual errors retryable and discards replies after closing or disposal
   const check = vi.fn<() => Promise<DesktopUpdateCheckResult>>().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(response.promise).mockResolvedValue(result)
   const store = useDesktopUpdates({
     checkForUpdates: check,
-    updates: { getState: async () => empty, onChanged: () => () => {}, acknowledge: async () => empty, takeReminder: async () => null },
+    updates: { download: async () => {}, cancelDownload: async () => {}, install: async () => {}, openDownloadDirectory: async () => {}, openPackage: async () => {}, getCacheSummary: async () => ({ bytes: 0, files: 0 }), clearCache: async () => {}, getState: async () => empty, onChanged: () => () => {}, acknowledge: async () => empty, takeReminder: async () => null },
   })
   await expect(store.check()).rejects.toThrow('offline')
   expect(store.details.value).toBeNull()

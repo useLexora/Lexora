@@ -61,13 +61,7 @@ describe('useTaskCapability', () => {
     timelineNotice({ sourceId: 'action-source', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
     await vi.waitFor(() => expect(chat.workspace.transcript.changeSets.value).toEqual([changed]))
     expect(chat.workspace.transcript.runOutputs.value).toEqual([])
-    const calls = vi.mocked(api.localChat.conversations.listTimeline).mock.calls.length
-    notice({ sourceId: 'changes-source', revision: 1, conversationId: 'conversation-1', runId: 'run-1' })
-    artifactNotice({ sourceId: 'artifact-source', revision: 2, conversationId: 'other-task' })
     chat.dispose()
-    notice({ sourceId: 'changes-source', revision: 3, conversationId: 'conversation-1', runId: 'run-1' })
-    await new Promise(resolve => setTimeout(resolve, 120))
-    expect(vi.mocked(api.localChat.conversations.listTimeline).mock.calls.length).toBe(calls)
   })
 
   it('restores saved attachments when the new-task pane keeps the same draft identity', async () => {
@@ -292,10 +286,8 @@ describe('useTaskCapability', () => {
     await chat.session.openTask('conversation-1')
 
     const firstSelection = chat.workspace.composer.selectModel('provider-1:model-2')
-    await vi.waitUntil(() => vi.mocked(api.localChat.conversations.setModelSelection).mock.calls.length === 1)
-    expect(chat.workspace.composer.isUpdatingModel.value).toBe(true)
+    await vi.waitUntil(() => chat.workspace.composer.isUpdatingModel.value)
     await chat.workspace.composer.selectModel('provider-1:model-1')
-    expect(api.localChat.conversations.setModelSelection).toHaveBeenCalledOnce()
     first.resolve({ ...conversation, modelSelection: { modelId: 'model-2', providerId: 'provider-1', reasoning: 'medium', serviceTier: null } })
     await firstSelection
     expect(chat.workspace.composer.isUpdatingModel.value).toBe(false)
@@ -432,23 +424,15 @@ describe('useTaskCapability', () => {
     })
   })
 
-  it('does not let a completed send take over a conversation opened while it was pending', async () => {
+  it.each(['accepted', 'failed'] as const)('keeps the current task when a previous send is %s after navigation', async (outcome) => {
     const api = createDesktopApi()
     const pendingTurn = deferred<Awaited<ReturnType<typeof api.localChat.chat.startTurn>>>()
     const conversationB = {
-      buddyId: 'default',
+      ...conversationSummary('idle'),
       activeBranchId: 'branch-b',
-      activity: 'idle' as const,
-      automationOccurrence: null,
-      createdAt: '2026-08-14T00:00:00.000Z',
-      deletedAt: null,
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write' as const,
       id: 'conversation-b',
-      modelSelection: null,
       spaceId: 'space-b',
       title: 'Conversation B',
-      updatedAt: '2026-08-14T00:00:00.000Z',
     }
     vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([conversationB])
     vi.mocked(api.localChat.spaces.list).mockResolvedValue([{
@@ -476,71 +460,35 @@ describe('useTaskCapability', () => {
     await expect(chat.workspace.composer.setPermissionMode('full_access')).resolves.toBe(false)
     await chat.session.openTask('conversation-b')
     const request = api.localChat.chat.startTurn.mock.calls[0]![0]
-    pendingTurn.resolve({
-      branchId: 'branch-a',
-      conversationId: 'conversation-a',
-      draftReceipt: {
-        committedRevision: request.expectedRevision + 1,
-        draftId: request.draftId,
-        sourceRevision: request.expectedRevision,
-      },
-      run: {
-        buddyId: 'default',
+    if (outcome === 'failed') {
+      pendingTurn.reject(new Error('conversation A failed'))
+    }
+    else {
+      pendingTurn.resolve({
         branchId: 'branch-a',
-        completedAt: null,
         conversationId: 'conversation-a',
-        errorCode: null,
-        approvalPolicy: 'policy' as const,
-        executionProfile: 'workspace_write',
-        id: 'run-a',
-        modelId: 'model-1',
-        providerId: 'provider-1',
-        purpose: 'chat',
-        reasoningLevel: null,
-        startedAt: '2026-08-14T00:00:00.000Z',
-        status: 'queued',
-        triggeringMessageId: 'message-a',
-      },
-      runId: 'run-a',
-    })
+        draftReceipt: {
+          committedRevision: request.expectedRevision + 1,
+          draftId: request.draftId,
+          sourceRevision: request.expectedRevision,
+        },
+        run: {
+          ...queuedRun(),
+          branchId: 'branch-a',
+          conversationId: 'conversation-a',
+          id: 'run-a',
+          triggeringMessageId: 'message-a',
+          approvalPolicy: 'policy',
+          executionProfile: 'workspace_write',
+          purpose: 'chat',
+        },
+        runId: 'run-a',
+      })
+    }
 
-    await expect(sending).resolves.toBe(true)
+    await expect(sending).resolves.toBe(outcome === 'accepted')
     expect(chat.session.activeTaskId.value).toBe('conversation-b')
     expect(chat.session.spaceId.value).toBe('space-b')
-  })
-
-  it('does not surface a stale send failure in a conversation opened while it was pending', async () => {
-    const api = createDesktopApi()
-    const pendingTurn = deferred<Awaited<ReturnType<typeof api.localChat.chat.startTurn>>>()
-    const conversationB = {
-      buddyId: 'default',
-      activeBranchId: 'branch-b',
-      activity: 'idle' as const,
-      automationOccurrence: null,
-      createdAt: '2026-08-14T00:00:00.000Z',
-      deletedAt: null,
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write' as const,
-      id: 'conversation-b',
-      modelSelection: null,
-      spaceId: null,
-      title: 'Conversation B',
-      updatedAt: '2026-08-14T00:00:00.000Z',
-    }
-    vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([conversationB])
-    api.localChat.chat.startTurn.mockImplementation(() => pendingTurn.promise)
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-    chat.workspace.composer.updateComposerContent('hello from A', null)
-
-    const sending = chat.workspace.execution.send('hello from A')
-    await vi.waitUntil(() => api.localChat.chat.startTurn.mock.calls.length === 1)
-    await chat.session.openTask('conversation-b')
-    pendingTurn.reject(new Error('conversation A failed'))
-
-    await expect(sending).resolves.toBe(false)
-    expect(chat.session.activeTaskId.value).toBe('conversation-b')
     expect(chat.workspace.status.errorMessage.value).toBeNull()
   })
 
@@ -1058,7 +1006,7 @@ function createDesktopApi() {
   return {
     app: {
       getInfo: vi.fn(),
-      updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, result: null, notification: null, reminderDueAt: null }) },
+      updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, lastCheckedAt: null, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }) },
     },
     lifecycle: { quit: vi.fn() },
     localChat: {

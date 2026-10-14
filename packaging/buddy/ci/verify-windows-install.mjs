@@ -51,7 +51,7 @@ async function main() {
     writeOutput('Installed Windows Desktop: startup, database, restart and shutdown passed')
   }
   finally {
-    await rm(smokeRoot, { force: true, recursive: true })
+    await rm(smokeRoot, { force: true, recursive: true, maxRetries: 10, retryDelay: 250 })
   }
 }
 

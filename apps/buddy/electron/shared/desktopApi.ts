@@ -10,7 +10,7 @@ import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { ThemePreference } from '../../shared/theme/themePreferences'
 import type { DesktopChatWelcomeItem, DesktopChatWelcomePreference } from './desktopChatWelcome'
 import type { DesktopCommandId, DesktopPlatform } from './desktopCommands'
-import type { DesktopUpdateApi, DesktopUpdateCheckResult } from './desktopUpdates'
+import type { DesktopUpdateApi, DesktopUpdateCapabilities, DesktopUpdateCheckResult } from './desktopUpdates'
 import type { LocalChatApi } from './localChatApi'
 import { BUDDY_DEFAULT_PERMISSION_MODE } from '../../shared/permissions/permissionMode'
 import { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS } from './desktopChatWelcome'
@@ -32,6 +32,13 @@ export const DESKTOP_IPC_CHANNELS = {
   appStartupReport: 'lexora:app:startup:report',
   appStartupStateChanged: 'lexora:app:startup:state-changed',
   appCheckForUpdates: 'lexora:app:check-for-updates',
+  appUpdatesDownload: 'lexora:app:updates:download',
+  appUpdatesCancelDownload: 'lexora:app:updates:cancel-download',
+  appUpdatesInstall: 'lexora:app:updates:install',
+  appUpdatesOpenPackage: 'lexora:app:updates:open-package',
+  appUpdatesOpenDirectory: 'lexora:app:updates:open-directory',
+  appUpdatesCacheSummary: 'lexora:app:updates:cache-summary',
+  appUpdatesClearCache: 'lexora:app:updates:clear-cache',
   appUpdatesState: 'lexora:app:updates:state',
   appUpdatesChanged: 'lexora:app:updates:changed',
   appUpdatesAcknowledge: 'lexora:app:updates:acknowledge',
@@ -103,6 +110,7 @@ export interface DesktopUserProfileConfig {
 }
 
 export interface DesktopAppInfo {
+  updateCapabilities?: DesktopUpdateCapabilities
   runtimeProfile: BuddyRuntimeProfile
   isPackaged: boolean
   capabilities: BuddyCapabilities
@@ -186,6 +194,7 @@ export interface LexoraConfig {
     launchAtLogin: boolean
     notificationsEnabled: boolean
     updateNotificationsEnabled: boolean
+    autoDownloadUpdates: boolean
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig
     pluginAuthor: string

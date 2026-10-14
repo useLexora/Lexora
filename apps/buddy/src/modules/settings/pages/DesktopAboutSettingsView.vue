@@ -4,6 +4,7 @@ import DesktopSettingsModuleLayout from '../layouts/DesktopSettingsModuleLayout.
 import { useSettingsContext } from '../settingsContext'
 import DesktopAboutSettings from '../widgets/app/DesktopAboutSettings.vue'
 import DesktopApplicationToggle from '../widgets/app/DesktopApplicationToggle.vue'
+import DesktopUpdateSettings from '../widgets/app/DesktopUpdateSettings.vue'
 
 const { applicationSettings, appInfo } = useSettingsContext()
 const { config, settingsError, language, updateSettings } = applicationSettings
@@ -13,16 +14,14 @@ const { t } = useBuddyI18n(language)
 <template>
   <DesktopSettingsModuleLayout>
     <DesktopAboutSettings :app-info="appInfo" :language="language" />
+    <DesktopUpdateSettings
+      :config="config"
+      :error="settingsError"
+      :language="language"
+      :update-settings="updateSettings"
+      :capabilities="appInfo?.updateCapabilities"
+    />
     <div class="desktop-about-preferences grid gap-[0.8rem]">
-      <DesktopApplicationToggle
-        field="updateNotificationsEnabled"
-        :label="t('desktop.update.notifications')"
-        :description="t('desktop.update.notificationsDescription')"
-        :config="config"
-        :error="settingsError"
-        :language="language"
-        :update-settings="updateSettings"
-      />
       <DesktopApplicationToggle
         field="launchAtLogin"
         :label="t('settings.autostart')"

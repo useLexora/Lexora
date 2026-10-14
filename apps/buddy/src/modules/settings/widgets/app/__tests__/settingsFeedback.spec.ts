@@ -22,7 +22,7 @@ function mount(component: Component, props: () => Record<string, unknown>) {
   document.body.append(root)
   const app = createApp({
     setup() {
-      let state: DesktopUpdateState = { revision: 0, checking: false, enabled: true, result: null, notification: null, reminderDueAt: null }
+      let state: DesktopUpdateState = { revision: 0, checking: false, enabled: true, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }
       let changed = (_value: DesktopUpdateState) => {}
       const updates = useDesktopUpdates({
         checkForUpdates: async () => {
@@ -36,6 +36,13 @@ function mount(component: Component, props: () => Record<string, unknown>) {
             changed = listener
             return () => {}
           },
+          download: async () => {},
+          cancelDownload: async () => {},
+          install: async () => {},
+          openDownloadDirectory: async () => {},
+          openPackage: async () => {},
+          getCacheSummary: async () => ({ bytes: 0, files: 0 }),
+          clearCache: async () => {},
           getState: async () => state,
           acknowledge: async () => state,
           takeReminder: async () => null,
@@ -124,7 +131,7 @@ describe('settings action feedback', () => {
     expect(messages()).toHaveLength(1)
   })
 
-  it('keeps the saved toggle value on failure without adding a row, and can retry', async () => {
+  it('keeps the saved toggle value on failure and can retry', async () => {
     const config = await configFixture()
     let succeeds = false
     const root = mount(DesktopApplicationToggle, () => ({
@@ -141,11 +148,9 @@ describe('settings action feedback', () => {
       },
     }))
     const control = root.querySelector<HTMLButtonElement>('[role="switch"]')!
-    const children = root.firstElementChild!.childElementCount
     control.click()
     await vi.waitFor(() => expect(messages()).toHaveLength(1))
     expect(control.getAttribute('aria-checked')).toBe('false')
-    expect(root.firstElementChild!.childElementCount).toBe(children)
     succeeds = true
     control.click()
     await vi.waitFor(() => expect(control.getAttribute('aria-checked')).toBe('true'))

@@ -53,6 +53,9 @@ const messages = {
     saveBeforeQuitTitle: 'Save changes before quitting?',
     retrySave: 'Retry',
     quitWithoutSaving: 'Quit without saving',
+    closeForInstallation: 'Close Lexora to continue installation?',
+    closeForInstallationBody: 'Tasks are still running. Closing Lexora will interrupt them. You can cancel and install later.',
+    closeAndContinue: 'Close and continue',
     cancel: 'Cancel',
   },
   'zh-CN': {
@@ -105,6 +108,9 @@ const messages = {
     saveBeforeQuitTitle: '退出前保存更改？',
     retrySave: '重试',
     quitWithoutSaving: '放弃保存并退出',
+    closeForInstallation: '关闭 Lexora 并继续安装？',
+    closeForInstallationBody: '当前仍有任务正在运行，关闭 Lexora 将中断这些任务。你可以取消，稍后再安装。',
+    closeAndContinue: '关闭并继续',
     cancel: '取消',
   },
 } as const

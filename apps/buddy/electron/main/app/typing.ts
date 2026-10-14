@@ -20,11 +20,13 @@ export interface DesktopEnvironment {
 }
 
 export interface DesktopQuitOptions {
+  reason?: 'installation'
   discardDraftsOnFailure?: boolean
   restart?: boolean
 }
 
 export interface DesktopQuitHost {
+  isBusy?: () => Promise<boolean>
   getWindow: () => BrowserWindow | null
   getLanguage: () => LexoraConfig['desktop']['language']
 }

@@ -107,7 +107,25 @@ export async function showDesktopStartupFailure(error: unknown, language: Lexora
   }
 }
 
-export function confirmDesktopQuit(host: DesktopQuitHost, options: DesktopQuitOptions): Promise<boolean> {
+export async function confirmDesktopQuit(host: DesktopQuitHost, options: DesktopQuitOptions): Promise<boolean> {
+  if (options.reason === 'installation' && await host.isBusy?.()) {
+    const language = host.getLanguage()
+    const window = host.getWindow()
+    if (window && !window.isVisible())
+      window.show()
+    const prompt: MessageBoxOptions = {
+      type: 'warning',
+      message: translateDesktopNative(language, 'closeForInstallation'),
+      detail: translateDesktopNative(language, 'closeForInstallationBody'),
+      buttons: [translateDesktopNative(language, 'cancel'), translateDesktopNative(language, 'closeAndContinue')],
+      cancelId: 0,
+      defaultId: 0,
+      noLink: true,
+    }
+    const result = await (window ? dialog.showMessageBox(window, prompt) : dialog.showMessageBox(prompt))
+    if (result.response !== 1)
+      return false
+  }
   return confirmDraftFlushBeforeQuit(
     () => requestRendererDraftFlush(host.getWindow(), ipcMain),
     options.discardDraftsOnFailure

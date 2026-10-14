@@ -71,13 +71,19 @@ export class DesktopUpdates {
   }
 
   get state(): DesktopUpdateState {
-    const { result, discoveredAt, seenVersion, ignoredVersion, notifiedVersion, lastNotifiedAt } = this.#record
-    const available = this.#enabled && result?.status === 'update_available' && !covers(ignoredVersion, result.latestVersion)
+    const { result, discoveredAt, seenVersion, ignoredVersion, notifiedVersion, lastNotifiedAt, snoozedReminder } = this.#record
+    const candidate = result?.status === 'update_available' && !covers(ignoredVersion, result.latestVersion)
+    const deferred = candidate && snoozedReminder?.version === result.latestVersion ? snoozedReminder : null
+    const available = candidate && (this.#enabled || deferred !== null)
     const unseen = available && !covers(seenVersion, result.latestVersion)
     return copyEventSnapshot({
       revision: this.#revision,
       checking: this.#request !== null,
       enabled: this.#enabled,
+      lastCheckedAt: this.#record.lastCheckedAt,
+      lastSuccessfulCheckAt: this.#record.lastSuccessfulCheckAt,
+      checkFailed: this.#record.checkFailed,
+      ignoredVersion: ignoredVersion !== null && compareDesktopVersions(ignoredVersion, this.#options.currentVersion) > 0 ? ignoredVersion : null,
       result,
       notification: available
         ? {
@@ -91,9 +97,14 @@ export class DesktopUpdates {
             payload: { version: result.latestVersion },
           }
         : null,
-      reminderDueAt: this.#ready && unseen && !covers(notifiedVersion, result.latestVersion)
-        ? lastNotifiedAt === null ? 0 : Math.min(lastNotifiedAt, Date.now()) + UPDATE_REMINDER_INTERVAL
+      reminderDueAt: this.#ready && available
+        ? deferred
+          ? deferred.reminded ? null : deferred.until
+          : unseen && !covers(notifiedVersion, result.latestVersion)
+            ? lastNotifiedAt === null ? 0 : Math.min(lastNotifiedAt, Date.now()) + UPDATE_REMINDER_INTERVAL
+            : null
         : null,
+      reminderDeferredUntil: deferred && !deferred.reminded ? deferred.until : null,
     })
   }
 
@@ -142,18 +153,47 @@ export class DesktopUpdates {
 
   acknowledge(input: DesktopUpdateAction): Promise<DesktopUpdateState> {
     return this.#enqueue(async () => {
+      if (input.action === 'unignore') {
+        if (this.#record.ignoredVersion === input.version) {
+          await this.#commit({
+            ...this.#record,
+            ignoredVersion: null,
+            seenVersion: this.#record.seenVersion === input.version ? null : this.#record.seenVersion,
+            ...(this.#record.notifiedVersion === input.version ? { notifiedVersion: null, lastNotifiedAt: null } : {}),
+          })
+        }
+        return this.state
+      }
       const result = this.#record.result
       if (result?.latestVersion !== input.version || result.status !== 'update_available')
         return this.state
+      if (input.action === 'snooze') {
+        const until = new Date()
+        if (input.delay === 'tomorrow')
+          until.setDate(until.getDate() + 1)
+        else
+          until.setTime(until.getTime() + 30 * 60_000)
+        await this.#commit({ ...this.#record, seenVersion: input.version, snoozedReminder: { version: input.version, until: until.getTime(), reminded: false } })
+        return this.state
+      }
+      if (input.action === 'cancel-snooze') {
+        if (this.#record.snoozedReminder?.version === input.version)
+          await this.#commit({ ...this.#record, snoozedReminder: null })
+        return this.state
+      }
       if (input.action === 'reminded') {
-        if (!covers(this.#record.notifiedVersion, input.version))
-          await this.#commit({ ...this.#record, notifiedVersion: input.version, lastNotifiedAt: Date.now() })
+        const deferred = this.#record.snoozedReminder?.version === input.version ? this.#record.snoozedReminder : null
+        if (deferred && (deferred.reminded || deferred.until > Date.now()))
+          return this.state
+        if (!covers(this.#record.notifiedVersion, input.version) || deferred?.version === input.version)
+          await this.#commit({ ...this.#record, seenVersion: this.#record.seenVersion === input.version ? null : this.#record.seenVersion, snoozedReminder: deferred ? { ...deferred, reminded: true } : null, notifiedVersion: input.version, lastNotifiedAt: Date.now() })
         return this.state
       }
       await this.#commit({
         ...this.#record,
         seenVersion: input.version,
-        ...(input.action === 'ignore' ? { ignoredVersion: input.version } : {}),
+        ...(this.#record.snoozedReminder?.reminded ? { snoozedReminder: null } : {}),
+        ...(input.action === 'ignore' ? { ignoredVersion: input.version, snoozedReminder: null } : {}),
       })
       return this.state
     })
@@ -187,13 +227,28 @@ export class DesktopUpdates {
       await this.#commit({ ...this.#record, lastCheckedAt: this.#attemptAt })
     })
     signal.throwIfAborted()
-    const result = await this.#options.check(signal)
+    let result: DesktopUpdateCheckResult
+    try {
+      result = await this.#options.check(signal)
+    }
+    catch (error) {
+      if (!signal.aborted) {
+        await this.#enqueue(async () => {
+          if (!signal.aborted && this.#request === request)
+            await this.#commit({ ...this.#record, checkFailed: true })
+        })
+      }
+      throw error
+    }
     return this.#enqueue(async () => {
       signal.throwIfAborted()
       const previous = this.#record.result
       await this.#commit({
         ...this.#record,
         result,
+        lastSuccessfulCheckAt: Date.now(),
+        checkFailed: false,
+        snoozedReminder: this.#record.snoozedReminder?.version === result.latestVersion ? this.#record.snoozedReminder : null,
         discoveredAt: previous?.latestVersion === result.latestVersion ? this.#record.discoveredAt : Date.now(),
         ...(request.manual ? { seenVersion: result.latestVersion } : {}),
       })
@@ -235,7 +290,7 @@ export class DesktopUpdates {
     clearTimeout(this.#timer)
     if (this.#stopped || !this.#enabled || !this.#ready || !this.#options.automatic || this.#request)
       return
-    const checked = this.#attemptAt ?? this.#record.lastCheckedAt
+    const checked = this.#attemptAt
     const due = Math.max(this.#automaticAfter, checked === null ? 0 : Math.min(checked, Date.now()) + UPDATE_CHECK_INTERVAL)
     this.#timer = setTimeout(() => {
       void this.check(false).catch(() => {

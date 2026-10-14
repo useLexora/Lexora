@@ -21,7 +21,7 @@ if (!target)
 const platform = resolveBuildTarget(values.target)
 requireNativeBuildTarget(platform)
 requirePackageFormat(platform, target)
-if (target === 'dmg')
+if (['dmg', 'zip'].includes(target))
   requireMacosSigningEnvironment()
 
 const errors = verifyElectronBundle()
@@ -41,10 +41,11 @@ const result = spawnSync(process.execPath, [
   'electron-builder.config.cjs',
   `--${platform.builderPlatform}`,
   target,
+  ...(target === 'dmg' ? ['zip'] : []),
   `--${platform.architecture}`,
   '--publish',
   'never',
-], { cwd: paths.buddyRoot, env: process.env, stdio: 'inherit' })
+], { cwd: paths.buddyRoot, env: { ...process.env, LEXORA_BUDDY_PACKAGE_FORMAT: target }, stdio: 'inherit' })
 if (result.error)
   throw result.error
 if (result.status !== 0)
@@ -55,9 +56,13 @@ if (target === 'dmg')
   notarizeMacosArtifact(packagePath)
 if (target === 'nsis')
   verifyDesktopDirectory(join(paths.package.desktop, platform.architecture === CPU_ARCHITECTURE.X64 ? 'win-unpacked' : `win-${platform.architecture}-unpacked`), platform.id)
-else if (target === 'dmg')
+else if (['dmg', 'zip'].includes(target))
   verifyDesktopDirectory(join(paths.package.desktop, `mac-${platform.architecture}/lexora-buddy.app`), platform.id)
 else
   verifyLinuxPackage(target, packagePath, repoRoot, platform.id)
 renameSync(packagePath, artifact.path)
+if (target === 'dmg') {
+  const zip = desktopArtifact(platform, 'zip', { cwd: repoRoot })
+  renameSync(join(paths.package.desktop, zip.name), zip.path)
+}
 writeOutput(artifact.path)

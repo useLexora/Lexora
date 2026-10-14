@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,6 +39,15 @@ async function main() {
     mounted = false
     verifyBundleCompatibility(installed, target)
     execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', installed], { stdio: 'inherit' })
+    const updateDirectory = join(directory, 'update')
+    execFileSync('ditto', ['-x', '-k', desktopArtifact(target, 'zip').path, updateDirectory], { stdio: 'inherit', timeout: 120_000 })
+    const updateBundle = join(updateDirectory, 'lexora-buddy.app')
+    verifyDesktopResources(updateBundle, target.id)
+    verifyBundleCompatibility(updateBundle, target)
+    execFileSync('codesign', ['--verify', '--deep', '--strict', updateBundle], { stdio: 'inherit' })
+    const fingerprint = bundle => createHash('sha256').update(readFileSync(join(bundle, 'Contents/Resources/app.asar'))).digest('hex')
+    if (fingerprint(updateBundle) !== fingerprint(installed))
+      throw new Error('macOS update ZIP and DMG application content differs')
     verifyFirstLaunchPolicy(installed, signing)
     const { executablePath, resources } = verifyDesktopResources(installed, target.id)
     const fixture = join(directory, '文档.txt')

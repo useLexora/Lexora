@@ -3,17 +3,19 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { desktopUpdateArtifactName } from '../../../apps/buddy/electron/shared/desktopDistribution.ts'
 import { CPU_ARCHITECTURE } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { requirePackageFormat, resolveBuildTarget } from './targets.mjs'
 
 const formats = {
-  deb: { directory: 'desktop', artifact: 'lexora-buddy-ubuntu', suffix: target => `linux-${target.architecture === CPU_ARCHITECTURE.X64 ? 'amd64' : 'arm64'}.deb` },
-  rpm: { directory: 'rpm', artifact: 'lexora-buddy-fedora', suffix: target => `linux-${target.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64'}.rpm` },
-  pacman: { directory: 'arch', artifact: 'lexora-buddy-arch', suffix: target => `arch-${target.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64'}.pkg.tar.zst` },
-  nsis: { directory: 'windows', artifact: 'lexora-buddy-windows', suffix: target => `windows-${target.architecture}.exe` },
-  dmg: { directory: 'macos', artifact: 'lexora-buddy-macos', suffix: target => `macos-${target.architecture}.dmg` },
+  deb: { directory: 'desktop', artifact: 'lexora-buddy-ubuntu' },
+  rpm: { directory: 'rpm', artifact: 'lexora-buddy-fedora' },
+  pacman: { directory: 'arch', artifact: 'lexora-buddy-arch' },
+  nsis: { directory: 'windows', artifact: 'lexora-buddy-windows' },
+  zip: { directory: 'macos', artifact: 'lexora-buddy-macos' },
+  dmg: { directory: 'macos', artifact: 'lexora-buddy-macos' },
 }
 
 export const releasePackages = [
@@ -26,11 +28,12 @@ export const releasePackages = [
   { targetId: 'win32-x64', format: 'nsis' },
   { targetId: 'win32-arm64', format: 'nsis' },
   { targetId: 'darwin-arm64', format: 'dmg' },
+  { targetId: 'darwin-arm64', format: 'zip' },
 ]
 
 export function desktopArtifactName(target, format, version) {
   requirePackageFormat(target, format)
-  return `Lexora-Buddy-${version}-${formats[format].suffix(target)}`
+  return desktopUpdateArtifactName(format, target.architecture, version)
 }
 
 export function desktopArtifact(target, format, { cwd } = {}) {

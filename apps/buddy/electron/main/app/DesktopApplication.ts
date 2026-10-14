@@ -9,8 +9,10 @@ import { readDiagnosticErrorCode } from '../../../shared/diagnostics/application
 import { ServiceHost } from '../../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../../shared/lifecycle/ServiceLifecycleSource'
 import { observeLifecycleDiagnostics } from '../../../shared/observability/lifecycleDiagnostics'
+import { runsRpc } from '../../../shared/runs/runApi'
 import { BrowserIntegration } from '../browser/BrowserIntegration'
-import { resolveDesktopLaunchIntent } from '../startupIntent'
+import { INSTALLER_EXIT_ARGUMENT, isInstallerExitRequest, resolveDesktopLaunchIntent } from '../startupIntent'
+import { isWindowsInstallationActive } from '../updates/windowsInstallationGate'
 import { closeDesktopDiagnostics } from './closeDesktopDiagnostics'
 import { confirmDesktopQuit, showBackgroundCloseNotice, showDesktopStartupFailure, showLegacyPowerShellNotice } from './desktopDialogs'
 import { DesktopIntegrations } from './DesktopIntegrations'
@@ -57,6 +59,11 @@ class DesktopApplication {
       confirm: options => confirmDesktopQuit({
         getWindow: () => this.#windows.window,
         getLanguage: () => this.#runtime.language,
+        isBusy: async () => {
+          if (this.#runtime.service.state.status !== 'ready')
+            return false
+          return runsRpc.isBusy.response.parse(await this.#runtime.service.request(runsRpc.isBusy.method, {}, { timeoutMs: 5_000 }))
+        },
       }, options),
       dispose: async () => {
         try {
@@ -69,8 +76,17 @@ class DesktopApplication {
           app.relaunch({ args: recoveryRelaunchArgs(process.argv, environment.diagnostics.launchId) })
         app.quit()
       },
+      exit: () => app.exit(1),
     })
-    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, this.#browser, () => this.#requestQuit(), () => this.#requestRestart())
+    this.#integrations = new DesktopIntegrations(environment, this.#runtime, this.#windows, this.#browser, () => this.#requestQuit(), () => this.#requestRestart(), async (prepare) => {
+      let prepared = false
+      await this.#quit.request({ reason: 'installation' }, async () => {
+        const finish = await prepare()
+        prepared = true
+        return finish
+      })
+      return prepared && this.#quit.committed
+    })
   }
 
   bindEvents(): void {
@@ -96,8 +112,14 @@ class DesktopApplication {
       event.preventDefault()
       this.#requestQuit()
     })
-    app.on('second-instance', (_event, argv) => {
+    app.on('second-instance', (_event, argv, _directory, data) => {
       this.#environment.events.publish({ level: 'info', event: 'app.second_instance' })
+      if (process.platform === 'win32' && isInstallerExitRequest(argv, data, process.execPath)) {
+        void this.#quit.request({ reason: 'installation' }).catch((error) => {
+          this.#environment.events.publish({ level: 'error', event: 'app.installation_quit_failed', errorCode: readDiagnosticErrorCode(error) })
+        })
+        return
+      }
       if (resolveDesktopLaunchIntent(argv) === 'foreground')
         this.#windows.show()
     })
@@ -171,8 +193,6 @@ class DesktopApplication {
     void this.#quit.request().catch((error) => {
       if (!this.#quit.quitting)
         this.#environment.events.publish({ level: 'error', event: 'app.stop_failed', errorCode: readDiagnosticErrorCode(error) })
-      if (this.#quit.quitting)
-        app.exit(1)
     })
   }
 
@@ -180,8 +200,6 @@ class DesktopApplication {
     void this.#quit.request({ restart: true }).catch((error) => {
       if (!this.#quit.quitting)
         this.#environment.events.publish({ level: 'error', event: 'app.restart_failed', errorCode: readDiagnosticErrorCode(error) })
-      if (this.#quit.quitting)
-        app.exit(1)
     })
   }
 
@@ -231,11 +249,20 @@ export async function startDesktopApplication(): Promise<void> {
   let environment: DesktopEnvironment | undefined
   let recoveryRecorded = false
   try {
+    if (isWindowsInstallationActive()) {
+      app.quit()
+      return
+    }
     environment = prepareDesktopEnvironment()
     initializeDesktopEnvironment(environment)
-    if (!app.requestSingleInstanceLock()) {
+    if (!app.requestSingleInstanceLock({ executablePath: process.execPath })) {
       environment.diagnostics.record({ scope: 'desktop', level: 'info', event: 'startup.single_instance_lock_unavailable' })
       await checkDesktopCoreDirectories(environment)
+      await closeDesktopDiagnostics(environment.diagnostics)
+      app.quit()
+      return
+    }
+    if (process.argv.includes(INSTALLER_EXIT_ARGUMENT)) {
       await closeDesktopDiagnostics(environment.diagnostics)
       app.quit()
       return

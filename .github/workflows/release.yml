@@ -101,7 +101,8 @@ jobs:
     needs: validate-release
     uses: ./.github/workflows/macos-verify.yml
     with:
-      signing: ad-hoc
+      signing: ${{ vars.MACOS_SIGNING || 'ad-hoc' }}
+    secrets: inherit
 
   draft-release:
     name: Prepare Release draft

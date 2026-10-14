@@ -25,23 +25,62 @@ export interface DesktopUpdateNotification {
   readonly payload: { readonly version: string }
 }
 
+export type DesktopUpdateDeliveryMode = 'restart' | 'open-package' | 'release'
+export type DesktopUpdateDeliveryReason = 'signature-required' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
+
+export interface DesktopUpdateDeliveryState {
+  readonly mode: DesktopUpdateDeliveryMode
+  readonly reason: DesktopUpdateDeliveryReason
+  readonly status: 'unsupported' | 'idle' | 'verifying' | 'available' | 'downloading' | 'ready' | 'installing' | 'error'
+  readonly version: string | null
+  readonly progressPercent: number
+  readonly downloadedBytes?: number
+  readonly totalBytes?: number | null
+}
+
+export interface DesktopUpdateCacheSummary {
+  readonly bytes: number
+  readonly files: number
+}
+
+export interface DesktopUpdateCapabilities {
+  readonly automaticCheck: boolean
+  readonly download: boolean
+  readonly install: boolean
+}
+
 export interface DesktopUpdateState {
+  readonly delivery?: DesktopUpdateDeliveryState
+  readonly downloadDirectory?: string | null
   readonly revision: number
   readonly checking: boolean
   readonly enabled: boolean
+  readonly lastCheckedAt: number | null
+  readonly lastSuccessfulCheckAt: number | null
+  readonly checkFailed: boolean
+  readonly ignoredVersion: string | null
   readonly result: DesktopUpdateCheckResult | null
   readonly notification: DesktopUpdateNotification | null
   readonly reminderDueAt: number | null
+  readonly reminderDeferredUntil?: number | null
 }
 
-export const desktopUpdateActionSchema = z.object({
-  version: desktopVersionSchema,
-  action: z.enum(['seen', 'ignore', 'reminded']),
-}).strict()
+export const desktopUpdateActionSchema = z.discriminatedUnion('action', [
+  z.object({ version: desktopVersionSchema, action: z.enum(['seen', 'ignore', 'reminded', 'unignore', 'cancel-snooze']) }).strict(),
+  z.object({ version: desktopVersionSchema, action: z.literal('snooze'), delay: z.enum(['30-minutes', 'tomorrow']) }).strict(),
+])
 
 export type DesktopUpdateAction = z.infer<typeof desktopUpdateActionSchema>
+export const desktopUpdateTargetSchema = z.object({ version: desktopVersionSchema }).strict()
 
 export interface DesktopUpdateApi {
+  download: (version: string) => Promise<void>
+  cancelDownload: (version: string) => Promise<void>
+  install: (version: string) => Promise<void>
+  openDownloadDirectory: () => Promise<void>
+  openPackage: (version: string) => Promise<void>
+  getCacheSummary: () => Promise<DesktopUpdateCacheSummary>
+  clearCache: () => Promise<void>
   getState: () => Promise<DesktopUpdateState>
   onChanged: (listener: (state: DesktopUpdateState) => void) => () => void
   acknowledge: (input: DesktopUpdateAction) => Promise<DesktopUpdateState>

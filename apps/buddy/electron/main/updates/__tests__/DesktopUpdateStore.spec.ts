@@ -32,9 +32,23 @@ it('preserves corrupt or unknown-version state rather than silently resetting op
   const directory = await createTemporaryDirectory('desktop-updates-')
   const path = join(directory, 'updates.json')
   const store = new DesktopUpdateStore(directory)
-  for (const content of ['{broken', JSON.stringify({ ...emptyUpdateRecord(), version: 2 })]) {
+  for (const content of ['{broken', JSON.stringify({ ...emptyUpdateRecord(), version: 3 })]) {
     await writeFile(path, content)
     await expect(store.read()).rejects.toThrow('UPDATE_STATE_UNAVAILABLE')
     expect(await readFile(path, 'utf8')).toBe(content)
   }
+})
+
+it('migrates existing decisions without treating the last failed attempt as a successful check', async () => {
+  const directory = await createTemporaryDirectory('desktop-update-migration-')
+  const { lastSuccessfulCheckAt: _success, checkFailed: _failed, snoozedReminder: _snoozed, ...legacy } = emptyUpdateRecord()
+  const record = { ...legacy, version: 1, lastCheckedAt: 9000, discoveredAt: 1000, ignoredVersion: '1.2.0', result: { currentVersion: '1.0.0', latestVersion: '1.2.0', status: 'update_available', releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.2.0', releaseNotes: 'Saved notes' } }
+  const path = join(directory, 'updates.json')
+  await writeFile(path, JSON.stringify(record))
+  const store = new DesktopUpdateStore(directory)
+  const migrated = await store.read()
+  expect(migrated).toMatchObject({ version: 2, ignoredVersion: '1.2.0', lastCheckedAt: 9000, lastSuccessfulCheckAt: 1000, snoozedReminder: null })
+  expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(record)
+  await store.write(migrated)
+  expect(await store.read()).toEqual(migrated)
 })

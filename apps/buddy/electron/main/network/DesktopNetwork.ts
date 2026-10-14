@@ -57,6 +57,11 @@ export class DesktopNetwork {
     )
   }
 
+  readonly download = (url: string, init: Pick<RequestInit, 'signal'>): Promise<Response> => {
+    this.assertAvailable()
+    return session.defaultSession.fetch(url, { ...init, redirect: 'manual', credentials: 'omit' })
+  }
+
   readonly authenticateProxy = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void): boolean => {
     if (!authInfo.isProxy || authInfo.host !== '127.0.0.1' || authInfo.port !== this.#proxy.port)
       return false

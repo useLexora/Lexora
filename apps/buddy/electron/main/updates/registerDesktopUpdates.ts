@@ -1,24 +1,76 @@
 import type { DesktopRuntimeHost } from '../app/DesktopRuntimeHost'
 import type { DesktopWindowHost } from '../app/DesktopWindowHost'
 import type { DesktopEnvironment } from '../app/typing'
-import { app, ipcMain } from 'electron'
+import { readFileSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join, win32 } from 'node:path'
+import process from 'node:process'
+import { app, ipcMain, shell } from 'electron'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
-import { desktopUpdateActionSchema } from '../../shared/desktopUpdates'
+import { compareDesktopVersions, desktopUpdateActionSchema, desktopUpdateTargetSchema } from '../../shared/desktopUpdates'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
 import { assertTrustedSender } from '../ipc'
+import { DesktopUpdateCache } from './DesktopUpdateCache'
+import { DesktopUpdateDelivery } from './DesktopUpdateDelivery'
+import { DesktopUpdatePolicy, readDesktopDistribution } from './DesktopUpdatePolicy'
 import { DesktopUpdates } from './DesktopUpdates'
 import { DesktopUpdateStore } from './DesktopUpdateStore'
+import { MacUpdateInstaller } from './MacUpdateInstaller'
+import { launchWindowsUpdateInstaller } from './windowsInstaller'
 
-export function registerDesktopUpdates(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost) {
+export function registerDesktopUpdates(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, requestInstall: (prepare: () => Promise<(() => void) | void>) => Promise<boolean>) {
   let activityRevision = 0
+  let revision = 0
+  let automaticDownload = runtime.config?.desktop.autoDownloadUpdates ?? true
+  const automaticCheck = app.isPackaged && environment.paths.profile !== 'development' && !environment.isSmokeTest
+  const metadata = app.isPackaged && environment.paths.profile !== 'development' ? JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) : null
+  const policy = new DesktopUpdatePolicy(readDesktopDistribution(metadata?.desktopDistribution, process.platform, process.arch))
+  const cacheRoots: Partial<Record<NodeJS.Platform, () => string>> = {
+    win32: () => win32.join(process.env.LOCALAPPDATA ?? win32.join(homedir(), 'AppData', 'Local'), 'lexora-buddy', 'updates'),
+    darwin: () => join(homedir(), 'Library', 'Caches', 'lexora-buddy', 'updates'),
+    linux: () => join(process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'lexora-buddy', 'updates'),
+  }
+  const directory = policy.capabilities.download
+    ? environment.paths.profile === 'test' ? join(environment.paths.lexoraHome, '.runtime', 'updates') : cacheRoots[process.platform]?.() ?? null
+    : null
+  const downloadDirectory = directory ? join(directory, 'pending') : null
+  const macInstaller = new MacUpdateInstaller(runtime.network.authenticateProxy)
+  const installers = {
+    nsis: (path: string) => launchWindowsUpdateInstaller(path),
+    dmg: (path: string, update: import('./DesktopUpdatePackage').DesktopUpdatePackage) => macInstaller.prepare(path, update, directory!),
+  }
+  const delivery = new DesktopUpdateDelivery({
+    directory,
+    cache: directory ? new DesktopUpdateCache(directory, policy, app.getVersion()) : undefined,
+    get: runtime.network.download,
+    requestInstall,
+    launchInstaller: async (path, update) => {
+      const format = policy.distribution?.format
+      const installer = format && Object.hasOwn(installers, format) ? installers[format as keyof typeof installers] : null
+      if (!installer)
+        throw new Error('UPDATE_INSTALL_UNAVAILABLE')
+      return installer(path, update)
+    },
+    openPackage: async (path) => {
+      if (await shell.openPath(path))
+        throw new Error('UPDATE_PACKAGE_OPEN_FAILED')
+    },
+    reportFailure: error => environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error }),
+  })
   const service = runtime.service
   const updates = new DesktopUpdates({
     currentVersion: app.getVersion(),
-    automatic: app.isPackaged && environment.paths.profile !== 'development' && !environment.isSmokeTest,
+    automatic: automaticCheck,
     enabled: runtime.config?.desktop.updateNotificationsEnabled ?? true,
     store: new DesktopUpdateStore(environment.paths.buddyHome),
-    check: signal => checkForDesktopUpdate({ currentVersion: app.getVersion(), fetchRelease: runtime.network.get, signal }),
+    check: signal => checkForDesktopUpdate({
+      currentVersion: app.getVersion(),
+      fetchRelease: runtime.network.get,
+      signal,
+      onRelease: (release, version) => delivery.discover(compareDesktopVersions(version, app.getVersion()) > 0 ? policy.resolve(release, version) : { mode: 'release', reason: null, update: null, fallback: null }),
+    }),
     canPresent: () => environment.startup.state.status === 'ready' && !!windows.window?.isFocused() && windows.window.isVisible(),
     isIdle: async () => {
       if (service.state.status !== 'ready')
@@ -29,14 +81,28 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
     },
     reportFailure: () => environment.events.publish({ component: 'desktop.updates', event: 'update.background.failed', level: 'warn', errorCode: 'UPDATE_CHECK_FAILED' }),
   })
-  const changes = updates.onDidChange((state) => {
+  const snapshot = () => ({ ...updates.state, revision, delivery: delivery.state, downloadDirectory })
+  const publish = () => {
+    revision++
     const window = windows.window
     if (window && !window.isDestroyed())
-      window.webContents.send(DESKTOP_IPC_CHANNELS.appUpdatesChanged, state)
+      window.webContents.send(DESKTOP_IPC_CHANNELS.appUpdatesChanged, snapshot())
+  }
+  const reconcile = () => delivery.reconcile(updates.state.enabled && updates.state.notification?.revision === delivery.state.version, automaticDownload && !environment.isSmokeTest && environment.paths.profile !== 'test')
+  const changes = updates.onDidChange(() => {
+    reconcile()
+    publish()
+  })
+  const downloadChanges = delivery.onDidChange(() => {
+    reconcile()
+    publish()
   })
   const config = runtime.configStore.onDidChange((change) => {
-    if (change.kind === 'committed')
+    if (change.kind === 'committed') {
+      automaticDownload = change.config.desktop.autoDownloadUpdates
       updates.setEnabled(change.config.desktop.updateNotificationsEnabled)
+      reconcile()
+    }
   })
   const stopRuntime = service.onStateChange(() => {
     activityRevision++
@@ -47,31 +113,81 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   })
   const stopStartup = environment.startup.onStateChange(state => updates.setReady(state.status === 'ready'))
   updates.setReady(environment.startup.state.status === 'ready')
-  const channels = [DESKTOP_IPC_CHANNELS.appUpdatesState, DESKTOP_IPC_CHANNELS.appUpdatesAcknowledge, DESKTOP_IPC_CHANNELS.appUpdatesTakeReminder]
+  const initialization = updates.start().then(() => delivery.restore(updates.state.result?.status === 'update_available' ? updates.state.result.latestVersion : null))
+  const channels: string[] = [DESKTOP_IPC_CHANNELS.appUpdatesState, DESKTOP_IPC_CHANNELS.appUpdatesAcknowledge, DESKTOP_IPC_CHANNELS.appUpdatesTakeReminder]
   ipcMain.handle(channels[0]!, async (event) => {
     assertTrustedSender(event, windows.window)
-    await updates.start()
-    return updates.state
+    await initialization
+    return snapshot()
   })
-  ipcMain.handle(channels[1]!, (event, input: unknown) => {
+  ipcMain.handle(channels[1]!, async (event, input: unknown) => {
     assertTrustedSender(event, windows.window)
-    return updates.acknowledge(desktopUpdateActionSchema.parse(input))
+    const action = desktopUpdateActionSchema.parse(input)
+    const ignoredVersion = updates.state.ignoredVersion
+    await updates.acknowledge(action)
+    if (action.action === 'ignore' && updates.state.ignoredVersion === action.version && delivery.state.version === action.version)
+      delivery.cancel()
+    if (action.action === 'unignore' && ignoredVersion === action.version && updates.state.ignoredVersion === null) {
+      delivery.resumeAutomaticDownload(action.version)
+      reconcile()
+    }
+    return snapshot()
   })
   ipcMain.handle(channels[2]!, (event) => {
     assertTrustedSender(event, windows.window)
     return updates.takeReminder()
   })
-  void updates.start().catch(() => environment.events.publish({ component: 'desktop.updates', event: 'update.restore.failed', level: 'warn', errorCode: 'UPDATE_STATE_UNAVAILABLE' }))
+  const register = (channel: string, operation: (input: unknown) => unknown) => {
+    channels.push(channel)
+    ipcMain.handle(channel, (event, input: unknown) => {
+      assertTrustedSender(event, windows.window)
+      return operation(input)
+    })
+  }
+  const assertTarget = (input: unknown) => {
+    const { version } = desktopUpdateTargetSchema.parse(input)
+    if (version !== delivery.state.version || version !== updates.state.result?.latestVersion)
+      throw new Error('UPDATE_TARGET_CHANGED')
+  }
+  register(DESKTOP_IPC_CHANNELS.appUpdatesDownload, (input) => {
+    assertTarget(input)
+    void delivery.download().catch(error => environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error }))
+  })
+  register(DESKTOP_IPC_CHANNELS.appUpdatesCancelDownload, (input) => {
+    assertTarget(input)
+    delivery.cancel()
+  })
+  register(DESKTOP_IPC_CHANNELS.appUpdatesInstall, (input) => {
+    assertTarget(input)
+    return delivery.install()
+  })
+  register(DESKTOP_IPC_CHANNELS.appUpdatesOpenPackage, (input) => {
+    assertTarget(input)
+    return delivery.openPackage()
+  })
+  register(DESKTOP_IPC_CHANNELS.appUpdatesCacheSummary, () => delivery.cacheSummary())
+  register(DESKTOP_IPC_CHANNELS.appUpdatesClearCache, () => delivery.clearCache())
+  register(DESKTOP_IPC_CHANNELS.appUpdatesOpenDirectory, async () => {
+    if (!downloadDirectory)
+      throw new Error('UPDATE_DOWNLOAD_UNAVAILABLE')
+    await mkdir(downloadDirectory, { recursive: true })
+    if (await shell.openPath(downloadDirectory))
+      throw new Error('DIRECTORY_OPEN_FAILED')
+  })
+  void initialization.catch(() => environment.events.publish({ component: 'desktop.updates', event: 'update.restore.failed', level: 'warn', errorCode: 'UPDATE_STATE_UNAVAILABLE' }))
   return {
     check: () => updates.check(),
+    capabilities: { ...policy.capabilities, automaticCheck },
     async dispose() {
       stopStartup()
       stopEvents()
       stopRuntime()
       config.dispose()
       changes.dispose()
+      downloadChanges.dispose()
       for (const channel of channels)
         ipcMain.removeHandler(channel)
+      await delivery.dispose()
       await updates.dispose()
     },
   }

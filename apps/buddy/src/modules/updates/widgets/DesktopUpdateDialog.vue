@@ -1,27 +1,73 @@
 <script setup lang="ts">
-import type { DesktopUpdateCheckResult } from '@buddy-electron/shared/desktopUpdates'
+import type { DesktopUpdateCheckResult, DesktopUpdateDeliveryState } from '@buddy-electron/shared/desktopUpdates'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { ArrowDownload20Regular, ArrowUpRight20Regular, CheckmarkCircle20Regular } from '@vicons/fluent'
-import { NButton, NModal, NScrollbar } from 'naive-ui'
+import { compareDesktopVersions } from '@buddy-electron/shared/desktopUpdates'
+import { ArrowDownload20Regular, ArrowUpRight20Regular, CheckmarkCircle20Regular, ChevronDown16Regular, History20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
+import { NButton, NDropdown, NModal, NScrollbar, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
+import DesktopUpdateDeliveryActions from './DesktopUpdateDeliveryActions.vue'
+import DesktopUpdateDeliveryStatus from './DesktopUpdateDeliveryStatus.vue'
 
 const props = defineProps<{
+  delivery?: DesktopUpdateDeliveryState
   language: BuddyLocale
   result: DesktopUpdateCheckResult | null
   show: boolean
   pending: boolean
+  ignored?: boolean
+  checkFailed?: boolean
+  reminderDeferredUntil?: number | null
+  latestVersion?: string
   writeClipboardText: (text: string) => Promise<void>
 }>()
 const emit = defineEmits<{
   'openRelease': [url: string]
   'ignore': [version: string]
+  'restore': [version: string]
+  'snooze': [version: string, delay: '30-minutes' | 'tomorrow']
+  'cancelSnooze': [version: string]
+  'showLatest': []
+  'download': []
+  'cancelDownload': []
+  'install': []
+  'openPackage': []
+  'openDownloadDirectory': []
   'update:show': [show: boolean]
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const installing = computed(() => props.delivery?.status === 'installing')
 const updateAvailable = computed(() => props.result?.status === 'update_available')
+const outdated = computed(() => !installing.value && !!props.result && !!props.latestVersion && props.latestVersion !== props.result.latestVersion)
+const newer = computed(() => !!props.result && !!props.latestVersion && compareDesktopVersions(props.latestVersion, props.result.latestVersion) > 0)
+const laterOptions = computed(() => [
+  { key: 'close', label: t('desktop.update.dismiss') },
+  { key: '30-minutes', label: t('desktop.update.remindIn30Minutes') },
+  { key: 'tomorrow', label: t('desktop.update.remindTomorrow') },
+  ...(props.reminderDeferredUntil ? [{ key: 'cancel-snooze', label: t('desktop.update.cancelSnooze') }] : []),
+])
+const reminderDescription = computed(() => props.reminderDeferredUntil ? t('desktop.update.reminderScheduled', { time: new Intl.DateTimeFormat(props.language, { dateStyle: 'medium', timeStyle: 'short' }).format(props.reminderDeferredUntil) }) : '')
+const moreOptions = computed(() => [{ key: 'directory', label: t('desktop.update.openDownloadDirectory') }])
+
+function selectLater(key: string) {
+  if (key === 'close')
+    emit('update:show', false)
+  else if (props.result && key === 'cancel-snooze')
+    emit('cancelSnooze', props.result.latestVersion)
+  else if (props.result && (key === '30-minutes' || key === 'tomorrow'))
+    emit('snooze', props.result.latestVersion, key)
+}
+
+function updateVersionReminder() {
+  if (!props.result)
+    return
+  if (props.ignored)
+    emit('restore', props.result.latestVersion)
+  else
+    emit('ignore', props.result.latestVersion)
+}
 </script>
 
 <template>
@@ -32,6 +78,9 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
     :style="{ width: 'min(42rem, calc(100vw - 2rem))' }"
     :title="t('desktop.update.title')"
     :auto-focus="false"
+    :closable="!installing"
+    :mask-closable="!installing"
+    :close-on-esc="!installing"
     @update:show="emit('update:show', $event)"
   >
     <template v-if="result">
@@ -46,7 +95,7 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
               <h2 class="m-0 text-strong text-[16px] font-600 leading-[1.35]">
                 Lexora Buddy {{ result.latestVersion }}
               </h2>
-              <span class="inline-flex items-center py-[2px] px-[7px] rounded-[9999px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t('desktop.update.newTag') }}</span>
+              <span class="inline-flex items-center py-[2px] px-[7px] rounded-[4px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t(ignored ? 'desktop.update.skippedTag' : 'desktop.update.newTag') }}</span>
             </div>
             <p class="mt-[3px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
               {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
@@ -59,19 +108,33 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
             <h3 class="desktop-update-dialog__card-title m-0 text-strong text-[12px] font-600">
               {{ t('desktop.update.releaseNotes') }}
             </h3>
-            <NButton
-              text
-              type="primary"
-              size="tiny"
-              class="desktop-update-dialog__release-link"
-              :disabled="pending"
-              @click="emit('openRelease', result.releaseUrl)"
-            >
-              <template #icon>
-                <DesktopIcon :component="ArrowUpRight20Regular" :size="14" />
-              </template>
-              {{ t('desktop.update.openRelease') }}
-            </NButton>
+            <div class="flex items-center gap-2">
+              <NButton
+                text
+                type="primary"
+                size="tiny"
+                class="desktop-update-dialog__release-link"
+                :disabled="pending"
+                @click="emit('openRelease', result.releaseUrl)"
+              >
+                <template #icon>
+                  <DesktopIcon :component="ArrowUpRight20Regular" :size="14" />
+                </template>
+                {{ t('desktop.update.openRelease') }}
+              </NButton>
+              <NDropdown v-if="delivery?.version === result.latestVersion && delivery.mode !== 'release'" :menu-props="() => ({ role: 'menu' })" :node-props="option => ({ 'role': 'menuitem', 'aria-disabled': option.disabled ? 'true' : 'false' })" trigger="click" :options="moreOptions" @select="emit('openDownloadDirectory')">
+                <NTooltip>
+                  <template #trigger>
+                    <NButton class="buddy-icon-button" quaternary size="tiny" :disabled="pending || installing" :aria-label="t('desktop.update.moreActions')">
+                      <template #icon>
+                        <DesktopIcon :component="MoreHorizontal20Regular" :size="18" />
+                      </template>
+                    </NButton>
+                  </template>
+                  {{ t('desktop.update.moreActions') }}
+                </NTooltip>
+              </NDropdown>
+            </div>
           </div>
 
           <NScrollbar
@@ -102,43 +165,71 @@ const updateAvailable = computed(() => props.result?.status === 'update_availabl
       <!-- 已是最新版本视图 -->
       <template v-else>
         <div class="flex flex-col items-center justify-center text-center pt-[16px] pr-0 pb-[12px] pl-0">
-          <div class="desktop-update-dialog__icon-wrap is-latest flex items-center justify-center flex-none w-[44px] h-[44px] rounded-[12px]">
-            <DesktopIcon :component="CheckmarkCircle20Regular" :size="24" aria-hidden="true" />
+          <div class="desktop-update-dialog__icon-wrap flex items-center justify-center flex-none w-[44px] h-[44px] rounded-[12px]" :class="checkFailed ? 'bg-subtle text-muted' : 'is-latest'">
+            <DesktopIcon :component="checkFailed ? History20Regular : CheckmarkCircle20Regular" :size="24" aria-hidden="true" />
           </div>
           <h2 class="mt-[12px] mr-0 mb-[4px] ml-0 text-strong text-[16px] font-600 leading-[1.35]">
-            {{ t('desktop.update.latest') }}
+            {{ t(checkFailed ? 'desktop.update.cachedResult' : 'desktop.update.latest') }}
           </h2>
           <p class="m-0 text-muted text-[13px] leading-[1.5]">
-            {{ t('desktop.update.latestDescription') }} (v{{ result.currentVersion }})
+            {{ t(checkFailed ? 'desktop.update.cachedResultDescription' : 'desktop.update.latestDescription') }} (v{{ result.currentVersion }})
           </p>
         </div>
       </template>
     </template>
 
     <template #footer>
-      <div class="flex items-center justify-between gap-[12px] w-full">
-        <NButton
-          v-if="updateAvailable"
-          quaternary
-          :disabled="pending"
-          @click="emit('ignore', result?.latestVersion ?? '')"
-        >
-          {{ t('desktop.update.ignore') }}
-        </NButton>
-        <div v-else class="flex-1" />
+      <div class="grid gap-[1rem]">
+        <p v-if="outdated" class="m-0 text-muted text-[12px] leading-[1.5]" role="status">
+          {{ t(newer ? 'desktop.update.newerVersion' : 'desktop.update.changedResult', { version: latestVersion ?? '' }) }}
+        </p>
+        <DesktopUpdateDeliveryStatus v-else-if="updateAvailable && result" :delivery="delivery" :version="result.latestVersion" :language="language" />
+        <p v-if="reminderDescription" class="m-0 text-muted text-[12px] leading-[1.5]" role="status">
+          {{ reminderDescription }}
+        </p>
+        <div class="flex flex-wrap items-center justify-between gap-[12px] w-full">
+          <div v-if="updateAvailable" class="desktop-update-dialog__secondary-actions flex flex-wrap items-center gap-[8px]">
+            <NDropdown v-if="!ignored && !outdated" :menu-props="() => ({ role: 'menu' })" :node-props="option => ({ 'role': 'menuitem', 'aria-disabled': option.disabled ? 'true' : 'false' })" trigger="click" :options="laterOptions" @select="selectLater">
+              <NButton :disabled="pending || installing">
+                {{ t('desktop.update.later') }}
+                <template #icon>
+                  <DesktopIcon :component="ChevronDown16Regular" :size="16" />
+                </template>
+              </NButton>
+            </NDropdown>
+            <NButton v-else :disabled="installing" @click="emit('update:show', false)">
+              {{ t('desktop.update.later') }}
+            </NButton>
+            <NButton
+              quaternary
+              :disabled="pending || installing || outdated"
+              @click="updateVersionReminder"
+            >
+              {{ t(ignored ? 'desktop.update.restore' : 'desktop.update.ignore') }}
+            </NButton>
+          </div>
+          <div v-else class="flex-1" />
 
-        <div class="flex items-center gap-[8px]">
-          <NButton @click="emit('update:show', false)">
-            {{ t('common.close') }}
-          </NButton>
-          <NButton
-            v-if="updateAvailable"
-            type="primary"
-            :loading="pending"
-            @click="emit('openRelease', result?.releaseUrl ?? '')"
-          >
-            {{ t('desktop.update.download') }}
-          </NButton>
+          <div class="desktop-update-dialog__primary-actions flex items-center gap-[8px]">
+            <NButton v-if="outdated" type="primary" :disabled="pending" @click="emit('showLatest')">
+              {{ t(newer ? 'desktop.update.viewLatest' : 'desktop.update.viewResult') }}
+            </NButton>
+            <NButton v-else-if="!updateAvailable" @click="emit('update:show', false)">
+              {{ t('common.close') }}
+            </NButton>
+            <DesktopUpdateDeliveryActions
+              v-else-if="updateAvailable && result"
+              :delivery="delivery"
+              :version="result.latestVersion"
+              :language="language"
+              :pending="pending"
+              @download="emit('download')"
+              @cancel="emit('cancelDownload')"
+              @install="emit('install')"
+              @open-package="emit('openPackage')"
+              @open-release="emit('openRelease', result.releaseUrl)"
+            />
+          </div>
         </div>
       </div>
     </template>

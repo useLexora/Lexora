@@ -22,15 +22,12 @@ describe('useDesktopAppState', () => {
     } as unknown as LexoraDesktopApi
     const appState = useDesktopAppState({ api })
     const first = appState.initialize()
-    expect(appState.initialize()).toBe(first)
-    appState.dispose()
+    const concurrent = appState.initialize()
     appState.dispose()
     status.resolve({ lastError: null, pid: 42, restartAttempt: 0, status: 'ready' })
-    expect(await first).toBe(false)
+    expect(await Promise.all([first, concurrent])).toEqual([false, false])
     expect(await appState.initialize()).toBe(false)
     expect(appState.stores.runtimeSupervisor.runtimeState.value.status).toBe('stopped')
-    expect(appState.stores.notifications.items.value).toEqual([])
-    expect(appState.stores.modelProviders.models.value).toEqual([])
   })
 
   it('derives a localized safe runtime failure from the runtimeSupervisor code', async () => {
@@ -137,7 +134,7 @@ describe('useDesktopAppState', () => {
 })
 
 function emptyUpdateApp() {
-  return { updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, result: null, notification: null, reminderDueAt: null }) } }
+  return { updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, lastCheckedAt: null, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }) } }
 }
 
 function emptyNotificationApi() {

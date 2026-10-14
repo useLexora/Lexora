@@ -5,6 +5,7 @@ const props = defineProps<{ label: string, description?: string, toggle?: boolea
 defineSlots<{
   default: (props: { labelId: string, controlAttrs: { 'aria-labelledby': string, 'aria-describedby': string | undefined } }) => unknown
   hint?: () => unknown
+  labelExtra?: () => unknown
 }>()
 const labelId = useId()
 const descriptionId = `${labelId}-description`
@@ -18,7 +19,10 @@ const controlAttrs = computed(() => ({
 <template>
   <div class="desktop-settings-row grid min-h-[var(--setting-row-height,4rem)] items-center gap-8 border-b border-b-solid border-b-border px-[var(--setting-row-px,0.9rem)] py-[var(--setting-row-py,0.75rem)] last:border-b-0 grid-cols-[minmax(var(--setting-label-min,0px),1fr)_minmax(var(--setting-control-min,10rem),var(--setting-control-max,19rem))]">
     <div class="grid min-w-0 gap-[var(--setting-copy-gap,0.25rem)]">
-      <strong :id="labelId" class="text-[0.8rem] font-600" :class="disabled ? 'text-disabled' : 'text-fg'">{{ label }}</strong>
+      <div class="flex flex-wrap items-center gap-[0.5rem]">
+        <strong :id="labelId" class="text-[0.8rem] font-600" :class="disabled ? 'text-disabled' : 'text-fg'">{{ label }}</strong>
+        <slot name="labelExtra" />
+      </div>
       <small v-if="description" :id="descriptionId" class="text-[length:var(--setting-description-size,0.7rem)] leading-[var(--setting-description-leading,1.5)]" :class="disabled ? 'text-disabled' : 'text-muted'">{{ description }}</small>
       <slot name="hint" />
     </div>

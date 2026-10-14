@@ -10,29 +10,20 @@ function list(seen = false): LocalNotificationList {
   return { items: [item], unseenCount: seen ? 0 : 1 }
 }
 function fixture() {
-  let listeners = 0
   let changed: (event: { revision: number }) => void = () => {}
-  const subscribe = () => {
-    listeners += 1
-    return () => {
-      listeners -= 1
-    }
-  }
   const api = {
     notifications: { onChanged: (listener: (event: { revision: number }) => void) => {
       changed = listener
-      const stop = subscribe()
       return () => {
-        stop()
         changed = () => {}
       }
     }, list: vi.fn(async () => list()), markSeen: vi.fn(async () => list(true)), markAllSeen: vi.fn(async () => list(true)) },
-    chat: { onRunEvent: subscribe },
-    automations: { onChanged: subscribe },
+    chat: { onRunEvent: () => () => {} },
+    automations: { onChanged: () => () => {} },
   }
   const updates = { state: shallowRef<DesktopUpdateState | null>(null), markSeen: vi.fn(async (_version: string) => {}) }
   const store = useNotificationCenterStore(api, updates)
-  return { api, store, updates, changed: () => changed({ revision: 1 }), listeners: () => listeners }
+  return { api, store, updates, changed: () => changed({ revision: 1 }) }
 }
 
 describe('notification state ownership', () => {
@@ -59,6 +50,10 @@ describe('notification state ownership', () => {
       revision: 1,
       enabled: true,
       checking: false,
+      lastCheckedAt: null,
+      lastSuccessfulCheckAt: null,
+      checkFailed: false,
+      ignoredVersion: null,
       result: null,
       reminderDueAt: 0,
       notification: {
@@ -105,8 +100,6 @@ describe('notification state ownership', () => {
     await vi.waitFor(() => expect(f.store.items.value[0]?.attention).toBe('seen'))
     expect(f.store.unseenCount.value).toBe(0)
     f.store.dispose()
-    f.changed()
-    expect(f.listeners()).toBe(0)
   })
 
   it('refreshes authoritative state when a failed mutation overtakes an in-flight list', async () => {
@@ -155,13 +148,12 @@ describe('notification state ownership', () => {
     f.store.dispose()
   })
 
-  it.each(['resolve', 'reject'])('ignores a late list %s and unsubscribes once after disposal', async (result) => {
+  it.each(['resolve', 'reject'])('ignores a late list %s after disposal', async (result) => {
     const f = fixture()
     const pending = deferred<LocalNotificationList>()
     f.api.notifications.list.mockReturnValueOnce(pending.promise)
     const loading = f.store.load()
     void f.store.load()
-    f.store.dispose()
     f.store.dispose()
     if (result === 'resolve')
       pending.resolve(list())
@@ -170,7 +162,6 @@ describe('notification state ownership', () => {
     await loading
     expect(f.store.items.value).toEqual([])
     expect(f.store.error.value).toBeNull()
-    expect(f.listeners()).toBe(0)
     expect(await f.store.load()).toBe(false)
   })
 

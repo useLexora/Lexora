@@ -26,6 +26,9 @@ const signedMacos = macosSigningMode() === 'developer-id'
 
 module.exports = {
   appId: desktopName,
+  extraMetadata: {
+    desktopDistribution: { schemaVersion: 1, format: process.env.LEXORA_BUDDY_PACKAGE_FORMAT === 'zip' ? 'dmg' : process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0], architecture: target.architecture, signing: target.platform === OPERATING_SYSTEM.MacOS ? (signedMacos ? 'developer-id' : 'ad-hoc') : 'none' },
+  },
   productName: 'lexora-buddy',
   asar: true,
   asarUnpack: ['node_modules/@anthropic-ai/sandbox-runtime/vendor/**'],
@@ -51,7 +54,8 @@ module.exports = {
   ],
   mac: {
     extraResources: (target.platform === OPERATING_SYSTEM.MacOS ? resources : []),
-    target: [{ target: 'dmg', arch: ['arm64'] }],
+    target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
+    artifactName: target.platform === OPERATING_SYSTEM.MacOS ? desktopArtifactName(target, 'dmg', macro('version')).replace(/\.dmg$/, `.${macro('ext')}`) : undefined,
     category: 'public.app-category.productivity',
     minimumSystemVersion: target.minimumSystemVersion,
     icon: 'resources/icons/app-icon.png',

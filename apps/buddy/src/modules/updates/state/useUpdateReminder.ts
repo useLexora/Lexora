@@ -22,8 +22,8 @@ export function useUpdateReminder(updates: DesktopUpdates, focused: Readonly<Ref
   function canShow(result: DesktopUpdateCheckResult, activity: number) {
     const notification = updates.state.value?.notification
     return !disposed && focused.value && activity === activityRevision && !updates.details.value
-      && updates.state.value?.reminderDueAt != null
-      && notification?.revision === result.latestVersion && notification.attention === 'unseen'
+      && (updates.state.value?.reminderDueAt ?? Infinity) <= Date.now()
+      && notification?.revision === result.latestVersion
   }
 
   async function attempt() {

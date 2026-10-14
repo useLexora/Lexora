@@ -38,6 +38,17 @@ fn main() -> ExitCode {
             };
         }
         #[cfg(windows)]
+        if command == "--check-installation" && arguments.next().is_none() {
+            return match lexora_buddy_host::installation_gate::installation_active() {
+                Ok(false) => ExitCode::SUCCESS,
+                Ok(true) => ExitCode::from(32),
+                Err(error) => {
+                    eprintln!("INSTALLATION_CHECK_FAILED: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        #[cfg(windows)]
         if command == "--check-running" {
             return check_running(arguments);
         }

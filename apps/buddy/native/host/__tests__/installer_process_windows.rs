@@ -91,3 +91,34 @@ fn invalid_or_incomplete_probe_arguments_fail_closed() {
         assert_eq!(diagnostic["status"], "failed");
     }
 }
+
+#[test]
+fn application_start_is_blocked_only_while_the_installer_owns_its_mutex() {
+    use std::ptr;
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{CreateMutexW, ReleaseMutex},
+    };
+    let name: Vec<u16> = lexora_buddy_host::installation_gate::MUTEX_NAME
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    // SAFETY: The NUL-terminated name is live and this test owns the new mutex.
+    let mutex = unsafe { CreateMutexW(ptr::null(), 1, name.as_ptr()) };
+    assert!(!mutex.is_null());
+    let output = Command::new(HELPER)
+        .arg("--check-installation")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(32));
+    // SAFETY: This test owns the mutex; the final handle is closed after its release.
+    unsafe {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+    }
+    let output = Command::new(HELPER)
+        .arg("--check-installation")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+}

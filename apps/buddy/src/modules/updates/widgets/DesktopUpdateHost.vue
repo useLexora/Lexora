@@ -13,7 +13,7 @@ import DesktopUpdateReminder from './DesktopUpdateReminder.vue'
 const props = defineProps<{ language: BuddyLocale }>()
 const api = requireDesktopApi()
 const updates = useDesktopUpdatesContext()
-const { details } = updates
+const { details, state } = updates
 const windowFocused = useWindowFocus()
 const visibility = useDocumentVisibility()
 const focused = computed(() => windowFocused.value && visibility.value === 'visible')
@@ -36,6 +36,12 @@ async function action(operation: () => Promise<unknown>) {
     pending.value = false
   }
 }
+
+function versionedAction(operation: (version: string) => Promise<unknown>) {
+  const version = details.value?.latestVersion
+  if (version)
+    return action(() => operation(version))
+}
 </script>
 
 <template>
@@ -47,15 +53,30 @@ async function action(operation: () => Promise<unknown>) {
     @dismiss="dismiss"
     @open="action(updates.openDetails)"
     @ignore="version => action(() => updates.ignore(version))"
+    @snooze="(version, delay) => action(() => updates.snooze(version, delay))"
   />
   <DesktopUpdateDialog
     :show="details !== null"
     :result="details"
+    :delivery="state?.delivery"
+    :ignored="state?.ignoredVersion === details?.latestVersion"
+    :check-failed="state?.checkFailed"
+    :reminder-deferred-until="state?.result?.latestVersion === details?.latestVersion ? state?.reminderDeferredUntil : null"
+    :latest-version="state?.result?.latestVersion"
     :language="language"
     :pending="pending"
     :write-clipboard-text="api.clipboard.writeText"
     @update:show="!$event && updates.closeDetails()"
     @open-release="url => action(() => api.app.openReleasePage(url))"
     @ignore="version => action(() => updates.ignore(version))"
+    @restore="version => action(() => updates.restore(version))"
+    @cancel-snooze="version => action(() => updates.cancelSnooze(version))"
+    @snooze="(version, delay) => action(() => updates.snooze(version, delay))"
+    @show-latest="action(updates.openDetails)"
+    @download="versionedAction(api.app.updates.download)"
+    @cancel-download="versionedAction(api.app.updates.cancelDownload)"
+    @install="versionedAction(api.app.updates.install)"
+    @open-package="versionedAction(api.app.updates.openPackage)"
+    @open-download-directory="action(api.app.updates.openDownloadDirectory)"
   />
 </template>

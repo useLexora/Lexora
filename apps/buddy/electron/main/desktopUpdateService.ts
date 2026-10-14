@@ -7,14 +7,16 @@ export interface CheckForDesktopUpdateOptions {
   currentVersion: string
   signal?: AbortSignal
   fetchRelease?: (url: string, init?: RequestInit) => Promise<Response>
+  onRelease?: (release: GithubRelease, version: string) => void
 }
 
-interface GithubRelease {
+export interface GithubRelease {
   draft: boolean
   html_url: string
   prerelease: boolean
   tag_name: string
   body?: string
+  assets?: unknown
 }
 
 const RELEASE_TAG_PREFIX = 'v'
@@ -46,6 +48,7 @@ export async function checkForDesktopUpdate(
     const body = await readResponseBytes(response, 4 * 1024 * 1024)
     const release = parseLatestBuddyRelease(JSON.parse(new TextDecoder().decode(body)))
     const current = desktopVersionSchema.parse(options.currentVersion)
+    options.onRelease?.(release.metadata, release.version)
     return desktopUpdateResultSchema.parse({
       currentVersion: current,
       latestVersion: release.version,

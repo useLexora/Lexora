@@ -7,7 +7,7 @@ import { desktopUpdateResultSchema, desktopVersionSchema } from '../../shared/de
 
 const timestamp = z.number().int().nonnegative().nullable()
 const version = desktopVersionSchema.nullable()
-const updateRecordSchema = z.object({
+const legacyRecordSchema = z.object({
   version: z.literal(1),
   lastCheckedAt: timestamp,
   lastNotifiedAt: timestamp,
@@ -18,10 +18,17 @@ const updateRecordSchema = z.object({
   result: desktopUpdateResultSchema.nullable(),
 }).strict()
 
+const updateRecordSchema = legacyRecordSchema.extend({
+  version: z.literal(2),
+  lastSuccessfulCheckAt: timestamp,
+  checkFailed: z.boolean(),
+  snoozedReminder: z.object({ version: desktopVersionSchema, until: z.number().int().nonnegative(), reminded: z.boolean().default(false) }).strict().nullable(),
+}).strict()
+
 export type DesktopUpdateRecord = z.infer<typeof updateRecordSchema>
 
 export function emptyUpdateRecord(): DesktopUpdateRecord {
-  return { version: 1, lastCheckedAt: null, lastNotifiedAt: null, notifiedVersion: null, ignoredVersion: null, seenVersion: null, discoveredAt: null, result: null }
+  return { version: 2, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, snoozedReminder: null, lastNotifiedAt: null, notifiedVersion: null, ignoredVersion: null, seenVersion: null, discoveredAt: null, result: null }
 }
 
 export class DesktopUpdateStore {
@@ -36,7 +43,12 @@ export class DesktopUpdateStore {
     try {
       if ((await stat(path)).size > 8 * 1024 * 1024)
         throw new Error('UPDATE_STATE_TOO_LARGE')
-      return updateRecordSchema.parse(JSON.parse(await readFile(path, 'utf8')))
+      const input = JSON.parse(await readFile(path, 'utf8'))
+      if (input?.version === 1) {
+        const legacy = legacyRecordSchema.parse(input)
+        return { ...legacy, version: 2, lastSuccessfulCheckAt: legacy.result ? legacy.discoveredAt : null, checkFailed: false, snoozedReminder: null }
+      }
+      return updateRecordSchema.parse(input)
     }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')

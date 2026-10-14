@@ -48,7 +48,7 @@ async function openLink(action: () => Promise<unknown>) {
         <h2>Lexora Buddy</h2>
         <div class="desktop-about-settings__version m-0 text-muted text-[0.8rem]">
           <span>{{ t('desktop.about.version', { version: appInfo?.version ?? '—' }) }}</span>
-          <NTag v-if="updateResult?.status === 'up_to_date'" size="small" type="success" :bordered="false" role="status">
+          <NTag v-if="updateResult?.status === 'up_to_date' && !updates.state.value?.checkFailed" size="small" type="success" :bordered="false" role="status">
             {{ t('desktop.update.latestTag') }}
           </NTag>
         </div>
@@ -66,7 +66,7 @@ async function openLink(action: () => Promise<unknown>) {
       </NButton>
     </div>
     <div v-if="updateResult?.status === 'update_available'" class="desktop-about-settings__update text-fg text-[0.8rem]" role="status">
-      <span>{{ t('desktop.update.available') }}</span>
+      <span>{{ t(updates.state.value?.ignoredVersion === updateResult.latestVersion ? 'desktop.update.skippedTag' : 'desktop.update.available') }}</span>
       <span>{{ t('desktop.about.version', { version: updateResult.latestVersion }) }}</span>
       <NButton text type="primary" @click="openLink(updates.openDetails)">
         {{ t('desktop.update.view') }}

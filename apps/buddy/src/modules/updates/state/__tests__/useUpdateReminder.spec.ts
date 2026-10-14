@@ -49,6 +49,13 @@ async function fixture(pauseSave = false) {
   const updates = useDesktopUpdates({
     checkForUpdates: () => owner.check(),
     updates: {
+      download: async () => {},
+      cancelDownload: async () => {},
+      install: async () => {},
+      openDownloadDirectory: async () => {},
+      openPackage: async () => {},
+      getCacheSummary: async () => ({ bytes: 0, files: 0 }),
+      clearCache: async () => {},
       getState: async () => owner.state,
       onChanged: listener => owner.onDidChange(listener).dispose,
       acknowledge: input => owner.acknowledge(input),

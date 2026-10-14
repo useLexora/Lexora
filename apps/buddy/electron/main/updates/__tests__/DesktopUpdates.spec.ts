@@ -54,7 +54,52 @@ async function discover(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('desktop update ownership and notification policy', () => {
-  it('delays startup checks, persists the daily limit, and coalesces repeated manual requests', async () => {
+  it('persists explicit reminder deferral across restarts, waits for idle, and does not consume it with stale display acknowledgements', async () => {
+    const f = await fixture()
+    await discover(f)
+    await f.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    await f.service.acknowledge({ action: 'snooze', version: '1.1.0', delay: '30-minutes' })
+    const due = Date.now() + 30 * 60_000
+    expect(f.service.state.reminderDueAt).toBe(due)
+    await f.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    expect(f.service.state.reminderDueAt).toBe(due)
+    const restarted = await fixture({ automatic: false }, f.saved())
+    expect(await restarted.service.takeReminder()).toBeNull()
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    restarted.environment.idle = false
+    expect(await restarted.service.takeReminder()).toBeNull()
+    restarted.environment.idle = true
+    expect((await restarted.service.takeReminder())?.latestVersion).toBe('1.1.0')
+    await restarted.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    expect(restarted.saved().snoozedReminder).toMatchObject({ reminded: true })
+    expect(restarted.service.state.reminderDueAt).toBeNull()
+    await restarted.service.acknowledge({ action: 'snooze', version: '1.1.0', delay: 'tomorrow' })
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    expect(restarted.service.state).toMatchObject({ ignoredVersion: null, reminderDueAt: tomorrow.getTime(), notification: { payload: { version: '1.1.0' } } })
+    await restarted.service.acknowledge({ action: 'ignore', version: '1.1.0' })
+    expect(restarted.saved().snoozedReminder).toBeNull()
+    expect(restarted.service.state.reminderDueAt).toBeNull()
+  })
+
+  it('honors and cancels explicit reminders with automatic checking disabled without starting any background check', async () => {
+    const f = await fixture({ enabled: false })
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL * 2)
+    expect(f.saved().lastCheckedAt).toBeNull()
+    await f.service.check()
+    const checkedAt = f.service.state.lastCheckedAt
+    await f.service.acknowledge({ action: 'snooze', version: '1.1.0', delay: '30-minutes' })
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    expect((await f.service.takeReminder())?.latestVersion).toBe('1.1.0')
+    await f.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    expect(f.service.state).toMatchObject({ enabled: false, lastCheckedAt: checkedAt, reminderDueAt: null, notification: { attention: 'unseen' } })
+    await f.service.acknowledge({ action: 'snooze', version: '1.1.0', delay: 'tomorrow' })
+    await f.service.acknowledge({ action: 'cancel-snooze', version: '1.1.0' })
+    expect(f.service.state).toMatchObject({ reminderDueAt: null, reminderDeferredUntil: null, notification: null })
+    f.service.setEnabled(true)
+    expect(f.service.state.reminderDueAt).toBeNull()
+  })
+  it('checks after each startup delay, discovers newer releases despite a recent cached check, and keeps daily checks within a launch', async () => {
     const f = await fixture()
     await vi.advanceTimersByTimeAsync(UPDATE_STARTUP_DELAY - 1)
     expect(f.service.state.result).toBeNull()
@@ -63,15 +108,39 @@ describe('desktop update ownership and notification policy', () => {
     const checkedAt = f.saved().lastCheckedAt
     await f.service.dispose()
     const restored = await fixture({}, f.saved())
-    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL - 1)
+    restored.environment.latest = '1.2.0'
+    await vi.advanceTimersByTimeAsync(UPDATE_STARTUP_DELAY - 1)
     expect(restored.saved().lastCheckedAt).toBe(checkedAt)
+    expect(restored.service.state.result?.latestVersion).toBe('1.1.0')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(restored.service.state.notification).toMatchObject({ attention: 'unseen', payload: { version: '1.2.0' } })
+    const restartedCheckedAt = restored.saved().lastCheckedAt
+    restored.environment.latest = '1.3.0'
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL - 1)
+    expect(restored.saved().lastCheckedAt).toBe(restartedCheckedAt)
+    expect(restored.service.state.result?.latestVersion).toBe('1.2.0')
     await vi.advanceTimersByTimeAsync(1)
     expect(restored.saved().lastCheckedAt).toBe(Date.now())
-    const first = restored.service.check()
-    expect(restored.service.check()).toBe(first)
-    await first
+    expect(restored.service.state.result?.latestVersion).toBe('1.3.0')
+    await Promise.all([restored.service.check(), restored.service.check()])
     expect(restored.service.state.notification?.attention).toBe('seen')
     expect(restored.service.state.reminderDueAt).toBeNull()
+  })
+
+  it('uses a manual startup check for the daily interval and does not repeat checks when readiness changes', async () => {
+    const f = await fixture()
+    await f.service.check()
+    const checkedAt = f.saved().lastCheckedAt
+    f.environment.latest = '1.2.0'
+    f.service.setReady(false)
+    await vi.advanceTimersByTimeAsync(UPDATE_STARTUP_DELAY)
+    f.service.setReady(true)
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL - UPDATE_STARTUP_DELAY - 1)
+    expect(f.saved().lastCheckedAt).toBe(checkedAt)
+    expect(f.service.state.result?.latestVersion).toBe('1.1.0')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.service.state.result?.latestVersion).toBe('1.2.0')
+    expect(f.service.state.notification?.attention).toBe('unseen')
   })
 
   it('defers to foreground idle time and only consumes a version after display is acknowledged', async () => {
@@ -167,14 +236,35 @@ describe('desktop update ownership and notification policy', () => {
     expect(f.saved().result).toBeNull()
   })
 
-  it('keeps manual checking available while disabled without reminders or automatic network work', async () => {
-    const f = await fixture({ enabled: false })
-    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL * 2)
-    expect(f.saved().lastCheckedAt).toBeNull()
-    expect((await f.service.check()).latestVersion).toBe('1.1.0')
-    expect(f.service.state.notification).toBeNull()
-    f.service.setEnabled(true)
-    expect(f.service.state.reminderDueAt).toBeNull()
+  it('restores a skipped version with reminders and persists the decision across restarts', async () => {
+    const f = await fixture()
+    await discover(f)
+    await f.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    await f.service.acknowledge({ action: 'ignore', version: '1.1.0' })
+    expect(f.service.state).toMatchObject({ ignoredVersion: '1.1.0', notification: null, lastCheckedAt: f.saved().lastCheckedAt })
+    await f.service.acknowledge({ action: 'unignore', version: '1.2.0' })
+    expect(f.service.state.ignoredVersion).toBe('1.1.0')
+    await f.service.acknowledge({ action: 'unignore', version: '1.1.0' })
+    expect(f.saved()).toMatchObject({ ignoredVersion: null, seenVersion: null, notifiedVersion: null, lastNotifiedAt: null })
+    expect(f.service.state).toMatchObject({ notification: { attention: 'unseen' }, reminderDueAt: 0 })
+    const restored = await fixture({}, f.saved())
+    expect(restored.service.state).toMatchObject({ ignoredVersion: null, notification: { payload: { version: '1.1.0' } } })
+  })
+
+  it('restores old skips without resetting attention on newer versions and hides skips already installed', async () => {
+    const f = await fixture()
+    await discover(f)
+    await f.service.acknowledge({ action: 'ignore', version: '1.1.0' })
+    f.environment.latest = '1.2.0'
+    await f.service.check(false)
+    await f.service.acknowledge({ action: 'reminded', version: '1.2.0' })
+    await f.service.acknowledge({ action: 'seen', version: '1.2.0' })
+    await f.service.acknowledge({ action: 'unignore', version: '1.1.0' })
+    expect(f.saved()).toMatchObject({ ignoredVersion: null, seenVersion: '1.2.0', notifiedVersion: '1.2.0' })
+    expect(f.service.state).toMatchObject({ notification: { attention: 'seen' }, reminderDueAt: null })
+    await f.service.acknowledge({ action: 'ignore', version: '1.2.0' })
+    const upgraded = await fixture({ currentVersion: '1.2.0' }, f.saved())
+    expect(upgraded.service.state).toMatchObject({ ignoredVersion: null, notification: null })
   })
 
   it('does not auto-check development builds and clears obsolete availability after upgrading', async () => {
@@ -187,18 +277,26 @@ describe('desktop update ownership and notification policy', () => {
     expect(upgraded.service.state.notification).toBeNull()
   })
 
-  it('keeps valid cached results on network failure and never converts failure into up-to-date', async () => {
+  it('retains the last successful check through background and manual failures, then recovers on retry', async () => {
+    const initial = { ...emptyUpdateRecord(), lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now(), result: release(), discoveredAt: Date.now() }
     const f = await fixture({
       check: async () => {
         throw new Error('offline')
       },
-    })
+    }, initial)
     await vi.advanceTimersByTimeAsync(UPDATE_STARTUP_DELAY)
-    expect(f.service.state).toMatchObject({ checking: false, result: null, notification: null })
+    expect(f.service.state).toMatchObject({ checking: false, checkFailed: true, lastSuccessfulCheckAt: initial.lastSuccessfulCheckAt, result: initial.result, notification: { attention: 'unseen' } })
     expect(f.errors).toEqual(['background'])
     expect(f.saved().lastCheckedAt).toBe(Date.now())
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL - 1)
+    expect(f.errors).toEqual(['background'])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.errors).toEqual(['background', 'background'])
     await expect(f.service.check()).rejects.toThrow('offline')
-    expect(f.service.state.result).toBeNull()
+    expect(f.service.state).toMatchObject({ checkFailed: true, lastSuccessfulCheckAt: initial.lastSuccessfulCheckAt, result: initial.result })
+    f.input.check = async () => release('1.2.0')
+    await f.service.check()
+    expect(f.service.state).toMatchObject({ checkFailed: false, lastSuccessfulCheckAt: Date.now(), result: release('1.2.0') })
   })
 
   it('does not mark a reminder delivered when persistence fails', async () => {

@@ -15,3 +15,6 @@ pub mod supervised_shell;
 mod windows_path;
 #[cfg(windows)]
 mod windows_security;
+
+#[cfg(windows)]
+pub mod installation_gate;

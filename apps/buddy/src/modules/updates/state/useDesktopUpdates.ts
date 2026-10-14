@@ -50,6 +50,20 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
       closeDetails()
   }
 
+  async function restore(version: string) {
+    apply(await app.updates.acknowledge({ action: 'unignore', version }))
+  }
+
+  async function snooze(version: string, delay: '30-minutes' | 'tomorrow') {
+    apply(await app.updates.acknowledge({ action: 'snooze', version, delay }))
+    if (!details.value || details.value.latestVersion === version)
+      closeDetails()
+  }
+
+  async function cancelSnooze(version: string) {
+    apply(await app.updates.acknowledge({ action: 'cancel-snooze', version }))
+  }
+
   function closeDetails() {
     generation++
     details.value = null
@@ -61,5 +75,5 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
     stop()
   }
 
-  return { state: readonly(state), details: readonly(details), load, check, openDetails, closeDetails, markSeen, markReminded, ignore, takeReminder: app.updates.takeReminder, dispose }
+  return { state: readonly(state), details: readonly(details), load, check, openDetails, closeDetails, markSeen, markReminded, ignore, restore, snooze, cancelSnooze, takeReminder: app.updates.takeReminder, dispose }
 }
