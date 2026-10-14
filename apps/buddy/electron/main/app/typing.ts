@@ -4,6 +4,7 @@ import type { LexoraConfig } from '../../shared/desktopApi'
 import type { DesktopDiagnosticLogger } from '../desktopDiagnostics'
 import type { BuddyRuntimePaths } from '../paths'
 import type { DesktopLaunchIntent } from '../startupIntent'
+import type { DesktopStorage } from '../storage/storageBootstrap'
 import type { DesktopStartup } from './DesktopStartup'
 
 export interface DesktopEnvironment {
@@ -14,6 +15,7 @@ export interface DesktopEnvironment {
   initialLaunchIntent: DesktopLaunchIntent
   isSmokeTest: boolean
   paths: BuddyRuntimePaths
+  storage: DesktopStorage
   windowStateAvailable: boolean
   setAutostart: (enabled: boolean) => Promise<void>
   trayIconPath: string

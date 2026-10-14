@@ -223,6 +223,8 @@ export interface LexoraConfigPatch {
 }
 
 export interface LexoraDesktopApi {
+  sync: import('../../shared/sync/syncApi').SyncApi
+  storage: import('../../shared/storage/storageApi').StorageApi
   themes: import('../../shared/theme/themeApi').ThemeApi
   extensions: import('../../shared/extensions/extensionApi').ExtensionApi
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi

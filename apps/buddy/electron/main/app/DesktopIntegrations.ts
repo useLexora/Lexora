@@ -30,6 +30,9 @@ import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
+import { registerStorageIpc } from '../storage/registerStorageIpc'
+import { StorageBackupService } from '../storage/StorageBackupService'
+import { registerSyncIpc } from '../sync/registerSyncIpc'
 import { registerThemeIpc } from '../themes/registerThemeIpc'
 import { createDesktopTray } from '../tray'
 import { registerDesktopUpdates } from '../updates/registerDesktopUpdates'
@@ -183,6 +186,10 @@ export class DesktopIntegrations {
     }))
     const updates = registerDesktopUpdates(this.#environment, runtime, windows, this.#requestInstall)
     this.#subscriptions.push(updates.dispose)
+    const backups = new StorageBackupService(this.#environment, () => windows.window, runtime)
+    this.#subscriptions.push(() => backups.dispose())
+    this.#subscriptions.push(await registerSyncIpc(paths.lexoraHome, runtime.network, () => windows.window, backups, this.#environment.storage.privateDirectoriesExecutable))
+    this.#subscriptions.push(registerStorageIpc(this.#environment, () => windows.window, backups, this.#requestRestart))
     registerDesktopIpc({
       getSandboxStatus: () => this.#runtime.getSandboxStatus(),
       setupSandbox: () => this.#runtime.setupSandbox(),

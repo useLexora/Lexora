@@ -1,3 +1,4 @@
+import type { StorageProtection } from '../../../platform/storage/ProfileLocations'
 import { homedir } from 'node:os'
 import process from 'node:process'
 import { filePathAdapters } from '../../../platform/filesystem/filePaths'
@@ -30,6 +31,7 @@ export function createBuddyServiceEnvironment(
   buddyHome: string,
   platform: NodeJS.Platform = process.platform,
   proxyUrl?: string,
+  storageProtection?: StorageProtection,
 ): NodeJS.ProcessEnv {
   const targetPlatform = resolveBuddyPlatform(platform)
   const environmentSource = !isWindows(targetPlatform.id) && !source.HOME
@@ -43,6 +45,7 @@ export function createBuddyServiceEnvironment(
     platform: targetPlatform,
     additions: {
       LEXORA_BUDDY_HOME: buddyHome,
+      LEXORA_BUDDY_STORAGE_PROTECTION: storageProtection ? JSON.stringify(storageProtection.sensitiveRoots) : undefined,
       LEXORA_BUDDY_EVENT_RECOVERY: recoveryMode === 'full' ? 'full' : undefined,
       NODE_USE_ENV_PROXY: '1',
       PI_CODING_AGENT_DIR: filePathAdapters[targetPlatform.id].resolveInput('agent', buddyHome),

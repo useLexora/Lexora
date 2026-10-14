@@ -4,15 +4,46 @@ import type { ApplicationStartupState } from '../../shared/diagnostics/applicati
 import type { CpuProfileRequest } from '../../shared/diagnostics/performanceDiagnostic'
 import type { RendererDiagnosticReport } from '../../shared/diagnostics/rendererDiagnostic'
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
+import type { BackupOptions } from '../../shared/storage/backupScope'
+import type { StorageProgress } from '../../shared/storage/storageApi'
+import type { BackupConfiguration, SyncConnectionInput, SyncState } from '../../shared/sync/syncApi'
 import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfigPatch, LexoraDesktopApi } from '../shared/desktopApi'
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopUpdates'
 import { ipcRenderer, webUtils } from 'electron'
+import { STORAGE_CHANGED, STORAGE_CHANNEL } from '../../shared/storage/storageApi'
+import { SYNC_CHANGED, SYNC_CHANNEL } from '../../shared/sync/syncApi'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
-export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'window' | 'workbench'> {
+export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
   return {
+    sync: Object.freeze({
+      selectAdapter: (adapter: 'webdav' | 's3') => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'selectAdapter', adapter }),
+      setFrequency: (frequency: 'hourly' | 'daily' | 'weekly') => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'frequency', frequency }),
+      backupNow: (options: BackupOptions, configuration?: BackupConfiguration) => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'backupNow', options: { ...options, scopes: [...options.scopes] }, ...(configuration ? { configuration: { frequency: configuration.frequency, connection: { ...configuration.connection } } } : {}) }),
+      testConnection: (connection: SyncConnectionInput) => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'testConnection', connection: { ...connection } }),
+      credential: (id: string) => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'credential', id }),
+      state: () => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'state' }),
+      setEnabled: (enabled: boolean) => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'setEnabled', enabled }),
+      onChanged: (listener: (state: SyncState) => void) => subscribe(SYNC_CHANGED, listener),
+    }),
+    storage: Object.freeze({
+      delete: (id: string) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'delete', id }),
+      snapshots: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'snapshots' }),
+      snapshot: (options?: BackupOptions) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'snapshot', options }),
+      restore: (id: string, options: BackupOptions) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'restore', id, options }),
+      import: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'import' }),
+      export: (id: string) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'export', id }),
+      onProgress: (listener: (progress: StorageProgress | null) => void) => subscribe(STORAGE_CHANGED, listener),
+      summary: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'summary' }),
+      usage: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'usage' }),
+      choose: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'choose' }),
+      open: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'open' }),
+      relocate: (target: string) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'relocate', target }),
+      cancel: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'cancel' }),
+      restart: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'restart' }),
+    }),
     workbench: Object.freeze({
       read: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.workbenchRead),
       write: (state: import('../../shared/workbench/workbenchState').WorkbenchState, options?: import('../../shared/workbench/workbenchState').WorkbenchWriteOptions) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.workbenchWrite, state, options),

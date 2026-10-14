@@ -22,6 +22,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { supportsSettingsCategory } from '@/platform/desktop/desktopCapabilities'
+import DataStorageIcon from '@/shared/ui/icon/DataStorageIcon.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import RuntimeIcon from '@/shared/ui/icon/RuntimeIcon.vue'
@@ -39,7 +40,7 @@ const props = defineProps<{
 const route = useRoute()
 const { registry } = useSettingsContext()
 const { t } = useBuddyI18n(() => props.language)
-const icons = { general: Settings20Regular, appearance: PaintBrush20Regular, notifications: Alert20Regular, pet: AnimalCat20Regular, shortcuts: Keyboard20Regular, models: ModelIcon, runtime: RuntimeIcon, prompts: TextDescription20Regular, mcp: PlugConnected20Regular, skills: SkillIcon, usage: DataUsage20Regular, web: Globe20Regular, browser: Window20Regular, proxy: Server20Regular, logs: DocumentTextClock20Regular, about: Info20Regular }
+const icons = { general: Settings20Regular, appearance: PaintBrush20Regular, notifications: Alert20Regular, pet: AnimalCat20Regular, shortcuts: Keyboard20Regular, models: ModelIcon, runtime: RuntimeIcon, prompts: TextDescription20Regular, mcp: PlugConnected20Regular, skills: SkillIcon, usage: DataUsage20Regular, web: Globe20Regular, browser: Window20Regular, storage: DataStorageIcon, proxy: Server20Regular, logs: DocumentTextClock20Regular, about: Info20Regular }
 const activeModuleId = computed(() => route.meta.settingsModule ?? route.params.moduleId)
 const visibleGroups = computed(() => settingsNavigationSections.map(section => ({
   ...section,

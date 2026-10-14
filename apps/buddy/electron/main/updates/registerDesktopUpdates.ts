@@ -3,8 +3,7 @@ import type { DesktopWindowHost } from '../app/DesktopWindowHost'
 import type { DesktopEnvironment } from '../app/typing'
 import { readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { join } from 'node:path'
 import process from 'node:process'
 import { app, ipcMain, shell } from 'electron'
 import { runsRpc } from '../../../shared/runs/runApi'
@@ -27,14 +26,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   const automaticCheck = app.isPackaged && environment.paths.profile !== 'development' && !environment.isSmokeTest
   const metadata = app.isPackaged && environment.paths.profile !== 'development' ? JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) : null
   const policy = new DesktopUpdatePolicy(readDesktopDistribution(metadata?.desktopDistribution, process.platform, process.arch))
-  const cacheRoots: Partial<Record<NodeJS.Platform, () => string>> = {
-    win32: () => win32.join(process.env.LOCALAPPDATA ?? win32.join(homedir(), 'AppData', 'Local'), 'lexora-buddy', 'updates'),
-    darwin: () => join(homedir(), 'Library', 'Caches', 'lexora-buddy', 'updates'),
-    linux: () => join(process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'), 'lexora-buddy', 'updates'),
-  }
-  const directory = policy.capabilities.download
-    ? environment.paths.profile === 'test' ? join(environment.paths.lexoraHome, '.runtime', 'updates') : cacheRoots[process.platform]?.() ?? null
-    : null
+  const directory = policy.capabilities.download ? join(environment.paths.lexoraHome, 'cache', 'updates') : null
   const downloadDirectory = directory ? join(directory, 'pending') : null
   const macInstaller = new MacUpdateInstaller(runtime.network.authenticateProxy)
   const installers = {

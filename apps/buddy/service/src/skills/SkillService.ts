@@ -560,7 +560,11 @@ export class SkillService {
             const loaded = lightweight ? skill : await this.#packages.load(path, root)
             if (!loaded)
               throw new SkillError('SKILL_INVALID')
-            const id = skillIdentity(source.kind === 'application' ? `application:${loaded.name}` : `${source.kind}:${path}`)
+            const discoveredId = skillIdentity(source.kind === 'application' ? `application:${loaded.name}` : `${source.kind}:${path}`)
+            const installation = source.kind === 'external'
+              ? [...existingRecords.values()].find(record => record.managedBy === source.kind && record.spaceId === null && record.path === loaded.path)
+              : undefined
+            const id = installation?.id ?? discoveredId
             if (source.kind === 'directory') {
               candidates.push({ allowedRoot: root, loaded, priority: 1, referenceRevision: loaded.referenceRevision, entry: {
                 id,

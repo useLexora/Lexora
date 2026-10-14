@@ -1,12 +1,13 @@
 import type { DesktopEnvironment } from './typing'
 import { mkdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { app, crashReporter, Menu, protocol } from 'electron'
 import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
+import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLease'
 import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
@@ -17,16 +18,17 @@ import { resolveBuddyRuntimePaths } from '../paths'
 import { desktopHosts } from '../platform/desktopHost'
 import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
+import { prepareStorageBootstrap, readStorageBootstrap, unifiedStoragePaths } from '../storage/storageBootstrap'
 import { bootstrapStep } from './desktopBootstrap'
 import { desktopIcons } from './desktopIcons'
 import { DesktopStartup } from './DesktopStartup'
-import { checkDesktopDirectories, criticalDesktopDirectories, prepareDesktopPrivateStorage } from './desktopStorage'
+import { checkDesktopDirectories, criticalDesktopDirectories, DesktopInstanceLockUnavailable, prepareDesktopPrivateStorage } from './desktopStorage'
 import { observeStartupDiagnostics } from './startupDiagnostics'
 
 export function prepareDesktopEnvironment(): DesktopEnvironment {
   const desktopHost = desktopHosts[currentPlatform.id]
   const isSmokeTest = process.env.LEXORA_DESKTOP_SMOKE_TEST === '1'
-  const paths = bootstrapStep('resolve_paths', () => resolveBuddyRuntimePaths({
+  const legacyPaths = bootstrapStep('resolve_paths', () => resolveBuddyRuntimePaths({
     defaultUserData: app.getPath('userData'),
     desktopName: buddyPackage.desktopName,
     isPackaged: app.isPackaged,
@@ -47,8 +49,29 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
     xdgRuntimeDirectory: process.env.XDG_RUNTIME_DIR,
     xdgStateHome: process.env.XDG_STATE_HOME,
   }))
+  const { bootstrapRoot } = readStorageBootstrap(legacyPaths.lexoraHome)
+  prepareDesktopPrivateStorage(bootstrapRoot, privateDirectoriesExecutable())
+  mkdirSync(join(bootstrapRoot, 'migration-session'), { recursive: true, mode: 0o700 })
+  app.setPath('sessionData', join(bootstrapRoot, 'migration-session'))
+  app.setName(legacyPaths.appName)
+  prepareDesktopPrivateStorage(legacyPaths.userData, privateDirectoriesExecutable())
+  app.setPath('userData', legacyPaths.userData)
+  if (!app.requestSingleInstanceLock({ executablePath: process.execPath }))
+    throw new DesktopInstanceLockUnavailable(legacyPaths.userData)
+  const storage = prepareStorageBootstrap(legacyPaths, privateDirectoriesExecutable())
+  const releaseStorage = acquireStorageRootLease(storage.state.activeRoot, storage.leaseDirectory, storage.privateDirectoriesExecutable)
+  app.once('will-quit', releaseStorage)
+  const paths = unifiedStoragePaths(legacyPaths, storage.state.activeRoot)
+  if (process.env.LEXORA_BUDDY_PET_STATE_PATH)
+    paths.nativePetState = legacyPaths.nativePetState
+  if (app.commandLine.hasSwitch('user-data-dir'))
+    paths.userData = legacyPaths.userData
+  if (storage.state.pending) {
+    mkdirSync(join(bootstrapRoot, 'migration-session'), { recursive: true, mode: 0o700 })
+    app.setPath('sessionData', join(bootstrapRoot, 'migration-session'))
+  }
   const diagnostics = new DesktopDiagnosticLogger({
-    directory: paths.logs,
+    directory: storage.state.pending ? join(bootstrapRoot, 'logs') : paths.logs,
     appVersion: app.getVersion(),
     userHome: homedir(),
   })
@@ -64,6 +87,7 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
     initialLaunchIntent: resolveDesktopLaunchIntent(process.argv, currentPlatform.id === OPERATING_SYSTEM.MacOS && app.getLoginItemSettings().wasOpenedAtLogin),
     isSmokeTest,
     paths,
+    storage,
     windowStateAvailable: true,
     setAutostart: desktopHost.setAutostart,
     trayIconPath: desktopIcons[paths.profile].tray,

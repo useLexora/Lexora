@@ -9,6 +9,15 @@ import { DesktopBootstrapError } from './desktopBootstrap'
 
 type DirectoryRole = NonNullable<PrivateDirectoryFailure['directoryRole']>
 
+export class DesktopInstanceLockUnavailable extends Error {
+  readonly userData: string
+
+  constructor(userData: string) {
+    super('DESKTOP_INSTANCE_LOCK_UNAVAILABLE')
+    this.userData = userData
+  }
+}
+
 export function prepareDesktopPrivateStorage(directory: string, executable?: string): void {
   try {
     ensurePrivateDirectoriesSync([directory], executable)

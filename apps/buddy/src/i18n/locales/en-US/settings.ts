@@ -1,6 +1,12 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.backup.completed': 'Cloud backup completed',
+  'desktop.backup.failed': 'Cloud backup did not complete. Check its status in Data storage and try again.',
+  'desktop.backup.authenticationFailed': 'Cloud backup failed. Check your username, password or access keys.',
+  'desktop.backup.writeFailed': 'Cloud backup failed. Check the backup directory and write permissions.',
+  'desktop.settings.category.storage': 'Data storage',
+  'desktop.settings.categoryDescription.storage': 'Manage your data location, storage usage and backups',
   'desktop.settings.category.prompts': 'Prompts',
   'desktop.settings.categoryDescription.prompts': 'Browse system instructions and task templates.',
   'desktop.prompts.group.system': 'System instructions',

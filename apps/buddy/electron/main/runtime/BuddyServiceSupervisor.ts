@@ -82,6 +82,8 @@ const RUNTIME_FAILURE_DISPOSITIONS = {
 } as const satisfies Record<BuddyServiceSupervisorFailureCode, 'offline' | 'restart'>
 
 export class BuddyServiceSupervisor {
+  #maintenance = false
+  #resumeAfterMaintenance = false
   readonly #bindPeer?: BuddyServiceSupervisorOptions['bindPeer']
   readonly #diagnosticOutput: Writable
   readonly #onDiagnostic: BuddyServiceSupervisorOptions['onDiagnostic']
@@ -158,6 +160,8 @@ export class BuddyServiceSupervisor {
   }
 
   start(): void {
+    if (this.#maintenance)
+      return
     if (this.#isReplacementBlocked())
       return
     if (this.#desiredRunning && this.#state.status !== 'offline')
@@ -178,6 +182,8 @@ export class BuddyServiceSupervisor {
     params: unknown,
     options: BuddyServiceRequestOptions = {},
   ): Promise<unknown> {
+    if (this.#maintenance)
+      throw new BuddyServiceUnavailableError()
     const peer = await this.#waitForReadyPeer()
     return peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
   }
@@ -201,6 +207,8 @@ export class BuddyServiceSupervisor {
   }
 
   async restart(): Promise<void> {
+    if (this.#maintenance)
+      throw new BuddyServiceUnavailableError()
     if (this.#isReplacementBlocked())
       throw new BuddyServiceUnavailableError()
     const intent = ++this.#intent
@@ -220,7 +228,9 @@ export class BuddyServiceSupervisor {
     })
   }
 
-  async stop(): Promise<void> {
+  async stop(forMaintenance = false): Promise<void> {
+    if (!forMaintenance)
+      this.#resumeAfterMaintenance = false
     if (!this.#desiredRunning && this.#state.status === 'stopped')
       return
     const intent = ++this.#intent
@@ -238,6 +248,23 @@ export class BuddyServiceSupervisor {
       if (!stopped || !this.#lastShutdownClean)
         throw new Error('Runtime shutdown did not complete cleanly')
     })
+  }
+
+  async withStoppedStorage<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#maintenance || this.#state.status !== 'ready')
+      throw new BuddyServiceUnavailableError()
+    this.#maintenance = true
+    this.#resumeAfterMaintenance = true
+    try {
+      await this.stop(true)
+      return await operation()
+    }
+    finally {
+      this.#maintenance = false
+      if (this.#resumeAfterMaintenance)
+        this.start()
+      this.#resumeAfterMaintenance = false
+    }
   }
 
   async #stopCurrentGeneration(): Promise<boolean> {

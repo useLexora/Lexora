@@ -11,7 +11,7 @@ import { useProvideAutomationContext } from '@/modules/automations'
 import { useProvideBuddiesContext } from '@/modules/buddies'
 import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
-import { usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
+import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { DesktopSkillReviewHost } from '@/modules/skills/ui'
 import { provideExecutionEnvironment, sessionReferenceNavigationKey, useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
@@ -54,6 +54,7 @@ const router = useRouter()
 const message = useMessage()
 const appState = useDesktopAppState({ api })
 const { stores } = appState
+const cloudBackup = useCloudBackupFeedback({ api: api.sync, language: stores.applicationSettings.language, notify: (type, content) => message[type](content) })
 
 useDesktopTypography(() => stores.applicationSettings.config.value?.desktop.typography)
 useProvideDesktopUpdates(stores.updates)
@@ -294,6 +295,9 @@ useProvideSettingsContext({
   applicationSettings: stores.applicationSettings,
   appInfo: shell.appInfo,
   dataSettings: capabilities.dataSettings,
+  storageUsage: stores.storageUsage,
+  storage: stores.storage,
+  cloudBackup,
   platformCapabilities: shell.platformCapabilities,
   providerSettings: stores.modelProviders,
   ready,

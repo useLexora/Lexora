@@ -41,6 +41,7 @@ export default defineConfig({
         external: ['electron', '@silvia-odwyer/photon-node', 'fflate/node', /^@earendil-works\/pi-/],
         input: {
           'index': fileURLToPath(new URL('./electron/main/index.ts', import.meta.url)),
+          'storage-worker': fileURLToPath(new URL('./service/src/storage/storageWorker.ts', import.meta.url)),
           'buddy-service': fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
           'extension-compiler': fileURLToPath(new URL('./electron/main/extensions/compilerProcess.ts', import.meta.url)),
         },

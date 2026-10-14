@@ -1,10 +1,10 @@
 import type { AuthInfo, Session } from 'electron'
-import type { WebNetworkRequest } from '../../../shared/network/webProtocol'
+import type { Buffer } from 'node:buffer'
 import { WebError } from '../../../shared/network/webProtocol'
 
 export type ProxyAuthenticator = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void) => boolean
 
-export async function requestThroughHost(session: Session, input: Pick<WebNetworkRequest, 'body' | 'headers' | 'method' | 'url'>, signal: AbortSignal, authenticateProxy?: ProxyAuthenticator): Promise<Response> {
+export async function requestThroughHost(session: Session, input: { url: string, method: string, headers: Record<string, string>, body?: string | Buffer }, signal: AbortSignal, authenticateProxy?: ProxyAuthenticator): Promise<Response> {
   const { net } = await import('electron')
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {

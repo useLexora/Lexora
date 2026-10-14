@@ -48,6 +48,14 @@ const locations: Record<BuddyPlatformId, SensitiveLocations> = {
 export function resolveSensitiveLocations(home: string | null, environment: NodeJS.ProcessEnv): string[] {
   const definition = locations[currentPlatform.id]
   const roots = [...definition.absolute]
+  const buddyHome = environment.LEXORA_BUDDY_HOME
+  if (buddyHome && filePaths.path.isAbsolute(buddyHome)) {
+    roots.push(...['secrets', '../device', '../storage.json'].map(path => filePaths.resolveInput(path, buddyHome)))
+  }
+  const storageProtection: unknown = environment.LEXORA_BUDDY_STORAGE_PROTECTION ? JSON.parse(environment.LEXORA_BUDDY_STORAGE_PROTECTION) : []
+  if (!Array.isArray(storageProtection) || !storageProtection.every(root => typeof root === 'string' && filePaths.path.isAbsolute(root)))
+    throw new Error('STORAGE_INVALID_PROTECTION')
+  roots.push(...storageProtection)
   for (const source of definition.environment) {
     const bases = [environment[source.key], home && source.homeFallback ? filePaths.path.join(home, source.homeFallback) : null]
     for (const base of bases) {

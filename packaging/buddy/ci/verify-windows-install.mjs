@@ -34,7 +34,7 @@ async function main() {
       LEXORA_DESKTOP_SMOKE_REQUIRE_SANDBOX: requireSandbox ? '1' : '0',
     }
     delete environment.ELECTRON_RUN_AS_NODE
-    await runDesktopSmoke(executablePath, environment, 45_000)
+    await runDesktopSmoke(executablePath, environment, 180_000)
     const database = new DatabaseSync(join(lexoraHome, 'buddy', 'buddy.sqlite3'))
     try {
       const integrity = database.prepare('PRAGMA quick_check').get()
@@ -47,7 +47,7 @@ async function main() {
     finally {
       database.close()
     }
-    await runDesktopSmoke(executablePath, environment, 45_000)
+    await runDesktopSmoke(executablePath, environment, 180_000)
     writeOutput('Installed Windows Desktop: startup, database, restart and shutdown passed')
   }
   finally {

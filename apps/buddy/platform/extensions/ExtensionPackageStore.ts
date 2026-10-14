@@ -2,6 +2,7 @@ import type { ExtensionManifest } from '../../shared/extensions/extensionManifes
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
+import type { ExtensionPackage, extensionIndexSchema as indexSchema, InstalledExtension, extensionSourceSchema as sourceSchema, storedPackageSchema, storedRecordSchema } from './extensionState'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
@@ -19,18 +20,10 @@ import { validateThemeFiles } from '../themes/themeAssets'
 import { EXTENSION_PACKAGE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
+import { extensionPackageSchema as packageSchema, storedIndexSchema } from './extensionState'
 
-const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
-const sourceSchema = z.object({ catalog: z.string().url(), artifact: z.string().url(), sha256: revisionSchema }).strict()
-const packageSchema = z.object({ manifest: extensionManifestSchema, revision: revisionSchema, hashes: z.record(z.string(), revisionSchema), source: sourceSchema.nullable().default(null) }).strict()
-const recordSchema = z.object({ current: packageSchema, pending: packageSchema.nullable(), enabled: z.boolean(), development: z.boolean() }).strict()
-const indexSchema = z.object({ version: z.literal(1), installed: z.record(extensionIdSchema, recordSchema) }).strict()
-const storedPackageSchema = packageSchema.extend({ manifest: z.unknown() })
-const storedRecordSchema = recordSchema.extend({ current: storedPackageSchema, pending: storedPackageSchema.nullable() })
-const storedIndexSchema = indexSchema.extend({ installed: z.record(extensionIdSchema, storedRecordSchema) })
 const grantSchema = z.object({ resource: extensionResourceSchema, target: spaceFileTargetSchema }).strict()
-export type ExtensionPackage = z.infer<typeof packageSchema>
-export type InstalledExtension = z.infer<typeof recordSchema>
+export type { ExtensionPackage, InstalledExtension } from './extensionState'
 export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number }
 
 async function verifyExistingPackage(root: string, pkg: ExtensionPackage, renameError: unknown): Promise<void> {

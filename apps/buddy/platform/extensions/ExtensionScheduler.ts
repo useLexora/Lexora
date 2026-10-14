@@ -1,13 +1,11 @@
+import type { z } from 'zod'
 import type { ExtensionSchedule, ExtensionScheduleInput } from '../../shared/extensions/extensionSchedule'
+import type { extensionJobSchema } from './extensionState'
 import { join } from 'node:path'
-import { z } from 'zod'
-import { extensionIdSchema } from '../../shared/extensions/extensionManifest'
-import { extensionScheduleSchema } from '../../shared/extensions/extensionSchedule'
 import { readExtensionJson, writeExtensionJson } from './extensionFiles'
+import { extensionScheduleStateSchema } from './extensionState'
 
-const jobSchema = extensionScheduleSchema.extend({ extensionId: extensionIdSchema })
-const stateSchema = z.object({ version: z.literal(1), jobs: z.array(jobSchema).max(512) }).strict()
-type Job = z.infer<typeof jobSchema>
+type Job = z.infer<typeof extensionJobSchema>
 interface SchedulerPorts {
   available: (extensionId: string, command: string) => boolean
   execute: (extensionId: string, command: string) => Promise<unknown>
@@ -33,7 +31,7 @@ export class ExtensionScheduler {
 
   async load(): Promise<void> {
     try {
-      this.#jobs = stateSchema.parse(await readExtensionJson(this.#path)).jobs
+      this.#jobs = extensionScheduleStateSchema.parse(await readExtensionJson(this.#path)).jobs
       if (new Set(this.#jobs.map(job => `${job.extensionId}/${job.id}`)).size !== this.#jobs.length)
         throw new Error('Duplicate schedule')
     }

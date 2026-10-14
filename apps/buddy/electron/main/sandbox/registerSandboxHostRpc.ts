@@ -1,6 +1,7 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import process from 'node:process'
 import { utilityProcess } from 'electron'
 import { createProxyEnvironment } from '../../../platform/process/proxyEnvironment'
@@ -16,6 +17,7 @@ import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
 
 export interface SandboxHostOptions {
   buddyHome: string
+  protectedRoots?: string[]
   proxyUrl?: string
   searchDirectory: string
   sandboxDirectory?: string
@@ -137,7 +139,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           home: homedir(),
           path: process.env.PATH ?? '',
           privateRoot: directory,
-          protectedRoots: [options.buddyHome],
+          protectedRoots: options.protectedRoots ?? [dirname(options.buddyHome)],
           searchDirectory: options.searchDirectory,
           backend: windowsSandbox
             ? { kind: SHELL_SANDBOX_BACKEND.Windows, executable: windowsSandbox, shell: options.windowsShell, systemRoot }

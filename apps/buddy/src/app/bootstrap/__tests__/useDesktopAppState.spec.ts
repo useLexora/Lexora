@@ -10,6 +10,8 @@ describe('useDesktopAppState', () => {
   it('initializes once and ignores startup replies after disposal', async () => {
     const status = deferred<LocalBuddyServiceSupervisorState>()
     const api = {
+      storage: { onProgress: () => () => {} },
+      sync: { onChanged: () => () => {} },
       localChat: {
         automations: emptyAutomationApi(),
         chat: emptyChatApi(),
@@ -33,6 +35,8 @@ describe('useDesktopAppState', () => {
   it('derives a localized safe runtime failure from the runtimeSupervisor code', async () => {
     let onStateChanged: ((state: LocalBuddyServiceSupervisorState) => void) | undefined
     const api = {
+      storage: { onProgress: () => () => {} },
+      sync: { onChanged: () => () => {} },
       localChat: {
         automations: emptyAutomationApi(),
         chat: emptyChatApi(),
@@ -84,6 +88,8 @@ describe('useDesktopAppState', () => {
     let resolveStatus: ((state: LocalBuddyServiceSupervisorState) => void) | undefined
     let onStateChanged: ((state: LocalBuddyServiceSupervisorState) => void) | undefined
     const api = {
+      storage: { onProgress: () => () => {} },
+      sync: { onChanged: () => () => {} },
       localChat: {
         automations: emptyAutomationApi(),
         chat: emptyChatApi(),

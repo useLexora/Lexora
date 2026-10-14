@@ -12,6 +12,7 @@ export const builtinSettingsCatalog = {
   usage: { section: 'ai', requiresRuntime: true },
   web: { section: 'integrations', requiresRuntime: true },
   browser: { section: 'integrations', requiresRuntime: false },
+  storage: { section: 'system', requiresRuntime: false },
   proxy: { section: 'system', requiresRuntime: false },
   logs: { section: 'system', requiresRuntime: false },
   about: { section: 'system', requiresRuntime: false },

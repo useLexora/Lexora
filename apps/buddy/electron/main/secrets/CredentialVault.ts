@@ -16,6 +16,8 @@ import process from 'node:process'
 import { safeStorage } from 'electron'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 
+type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup'
+
 const SECRET_FILE_SUFFIX = '.credential'
 
 export interface SecretCipher {
@@ -25,13 +27,13 @@ export interface SecretCipher {
 }
 
 export interface CredentialVault {
-  delete: (namespace: CredentialNamespace, id: string) => Promise<void>
+  delete: (namespace: LocalCredentialNamespace, id: string) => Promise<void>
   listProviders: () => Promise<ReadonlyArray<{
     providerId: string
     type: 'api_key' | 'oauth'
   }>>
-  read: (namespace: CredentialNamespace, id: string) => Promise<unknown | null>
-  write: (namespace: CredentialNamespace, id: string, value: unknown) => Promise<void>
+  read: (namespace: LocalCredentialNamespace, id: string) => Promise<unknown | null>
+  write: (namespace: LocalCredentialNamespace, id: string, value: unknown) => Promise<void>
 }
 
 export interface CreateCredentialVaultOptions {
@@ -172,11 +174,11 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
   await chmod(path, 0o700)
 }
 
-function resolveNamespacePath(root: string, namespace: CredentialNamespace): string {
+function resolveNamespacePath(root: string, namespace: LocalCredentialNamespace): string {
   return join(root, namespace)
 }
 
-function resolveSecretPath(root: string, namespace: CredentialNamespace, id: string): string {
+function resolveSecretPath(root: string, namespace: LocalCredentialNamespace, id: string): string {
   const name = createHash('sha256').update(id).digest('hex')
   return join(resolveNamespacePath(root, namespace), `${name}${SECRET_FILE_SUFFIX}`)
 }

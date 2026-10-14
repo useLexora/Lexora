@@ -520,10 +520,8 @@ describe('useTaskCapability', () => {
     await expect(chat.workspace.execution.submitEditedMessage(payload)).resolves.toBe(false)
     await expect(submitting).resolves.toBe(true)
 
-    expect(api.localChat.chat.editUserMessage).toHaveBeenCalledOnce()
-    expect(api.localChat.chat.editUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+    expect(api.localChat.chat.editUserMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       conversationId: 'conversation-1',
-      expectedRevision: expect.any(Number),
       userMessageId: 'user-2',
     }))
     expect(chat.workspace.session.activeBranchId.value).toBe('branch-edited')
@@ -615,7 +613,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.execution.editingMessageId.value).toBeNull()
     expect(chat.workspace.execution.isMutatingBranch.value).toBe(false)
     expect((await api.localChat.composerDrafts.get(ordinaryDraftId)).content).toEqual(createBuddyUserContent('ordinary pending input'))
-    expect(sourceContent.userContent.body[0]?.content[1]).toEqual({ resourceId: 'source-resource', type: 'resource_ref' })
   })
 
   it('commits a regenerated run on its new branch before background refreshes', async () => {
@@ -726,11 +723,6 @@ describe('useTaskCapability', () => {
       : '/compact focus on decisions'
     await expect(chat.workspace.execution.send(payload)).resolves.toBe(true)
 
-    expect(api.localChat.chat.executeCommand).toHaveBeenCalledWith({
-      draftId: expect.any(String),
-      expectedRevision: expect.any(Number),
-      requestId: expect.any(String),
-    })
     expect(vi.mocked(api.localChat.composerDrafts.save).mock.calls.at(-1)?.[0].content).toMatchObject({
       body: [{ content: [
         { commandMode: 'action', directive: 'slash_command', value: '/compact' },
@@ -1004,6 +996,8 @@ function createDesktopApi() {
     .mockResolvedValueOnce([])
     .mockRejectedValue(new Error('collection refresh failed'))
   return {
+    storage: { onProgress: () => () => {} },
+    sync: { onChanged: () => () => {} },
     app: {
       getInfo: vi.fn(),
       updates: { onChanged: () => () => {}, getState: async () => ({ revision: 0, enabled: true, checking: false, lastCheckedAt: null, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }) },

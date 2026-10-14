@@ -15,6 +15,7 @@ export const settingsPageRenderers: Record<Exclude<BuiltinSettingsCategory, 'gen
   usage: defineAsyncComponent(() => import('./DesktopUsageSettingsView.vue')),
   web: defineAsyncComponent(() => import('./DesktopWebSettingsView.vue')),
   browser: defineAsyncComponent(() => import('./DesktopBrowserSettingsView.vue')),
+  storage: defineAsyncComponent(() => import('./DesktopStorageSettingsView.vue')),
   proxy: defineAsyncComponent(() => import('./DesktopProxySettingsView.vue')),
   logs: defineAsyncComponent(() => import('./DesktopLogsSettingsView.vue')),
   about: defineAsyncComponent(() => import('./DesktopAboutSettingsView.vue')),

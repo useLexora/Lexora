@@ -1,6 +1,8 @@
 import type { AuthenticationResponseDetails, AuthInfo, Event, ProxyConfig, Session, WebContents } from 'electron'
+import type { SyncTransport } from '../../../platform/sync/SyncAdapter'
 import type { NetworkStartupFailure } from '../../../shared/diagnostics/networkStartupFailure'
 import type { ProxySettings } from '../../../shared/network/proxySettings'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { app, session } from 'electron'
 import { NetworkStartupError } from '../../../shared/diagnostics/networkStartupFailure'
@@ -55,6 +57,11 @@ export class DesktopNetwork {
       init?.signal ?? AbortSignal.timeout(30_000),
       this.authenticateProxy,
     )
+  }
+
+  readonly request: SyncTransport = async (url, input) => {
+    this.assertAvailable()
+    return requestThroughHost(session.defaultSession, { url, method: input.method, headers: input.headers, ...(input.body ? { body: Buffer.from(input.body) } : {}) }, input.signal, this.authenticateProxy)
   }
 
   readonly download = (url: string, init: Pick<RequestInit, 'signal'>): Promise<Response> => {

@@ -1,4 +1,10 @@
 export default {
+  'desktop.settings.category.storage': '数据存储',
+  'desktop.settings.categoryDescription.storage': '管理数据目录、空间占用与备份恢复',
+  'desktop.backup.completed': '云备份已完成',
+  'desktop.backup.failed': '云备份未完成，请在数据存储中查看备份状态后重试。',
+  'desktop.backup.authenticationFailed': '云备份失败，请检查账号、密码或访问密钥。',
+  'desktop.backup.writeFailed': '云备份失败，请检查备份目录和写入权限。',
   'desktop.settings.category.prompts': '提示词',
   'desktop.settings.categoryDescription.prompts': '浏览系统规则与任务模板。',
   'desktop.prompts.group.system': '系统规则',

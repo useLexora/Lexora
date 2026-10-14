@@ -167,6 +167,7 @@ export class DesktopRuntimeHost {
       bindPeer: (peer) => {
         const sandbox = registerSandboxHostRpc(peer, {
           buddyHome: environment.paths.buddyHome,
+          protectedRoots: environment.storage.protection.sandboxRoots,
           proxyUrl: this.#network!.sandboxProxyUrl,
           ...this.#sandboxOptions(),
         })
@@ -207,7 +208,7 @@ export class DesktopRuntimeHost {
       diagnosticOutput: environment.diagnostics.createWritable('local-service', { event: 'runtime.supervisor', level: 'error' }),
       spawnService: (onFatalError, sourceId) => forkBuddyServiceProcess({
         env: {
-          ...createBuddyServiceEnvironment(process.env, environment.paths.buddyHome, process.platform, this.#network!.proxyUrl),
+          ...createBuddyServiceEnvironment(process.env, environment.paths.buddyHome, process.platform, this.#network!.proxyUrl, environment.storage.protection),
           ...createBuddyNativeEnvironment(nativePaths),
           ...(this.#windowsPowerShell ? { PI_POWERSHELL_PATH: this.#windowsPowerShell } : {}),
           PI_TOOLS_DIR: resolveBuddySearchToolsDirectory(nativePaths),

@@ -2,7 +2,7 @@ import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { useModelProvidersStore } from '@/modules/models'
 import { useNotificationCenterStore } from '@/modules/notifications'
-import { useApplicationSettingsStore, useUsageStore } from '@/modules/settings'
+import { useApplicationSettingsStore, useStorageStore, useStorageUsageStore, useUsageStore } from '@/modules/settings'
 import { useDesktopUpdates } from '@/modules/updates'
 import { useRuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { requireInitialState } from './requireInitialState'
@@ -27,11 +27,14 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
     api: options.api.localChat.usage,
     language: applicationSettings.language,
   })
+  const storageUsage = useStorageUsageStore(options.api.storage)
   const stores = {
     applicationSettings,
     modelProviders,
     notifications,
     runtimeSupervisor,
+    storageUsage,
+    storage: useStorageStore(options.api.storage, options.api.sync, storageUsage),
     updates,
     usage,
   } as const
@@ -77,6 +80,7 @@ export function useDesktopAppState(options: UseDesktopAppStateOptions) {
     notifications.dispose()
     updates.dispose()
     runtimeSupervisor.dispose()
+    stores.storage.dispose()
   }
 
   return {

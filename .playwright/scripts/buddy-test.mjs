@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -14,7 +15,7 @@ const buddyRoot = path.join(repoRoot, 'apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
 const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
 
-export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()), passwordStore } = {}) {
+export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()), passwordStore } = {}) {
   assert(passwordStore === undefined || (process.platform === 'linux' && ['kwallet', 'kwallet5', 'kwallet6', 'gnome-libsecret'].includes(passwordStore)), 'Unsupported secure password store')
   runId ??= `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
   assert(/^[\w-]{1,100}$/.test(runId), 'Invalid test run ID')
@@ -43,6 +44,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     const record = { home, artifactDirectory, launches: [] }
     records.push(record)
     let application
+    let applicationProcess
     let page
     let display
     let launchRecord
@@ -51,10 +53,10 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     const instance = {
       home,
       artifactDirectory,
-      async launch() {
+      async launch(options = {}) {
         assert(!disposed, 'Test run has been disposed')
         assert(!application && !launching, 'Stop the previous application before restarting this instance')
-        launching = launch()
+        launching = launch(options)
         try {
           return await launching
         }
@@ -77,7 +79,8 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     instances.push(instance)
     return instance
 
-    async function launch() {
+    async function launch({ maintenance = false, expectedRoot = home } = {}) {
+      assert(contains(instancesRoot, await canonicalPath(expectedRoot)), 'Expected root must stay in this isolated test run')
       const { _electron: electron } = await import('@playwright/test')
       const environment = createTestEnvironment(home)
       if (process.platform === 'linux') {
@@ -88,16 +91,13 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
       record.launches.push(launchRecord)
       launchNumber += 1
       try {
-        application = await electron.launch({
-          executablePath: require('electron'),
-          args: [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), ...(passwordStore ? [`--password-store=${passwordStore}`] : []), '--disable-gpu', path.resolve(appPath)],
-          chromiumSandbox: true,
-          cwd: repoRoot,
-          env: environment,
-          timeout: 45000,
-        })
-        launchRecord.pid = application.process().pid
-        application.process().stderr?.on('data', (chunk) => {
+        const args = [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), ...(passwordStore ? [`--password-store=${passwordStore}`] : []), '--disable-gpu']
+        application = executablePath
+          ? await launchInstalled(executablePath, args, environment, { maintenance, artifactDirectory, launchNumber })
+          : await electron.launch({ executablePath: require('electron'), args: [...args, path.resolve(appPath)], chromiumSandbox: true, cwd: repoRoot, env: environment, timeout: 45000 })
+        applicationProcess = application.process()
+        launchRecord.pid = applicationProcess.pid
+        applicationProcess.stderr?.on('data', (chunk) => {
           launchRecord.stderr = `${launchRecord.stderr}${chunk}`.slice(-65536)
         })
         await application.context().tracing.start({ screenshots: true, snapshots: true })
@@ -105,11 +105,17 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
         launchRecord.diagnostics = attachPageDiagnostics(page)
         page.setDefaultTimeout(30000)
         await page.waitForFunction(() => location.protocol === 'lexora-app:' || location.protocol === 'data:', undefined, { timeout: 45000 })
+        if (maintenance) {
+          assert.equal(new URL(page.url()).protocol, 'data:')
+          return { app: application, page, diagnostics: launchRecord.diagnostics }
+        }
         assert.equal(new URL(page.url()).protocol, 'lexora-app:', `Application failed to start: ${await page.locator('body').textContent()}`)
         await page.waitForFunction(async () => (await window.lexoraDesktop?.app.startup.getState())?.status === 'ready', undefined, { timeout: 45000 })
         const info = await page.evaluate(() => window.lexoraDesktop.app.getInfo())
         assert.equal(info.runtimeProfile, 'test')
-        assert.equal(await fs.realpath(path.dirname(info.configPath)), home)
+        if (executablePath)
+          assert.equal(info.isPackaged, true)
+        assert.equal(await fs.realpath(path.dirname(info.configPath)), await canonicalPath(expectedRoot))
         const { runtimeProfile, isPackaged, version, platform, configPath } = info
         launchRecord.application = { runtimeProfile, isPackaged, version, platform, configPath }
         return { app: application, page, diagnostics: launchRecord.diagnostics }
@@ -123,8 +129,8 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     async function stop() {
       if (application) {
         const current = application
-        const child = current.process()
-        if (child.exitCode === null && child.signalCode === null) {
+        const child = applicationProcess
+        if (executablePath || (child.exitCode === null && child.signalCode === null)) {
           await page?.screenshot({ path: path.join(artifactDirectory, `launch-${launchNumber}.png`), animations: 'disabled', timeout: 5000 }).catch(() => {})
           await withTimeout(current.context().tracing.stop({ path: path.join(artifactDirectory, `trace-${launchNumber}.zip`) }), 10000, 'Trace export timed out').catch(() => {})
           try {
@@ -137,12 +143,14 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
           }
           finally {
             application = undefined
+            applicationProcess = undefined
             page = undefined
             await display?.stop()
             display = undefined
           }
         }
         application = undefined
+        applicationProcess = undefined
         page = undefined
       }
       await display?.stop()
@@ -257,4 +265,70 @@ async function withTimeout(promise, milliseconds, message) {
     })])
   }
   finally { clearTimeout(timer) }
+}
+
+async function launchInstalled(executablePath, args, environment, { maintenance, artifactDirectory, launchNumber }) {
+  const { chromium } = await import('@playwright/test')
+  const server = createServer()
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  await new Promise(resolve => server.close(resolve))
+  const child = spawn(executablePath, [...args, `--remote-debugging-port=${port}`], { env: environment, cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', (chunk) => {
+    stderr = `${stderr}${chunk}`.slice(-65536)
+  })
+  let browser
+  let page
+  const deadline = Date.now() + 90000
+  try {
+    while (Date.now() < deadline) {
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 })
+      }
+      catch {
+        await new Promise(resolve => setTimeout(resolve, 200))
+        continue
+      }
+      page = browser.contexts().flatMap(context => context.pages())[0]
+      if (!page) {
+        await browser.close()
+        await new Promise(resolve => setTimeout(resolve, 200))
+        continue
+      }
+      await page.waitForFunction(() => location.protocol === 'lexora-app:' || location.protocol === 'data:', undefined, { timeout: 45000 }).catch(() => {})
+      if (page.isClosed()) {
+        await browser.close()
+        continue
+      }
+      if (!maintenance && page.url().startsWith('data:')) {
+        await page.screenshot({ path: path.join(artifactDirectory, `migration-${launchNumber}.png`) }).catch(() => {})
+        await withTimeout(once(browser, 'disconnected'), Math.max(1, deadline - Date.now()), 'Migration did not restart').catch(() => {})
+        await browser.close()
+        continue
+      }
+      return {
+        context: () => page.context(),
+        process: () => child,
+        firstWindow: async () => page,
+        close: async () => {
+          if (browser.isConnected()) {
+            const disconnected = withTimeout(once(browser, 'disconnected'), 15000, 'Installed application did not exit')
+            if (page.url().startsWith('data:'))
+              child.kill('SIGTERM')
+            else
+              await page.evaluate(() => window.lexoraDesktop.commands.execute('app.quit')).catch(() => {})
+            await disconnected
+          }
+          await browser.close()
+        },
+      }
+    }
+    throw new Error(`Installed application did not become ready: ${stderr}`)
+  }
+  catch (error) {
+    await browser?.close().catch(() => {})
+    await terminate(child)
+    throw error
+  }
 }

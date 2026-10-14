@@ -30,6 +30,7 @@ export const settingsRoutes: ReadonlyArray<RouteRecordRaw> = [
         props: true,
         meta: { settingsCategory: 'models', settingsModule: 'settings.models' },
       },
+      { path: 'sync', name: 'desktop.settings.sync', redirect: desktopRouteLocations.settings('storage') },
       { path: 'extensions', name: DESKTOP_ROUTE_NAMES.settingsExtensions, redirect: desktopRouteLocations.extensions() },
       { path: 'app', name: DESKTOP_ROUTE_NAMES.settingsApp, redirect: desktopRouteLocations.settings() },
     ],
