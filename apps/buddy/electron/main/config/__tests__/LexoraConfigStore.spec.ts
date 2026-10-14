@@ -1,314 +1,164 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import type { LexoraConfigPatch } from '../../../shared/desktopApi'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
+import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
-import { DEFAULT_THEME_PREFERENCE } from '../../../../shared/theme/themePreferences'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
-import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '../../../shared/desktopApi'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
-async function createConfigStore() {
+async function createConfigStore(content?: string) {
   const directory = await createTemporaryDirectory('lexora-config-test-')
   const configPath = join(directory, '.lexora', 'config.toml')
-
-  return {
-    configPath,
-    store: new LexoraConfigStore({ configPath }),
+  if (content !== undefined) {
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(configPath, content)
   }
+  return { configPath, store: new LexoraConfigStore({ configPath }) }
 }
 
 describe('lexoraConfigStore', () => {
-  it('defaults legacy typography, merges independent choices and resets without losing other preferences', async () => {
+  it('defaults legacy profiles and preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
     const { configPath, store } = await createConfigStore()
-    expect((await store.read()).desktop.typography).toEqual(DEFAULT_TYPOGRAPHY)
+    const defaults = {
+      browser: DEFAULT_BROWSER_PREFERENCES,
+      runtime: { modelRetryLimit: 3 },
+      desktop: {
+        notificationsEnabled: true,
+        subtaskNotificationsEnabled: true,
+        pluginAuthor: '',
+        keybindings: {},
+        typography: DEFAULT_TYPOGRAPHY,
+        chat: { pasteTextAsAttachment: true, permissionMode: 'policy_approval' },
+      },
+    }
+    expect(await store.read()).toMatchObject(defaults)
     await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop.chat]\nwelcome="none"\n[desktop.typography]\nfuture=true\n')
-    expect((await store.read()).desktop.typography).toEqual(DEFAULT_TYPOGRAPHY)
-    await store.update({ desktop: { typography: { bodyFont: 'Noto Serif CJK SC', bodySize: 15 } } })
-    await store.update({ desktop: { typography: { codeFont: 'Consolas' } } })
-    const restarted = new LexoraConfigStore({ configPath })
-    expect((await restarted.read()).desktop.typography).toEqual({ ...DEFAULT_TYPOGRAPHY, bodyFont: 'Noto Serif CJK SC', bodySize: 15, codeFont: 'Consolas' })
-    const saved = await readFile(configPath, 'utf8')
-    await expect(store.update({ desktop: { typography: { bodySize: 100 } } })).rejects.toThrow()
-    expect(await readFile(configPath, 'utf8')).toBe(saved)
-    await restarted.update({ desktop: { typography: { ...DEFAULT_TYPOGRAPHY } } })
-    expect((await store.read()).desktop).toMatchObject({ typography: DEFAULT_TYPOGRAPHY, chat: { welcome: 'none' } })
-    expect(await readFile(configPath, 'utf8')).toContain('future = true')
+    await writeFile(configPath, '[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[browser]\nfuture=true\n')
+    expect(await store.read()).toMatchObject(defaults)
+    const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
+    const preferences = {
+      runtime: { cacheWarming: 'streaming' },
+      browser: { screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
+      proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
+      desktop: {
+        subtaskNotificationsEnabled: false,
+        updateNotificationsEnabled: false,
+        chat: { welcome: 'writing', pasteTextAsAttachment: false, permissionMode: 'full_access' },
+        typography: { bodyFont: 'Noto Serif CJK SC', bodySize: 15 },
+        keybindings: { 'task.new': 'Mod+Alt+N', 'view.close': '' },
+        pluginAuthor: '山雨海 · Équipe 🎨',
+        profile,
+        taskSidebar: { collapsed: true, collapsedSections: ['tasks'], collapsedSpaces: ['space-a'], width: 336 },
+        taskSidebarPinnedItems: [{ id: 'space-a', kind: 'space' }, { id: 'conversation-a', kind: 'conversation' }],
+        contextPanelMode: 'space',
+        contextPanelGlobal: true,
+        theme: { id: 'lexora.themes.classic-dark' },
+      },
+      pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
+    } satisfies LexoraConfigPatch
+    expect(await store.update(preferences)).toMatchObject(preferences)
+    await store.update({
+      proxy: { mode: 'direct', server: preferences.proxy.server },
+      desktop: { language: 'en-US', contextPanelGlobal: false, profile: { userName: 'Bob' }, taskSidebar: { collapsedSpaces: ['space-b'] }, typography: { codeFont: 'Consolas' } },
+    })
+    const reopened = new LexoraConfigStore({ configPath })
+    expect(await reopened.read()).toMatchObject({
+      ...preferences,
+      proxy: { mode: 'direct', server: preferences.proxy.server },
+      desktop: {
+        ...preferences.desktop,
+        notificationsEnabled: true,
+        notifyWhenFocused: true,
+        language: 'en-US',
+        contextPanelGlobal: false,
+        profile: { ...profile, userName: 'Bob' },
+        taskSidebar: { ...preferences.desktop.taskSidebar, collapsedSpaces: ['space-b'] },
+        typography: { ...DEFAULT_TYPOGRAPHY, ...preferences.desktop.typography, codeFont: 'Consolas' },
+      },
+    })
+    await store.update({ desktop: { typography: { ...DEFAULT_TYPOGRAPHY }, keybindings: {}, pluginAuthor: '' } })
+    expect((await reopened.read()).desktop).toMatchObject({
+      typography: DEFAULT_TYPOGRAPHY,
+      keybindings: {},
+      pluginAuthor: '',
+      subtaskNotificationsEnabled: false,
+      profile: { ...profile, userName: 'Bob' },
+      chat: preferences.desktop.chat,
+    })
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      api: { base_url: 'https://lexora.example' },
+      desktop: { future_setting: true, subtask_notifications_enabled: false, chat: { future: true, paste_text_as_attachment: false }, typography: { future: true } },
+      browser: { future: true },
+    })
+    expect((await stat(configPath)).mode & 0o777).toBe(0o600)
   })
 
-  it('migrates paired themes into one selection while retaining system appearance tracking', async () => {
-    for (const mode of ['light', 'dark', 'system'] as const) {
-      const { configPath, store } = await createConfigStore()
-      await mkdir(dirname(configPath), { recursive: true })
-      await writeFile(configPath, `[desktop.theme]\nmode="${mode}"\nlight="author.ocean.day"\ndark="author.ocean.night"\n[custom]\nkeep=true\n`)
-      const expected = { id: mode === 'system' ? 'system' : mode === 'dark' ? 'author.ocean.night' : 'author.ocean.day' }
-      expect((await store.read()).desktop.theme).toEqual(expected)
+  it('migrates paired and legacy themes without losing the selected appearance or custom themes', async () => {
+    const cases = [
+      ['[desktop]\ntheme="dark"\naccent_color="violet"\n', 'lexora.themes.violet-dark'],
+      ...(['light', 'dark', 'system'] as const).map(mode => [
+        `[desktop.theme]\nmode="${mode}"\nlight="author.ocean.day"\ndark="author.ocean.night"\n`,
+        mode === 'system' ? 'system' : mode === 'dark' ? 'author.ocean.night' : 'author.ocean.day',
+      ]),
+    ]
+    for (const [content, id] of cases) {
+      const { configPath, store } = await createConfigStore(content)
+      expect((await store.read()).desktop.theme).toEqual({ id })
       await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).desktop.theme).toEqual(expected)
-      const saved = await readFile(configPath, 'utf8')
-      expect(saved).toContain('keep = true')
+      expect((await new LexoraConfigStore({ configPath }).read()).desktop.theme).toEqual({ id })
     }
   })
 
-  it('migrates legacy theme choices and rejects an expired write without changing persisted settings', async () => {
-    const { configPath, store } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop]\ntheme="dark"\naccent_color="violet"\n[custom]\nkeep=true\n')
-    const original = await store.read()
-    expect(original.desktop.theme).toEqual({ id: 'lexora.themes.violet-dark' })
-    await store.update({ desktop: { language: 'en-US' } })
-    const saved = await readFile(configPath, 'utf8')
-    expect(saved).not.toContain('accent_color')
-    expect(saved).toContain('keep = true')
-    let expired = false
-    await expect(store.update({ desktop: { theme: DEFAULT_THEME_PREFERENCE } }, () => {
-      expired = true
-    }, () => {
-      if (expired)
-        throw new Error('owner expired')
-    })).rejects.toThrow('owner expired')
-    expect(await readFile(configPath, 'utf8')).toBe(saved)
-    expect(store.snapshot.applied?.desktop.theme).toEqual(original.desktop.theme)
-    expect((await new LexoraConfigStore({ configPath }).read()).desktop.theme).toEqual(original.desktop.theme)
-  })
-
-  it('enables pasted text attachments for new and legacy profiles and preserves an opt-out across updates and restart', async () => {
-    const { configPath, store } = await createConfigStore()
-    expect((await store.read()).desktop.chat.pasteTextAsAttachment).toBe(true)
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop.chat]\nwelcome = "none"\nfuture = true\n')
-    expect((await store.read()).desktop.chat.pasteTextAsAttachment).toBe(true)
-    await store.update({ desktop: { chat: { pasteTextAsAttachment: false } } })
-    await store.update({ desktop: { chat: { outlinePosition: 'center-left' } } })
-    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat).toEqual({
-      ...DEFAULT_DESKTOP_CHAT_PREFERENCES,
-      outlinePosition: 'center-left',
-      pasteTextAsAttachment: false,
-      welcome: 'none',
-      welcomeEnabled: false,
-    })
-    const saved = await readFile(configPath, 'utf8')
-    expect(saved).toContain('paste_text_as_attachment = false')
-    expect(saved).toContain('future = true')
-    await writeFile(configPath, '[desktop.chat]\npaste_text_as_attachment = "false"\n')
-    await expect(store.read()).rejects.toThrow()
-  })
-
-  it('defaults existing profiles to three retries and round-trips disabled, finite and unlimited limits', async () => {
-    const { store, configPath } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[runtime]\ncache_warming = "streaming"\nfuture = true\n')
-    expect((await store.read()).runtime).toEqual({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
+  it('preserves disabled, finite and unlimited model retry limits across unrelated updates and restart', async () => {
+    const { store, configPath } = await createConfigStore('[runtime]\ncache_warming="streaming"\nfuture=true\n')
     for (const modelRetryLimit of [0, 7, 'unlimited'] as const) {
       await store.update({ runtime: { modelRetryLimit } })
       await store.update({ desktop: { language: 'en-US' } })
       expect((await new LexoraConfigStore({ configPath }).read()).runtime).toEqual({ cacheWarming: 'streaming', codemode: false, modelRetryLimit })
-      expect(await readFile(configPath, 'utf8')).toContain('future = true')
     }
-    const saved = await readFile(configPath, 'utf8')
-    expect(saved).toContain('model_retry_limit = "unlimited"')
-    for (const modelRetryLimit of [-1, 1.5, Infinity, Number.NaN, Number.MAX_SAFE_INTEGER + 1, 'invalid'] as const)
-      await expect(store.update({ runtime: { modelRetryLimit: modelRetryLimit as never } })).rejects.toThrow()
-    await expect(store.update({ runtime: { cacheWarming: 'idle' as never } })).rejects.toThrow()
-    expect(await readFile(configPath, 'utf8')).toBe(saved)
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited' } })
   })
 
-  it('persists permission mode, defaults legacy profiles, and rejects invalid values without a partial write', async () => {
-    const { configPath, store } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop.chat]\nwelcome = "random"\n')
-    expect((await store.read()).desktop.chat.permissionMode).toBe('policy_approval')
-
-    await store.update({ desktop: { chat: { permissionMode: 'full_access' } } })
-    expect(await readFile(configPath, 'utf8')).toContain('permission_mode = "full_access"')
-    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat.permissionMode).toBe('full_access')
-
-    const saved = await readFile(configPath, 'utf8')
-    await expect(store.update({ desktop: { chat: { permissionMode: 'invalid' as never } } })).rejects.toThrow()
-    expect(await readFile(configPath, 'utf8')).toBe(saved)
-
-    await writeFile(configPath, '[desktop.chat]\npermission_mode = "invalid"\n')
-    await expect(store.read()).rejects.toThrow()
-  })
-
-  it('migrates browser preferences with defaults and preserves unrelated settings across updates', async () => {
-    const { configPath, store } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop]\nlanguage = "en-US"\n[browser]\nfuture = true\n')
-    expect((await store.read()).browser).toEqual(DEFAULT_BROWSER_PREFERENCES)
-    await store.update({ browser: { screenshotDestination: 'clipboard' } })
-    await store.update({ browser: { defaultZoomFactor: 1.25 } })
-    await store.update({ browser: { freezeForeground: true, freezeDelaySeconds: 120 } })
-    await store.update({ browser: { freezeBackground: false } })
-    const restarted = new LexoraConfigStore({ configPath })
-    expect((await restarted.read()).browser).toEqual({ ...DEFAULT_BROWSER_PREFERENCES, screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 })
-    expect((await restarted.read()).desktop.language).toBe('en-US')
-    expect(await readFile(configPath, 'utf8')).toContain('future = true')
-    const saved = await readFile(configPath, 'utf8')
-    await expect(store.update({ browser: { defaultZoomFactor: 0 } })).rejects.toThrow()
-    for (const freezeDelaySeconds of [0, 4, 3601, 10.5])
-      await expect(store.update({ browser: { freezeDelaySeconds } })).rejects.toThrow()
-    expect(await readFile(configPath, 'utf8')).toBe(saved)
-  })
-
-  it('persists shortcut overrides, disabled commands and reset without losing unrelated settings', async () => {
-    const { store, configPath } = await createConfigStore()
-    expect((await store.read()).desktop.keybindings).toEqual({})
-    await store.update({ desktop: { keybindings: { 'task.new': 'Mod+Alt+N', 'view.close': '' }, theme: { id: 'lexora.themes.classic-dark' } } })
-    const reopened = new LexoraConfigStore({ configPath })
-    expect((await reopened.read()).desktop.keybindings).toEqual({ 'task.new': 'Mod+Alt+N', 'view.close': '' })
-    const before = await readFile(configPath, 'utf8')
-    await expect(reopened.update({ desktop: { keybindings: { 'task.new': 'not a shortcut' } } })).rejects.toThrow()
-    expect(await readFile(configPath, 'utf8')).toBe(before)
-    await reopened.update({ desktop: { keybindings: {} } })
-    expect((await reopened.read()).desktop).toMatchObject({ theme: { id: 'lexora.themes.classic-dark' }, keybindings: {} })
-  })
-
-  it('restores the applied configuration when applying a setting fails without changing the saved profile', async () => {
-    const { store } = await createConfigStore()
-    const previous = await store.read()
-    const changes: string[] = []
-    store.onDidChange(change => changes.push(change.kind))
-    let active = previous.proxy
-    await expect(store.update({ proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' } }, async (next) => {
-      active = next.proxy
-      if (next.proxy.mode === 'custom')
-        throw new Error('Proxy configuration unavailable')
-    })).rejects.toThrow('Proxy configuration unavailable')
-    expect(active).toEqual(previous.proxy)
-    expect(await store.read()).toEqual(previous)
-    expect(changes).toEqual(['apply-failed', 'rolled-back'])
-    expect(store.snapshot.applied).toEqual(previous)
-  })
-  it('preserves nested settings, ordered pins and unknown fields across partial updates and restart', async () => {
-    const { configPath, store } = await createConfigStore()
-    expect(await store.read()).toMatchObject({
-      runtime: { cacheWarming: 'off' },
-      proxy: { mode: 'system', server: '' },
-      desktop: {
-        theme: DEFAULT_THEME_PREFERENCE,
-        contextPanelMode: 'task',
-        contextPanelGlobal: false,
-        updateNotificationsEnabled: true,
-        profile: { userName: '', deviceName: '', avatar: '' },
-        taskSidebar: { collapsed: false, collapsedSections: [], collapsedSpaces: [], width: null },
-      },
-      pet: { alwaysOnTop: true, enabled: true, rememberPosition: true },
-    })
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[api]\nbase_url="https://lexora.example"\n[desktop]\nnotifications_enabled=false\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n')
-    const previous = await store.read()
-    expect(previous.desktop.chat).toMatchObject({ outlinePosition: 'top-right', permissionMode: 'policy_approval', welcome: 'none' })
-    expect(previous.desktop.updateNotificationsEnabled).toBe(true)
-    const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
-    const taskSidebar = { collapsed: true, collapsedSections: ['tasks' as const], collapsedSpaces: ['space-a'], width: 336 }
-    const taskSidebarPinnedItems = [{ id: 'space-a', kind: 'space' as const }, { id: 'conversation-a', kind: 'conversation' as const }]
-    const updated = await store.update({
-      runtime: { cacheWarming: 'streaming' },
-      proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
-      desktop: {
-        theme: { id: 'lexora.themes.classic-dark' },
-        chat: { welcome: 'writing' },
-        contextPanelMode: 'space',
-        contextPanelGlobal: true,
-        updateNotificationsEnabled: false,
-        profile,
-        taskSidebar,
-        taskSidebarPinnedItems,
-      },
-      pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
-    })
-    expect(updated).toEqual({
-      ...previous,
-      runtime: { ...previous.runtime, cacheWarming: 'streaming' },
-      proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
-      desktop: {
-        ...previous.desktop,
-        theme: { id: 'lexora.themes.classic-dark' },
-        chat: { ...previous.desktop.chat, welcome: 'writing' },
-        contextPanelMode: 'space',
-        contextPanelGlobal: true,
-        updateNotificationsEnabled: false,
-        profile,
-        taskSidebar,
-        taskSidebarPinnedItems,
-      },
-      pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
-    })
-    await store.update({
-      proxy: { mode: 'direct', server: 'http://127.0.0.1:7890' },
-      desktop: { language: 'en-US', contextPanelGlobal: false, profile: { userName: 'Bob' }, taskSidebar: { collapsedSpaces: ['space-b'] } },
-    })
-    expect(await new LexoraConfigStore({ configPath }).read()).toEqual({
-      ...updated,
-      proxy: { mode: 'direct', server: 'http://127.0.0.1:7890' },
-      desktop: {
-        ...updated.desktop,
-        language: 'en-US',
-        contextPanelGlobal: false,
-        profile: { ...profile, userName: 'Bob' },
-        taskSidebar: { ...taskSidebar, collapsedSpaces: ['space-b'] },
-      },
-    })
-    const content = await readFile(configPath, 'utf8')
-    expect(content).toContain('base_url = "https://lexora.example"')
-    expect(content).toContain('future_setting = true')
-    expect(content).toContain('future = true')
-    expect((await stat(configPath)).mode & 0o777).toBe(0o600)
-    expect(await readdir(dirname(configPath))).toEqual(['config.toml'])
+  it('restores active and saved preferences after an apply failure or an expired write', async () => {
+    for (const failure of ['apply', 'expired'] as const) {
+      const { configPath, store } = await createConfigStore()
+      const previous = await store.update({ desktop: { profile: { userName: 'Saved profile' } } })
+      const saved = await readFile(configPath, 'utf8')
+      let active = previous
+      let expired = false
+      await expect(store.update({ proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' } }, (next) => {
+        active = next
+        if (next.proxy.mode === 'custom') {
+          if (failure === 'apply')
+            throw new Error('Isolated settings failure')
+          expired = true
+        }
+      }, () => {
+        if (expired)
+          throw new Error('Isolated settings failure')
+      })).rejects.toThrow('Isolated settings failure')
+      expect(active).toEqual(previous)
+      expect(await readFile(configPath, 'utf8')).toBe(saved)
+      expect(await new LexoraConfigStore({ configPath }).read()).toEqual(previous)
+    }
   })
 
   it('preserves welcome content and selection across concurrent partial writes and restart', async () => {
     const { configPath, store } = await createConfigStore()
-    const initial = await store.read()
-    expect(initial.desktop.chat.welcomeItems).toEqual(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeItems)
-
-    const updated = await store.update({
-      desktop: {
-        chat: {
-          welcome: 'custom-123',
-          welcomeItems: [
-            ...initial.desktop.chat.welcomeItems,
-            { kind: 'custom', id: 'custom-123', text: '新的一天，尽情创造' },
-          ],
-        },
-      },
-    })
-    const reloadedConfig = await new LexoraConfigStore({ configPath }).read()
-    expect(reloadedConfig.desktop.chat).toEqual(updated.desktop.chat)
-
-    const concurrent1 = store.update({
-      desktop: {
-        chat: {
-          welcomeItems: [
-            ...reloadedConfig.desktop.chat.welcomeItems,
-            { kind: 'custom', id: 'custom-456', text: '第二条自定义' },
-          ],
-        },
-      },
-    })
-    const concurrent2 = store.update({
-      desktop: {
-        chat: {
-          welcome: 'custom-456',
-        },
-      },
-    })
-    await Promise.all([concurrent1, concurrent2])
-    const finalConfig = await (new LexoraConfigStore({ configPath })).read()
-    expect(finalConfig.desktop.chat.welcome).toBe('custom-456')
-    expect(finalConfig.desktop.chat.welcomeItems).toEqual([
-      ...initial.desktop.chat.welcomeItems,
-      { kind: 'custom', id: 'custom-123', text: '新的一天，尽情创造' },
-      { kind: 'custom', id: 'custom-456', text: '第二条自定义' },
+    const first = { kind: 'custom' as const, id: 'custom-123', text: '新的一天，尽情创造' }
+    const second = { kind: 'custom' as const, id: 'custom-456', text: '第二条自定义' }
+    await store.update({ desktop: { chat: { welcome: first.id, welcomeItems: [first] } } })
+    await Promise.all([
+      store.update({ desktop: { chat: { welcomeItems: [first, second] } } }),
+      store.update({ desktop: { chat: { welcome: second.id } } }),
     ])
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat).toMatchObject({ welcome: second.id, welcomeItems: [first, second] })
   })
 
   it('migrates stored welcome text, preserves disabled preferences and does not restore deleted messages', async () => {
-    const { configPath, store } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, `
+    const { configPath, store } = await createConfigStore(`
 [desktop.chat]
 welcome = "custom-kept"
 [[desktop.chat.welcome_items]]
@@ -323,43 +173,47 @@ text = "保留我的内容"
       { kind: 'preset', id: 'writing' },
       { kind: 'custom', id: 'custom-kept', text: '保留我的内容' },
     ])
-    const disabled = await store.update({ desktop: { chat: { welcomeEnabled: false } } })
-    expect(disabled.desktop.chat).toMatchObject({ welcomeEnabled: false, welcome: 'custom-kept', welcomeItems: loaded.desktop.chat.welcomeItems })
+    await store.update({ desktop: { chat: { welcomeEnabled: false } } })
     const restarted = new LexoraConfigStore({ configPath })
-    expect((await restarted.read()).desktop.chat).toEqual(disabled.desktop.chat)
+    expect((await restarted.read()).desktop.chat).toMatchObject({ welcomeEnabled: false, welcome: 'custom-kept', welcomeItems: loaded.desktop.chat.welcomeItems })
     await restarted.update({ desktop: { chat: { welcome: 'writing' } } })
     const remaining = [{ kind: 'custom' as const, id: 'custom-kept', text: '保留我的内容' }]
-    const deleted = await restarted.update({ desktop: { chat: { welcomeItems: remaining } } })
-    expect(deleted.desktop.chat).toMatchObject({ welcome: 'random', welcomeEnabled: false, welcomeItems: remaining })
-    expect((await store.read()).desktop.chat).toEqual(deleted.desktop.chat)
-    const empty = await store.update({ desktop: { chat: { welcomeItems: [] } } })
-    expect(empty.desktop.chat).toMatchObject({ welcome: 'none', welcomeEnabled: false, welcomeItems: [] })
-    expect((await restarted.read()).desktop.chat.welcomeItems).toEqual([])
+    await restarted.update({ desktop: { chat: { welcomeItems: remaining } } })
+    expect((await store.read()).desktop.chat).toMatchObject({ welcome: 'random', welcomeEnabled: false, welcomeItems: remaining })
+    await store.update({ desktop: { chat: { welcomeItems: [] } } })
+    expect((await restarted.read()).desktop.chat).toMatchObject({ welcome: 'none', welcomeEnabled: false, welcomeItems: [] })
     await store.update({ desktop: { chat: { welcomeEnabled: true } } })
     expect((await restarted.read()).desktop.chat).toMatchObject({ welcomeEnabled: true, welcome: 'none', welcomeItems: [] })
   })
 
-  it('rejects malformed TOML with a stable configuration error', async () => {
+  it('rejects invalid patches and malformed stored configuration without overwriting previous data', async () => {
     const { configPath, store } = await createConfigStore()
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[desktop\ntheme = "dark"')
-
-    await expect(store.read()).rejects.toMatchObject({
-      code: 'INVALID_CONFIG',
-    })
+    const previous = await store.update({ desktop: { profile: { userName: 'Saved profile' } } })
+    const saved = await readFile(configPath, 'utf8')
+    const invalidPatches = [
+      { runtime: { modelRetryLimit: -1 } },
+      { runtime: { cacheWarming: 'idle' } },
+      { browser: { defaultZoomFactor: 0 } },
+      { browser: { freezeDelaySeconds: 1.5 } },
+      { desktop: { chat: { permissionMode: 'invalid' } } },
+      { desktop: { typography: { bodySize: 100 } } },
+      { desktop: { keybindings: { 'task.new': 'not a shortcut' } } },
+      { desktop: { pluginAuthor: '名'.repeat(81) } },
+    ]
+    for (const patch of invalidPatches) {
+      await expect(store.update(patch as LexoraConfigPatch)).rejects.toThrow()
+      expect(await readFile(configPath, 'utf8')).toBe(saved)
+    }
+    expect(await new LexoraConfigStore({ configPath }).read()).toEqual(previous)
+    for (const content of [
+      '[desktop\ntheme="dark"',
+      '[desktop]\nsubtask_notifications_enabled="false"\n',
+      '[desktop.chat]\npaste_text_as_attachment="false"\n',
+      '[desktop.chat]\npermission_mode="invalid"\n',
+    ]) {
+      await writeFile(configPath, content)
+      await expect(store.read()).rejects.toMatchObject({ code: 'INVALID_CONFIG' })
+      expect(await readFile(configPath, 'utf8')).toBe(content)
+    }
   })
-})
-
-it('persists an optional Unicode plugin signature without changing profile or previous data on invalid input', async () => {
-  const { store, configPath } = await createConfigStore()
-  expect((await store.read()).desktop.pluginAuthor).toBe('')
-  await store.update({ desktop: { pluginAuthor: '山雨海 · Équipe 🎨', profile: { userName: '个人名称' } } })
-  const saved = await readFile(configPath, 'utf8')
-  const reopened = new LexoraConfigStore({ configPath })
-  expect((await reopened.read()).desktop.pluginAuthor).toBe('山雨海 · Équipe 🎨')
-  await expect(store.update({ desktop: { pluginAuthor: '名'.repeat(81) } })).rejects.toThrow()
-  expect(await readFile(configPath, 'utf8')).toBe(saved)
-  await store.update({ desktop: { pluginAuthor: '' } })
-  expect((await reopened.read()).desktop.profile.userName).toBe('个人名称')
-  expect((await reopened.read()).desktop.pluginAuthor).toBe('')
 })

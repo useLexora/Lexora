@@ -241,6 +241,8 @@ export default {
   'desktop.settings.developerToolsDescription': 'Allow open Developer Tools.',
   'desktop.settings.notifications': 'System notifications',
   'desktop.settings.notificationsDescription': 'Notify when approval is required or a task completes or fails.',
+  'desktop.settings.subtaskNotifications': 'Subtask notifications',
+  'desktop.settings.subtaskNotificationsDescription': 'Also notify when a subtask requires approval, completes or fails.',
   'desktop.settings.pet.alwaysOnTop': 'Always on top',
   'desktop.settings.pet.alwaysOnTopDescription': 'Keep the pet window above other windows.',
   'desktop.settings.pet.behavior': 'Core behavior',

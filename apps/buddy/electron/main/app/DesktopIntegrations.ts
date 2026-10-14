@@ -151,6 +151,7 @@ export class DesktopIntegrations {
       getLanguage: () => runtime.language,
       getSettings: () => ({
         notificationsEnabled: runtime.config?.desktop.notificationsEnabled ?? true,
+        subtaskNotificationsEnabled: runtime.config?.desktop.subtaskNotificationsEnabled ?? true,
         notifyWhenFocused: runtime.config?.desktop.notifyWhenFocused ?? false,
       }),
       isWindowFocused: () => windows.window?.isFocused() ?? false,

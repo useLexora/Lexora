@@ -99,6 +99,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     language: z.enum(['zh-CN', 'en-US']).optional(),
     launchAtLogin: z.boolean().optional(),
     notificationsEnabled: z.boolean().optional(),
+    subtaskNotificationsEnabled: z.boolean().optional(),
     updateNotificationsEnabled: z.boolean().optional(),
     autoDownloadUpdates: z.boolean().optional(),
     notifyWhenFocused: z.boolean().optional(),

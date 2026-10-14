@@ -7,14 +7,19 @@ import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 
-type SettingField = 'notifications' | 'notifyWhenFocused'
+type SettingField = 'notifications' | 'subtaskNotifications' | 'notifyWhenFocused'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
 const { pending: pendingFields, failed: failedFields, save } = useSettingMutation<SettingField>(patch => props.updateSettings(patch))
 const fields = computed(() => [
   { id: 'notifications' as const, key: 'notificationsEnabled' as const },
-  ...(props.config?.desktop.notificationsEnabled ? [{ id: 'notifyWhenFocused' as const, key: 'notifyWhenFocused' as const }] : []),
+  ...(props.config?.desktop.notificationsEnabled
+    ? [
+        { id: 'subtaskNotifications' as const, key: 'subtaskNotificationsEnabled' as const },
+        { id: 'notifyWhenFocused' as const, key: 'notifyWhenFocused' as const },
+      ]
+    : []),
 ])
 </script>
 

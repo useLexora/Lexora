@@ -239,6 +239,8 @@ export default {
   'desktop.settings.developerToolsDescription': '允许使用开发者工具。',
   'desktop.settings.notifications': '系统通知',
   'desktop.settings.notificationsDescription': '在等待审批、任务完成或任务失败时发送系统通知。',
+  'desktop.settings.subtaskNotifications': '子任务通知',
+  'desktop.settings.subtaskNotificationsDescription': '子任务等待审批、完成或失败时，也发送系统通知。',
   'desktop.settings.pet.alwaysOnTop': '桌宠置顶',
   'desktop.settings.pet.alwaysOnTopDescription': '让桌宠形象保持在其他窗口上方。',
   'desktop.settings.pet.behavior': '基础行为',

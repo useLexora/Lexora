@@ -1,6 +1,8 @@
 import type { LexoraConfig } from '../shared/desktopApi'
+import type { DesktopNotificationSettings } from './desktopNotificationPolicy'
 import type { DesktopRuntimeGateway } from './localChatIpc'
 import { conversationResponseSchemas } from '../../shared/conversation/conversationApi'
+import { executionPresentationRpc } from '../../shared/executions/executionPresentationApi'
 import { runsRequestSchemas, runsResponseSchemas } from '../../shared/runs/runApi'
 
 import { shouldShowDesktopNotification } from './desktopNotificationPolicy'
@@ -23,10 +25,7 @@ export interface DesktopNotificationTarget {
 export interface DesktopNotificationServiceOptions {
   createNotification: (input: DesktopNotificationInput) => DesktopSystemNotification
   getLanguage: () => LexoraConfig['desktop']['language']
-  getSettings: () => Pick<
-    LexoraConfig['desktop'],
-    'notificationsEnabled' | 'notifyWhenFocused'
-  >
+  getSettings: () => DesktopNotificationSettings
   isWindowFocused: () => boolean
   openTarget: (target: DesktopNotificationTarget) => Promise<void> | void
   request: DesktopRuntimeGateway['request']
@@ -34,22 +33,39 @@ export interface DesktopNotificationServiceOptions {
 
 const BODY_LABELS = {
   'zh-CN': {
-    'approval.requested': '等待你的确认',
-    'run.completed': '任务已完成',
-    'run.failed': '任务失败',
-    'untitled': '未命名对话',
+    task: {
+      'approval.requested': '等待你的确认',
+      'run.completed': '任务已完成',
+      'run.failed': '任务失败',
+    },
+    subtask: {
+      'approval.requested': '子任务等待你的确认',
+      'run.completed': '子任务已完成',
+      'run.failed': '子任务失败',
+    },
+    subtaskName: '子任务',
+    untitled: '未命名对话',
   },
   'en-US': {
-    'approval.requested': 'Waiting for your approval',
-    'run.completed': 'Task completed',
-    'run.failed': 'Task failed',
-    'untitled': 'Untitled conversation',
+    task: {
+      'approval.requested': 'Waiting for your approval',
+      'run.completed': 'Task completed',
+      'run.failed': 'Task failed',
+    },
+    subtask: {
+      'approval.requested': 'Subtask waiting for your approval',
+      'run.completed': 'Subtask completed',
+      'run.failed': 'Subtask failed',
+    },
+    subtaskName: 'Subtask',
+    untitled: 'Untitled conversation',
   },
 } as const
 
 export class DesktopNotificationService {
   readonly #options: DesktopNotificationServiceOptions
   readonly #shownEvents = new Set<string>()
+  readonly #pendingEvents = new Set<string>()
 
   constructor(options: DesktopNotificationServiceOptions) {
     this.#options = options
@@ -62,7 +78,7 @@ export class DesktopNotificationService {
     if (!event.success)
       return
     const eventKey = `${event.data.runId}:${event.data.sequence}:${event.data.type}`
-    if (this.#shownEvents.has(eventKey))
+    if (this.#shownEvents.has(eventKey) || this.#pendingEvents.has(eventKey))
       return
     if (!shouldShowDesktopNotification({
       eventType: event.data.type,
@@ -72,24 +88,49 @@ export class DesktopNotificationService {
       return
     }
 
-    const run = runsResponseSchemas.run.parse(
-      await this.#options.request('runs.get', { runId: event.data.runId }),
-    )
-    const conversation = conversationResponseSchemas.conversation.parse(
-      await this.#options.request('conversations.get', { conversationId: run.conversationId }),
-    )
-    const labels = BODY_LABELS[this.#options.getLanguage()]
-    const systemNotification = this.#options.createNotification({
-      body: labels[event.data.type as keyof Omit<typeof labels, 'untitled'>],
-      title: conversation.title?.trim() || labels.untitled,
-    })
-    systemNotification.onClick(() => {
-      void this.#options.openTarget({
-        conversationId: run.conversationId,
-        runId: run.id,
+    this.#pendingEvents.add(eventKey)
+    try {
+      const run = runsResponseSchemas.run.parse(
+        await this.#options.request('runs.get', { runId: event.data.runId }),
+      )
+      const [conversationResult, executionsResult] = await Promise.all([
+        this.#options.request('conversations.get', { conversationId: run.conversationId }),
+        this.#options.request('executions.list', { conversationId: run.conversationId, branchId: run.branchId }),
+      ])
+      const conversation = conversationResponseSchemas.conversation.parse(conversationResult)
+      const execution = executionPresentationRpc.list.response.parse(executionsResult).find(item => item.runId === run.id)
+      if (!execution)
+        return
+      const isSubtask = execution.kind === 'npc_child' || execution.kind === 'actor_child'
+      if (!shouldShowDesktopNotification({
+        eventType: event.data.type,
+        isSubtask,
+        isWindowFocused: this.#options.isWindowFocused(),
+        settings: this.#options.getSettings(),
+      })) {
+        return
+      }
+      const labels = BODY_LABELS[this.#options.getLanguage()]
+      const eventType = event.data.type as keyof typeof labels.task
+      const title = conversation.title?.trim() || labels.untitled
+      const task = execution.task.replace(/\s+/g, ' ').trim()
+      const systemNotification = this.#options.createNotification({
+        body: isSubtask
+          ? [`${execution.buddyName} · ${labels.subtask[eventType]}`, task].filter(Boolean).join('\n')
+          : labels.task[eventType],
+        title: isSubtask ? `${labels.subtaskName} #${execution.ordinal} · ${title}` : title,
       })
-    })
-    systemNotification.show()
-    this.#shownEvents.add(eventKey)
+      systemNotification.onClick(() => {
+        void this.#options.openTarget({
+          conversationId: run.conversationId,
+          runId: run.id,
+        })
+      })
+      systemNotification.show()
+      this.#shownEvents.add(eventKey)
+    }
+    finally {
+      this.#pendingEvents.delete(eventKey)
+    }
   }
 }
