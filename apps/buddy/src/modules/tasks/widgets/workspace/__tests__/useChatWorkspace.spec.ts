@@ -182,6 +182,11 @@ function createOwner(name: string) {
       resolveRemote: async () => true,
     },
     context: {
+      references: {
+        listReferenceAccess: async () => { throw new Error('Unused fixture operation') },
+        setReferenceExcluded: async () => { throw new Error('Unused fixture operation') },
+        onChanged: () => () => {},
+      },
       getNodeDetail: async () => { throw new Error('Unused detail loader') },
       getChangeOverview: async () => { throw new Error('Unused fixture operation') },
       files: {

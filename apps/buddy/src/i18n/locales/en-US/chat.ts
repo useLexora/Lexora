@@ -1,6 +1,23 @@
 import type zhCN from '../zh-CN/chat'
 
 export default {
+  'desktop.chat.referenceAccess.title': 'Referenced materials',
+  'desktop.chat.referenceAccess.scope': 'Tasks attached on this branch remain readable, including bounded user-attached reference chains. File access still follows current permissions.',
+  'desktop.chat.referenceAccess.failed': 'Could not load or update references. Try again.',
+  'desktop.chat.referenceAccess.retry': 'Retry',
+  'desktop.chat.referenceAccess.loading': 'Loading references…',
+  'desktop.chat.referenceAccess.empty': 'No referenced materials on this branch.',
+  'desktop.chat.referenceAccess.available': 'Readable',
+  'desktop.chat.referenceAccess.revoked': 'Reference revoked',
+  'desktop.chat.referenceAccess.unavailable': 'Source unavailable or reference chain invalid',
+  'desktop.chat.referenceAccess.branch_changed': 'Source branch changed',
+  'desktop.chat.referenceAccess.direct': 'Direct reference',
+  'desktop.chat.referenceAccess.via': 'Referenced through {titles}',
+  'desktop.chat.referenceAccess.restore': 'Restore',
+  'desktop.chat.referenceAccess.revoke': 'Revoke',
+  'desktop.chat.referenceAccess.truncated': 'References expand up to {depth} additional levels and {count} tasks. More references were not expanded.',
+  'desktop.chat.referenceAccess.revokeHint': 'Revoking stops future retrieval. Content already read into the conversation remains. Attach the task again to restore access.',
+
   'desktop.chat.command.mcp': 'Check MCP status, toggle connections and reconnect.',
   'desktop.chat.attachmentImportFailed': 'Could not import the file. Retry or select the file again.',
   'desktop.chat.attachmentUnsupported': 'This file format is not supported. Choose a supported document, image, audio, or video file.',

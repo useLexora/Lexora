@@ -6,7 +6,7 @@ import { redactSensitiveText } from '../../../shared/permissions/approvalReviewP
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { boundedToolPreview, readOptionalString, readRecord, readToolDetails, readToolOutput } from '../events/toolPresentationSupport'
 
-export const SESSION_TOOLS = toPiToolGroup({ name: 'lexora_session', description: 'Search and read task materials explicitly referenced in the current message.', tools: [{ name: 'search' }, { name: 'read' }] })
+export const SESSION_TOOLS = toPiToolGroup({ name: 'lexora_session', description: 'Search and read user-referenced task materials on the accepted conversation branch, including bounded reference chains.', tools: [{ name: 'search' }, { name: 'read' }] })
 
 export const SESSION_SEARCH_TOOL = SESSION_TOOLS.search.name
 export const SESSION_READ_TOOL = SESSION_TOOLS.read.name
@@ -21,7 +21,8 @@ export const sessionReferenceSourceSchema = Type.Union([
 export type SessionReferenceSource = Static<typeof sessionReferenceSourceSchema>
 
 export const sessionSearchParameters = Type.Object({
-  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of a task explicitly referenced by the current user message.' }),
+  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of an available task in the current reference access catalogue.' }),
+  branchId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Branch ID returned by an earlier search. Supply it when continuing that search; a changed branch requires a new authorized search.' })),
   query: Type.Optional(Type.String({ minLength: 1, maxLength: 500, description: 'Keywords in messages or resource names and paths. Omit to browse recent messages and the resource catalogue. Does not search inside files.' })),
   kind: Type.Optional(Type.Union([Type.Literal('all'), Type.Literal('messages'), Type.Literal('resources')], { description: 'Defaults to all. Select a kind when continuing its results.' })),
   messageOffset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'How many of the newest messages earlier searches already covered. 0 (or omit) for a new search; nextMessageOffset from the previous message search to continue.' })),
@@ -29,7 +30,8 @@ export const sessionSearchParameters = Type.Object({
 }, { additionalProperties: false })
 
 export const sessionReadParameters = Type.Object({
-  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of a task explicitly referenced by the current user message.' }),
+  sessionId: Type.String({ minLength: 1, maxLength: 128, description: 'ID of an available task in the current reference access catalogue.' }),
+  branchId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: 'Branch ID returned by search. Supply it to prevent reading a source from another branch.' })),
   source: sessionReferenceSourceSchema,
   offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Zero-based text offset. Use nextOffset to continue reading the same source.' })),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 16000, description: 'Maximum text characters returned, default 12000.' })),

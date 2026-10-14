@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../shared/conversation/buddyMessageContent'
-import { buddyUserContentToText, getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
+import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
+import { projectBuddyUserText, sessionReferenceText } from '../../../shared/conversation/buddyUserReferenceText'
 
 const source = {
   sourceId: z.string().min(1),
@@ -41,7 +42,7 @@ export function readPublicMessageText(content: unknown, role: 'user' | 'assistan
   if (role === 'user') {
     const structured = readBuddyUserMessageContent(content)
     if (structured) {
-      const text = buddyUserContentToText(structured.userContent)
+      const text = [projectBuddyUserText(structured.userContent), sessionReferenceText(structured.userContent)].filter(Boolean).join('\n')
       const quotes = structured.userContent.quotes?.map(quote => quote.text) ?? []
       return [text, ...quotes].filter(Boolean).join('\n\n').slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
     }

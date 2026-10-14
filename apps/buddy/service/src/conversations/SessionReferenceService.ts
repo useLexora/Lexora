@@ -7,7 +7,7 @@ import type { SessionReferenceSource } from './sessionReferenceToolContract'
 import { readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
 import { historicalComposerSources } from '../attachments/historicalComposerSources'
 
-import { createSessionQuery, readSessionText, sessionMessageText } from './sessionReferenceText'
+import { createSessionQuery, readSessionText, sessionMessageReferences, sessionMessageText } from './sessionReferenceText'
 
 export interface SessionReferenceServices {
   conversations: Pick<ConversationRepository, 'findById' | 'findMessageById' | 'findMessageIdAtOffset' | 'listBranchMessages' | 'listMessagePage'>
@@ -64,11 +64,15 @@ export class SessionReferenceService {
       role: item.role,
       createdAt: item.createdAt,
       excerpt: sessionMessageText(item.role, item.content).slice(0, 800),
+      sessionReferences: sessionMessageReferences(item.role, item.content),
     })
     return {
       source,
       role: message.role,
+      runId: message.runId,
+      authorActorId: this.#services.publications.listPublications(target.id, target.activeBranchId!).find(material => material.kind === 'message' && material.messageId === message.id)?.actorId ?? null,
       createdAt: message.createdAt,
+      sessionReferences: sessionMessageReferences(message.role, message.content),
       ...readSessionText(sessionMessageText(message.role, message.content), input.offset, input.limit),
       before: history.slice(Math.max(0, index - 2), index).map(neighbour),
       after: history.slice(index + 1, index + 3).map(neighbour),

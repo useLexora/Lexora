@@ -15,6 +15,7 @@ import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
 import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import type { SkillAuthoringServices } from './skills/skillAuthoringCapability'
+import type { SessionReferenceRepository } from './storage/sessionReferenceRepository'
 import type { WebCapabilityService } from './web/WebCapabilityService'
 import { createOutputPresentationCapability } from './artifacts/outputPresentationExtension'
 import { createAutomationCapability } from './automations/automationExtension'
@@ -53,6 +54,7 @@ export interface BuddyCapabilityServices {
   webService: Pick<WebCapabilityService, 'search' | 'fetch'>
   conversations: SessionReferenceServices['conversations']
   publications: SessionReferenceServices['publications']
+  references: SessionReferenceRepository
 }
 
 export function createBuddyCapabilityFactory(
@@ -101,7 +103,7 @@ export function createBuddyCapabilityFactory(
       createImageCapability(context, services),
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),
-      createSessionReferenceCapability({ conversationId: context.conversationId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, publications: services.publications }),
+      createSessionReferenceCapability({ conversationId: context.conversationId, getRunId: context.getRunId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, publications: services.publications, references: services.references }),
       ...supported.map(create => create(context)),
     ]
     try {

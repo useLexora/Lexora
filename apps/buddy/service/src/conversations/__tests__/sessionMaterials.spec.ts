@@ -16,6 +16,7 @@ import { createConversationRepository } from '../../storage/conversationReposito
 import { createConversationTreeRepository } from '../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
+import { createSessionReferenceRepository } from '../../storage/sessionReferenceRepository'
 import { searchConversationHistory } from '../searchConversationHistory'
 import { createSessionReferenceCapability } from '../sessionReferenceExtension'
 import { SessionReferenceService } from '../SessionReferenceService'
@@ -78,7 +79,7 @@ async function fixture() {
     return { path, early, source: { kind: 'artifact' as const, artifactId: record!.id } }
   }
   const input = message({ userContent: { ...createBuddyUserContent('Use source.'), sessionReferences: [{ id: 'source', title: 'source' }] }, resourceSnapshots: [] }, { conversationId: 'current' })
-  const capability = createSessionReferenceCapability({ ...services, conversationId: 'current' })
+  const capability = createSessionReferenceCapability({ ...services, references: createSessionReferenceRepository(database), conversationId: 'current' })
   const tools = new Map<string, ToolDefinition>()
   const hooks = new Map<string, (input: unknown) => unknown>()
   await capability.extension.factory({
@@ -111,7 +112,11 @@ async function fixture() {
   async function read(source: SessionReferenceSource, options: { offset?: number, limit?: number, sessionId?: string } = {}) {
     return call(SESSION_READ_TOOL, { sessionId: 'source', source, ...options })
   }
-  return { root, conversations, service, controller, call, read, message, inputResource, artifact, capability, tools, hooks }
+  async function nextInput() {
+    const next = message({ userContent: createBuddyUserContent('Continue'), resourceSnapshots: [] }, { conversationId: 'current' })
+    await hooks.get('context')!({ messages: [createBuddyInputReferenceMessage(createBuddyInputReference({ messageId: next.id, prompt: 'Continue', images: [] }), Date.now())] })
+  }
+  return { nextInput, root, conversations, service, controller, call, read, message, inputResource, artifact, capability, tools, hooks }
 }
 
 function textResult(result: Awaited<ReturnType<ToolDefinition['execute']>>) {
@@ -123,6 +128,8 @@ describe('referenced task materials', () => {
     const f = await fixture()
     const output = await f.artifact('late-private-branch-output.txt', 'LATE_BRANCH_ARTIFACT')
     f.conversations.createBranch({ id: 'early-fork', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: output.early.id, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
+    await expect(f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'resources' })).rejects.toThrow('BRANCH_CHANGED')
+    await f.nextInput()
     const search = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'resources' }))
     expect(search.resources).toEqual([])
     await expect(f.read(output.source)).rejects.toThrow('SOURCE_UNAVAILABLE')
@@ -195,6 +202,8 @@ describe('referenced task materials', () => {
     const abandoned = await f.artifact('abandoned.html', 'old branch')
     f.conversations.createBranch({ id: 'fork', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: shared.message.id, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
     const current = await f.artifact('current.html', 'new branch', 'fork')
+    await expect(f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'resources' })).rejects.toThrow('BRANCH_CHANGED')
+    await f.nextInput()
     const results = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'resources' }))
     expect(results.resources.map((item: { name: string }) => item.name).sort()).toEqual(['current.html', 'shared.txt'])
     await expect(f.read(abandoned.source)).rejects.toThrow('SOURCE_UNAVAILABLE')

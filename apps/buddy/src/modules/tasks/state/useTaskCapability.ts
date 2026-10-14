@@ -578,6 +578,11 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     marks: taskMarks,
     tree,
     context: {
+      references: {
+        listReferenceAccess: api.localChat.conversations.listReferenceAccess,
+        setReferenceExcluded: api.localChat.conversations.setReferenceExcluded,
+        onChanged: api.localChat.conversations.onChanged,
+      },
       getChangeOverview: api.localChat.changes.overview,
       files: { listDirectory: api.localChat.spaces.listDirectory, readFile: api.localChat.spaces.readFile, revealFile: api.localChat.spaces.revealFile },
       getNodeDetail: api.localChat.conversations.getNodeDetail,

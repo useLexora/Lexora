@@ -114,6 +114,7 @@ import { ExtensionTaskContext } from './conversations/ExtensionTaskContext'
 import { registerConversationRpc } from './conversations/registerConversationRpc'
 import { registerConversationTreeRpc } from './conversations/registerConversationTreeRpc'
 import { registerTaskMarkRpc } from './conversations/registerTaskMarkRpc'
+import { SessionReferenceSettingsService } from './conversations/SessionReferenceSettingsService'
 import { TaskAttentionProjection } from './conversations/TaskAttentionProjection'
 import { TaskMarkService } from './conversations/TaskMarkService'
 import { createBuddyCapabilityFactory } from './createBuddyCapabilityFactory'
@@ -138,8 +139,8 @@ import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
-
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
+
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunContinuityService } from './runs/RunContinuityService'
@@ -184,6 +185,7 @@ import { createNotificationAttentionRepository } from './storage/notificationAtt
 import { createProviderRepository } from './storage/providerRepository'
 import { createRunInputRepository } from './storage/runInputRepository'
 import { createRunRepository } from './storage/runRepository'
+import { createSessionReferenceRepository } from './storage/sessionReferenceRepository'
 import { createSkillRepository } from './storage/skillRepository'
 import { createSpaceRepository } from './storage/spaceRepository'
 import { createTaskMarkRepository } from './storage/taskMarkRepository'
@@ -516,12 +518,14 @@ export async function startBuddyService(
       resolveSourceProviderId: providerId => executionModels.resolveSourceProviderId(providerId),
     })
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())
+    const sessionReferences = createSessionReferenceRepository(options.database)
     const conversationMetadata = await host.start('runtime.task_metadata', ({ defer }) => {
       const service = new ConversationMetadataService({
         buddies,
         runInputs,
         runs,
         repository: conversations,
+        references: new SessionReferenceSettingsService(conversations, sessionReferences),
         sessions: {
           invalidateConversation: id => sessions.invalidateConversationWithResult(id),
           applyPermissionSettings: conversation => sessions.applyConversationPermissions(conversation.id, conversation),
@@ -873,6 +877,7 @@ export async function startBuddyService(
         webService,
         conversations,
         publications: treeRepository,
+        references: sessionReferences,
       }, petActions),
     }
     const conversationMembers = createConversationMemberRepository(options.database)

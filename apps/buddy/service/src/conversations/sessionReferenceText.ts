@@ -1,4 +1,5 @@
-import { buddyUserContentToText, readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
+import { readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
+import { escapeLiteralMarkers, projectBuddyUserText, sessionReferenceText } from '../../../shared/conversation/buddyUserReferenceText'
 
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
 const stopWords = new Set(['的', '了', '是', '什么', '为什么', '怎么', '如何', '请', 'the', 'a', 'an', 'is', 'was', 'were', 'what', 'why', 'how', 'to', 'of', 'in', 'and'])
@@ -22,15 +23,19 @@ export function sessionMessageText(role: string, content: unknown): string {
   if (role === 'user') {
     const structured = readBuddyUserMessageContent(content)
     if (structured)
-      return [buddyUserContentToText(structured.userContent), ...(structured.userContent.quotes ?? []).map(quote => quote.text)].filter(Boolean).join('\n')
+      return [projectBuddyUserText(structured.userContent), ...(structured.userContent.quotes ?? []).map(quote => escapeLiteralMarkers(quote.text)), sessionReferenceText(structured.userContent)].filter(Boolean).join('\n')
   }
   if (typeof content === 'string')
-    return content
+    return role === 'user' ? escapeLiteralMarkers(content) : content
   if (content && typeof content === 'object' && !Array.isArray(content)) {
     const text = (content as Record<string, unknown>).text
     return typeof text === 'string' ? text : ''
   }
   return ''
+}
+
+export function sessionMessageReferences(role: string, content: unknown) {
+  return role === 'user' ? readBuddyUserMessageContent(content)?.userContent.sessionReferences ?? [] : []
 }
 
 export function readSessionText(text: string, offset = 0, limit = 12000) {

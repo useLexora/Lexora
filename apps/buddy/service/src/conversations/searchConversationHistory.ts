@@ -1,7 +1,7 @@
 import type { ConversationRecord } from '../storage/conversationRecord'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import { setImmediate } from 'node:timers/promises'
-import { createSessionQuery, sessionMessageText } from './sessionReferenceText'
+import { createSessionQuery, sessionMessageReferences, sessionMessageText } from './sessionReferenceText'
 
 const MAX_RESULTS = 8
 const MAX_SCANNED = 500
@@ -15,7 +15,7 @@ export async function searchConversationHistory(
   signal?: AbortSignal,
 ) {
   const matchQuery = createSessionQuery(input.query)
-  const matches: Array<{ source: { kind: 'message', messageId: string }, messageId: string, role: string, createdAt: string, excerpt: string, offset: number }> = []
+  const matches: Array<{ source: { kind: 'message', messageId: string }, messageId: string, role: string, createdAt: string, excerpt: string, offset: number, sessionReferences: ReturnType<typeof sessionMessageReferences> }> = []
   const startOffset = input.messageOffset ?? 0
   let scanned = 0
   let boundary: string | undefined
@@ -58,6 +58,7 @@ export async function searchConversationHistory(
         offset: start,
         messageId: message.id,
         role: message.role,
+        sessionReferences: sessionMessageReferences(message.role, message.content),
         createdAt: message.createdAt,
         excerpt: `${start ? '…' : ''}${text.slice(start, start + EXCERPT_LENGTH)}${text.length > start + EXCERPT_LENGTH ? '…' : ''}`,
       })

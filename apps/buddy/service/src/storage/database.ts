@@ -29,6 +29,8 @@ const BUDDY_CURRENT_SCHEMA_COLUMNS = {
   conversation_public_heads: ['conversation_id', 'sequence'],
   conversation_publications: ['source_id', 'conversation_id', 'branch_id', 'sequence', 'kind', 'message_id', 'run_id', 'source_sequence', 'author_actor_id'],
   run_public_snapshots: ['run_id', 'public_sequence'],
+  run_session_reference_scopes: ['run_id', 'public_sequence', 'graph_json'],
+  session_reference_exclusions: ['conversation_id', 'branch_id', 'session_id', 'created_at'],
   actor_public_cursors: ['thread_id', 'branch_id', 'public_sequence', 'context_entry_id'],
   execution_threads: ['id', 'conversation_id', 'actor_id', 'kind'],
   execution_thread_bindings: ['thread_id', 'session_file', 'root_entry_id'],

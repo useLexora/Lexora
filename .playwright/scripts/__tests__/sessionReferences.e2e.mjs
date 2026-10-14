@@ -11,6 +11,9 @@ test('referenced task resources are discovered, read through the runtime and ope
   const requests = []
   const readParts = []
   let step = 0
+  let phase = 'resource'
+  let earlierSource
+  const chainTexts = []
   let source
   const server = createServer(async (request, response) => {
     if (request.url !== '/v1/chat/completions') {
@@ -33,6 +36,49 @@ test('referenced task resources are discovered, read through the runtime and ope
     }
     if (!body.tools?.length) {
       send({ content: '继续制作动画' })
+      return
+    }
+    if (phase === 'chain') {
+      const current = step++
+      if (current === 0) {
+        call('lexora_tool_search', { toolNames: ['lexora_session_search', 'lexora_session_read'] })
+      }
+      else if (current === 1) {
+        call('lexora_session_search', { sessionId: 'source', query: 'Referenced tasks', kind: 'messages' })
+      }
+      else if (current === 2) {
+        const last = JSON.parse(body.messages.findLast(message => message.role === 'tool').content)
+        call('lexora_session_read', { sessionId: 'source', branchId: last.branchId, source: last.matches[0].source })
+      }
+      else if (current === 3) {
+        const last = JSON.parse(body.messages.findLast(message => message.role === 'tool').content)
+        chainTexts.push(last.text)
+        call('lexora_session_search', { sessionId: 'earlier', query: 'EARLIER_DECISION', kind: 'messages' })
+      }
+      else if (current === 4) {
+        const last = JSON.parse(body.messages.findLast(message => message.role === 'tool').content)
+        earlierSource = last.matches[0].source
+        call('lexora_session_read', { sessionId: 'earlier', branchId: last.branchId, source: earlierSource })
+      }
+      else {
+        const last = JSON.parse(body.messages.findLast(message => message.role === 'tool').content)
+        chainTexts.push(last.text)
+        send({ content: '第二轮已沿引用链读取更早的决定。' })
+      }
+      return
+    }
+    if (phase === 'revoked') {
+      const current = step++
+      if (current === 0) {
+        call('lexora_tool_search', { toolNames: ['lexora_session_read'] })
+      }
+      else if (current === 1) {
+        call('lexora_session_read', { sessionId: 'earlier', source: earlierSource })
+      }
+      else {
+        chainTexts.push(body.messages.findLast(message => message.role === 'tool').content)
+        send({ content: '引用已撤销，不能继续检索更早的任务。' })
+      }
       return
     }
     if (step++ === 0) {
@@ -83,8 +129,11 @@ test('referenced task resources are discovered, read through the runtime and ope
       try {
         database.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run('source', fixture.title, 'source-branch', now, now)
         database.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run('source-branch', 'source', now)
+        database.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run('earlier', '更早的方案决定', 'earlier-branch', now, now)
+        database.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run('earlier-branch', 'earlier', now)
+        database.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('earlier-message', 'earlier', 'earlier-branch', 'assistant', JSON.stringify({ text: 'EARLIER_DECISION: use the night sky palette.' }), now)
         const content = {
-          userContent: { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text: '继续完善这个文件。' }] }], panelResourceIds: ['animation'] },
+          userContent: { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text: '继续完善这个文件。' }, { type: 'session_ref', sessionId: 'earlier' }] }], panelResourceIds: ['animation'], sessionReferences: [{ id: 'earlier', title: '更早的方案决定' }] },
           resourceSnapshots: [{ resourceId: 'animation', localReference: { path: fixture.resourcePath, name: 'goose-animation.html', kind: 'file', mimeType: 'text/html', sizeBytes: fixture.sizeBytes } }],
         }
         database.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('source-message', 'source', 'source-branch', 'user', JSON.stringify(content), now)
@@ -128,6 +177,45 @@ test('referenced task resources are discovered, read through the runtime and ope
     await expect(page.getByRole('button', { name: /搜索任务资料/ })).toBeVisible()
     await page.getByRole('button', { name: /读取任务资料/ }).first().click()
     await expect(page.getByRole('button', { name: `打开来源任务 · ${title}`, exact: true })).toBeVisible()
+    phase = 'chain'
+    step = 0
+    await editor.fill('没有重新附加任务，继续查找更早的决定。')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(page.getByText('第二轮已沿引用链读取更早的决定。', { exact: true })).toBeVisible({ timeout: 60000 })
+    expect(chainTexts[0]).toContain('[SESSION:earlier]')
+    expect(chainTexts[0]).toContain('Referenced tasks:')
+    expect(chainTexts[1]).toContain('EARLIER_DECISION')
+    const referenceButton = page.getByTestId('task-reference-access')
+    await referenceButton.click()
+    const panel = page.locator('.task-reference-access')
+    const earlier = panel.locator('[data-reference-id="earlier"]')
+    await expect(earlier).toHaveAttribute('data-reference-status', 'available')
+    await expect(earlier).toContainText('经')
+    await page.screenshot({ path: testInfo.outputPath('session-references-light.png'), animations: 'disabled' })
+    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.classic-dark' } } }))
+    await page.screenshot({ path: testInfo.outputPath('session-references-dark.png'), animations: 'disabled' })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(780, 700))
+    await expect(panel).toBeVisible()
+    expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('session-references-narrow.png'), animations: 'disabled' })
+    await earlier.getByRole('button', { name: '取消引用', exact: true }).click()
+    await expect(earlier).toHaveAttribute('data-reference-status', 'revoked')
+    await referenceButton.click()
+    phase = 'revoked'
+    step = 0
+    await editor.fill('尝试再次读取已经取消引用的更早任务。')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(page.getByText('引用已撤销，不能继续检索更早的任务。', { exact: true })).toBeVisible({ timeout: 60000 })
+    expect(chainTexts.at(-1)).toContain('SESSION_REFERENCE_REVOKED')
+    await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
+    await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
+    await referenceButton.click()
+    await expect(earlier).toHaveAttribute('data-reference-status', 'revoked')
+    await earlier.getByRole('button', { name: '恢复引用', exact: true }).click()
+    await expect(earlier).toHaveAttribute('data-reference-status', 'available')
+    await referenceButton.click()
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.isVisible()).setSize(1280, 900))
+    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.classic-light' } } }))
     await editor.fill('保留在当前任务的后续修改要求')
     await page.getByRole('button', { name: `打开来源任务 · ${title}`, exact: true }).click()
     await expect(page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveCount(2)

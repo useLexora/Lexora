@@ -82,6 +82,30 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('upgrades reference authorization without rewriting existing messages and restores exclusions after reopening', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-reference-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 28))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    const messages = previous.prepare('SELECT * FROM messages ORDER BY id').all()
+    const runs = previous.prepare('SELECT * FROM runs ORDER BY id').all()
+    const snapshot = previous.prepare('SELECT public_sequence FROM run_public_snapshots WHERE run_id = ?').get('run-1')
+    previous.exec('PRAGMA user_version = 28')
+    previous.close()
+    const migrated = openBuddyDatabase({ databasePath })
+    expect(migrated.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(messages)
+    expect(migrated.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(runs)
+    expect(migrated.prepare('SELECT public_sequence FROM run_session_reference_scopes WHERE run_id = ?').get('run-1')).toEqual(snapshot)
+    migrated.prepare('INSERT INTO session_reference_exclusions VALUES (?, ?, ?, ?)').run('conversation-1', 'branch-1', 'source', '2026-10-14T00:00:00.000Z')
+    migrated.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT session_id FROM session_reference_exclusions').all()).toEqual([{ session_id: 'source' }])
+    expect(reopened.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
   it('retains existing and deleted profile avatars when upgrading to custom galleries', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-avatar-migration-'))
     directories.push(directory)
