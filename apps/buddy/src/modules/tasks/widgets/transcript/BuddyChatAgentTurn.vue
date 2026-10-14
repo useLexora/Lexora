@@ -80,7 +80,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
 <template>
   <section
     class="buddy-chat-agent-turn grid min-w-0 items-start"
-    :class="`is-${turn.status}`"
+    :class="[`is-${turn.status}`, { 'is-assistant-continuation': showIdentity === false }]"
   >
     <div v-if="showIdentity !== false" class="flex min-w-0 items-center justify-between gap-[12px]">
       <BuddyChatAgentIdentity :run-id="turn.runId" :language="language" />

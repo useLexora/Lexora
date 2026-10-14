@@ -14,9 +14,23 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
   const zoom = shallowRef(100)
   const manualPositions = new Map<string, { x: number, y: number }>()
   let applying = false
+  let pendingFocus: string | null = null
   const geometry = computed(() => JSON.stringify(nodes.value.map(node => [node.execution.runId, node.parentId, node.x, node.y, node.width, node.height])))
   let viewport: { tx: number, ty: number, scale: number, width: number, height: number } | null = null
   let frame = 0
+
+  function focus(id: string) {
+    const value = graph.value
+    const node = value?.getCellById(id)
+    const element = surface.value
+    if (!value || !node || !element?.clientWidth || !element.clientHeight) {
+      pendingFocus = id
+      return
+    }
+    const bounds = node.getBBox()
+    value.positionPoint(bounds.center, element.clientWidth / 2, element.clientHeight / 2)
+    pendingFocus = null
+  }
 
   function place(readable: boolean) {
     const value = graph.value
@@ -158,6 +172,8 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
     else {
       place(true)
     }
+    if (pendingFocus)
+      focus(pendingFocus)
   }
 
   useIntersectionObserver(surface, ([entry]) => nearby.value = entry?.isIntersecting ?? false, { rootMargin: '240px' })
@@ -181,13 +197,6 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
       place(false)
     },
     zoomBy: (amount: number) => graph.value?.zoom(amount),
-    focus: (id: string) => {
-      const value = graph.value
-      const node = value?.getCellById(id)
-      if (value && node && surface.value) {
-        const bounds = node.getBBox()
-        value.positionPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }, surface.value.clientWidth / 2, surface.value.clientHeight / 2)
-      }
-    },
+    focus,
   }
 }

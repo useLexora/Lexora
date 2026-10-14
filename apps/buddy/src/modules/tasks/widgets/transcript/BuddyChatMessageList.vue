@@ -350,6 +350,18 @@ onBeforeUnmount(clearOutlineHighlight)
   padding-bottom: var(--buddy-chat-gap-turn);
 }
 
+.buddy-chat-agent-turn.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group),
+.buddy-chat-message.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group),
+.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group) {
+  padding-bottom: var(--buddy-chat-gap-section);
+}
+
+.buddy-chat-execution-group:has(+ .buddy-chat-message:not(.is-assistant-continuation)),
+.buddy-chat-execution-group:has(+ .buddy-chat-agent-turn:not(.is-assistant-continuation)),
+.buddy-chat-execution-group:has(+ .buddy-chat-day-divider) {
+  padding-bottom: 1.5rem;
+}
+
 .buddy-chat-system-event {
   display: flex;
   align-items: center;
