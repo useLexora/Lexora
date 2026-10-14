@@ -66,7 +66,7 @@ export function createShellCapability(options: {
       if (event.toolName === shellName)
         return { access: 'execute', get shellBoundary() { return (options.getExecution?.() ?? options.execution).boundary === 'sandbox' ? 'sandbox' as const : undefined } }
       if (event.toolName === 'lexora_host_shell')
-        return { access: 'execute', forceAsk: true }
+        return { access: 'execute' }
       if (event.toolName !== 'lexora_authorize_directory')
         return null
       return { shellBoundary: 'sandbox' }
@@ -180,7 +180,7 @@ export function createShellCapability(options: {
           ...native,
           ...HOST_TOOLS.shell,
           label: 'Host shell',
-          description: 'Run a command OUTSIDE the sandbox with the desktop service user permissions, including host files, credentials, network and desktop IPC. Requires user authorization; reusable grants expire with the current run. Use only when isolation prevents an operation required by the user, never to evade a declined request. Supply command and optional timeout in seconds.',
+          description: `Run a command directly on the host with the desktop service user permissions, including host files, credentials, network and desktop IPC. Use when the requested task needs access unavailable to isolated ${shellName} commands. Prefer ${shellName} for ordinary commands. Never use host execution to evade a declined request. Supply command and optional timeout in seconds.`,
           promptSnippet: 'Run an authorized host command outside the sandbox',
           promptGuidelines: [],
           async execute(toolCallId, parameters, signal, onUpdate, context) {

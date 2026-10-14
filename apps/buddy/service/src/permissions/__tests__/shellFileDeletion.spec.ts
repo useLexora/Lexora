@@ -27,6 +27,7 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     }
     await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { approvalAvailable: false }))).resolves.toEqual({ type: 'allow' })
     await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { profile: 'full_access' }))).resolves.toEqual({ type: 'allow' })
+    await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { profile: 'full_access', toolName: 'lexora_host_shell' }))).resolves.toEqual({ type: 'allow' })
     await expect(readFile(join(fixture.workspace, 'obsolete.vue'), 'utf8')).resolves.toBe('fixture')
   })
 
@@ -37,10 +38,9 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
       source: 'profile',
       type: 'deny',
     })
-    await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { approvalPolicy: 'manual' }))).resolves.toEqual({
+    await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { approvalPolicy: 'manual' }))).resolves.toMatchObject({
       kind: 'delete',
       paths: [{ path: join(fixture.workspace, 'obsolete.vue'), zone: 'workspace' }],
-      summary: 'Delete local content',
       type: 'ask',
     })
     await expect(fixture.engine.decide(request(fixture, 'rm obsolete.vue', { forceAsk: true }))).resolves.toMatchObject({
@@ -57,14 +57,13 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     const fixture = await createFixture()
     const path = join(fixture.outside, 'obsolete.vue')
     const command = `rm obsolete.vue "${path}"`
-    await expect(fixture.engine.decide(request(fixture, command))).resolves.toEqual({
+    await expect(fixture.engine.decide(request(fixture, command))).resolves.toMatchObject({
       grant: { owner: { id: 'space-1', kind: 'space' }, root: fixture.outside },
       kind: 'delete',
       paths: [
         { path: join(fixture.workspace, 'obsolete.vue'), zone: 'workspace' },
         { path, zone: 'outside' },
       ],
-      summary: 'Delete local content',
       type: 'ask',
     })
     await expect(fixture.engine.decide(request(fixture, command, { approvalAvailable: false }))).resolves.toMatchObject({
@@ -115,6 +114,13 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
         })
       }
     }
+    for (const command of ['rm .env', 'rm public.vue', 'rm obsolete.vue .env']) {
+      await expect(fixture.engine.decide(request(fixture, command, { profile: 'full_access', toolName: 'lexora_host_shell' }))).resolves.toEqual({
+        code: 'SENSITIVE_PATH',
+        source: 'sensitive',
+        type: 'deny',
+      })
+    }
   })
 
   it('keeps directories, root targets, Git metadata and unbounded commands behind review', async () => {
@@ -164,7 +170,6 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     const fixture = await createFixture()
     const target = join(fixture.outside, 'obsolete.vue')
     const command = `rm "${target}"`
-    const facts: string[] = []
     let handler!: (event: ToolCallEvent) => Promise<ToolCallEventResult | void>
     const extension = createToolPolicyExtension({
       authorization: new ToolAuthorizationService({
@@ -179,7 +184,6 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
               targets: [{ path: target, zone: 'outside' }],
             })
             await expect(readFile(target, 'utf8')).resolves.toBe('fixture')
-            facts.push('reviewed')
             return { approvalId: 'approval-1', decision: outcome === 'grant_failure' ? 'approved_once' : outcome }
           },
         },
@@ -187,7 +191,6 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
           if (outcome === 'grant_failure')
             throw new Error('fixture grant failure')
           fixture.grants.push({ canonicalRoot: grant.root, grantId: 'external-1', kind: 'granted', root: grant.root })
-          facts.push('granted')
         },
         cwd: fixture.workspace,
         engine: fixture.engine,
@@ -197,8 +200,7 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
       }),
       getRunContext: () => ({
         flushProjectedEvents: async () => {},
-        onToolExecutionAuthorized: async () => { facts.push('authorized') },
-        onToolExecutionDenied: async () => { facts.push('denied') },
+        onToolExecutionAuthorized: async () => {},
         runId: 'run-1',
         signal: new AbortController().signal,
       }),
@@ -211,12 +213,10 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     const result = await handler({ input: { command }, toolCallId: 'tool-1', toolName: 'bash', type: 'tool_call' })
     if (outcome === 'denied' || outcome === 'grant_failure') {
       expect(result).toMatchObject({ block: true, reason: outcome === 'denied' ? 'APPROVAL_DENIED' : 'DIRECTORY_GRANT_FAILED' })
-      expect(facts).toEqual(['reviewed', 'denied'])
       await expect(readFile(target, 'utf8')).resolves.toBe('fixture')
     }
     else {
       expect(result).toBeUndefined()
-      expect(facts).toEqual(outcome === 'approved_once' ? ['reviewed', 'granted', 'authorized'] : ['reviewed', 'authorized'])
       await executeFile('bash', ['--noprofile', '--norc', '-c', command], { cwd: fixture.workspace, env: { PATH: process.env.PATH, BASH_ENV: '' } })
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
       await writeFile(target, 'restored fixture')

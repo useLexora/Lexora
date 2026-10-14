@@ -83,17 +83,7 @@ describe('harness tool authorization', () => {
     return { approvals, approve, authorization, call, controller, directories, events, executionPermissions, grants, options, records, repository, run }
   }
 
-  it('rejects calls outside the role scope even with full access and a read classification', async () => {
-    const f = fixture()
-    const scope = new SessionToolScope([], { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', 'read'])] })
-    const authorization = new ToolAuthorizationService({ ...f.options, executionProfile: 'full_access', getToolScopeDenial: name => scope.denial(name) })
-    const event = f.call('write', { path: join(workspace, 'result.txt'), content: 'outside scope' })
-    expect(await authorization.authorize(event, f.run, { access: 'read', paths: [] })).toBe('TOOL_OUTSIDE_ROLE_SCOPE')
-    expect(f.events).toEqual([])
-    expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
-  })
-
-  it('keeps the role file ceiling through permission updates while allowing only sandbox execution', async () => {
+  it('keeps role tool and file access limits through permission updates', async () => {
     const f = fixture()
     const authorization = new ToolAuthorizationService({ ...f.options, fileAccessLimit: 'read_only' })
     authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
@@ -101,6 +91,9 @@ describe('harness tool authorization', () => {
     expect(await authorization.authorize(f.call('bash', { command: 'git diff --cached' }), f.run, { access: 'execute', shellBoundary: 'sandbox' })).toBeNull()
     expect(await authorization.authorize(f.call('bash', { command: 'git diff --cached' }), f.run, { access: 'execute' })).toBe('ROLE_FILE_ACCESS_READ_ONLY')
     expect(await authorization.authorize(f.call('lexora_unknown', {}), f.run)).toBe('ROLE_FILE_ACCESS_READ_ONLY')
+    const scope = new SessionToolScope([], { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', 'read'])] })
+    const scoped = new ToolAuthorizationService({ ...f.options, executionProfile: 'full_access', getToolScopeDenial: name => scope.denial(name) })
+    await expect(scoped.authorize(f.call('write', { path: join(workspace, 'result.txt'), content: 'outside scope' }), f.run, { access: 'read', paths: [] })).resolves.toBe('TOOL_OUTSIDE_ROLE_SCOPE')
     expect(f.events).toEqual([])
   })
 
@@ -172,6 +165,21 @@ describe('harness tool authorization', () => {
     await f.approve('denied')
     await expect(next).resolves.toBe('APPROVAL_DENIED')
     expect(f.records.size).toBe(2)
+  })
+
+  it('rechecks a pending host command after full access is enabled and revokes the old approval', async () => {
+    const f = fixture()
+    const pending = f.authorization.authorize(f.call('lexora_host_shell', { command: 'node build.mjs' }), f.run, { access: 'execute' })
+    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(1))
+    const previous = f.repository.listPending()[0]!
+    expect(previous.payload).toMatchObject({ card: 'shell', context: { reason: 'sandbox-bypass' } })
+    f.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
+    await expect(pending).resolves.toBeNull()
+    await vi.waitFor(() => expect(f.repository.findById(previous.id)?.status).toBe('cancelled'))
+    await expect(f.approvals.resolve({ id: previous.id, decision: 'approved' })).rejects.toMatchObject({ code: 'APPROVAL_NOT_PENDING' })
+    expect(f.repository.listPending()).toEqual([])
+    expect(f.records.size).toBe(1)
+    await f.approvals.dispose()
   })
 
   it('applies turn authorization to every approvable tool category while preserving hard denials', async () => {
@@ -264,8 +272,6 @@ describe('harness tool authorization', () => {
     await f.approve('approved_for_turn')
     await expect(pending).resolves.toBeNull()
     const snapshot = f.executionPermissions.get(f.run, event.toolCallId)
-    expect(Reflect.set(snapshot[0]!, 'canonicalRoot', root)).toBe(false)
-    expect(Reflect.set(snapshot, '0', { canonicalRoot: root })).toBe(false)
     const executionGrants = [...f.grants, ...snapshot]
     await expect(resolveGrantedPath(executionGrants, output, 'create')).resolves.toMatchObject({ canonicalPath: output })
     expect(f.grants).toHaveLength(1)

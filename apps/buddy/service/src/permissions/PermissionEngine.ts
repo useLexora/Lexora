@@ -36,6 +36,7 @@ const BUILTIN_TOOL_ACCESS: Record<string, AccessKind> = {
   edit: 'write',
   find: 'read',
   grep: 'read',
+  lexora_host_shell: 'execute',
   ls: 'read',
   powershell: 'execute',
   read: 'read',
@@ -50,11 +51,13 @@ export interface PermissionEngineOptions {
 
 export class PermissionEngine {
   readonly #sensitive: SensitivePathMatcher
+  readonly #hostShellToolName: ShellToolName
   readonly #shellPolicies: Readonly<Record<ShellToolName, ShellCommandPolicy>>
 
   constructor(options: PermissionEngineOptions = {}) {
     const platform = options.platform ?? process.platform
     this.#sensitive = options.sensitive ?? createSensitivePathMatcher()
+    this.#hostShellToolName = platform === 'win32' ? 'powershell' : 'bash'
     this.#shellPolicies = {
       bash: options.shellPolicies?.bash ?? new ShellPolicy({ dialect: 'bash', platform }),
       powershell: options.shellPolicies?.powershell
@@ -80,9 +83,10 @@ export class PermissionEngine {
     if (request.shellBoundary === 'sandbox' && request.toolName === 'lexora_authorize_directory')
       return this.#decideSandboxDirectory(request)
     if (request.toolName === 'lexora_host_shell') {
-      return request.profile === 'read_only'
-        ? deny('READ_ONLY_PROFILE', 'profile')
-        : finalizeDecision(request, this.#forcedShellAsk(request, 'sandbox-bypass'))
+      if (request.profile === 'read_only')
+        return deny('READ_ONLY_PROFILE', 'profile')
+      if (request.profile !== 'full_access')
+        return finalizeDecision(request, this.#forcedShellAsk(request, 'sandbox-bypass'))
     }
     if (request.shellBoundary === 'sandbox' && access === 'execute') {
       readStringProperty(request.arguments, 'command')
@@ -152,7 +156,8 @@ export class PermissionEngine {
   }
 
   async #classifyShell(request: PermissionRequest): Promise<ToolDecision | undefined> {
-    const policy = this.#shellPolicies[request.toolName as ShellToolName]
+    const toolName = request.toolName === 'lexora_host_shell' ? this.#hostShellToolName : request.toolName as ShellToolName
+    const policy = this.#shellPolicies[toolName]
     if (!policy)
       return undefined
     const decision = await policy.decide(readStringProperty(request.arguments, 'command'), request.cwd)
@@ -353,7 +358,7 @@ function applyApprovalPolicy(
   return ask({
     kind: request.approval?.kind ?? approvalKindFor(access),
     paths: toDecisionPaths(classifications),
-    ...(['bash', 'powershell'].includes(request.toolName)
+    ...(['bash', 'powershell', 'lexora_host_shell'].includes(request.toolName)
       && access === 'execute'
       ? { shell: { cwd: request.cwd, reason: 'manual-policy' as const, boundary: request.shellBoundary ?? 'host' as const } }
       : {}),

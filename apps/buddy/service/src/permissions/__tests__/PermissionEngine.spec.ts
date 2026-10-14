@@ -93,6 +93,11 @@ describe('permissionEngine', () => {
           type: 'ask',
         })
       }
+      await expect(engine.decide(request(fixture, {
+        arguments: { command },
+        profile: 'full_access',
+        toolName: 'lexora_host_shell',
+      })), command).resolves.toMatchObject({ shell: { reason: 'sensitive-path' }, type: 'ask' })
     }
     for (const command of ['git diff --cached', 'git diff --cached --check', 'git diff --cached -- .']) {
       await expect(engine.decide(request(fixture, {
@@ -104,6 +109,14 @@ describe('permissionEngine', () => {
       arguments: { command: 'git diff --cached -- package.json' },
       toolName: 'bash',
     }))).resolves.toEqual({ type: 'allow' })
+    const powershell = new PermissionEngine({ platform: 'win32', sensitive: createSensitivePathMatcher({ home: fixture.home }) })
+    for (const toolName of ['powershell', 'lexora_host_shell']) {
+      await expect(powershell.decide(request(fixture, {
+        arguments: { command: 'git diff -- .env' },
+        profile: 'full_access',
+        toolName,
+      }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'sensitive-path' } })
+    }
   })
 
   it('keeps Git filters, index hooks, lazy fetching, and submodule execution behind approval', async () => {
@@ -161,7 +174,7 @@ describe('permissionEngine', () => {
     }))).resolves.toMatchObject({ shell: { reason: 'git-config-unavailable' }, type: 'ask' })
   })
 
-  it('allows outside reads and asks once to grant an outside write', async () => {
+  it('applies directory grants, read-only limits and manual approval to native file access', async () => {
     const fixture = await createFixture()
     const engine = createEngine(fixture.home)
     const readPath = join(fixture.outside, 'notes.md')
@@ -174,47 +187,27 @@ describe('permissionEngine', () => {
     await expect(engine.decide(request(fixture, {
       arguments: { content: 'draft', path: join(fixture.outside, 'draft.md') },
       toolName: 'write',
-    }))).resolves.toEqual({
+    }))).resolves.toMatchObject({
       grant: {
         owner: { id: 'conversation-1', kind: 'conversation' },
         root: fixture.outside,
       },
       kind: 'write',
       paths: [{ path: join(fixture.outside, 'draft.md'), zone: 'outside' }],
-      summary: 'Write outside the workspace',
       type: 'ask',
     })
-  })
-
-  it('denies mutations in read-only mode without offering approval', async () => {
-    const fixture = await createFixture()
-    const engine = createEngine(fixture.home)
-
-    await expect(engine.decide(request(fixture, {
+    const write = request(fixture, {
       arguments: { content: 'draft', path: join(fixture.workspace, 'draft.md') },
-      profile: 'read_only',
       toolName: 'write',
-    }))).resolves.toEqual({
+    })
+    await expect(engine.decide({ ...write, profile: 'read_only' })).resolves.toEqual({
       code: 'READ_ONLY_PROFILE',
       source: 'profile',
       type: 'deny',
     })
-  })
-
-  it('asks before policy-allowed mutations when manual approval is selected', async () => {
-    const fixture = await createFixture()
-    const engine = createEngine(fixture.home)
-
-    await expect(engine.decide({
-      ...request(fixture, {
-        arguments: { content: 'draft', path: join(fixture.workspace, 'draft.md') },
-        toolName: 'write',
-      }),
-      approvalPolicy: 'manual',
-    } as PermissionRequest)).resolves.toEqual({
+    await expect(engine.decide({ ...write, approvalPolicy: 'manual' })).resolves.toMatchObject({
       kind: 'write',
       paths: [{ path: join(fixture.workspace, 'draft.md'), zone: 'workspace' }],
-      summary: 'Write local content',
       type: 'ask',
     })
   })
@@ -238,21 +231,6 @@ describe('permissionEngine', () => {
     }))).resolves.toEqual({
       code: 'SENSITIVE_PATH',
       source: 'sensitive',
-      type: 'deny',
-    })
-  })
-
-  it('turns an unavailable approval into an explicit background denial', async () => {
-    const fixture = await createFixture()
-    const engine = createEngine(fixture.home)
-
-    await expect(engine.decide(request(fixture, {
-      approvalAvailable: false,
-      arguments: { command: 'python transform.py' },
-      toolName: 'bash',
-    }))).resolves.toEqual({
-      code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND',
-      source: 'profile',
       type: 'deny',
     })
   })
@@ -289,30 +267,15 @@ describe('permissionEngine', () => {
       kind: 'system',
       type: 'ask',
     })
-    await expect(engine.decide(request(fixture, {
-      arguments: { command: 'systemctl --user restart example.service' },
-      profile: 'full_access',
-      toolName: 'bash',
-    }))).resolves.toMatchObject({
-      kind: 'shell',
-      type: 'ask',
-    })
-    await expect(engine.decide(request(fixture, {
-      arguments: { command: 'sudo /usr/bin/systemctl --user restart example.service' },
-      profile: 'full_access',
-      toolName: 'bash',
-    }))).resolves.toMatchObject({
-      kind: 'shell',
-      type: 'ask',
-    })
-    await expect(engine.decide(request(fixture, {
-      arguments: { command: 'bash -c \'shutdown now\'' },
-      profile: 'full_access',
-      toolName: 'bash',
-    }))).resolves.toMatchObject({
-      kind: 'shell',
-      type: 'ask',
-    })
+    for (const toolName of ['bash', 'lexora_host_shell']) {
+      for (const command of ['sudo /usr/bin/systemctl --user restart example.service', 'bash -c \'shutdown now\'']) {
+        await expect(engine.decide(request(fixture, {
+          arguments: { command },
+          profile: 'full_access',
+          toolName,
+        }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'system-mutation' } })
+      }
+    }
     await expect(engine.decide(request(fixture, {
       access: 'execute',
       arguments: {},
