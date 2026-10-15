@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
-import { writeContributionPlugin } from './extensionContributions.mjs'
+import { writeContributionPlugin } from '../fixtures/extension-contributions.mjs'
 
 test('plugin-owned preferences activate contributions, yield native content and restore across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('plugin-contributions')

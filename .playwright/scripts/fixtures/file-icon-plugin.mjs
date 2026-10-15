@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { expect } from '../fixtures/electron.mjs'
+import { expect } from './electron.mjs'
 
 const { zipSync } = createRequire(new URL('../../../apps/buddy/package.json', import.meta.url))('fflate')
 

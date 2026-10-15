@@ -11,7 +11,7 @@ const { build } = createRequire(buddyRequire.resolve('electron-vite'))('esbuild'
 
 test('update downloads use real Electron redirects, report repeated failures, allow cancellation and offer manual downloads', async ({ buddy }, testInfo) => {
   const bundle = testInfo.outputPath('update-runtime.cjs')
-  await build({ entryPoints: [fileURLToPath(new URL('./updateDownloadRuntime.mjs', import.meta.url))], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', packages: 'external', banner: { js: `var require = require('node:module').createRequire(${JSON.stringify(buddyPackage)});` }, logLevel: 'silent' })
+  await build({ entryPoints: [fileURLToPath(new URL('../fixtures/update-download-runtime.mjs', import.meta.url))], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', packages: 'external', banner: { js: `var require = require('node:module').createRequire(${JSON.stringify(buddyPackage)});` }, logLevel: 'silent' })
   const instance = await buddy.createInstance('update-download')
   const { app, page, diagnostics } = await instance.launch()
   try {

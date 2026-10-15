@@ -1,6 +1,6 @@
-# Desktop tests
+# Desktop 测试
 
-Install workspace dependencies, then run the tests:
+安装工作区依赖后执行：
 
 ```sh
 pnpm install
@@ -8,14 +8,16 @@ pnpm test
 pnpm test:e2e
 ```
 
-`pnpm test` runs the Vitest suites without launching a GUI. `pnpm test:e2e` builds the current Electron app and runs Playwright Test. Use `pnpm test:e2e --grep 'graceful restart'` to select a scenario.
+`pnpm test` 执行无 GUI 的 Vitest 测试。`pnpm test:e2e` 构建当前 Electron 应用并执行 Playwright Test；可追加测试文件名或 `--grep` 筛选场景。Linux 需要 `Xvfb`，Electron 必须能启用 Chromium sandbox。
 
-Linux requires `Xvfb` on `PATH`; the launcher allocates an isolated display for each instance. Electron must be able to run with its Chromium sandbox enabled.
+运行产物位于 `.playwright/runs/YYYY-MM-DD/<task>/HH-mm-ss/`，同秒重跑自动编号。每批包含 `run.json`、Playwright 报告、附件与日志。可指定任务名：
 
-Test data lives under `~/.lexora-test/runs/<runId>/instances/<instance>`. Set `LEXORA_TEST_RUN_ID` to group concurrent callers into one task; each application instance still receives its own directory. Restart the same instance to retain its data.
+```sh
+LEXORA_TEST_TASK=buddy-settings pnpm test:e2e settings.e2e.mjs
+```
 
-For concurrent runners, build once with `pnpm --filter @uselexora/lexora-buddy exec electron-vite build`, then run `pnpm exec playwright test --config .playwright/scripts/playwright.config.mjs` in each runner. Do not rebuild the shared application output while tests are running.
+实例数据位于 `~/.lexora-test/runs/<runId>/instances/<instance>`。设置 `LEXORA_TEST_RUN_ID` 可让并发调用归入同一任务，各实例仍使用独立数据目录。成功只清理本实例数据；失败保留，`LEXORA_TEST_KEEP_DATA=1` 可保留成功实例。
 
-Successful tests remove only their own instance data. Failed tests retain it for inspection; set `LEXORA_TEST_KEEP_DATA=1` to retain successful test data too. Each invocation writes a separate Playwright report under `.playwright/runs/<runId>`, with instance diagnostics, screenshots and traces attached.
+并发运行时先构建一次，再分别执行 `pnpm exec playwright test --config .playwright/scripts/playwright.config.mjs`，避免重复构建共享产物。
 
-Electron tests import `test` and `expect` from `fixtures/electron.mjs`. Scenarios belong in `__tests__/*.e2e.mjs`; helper unit tests use Vitest in `__tests__/*.spec.mjs`.
+Electron 测试位于 `__tests__/*.e2e.mjs`，复用 `fixtures/electron.mjs` 的 `test`、`expect`；辅助逻辑测试使用 `__tests__/*.spec.mjs`。

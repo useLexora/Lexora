@@ -30,6 +30,11 @@ export default antfu({
     'unused-imports/no-unused-vars': 'off',
   },
 }, {
+  files: ['.playwright/scripts/**/*.{mjs,cjs,js}'],
+  rules: {
+    'unicorn/filename-case': ['error', { case: 'kebabCase', checkDirectories: false }],
+  },
+}, {
   files: ['apps/api/src/**/*.ts'],
   rules: {
     'ts/consistent-type-imports': 'off',

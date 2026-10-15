@@ -75,7 +75,7 @@ test('runtime stops connecting after a proxy drops its tunnel handshake and rema
         })
       }
       finally { child.kill() }
-    }, { fixture: path.resolve('.playwright/scripts/__tests__/runtimeNetworkUtility.mjs'), port: proxy.address().port })
+    }, { fixture: path.resolve('.playwright/scripts/fixtures/runtime-network-utility.mjs'), port: proxy.address().port })
     await testInfo.attach('network-lifecycle', { body: JSON.stringify({ ...result, failedConnections }), contentType: 'application/json' })
     console.log(JSON.stringify({ ...result, failedConnections }))
     expect(result).toMatchObject({ failure: { name: 'TypeError', code: 'UND_ERR_PRX_CONN' }, stream: 'data: recovered\n\ndata: [DONE]\n\n', responseCompatible: true, websocket: 'ready', cancelled: true })

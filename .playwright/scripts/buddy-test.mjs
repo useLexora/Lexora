@@ -8,6 +8,7 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { createRunDirectory } from './run-artifacts.mjs'
 import { attachPageDiagnostics, ROOT, serializeError } from './shared.mjs'
 
 const repoRoot = ROOT
@@ -15,7 +16,7 @@ const buddyRoot = path.join(repoRoot, 'apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
 const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
 
-export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, rendererUrl, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()), passwordStore } = {}) {
+export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, rendererUrl, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot, passwordStore } = {}) {
   if (rendererUrl) {
     const url = new URL(rendererUrl)
     assert(!executablePath && url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname), 'Development renderer requires a local development application')
@@ -30,7 +31,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
   }
   const directory = path.join(root, 'runs', runId)
   const instancesRoot = path.join(directory, 'instances')
-  const artifacts = path.resolve(artifactRoot)
+  const artifacts = artifactRoot ? path.resolve(artifactRoot) : createRunDirectory({ task: process.env.LEXORA_TEST_TASK ?? 'buddy-desktop', runId, completeOnExit: true })
   assert.equal(await canonicalPath(instancesRoot), instancesRoot, 'Test run directories must not redirect through links')
   await fs.mkdir(instancesRoot, { recursive: true, mode: 0o700 })
   await fs.mkdir(artifacts, { recursive: true, mode: 0o700 })
