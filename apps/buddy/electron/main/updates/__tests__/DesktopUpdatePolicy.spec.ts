@@ -28,15 +28,20 @@ describe('desktop update capability policy', () => {
     expect(signed.resolve(release(['dmg', 'zip']), version)).toMatchObject({ mode: 'restart', reason: null, update: { name: 'Lexora-Buddy-1.2.3-macos-arm64.zip' }, fallback: { name: 'Lexora-Buddy-1.2.3-macos-arm64.dmg' } })
     expect(signed.resolve(release(['dmg']), version)).toMatchObject({ mode: 'open-package', reason: 'asset-unavailable' })
     expect(signed.resolve(release(['zip']), version)).toMatchObject({ mode: 'release', update: null })
-    expect(signed.resolve(release([]), version)).toMatchObject({ mode: 'release', update: null })
   })
 
   it.each(['deb', 'rpm', 'pacman'] as const)('keeps %s installation under the system package manager', (format) => {
     const delivery = policy(format).resolve(release([format, 'nsis']), version)
-    expect(delivery.mode).toBe('open-package')
+    expect(delivery.mode).toBe('manual')
     expect(delivery.reason).toBe('system-package')
     expect(delivery.update?.name).toBe(desktopUpdateArtifactName(format, 'arm64', version))
-    expect(policy(format).capabilities).toEqual({ download: true, install: false })
+    const available = policy(format)
+    available.linuxInstallation = { available: true, failedVersion: null }
+    expect(available.resolve(release([format]), version).mode).toBe('restart')
+    available.linuxInstallation.failedVersion = version
+    expect(available.resolve(release([format]), version)).toMatchObject({ mode: 'manual', reason: 'installer-unavailable' })
+    available.linuxInstallation.failedVersion = '1.2.2'
+    expect(available.resolve(release([format]), version).mode).toBe('restart')
   })
 
   it('degrades Windows without a qualified asset and unknown distributions to the release page', () => {

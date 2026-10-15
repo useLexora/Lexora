@@ -27,7 +27,7 @@ export class DesktopUpdateDelivery {
   #ready: { path: string, update: DesktopUpdatePackage } | null = null
   #cancelledVersion: string | null = null
   #automaticAllowed = false
-  #plan: DesktopUpdatePlan = { mode: 'release', reason: 'distribution-unavailable', update: null, fallback: null }
+  #plan: DesktopUpdatePlan
   #stopped = false
   #installation: Promise<void> | null = null
   #restoration: Promise<void> | null = null
@@ -37,7 +37,8 @@ export class DesktopUpdateDelivery {
 
   constructor(options: DeliveryOptions) {
     this.#options = options
-    this.#state = { mode: 'release', reason: 'distribution-unavailable', status: 'idle', version: null, progressPercent: 0 }
+    this.#plan = { mode: 'release', reason: options.directory ? 'metadata-required' : 'distribution-unavailable', update: null, fallback: null }
+    this.#state = { mode: this.#plan.mode, reason: this.#plan.reason, status: 'idle', version: null, progressPercent: 0 }
     this.#changes = new Emitter(options.reportFailure)
     this.onDidChange = this.#changes.event
   }
@@ -229,6 +230,16 @@ export class DesktopUpdateDelivery {
           this.#setState({ status: 'ready', version: ready.update.version, progressPercent: 100 })
       }
       catch (error) {
+        if (this.#plan.reason === 'system-package' && error instanceof Error && error.message === 'UPDATE_INSTALL_CANCELLED') {
+          this.#setState({ status: 'ready', version: ready.update.version, progressPercent: 100 })
+          return
+        }
+        if (this.#ready && this.#plan.reason === 'system-package') {
+          this.#plan = { ...this.#plan, mode: 'manual', reason: 'installer-unavailable' }
+          this.#setState({ status: 'ready', version: ready.update.version, progressPercent: 100 })
+          this.#options.reportFailure(error)
+          return
+        }
         if (this.#plan.fallback) {
           const fallback = this.#plan.fallback
           if (!this.#pendingPlan || this.#pendingPlan.update?.version === ready.update.version)

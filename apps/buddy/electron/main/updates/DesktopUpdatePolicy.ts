@@ -27,13 +27,14 @@ export interface DesktopUpdatePlan {
 
 export class DesktopUpdatePolicy {
   readonly distribution: DesktopDistribution | null
+  linuxInstallation = { available: false, failedVersion: null as string | null }
 
   constructor(distribution: DesktopDistribution | null) {
     this.distribution = distribution
   }
 
   get capabilities() {
-    return { download: this.distribution !== null, install: this.distribution?.format === 'nsis' || (this.distribution?.signing === 'developer-id' && this.distribution.format === 'dmg') }
+    return { download: this.distribution !== null, install: this.linuxInstallation.available || this.distribution?.format === 'nsis' || (this.distribution?.signing === 'developer-id' && this.distribution.format === 'dmg') }
   }
 
   resolveCached(packages: DesktopUpdatePackage[]): DesktopUpdatePlan | null {
@@ -63,6 +64,10 @@ export class DesktopUpdatePolicy {
     }
     if (!fallback)
       return { mode: 'release', reason: 'asset-unavailable', update: null, fallback: null }
+    if (['deb', 'rpm', 'pacman'].includes(format)) {
+      const failed = this.linuxInstallation.failedVersion === version
+      return { mode: this.linuxInstallation.available && !failed ? 'restart' : 'manual', reason: failed ? 'installer-unavailable' : 'system-package', update: fallback, fallback: null }
+    }
     return {
       mode: format === 'nsis' ? 'restart' : 'open-package',
       reason: format === 'dmg' ? signing === 'developer-id' ? 'asset-unavailable' : 'signature-required' : format === 'nsis' ? null : 'system-package',

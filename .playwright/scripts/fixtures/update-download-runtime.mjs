@@ -1,2 +1,5 @@
 export { DesktopNetwork } from '../../../apps/buddy/electron/main/network/DesktopNetwork.ts'
+export { DesktopUpdateCache } from '../../../apps/buddy/electron/main/updates/DesktopUpdateCache.ts'
 export { DesktopUpdateDelivery } from '../../../apps/buddy/electron/main/updates/DesktopUpdateDelivery.ts'
+export { DesktopUpdatePolicy } from '../../../apps/buddy/electron/main/updates/DesktopUpdatePolicy.ts'
+export { linuxManualInstallation } from '../../../apps/buddy/electron/main/updates/linuxInstaller.ts'

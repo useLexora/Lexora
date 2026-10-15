@@ -8,6 +8,27 @@ fn main() -> ExitCode {
     }
     if let Some(command) = arguments.next() {
         #[cfg(target_os = "linux")]
+        if matches!(
+            command.to_str(),
+            Some("--supervise-linux-update" | "--install-linux-update" | "--check-linux-update")
+        ) && arguments.next().is_none()
+        {
+            use lexora_buddy_host::linux_update;
+            let result = match command.to_str() {
+                Some("--supervise-linux-update") => linux_update::supervise().map(|()| false),
+                Some("--install-linux-update") => linux_update::install().map(|()| false),
+                _ => linux_update::installation_active(),
+            };
+            return match result {
+                Ok(false) => ExitCode::SUCCESS,
+                Ok(true) => ExitCode::from(32),
+                Err(error) => {
+                    eprintln!("UPDATE_INSTALL_FAILED: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        #[cfg(target_os = "linux")]
         if command == "--sandbox-ipc-worker" {
             return ipc_result(lexora_buddy_host::sandbox_ipc::execute(arguments));
         }

@@ -17,6 +17,7 @@ const props = defineProps<{
   result: DesktopUpdateCheckResult | null
   show: boolean
   pending: boolean
+  manualInstallation?: boolean
   ignored?: boolean
   checkFailed?: boolean
   reminderDeferredUntil?: number | null
@@ -30,16 +31,19 @@ const emit = defineEmits<{
   'snooze': [version: string, delay: '30-minutes' | 'tomorrow']
   'cancelSnooze': [version: string]
   'showLatest': []
+  'check': []
   'download': []
   'cancelDownload': []
   'install': []
+  'showInstallation': []
   'openPackage': []
   'openDownloadDirectory': []
   'update:show': [show: boolean]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const installing = computed(() => props.delivery?.status === 'installing')
-const updateAvailable = computed(() => props.result?.status === 'update_available')
+const installationFailed = computed(() => props.delivery?.reason === 'installer-unavailable' && props.delivery.version === props.result?.latestVersion)
+const updateAvailable = computed(() => props.result?.status === 'update_available' || installationFailed.value)
 const outdated = computed(() => !installing.value && !!props.result && !!props.latestVersion && props.latestVersion !== props.result.latestVersion)
 const newer = computed(() => !!props.result && !!props.latestVersion && compareDesktopVersions(props.latestVersion, props.result.latestVersion) > 0)
 const laterOptions = computed(() => [
@@ -96,7 +100,7 @@ function updateVersionReminder() {
               <h2 class="m-0 text-strong text-[16px] font-600 leading-[1.35]">
                 Lexora Buddy {{ result.latestVersion }}
               </h2>
-              <span class="inline-flex items-center py-[2px] px-[7px] rounded-[4px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t(ignored ? 'desktop.update.skippedTag' : 'desktop.update.newTag') }}</span>
+              <span class="inline-flex items-center py-[2px] px-[7px] rounded-[4px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t(installationFailed ? 'desktop.update.installationIncomplete' : ignored ? 'desktop.update.skippedTag' : 'desktop.update.newTag') }}</span>
             </div>
             <p class="mt-[3px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
               {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
@@ -185,7 +189,7 @@ function updateVersionReminder() {
         <p v-if="outdated" class="m-0 text-muted text-[12px] leading-[1.5]" role="status">
           {{ t(newer ? 'desktop.update.newerVersion' : 'desktop.update.changedResult', { version: latestVersion ?? '' }) }}
         </p>
-        <DesktopUpdateDeliveryStatus v-else-if="updateAvailable && result" :delivery="delivery" :version="result.latestVersion" :language="language" />
+        <DesktopUpdateDeliveryStatus v-else-if="updateAvailable && result" :delivery="delivery" :version="result.latestVersion" :language="language" :pending="pending" />
         <p v-if="reminderDescription" class="m-0 text-muted text-[12px] leading-[1.5]" role="status">
           {{ reminderDescription }}
         </p>
@@ -212,7 +216,7 @@ function updateVersionReminder() {
           </div>
           <div v-else class="flex-1" />
 
-          <div class="desktop-update-dialog__primary-actions flex items-center gap-[8px]">
+          <div class="desktop-update-dialog__primary-actions flex flex-wrap items-center gap-[8px]">
             <NButton v-if="outdated" type="primary" :disabled="pending" @click="emit('showLatest')">
               {{ t(newer ? 'desktop.update.viewLatest' : 'desktop.update.viewResult') }}
             </NButton>
@@ -225,9 +229,12 @@ function updateVersionReminder() {
               :version="result.latestVersion"
               :language="language"
               :pending="pending"
+              :manual-installation="manualInstallation"
+              @check="emit('check')"
               @download="emit('download')"
               @cancel="emit('cancelDownload')"
               @install="emit('install')"
+              @show-installation="emit('showInstallation')"
               @open-package="emit('openPackage')"
               @open-release="emit('openRelease', result.releaseUrl)"
             />

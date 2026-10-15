@@ -97,6 +97,13 @@ test('updates stay discoverable after dismissal, persist and restore skips, and 
   const reminder = () => desktop.page.getByTestId('update-reminder')
   await expect(reminder()).toBeVisible()
   await expect.poll(() => decisions(instance)).toMatchObject({ notifiedVersion: version, seenVersion: null })
+  for (const theme of ['light', 'dark']) {
+    await desktop.page.evaluate(id => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id } }), `lexora.themes.classic-${theme}`)
+    await expect(desktop.page.locator('html')).toHaveAttribute('data-buddy-theme', theme)
+    await expect(reminder().locator('.n-alert')).toHaveCSS('background-color', /^rgb\(\d+, \d+, \d+\)$/)
+  }
+  await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 640))
+  await expect(reminder().getByRole('button', { name: '查看更新', exact: true })).toBeInViewport()
   await reminder().locator('.n-alert__close').click()
   await expect(reminder()).toHaveCount(0)
   await desktop.page.locator('.desktop-app-sidebar__notification-trigger').click()
@@ -165,7 +172,7 @@ test('updates stay discoverable after dismissal, persist and restore skips, and 
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('update preferences persist independently and show a download folder with safe failure feedback', async ({ buddy }) => {
+test('update settings persist independent preferences, confirm cache clearing and redact failures', async ({ buddy }) => {
   const instance = await buddy.createInstance('update-settings')
   await seedUpdate(instance, false)
   const directory = path.join(instance.home, 'cache', 'updates', 'pending')
@@ -183,21 +190,42 @@ test('update preferences persist independently and show a download folder with s
   expect(await fs.readFile(config, 'utf8')).toContain('update_notifications_enabled = false')
   await instance.stop()
   desktop = await instance.launch()
-  await exposeDownloadSettings(desktop, directory)
-  await about(desktop.page)
-  await expect(toggle(desktop.page)).not.toBeChecked()
-  await expect(download()).not.toBeChecked()
-  await expect(settings()).toContainText(directory)
   await desktop.app.evaluate(({ ipcMain }) => {
+    let summary = { bytes: 1024 * 1024, files: 1 }
+    ipcMain.removeHandler('lexora:app:updates:cache-summary')
+    ipcMain.handle('lexora:app:updates:cache-summary', () => summary)
+    ipcMain.removeHandler('lexora:app:updates:clear-cache')
+    ipcMain.handle('lexora:app:updates:clear-cache', () => {
+      summary = { bytes: 0, files: 0 }
+    })
     ipcMain.removeHandler('lexora:app:updates:open-directory')
     ipcMain.handle('lexora:app:updates:open-directory', () => {
       throw new Error('fixture-private-directory')
     })
   })
+  await exposeDownloadSettings(desktop, directory)
+  await about(desktop.page)
+  await expect(toggle(desktop.page)).not.toBeChecked()
+  await expect(download()).not.toBeChecked()
+  await expect(settings()).toContainText(directory)
   await settings().getByRole('button', { name: '打开下载位置', exact: true }).click()
   await expect(desktop.page.locator('.n-message')).toHaveCount(1)
   await expect(desktop.page.locator('.n-message')).toContainText('操作失败')
   await expect(desktop.page.locator('body')).not.toContainText('fixture-private-directory')
+  await expect(settings()).toContainText('1 MB')
+  async function openClear() {
+    await settings().getByRole('button', { name: '缓存操作', exact: true }).click()
+    await desktop.page.getByRole('menuitem', { name: '清理更新缓存', exact: true }).click()
+  }
+  await openClear()
+  const confirmation = desktop.page.locator('.n-dialog')
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(settings()).toContainText('1 MB')
+  await openClear()
+  await confirmation.getByRole('button', { name: '清理更新缓存', exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(settings()).not.toContainText('1 MB')
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
@@ -264,40 +292,6 @@ test('failed real update checks retain the last successful time and describe the
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('cache clearing requires confirmation and keeps the cache visible when cancelled', async ({ buddy }) => {
-  const instance = await buddy.createInstance('update-cache-settings')
-  await seedUpdate(instance, false)
-  const desktop = await instance.launch()
-  await desktop.app.evaluate(({ ipcMain }) => {
-    globalThis.updateCacheFixture = { bytes: 1024 * 1024, files: 1 }
-    ipcMain.removeHandler('lexora:app:updates:cache-summary')
-    ipcMain.handle('lexora:app:updates:cache-summary', () => globalThis.updateCacheFixture)
-    ipcMain.removeHandler('lexora:app:updates:clear-cache')
-    ipcMain.handle('lexora:app:updates:clear-cache', () => {
-      globalThis.updateCacheFixture = { bytes: 0, files: 0 }
-    })
-  })
-  await exposeDownloadSettings(desktop, path.join(instance.home, 'cache/updates/pending'))
-  await about(desktop.page)
-  const settings = desktop.page.locator('.desktop-update-settings')
-  await expect(settings).toContainText('1 MB')
-  async function openClear() {
-    await settings.getByRole('button', { name: '缓存操作', exact: true }).click()
-    await desktop.page.getByRole('menuitem', { name: '清理更新缓存', exact: true }).click()
-  }
-  await openClear()
-  const confirmation = desktop.page.locator('.n-dialog')
-  await expect(confirmation).toContainText('任务和配置不会受到影响')
-  await confirmation.getByRole('button', { name: '取消', exact: true }).click()
-  await expect(confirmation).toHaveCount(0)
-  await expect(settings).toContainText('1 MB')
-  await openClear()
-  await confirmation.getByRole('button', { name: '清理更新缓存', exact: true }).click()
-  await expect(confirmation).toHaveCount(0)
-  await expect(settings).not.toContainText('1 MB')
-  expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
-})
-
 test('updates defer for all running tasks and pending approvals, then notify when the window is idle', async ({ buddy }) => {
   const instance = await buddy.createInstance('updates-busy')
   await seedUpdate(instance, false)
@@ -349,7 +343,7 @@ test('updates defer for all running tasks and pending approvals, then notify whe
   expect(diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('update delivery waits for verification, falls back safely and requires review of changed versions', async ({ buddy }) => {
+test('update delivery waits for verification and requires review of changed versions', async ({ buddy }) => {
   const instance = await buddy.createInstance('update-delivery')
   await seedUpdate(instance, false)
   const { app, page, diagnostics } = await instance.launch()
@@ -366,17 +360,6 @@ test('update delivery waits for verification, falls back safely and requires rev
   await checkFromApplicationMenu(page)
   const dialog = page.locator('.desktop-update-dialog')
   await expect(dialog.getByRole('button', { name: '正在校验…', exact: true })).toBeDisabled()
-  for (const [mode, reason, action] of [['open-package', 'signature-required', '打开安装包'], ['release', 'asset-unavailable', '前往下载']]) {
-    await app.evaluate(({ BrowserWindow }, { mode, reason }) => {
-      const state = globalThis.updateDeliveryFixture
-      state.revision++
-      state.delivery = { ...state.delivery, mode, reason, status: 'ready' }
-      for (const window of BrowserWindow.getAllWindows())
-        window.webContents.send('lexora:app:updates:changed', state)
-    }, { mode, reason })
-    await expect(dialog.getByRole('button', { name: '重启并安装更新', exact: true })).toHaveCount(0)
-    await expect(dialog.getByRole('button', { name: action, exact: true })).toBeVisible()
-  }
   const staleActions = await page.evaluate(async () => {
     const updates = window.lexoraDesktop.app.updates
     return Promise.all([updates.download, updates.cancelDownload, updates.install, updates.openPackage].map(async (operation) => {

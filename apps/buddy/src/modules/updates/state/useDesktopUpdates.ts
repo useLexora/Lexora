@@ -28,13 +28,16 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
   }
 
   async function openDetails() {
-    generation++
+    const current = ++generation
     const result = state.value?.result
     if (disposed || !result)
       return
     details.value = result
-    if (result.status === 'update_available')
+    if (result.status === 'update_available') {
       await markSeen(result.latestVersion)
+      if (!disposed && current === generation && state.value?.delivery?.reason === 'metadata-required')
+        await app.checkForUpdates().catch(() => {})
+    }
   }
 
   async function check() {

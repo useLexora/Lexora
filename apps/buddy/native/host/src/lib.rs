@@ -1,6 +1,8 @@
 pub mod file_engine;
 pub mod file_reader;
 pub mod file_writer;
+#[cfg(target_os = "linux")]
+pub mod linux_update;
 pub mod private_directories;
 pub mod process_control;
 #[cfg(windows)]

@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { app, ipcMain, shell } from 'electron'
+import { resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { compareDesktopVersions, desktopUpdateActionSchema, desktopUpdateTargetSchema } from '../../shared/desktopUpdates'
@@ -17,6 +18,7 @@ import { readDesktopUpdateFailure } from './DesktopUpdateFailure'
 import { DesktopUpdatePolicy, readDesktopDistribution } from './DesktopUpdatePolicy'
 import { DesktopUpdates } from './DesktopUpdates'
 import { DesktopUpdateStore } from './DesktopUpdateStore'
+import { isLinuxPackageFormat, linuxInstallerAvailable, linuxManualInstallation, prepareLinuxInstaller, readLinuxInstallationFailure } from './linuxInstaller'
 import { MacUpdateInstaller } from './MacUpdateInstaller'
 import { launchWindowsUpdateInstaller } from './windowsInstaller'
 
@@ -29,6 +31,10 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   const policy = new DesktopUpdatePolicy(readDesktopDistribution(metadata?.desktopDistribution, process.platform, process.arch))
   const directory = policy.capabilities.download ? join(environment.paths.lexoraHome, 'cache', 'updates') : null
   const downloadDirectory = directory ? join(directory, 'pending') : null
+  const linuxFormat = policy.distribution?.format
+  const linuxHelper = process.platform === 'linux' && app.isPackaged ? resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: true, resourcesPath: process.resourcesPath }) : undefined
+  if (isLinuxPackageFormat(linuxFormat) && directory)
+    policy.linuxInstallation = { available: linuxInstallerAvailable(linuxHelper, linuxFormat), failedVersion: readLinuxInstallationFailure(directory) }
   const macInstaller = new MacUpdateInstaller(runtime.network.authenticateProxy)
   const installers = {
     nsis: (path: string) => launchWindowsUpdateInstaller(path),
@@ -41,6 +47,16 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
     requestInstall,
     launchInstaller: async (path, update) => {
       const format = policy.distribution?.format
+      if (isLinuxPackageFormat(format) && linuxHelper && directory) {
+        try {
+          return await prepareLinuxInstaller({ helper: linuxHelper, format, directory, path, update, quit: () => app.quit() })
+        }
+        catch (error) {
+          if (!(error instanceof Error && error.message === 'UPDATE_INSTALL_CANCELLED'))
+            policy.linuxInstallation.failedVersion = update.version
+          throw error
+        }
+      }
       const installer = format && Object.hasOwn(installers, format) ? installers[format as keyof typeof installers] : null
       if (!installer)
         throw new Error('UPDATE_INSTALL_UNAVAILABLE')
@@ -62,7 +78,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
       currentVersion: app.getVersion(),
       fetchRelease: runtime.network.get,
       signal,
-      onRelease: (release, version) => delivery.discover(compareDesktopVersions(version, app.getVersion()) > 0 ? policy.resolve(release, version) : { mode: 'release', reason: null, update: null, fallback: null }),
+      onRelease: (release, version) => delivery.discover(compareDesktopVersions(version, app.getVersion()) > 0 || (version === app.getVersion() && version === policy.linuxInstallation.failedVersion) ? policy.resolve(release, version) : { mode: 'release', reason: null, update: null, fallback: null }),
     }),
     canPresent: () => environment.startup.state.status === 'ready' && !!windows.window?.isFocused() && windows.window.isVisible(),
     isIdle: async () => {
@@ -74,7 +90,15 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
     },
     reportFailure: () => environment.events.publish({ component: 'desktop.updates', event: 'update.background.failed', level: 'warn', errorCode: 'UPDATE_CHECK_FAILED' }),
   })
-  const snapshot = () => ({ ...updates.state, revision, delivery: delivery.state, downloadDirectory })
+  const snapshot = () => ({
+    ...updates.state,
+    revision,
+    delivery: delivery.state,
+    downloadDirectory,
+    manualInstallation: policy.distribution && delivery.state.version && downloadDirectory && ['ready', 'installing'].includes(delivery.state.status)
+      ? linuxManualInstallation(policy.distribution, delivery.state.version, downloadDirectory)
+      : undefined,
+  })
   const publish = () => {
     revision++
     const window = windows.window
@@ -106,7 +130,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   })
   const stopStartup = environment.startup.onStateChange(state => updates.setReady(state.status === 'ready'))
   updates.setReady(environment.startup.state.status === 'ready')
-  const initialization = updates.start().then(() => delivery.restore(updates.state.result?.status === 'update_available' ? updates.state.result.latestVersion : null))
+  const initialization = updates.start().then(() => delivery.restore(updates.state.result?.status === 'update_available' ? updates.state.result.latestVersion : policy.linuxInstallation.failedVersion === app.getVersion() ? app.getVersion() : null))
   const channels: string[] = [DESKTOP_IPC_CHANNELS.appUpdatesState, DESKTOP_IPC_CHANNELS.appUpdatesAcknowledge, DESKTOP_IPC_CHANNELS.appUpdatesTakeReminder]
   ipcMain.handle(channels[0]!, async (event) => {
     assertTrustedSender(event, windows.window)

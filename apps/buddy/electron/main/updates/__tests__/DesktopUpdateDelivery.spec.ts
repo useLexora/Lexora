@@ -33,6 +33,29 @@ async function setup(allowed = true, launchFailure = false) {
 }
 
 describe('update delivery', () => {
+  it.each(['UPDATE_INSTALL_CANCELLED', 'UPDATE_INSTALL_UNAVAILABLE'])('preserves verified Linux downloads when preparation returns %s', async (failure) => {
+    const directory = await createTemporaryDirectory('lexora-linux-delivery-')
+    const delivery = new DesktopUpdateDelivery({
+      directory,
+      get: async () => new Response(body),
+      requestInstall: async (prepare) => {
+        await prepare()
+        return true
+      },
+      launchInstaller: async () => { throw new Error(failure) },
+      openPackage: async () => { throw new Error('File associations must not be used') },
+      reportFailure: () => {},
+    })
+    delivery.discover({ mode: 'restart', reason: 'system-package', update, fallback: null })
+    await delivery.download()
+    await delivery.install()
+    await expect.poll(() => delivery.state.status).toBe('ready')
+    expect(delivery.state.mode).toBe(failure === 'UPDATE_INSTALL_CANCELLED' ? 'restart' : 'manual')
+    expect(await readFile(join(directory, 'pending', update.name))).toEqual(body)
+    await expect(delivery.openPackage()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
+    await delivery.dispose()
+  })
+
   it('reports safe download, storage and timeout failures and clears them after a successful retry', async () => {
     const directory = await createTemporaryDirectory('lexora-delivery-failure-')
     let failure: Error | null = null

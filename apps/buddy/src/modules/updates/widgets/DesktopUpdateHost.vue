@@ -2,12 +2,13 @@
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { useDocumentVisibility, useWindowFocus } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
-import { computed, shallowRef } from 'vue'
+import { computed, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { useUpdateReminder } from '../state/useUpdateReminder'
 import { useDesktopUpdatesContext } from '../updatesContext'
 import DesktopUpdateDialog from './DesktopUpdateDialog.vue'
+import DesktopUpdateInstallDialog from './DesktopUpdateInstallDialog.vue'
 import DesktopUpdateReminder from './DesktopUpdateReminder.vue'
 
 const props = defineProps<{ language: BuddyLocale }>()
@@ -21,6 +22,10 @@ const { reminder, dismiss } = useUpdateReminder(updates, focused, api.localChat)
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const pending = shallowRef(false)
+const checkingPackage = computed(() => state.value?.checking === true && state.value.delivery?.reason === 'metadata-required')
+const installationVisible = shallowRef(false)
+const manualInstallation = computed(() => state.value?.manualInstallation?.version === details.value?.latestVersion ? state.value?.manualInstallation : undefined)
+watch([() => details.value?.latestVersion, () => !!manualInstallation.value], () => installationVisible.value = false)
 const downloadingVersion = shallowRef<string | null>(null)
 const delivery = computed(() => {
   const current = state.value?.delivery
@@ -74,14 +79,14 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
     v-if="reminder && focused"
     :result="reminder"
     :language="language"
-    :pending="pending"
+    :pending="pending || checkingPackage"
     @dismiss="dismiss"
     @open="action(updates.openDetails)"
     @ignore="version => action(() => updates.ignore(version))"
     @snooze="(version, delay) => action(() => updates.snooze(version, delay))"
   />
   <DesktopUpdateDialog
-    :show="details !== null"
+    :show="details !== null && !installationVisible"
     :result="details"
     :delivery="delivery"
     :ignored="state?.ignoredVersion === details?.latestVersion"
@@ -89,7 +94,8 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
     :reminder-deferred-until="state?.result?.latestVersion === details?.latestVersion ? state?.reminderDeferredUntil : null"
     :latest-version="state?.result?.latestVersion"
     :language="language"
-    :pending="pending"
+    :pending="pending || checkingPackage"
+    :manual-installation="!!manualInstallation"
     :write-clipboard-text="api.clipboard.writeText"
     @update:show="!$event && updates.closeDetails()"
     @open-release="url => action(() => api.app.openReleasePage(url))"
@@ -98,10 +104,24 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
     @cancel-snooze="version => action(() => updates.cancelSnooze(version))"
     @snooze="(version, delay) => action(() => updates.snooze(version, delay))"
     @show-latest="action(updates.openDetails)"
+    @check="action(updates.check)"
     @download="download"
     @cancel-download="versionedAction(api.app.updates.cancelDownload)"
     @install="versionedAction(api.app.updates.install)"
+    @show-installation="installationVisible = true"
     @open-package="versionedAction(api.app.updates.openPackage)"
     @open-download-directory="action(api.app.updates.openDownloadDirectory)"
+  />
+  <DesktopUpdateInstallDialog
+    v-if="manualInstallation"
+    :show="installationVisible && details !== null"
+    :installation="manualInstallation"
+    :language="language"
+    :failed="delivery?.reason === 'installer-unavailable'"
+    :pending="pending"
+    :write-clipboard-text="api.clipboard.writeText"
+    @update:show="installationVisible = $event"
+    @open-directory="action(api.app.updates.openDownloadDirectory)"
+    @quit="action(() => api.commands.execute('app.quit'))"
   />
 </template>

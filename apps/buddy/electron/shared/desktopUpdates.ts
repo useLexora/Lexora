@@ -25,8 +25,8 @@ export interface DesktopUpdateNotification {
   readonly payload: { readonly version: string }
 }
 
-export type DesktopUpdateDeliveryMode = 'restart' | 'open-package' | 'release'
-export type DesktopUpdateDeliveryReason = 'signature-required' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
+export type DesktopUpdateDeliveryMode = 'restart' | 'open-package' | 'manual' | 'release'
+export type DesktopUpdateDeliveryReason = 'metadata-required' | 'signature-required' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
 export type DesktopUpdateFailureKind = 'download' | 'verification' | 'storage' | 'timeout'
 
 export interface DesktopUpdateDeliveryState {
@@ -52,6 +52,7 @@ export interface DesktopUpdateCapabilities {
 }
 
 export interface DesktopUpdateState {
+  readonly manualInstallation?: DesktopUpdateManualInstallation
   readonly delivery?: DesktopUpdateDeliveryState
   readonly downloadDirectory?: string | null
   readonly revision: number
@@ -65,6 +66,14 @@ export interface DesktopUpdateState {
   readonly notification: DesktopUpdateNotification | null
   readonly reminderDueAt: number | null
   readonly reminderDeferredUntil?: number | null
+}
+
+export interface DesktopUpdateManualInstallation {
+  readonly version: string
+  readonly packageName: string
+  readonly packagePath: string
+  readonly manager: string
+  readonly command: string
 }
 
 export const desktopUpdateActionSchema = z.discriminatedUnion('action', [

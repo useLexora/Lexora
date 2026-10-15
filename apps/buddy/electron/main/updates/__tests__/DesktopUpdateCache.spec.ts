@@ -49,6 +49,25 @@ it('restores a verified installer after relaunch and permits installation offlin
   await second.dispose()
 })
 
+it('keeps the verified Linux package for recovery when a failed transaction already changed the app version', async () => {
+  const directory = await createTemporaryDirectory('linux-update-recovery-')
+  const linuxPolicy = new DesktopUpdatePolicy({ schemaVersion: 1, format: 'deb', architecture: 'x64', signing: 'none' })
+  linuxPolicy.linuxInstallation = { available: true, failedVersion: update.version }
+  const name = 'Lexora-Buddy-1.2.3-linux-amd64.deb'
+  const linuxUpdate = { ...update, name, url: `https://github.com/useLexora/Lexora/releases/download/v1.2.3/${name}` }
+  const cache = new DesktopUpdateCache(directory, linuxPolicy, update.version)
+  const recovery = { mode: 'manual' as const, reason: 'installer-unavailable' as const, update: linuxUpdate, fallback: null }
+  await cache.remember(recovery)
+  await mkdir(join(directory, 'pending'))
+  await writeFile(join(directory, 'pending', name), body)
+  const restored = await cache.readPlan(update.version)
+  expect(restored).toMatchObject(recovery)
+  await cache.cleanup(restored!)
+  expect(await cache.verifiedPath(linuxUpdate)).toBe(join(directory, 'pending', name))
+  linuxPolicy.linuxInstallation.failedVersion = null
+  expect(await cache.readPlan(update.version)).toBeNull()
+})
+
 it('refuses restored installers whose bytes, version, architecture or source no longer match', async () => {
   const f = await fixture()
   const first = new DesktopUpdateDelivery(f.options)

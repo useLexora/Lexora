@@ -6,7 +6,7 @@ import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { formatFileSize } from '@/shared/lib/formatFileSize'
 
-const props = defineProps<{ delivery?: DesktopUpdateDeliveryState, version: string, language: BuddyLocale }>()
+const props = defineProps<{ delivery?: DesktopUpdateDeliveryState, version: string, language: BuddyLocale, pending: boolean }>()
 const { t } = useBuddyI18n(() => props.language)
 const current = computed(() => props.delivery?.version === props.version ? props.delivery : undefined)
 const downloading = computed(() => current.value?.status === 'downloading')
@@ -16,6 +16,8 @@ const failureDescription = computed(() => {
   return t(keys[kind])
 })
 const description = computed(() => {
+  if (props.delivery?.reason === 'metadata-required')
+    return t(props.pending ? 'desktop.update.checkingPackage' : 'desktop.update.packageInfoRequired')
   const state = current.value
   if (!state || state.mode === 'release')
     return t('desktop.update.releaseFallback')
@@ -24,13 +26,15 @@ const description = computed(() => {
   if (state.status === 'verifying')
     return t('desktop.update.verifyingDescription')
   if (state.status === 'installing')
-    return t('desktop.update.installingDescription')
+    return t(state.reason === 'system-package' ? 'desktop.update.linuxInstallingDescription' : 'desktop.update.installingDescription')
   if (state.status === 'downloading')
     return state.totalBytes ? t('desktop.update.downloadProgress', { received: formatFileSize(state.downloadedBytes ?? 0), total: formatFileSize(state.totalBytes) }) : t('desktop.update.downloading')
   if (state.mode === 'open-package')
-    return t(state.reason === 'system-package' ? 'desktop.update.systemPackage' : 'desktop.update.manualInstallation')
+    return t('desktop.update.manualInstallation')
+  if (state.mode === 'manual')
+    return t(state.reason === 'installer-unavailable' ? 'desktop.update.installStepsFailed' : 'desktop.update.systemPackage')
   if (state.status === 'ready')
-    return t('desktop.update.readyDescription')
+    return t(state.reason === 'system-package' ? 'desktop.update.linuxReadyDescription' : 'desktop.update.readyDescription')
   return state.totalBytes ? t('desktop.update.packageSize', { size: formatFileSize(state.totalBytes) }) : ''
 })
 </script>

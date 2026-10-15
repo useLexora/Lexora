@@ -59,3 +59,45 @@ it('keeps manual errors retryable and discards replies after closing or disposal
   await store.check()
   expect(store.details.value).toBeNull()
 })
+
+it.each(['newer', 'closed'] as const)('refreshes missing package details without replacing the viewed release (%s)', async (outcome) => {
+  const response = deferred<DesktopUpdateCheckResult>()
+  const started = deferred<void>()
+  let emit = (_state: DesktopUpdateState) => {}
+  const cached: DesktopUpdateState = { ...empty, revision: 1, result, delivery: { mode: 'release', reason: 'metadata-required', status: 'idle', version: null, progressPercent: 0 } }
+  const store = useDesktopUpdates({
+    checkForUpdates: () => {
+      started.resolve()
+      return response.promise
+    },
+    updates: {
+      download: async () => {},
+      cancelDownload: async () => {},
+      install: async () => {},
+      openDownloadDirectory: async () => {},
+      openPackage: async () => {},
+      getCacheSummary: async () => ({ bytes: 0, files: 0 }),
+      clearCache: async () => {},
+      getState: async () => cached,
+      onChanged: (listener) => {
+        emit = listener
+        return () => {}
+      },
+      acknowledge: async () => cached,
+      takeReminder: async () => null,
+    },
+  })
+  await store.load()
+  const opening = store.openDetails()
+  await started.promise
+  expect(store.details.value).toEqual(result)
+  if (outcome === 'closed')
+    store.closeDetails()
+  const latest: DesktopUpdateCheckResult = { ...result, latestVersion: '1.2.0', releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.2.0', releaseNotes: 'New release' }
+  emit({ ...cached, revision: 2, result: latest, delivery: { mode: 'restart', reason: null, version: latest.latestVersion, status: 'available', progressPercent: 0 } })
+  response.resolve(latest)
+  await opening
+  expect(store.details.value).toEqual(outcome === 'closed' ? null : result)
+  expect(store.state.value?.result?.latestVersion).toBe(latest.latestVersion)
+  store.dispose()
+})

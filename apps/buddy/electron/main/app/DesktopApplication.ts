@@ -14,7 +14,7 @@ import { BrowserIntegration } from '../browser/BrowserIntegration'
 import { INSTALLER_EXIT_ARGUMENT, isInstallerExitRequest, resolveDesktopLaunchIntent } from '../startupIntent'
 import { showStorageMigration } from '../storage/StorageMigrationWindow'
 import { showStorageUnavailable, StorageUnavailableError } from '../storage/storageUnavailable'
-import { isWindowsInstallationActive } from '../updates/windowsInstallationGate'
+import { isDesktopInstallationActive } from '../updates/desktopInstallationGate'
 import { closeDesktopDiagnostics } from './closeDesktopDiagnostics'
 import { confirmDesktopQuit, showBackgroundCloseNotice, showDesktopStartupFailure, showLegacyPowerShellNotice } from './desktopDialogs'
 import { DesktopIntegrations } from './DesktopIntegrations'
@@ -252,7 +252,7 @@ export async function startDesktopApplication(): Promise<void> {
   let environment: DesktopEnvironment | undefined
   let recoveryRecorded = false
   try {
-    if (isWindowsInstallationActive()) {
+    if (isDesktopInstallationActive()) {
       app.quit()
       return
     }

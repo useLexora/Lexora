@@ -35,7 +35,7 @@ export class DesktopUpdateCache {
   }
 
   async readPlan(version: string | null): Promise<DesktopUpdatePlan | null> {
-    if (!version || compareDesktopVersions(version, this.#currentVersion) <= 0)
+    if (!version || compareDesktopVersions(version, this.#currentVersion) < 0 || (version === this.#currentVersion && this.#policy.linuxInstallation.failedVersion !== version))
       return null
     try {
       await this.#validateDirectory()

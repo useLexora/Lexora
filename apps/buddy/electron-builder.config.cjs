@@ -110,6 +110,7 @@ module.exports = {
       'socat',
       'git',
       'libgtk-3-0',
+      'libasound2t64 | libasound2',
       'libnotify4',
       'libnss3',
       'libxss1',
