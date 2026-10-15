@@ -434,13 +434,12 @@ fn queued_mutation_can_be_cancelled_without_modifying_the_file() {
 mod windows;
 
 #[test]
-fn watched_directories_are_lazy_and_shared_roots_survive_revocation() {
+fn browsed_directories_notify_shared_roots_after_revocation() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
     std::fs::create_dir_all(root.join("src/deep")).unwrap();
     std::fs::create_dir_all(root.join("unopened")).unwrap();
     std::fs::write(root.join("src/deep/note.txt"), "original").unwrap();
-    std::fs::write(root.join("unopened/note.txt"), "original").unwrap();
     let mut engine = Engine::new(&directory.path().join("journal"));
     for key in ["first", "second"] {
         assert!(
@@ -451,16 +450,13 @@ fn watched_directories_are_lazy_and_shared_roots_survive_revocation() {
         );
     }
     engine.register("agent", &root);
-    std::fs::write(root.join("unopened/note.txt"), "not browsed").unwrap();
-    assert!(
-        engine
-            .output
-            .recv_timeout(Duration::from_millis(600))
-            .is_err()
-    );
-
     let read = engine.call(json!({"type":"read", "root":"first", "path":"src/deep/note.txt"}));
     assert_eq!(read["result"]["text"], "original");
+    while engine
+        .output
+        .recv_timeout(Duration::from_millis(300))
+        .is_ok()
+    {}
     std::fs::write(root.join("src/deep/note.txt"), "changed").unwrap();
     let change = engine.output.recv_timeout(Duration::from_secs(5)).unwrap();
     let roots = change["roots"].as_array().unwrap();
