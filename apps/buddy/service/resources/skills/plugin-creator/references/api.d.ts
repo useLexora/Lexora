@@ -79,6 +79,9 @@ export interface AgentToolContext {
   }
 }
 export interface TaskActionEvents {
+  'task:created': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string, readonly commitId: string }
+  'task:run:before': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string }
+  'task:reply:started': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string }
   'task:input:committed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string, readonly commitId: string }
   'task:turn:completed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly triggeringMessageId: string, readonly completedAt: string }
 }

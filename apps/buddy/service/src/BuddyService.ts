@@ -1115,7 +1115,7 @@ export async function startBuddyService(
         capture: (conversationId, source) => extensionTaskContext.captureAction(conversationId, source),
         onObserverError: () => record({ event: 'plugins.action.observer_failed', level: 'warn' }),
       })
-      const binding = bindExtensionActions(service, { turns: turnRequests, execution: runner, metadata: conversationMetadata, deletions: conversationLifecycle, runs })
+      const binding = bindExtensionActions(service, { turns: turnRequests, execution: runner, metadata: conversationMetadata, deletions: conversationLifecycle, runs, events: options.eventLog })
       const diagnostics = service.onDidFail(event => record({ event: 'plugins.action.failed', level: 'warn', ...event }))
       const notification = service.onDidChange(event => options.rpc.notify(conversationTimelineChanged.method, event))
       const list = registerRuntimeRequest(options.rpc, extensionActionRpc.list, (_input, signal) => service.list(signal))
@@ -1161,6 +1161,11 @@ export async function startBuddyService(
       executions: executionCoordinator,
       planner: executionPlanner,
       runner,
+      beforeRun: async (runId, signal) => {
+        const run = runs.findById(runId)
+        if (run?.purpose === 'chat')
+          await extensionActions.beforeRun({ type: 'task:run:before', data: { conversationId: run.conversationId, branchId: run.branchId, runId, messageId: run.triggeringMessageId } }, signal)
+      },
     })
     const chatCommandService = await host.start('runtime.chat_commands', ({ defer }) => {
       const service = new ChatCommandService({

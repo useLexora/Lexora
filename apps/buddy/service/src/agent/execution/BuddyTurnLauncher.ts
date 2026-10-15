@@ -7,6 +7,7 @@ export interface BuddyTurnLauncherOptions {
   executions: Pick<ExecutionCoordinator, 'prepare' | 'failBeforeStart'>
   planner: Pick<BuddyRunExecutionPlanner, 'resolve'>
   runner: Pick<BuddyAgentRunner, 'startCompaction' | 'startTurn'>
+  beforeRun?: (runId: string, signal: AbortSignal) => Promise<void>
 }
 
 export class BuddyTurnLauncher {
@@ -22,6 +23,9 @@ export class BuddyTurnLauncher {
       preparation = this.#options.executions.prepare(runId, signal)
       preparation.signal.throwIfAborted()
       const plan = await this.#options.planner.resolve(runId)
+      preparation.signal.throwIfAborted()
+      if (plan.kind === 'turn')
+        await this.#options.beforeRun?.(runId, preparation.signal)
       preparation.signal.throwIfAborted()
       return plan.kind === 'turn'
         ? this.#options.runner.startTurn(plan.input)

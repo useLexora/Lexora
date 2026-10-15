@@ -5,6 +5,7 @@ import type { ExtensionActionCause, ExtensionAgentDescriptor } from '../../../sh
 import type { ExtensionInvocationRepository } from '../storage/extensionInvocationRepository'
 import type { ExtensionAgentRuntime } from './ExtensionAgentRuntime'
 import { randomUUID } from 'node:crypto'
+import { addAbortListener } from 'node:events'
 import { Emitter } from '../../../shared/events/Emitter'
 import { extensionActionResultSchema } from '../../../shared/extensions/extensionAgent'
 
@@ -19,6 +20,7 @@ export class ExtensionActionService {
   readonly #options: Options
   readonly #stop = new AbortController()
   readonly #pending = new Map<Promise<unknown>, { conversationId: string, controller: AbortController }>()
+  readonly #inputs = new Map<string, { event: Extract<TaskActionEvent, { type: 'task:input:committed' }>, plugins: Promise<ExtensionAgentDescriptor[]>, replied: boolean }>()
   readonly #actions = new Map<string, { controller: AbortController, settled: Promise<void> }>()
   readonly #failed: Emitter<Readonly<{ conversationId: string, errorCode: string }>>
   readonly #changed: Emitter<ConversationTimelineChangeNotice>
@@ -42,24 +44,71 @@ export class ExtensionActionService {
       .map(action => ({ extensionId: plugin.id, actionId: action.id, title: action.title })))
   }
 
-  dispatch(event: TaskActionEvent): void {
+  dispatch(event: TaskActionEvent, taskCreated = false): void {
     const conversationId = event.data.conversationId
-    if (event.type === 'task:input:committed')
+    if (event.type === 'task:input:committed') {
       this.cancel(conversationId)
-    void this.#track(conversationId, async (signal) => {
-      const plugins = await this.#options.runtime.descriptors(signal)
-      signal.throwIfAborted()
-      const results = await Promise.allSettled(plugins.flatMap(plugin => plugin.agent.actions.filter(action => action.triggers.includes(event.type)).map(action =>
-        this.#invoke(plugin, action.id, conversationId, event, signal))))
-      signal.throwIfAborted()
-      const failed = results.find(result => result.status === 'rejected')
-      if (failed?.status === 'rejected')
-        throw failed.reason
-    }).catch((error) => {
+      const plugins = this.#options.runtime.descriptors(this.#stop.signal)
+      void plugins.catch(() => {})
+      this.#inputs.set(event.data.runId, { event, plugins, replied: false })
+    }
+    const plugins = this.#inputs.get(event.data.runId)?.plugins
+    const events: TaskActionEvent[] = taskCreated && event.type === 'task:input:committed'
+      ? [{ type: 'task:created', data: event.data }, event]
+      : [event]
+    void this.#track(conversationId, signal => this.#dispatch(events, signal, plugins)).catch((error) => {
       if (error instanceof Error && error.name === 'AbortError')
         return
       this.#failed.fire({ conversationId, errorCode: error instanceof Error ? error.message.match(/EXTENSION_[A-Z_]+/)?.[0] ?? 'EXTENSION_ACTION_FAILED' : 'EXTENSION_ACTION_FAILED' })
     })
+  }
+
+  replyStarted(runId: string): void {
+    const input = this.#inputs.get(runId)
+    if (!input || input.replied)
+      return
+    input.replied = true
+    const { conversationId, branchId, messageId } = input.event.data
+    this.dispatch({ type: 'task:reply:started', data: { conversationId, branchId, runId, messageId } })
+  }
+
+  forgetRun(runId: string): void {
+    this.#inputs.delete(runId)
+  }
+
+  beforeRun(event: Extract<TaskActionEvent, { type: 'task:run:before' }>, signal: AbortSignal): Promise<void> {
+    const plugins = this.#inputs.get(event.data.runId)?.plugins
+    this.dispatch(event)
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(new DOMException('Pre-run hooks timed out', 'TimeoutError')), 10000)
+    return this.#track(event.data.conversationId, signal => waitWithSignal(async () => {
+      const descriptors = await (plugins ?? this.#options.runtime.descriptors(signal))
+      for (const plugin of [...descriptors].sort((a, b) => a.id.localeCompare(b.id))) {
+        for (const action of [...plugin.agent.actions].sort((a, b) => a.id.localeCompare(b.id))) {
+          signal.throwIfAborted()
+          if (action.execution === 'blocking' && action.triggers.includes(event.type))
+            await this.#invoke(plugin, action.id, event.data.conversationId, event, signal)
+        }
+      }
+    }, signal), AbortSignal.any([signal, deadline.signal])).finally(() => clearTimeout(timer))
+  }
+
+  async #dispatch(events: TaskActionEvent[], signal: AbortSignal, selected?: Promise<ExtensionAgentDescriptor[]>): Promise<void> {
+    const plugins = await (selected ?? this.#options.runtime.descriptors(signal))
+    signal.throwIfAborted()
+    const results = await Promise.allSettled(plugins.flatMap(plugin => plugin.agent.actions
+      .filter(action => action.execution !== 'blocking' && events.some(event => action.triggers.includes(event.type)))
+      .map(async (action) => {
+        for (const event of events) {
+          signal.throwIfAborted()
+          if (action.triggers.includes(event.type))
+            await this.#invoke(plugin, action.id, event.data.conversationId, event, signal)
+        }
+      })))
+    signal.throwIfAborted()
+    const failed = results.find(result => result.status === 'rejected')
+    if (failed?.status === 'rejected')
+      throw failed.reason
   }
 
   invoke(input: { conversationId: string, extensionId: string, actionId: string }, signal?: AbortSignal) {
@@ -72,6 +121,10 @@ export class ExtensionActionService {
   }
 
   cancel(conversationId?: string): void {
+    for (const [runId, input] of this.#inputs) {
+      if (!conversationId || input.event.data.conversationId === conversationId)
+        this.#inputs.delete(runId)
+    }
     for (const pending of this.#pending.values()) {
       if (!conversationId || pending.conversationId === conversationId)
         pending.controller.abort()
@@ -80,6 +133,7 @@ export class ExtensionActionService {
 
   async dispose(): Promise<void> {
     this.#stop.abort()
+    this.#inputs.clear()
     await Promise.allSettled([...this.#pending.keys()])
     this.#failed.dispose()
     this.#changed.dispose()
@@ -145,5 +199,18 @@ export class ExtensionActionService {
         settle()
       }
     }
+  }
+}
+
+async function waitWithSignal<T>(execute: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted()
+  let subscription: ReturnType<typeof addAbortListener> | undefined
+  try {
+    return await Promise.race([execute(), new Promise<never>((_resolve, reject) => {
+      subscription = addAbortListener(signal, () => reject(signal.reason))
+    })])
+  }
+  finally {
+    subscription?.[Symbol.dispose]()
   }
 }

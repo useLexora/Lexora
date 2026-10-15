@@ -27,13 +27,14 @@ export const extensionToolSchema = z.object({
     additionalProperties: z.literal(false).default(false),
   }).strict().refine(value => value.required.every(key => Object.hasOwn(value.properties, key))),
 }).strict()
-export const extensionActionTriggerSchema = z.enum(['task:input:committed', 'task:turn:completed', 'user'])
+export const extensionActionTriggerSchema = z.enum(['task:created', 'task:input:committed', 'task:run:before', 'task:reply:started', 'task:turn:completed', 'user'])
 export const extensionActionSchema = z.object({
   enabledWhen: extensionConditionReferenceSchema.optional(),
   id: extensionSettingIdSchema,
   title: z.string().min(1).max(100),
-  triggers: z.array(extensionActionTriggerSchema).min(1).max(3).refine(value => new Set(value).size === value.length),
-}).strict()
+  triggers: z.array(extensionActionTriggerSchema).min(1).max(6).refine(value => new Set(value).size === value.length),
+  execution: z.enum(['background', 'blocking']).optional(),
+}).strict().refine(action => action.execution !== 'blocking' || action.triggers.every(trigger => trigger === 'task:run:before'), { message: 'Only pre-run hooks may block execution' })
 export const extensionActionResultSchema = z.object({ status: z.enum(['completed', 'skipped']), message: z.string().max(500).optional() }).strict()
 export const extensionActionCauseSchema = z.union([taskActionEventSchema, z.object({ type: z.literal('user') }).strict()])
 export type ExtensionActionCause = EventSnapshot<z.infer<typeof extensionActionCauseSchema>>

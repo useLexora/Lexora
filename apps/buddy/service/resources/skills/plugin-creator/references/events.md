@@ -47,6 +47,9 @@ subscription.dispose()
 
 | trigger / cause.type | cause.data | 触发时机 |
 | --- | --- | --- |
+| `task:created` | `{conversationId, branchId, runId, messageId, commitId}` | 本次输入事务实际创建了新任务；安装、启用和恢复不补发旧任务。与输入动作同批捕获贡献快照，同一动作先处理创建再处理输入。 |
+| `task:run:before` | `{conversationId, branchId, runId, messageId}` | 主对话执行规划完成、主模型启动前；可声明 `execution: blocking` 等待完成。 |
+| `task:reply:started` | `{conversationId, branchId, runId, messageId}` | 对本次输入首次提交非空回复文本或开始执行工具；空消息占位和思考占位不触发，每次输入最多一次。 |
 | `task:input:committed` | `{conversationId, branchId, runId, messageId, commitId}` | 用户输入已经提交到当前任务分支，包括已提交的后续输入；未发送草稿和仍在等待的队列项不触发。无需等待主模型回复。 |
 | `task:turn:completed` | `{conversationId, branchId, runId, triggeringMessageId, completedAt}` | 该轮对话成功完成且执行占用已经释放；失败、取消与历史恢复不触发。`completedAt` 是 ISO 时间字符串。 |
 | `user` | 无 `data`，cause 为 `{type: 'user'}` | 用户点击任务菜单中该动作的 title，目标固定为菜单所属任务。不是可订阅、可发布的事件。 |
@@ -64,6 +67,8 @@ function triggeringInput({ cause }: AgentActionContext): string | null {
   return null
 }
 ```
+
+`execution` 默认是 `background`，不会等待动作结束。只有触发项全部为 `task:run:before` 的动作可选择 `blocking`；前置阶段按插件 ID、动作 ID 的稳定顺序执行，总预算 10 秒，包含排队。失败或超时会阻止本次主运行启动并保留已提交输入；后台失败不改变主任务结果。所有调用复用现有权限、配额、取消和独立用量归属。
 
 triggers 只接受表中的精确值，不支持通配符。动作不会作为主模型工具出现，也不向主对话插入工具结果；模型用量单独记录。输入事件不意味着只调用一次，是否首次命名、何时重试由插件按任务元数据决定。同一任务的同一动作串行执行；用户显式调用会取代仍在进行的同一动作，新输入会撤销旧输入对应的调用。事件不重放，重启后不自动重试中断动作。
 

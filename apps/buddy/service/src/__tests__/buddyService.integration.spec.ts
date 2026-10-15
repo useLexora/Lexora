@@ -1615,6 +1615,8 @@ function createRuntimeRpcHarness(
         url?: string
         value?: unknown
       }
+      if (method === 'extensions.agent.list')
+        return Promise.resolve([])
       if (method === 'host.web.authorize')
         return Promise.resolve(input.url && input.url in webPages ? { ok: true } : { ok: false, code: 'WEB_URL_BLOCKED' })
       if (method === 'host.web.request' && input.url && input.url in webPages) {

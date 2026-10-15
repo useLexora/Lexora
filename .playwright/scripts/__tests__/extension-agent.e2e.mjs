@@ -321,6 +321,11 @@ test('background plugin actions join their reply flow while preserving protected
       finally { stop() }
       await providers.setDefaultModel({ providerId: 'title-fixture', modelId: 'primary', reasoning: null })
     }, `http://127.0.0.1:${server.address().port}/v1`)
+    await page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
+    await page.locator('.desktop-chat-composer__prosemirror:visible').fill('安装插件前已有的任务')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect.poll(() => rows(instance.home, 'SELECT COUNT(*) AS count FROM runs WHERE status = \'completed\'')[0].count).toBe(1)
+    const existingTask = rows(instance.home, 'SELECT id, title FROM conversations')[0]
     const source = path.join(instance.home, 'action-fixture')
     const pluginId = 'tests.actions'
     await writeActionFixture(source)
@@ -397,13 +402,19 @@ test('background plugin actions join their reply flow while preserving protected
         return !!process && !!answer && process.y + process.height <= answer.y
       }).toBe(true)
     }
-    await send('整理项目发布计划')
+    await send('安装后继续原任务')
+    await settled()
+    expect(latest()).toMatchObject(existingTask)
+    expect(backgroundRequests()).toBe(0)
+    await send('整理项目发布计划', true)
     await expect.poll(() => pending.length).toBe(1)
     await expect(page.locator('.buddy-chat-message-list .buddy-chat-message.is-assistant')).toContainText('任务回答已完成。')
     await expectActionInReplyFlow('running')
     await page.screenshot({ path: path.join(instance.artifactDirectory, 'background-title-running.png'), animations: 'disabled' })
     expect(latest().title_source).toBe('fallback')
-    expect(rows(instance.home, 'SELECT status FROM runs')).toEqual([{ status: 'completed' }])
+    expect(rows(instance.home, `SELECT status FROM runs WHERE conversation_id = '${latest().id}'`)).toEqual([{ status: 'completed' }])
+    expect(requests.at(-2).tools.length).toBeGreaterThan(0)
+    expect(requests.at(-1).tools).toBeUndefined()
     expect(requests.filter(body => body.tools?.length).every(body => !body.tools.some(tool => tool.function.name.startsWith('lexora_plugin_')))).toBe(true)
     pending.shift()()
     await settled()
@@ -422,8 +433,8 @@ test('background plugin actions join their reply flow while preserving protected
 
     expect(rows(instance.home, 'SELECT run_id, invocation_id, purpose FROM usage_records WHERE purpose = \'extension.action\'')).toEqual([{ run_id: null, invocation_id: expect.any(String), purpose: 'extension.action' }])
     const inputActions = declaredActions.filter(action => action.triggers.includes('task:input:committed')).map(action => action.id).sort()
-    expect(rows(instance.home, 'SELECT action_id, status FROM extension_invocations WHERE trigger = \'task:input:committed\' ORDER BY action_id')).toEqual(inputActions.map(action_id => ({ action_id, status: 'completed' })))
-    await expect(page.locator('.buddy-chat-agent-turn [data-action-id]')).toHaveCount(inputActions.length)
+    expect(rows(instance.home, `SELECT action_id, status FROM extension_invocations WHERE conversation_id = '${latest().id}' AND trigger = 'task:input:committed' ORDER BY action_id`)).toEqual(inputActions.map(action_id => ({ action_id, status: 'completed' })))
+    await expect(page.locator('.buddy-chat-agent-turn [data-action-id]')).toHaveCount(inputActions.length + 1)
     const status = await page.evaluate(conversationId => window.lexoraDesktop.localChat.runs.status({ conversationId }), latest().id)
     expect(status.tokens.totals).toMatchObject({ totalTokens: 60, recordCount: 2 })
     expect(status.tokens.byPurpose.find(entry => entry.purpose === 'extension.action')).toMatchObject({ totalTokens: 30, recordCount: 1 })
@@ -538,7 +549,7 @@ async function writeActionFixture(directory) {
         { id: `${id}.model`, key: 'model', group: 'settings.general.general', type: 'model', title: '模型', default: null, enabledWhen: { condition: `${id}.available` } },
       ] },
       agent: { enabledWhen: 'enabled', actions: [
-        { id: `${id}.generate`, title: '重新生成标题', triggers: ['task:input:committed', 'task:turn:completed', 'user'] },
+        { id: `${id}.generate`, title: '重新生成标题', triggers: ['task:created', 'task:reply:started', 'task:turn:completed', 'user'], execution: 'background' },
         ...Array.from({ length: 15 }, (_, index) => ({ id: `${id}.read${index}`, title: `Read ${index}`, triggers: ['task:input:committed'] })),
       ] },
     },
@@ -546,7 +557,7 @@ async function writeActionFixture(directory) {
   await fs.writeFile(path.join(directory, 'extension.js'), `export const activate = ${activateActionFixture.toString()}`)
 }
 
-function activateActionFixture(context) {
+async function activateActionFixture(context) {
   context.conditions.register(`${context.extension.id}.available`, ctx => ctx.configuration.status === 'available' && ctx.configuration.values.enabled === true)
   for (let index = 0; index < 15; index++) {
     context.agent.registerAction(`${context.extension.id}.read${index}`, async (invocation) => {
@@ -554,19 +565,29 @@ function activateActionFixture(context) {
       return { status: 'completed' }
     })
   }
+  const stored = await context.storage.get()
+  const pending = new Set(stored?.pendingTasks ?? [])
+  const save = () => context.storage.set({ pendingTasks: [...pending] })
   context.agent.registerAction(`${context.extension.id}.generate`, async (invocation) => {
     const config = await context.configuration.get()
     const task = await invocation.task.get()
     const cause = invocation.cause.type
     if (cause !== 'user' && ['manual', 'legacy'].includes(task.titleSource))
       return { status: 'skipped' }
-    if (cause === 'task:input:committed' && task.titleSource !== 'fallback')
+    if (cause === 'task:created') {
+      pending.add(task.id)
+      await save()
+      return { status: 'skipped' }
+    }
+    if (cause === 'task:reply:started' && (task.titleSource !== 'fallback' || !pending.has(task.id)))
       return { status: 'skipped' }
     const messages = await invocation.task.messages()
     if (cause === 'task:turn:completed' && (!config.updateOnGoalChange || task.titleSource !== 'generated' || messages.filter(message => message.role === 'user').length < 2))
       return { status: 'skipped' }
     const result = await invocation.models.generateText({ prompt: JSON.stringify(messages) })
     const saved = await invocation.task.rename({ title: result.text })
+    pending.delete(task.id)
+    await save()
     return { status: saved.applied ? 'completed' : 'skipped' }
   })
 }

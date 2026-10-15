@@ -172,6 +172,29 @@ describe('buddyTurnLauncher', () => {
       .toEqual(['run.failed'])
   })
 
+  it('awaits preparation before the model starts and durably fails a rejected hook while retaining input', async () => {
+    const fixture = await createFixture()
+    fixture.prepareTurn({ spaceId: null })
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const launcher = fixture.createLauncher({
+      beforeRun: async () => {
+        entered.resolve()
+        await gate.promise
+      },
+      startTurn: () => { throw new Error('Preparation must succeed before model execution') },
+    })
+    const pending = launcher.launch('run-1')
+    await entered.promise
+    expect(fixture.runs.findById('run-1')?.status).toBe('queued')
+    expect(await fixture.eventLog.read('run-1')).toEqual([])
+    gate.reject(new Error('EXTENSION_PREPARATION_FAILED'))
+    const handle = await pending
+    await expect(handle.completion).resolves.toMatchObject({ status: 'failed' })
+    expect((await fixture.eventLog.read('run-1')).map(event => event.type)).toEqual(['run.failed'])
+    expect(fixture.runs.findById('run-1')?.triggeringMessageId).toBe('message-1')
+  })
+
   it('cancels an accepted queued run when its launch scope stops during planning', async () => {
     const fixture = await createFixture()
     fixture.prepareTurn({ spaceId: null })
@@ -240,10 +263,12 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
   return {
     createLauncher(overrides: {
       startTurn?: (input: StartBuddyTurnInput) => BuddyTurnHandle
+      beforeRun?: (runId: string, signal: AbortSignal) => Promise<void>
     } = {}) {
       return new BuddyTurnLauncher({
         executions,
         planner,
+        beforeRun: overrides.beforeRun,
         runner: {
           startCompaction() {
             throw new Error('Unexpected compaction launch')

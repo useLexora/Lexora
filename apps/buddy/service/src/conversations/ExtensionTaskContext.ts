@@ -39,9 +39,9 @@ export class ExtensionTaskContext {
     if (cause.data.conversationId !== conversationId || task.activeBranchId !== cause.data.branchId)
       return false
     const inputId = this.history.latestInput(conversationId, task.activeBranchId)
-    return cause.type === 'task:input:committed'
-      ? inputId === cause.data.messageId
-      : inputId === cause.data.triggeringMessageId || (!!inputId && this.inputs.findByMessageId(inputId)?.runId === cause.data.runId)
+    return cause.type === 'task:turn:completed'
+      ? inputId === cause.data.triggeringMessageId || (!!inputId && this.inputs.findByMessageId(inputId)?.runId === cause.data.runId)
+      : inputId === cause.data.messageId
   }
 
   open(scope: ExtensionInvocationScope): ExtensionTaskSession {
