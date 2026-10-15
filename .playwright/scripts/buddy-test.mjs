@@ -8,7 +8,6 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { createRunDirectory } from './run-artifacts.mjs'
 import { attachPageDiagnostics, ROOT, serializeError } from './shared.mjs'
 
 const repoRoot = ROOT
@@ -31,7 +30,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
   }
   const directory = path.join(root, 'runs', runId)
   const instancesRoot = path.join(directory, 'instances')
-  const artifacts = artifactRoot ? path.resolve(artifactRoot) : createRunDirectory({ task: process.env.LEXORA_TEST_TASK ?? 'buddy-desktop', runId, completeOnExit: true })
+  const artifacts = path.resolve(artifactRoot ?? path.join(repoRoot, '.playwright/runs', runId))
   assert.equal(await canonicalPath(instancesRoot), instancesRoot, 'Test run directories must not redirect through links')
   await fs.mkdir(instancesRoot, { recursive: true, mode: 0o700 })
   await fs.mkdir(artifacts, { recursive: true, mode: 0o700 })
