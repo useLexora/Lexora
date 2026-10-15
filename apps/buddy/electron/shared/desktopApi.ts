@@ -197,6 +197,7 @@ export interface LexoraConfig {
     subtaskNotificationsEnabled: boolean
     updateNotificationsEnabled: boolean
     autoDownloadUpdates: boolean
+    localBackupLimit: number
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig
     pluginAuthor: string

@@ -8,6 +8,7 @@ import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import BackupSelectionDialog from './BackupSelectionDialog.vue'
 import DataSnapshotList from './DataSnapshotList.vue'
+import LocalBackupRetention from './LocalBackupRetention.vue'
 
 const { applicationSettings, storage } = useSettingsContext()
 const english = computed(() => applicationSettings.language.value === 'en-US')
@@ -101,6 +102,10 @@ onMounted(() => {
         {{ text('创建备份', 'Create backup') }}
       </NButton>
     </DesktopSettingRow>
+    <LocalBackupRetention />
+    <NAlert v-if="catalog.cleanupError" type="warning" :show-icon="false" class="m-3">
+      {{ text('旧备份未能全部清理，将在下次备份时重试。新备份和当前数据已保留。', 'Some older backups could not be removed. Cleanup will retry with the next backup. New backups and current data are preserved.') }}
+    </NAlert>
     <NAlert v-if="error && !showSelection && !showBackups" type="error" :show-icon="false" class="m-3">
       {{ error }}
     </NAlert>

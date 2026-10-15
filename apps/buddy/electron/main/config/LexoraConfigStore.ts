@@ -16,6 +16,7 @@ import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/net
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
+import { DEFAULT_LOCAL_BACKUP_LIMIT, localBackupLimitSchema } from '../../../shared/storage/backupRetention'
 import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
 import { DEFAULT_TYPOGRAPHY, typographyPreferencesSchema } from '../../../shared/typography/typographyPreferences'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
@@ -102,6 +103,7 @@ const desktopConfigSchema = z.object({
   subtask_notifications_enabled: z.boolean().default(true),
   update_notifications_enabled: z.boolean().default(true),
   auto_download_updates: z.boolean().default(true),
+  local_backup_limit: localBackupLimitSchema.default(DEFAULT_LOCAL_BACKUP_LIMIT),
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
   file_icon_theme: fileIconPreferenceSchema.default({ id: BUILTIN_FILE_ICON_THEME }),
@@ -135,6 +137,7 @@ const desktopConfigSchema = z.object({
   subtask_notifications_enabled: true,
   update_notifications_enabled: true,
   auto_download_updates: true,
+  local_backup_limit: DEFAULT_LOCAL_BACKUP_LIMIT,
   notify_when_focused: false,
   sidebar_collapsed: false,
   file_icon_theme: { id: BUILTIN_FILE_ICON_THEME },
@@ -374,6 +377,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       subtaskNotificationsEnabled: config.desktop.subtask_notifications_enabled,
       updateNotificationsEnabled: config.desktop.update_notifications_enabled,
       autoDownloadUpdates: config.desktop.auto_download_updates,
+      localBackupLimit: config.desktop.local_backup_limit,
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
       fileIconTheme: config.desktop.file_icon_theme,
@@ -440,6 +444,7 @@ function encodeConfig(config: LexoraConfig) {
       subtask_notifications_enabled: config.desktop.subtaskNotificationsEnabled,
       update_notifications_enabled: config.desktop.updateNotificationsEnabled,
       auto_download_updates: config.desktop.autoDownloadUpdates,
+      local_backup_limit: config.desktop.localBackupLimit,
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
       file_icon_theme: config.desktop.fileIconTheme,
@@ -468,6 +473,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      localBackupLimit: localBackupLimitSchema.parse(patch.desktop?.localBackupLimit ?? current.desktop.localBackupLimit),
       fileIconTheme: fileIconPreferenceSchema.parse(patch.desktop?.fileIconTheme ?? current.desktop.fileIconTheme),
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
       typography: typographyPreferencesSchema.parse({ ...current.desktop.typography, ...patch.desktop?.typography }),

@@ -13,7 +13,10 @@ import { backupScheduleInputSchema, backupScheduleSchema, nextBackupTime } from 
 const recordSchema = z.object({
   connectionId: z.uuid(),
   automatic: z.uuid(),
-  policy: backupScheduleSchema,
+  policy: backupScheduleSchema.extend({
+    localKeep: z.number().int().min(0).max(365).optional(),
+    remoteKeep: z.number().int().min(0).max(365).optional(),
+  }).transform(({ localKeep: _localKeep, remoteKeep: _remoteKeep, ...policy }) => policy),
   credentialId: z.uuid().nullable(),
   nextRunAt: z.iso.datetime().nullable(),
   lastSuccessAt: z.iso.datetime().nullable(),
@@ -34,8 +37,6 @@ function defaultPolicy(now: Date) {
     weekday: now.getDay(),
     scopes: [...backupScopes],
     credentials: false,
-    localKeep: 0,
-    remoteKeep: 0,
   }
 }
 
@@ -90,7 +91,11 @@ export class BackupScheduler {
     }))
   }
 
-  protectedSnapshots() { return new Set(this.#records.flatMap(record => record.pendingId ? [record.pendingId] : [])) }
+  protectedSnapshots() {
+    if (this.unavailable)
+      throw new Error('BACKUP_SCHEDULE_UNAVAILABLE')
+    return new Set(this.#records.flatMap(record => record.pendingId ? [record.pendingId] : []))
+  }
 
   async #persist() {
     await writeStorageJson(this.#path, { version: 1, records: this.#records })
@@ -224,9 +229,7 @@ export class BackupScheduler {
           record.manual = false
           await this.#persist()
           try {
-            if (record.policy.remoteKeep)
-              await this.hub.run('prune', record.connectionId, undefined, { automatic: record.automatic, keep: record.policy.remoteKeep })
-            await this.backups.prune(record.automatic, record.policy.localKeep)
+            await this.backups.prune()
             record.cleanupError = false
           }
           catch { record.cleanupError = true }

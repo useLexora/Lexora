@@ -62,6 +62,7 @@ export interface StorageUsage {
 export const storageCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('snapshots') }).strict(),
   z.object({ action: z.literal('delete'), id: z.uuid() }).strict(),
+  z.object({ action: z.literal('prune') }).strict(),
   z.object({ action: z.literal('snapshot'), options: backupOptionsSchema.optional() }).strict(),
   z.object({ action: z.literal('restore'), id: z.uuid(), options: backupOptionsSchema }).strict(),
   z.object({ action: z.literal('import') }).strict(),
@@ -75,6 +76,7 @@ export const storageCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('restart') }).strict(),
 ])
 export interface StorageApi {
+  prune: () => Promise<void>
   delete: (id: string) => Promise<void>
   snapshots: () => Promise<SnapshotCatalog>
   snapshot: (options?: BackupOptions) => Promise<SnapshotSummary>

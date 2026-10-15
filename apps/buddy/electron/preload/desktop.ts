@@ -29,6 +29,7 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       onChanged: (listener: (state: SyncState) => void) => subscribe(SYNC_CHANGED, listener),
     }),
     storage: Object.freeze({
+      prune: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'prune' }),
       delete: (id: string) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'delete', id }),
       snapshots: () => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'snapshots' }),
       snapshot: (options?: BackupOptions) => ipcRenderer.invoke(STORAGE_CHANNEL, { action: 'snapshot', options }),

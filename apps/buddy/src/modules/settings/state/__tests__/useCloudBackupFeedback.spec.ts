@@ -15,7 +15,7 @@ function state(schedule: Partial<BackupScheduleState> = {}): SyncState {
     scheduleError: false,
     schedules: [{
       connectionId: 'fixture',
-      policy: { frequency: 'daily', time: '12:00', weekday: 0, scopes: ['tasks'], credentials: false, localKeep: 0, remoteKeep: 0 },
+      policy: { frequency: 'daily', time: '12:00', weekday: 0, scopes: ['tasks'], credentials: false },
       nextRunAt: '2026-10-14T12:00:00.000Z',
       lastSuccessAt: null,
       retryAt: null,

@@ -24,6 +24,7 @@ export class StorageBackupService {
   protectedSnapshots = () => new Set<string>()
   #queue: Promise<unknown> = Promise.resolve()
   #pending = 0
+  #cleanupError = false
   readonly environment: DesktopEnvironment
   readonly getWindow: () => BrowserWindow | null
   readonly runtime: DesktopRuntimeHost
@@ -35,6 +36,10 @@ export class StorageBackupService {
   }
 
   get busy() { return this.#pending > 0 }
+
+  async catalog() {
+    return { ...await this.snapshots.list(), cleanupError: this.#cleanupError }
+  }
 
   async summary(): Promise<StorageSummary> {
     const { store } = this.environment.storage
@@ -75,6 +80,7 @@ export class StorageBackupService {
       const manifest = await this.runtime.service.withStoppedStorage(() => runSnapshotWorker(this.environment.paths.lexoraHome, this.environment.storage.state.identity!.dataId, (progress) => {
         this.getWindow()?.webContents.send(STORAGE_CHANGED, progress)
       }, this.controller.signal, this.environment.storage.privateDirectoriesExecutable, { scopes: options.scopes, credentials: options.credentials, ...(automatic ? { automatic } : {}) }, encrypted))
+      await this.prune(manifest.id).catch(() => {})
       return snapshotSummary(manifest)
     }
     finally {
@@ -113,6 +119,7 @@ export class StorageBackupService {
   async import(source: string) {
     const manifest = await readSnapshotManifest(source)
     await this.#copy(source, this.snapshots.directory(manifest.id))
+    await this.prune(manifest.id).catch(() => {})
     return snapshotSummary(manifest)
   }
 
@@ -134,15 +141,39 @@ export class StorageBackupService {
     finally { this.getWindow()?.webContents.send(STORAGE_CHANGED, null) }
   }
 
-  async prune(automatic: string, keep: number) {
-    if (!keep)
-      return
-    const catalog = await this.snapshots.list()
-    for (const item of catalog.snapshots.filter(item => item.automatic === automatic).slice(keep)) {
-      if (!this.protectedSnapshots().has(item.id) && (await this.environment.storage.store.read()).pending?.snapshotId !== item.id)
-        await this.snapshots.remove(item.id)
+  async prune(preserveId?: string) {
+    try {
+      const keep = (await this.runtime.configStore.read()).desktop.localBackupLimit
+      const catalog = await this.snapshots.list()
+      const retainedIds = new Set(catalog.snapshots.slice(0, keep).map(item => item.id))
+      if (preserveId && !retainedIds.has(preserveId)) {
+        const oldest = [...retainedIds].at(-1)
+        if (oldest)
+          retainedIds.delete(oldest)
+        retainedIds.add(preserveId)
+      }
+      const protectedIds = this.protectedSnapshots()
+      const pendingId = (await this.environment.storage.store.read()).pending?.snapshotId
+      if (pendingId)
+        protectedIds.add(pendingId)
+      for (const item of catalog.snapshots) {
+        this.controller.signal.throwIfAborted()
+        if (!retainedIds.has(item.id) && !protectedIds.has(item.id))
+          await this.snapshots.remove(item.id)
+      }
+      this.#cleanupError = false
+    }
+    catch (error) {
+      this.#cleanupError = true
+      this.environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'storage.backup.cleanup.failed', error })
+      throw error
+    }
+    finally {
+      this.getWindow()?.webContents.send(STORAGE_CHANGED, null)
     }
   }
 
-  dispose() { this.controller.abort() }
+  dispose() {
+    this.controller.abort()
+  }
 }

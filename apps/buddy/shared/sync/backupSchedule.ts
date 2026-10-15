@@ -7,8 +7,6 @@ export const backupScheduleSchema = z.object({
   weekday: z.number().int().min(0).max(6),
   scopes: backupSelectionSchema,
   credentials: z.boolean(),
-  localKeep: z.number().int().min(0).max(365),
-  remoteKeep: z.number().int().min(0).max(365),
 }).strict()
 export const backupScheduleInputSchema = backupScheduleSchema.extend({ password: z.string().min(8).max(1024).optional() })
 export type BackupSchedule = z.infer<typeof backupScheduleSchema>

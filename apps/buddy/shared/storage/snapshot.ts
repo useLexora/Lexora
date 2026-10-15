@@ -63,6 +63,7 @@ export interface SnapshotSummary {
 export interface SnapshotCatalog {
   snapshots: SnapshotSummary[]
   unreadableIds: string[]
+  cleanupError?: boolean
 }
 export function snapshotSummary(manifest: SnapshotManifest): SnapshotSummary {
   return { ...(manifest.automatic ? { automatic: manifest.automatic } : {}), scopes: manifest.scopes, credentials: manifest.credentials, id: manifest.id, createdAt: manifest.createdAt, files: manifest.files.filter(entry => entry.kind === 'file').length, bytes: manifest.files.reduce((sum, entry) => sum + (entry.kind === 'file' ? entry.size : 0), 0), excludedLinks: manifest.excludedLinks }

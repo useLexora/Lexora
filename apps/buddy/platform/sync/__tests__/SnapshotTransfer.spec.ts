@@ -1,11 +1,11 @@
 import type { SyncAdapter } from '../SyncAdapter'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
-import { afterEach, expect, it } from 'vitest'
+import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
+import { expect, it } from 'vitest'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
 import { snapshotManifestSchema } from '../../../shared/storage/snapshot'
 import { SnapshotRepository, writeSnapshotManifest } from '../../storage/SnapshotRepository'
@@ -14,13 +14,8 @@ import { SnapshotTransfer } from '../SnapshotTransfer'
 import { WebDavAdapter } from '../WebDavAdapter'
 
 const privateDirectoriesExecutable = resolveBuddyPrivateDirectories({ appPath: process.cwd(), resourcesPath: '', isPackaged: false })
-const directories: string[] = []
-afterEach(async () => {
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
-})
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), 'lexora-sync-'))
-  directories.push(directory)
+  const directory = await createTemporaryDirectory('lexora-sync-')
   const id = randomUUID()
   const bytes = new TextEncoder().encode('stable snapshot bytes')
   const hash = createHash('sha256').update(bytes).digest('hex')
@@ -113,17 +108,14 @@ it('uses the same manifest capacity locally and remotely and isolates unreadable
   expect(await new SnapshotTransfer(adapter, root, () => {}, privateDirectoriesExecutable).list(new AbortController().signal)).toMatchObject({ snapshots: [{ id }], unreadableIds: [broken] })
 })
 
-it('prunes only this schedules old automatic backups and their private objects, preserving manual and other schedules', async () => {
-  const { root, adapter, objects, manifest, bytes } = await fixture()
+it('retains remote history and can restore an old snapshot after its local copy is removed', async () => {
+  const { root, adapter, manifest, bytes } = await fixture()
   const automatic = randomUUID()
-  const other = randomUUID()
   const signal = new AbortController().signal
   const transfer = new SnapshotTransfer(adapter, root, () => {}, privateDirectoriesExecutable)
   const manifests = [
-    { ...manifest, createdAt: '2026-10-01T00:00:00Z' },
+    { ...manifest, automatic, createdAt: '2026-10-01T00:00:00Z' },
     { ...manifest, id: randomUUID(), automatic, createdAt: '2026-10-02T00:00:00Z' },
-    { ...manifest, id: randomUUID(), automatic, createdAt: '2026-10-03T00:00:00Z' },
-    { ...manifest, id: randomUUID(), automatic: other, createdAt: '2026-10-01T00:00:00Z' },
   ]
   for (const item of manifests) {
     await mkdir(join(root, item.id, 'files/buddy'), { recursive: true })
@@ -131,11 +123,8 @@ it('prunes only this schedules old automatic backups and their private objects, 
     await writeSnapshotManifest(join(root, item.id), item)
     await transfer.upload(item.id, signal)
   }
-  await transfer.pruneAutomatic(automatic, 1, signal)
-  expect((await transfer.list(signal)).snapshots.map(item => item.id).sort()).toEqual([manifests[0]!.id, manifests[2]!.id, manifests[3]!.id].sort())
-  expect([...objects.keys()].some(key => key.includes(manifests[1]!.id))).toBe(false)
-  const destination = join(root, 'download')
-  const download = new SnapshotTransfer(adapter, destination, () => {}, privateDirectoriesExecutable)
-  await download.download(manifests[2]!.id, signal)
-  expect(await readFile(join(destination, manifests[2]!.id, 'files/buddy/buddy.sqlite3'))).toEqual(Buffer.from(bytes))
+  await rm(join(root, manifest.id), { recursive: true })
+  expect((await transfer.list(signal)).snapshots.map(item => item.id).sort()).toEqual(manifests.map(item => item.id).sort())
+  await transfer.download(manifest.id, signal)
+  expect(await readFile(join(root, manifest.id, 'files/buddy/buddy.sqlite3'))).toEqual(Buffer.from(bytes))
 })

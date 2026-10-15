@@ -1,20 +1,15 @@
 import type { CredentialVault } from '../../secrets/CredentialVault'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
+import { expect, it } from 'vitest'
 import { backupScopes } from '../../../../shared/storage/backupScope'
 import { nextBackupTime } from '../../../../shared/sync/backupSchedule'
 import { BackupScheduler } from '../BackupScheduler'
 
-const directories: string[] = []
-afterEach(async () => {
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
-})
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'lexora-scheduler-'))
-  directories.push(root)
+  const root = await createTemporaryDirectory('lexora-scheduler-')
   const connectionId = randomUUID()
   const created: string[] = []
   const uploaded: string[] = []
@@ -50,7 +45,7 @@ async function fixture() {
     },
   }
   const scheduler = () => new BackupScheduler(root, backups, hub, vault, () => {})
-  const policy = { frequency: 'daily' as const, time: '20:00', weekday: 0, scopes: [...backupScopes], credentials: false, localKeep: 0, remoteKeep: 0 }
+  const policy = { frequency: 'daily' as const, time: '20:00', weekday: 0, scopes: [...backupScopes], credentials: false }
   return {
     root,
     connectionId,
@@ -91,6 +86,11 @@ it('defers busy tasks, persists the failed upload, and retries the same snapshot
   expect(scheduler.protectedSnapshots()).toEqual(new Set(f.created))
   expect(scheduler.state()[0]).toMatchObject({ status: 'failed', lastSuccessAt: null })
   scheduler.dispose()
+  const schedulePath = join(f.root, 'device/backup-schedules.json')
+  const legacy = JSON.parse(await readFile(schedulePath, 'utf8'))
+  legacy.records[0].policy.localKeep = 1
+  legacy.records[0].policy.remoteKeep = 1
+  await writeFile(schedulePath, JSON.stringify(legacy))
   scheduler = f.scheduler()
   await scheduler.initialize()
   f.setOnline(true)
@@ -105,7 +105,7 @@ it('defers busy tasks, persists the failed upload, and retries the same snapshot
   expect(JSON.parse(await readFile(join(f.root, 'device/backup-schedules.json'), 'utf8')).records[0].pendingId).toBeNull()
 })
 
-it('does not run disabled or manual schedules and catches up only once after multiple missed days', async () => {
+it('runs only the enabled selected target and catches up once after multiple missed days', async () => {
   const f = await fixture()
   const scheduler = f.scheduler()
   await scheduler.initialize()
@@ -116,6 +116,10 @@ it('does not run disabled or manual schedules and catches up only once after mul
   await scheduler.tick(now)
   expect(f.created).toHaveLength(0)
   f.setEnabled(true)
+  f.setSelected(null)
+  await scheduler.tick(now)
+  expect(f.created).toHaveLength(0)
+  f.setSelected(f.connectionId)
   await scheduler.tick(now)
   await scheduler.tick(now)
   expect(f.created).toHaveLength(1)
@@ -128,9 +132,12 @@ it('stores the automatic backup password only in the credential vault and keeps 
   const f = await fixture()
   const scheduler = f.scheduler()
   await scheduler.initialize()
-  await expect(scheduler.save(f.connectionId, { ...f.policy, credentials: true })).rejects.toThrow('BACKUP_PASSWORD_REQUIRED')
+  await expect(scheduler.requestNow(f.connectionId, { scopes: ['providers'], credentials: true }, 'weekly')).rejects.toThrow('BACKUP_PASSWORD_REQUIRED')
+  expect(scheduler.state()).toEqual([])
+  await scheduler.tick()
+  expect(f.created).toHaveLength(0)
   await scheduler.save(f.connectionId, { ...f.policy, credentials: true, password: 'fixture-encryption-password' })
-  await scheduler.save(f.connectionId, { ...f.policy, credentials: true, localKeep: 3 })
+  await scheduler.save(f.connectionId, { ...f.policy, credentials: true, frequency: 'weekly' })
   expect([...f.values.values()]).toEqual(['fixture-encryption-password'])
   expect(await readFile(join(f.root, 'device/backup-schedules.json'), 'utf8')).not.toContain('fixture-encryption-password')
   expect(JSON.stringify(scheduler.state())).not.toContain('credentialId')
@@ -138,30 +145,12 @@ it('stores the automatic backup password only in the credential vault and keeps 
   expect(f.values.size).toBe(0)
 })
 
-it('uses local calendar time and advances weekly schedules beyond the current occurrence', () => {
-  const policy = { frequency: 'weekly' as const, time: '20:00', weekday: 3, scopes: [...backupScopes], credentials: false, localKeep: 7, remoteKeep: 30 }
+it('advances hourly and weekly schedules beyond the current occurrence using local calendar time', () => {
+  const policy = { frequency: 'weekly' as const, time: '20:00', weekday: 3, scopes: [...backupScopes], credentials: false }
   const due = new Date(2026, 9, 14, 20, 0)
   expect(new Date(nextBackupTime(policy, due)!).getTime()).toBe(new Date(2026, 9, 21, 20, 0).getTime())
+  expect(new Date(nextBackupTime({ ...policy, frequency: 'hourly' }, due)!).getTime()).toBe(new Date(2026, 9, 14, 21, 0).getTime())
   expect(nextBackupTime({ ...policy, frequency: 'manual' }, due)).toBeNull()
-})
-
-it('runs only the selected target, activates immediately and persists hourly frequency', async () => {
-  const f = await fixture()
-  const scheduler = f.scheduler()
-  await scheduler.initialize()
-  const now = new Date('2026-10-14T10:15:00Z')
-  await scheduler.activate(f.connectionId, { now })
-  expect(scheduler.state()[0]?.nextRunAt).toBe(now.toISOString())
-  f.setOnline(true)
-  f.setSelected(null)
-  await scheduler.tick(now)
-  expect(f.created).toHaveLength(0)
-  f.setSelected(f.connectionId)
-  await scheduler.tick(now)
-  expect(f.uploaded).toHaveLength(1)
-  await scheduler.setFrequency(f.connectionId, 'hourly')
-  expect(scheduler.state()[0]?.policy.frequency).toBe('hourly')
-  expect(nextBackupTime({ ...f.policy, frequency: 'hourly' }, now)).toBe('2026-10-14T11:15:00.000Z')
 })
 
 it('saves a first backup with its chosen frequency and runs it once without a prior default backup', async () => {
@@ -169,10 +158,6 @@ it('saves a first backup with its chosen frequency and runs it once without a pr
   const scheduler = f.scheduler()
   await scheduler.initialize()
   f.setOnline(true)
-  await expect(scheduler.requestNow(f.connectionId, { scopes: ['providers'], credentials: true }, 'weekly')).rejects.toThrow('BACKUP_PASSWORD_REQUIRED')
-  expect(scheduler.state()).toEqual([])
-  await scheduler.tick()
-  expect(f.created).toHaveLength(0)
   await scheduler.requestNow(f.connectionId, { scopes: ['tasks'], credentials: false }, 'weekly')
   expect(scheduler.state()[0]).toMatchObject({ status: 'waiting', policy: { frequency: 'weekly', scopes: ['tasks'] } })
   await scheduler.tick()
@@ -220,6 +205,7 @@ it('defers a failed upload when switching back while preserving its pending snap
   await scheduler.initialize()
   const now = new Date('2026-10-14T10:15:00Z')
   await scheduler.activate(f.connectionId, { now })
+  expect(scheduler.state()[0]?.nextRunAt).toBe(now.toISOString())
   await scheduler.tick(now)
   expect(scheduler.state()[0]?.status).toBe('failed')
   const pending = scheduler.protectedSnapshots()

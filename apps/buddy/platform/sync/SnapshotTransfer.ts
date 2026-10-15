@@ -79,21 +79,6 @@ export class SnapshotTransfer {
     await this.adapter.write(`snapshots/${id}.json`, manifestBytes, signal)
   }
 
-  async pruneAutomatic(automatic: string, keep: number, signal: AbortSignal): Promise<void> {
-    if (!keep)
-      return
-    const catalog = await this.list(signal)
-    for (const item of catalog.snapshots.filter(item => item.automatic === automatic).slice(keep)) {
-      const manifest = await this.#manifest(item.id, signal)
-      if (manifest.automatic !== automatic)
-        throw new Error('SYNC_SNAPSHOT_CONFLICT')
-      const keys = new Set(manifest.files.flatMap(entry => entry.kind === 'file' ? entry.chunks.map(chunk => chunkKey(manifest, chunk.hash)) : []))
-      for (const key of keys)
-        await this.adapter.remove(key, signal)
-      await this.adapter.remove(`snapshots/${manifest.id}.json`, signal)
-    }
-  }
-
   async download(id: string, signal: AbortSignal): Promise<SnapshotSummary> {
     const manifest = await this.#manifest(id, signal)
     const repository = new SnapshotRepository(this.root)

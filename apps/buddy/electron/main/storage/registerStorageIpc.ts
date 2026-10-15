@@ -14,7 +14,7 @@ export function registerStorageIpc(environment: DesktopEnvironment, getWindow: (
     switch (input.action) {
       case 'usage': return measureStorage(environment.paths.lexoraHome)
       case 'summary': return backups.summary()
-      case 'snapshots': return backups.snapshots.list()
+      case 'snapshots': return backups.catalog()
       case 'open': {
         const error = await shell.openPath(environment.paths.lexoraHome)
         if (error)
@@ -38,6 +38,7 @@ export function registerStorageIpc(environment: DesktopEnvironment, getWindow: (
       }
       case 'snapshot': return backups.run(() => backups.create(input.options ?? { scopes: [...backupScopes], credentials: false }))
       case 'delete': return backups.run(() => backups.remove(input.id))
+      case 'prune': return backups.run(() => backups.prune())
       case 'restore': return backups.run(() => backups.restore(input.id, input.options))
       case 'relocate': return backups.run(() => backups.relocate(input.target))
       case 'cancel': return backups.run(() => backups.cancel())

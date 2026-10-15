@@ -32,7 +32,7 @@ const backupConfigurationSchema = z.object({ connection: syncConnectionInputSche
 export type BackupConfiguration = z.infer<typeof backupConfigurationSchema>
 export interface SyncActivity {
   connectionId: string
-  action: 'test' | 'list' | 'upload' | 'download' | 'prune'
+  action: 'test' | 'list' | 'upload' | 'download'
   state: 'running' | 'completed' | 'failed' | 'cancelled'
   completedBytes: number
   totalBytes: number | null

@@ -25,6 +25,7 @@ describe('lexoraConfigStore', () => {
       browser: DEFAULT_BROWSER_PREFERENCES,
       runtime: { modelRetryLimit: 3 },
       desktop: {
+        localBackupLimit: 3,
         notificationsEnabled: true,
         subtaskNotificationsEnabled: true,
         pluginAuthor: '',
@@ -43,6 +44,7 @@ describe('lexoraConfigStore', () => {
       browser: { screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
       proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
       desktop: {
+        localBackupLimit: 1,
         subtaskNotificationsEnabled: false,
         updateNotificationsEnabled: false,
         chat: { welcome: 'writing', pasteTextAsAttachment: false, permissionMode: 'full_access' },
@@ -61,7 +63,7 @@ describe('lexoraConfigStore', () => {
     expect(await store.update(preferences)).toMatchObject(preferences)
     await store.update({
       proxy: { mode: 'direct', server: preferences.proxy.server },
-      desktop: { language: 'en-US', contextPanelGlobal: false, profile: { userName: 'Bob' }, taskSidebar: { collapsedSpaces: ['space-b'] }, typography: { codeFont: 'Consolas' } },
+      desktop: { localBackupLimit: 10, language: 'en-US', contextPanelGlobal: false, profile: { userName: 'Bob' }, taskSidebar: { collapsedSpaces: ['space-b'] }, typography: { codeFont: 'Consolas' } },
     })
     const reopened = new LexoraConfigStore({ configPath })
     expect(await reopened.read()).toMatchObject({
@@ -69,6 +71,7 @@ describe('lexoraConfigStore', () => {
       proxy: { mode: 'direct', server: preferences.proxy.server },
       desktop: {
         ...preferences.desktop,
+        localBackupLimit: 10,
         notificationsEnabled: true,
         notifyWhenFocused: true,
         language: 'en-US',
@@ -191,6 +194,7 @@ text = "保留我的内容"
     const previous = await store.update({ desktop: { profile: { userName: 'Saved profile' } } })
     const saved = await readFile(configPath, 'utf8')
     const invalidPatches = [
+      ...[0, 11, 1.5].map(localBackupLimit => ({ desktop: { localBackupLimit } })),
       { runtime: { modelRetryLimit: -1 } },
       { runtime: { cacheWarming: 'idle' } },
       { browser: { defaultZoomFactor: 0 } },

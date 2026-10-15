@@ -179,7 +179,7 @@ export class SyncHub {
     return pending
   }
 
-  async run(action: SyncActivity['action'], id: string, snapshotId?: string, retention?: { automatic: string, keep: number }) {
+  async run(action: SyncActivity['action'], id: string, snapshotId?: string) {
     await this.#mutation
     if (this.#controller || this.#closed)
       throw new Error('SYNC_BUSY')
@@ -201,7 +201,7 @@ export class SyncHub {
         this.#state.activity = { ...this.#state.activity!, completedBytes, totalBytes }
         this.#emit()
       }, this.privateDirectoriesExecutable)
-      const result = action === 'prune' ? await transfer.pruneAutomatic(retention!.automatic, retention!.keep, signal) : action === 'test' ? await adapter.test(signal) : action === 'list' ? await transfer.list(signal) : action === 'upload' ? await transfer.upload(snapshotId!, signal) : await transfer.download(snapshotId!, signal)
+      const result = action === 'test' ? await adapter.test(signal) : action === 'list' ? await transfer.list(signal) : action === 'upload' ? await transfer.upload(snapshotId!, signal) : await transfer.download(snapshotId!, signal)
       this.#state.activity = { ...this.#state.activity!, state: 'completed' }
       return result
     }
