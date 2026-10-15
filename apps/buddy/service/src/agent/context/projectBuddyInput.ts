@@ -3,6 +3,7 @@ import type { InputModel } from '../../providers/modelCapabilities'
 import type { BuddyInputReferenceV1 } from './BuddyInputReference'
 import { supportsModelFileInput } from '../../providers/modelCapabilities'
 import { base64BytesLength, getModelImageLimits, getModelImageResize } from '../../providers/modelInputBudget'
+import { readToolMediaReference } from './ToolMediaReference'
 
 export interface ImageRequestBudget {
   remainingBytes: number
@@ -15,11 +16,14 @@ export function projectMessageImages(message: AgentSession['messages'][number], 
     return message
   let remaining = budget?.remainingMessageImages ?? getModelImageLimits(model).maxPerMessage
   let changed = false
-  const content = message.content.map((block) => {
+  const media = readToolMediaReference(message)
+  const content = message.content.map((block, contentIndex) => {
     if (block.type !== 'image')
       return block
-    const bytes = block.data.length + 512
-    if (model.input.includes('image') && remaining > 0 && block.data.length <= getModelImageResize(model).maxBytes
+    const image = media?.images.find(image => image.contentIndex === contentIndex)
+    const encodedBytes = image ? base64BytesLength(image.sizeBytes) : block.data.length
+    const bytes = encodedBytes + 512
+    if (model.input.includes('image') && remaining > 0 && encodedBytes <= getModelImageResize(model).maxBytes
       && (!budget || (budget.remainingImages > 0 && bytes <= budget.remainingBytes))) {
       remaining--
       if (budget) {

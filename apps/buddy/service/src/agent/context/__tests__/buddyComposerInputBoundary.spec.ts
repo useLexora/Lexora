@@ -295,7 +295,8 @@ describe('composer input at the Buddy session boundary', () => {
     }))
     expect(referenceEntries(fixture)).toHaveLength(1)
     const persisted = await readFile(fixture.piSessionFile, 'utf8')
-    expect(persisted).toContain(fixture.nativeToolImage.data)
+    expect(persisted).not.toContain(fixture.nativeToolImage.data)
+    expect(persisted).toContain('buddyToolMedia')
     await expectSafePersistence(fixture)
   })
 

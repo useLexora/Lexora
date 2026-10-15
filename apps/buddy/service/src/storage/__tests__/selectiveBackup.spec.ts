@@ -1,4 +1,5 @@
 import type { BackupScope } from '../../../../shared/storage/backupScope'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,6 +14,7 @@ import { StorageLocationStore } from '../../../../platform/storage/StorageLocati
 import { restoreCredentialStage } from '../../../../platform/storage/storageOperationFiles'
 import { extensionManifestSchema } from '../../../../shared/extensions/extensionManifest'
 import { backupScopes } from '../../../../shared/storage/backupScope'
+import { conversationImageDirectory, ImageBlobStore } from '../../attachments/ImageBlobStore'
 import { prepareRestoreCommit, restoreRetained, restoreStage } from '../commitBackupRestore'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
@@ -85,6 +87,13 @@ it('imports a task backup into another profile without duplicating publications 
   db.prepare(invocation).run('a-imported-call', 'run', 'segment', 'tool-2', 'write', 'completed', now)
   db.prepare('UPDATE conversation_public_heads SET sequence = 4 WHERE conversation_id = ?').run('imported')
   db.close()
+  const mediaDirectory = conversationImageDirectory(join(source.root, 'buddy/conversations/imported'))
+  const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3xQAAAAASUVORK5CYII=', 'base64')
+  const image = await new ImageBlobStore(mediaDirectory).put(imageBytes.toString('base64'))
+  const sessionDirectory = join(source.root, 'buddy/conversations/imported/session')
+  await mkdir(sessionDirectory, { recursive: true })
+  const mediaMessage = { role: 'toolResult', toolName: 'read', toolCallId: 'read-image', content: [{ type: 'image', data: '', mimeType: 'image/png' }], buddyToolMedia: { version: 1, images: [{ ...image, contentIndex: 0, mimeType: 'image/png' }] } }
+  await writeFile(join(sessionDirectory, 'media.jsonl'), `${JSON.stringify({ type: 'message', message: mediaMessage })}\n`)
   const snapshot = await source.snapshot(['tasks'])
   const target = await fixture()
   const current = target.database()
@@ -96,6 +105,9 @@ it('imports a task backup into another profile without duplicating publications 
   await copySnapshot(snapshotDirectory(source.root, snapshot.id), snapshotDirectory(target.root, snapshot.id), { signal, report, privateDirectoriesExecutable })
   await target.store.request('restore', target.root, [], snapshot.id, ['tasks'])
   await target.run()
+  const restoredMedia = new ImageBlobStore(conversationImageDirectory(join(target.root, 'buddy/conversations/imported')))
+  expect(await restoredMedia.read(image)).toEqual(imageBytes)
+  expect(JSON.parse(await readFile(join(target.root, 'buddy/conversations/imported/session/media.jsonl'), 'utf8')).message).toEqual(mediaMessage)
   const result = target.database()
   expect(result.prepare('SELECT id FROM conversations ORDER BY id').all()).toEqual([{ id: 'imported' }, { id: 'retained' }])
   expect(result.prepare('SELECT COUNT(*) AS count FROM conversation_publications').get()?.count).toBe(1)

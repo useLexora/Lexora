@@ -4,25 +4,30 @@ import type { AttachmentRecord } from '../storage/attachmentRepository'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { convertToPng, formatDimensionNote, resizeImage } from '@earendil-works/pi-coding-agent'
 import { z } from 'zod'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
 import { getModelImageResize } from '../providers/modelInputBudget'
+import { conversationImageDirectory, imageBlobReferenceSchema, ImageBlobStore } from './ImageBlobStore'
 import { validateResourceBytes } from './validateResourceBytes'
 
 const MAX_CACHE_BYTES = 5 * 1024 * 1024
-const imageSchema = z.object({
-  version: z.literal(1),
+const imageMetadata = z.object({
   sourceHash: z.string().regex(/^[\da-f]{64}$/),
-  dataHash: z.string().regex(/^[\da-f]{64}$/),
-  data: z.string().min(1).max(4.5 * 1024 * 1024),
   mimeType: z.enum(['image/png', 'image/jpeg']),
   width: z.number().int().positive().max(2000),
   height: z.number().int().positive().max(2000),
   note: z.string().max(1024).optional(),
 }).strict()
+const legacyImageSchema = imageMetadata.extend({
+  version: z.literal(1),
+  dataHash: z.string().regex(/^[\da-f]{64}$/),
+  data: z.string().min(1).max(4.5 * 1024 * 1024),
+}).strict()
+const imageSchema = imageMetadata.extend({ version: z.literal(2), blob: imageBlobReferenceSchema }).strict()
+const cachedImageSchema = z.discriminatedUnion('version', [legacyImageSchema, imageSchema])
 
 export interface PreparedAttachmentImage {
   image: ImageContent
@@ -49,14 +54,19 @@ export class AttachmentImageStore {
     if (!(await lstat(directory)).isDirectory())
       throw new Error('RESOURCE_MATERIALIZATION_FAILED')
     const path = join(directory, `${record.id}.json`)
+    const blobs = new ImageBlobStore(conversationImageDirectory(dirname(directory)))
     const sourceHash = hash(bytes)
-    let cached: z.infer<typeof imageSchema>
+    let cached: z.infer<typeof cachedImageSchema>
+    let changed = false
     try {
       const metadata = await lstat(path)
       if (!metadata.isFile() || metadata.size > MAX_CACHE_BYTES)
         throw new Error('RESOURCE_MATERIALIZATION_FAILED')
-      cached = imageSchema.parse(JSON.parse((await readBoundedFile(directory, path, MAX_CACHE_BYTES)).toString('utf8')))
-      if (cached.sourceHash !== sourceHash || cached.dataHash !== hash(cached.data))
+      const parsed = cachedImageSchema.safeParse(JSON.parse((await readBoundedFile(directory, path, MAX_CACHE_BYTES)).toString('utf8')))
+      if (!parsed.success)
+        throw new Error('RESOURCE_MATERIALIZATION_FAILED')
+      cached = parsed.data
+      if (cached.sourceHash !== sourceHash || (cached.version === 1 && cached.dataHash !== hash(cached.data)))
         throw new Error('RESOURCE_MATERIALIZATION_FAILED')
     }
     catch (error) {
@@ -76,15 +86,22 @@ export class AttachmentImageStore {
         ['image/gif', 'image/webp'].includes(record.mimeType) ? 'Static image preview; animation is not supplied. Use the original file to inspect other frames.' : undefined,
       ].filter(Boolean).join(' ')
       cached = imageSchema.parse({
-        version: 1,
+        version: 2,
         sourceHash,
-        dataHash: hash(resized.data),
-        data: resized.data,
+        blob: await blobs.put(resized.data),
         mimeType: resized.mimeType,
         width: resized.width,
         height: resized.height,
         ...note ? { note } : {},
       })
+      changed = true
+    }
+    if (cached.version === 1) {
+      const { data, dataHash: _dataHash, version: _version, ...metadata } = cached
+      cached = { ...metadata, version: 2, blob: await blobs.put(data) }
+      changed = true
+    }
+    if (changed) {
       const temporary = `${path}.${randomUUID()}.part`
       try {
         await writeFile(temporary, JSON.stringify(cached), { flag: 'wx', mode: 0o600, flush: true })
@@ -98,10 +115,11 @@ export class AttachmentImageStore {
         })
       }
     }
+    const data = (await blobs.read(cached.blob)).toString('base64')
     const limits = getModelImageResize(model)
-    if (cached.width > limits.maxWidth || cached.height > limits.maxHeight || cached.data.length > limits.maxBytes)
+    if (cached.width > limits.maxWidth || cached.height > limits.maxHeight || data.length > limits.maxBytes)
       return null
-    return { image: { type: 'image', data: cached.data, mimeType: cached.mimeType }, note: cached.note }
+    return { image: { type: 'image', data, mimeType: cached.mimeType }, note: cached.note }
   }
 }
 

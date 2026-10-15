@@ -26,6 +26,7 @@ import {
   SessionManager,
 } from '@earendil-works/pi-coding-agent'
 import { containsCanonicalPath } from '../../../../platform/filesystem/filePaths'
+import { conversationImageDirectory, ImageBlobStore } from '../../attachments/ImageBlobStore'
 import { buildBuddyRequestContext } from '../context/buildBuddyRequestContext'
 import { createEstimatedContextUsage } from '../context/contextUsageBreakdown'
 import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
@@ -35,6 +36,7 @@ import {
   getActivePiBuiltinToolNames,
   isPiShellToolName,
 } from '../extensions/piBuiltinTools'
+import { createToolMediaExtension, materializeToolMedia } from '../extensions/toolMediaExtension'
 import {
   createBuddyResourceLoader,
   createBuddySettingsManager,
@@ -227,6 +229,7 @@ async function createConfiguredBuddySession(
   runtime: ConfiguredBuddySessionRuntime,
 ) {
   const context = options.resources.context
+  const imageStore = new ImageBlobStore(conversationImageDirectory(join(resolve(options.conversationsDirectory), options.conversationId)))
   const settingsManager = createBuddySettingsManager()
   const resourceLoader = await createBuddyResourceLoader({
     actorPrompt: options.resources.actorPrompt,
@@ -238,7 +241,7 @@ async function createConfiguredBuddySession(
     boundedContextFiles: context.agentsFiles,
     cwd: runtime.cwd,
     directoryContext: options.resources.directoryContext,
-    inProcessExtensions: options.inProcessExtensions,
+    inProcessExtensions: [...options.inProcessExtensions, createToolMediaExtension(imageStore)],
     executionProfile: options.executionProfile,
     platform: options.platform,
     settingsManager,
@@ -255,6 +258,8 @@ async function createConfiguredBuddySession(
     thinkingLevel: options.thinkingLevel,
   })
   const platform = options.platform ?? process.platform
+  const convertMessages = result.session.agent.convertToLlm
+  result.session.agent.convertToLlm = async messages => convertMessages(await materializeToolMedia(messages, imageStore))
   result.session.setActiveToolsByName([...new Set([
     ...result.session.getActiveToolNames().filter(toolName => !isPiShellToolName(toolName)),
     ...getActivePiBuiltinToolNames(platform),

@@ -1,12 +1,14 @@
 import type { InputModel } from '../../providers/modelCapabilities'
 import type { AttachmentRecord } from '../../storage/attachmentRepository'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PhotonImage } from '@silvia-odwyer/photon-node'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AttachmentImageStore } from '../AttachmentImageStore'
+import { conversationImageDirectory } from '../ImageBlobStore'
 
 const model: InputModel = { api: 'openai-completions', provider: 'fixture', id: 'vision', name: 'Vision', baseUrl: 'https://example.test', input: ['text', 'image'], reasoning: false, contextWindow: 128000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
 const roots: string[] = []
@@ -30,9 +32,27 @@ describe('stable attachment image inputs', () => {
     expect(first!.image.data.length).toBeLessThanOrEqual(4.5 * 1024 * 1024)
     expect(first!.note).toContain('original 3000x1500')
     const saved = await readFile(join(fixture.directory, 'attachment.json'))
+    const metadata = JSON.parse(saved.toString())
+    expect(metadata.version).toBe(2)
+    expect(metadata).not.toHaveProperty('data')
+    expect(await readFile(join(conversationImageDirectory(fixture.root), metadata.blob.sha256))).toEqual(Buffer.from(first!.image.data, 'base64'))
     expect(await new AttachmentImageStore().prepare(fixture.record, fixture.bytes, fixture.directory, model)).toEqual(first)
     expect(await readFile(join(fixture.directory, 'attachment.json'))).toEqual(saved)
     expect(await readFile(fixture.record.storedPath)).toEqual(fixture.bytes)
+  })
+
+  it('atomically converts an existing preview without re-encoding its bytes or changing its model profile', async () => {
+    const fixture = await createFixture(png(60, 30))
+    const first = await new AttachmentImageStore().prepare(fixture.record, fixture.bytes, fixture.directory, model)
+    const path = join(fixture.directory, 'attachment.json')
+    const { blob: _blob, ...metadata } = JSON.parse(await readFile(path, 'utf8'))
+    await writeFile(path, JSON.stringify({ ...metadata, version: 1, data: first!.image.data, dataHash: createHash('sha256').update(first!.image.data).digest('hex') }))
+    await rm(conversationImageDirectory(fixture.root), { recursive: true })
+    expect(await new AttachmentImageStore().prepare(fixture.record, fixture.bytes, fixture.directory, model)).toEqual(first)
+    const converted = JSON.parse(await readFile(path, 'utf8'))
+    expect(converted).toMatchObject({ ...metadata, version: 2 })
+    expect(converted).not.toHaveProperty('data')
+    expect(await readFile(join(conversationImageDirectory(fixture.root), converted.blob.sha256))).toEqual(Buffer.from(first!.image.data, 'base64'))
   })
 
   it('uses the first model profile and does not rewrite history for a stricter model', async () => {
@@ -60,7 +80,7 @@ describe('stable attachment image inputs', () => {
     await new AttachmentImageStore().prepare(fixture.record, fixture.bytes, fixture.directory, model)
     const path = join(fixture.directory, 'attachment.json')
     const cache = JSON.parse(await readFile(path, 'utf8'))
-    await writeFile(path, JSON.stringify({ ...cache, data: 'corrupted' }))
+    await writeFile(join(conversationImageDirectory(fixture.root), cache.blob.sha256), 'corrupted')
     await expect(new AttachmentImageStore().prepare(fixture.record, fixture.bytes, fixture.directory, model)).rejects.toThrow('RESOURCE_MATERIALIZATION_FAILED')
   })
 })
@@ -70,7 +90,7 @@ async function createFixture(bytes: Buffer, mimeType = 'image/png') {
   roots.push(root)
   const record: AttachmentRecord = { id: 'attachment', conversationId: 'conversation', messageId: 'message', draftId: null, createdAt: new Date(0).toISOString(), name: 'image', mimeType, sizeBytes: bytes.length, storedPath: join(root, 'original') }
   await writeFile(record.storedPath, bytes)
-  return { directory: join(root, 'image-inputs'), record, bytes }
+  return { root, directory: join(root, 'image-inputs'), record, bytes }
 }
 
 function png(width: number, height: number): Buffer {

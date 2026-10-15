@@ -62,6 +62,15 @@ describe('request attachment projection', () => {
     expect(tool.content[1]).toMatchObject({ type: 'image', data: 'image-bytes' })
   })
 
+  it('budgets binary tool references by their encoded size before loading image bytes', () => {
+    const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'image' as const, mimeType: 'image/png', data: '' }], buddyToolMedia: { version: 1 as const, images: [{ contentIndex: 0, mimeType: 'image/png', sha256: 'a'.repeat(64), sizeBytes: 3000 }] } }
+    const budget = { remainingBytes: 4000, remainingImages: 1, remainingMessageImages: 1 }
+    expect(projectMessageImages(tool, model, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('not supplied') }] })
+    expect(budget.remainingImages).toBe(1)
+    expect(projectMessageImages(tool, model, { ...budget, remainingBytes: 5000 })).toBe(tool)
+    expect(tool.content[0]!.data).toBe('')
+  })
+
   it('shares an image budget between attachment references and tool results without modifying either', () => {
     const limited = { ...model, inputLimits: { images: { maxPerMessage: 1, maxPerRequest: 1 } } }
     const twoImages = { ...input, images: [...input.images, { attachmentId: 'other', mimeType: 'image/png' }] }
