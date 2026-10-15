@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "lexora-buddy-pet"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "cairo-rs",
  "gdk",
