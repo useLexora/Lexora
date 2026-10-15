@@ -2,6 +2,9 @@
 
 Var /GLOBAL BuddyInstallMutex
 
+!include "FileFunc.nsh"
+!include "WordFunc.nsh"
+
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
     Function un.BuddyCheckAppRunning
@@ -55,6 +58,11 @@ Var /GLOBAL BuddyInstallMutex
       ${EndIf}
       SetErrorLevel 32
       StrCmp $4 "1" buddy_manual_exit
+      ClearErrors
+      ${GetFileVersion} "$INSTDIR\${APP_EXECUTABLE_FILENAME}" $0
+      IfErrors buddy_manual_exit
+      ${VersionCompare} "$0" "0.11.1.0" $1
+      StrCmp $1 "2" buddy_manual_exit
       ${If} ${isUpdated}
         StrCpy $4 1
         StrCpy $3 30
@@ -75,7 +83,7 @@ Var /GLOBAL BuddyInstallMutex
 
     buddy_manual_exit:
       StrCpy $4 0
-      StrCpy $1 "Lexora 仍在运行，或退出已取消。旧版本需从托盘退出后重试。$\r$\n$\r$\nLexora is still running, or closing was cancelled. Older versions must be closed from the system tray. Retry after it exits."
+      StrCpy $1 "Lexora 仍在运行。请从系统托盘选择退出，等待退出完成后重试。$\r$\n$\r$\nLexora is still running. Quit from the system tray, then retry after it exits."
 
     buddy_blocked:
       IfSilent 0 +2
