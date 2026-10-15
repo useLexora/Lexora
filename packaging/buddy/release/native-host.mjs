@@ -35,11 +35,14 @@ export function prepareNativeHost(target = resolveBuildTarget()) {
       component.package,
       '--bin',
       component.binary,
-      ...(target.platform === OPERATING_SYSTEM.Windows ? ['--', '-C', 'target-feature=+crt-static'] : []),
     ], {
       cwd: buddyRoot,
       stdio: 'inherit',
-      env: { ...process.env, ...(target.minimumSystemVersion ? { MACOSX_DEPLOYMENT_TARGET: target.minimumSystemVersion } : {}) },
+      env: {
+        ...process.env,
+        ...(target.platform === OPERATING_SYSTEM.Windows ? { RUSTFLAGS: `${process.env.RUSTFLAGS ?? ''} -C target-feature=+crt-static`.trim() } : {}),
+        ...(target.minimumSystemVersion ? { MACOSX_DEPLOYMENT_TARGET: target.minimumSystemVersion } : {}),
+      },
     })
   }
 }

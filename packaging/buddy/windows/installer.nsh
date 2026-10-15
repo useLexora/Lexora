@@ -114,6 +114,31 @@ Var /GLOBAL BuddyInstallMutex
   StrCpy $isForceCurrentInstall "1"
 !macroend
 
+!macro customPageAfterChangeDir
+  !include StrContains.nsh
+
+  Function BuddyDirectoryPre
+    ${If} ${isUpdated}
+    ${OrIf} $perUserInstallationFolder != ""
+      Abort
+    ${EndIf}
+  FunctionEnd
+
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE BuddyDirectoryPre
+  !insertmacro MUI_PAGE_DIRECTORY
+
+  Function BuddyInstFilesPre
+    ${If} $perUserInstallationFolder == ""
+      ${StrContains} $0 "${APP_FILENAME}" $INSTDIR
+      ${If} $0 == ""
+        StrCpy $INSTDIR "$INSTDIR\${APP_FILENAME}"
+      ${EndIf}
+    ${EndIf}
+  FunctionEnd
+
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE BuddyInstFilesPre
+!macroend
+
 !macro BuddyAcquireInstallationMutex
   System::Call 'kernel32::CreateMutex(p 0, i 1, t "Local\lexora-buddy-installation") p.r0'
   StrCpy $BuddyInstallMutex $0
