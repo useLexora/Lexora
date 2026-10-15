@@ -5,7 +5,7 @@ import { effectScope } from 'vue'
 import { useStorageUsageStore } from '../useStorageUsageStore'
 
 function usage(bytes: number): StorageUsage {
-  return { scannedAt: '2026-10-14T00:00:00.000Z', categories: [{ id: 'data', bytes, files: 1 }], missing: 0 }
+  return { scannedAt: '2026-10-14T00:00:00.000Z', categories: [{ id: 'data', bytes, files: 1, details: [{ id: 'database', bytes, files: 1 }] }], missing: 0 }
 }
 
 describe('storage usage session cache', () => {

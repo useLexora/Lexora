@@ -50,13 +50,27 @@ export interface StorageSummary {
   pending: StorageOperation | null
   history: StorageHistory[]
 }
+export const storageUsageDetails = {
+  data: ['database', 'sessions', 'attachments', 'workspace', 'changes', 'other'],
+  browser: ['siteData', 'webCache', 'codeCache', 'graphicsCache'],
+  plugins: ['packages', 'pluginData', 'configuration'],
+  skills: [],
+  device: [],
+  cache: ['webCache', 'codeCache', 'graphicsCache', 'other'],
+  logs: ['application', 'crashes'],
+  exports: ['snapshots', 'recovery', 'other'],
+} as const
+export type StorageUsageCategoryId = keyof typeof storageUsageDetails
+export type StorageUsageDetailId = typeof storageUsageDetails[StorageUsageCategoryId][number]
+export interface StorageUsageCategory {
+  id: StorageUsageCategoryId
+  bytes: number
+  files: number
+  details: Array<{ id: StorageUsageDetailId, bytes: number, files: number }>
+}
 export interface StorageUsage {
   scannedAt: string
-  categories: Array<{
-    id: 'data' | 'device' | 'browser' | 'plugins' | 'skills' | 'cache' | 'browserCache' | 'logs' | 'recovery' | 'exports'
-    bytes: number
-    files: number
-  }>
+  categories: StorageUsageCategory[]
   missing: number
 }
 export const storageCommandSchema = z.discriminatedUnion('action', [

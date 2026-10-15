@@ -1,96 +1,135 @@
 <script setup lang="ts">
 import type { StorageUsage } from '@buddy-shared/storage/storageApi'
 import { ArrowClockwise20Regular } from '@vicons/fluent'
-import { NButton, NSkeleton } from 'naive-ui'
+import { NButton, NSkeleton, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { formatFileSize } from '@/shared/lib/formatFileSize'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { presentStorageUsage } from '../../model/storageUsagePresentation'
+import StorageUsageCategoryRow from './StorageUsageCategoryRow.vue'
 
 const props = defineProps<{ usage: StorageUsage | null, loading: boolean, failed: boolean, english: boolean }>()
 defineEmits<{ scan: [] }>()
 const text = (zh: string, en: string) => props.english ? en : zh
 const total = computed(() => props.usage?.categories.reduce((sum, item) => sum + item.bytes, 0) ?? 0)
 const files = computed(() => props.usage?.categories.reduce((sum, item) => sum + item.files, 0) ?? 0)
-const categories = computed(() => props.usage?.categories.map(item => ({
-  ...item,
-  label: ({ data: text('任务与文件', 'Tasks and files'), device: text('应用设置', 'Application settings'), browser: text('浏览器网站数据', 'Browser site data'), plugins: text('插件与插件数据', 'Plugins and plugin data'), skills: 'Skills', cache: text('应用缓存', 'Application cache'), browserCache: text('浏览器缓存', 'Browser cache'), logs: text('日志', 'Logs'), recovery: text('恢复副本', 'Recovery copies'), exports: text('本地备份与导出', 'Backups and exports') })[item.id],
-  color: ({ data: '--buddy-accent-solid', device: '--buddy-text-muted', browser: '--buddy-data-blue', plugins: '--buddy-data-violet', skills: '--buddy-data-cyan', cache: '--buddy-data-violet', browserCache: '--buddy-data-blue', logs: '--buddy-brand-gold', recovery: '--buddy-data-cyan', exports: '--buddy-text-muted' })[item.id],
-})) ?? [])
+const categories = computed(() => presentStorageUsage(props.usage, props.english))
+const segments = computed(() => {
+  const nonEmpty = categories.value.filter(category => category.bytes > 0)
+  const minor = nonEmpty.filter(category => category.bytes < total.value * 0.01)
+  const visible = minor.length > 1 ? nonEmpty.filter(category => category.bytes >= total.value * 0.01) : nonEmpty
+  const result = visible.map(category => ({ id: category.id as string, bytes: category.bytes, color: category.color, label: category.label, items: [category] }))
+  if (minor.length > 1) {
+    result.push({
+      id: 'other',
+      bytes: minor.reduce((sum, category) => sum + category.bytes, 0),
+      color: '--buddy-text-muted',
+      label: text('其他分类', 'Other categories'),
+      items: minor,
+    })
+  }
+  return result
+})
 </script>
 
 <template>
-  <section class="grid grid-cols-1 gap-3 p-[0.9rem]" :aria-label="text('空间占用', 'Storage usage')" :aria-busy="loading">
-    <header class="flex flex-wrap items-center justify-between gap-3">
-      <h3 class="m-0 text-[0.8rem] font-600">
-        {{ text('空间占用', 'Storage usage') }}
-      </h3>
-      <NButton :loading="loading" :disabled="loading || (!usage && !failed)" @click="$emit('scan')">
+  <section class="storage-usage grid gap-4 p-[0.9rem]" :aria-label="text('空间占用', 'Storage usage')" :aria-busy="loading">
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div class="grid gap-2">
+        <h3 class="m-0 text-[0.8rem] font-600">
+          {{ text('空间占用', 'Storage usage') }}
+        </h3>
+        <template v-if="usage">
+          <strong role="status" class="text-[1.5rem] leading-tight font-600 tabular-nums tracking-tight">{{ formatFileSize(total) }}</strong>
+          <span class="text-[0.7rem] text-muted">{{ text(`共 ${files.toLocaleString('zh-CN')} 个文件`, `${files.toLocaleString('en-US')} files`) }}</span>
+        </template>
+      </div>
+      <NButton size="small" :loading="loading" :disabled="loading || (!usage && !failed)" @click="$emit('scan')">
         <template #icon>
           <DesktopIcon :component="ArrowClockwise20Regular" />
         </template>
         {{ failed ? text('重试', 'Retry') : text('重新统计', 'Refresh') }}
       </NButton>
     </header>
-    <div v-if="loading || (!usage && !failed)" role="status">
+    <div v-if="!usage && (loading || !failed)" class="grid gap-4" role="status">
       <span class="sr-only">{{ text('正在统计空间占用…', 'Calculating storage usage…') }}</span>
       <div aria-hidden="true">
-        <NSkeleton height="1.6rem" width="7rem" />
-        <NSkeleton height="0.45rem" round class="mt-4" />
-        <div class="storage-usage-legend grid grid-cols-2 gap-x-8 gap-y-3 mt-4">
-          <div v-for="index in 10" :key="index" class="flex h-[1.2rem] items-center justify-between gap-3">
-            <NSkeleton height="0.75rem" width="8rem" />
-            <NSkeleton height="0.75rem" width="3.5rem" />
+        <NSkeleton height="1.8rem" width="8rem" />
+        <NSkeleton height="0.5rem" round class="mt-4" />
+        <div class="grid gap-5 mt-5">
+          <div v-for="index in 8" :key="index" class="flex items-center justify-between gap-3">
+            <NSkeleton height="0.9rem" width="9rem" />
+            <NSkeleton height="0.9rem" width="4rem" />
           </div>
         </div>
-        <NSkeleton height="1.1rem" width="12rem" class="mt-4 max-w-full" />
-        <NSkeleton height="1.1rem" width="28rem" class="mt-2 max-w-full" />
       </div>
     </div>
     <div v-else-if="!usage" class="grid gap-1 py-2" role="status">
       <span class="text-[0.8rem]">{{ text('暂时无法读取空间占用', 'Storage usage is unavailable') }}</span>
       <span class="text-[0.7rem] text-muted">{{ text('可以重试，其他设置仍可使用。', 'You can retry and continue using other settings.') }}</span>
     </div>
-    <div v-else>
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1" role="status">
-        <strong class="text-[1.3rem] leading-tight font-600 tabular-nums tracking-tight">{{ formatFileSize(total) }}</strong>
+    <template v-else>
+      <div class="storage-usage-band flex h-3.5 gap-[2px] overflow-hidden rounded-[5px] bg-subtle p-[2px]" aria-hidden="true">
+        <NTooltip v-for="item in segments" :key="item.id" :show-arrow="false">
+          <template #trigger>
+            <span class="storage-usage-segment min-w-0 basis-0 rounded-[2px]" :style="{ flexGrow: item.bytes, background: `color-mix(in srgb, var(${item.color}) 78%, var(--buddy-surface-base))` }" />
+          </template>
+          <div class="grid gap-1 text-[0.75rem]">
+            <strong v-if="item.items.length > 1" class="font-500">{{ item.label }}</strong>
+            <div v-for="category in item.items" :key="category.id" class="flex justify-between gap-6">
+              <span>{{ category.label }}</span>
+              <span class="tabular-nums">{{ formatFileSize(category.bytes) }}</span>
+            </div>
+          </div>
+        </NTooltip>
       </div>
-      <div class="flex h-[0.45rem] overflow-hidden rounded-full bg-[var(--buddy-border-subtle)] mt-4" aria-hidden="true">
-        <span v-for="item in categories.filter(item => item.bytes > 0)" :key="item.id" class="min-w-px basis-0" :style="{ flexGrow: item.bytes, background: `var(${item.color})` }" />
-      </div>
-      <dl class="storage-usage-legend grid grid-cols-2 gap-x-8 gap-y-3 m-0 mt-4">
-        <div v-for="item in categories" :key="item.id" class="flex items-center justify-between gap-3 text-[0.75rem]">
-          <dt class="flex min-w-0 items-center gap-2">
-            <span class="h-2 w-2 flex-none rounded-full" :style="{ background: `var(${item.color})` }" />
-            {{ item.label }}
-          </dt>
-          <dd class="m-0 shrink-0 text-muted tabular-nums">
-            {{ formatFileSize(item.bytes) }}
-          </dd>
+      <div>
+        <div class="storage-usage-columns px-2 pb-2 text-[0.65rem] text-muted" aria-hidden="true">
+          <span>{{ text('分类', 'Category') }}</span>
+          <span class="storage-usage-share text-right">{{ text('占比', 'Share') }}</span>
+          <span class="text-right">{{ text('占用', 'Size') }}</span>
         </div>
-      </dl>
-      <p class="m-0 mt-4 text-[0.7rem] text-muted leading-relaxed">
-        {{ text(`共 ${files.toLocaleString()} 个文件`, `${files.toLocaleString()} files`) }} · {{ text('更新于', 'Updated') }} {{ new Date(usage.scannedAt).toLocaleTimeString(english ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' }) }}
-        <span v-if="usage.missing">{{ text('部分文件无法读取，实际占用可能更大。', 'Some files could not be read; actual usage may be higher.') }}</span>
-      </p>
-      <p class="m-0 mt-2 text-[0.7rem] text-muted">
-        {{ text('浏览器缓存包含网页、代码与图形缓存；浏览器设置中的大小仅统计网页缓存。', 'Browser cache includes web, code and graphics caches. Browser settings report web cache only.') }}
-      </p>
-      <p v-if="failed" class="m-0 mt-2 text-[0.7rem] text-muted" role="status">
-        {{ text('更新未完成，仍显示上次统计结果。', 'Refresh failed. Showing the previous result.') }}
-      </p>
-    </div>
+        <ul class="m-0 p-0">
+          <StorageUsageCategoryRow v-for="category in categories" :key="category.id" :category="category" :english="english" />
+        </ul>
+      </div>
+      <footer class="grid gap-1 text-[0.65rem] text-muted leading-relaxed">
+        <span>{{ text('仅统计当前数据目录，不包含外部工作目录。', 'Includes the current data directory only. External working directories are excluded.') }}</span>
+        <span>{{ text('更新于', 'Updated') }} {{ new Date(usage.scannedAt).toLocaleTimeString(english ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</span>
+        <span v-if="usage.missing" role="status">{{ text('部分文件无法读取，实际占用可能更大。', 'Some files could not be read; actual usage may be higher.') }}</span>
+        <span v-if="failed" role="status">{{ text('更新未完成，仍显示上次统计结果。', 'Refresh failed. Showing the previous result.') }}</span>
+      </footer>
+    </template>
   </section>
 </template>
 
 <style scoped lang="scss">
-.storage-usage-legend {
-  @container (max-width: 560px) {
-    grid-template-columns: minmax(0, 1fr);
+.storage-usage-band {
+  box-shadow: inset 0 0 0 1px var(--buddy-border-subtle);
+}
+
+.storage-usage {
+  :deep(.storage-usage-columns) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 4rem 6rem 1rem;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  @container (max-width: 400px) {
+    :deep(.storage-usage-columns) {
+      grid-template-columns: minmax(0, 1fr) 5rem 1rem;
+      gap: 0.5rem;
+    }
+
+    :deep(.storage-usage-share) {
+      display: none;
+    }
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :deep(.n-skeleton) {
+  .storage-usage :deep(.n-skeleton) {
     animation: none;
   }
 }

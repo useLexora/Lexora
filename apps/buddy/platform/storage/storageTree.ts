@@ -1,8 +1,9 @@
-import type { StorageProgress, StorageUsage } from '../../shared/storage/storageApi'
+import type { StorageProgress, StorageUsage, StorageUsageCategoryId, StorageUsageDetailId } from '../../shared/storage/storageApi'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, open, readdir, readlink, statfs, symlink, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
+import { storageUsageDetails } from '../../shared/storage/storageApi'
 import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
 import { chromiumCacheEntry, chromiumTransientEntry } from './storageCopyPolicy'
 import { containsStoragePath, isMissing, storageError, syncStorageDirectory } from './storageFiles'
@@ -164,36 +165,68 @@ export async function copyStorageTree(source: string, target: string, options: {
   await syncStorageDirectory(target)
   options.report({ phase: 'copying', completedBytes, totalBytes, files, error: null })
 }
-function storageUsageCategory(path: string): StorageUsage['categories'][number]['id'] {
+function storageUsageCategory(path: string): [StorageUsageCategoryId, StorageUsageDetailId | null] {
   const browserEntry = /^(?:device\/(?:electron|chromium)|\.runtime\/(?:electron|cache\/chromium))\/(?:Partitions\/[^/]+\/)?([^/]+)(?:\/|$)/.exec(path)?.[1]
-  if (browserEntry && chromiumCacheEntry(browserEntry))
-    return /\/Partitions\//.test(path) ? 'browserCache' : 'cache'
-  if ((browserEntry && /^(?:Crashpad|Crash Reports)$/.test(browserEntry)) || /^(?:device\/crashes|(?:device|\.runtime)\/state\/(?:logs|crashes))\//.test(path))
-    return 'logs'
+  if (browserEntry && chromiumCacheEntry(browserEntry)) {
+    const category = /\/Partitions\//.test(path) ? 'browser' : 'cache'
+    return [category, browserEntry === 'Cache' ? 'webCache' : browserEntry === 'Code Cache' ? 'codeCache' : 'graphicsCache']
+  }
+  if ((browserEntry && /^(?:Crashpad|Crash Reports)$/.test(browserEntry)) || /^(?:device\/crashes|(?:device|\.runtime)\/state\/crashes)\//.test(path))
+    return ['logs', 'crashes']
+  if (/^(?:logs|(?:device|\.runtime)\/state\/logs)\//.test(path))
+    return ['logs', 'application']
   if (/^buddy\/(?:skills|agent\/skills|spaces\/[^/]+\/skills)\//.test(path))
-    return 'skills'
-  if (path.startsWith('buddy/extensions/'))
-    return 'plugins'
+    return ['skills', null]
+  if (path.startsWith('buddy/extensions/')) {
+    const entry = path.split('/')[2]
+    return ['plugins', entry === 'packages' ? 'packages' : entry === 'data' ? 'pluginData' : 'configuration']
+  }
   if (browserEntry)
-    return 'browser'
+    return ['browser', 'siteData']
   if (path === 'config.toml' || /^buddy\/workbench(?:\.previous)?\.json$/.test(path))
-    return 'device'
+    return ['device', null]
   const first = path.split('/')[0]
-  if (first === 'cache' || first === 'logs' || first === 'recovery' || first === 'exports')
-    return first
-  return first === 'device' || first === '.runtime' || path.startsWith('buddy/secrets/') ? 'device' : 'data'
+  if (first === 'recovery')
+    return ['exports', 'recovery']
+  if (first === 'exports')
+    return ['exports', path.startsWith('exports/snapshots/') ? 'snapshots' : 'other']
+  if (first === 'cache')
+    return ['cache', 'other']
+  if (first === 'device' || first === '.runtime' || path.startsWith('buddy/secrets/'))
+    return ['device', null]
+  if (/^buddy\/buddy\.sqlite3(?:-(?:wal|shm|journal))?$/.test(path))
+    return ['data', 'database']
+  if (/^buddy\/(?:conversations|spaces)\/[^/]+\/workspace\//.test(path) || /^buddy\/conversations\/[^/]+\/artifacts\//.test(path))
+    return ['data', 'workspace']
+  if (/^buddy\/(?:conversations\/[^/]+\/(?:inputs|image-inputs|media)|drafts\/[^/]+\/attachments)\//.test(path))
+    return ['data', 'attachments']
+  if (/^buddy\/conversations\/[^/]+\/(?:session|events)\//.test(path))
+    return ['data', 'sessions']
+  if (/^buddy\/conversations\/[^/]+\/changes\//.test(path))
+    return ['data', 'changes']
+  return ['data', 'other']
 }
 export async function measureStorage(root: string): Promise<StorageUsage> {
-  const categories: StorageUsage['categories'] = ['data', 'skills', 'plugins', 'device', 'browser', 'cache', 'browserCache', 'logs', 'recovery', 'exports'].map(id => ({ id: id as StorageUsage['categories'][number]['id'], bytes: 0, files: 0 }))
+  const categories: StorageUsage['categories'] = (Object.keys(storageUsageDetails) as StorageUsageCategoryId[]).map(id => ({
+    id,
+    bytes: 0,
+    files: 0,
+    details: storageUsageDetails[id].map(detail => ({ id: detail, bytes: 0, files: 0 })),
+  }))
   let missing = 0
   try {
     for await (const entry of walkStorage(root, storageTransient)) {
       if (entry.directory)
         continue
-      const id = storageUsageCategory(entry.path)
+      const [id, detailId] = storageUsageCategory(entry.path)
       const category = categories.find(item => item.id === id)!
       category.bytes += entry.size
       category.files++
+      if (detailId) {
+        const detail = category.details.find(item => item.id === detailId)!
+        detail.bytes += entry.size
+        detail.files++
+      }
     }
   }
   catch (error) {
