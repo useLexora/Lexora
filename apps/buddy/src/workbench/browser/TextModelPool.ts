@@ -7,6 +7,8 @@ import { resourceKey } from '../common/workbench'
 
 const languages: Record<string, string> = { md: 'markdown', ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', json: 'json', html: 'html', css: 'css', scss: 'scss', yaml: 'yaml', yml: 'yaml', py: 'python', rs: 'rust', sh: 'shell', sql: 'sql', xml: 'xml', vue: 'html' }
 interface ModelEntry {
+  resource: ResourceRef
+  key: string
   model: Monaco.editor.ITextModel
   incarnation: string
   users: number
@@ -36,17 +38,19 @@ export class TextModelPool {
     }
     if (!entry) {
       const path = typeof copy.resource.data.path === 'string' ? copy.resource.data.path : copy.resource.id
-      const model = monaco.editor.createModel(copy.text, languages[path.split('.').at(-1) ?? ''] ?? 'plaintext', monaco.Uri.parse(`lexora-file:/${encodeURIComponent(key)}/${copy.incarnation}`))
+      const model = monaco.editor.createModel(copy.text, languages[path.split('.').at(-1)?.toLowerCase() ?? ''] ?? 'plaintext', monaco.Uri.parse(`lexora-file:/${encodeURIComponent(key)}/${copy.incarnation}`))
+      let currentResource = resource
+      let currentKey = key
       let version = copy.contentVersion
       let reflecting: string | undefined
       let stopped = false
       const changed = model.onDidChangeContent(() => {
         const text = model.getValue(monaco.editor.EndOfLinePreference.TextDefined, true)
-        if (text !== reflecting && this.#copies.get(copy.resource)?.incarnation === copy.incarnation)
-          this.#copies.edit(copy.resource, text)
+        if (text !== reflecting && this.#copies.get(currentResource)?.incarnation === copy.incarnation)
+          this.#copies.edit(currentResource, text)
       })
-      const content = filterEvent(this.#copies.onDidChangeContent, event => event.copy.key === key && event.copy.incarnation === copy.incarnation)((event) => {
-        const current = this.#copies.get(copy.resource)
+      const content = filterEvent(this.#copies.onDidChangeContent, event => event.copy.incarnation === copy.incarnation)((event) => {
+        const current = this.#copies.get(currentResource)
         if (!current || current.incarnation !== event.copy.incarnation || current.contentVersion <= version)
           return
         version = current.contentVersion
@@ -63,6 +67,8 @@ export class TextModelPool {
       })
       const subscriptions = [content.dispose, () => changed.dispose()]
       const held: ModelEntry = {
+        resource,
+        key,
         model,
         incarnation: copy.incarnation,
         users: 0,
@@ -74,10 +80,22 @@ export class TextModelPool {
           model.dispose()
         },
       }
-      subscriptions.push(filterEvent(this.#copies.onDidRelease, event => event.copy.key === key && event.copy.incarnation === copy.incarnation)(() => {
+      subscriptions.push(this.#copies.onDidChange((event) => {
+        if (event.kind !== 'moved' || event.copy.incarnation !== copy.incarnation)
+          return
+        this.#models.delete(currentKey)
+        currentKey = event.copy.key
+        currentResource = event.copy.resource
+        held.key = currentKey
+        held.resource = currentResource
+        const path = String(currentResource.data.path ?? currentResource.id)
+        monaco.editor.setModelLanguage(model, languages[path.split('.').at(-1)?.toLowerCase() ?? ''] ?? 'plaintext')
+        this.#models.set(currentKey, held)
+      }).dispose)
+      subscriptions.push(filterEvent(this.#copies.onDidRelease, event => event.copy.incarnation === copy.incarnation)(() => {
         held.stop()
-        if (this.#models.get(key) === held)
-          this.#models.delete(key)
+        if (this.#models.get(held.key) === held)
+          this.#models.delete(held.key)
       }).dispose)
       entry = held
       this.#models.set(key, entry)
@@ -90,10 +108,10 @@ export class TextModelPool {
         return
       released = true
       held.users--
-      if (!held.users) {
+      if (!held.users && !this.#copies.get(held.resource)) {
         held.stop()
-        if (this.#models.get(key) === held)
-          this.#models.delete(key)
+        if (this.#models.get(held.key) === held)
+          this.#models.delete(held.key)
       }
     } }
   }

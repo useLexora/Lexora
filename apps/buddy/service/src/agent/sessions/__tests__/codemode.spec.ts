@@ -13,6 +13,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { ApprovalCancelledError } from '../../../approvals/ApprovalService'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
+import { FileResourceCoordinator } from '../../../files/FileResourceCoordinator'
+import { NativeFileEngine } from '../../../files/NativeFileEngine'
 import { CODEMODE_EXTENSION } from '../../extensions/codemodeExtension'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
 import { createReusableBuddySession } from '../createReusableBuddySession'
@@ -238,11 +240,20 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   const gates: { value: number, signal: AbortSignal, release: () => void }[] = []
   let active = 0
   let maximumActive = 0
+  const engine = new NativeFileEngine(join(root, 'file-operations'))
+  await engine.ready()
+  const fileResources = new FileResourceCoordinator(engine)
+  const mutations = new MutationCoordinator({ resources: fileResources })
+  cleanups.push(async () => {
+    await mutations.dispose()
+    await engine.dispose()
+  })
   const services: BuddySessionExtensionServices = {
     delegation: { pending: () => [], execute: async () => ({ status: 'working', updates: [] }), assertShellExecutionAllowed: () => {} },
     approvalService: { request: async () => ({ approvalId: 'denied-1', decision: 'denied' }) },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
-    mutations: new MutationCoordinator(),
+    fileResources,
+    mutations,
     changeCaptureService: {
       beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }),
       finishInvocation: async () => ({ complete: true }),

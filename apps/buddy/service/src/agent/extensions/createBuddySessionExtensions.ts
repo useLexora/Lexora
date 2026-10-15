@@ -13,6 +13,7 @@ import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
+import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
 import type { ExecutionDelegationService } from '../execution/ExecutionDelegationService'
@@ -48,6 +49,7 @@ export interface BuddySessionExtensionServices {
   approvalService: Pick<ApprovalService, 'request'> & Partial<Pick<ApprovalService, 'clearRunAuthorizations'>>
   attachmentService: Pick<AttachmentService, 'prepareInputImages' | 'materializeDocumentInputs' | 'materializeInputResources' | 'getInputMetadata'>
   changeCaptureService: Pick<ChangeCaptureService, 'beginInvocation' | 'finishInvocation' | 'markPartial'>
+  fileResources: FileResourceCoordinator
   mutations: MutationCoordinator
   createCapabilities: BuddyCapabilityFactory
   directoryGrants: Pick<DirectoryGrantService, 'grant' | 'assertCurrent'>
@@ -225,7 +227,7 @@ export async function createBuddySessionExtensions(
       ...options.sessionMode === 'interactive' && services.followUp
         ? [createChatQueueExtension({ getRunContext: () => runContext.current, followUp: services.followUp })]
         : [],
-      scope.wrap(createFileMutationExtension(options.canonicalRoot), wrapTool),
+      scope.wrap(createFileMutationExtension(options.canonicalRoot, services.fileResources, services.mutations), wrapTool),
       ...capabilities.map(capability => scope.wrap(capability.extension, wrapTool)),
       { ...discovery.extension, factory: (pi) => {
         scope.assertRegistered()

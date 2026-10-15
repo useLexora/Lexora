@@ -11,6 +11,7 @@ import { useProvideAutomationContext } from '@/modules/automations'
 import { useProvideBuddiesContext } from '@/modules/buddies'
 import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
+import { fileOperationsKey } from '@/modules/files/ui'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { DesktopSkillReviewHost } from '@/modules/skills/ui'
@@ -74,6 +75,7 @@ onScopeDispose(() => {
   void workbench.dispose().finally(() => diagnostics.dispose()).catch(() => {})
 })
 provide(desktopWorkbenchKey, workbench)
+provide(fileOperationsKey, workbench.fileOperations)
 provide(sessionReferenceNavigationKey, id => workbench.openTask(id, { direction: 'right' }))
 const extensions = useExtensionState(api.extensions)
 const settingsRegistry = useSettingsRegistry(extensions.installed)
@@ -250,7 +252,7 @@ const shellBindings: DesktopShellBindings = {
   resources,
   resourceContext: {
     getChangeOverview: api.localChat.changes.overview,
-    files: { listDirectory: api.localChat.spaces.listDirectory, readFile: api.localChat.spaces.readFile, revealFile: api.localChat.spaces.revealFile },
+    files: api.localChat.spaces,
     getNodeDetail: api.localChat.conversations.getNodeDetail,
     getChangeSet: api.localChat.changes.get,
     readArtifactText: api.localChat.artifacts.readText,

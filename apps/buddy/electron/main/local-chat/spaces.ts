@@ -11,6 +11,12 @@ import { selectPaths } from './nativeSelection'
 export function registerSpacesIpc(context: LocalChatIpcContext): void {
   const { handle, request, options } = context
   const spaceDirectorySelections = new SpaceDirectorySelectionLedger()
+  handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesMutate, (_event, input) => request(spaceFilesRpc.mutate, spaceFilesRpc.mutate.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesHistory, (_event, input) => request(spaceFilesRpc.history, spaceFilesRpc.history.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesQuery, (_event, input) => request(spaceFilesRpc.query, spaceFilesRpc.query.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesAcknowledge, (_event, input) => request(spaceFilesRpc.acknowledge, spaceFilesRpc.acknowledge.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesCancel, (_event, input) => request(spaceFilesRpc.cancel, spaceFilesRpc.cancel.input.parse(input)))
+
   handle(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentRead, (_event, input) => request(spaceFilesRpc.readDocument, spaceFileTargetSchema.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.spaceDocumentSave, (_event, input) => request(spaceFilesRpc.saveDocument, spaceSaveDocumentSchema.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.spaceFilesList, (_event, input) => request(spaceFilesRpc.list, spaceDirectoryRequestSchema.parse(input)))

@@ -4,6 +4,8 @@ import type { WorkbenchController, WorkbenchLayoutChange } from '@/workbench/ser
 import type { WorkingCopyChangeKind, WorkingCopyService } from '@/workbench/services/WorkingCopyService'
 
 const copyEvents = {
+  'guarded': 'guarded',
+  'moved': 'moved',
   'registered': 'registered',
   'restored': 'restored',
   'released': 'released',

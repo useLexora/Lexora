@@ -8,6 +8,7 @@ mod unix;
 mod windows;
 
 pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_ENGINE_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
@@ -36,11 +37,23 @@ pub fn run(input: impl Read) -> Result<(), WriteError> {
         return Err(WriteError::Failed);
     }
     let request: WriteRequest = serde_json::from_slice(&bytes).map_err(|_| WriteError::Failed)?;
+    if request.expected.len() > 1024 * 1024 || request.content.len() > 1024 * 1024 {
+        return Err(WriteError::Failed);
+    }
     write(&request)
 }
 
 pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
     if request.expected.len() > MAX_TEXT_BYTES || request.content.len() > MAX_TEXT_BYTES {
+        return Err(WriteError::Failed);
+    }
+    write_large(request)
+}
+
+pub fn write_large(request: &WriteRequest) -> Result<(), WriteError> {
+    if request.expected.len() > MAX_ENGINE_TEXT_BYTES
+        || request.content.len() > MAX_ENGINE_TEXT_BYTES
+    {
         return Err(WriteError::Failed);
     }
     #[cfg(unix)]
@@ -53,11 +66,11 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
 
 fn check_content(file: &std::fs::File, expected: &str) -> Result<(), WriteError> {
     let metadata = file.metadata().map_err(|_| WriteError::Failed)?;
-    if !metadata.is_file() || metadata.len() > MAX_TEXT_BYTES as u64 {
+    if !metadata.is_file() || metadata.len() > MAX_ENGINE_TEXT_BYTES as u64 {
         return Err(WriteError::Failed);
     }
     let mut bytes = Vec::new();
-    file.take(MAX_TEXT_BYTES as u64 + 1)
+    file.take(MAX_ENGINE_TEXT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| WriteError::Failed)?;
     if bytes != expected.as_bytes() {

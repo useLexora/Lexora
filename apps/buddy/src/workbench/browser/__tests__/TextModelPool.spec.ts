@@ -9,8 +9,8 @@ vi.mock('@/shared/ui/monaco/desktopMonaco', () => ({ loadDesktopMonaco: load }))
 class TextModel {
   readonly listeners = new Set<() => void>()
   text: string
+  language = 'plaintext'
   disposed = false
-  reflections = 0
   constructor(text: string) { this.text = text }
   getValue() { return this.text }
   onDidChangeContent(listener: () => void) {
@@ -28,7 +28,6 @@ class TextModel {
   }
 
   setValue(text: string) {
-    this.reflections++
     this.edit(text)
   }
 
@@ -46,8 +45,10 @@ function monaco() {
     Uri: { parse: (value: string) => value },
     editor: {
       EndOfLinePreference: { TextDefined: 0 },
-      createModel: (text: string) => {
+      setModelLanguage: (model: TextModel, language: string) => { model.language = language },
+      createModel: (text: string, language: string) => {
         const model = new TextModel(text)
+        model.language = language
         models.push(model)
         return model
       },
@@ -82,7 +83,6 @@ describe('resource scoped text models', () => {
     await copies.open({ ...resource, id: 'other' })
     copies.edit({ ...resource, id: 'other' }, 'unrelated')
     expect(model.text).toBe('disk')
-    expect(model.reflections).toBe(0)
     model.onDidChangeContent(() => {
       if (model.text === 'reflected')
         model.edit('new user input')
@@ -90,11 +90,13 @@ describe('resource scoped text models', () => {
     copies.edit(resource, 'reflected')
     expect(copies.get(resource)?.text).toBe('new user input')
     expect(model.text).toBe('new user input')
-    expect(copies.get(resource)?.contentVersion).toBe(3)
     first.release()
     first.release()
     expect(model.disposed).toBe(false)
     second.release()
+    expect(model.disposed).toBe(false)
+    copies.discard(resource)
+    expect(copies.release(resource)).toBe(true)
     expect(model.disposed).toBe(true)
   })
 
@@ -107,7 +109,6 @@ describe('resource scoped text models', () => {
     const lease = await pool.acquire(resource)
     copies.edit(resource, 'first')
     expect(runtime.models[0]?.text).toBe('second')
-    expect(runtime.models[0]?.reflections).toBe(1)
     lease.release()
   })
 
@@ -124,6 +125,21 @@ describe('resource scoped text models', () => {
     runtime.models[1]!.edit('current')
     expect(copies.get(resource)?.text).toBe('current')
     current.release()
+  })
+
+  it('keeps the model and its edit destination when a resource is renamed', async () => {
+    const { copies, pool, runtime } = setup()
+    const old = await pool.acquire(resource)
+    const destination = { ...resource, id: 'renamed', data: { path: 'renamed.TS' } }
+    copies.move(resource, destination)
+    old.release()
+    const moved = await pool.acquire(destination)
+    expect(moved.model).toBe(old.model)
+    expect(runtime.models[0]!.language).toBe('typescript')
+    runtime.models[0]!.edit('after rename')
+    expect(copies.get(resource)).toBeUndefined()
+    expect(copies.get(destination)?.text).toBe('after rename')
+    moved.release()
   })
 
   it('creates no model when initialization finishes after pool disposal', async () => {

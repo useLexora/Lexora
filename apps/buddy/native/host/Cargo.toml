@@ -35,12 +35,20 @@ name = "lexora-buddy-sandbox"
 path = "src/bin/shell_sandbox.rs"
 
 [[test]]
+name = "file-engine"
+path = "__tests__/file_engine.rs"
+
+[[test]]
 name = "bounded-file"
 path = "__tests__/bounded_file.rs"
 
 [[test]]
 name = "bounded-write"
 path = "__tests__/bounded_write.rs"
+
+[[test]]
+name = "bounded-file-windows"
+path = "__tests__/bounded_file_windows.rs"
 
 [[test]]
 name = "bounded-file-linux"
@@ -86,6 +94,13 @@ rustix = { version = "1.1", features = [
 chrono = { version = "0.4", default-features = false, features = [ "std" ] }
 
 [dependencies]
+cap-std = "4"
+notify = "8.2"
+rusqlite = { version = "0.40", features = [ "bundled" ] }
+sha2 = "0.10"
+uuid = { version = "1", features = [ "v4" ] }
+trash = "5.2"
+
 serde.workspace = true
 
 serde_json.workspace = true
@@ -97,8 +112,23 @@ workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rustix = { version = "1.1", features = [ "fs" ] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSError",
+  "NSFileManager",
+  "NSString",
+  "NSURL"
+] }
 
 [target.'cfg(windows)'.dependencies]
+windows-core = "0.62"
+cap-primitives = "4"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_UI_Shell"
+] }
 windows-sys = { workspace = true, features = [
   "Wdk_Foundation",
   "Wdk_Storage_FileSystem",

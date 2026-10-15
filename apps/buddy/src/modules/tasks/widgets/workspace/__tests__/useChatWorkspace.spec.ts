@@ -185,6 +185,10 @@ function createOwner(name: string) {
       getNodeDetail: async () => { throw new Error('Unused detail loader') },
       getChangeOverview: async () => { throw new Error('Unused fixture operation') },
       files: {
+        onFilesChanged: () => () => {},
+        fileHistory: async () => [],
+        acknowledgeFileOperation: async () => { throw new Error('unused') },
+        cancelFileOperation: async () => null,
         listDirectory: async () => { throw new Error('Unused fixture operation') },
         readFile: async () => { throw new Error('Unused fixture operation') },
         revealFile: async () => { throw new Error('Unused fixture operation') },

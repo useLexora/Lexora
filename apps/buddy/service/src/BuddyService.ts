@@ -11,10 +11,10 @@ import type { BuddyServiceRpcServer } from './rpc/BuddyServiceRpcServer'
 import type { BuddyServiceErrorCode } from './rpc/runtimeRequest'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-
 import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
+
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
 import { automationNotifications } from '../../shared/automation/automationApi'
 import { buddiesChanged } from '../../shared/buddies/buddyApi'
@@ -38,6 +38,7 @@ import { openExternalResultSchema } from '../../shared/runtime/credentialProtoco
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { skillReviewRequested } from '../../shared/skills/skillApi'
 import { spaceChanged } from '../../shared/spaces/spaceApi'
+import { spaceFilesChanged } from '../../shared/spaces/spaceFileApi'
 import { PiEventBridge } from './agent/events/PiEventBridge'
 import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
 import { BuddyRunExecutionPlanner } from './agent/execution/BuddyRunExecutionPlanner'
@@ -119,6 +120,8 @@ import { TaskMarkService } from './conversations/TaskMarkService'
 import { createBuddyCapabilityFactory } from './createBuddyCapabilityFactory'
 import { DirectoryGrantService } from './directories/DirectoryGrantService'
 import { observeRunDiagnostics } from './events/observeRunDiagnostics'
+import { FileResourceCoordinator } from './files/FileResourceCoordinator'
+import { NativeFileEngine } from './files/NativeFileEngine'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
 import { ImageTransformService } from './images/ImageTransformService'
 import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationService'
@@ -331,15 +334,28 @@ export async function startBuddyService(
       })
       return service
     })
+    const fileEngine = await host.start('runtime.file_engine', async ({ defer }) => {
+      const engine = new NativeFileEngine(join(options.buddyHome, 'file-operations'))
+      defer(() => engine.dispose())
+      await engine.ready()
+      return engine
+    })
+    const fileResources = new FileResourceCoordinator(fileEngine)
     const spaceFiles = await host.start('runtime.space_files', ({ defer }) => {
-      const service = new SpaceFileService(spacesRepository)
+      const service = new SpaceFileService(spacesRepository, fileEngine)
+      const notices = service.onDidChange(event => options.rpc.notify(spaceFilesChanged.method, event))
+      const revoked = spaceService.onDidCommit(event => service.revoke(event.revokedDirectoryIds))
+      defer(() => {
+        notices.dispose()
+        revoked.dispose()
+      })
       const diagnostics = service.onDidChange(event => record({ event: `space.file.${event.kind.replaceAll('-', '_')}`, level: event.kind === 'response-denied' ? 'warn' : 'info', operationId: event.operationId, spaceId: event.spaceId, directoryId: event.directoryId, revision: event.revision }))
       defer(async () => {
         await service.dispose()
         diagnostics.dispose()
       })
       return service
-    }, ['runtime.spaces'])
+    }, ['runtime.spaces', 'runtime.file_engine'])
     let runner!: BuddyAgentRunner
     let turnLauncher!: BuddyTurnLauncher
     let delegation!: ExecutionDelegationService
@@ -405,11 +421,12 @@ export async function startBuddyService(
       })
       return service
     })
-    const mutations = await host.start('runtime.mutations', ({ defer }) => {
-      const service = new MutationCoordinator({ repository: createMutationRepository(options.database) })
+    const mutations = await host.start('runtime.mutations', async ({ defer }) => {
+      const service = new MutationCoordinator({ repository: createMutationRepository(options.database), resources: fileResources })
       defer(() => service.dispose())
+      await service.initialize()
       return service
-    })
+    }, ['runtime.file_engine'])
     const changeCaptureService = await host.start('runtime.change_capture', ({ defer }) => {
       const service = new ChangeCaptureService({ paths, repository: createChangeSetRepository(options.database), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.change_capture', level: 'warn' }) })
       service.onDidChange(event => record({ event: `changes.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, toolCallId: event.toolCallId, revision: event.revision, count: event.count, errorCode: event.errorCode }))
@@ -831,6 +848,7 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
+      fileResources,
       delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
       prepareForRun: signal => connectorService.prepareForRun(signal),

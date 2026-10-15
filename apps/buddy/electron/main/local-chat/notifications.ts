@@ -16,6 +16,7 @@ import { runNotifications } from '../../../shared/runs/runApi'
 import { runtimeResponseSchemas } from '../../../shared/runtime/serviceState'
 import { skillChangedSchema, skillReviewRequested } from '../../../shared/skills/skillApi'
 import { spaceChanged } from '../../../shared/spaces/spaceApi'
+import { spaceFilesChanged } from '../../../shared/spaces/spaceFileApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 
 export function registerLocalChatNotifications(options: RegisterLocalChatIpcOptions): () => void {
@@ -42,6 +43,12 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const event = buddiesChanged.params.safeParse(notification.params)
       if (event.success)
         sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.buddiesChanged, event.data)
+      return
+    }
+    if (notification.method === spaceFilesChanged.method) {
+      const event = spaceFilesChanged.params.safeParse(notification.params)
+      if (event.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.spaceFilesChanged, event.data)
       return
     }
     if (notification.method === spaceChanged.method) {

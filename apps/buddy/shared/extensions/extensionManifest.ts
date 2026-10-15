@@ -1,5 +1,6 @@
 import { satisfies, valid, validRange } from 'semver'
 import { z } from 'zod'
+import { fileIconThemeContributionSchema } from '../icons/fileIconTheme.ts'
 import { themeContributionSchema } from '../theme/themeDocument.ts'
 import { workbenchSlashSchema } from '../workbench/workbenchCommand.ts'
 import { workbenchConditionSchema } from '../workbench/workbenchContext.ts'
@@ -102,6 +103,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
   permissions: extensionPermissionsSchema.prefault({}),
   contributes: z.object({
+    iconThemes: z.array(fileIconThemeContributionSchema).max(32).default([]),
     themes: z.array(themeContributionSchema).max(64).default([]),
     conditions: z.array(extensionConditionDefinitionSchema).max(32).default([]),
     agent: extensionAgentSchema.optional(),
@@ -116,13 +118,13 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
-  for (const contribution of [...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
+  for (const contribution of [...manifest.contributes.iconThemes, ...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
   }
   const issue = (message: string) => context.addIssue({ code: 'custom', message })
-  if (manifest.apiVersion < 3 && (manifest.contributes.themes.length || manifest.permissions.themeManagement))
+  if (manifest.apiVersion < 3 && (manifest.contributes.iconThemes.length || manifest.contributes.themes.length || manifest.permissions.themeManagement))
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')

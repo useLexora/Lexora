@@ -75,6 +75,12 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   taskMarksSetRead: 'lexora:buddy:task-marks:set-read',
   taskMarksClear: 'lexora:buddy:task-marks:clear',
   changesOverview: 'lexora:buddy:changes:overview',
+  spaceFilesMutate: 'lexora:buddy:space-files:mutate',
+  spaceFilesHistory: 'lexora:buddy:space-files:history',
+  spaceFilesQuery: 'lexora:buddy:space-files:query',
+  spaceFilesAcknowledge: 'lexora:buddy:space-files:acknowledge',
+  spaceFilesCancel: 'lexora:buddy:space-files:cancel',
+  spaceFilesChanged: 'lexora:buddy:space-files:changed',
   spaceFilesList: 'lexora:buddy:space-files:list',
   spaceFilesRead: 'lexora:buddy:space-files:read',
   spaceFilesReveal: 'lexora:buddy:space-files:reveal',
@@ -373,6 +379,12 @@ export interface LocalChatApi {
   }
   spaces: {
     onChanged: (listener: (event: SpaceChangeNotice) => void) => () => void
+    mutateFile: (input: import('../../shared/spaces/spaceFileApi').SpaceFileMutation) => Promise<import('../../shared/spaces/spaceFileApi').SpaceFileOperation>
+    fileHistory: (input: SpaceFileTarget) => Promise<import('../../shared/spaces/spaceFileApi').SpaceFileOperation[]>
+    queryFileOperation: (input: SpaceFileTarget & { operationId: string }) => Promise<import('../../shared/spaces/spaceFileApi').SpaceFileOperation | null>
+    acknowledgeFileOperation: (input: SpaceFileTarget & { operationId: string }) => Promise<import('../../shared/spaces/spaceFileApi').SpaceFileOperation>
+    cancelFileOperation: (input: SpaceFileTarget & { operationId: string }) => Promise<null>
+    onFilesChanged: (listener: (event: import('../../shared/spaces/spaceFileApi').SpaceFilesChange) => void) => () => void
     readDocument: (input: SpaceFileTarget) => Promise<import('../../shared/spaces/spaceFileApi').SpaceTextDocument>
     saveDocument: (input: import('../../shared/spaces/spaceFileApi').SpaceSaveDocument) => Promise<import('../../shared/spaces/spaceFileApi').SpaceSaveResult>
     listDirectory: (input: SpaceDirectoryRequest) => Promise<LocalSpaceDirectoryPage>

@@ -2,6 +2,7 @@ import type { LexoraConfigPatch } from './desktopApi'
 import { z } from 'zod'
 import { browserPreferencesSchema } from '../../shared/browser/browserPreferences'
 import { extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
+import { fileIconPreferenceSchema } from '../../shared/icons/fileIconTheme'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
 import { BUDDY_PERMISSION_MODES } from '../../shared/permissions/permissionMode'
 import { runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
@@ -105,6 +106,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     autoDownloadUpdates: z.boolean().optional(),
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),
+    fileIconTheme: fileIconPreferenceSchema.optional(),
     theme: themePreferenceSchema.optional(),
     typography: typographyPreferencesSchema.partial().optional(),
   }).strict().optional(),

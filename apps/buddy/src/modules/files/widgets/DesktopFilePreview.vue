@@ -27,7 +27,7 @@ watch([identity, attempt], async (_, __, onCleanup) => {
   preview.value = null
   failed.value = false
   try {
-    const value = await props.files.readFile(spaceFileTargetSchema.parse(props.view.resource.data))
+    const value = await props.files.readFile(spaceFileTargetSchema.strip().parse(props.view.resource.data))
     if (active)
       preview.value = value
   }
@@ -40,7 +40,7 @@ function loadPreview() {
   attempt.value++
 }
 function captureResource() {
-  return { resource: spaceFileTargetSchema.parse(props.view.resource.data) }
+  return { resource: spaceFileTargetSchema.strip().parse(props.view.resource.data) }
 }
 </script>
 

@@ -11,6 +11,7 @@ import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
+import { BUILTIN_FILE_ICON_THEME, fileIconPreferenceSchema } from '../../../shared/icons/fileIconTheme'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
@@ -103,6 +104,7 @@ const desktopConfigSchema = z.object({
   auto_download_updates: z.boolean().default(true),
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
+  file_icon_theme: fileIconPreferenceSchema.default({ id: BUILTIN_FILE_ICON_THEME }),
   theme: z.union([themePreferenceSchema, legacyThemePreferenceSchema, z.enum(['system', 'light', 'dark'])]).default('system'),
   accent_color: z.enum(DESKTOP_ACCENT_COLORS).default('default'),
 }).passthrough().default({
@@ -135,6 +137,7 @@ const desktopConfigSchema = z.object({
   auto_download_updates: true,
   notify_when_focused: false,
   sidebar_collapsed: false,
+  file_icon_theme: { id: BUILTIN_FILE_ICON_THEME },
   theme: 'system',
   accent_color: 'default',
 })
@@ -373,6 +376,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       autoDownloadUpdates: config.desktop.auto_download_updates,
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
+      fileIconTheme: config.desktop.file_icon_theme,
       theme: migrateThemePreference(config.desktop.theme, config.desktop.accent_color),
       typography: {
         uiFont: config.desktop.typography.ui_font,
@@ -438,6 +442,7 @@ function encodeConfig(config: LexoraConfig) {
       auto_download_updates: config.desktop.autoDownloadUpdates,
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
+      file_icon_theme: config.desktop.fileIconTheme,
       theme: config.desktop.theme,
       typography: {
         ui_font: config.desktop.typography.uiFont,
@@ -463,6 +468,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
     desktop: {
       ...current.desktop,
       ...patch.desktop,
+      fileIconTheme: fileIconPreferenceSchema.parse(patch.desktop?.fileIconTheme ?? current.desktop.fileIconTheme),
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
       typography: typographyPreferencesSchema.parse({ ...current.desktop.typography, ...patch.desktop?.typography }),
       pluginAuthor: extensionAuthorSchema.parse(patch.desktop?.pluginAuthor ?? current.desktop.pluginAuthor),

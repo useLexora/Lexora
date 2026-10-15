@@ -13,6 +13,7 @@ import type { DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
+import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton, useDialog } from 'naive-ui'
 import { computed, h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
 import { userContentToChatComposerDocument } from '@/modules/prompt-input'
@@ -26,6 +27,7 @@ import { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
 import { ActiveTaskProjection } from './ActiveTaskProjection'
 import { ContextTabProjection } from './ContextTabProjection'
+import { absolute, contains, FileOperationService } from './FileOperationService'
 import { registerDesktopContributions } from './registerDesktopContributions'
 import { restoreTaskInputViews } from './restoreTaskInputViews'
 import { TaskWorkspacePool } from './TaskWorkspacePool'
@@ -44,8 +46,8 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   const fileToolbarTargets = shallowReactive(new Map<string, HTMLElement>())
   const openingFiles = new Map<string, Promise<string | null | undefined>>()
   const copies = new WorkingCopyService({
-    read: resource => api.localChat.spaces.readDocument(resource.data as unknown as SpaceFileTarget),
-    save: (resource, document) => api.localChat.spaces.saveDocument({ ...resource.data as unknown as SpaceFileTarget, ...document }),
+    read: resource => api.localChat.spaces.readDocument(spaceFileTargetSchema.strip().parse(resource.data)),
+    save: (resource, document, operationId) => api.localChat.spaces.saveDocument({ ...spaceFileTargetSchema.strip().parse(resource.data), ...document, operationId }),
   })
   const controller = new WorkbenchController(new ContributionRegistry(), beforeClose)
   const diagnostics = new WorkbenchDiagnostics({ controller, copies, events: options.events })
@@ -89,6 +91,54 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
     activity.reconcile()
     contextTabs.reconcile()
   } }
+  const fileOperations = new FileOperationService({
+    api: api.localChat.spaces,
+    spaces: () => options.resources().fileSpaces.value,
+    copies,
+    controller,
+    flush: () => persistence.flush(),
+    confirmSave: paths => new Promise((resolve) => {
+      let settled = false
+      const finish = (value: boolean) => {
+        if (!settled) {
+          settled = true
+          resolve(value)
+        }
+      }
+      const chinese = language.value === 'zh-CN'
+      dialog.warning({ title: chinese ? '先保存打开的文件' : 'Save open files first', content: `${chinese ? '这些文件有未保存的修改：' : 'These files have unsaved changes:'}\n${[...new Set(paths)].join('\n')}`, positiveText: chinese ? '保存并继续' : 'Save and continue', negativeText: chinese ? '取消' : 'Cancel', onPositiveClick: () => finish(true), onNegativeClick: () => finish(false), onClose: () => finish(false), onMaskClick: () => finish(false), onEsc: () => finish(false) })
+    }),
+    updateSelection: (source, destination) => {
+      for (const tab of options.resources().allTabs.value) {
+        if (tab.kind !== 'files')
+          continue
+        try {
+          const root = fileOperations.root(tab.target)
+          const path = absolute(root, tab.target.path)
+          if (!contains(source, path))
+            continue
+          const next = destination ? destination + path.slice(source.length) : ''
+          const base = absolute(root, '')
+          options.resources().selectFile(tab.id, contains(base, next) ? next.slice(base.length + 1) : '')
+        }
+        catch {}
+      }
+    },
+  })
+  const fileRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const stopFileChanges = api.localChat.spaces.onFilesChanged((event) => {
+    if (event.kind !== 'changed')
+      return
+    const key = `${event.directoryId}:${event.directoryRevision}`
+    clearTimeout(fileRefreshTimers.get(key))
+    fileRefreshTimers.set(key, setTimeout(() => {
+      fileRefreshTimers.delete(key)
+      for (const copy of copies.copies.values()) {
+        if (copy.resource.data.directoryId === event.directoryId && copy.resource.data.revision === event.directoryRevision)
+          void copies.refresh(copy.resource).catch(options.onError)
+      }
+    }, 200))
+  })
   let navigationVersion = 0
   let routeVersion = 0
   onScopeDispose(router.beforeEach((to) => {
@@ -322,7 +372,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
         controller.focus(previous.id)
       return previous.id
     }
-    let resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target } }
+    let resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target, canonicalRoot: fileOperations.root(target) } }
     const release = resourceLifetime.acquire(resource)
     try {
       const copy = await copies.open(resource)
@@ -518,7 +568,10 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   let disposal: Promise<void> | undefined
   function dispose(): Promise<void> {
     controller.stop()
+    stopFileChanges()
+    for (const timer of fileRefreshTimers.values()) clearTimeout(timer)
     disposal ??= (async () => {
+      await fileOperations.dispose()
       const failures: unknown[] = []
       const release = async (operation: () => unknown) => {
         try {
@@ -555,7 +608,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
     await inputs.flush().catch(options.onError)
     return saved
   }
-  return { api, renderers, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  return { api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
     return navigationVersion

@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
 import { build } from 'vite'
 import { compileExtensionSource } from '../platform/extensions/compileExtensionSource.ts'
+import { validateExtensionFileCounts } from '../platform/extensions/extensionLimits.ts'
+import { fileIconAssetPaths, readFileIconTheme, validateFileIconThemeFiles } from '../platform/icons/fileIconThemeAssets.ts'
 import { validateThemeFiles } from '../platform/themes/themeAssets.ts'
 import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../shared/extensions/extensionManifest.ts'
 import { themeAssetPaths, themeDocumentSchema } from '../shared/theme/themeDocument.ts'
@@ -38,6 +40,13 @@ async function run() {
       themeFiles.set(asset, await fs.readFile(path.join(source, asset)))
   }
   validateThemeFiles(themeFiles, manifest.contributes.themes)
+  for (const theme of manifest.contributes.iconThemes) {
+    const bytes = await fs.readFile(path.join(source, theme.path))
+    themeFiles.set(theme.path, bytes)
+    for (const asset of new Set(fileIconAssetPaths(theme.path, readFileIconTheme(bytes)).values()))
+      themeFiles.set(asset, await fs.readFile(path.join(source, asset)))
+  }
+  validateFileIconThemeFiles(themeFiles, manifest.contributes.iconThemes)
   if (command === 'check') {
     process.stdout.write(`${manifest.id}@${manifest.version}: compatible with Lexora ${version}, API ${manifest.apiVersion}` + '\n')
   }
@@ -59,7 +68,7 @@ async function run() {
         assert(entry.isFile(), `Not a file: ${name}`)
         assert(!names.has(name.toLowerCase()), `Duplicate path: ${name}`)
         names.add(name.toLowerCase())
-        assert(names.size <= 512, 'Too many files')
+        validateExtensionFileCounts(names)
         const stat = await fs.stat(absolute)
         assert(stat.size <= 4 * 1024 * 1024, 'File exceeds 4 MiB')
         const bytes = await fs.readFile(absolute)

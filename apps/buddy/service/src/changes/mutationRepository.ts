@@ -18,6 +18,7 @@ export interface MutationRepository {
   settle: (invocationId: string, status: 'released' | 'hazard', reason: string | null) => void
   recordProcess: (invocationId: string, processId: string, settlement: OwnedProcessSettlement) => void
   listUnreleased: () => StoredMutation[]
+  isReleased: (invocationId: string) => boolean
 }
 
 const claimsSchema = z.array(z.union([
@@ -50,8 +51,12 @@ export function createMutationRepository(database: DatabaseSync): MutationReposi
     WHERE run_mutation_processes.settlement <> 'released'
   `)
   const listUnreleased = database.prepare('SELECT * FROM run_mutation_leases WHERE status <> \'released\' ORDER BY created_at, invocation_id')
+  const findStatus = database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?')
   const listProcesses = database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id')
   return {
+    isReleased(invocationId) {
+      return (findStatus.get(invocationId) as { status: string } | undefined)?.status === 'released'
+    },
     createLease(lease) {
       const now = new Date().toISOString()
       insert.run(lease.invocationId, lease.runId, lease.segmentId, JSON.stringify(claimsSchema.parse(lease.claims)), lease.lifetime, now, now)

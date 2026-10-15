@@ -10,7 +10,7 @@ interface ChangesView {
   range: 'all' | 'turn'
   treeVisible: boolean
   treeWidth: number
-  expandedKeys: Array<string | number>
+  expandedKeys: string[]
   collapsedFiles: ReadonlySet<string>
   selectedFileId: string | null
   wrap: boolean
@@ -133,6 +133,6 @@ export function useContextChanges(options: {
   return { current, nodes, counts, toggleFile, toggleAll }
 }
 
-function collectDirectories(nodes: ReturnType<typeof buildChangeFileTree>): Array<string | number> {
+function collectDirectories(nodes: readonly import('@/shared/ui/explorer/treeCollection').ExplorerNode[]): string[] {
   return nodes.flatMap(node => node.kind === 'directory' ? [node.key!, ...collectDirectories(node.children ?? [])] : [])
 }

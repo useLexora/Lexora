@@ -15,7 +15,11 @@ const buddyRoot = path.join(repoRoot, 'apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
 const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
 
-export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()), passwordStore } = {}) {
+export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, rendererUrl, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot = path.join(repoRoot, '.playwright/runs', randomUUID()), passwordStore } = {}) {
+  if (rendererUrl) {
+    const url = new URL(rendererUrl)
+    assert(!executablePath && url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname), 'Development renderer requires a local development application')
+  }
   assert(passwordStore === undefined || (process.platform === 'linux' && ['kwallet', 'kwallet5', 'kwallet6', 'gnome-libsecret'].includes(passwordStore)), 'Unsupported secure password store')
   runId ??= `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
   assert(/^[\w-]{1,100}$/.test(runId), 'Invalid test run ID')
@@ -83,6 +87,8 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
       assert(contains(instancesRoot, await canonicalPath(expectedRoot)), 'Expected root must stay in this isolated test run')
       const { _electron: electron } = await import('@playwright/test')
       const environment = createTestEnvironment(home)
+      if (rendererUrl)
+        environment.ELECTRON_RENDERER_URL = rendererUrl
       if (process.platform === 'linux') {
         display = await startDisplay()
         environment.DISPLAY = display.address
@@ -104,12 +110,12 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
         page = await application.firstWindow({ timeout: 45000 })
         launchRecord.diagnostics = attachPageDiagnostics(page)
         page.setDefaultTimeout(30000)
-        await page.waitForFunction(() => location.protocol === 'lexora-app:' || location.protocol === 'data:', undefined, { timeout: 45000 })
+        await page.waitForFunction(rendererUrl => location.protocol === 'lexora-app:' || location.protocol === 'data:' || (rendererUrl && location.origin === new URL(rendererUrl).origin), rendererUrl, { timeout: 45000 })
         if (maintenance) {
           assert.equal(new URL(page.url()).protocol, 'data:')
           return { app: application, page, diagnostics: launchRecord.diagnostics }
         }
-        assert.equal(new URL(page.url()).protocol, 'lexora-app:', `Application failed to start: ${await page.locator('body').textContent()}`)
+        assert.equal(rendererUrl ? new URL(page.url()).origin : new URL(page.url()).protocol, rendererUrl ? new URL(rendererUrl).origin : 'lexora-app:', `Application failed to start: ${await page.locator('body').textContent()}`)
         await page.waitForFunction(async () => (await window.lexoraDesktop?.app.startup.getState())?.status === 'ready', undefined, { timeout: 45000 })
         const info = await page.evaluate(() => window.lexoraDesktop.app.getInfo())
         assert.equal(info.runtimeProfile, 'test')

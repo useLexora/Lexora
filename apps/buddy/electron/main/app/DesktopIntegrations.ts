@@ -10,6 +10,7 @@ import process from 'node:process'
 import { app, nativeTheme, Notification, shell } from 'electron'
 import { z } from 'zod'
 import buddyVersion from '../../../buddy.version.json'
+import { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
 import { ThemeService } from '../../../platform/themes/ThemeService'
 import { CONVERSATION_CHANGED, conversationSchema } from '../../../shared/conversation/conversationApi'
 import { extensionActionRpc } from '../../../shared/extensions/extensionActionApi'
@@ -33,6 +34,7 @@ import { registerLocalChatIpc } from '../localChatIpc'
 import { registerStorageIpc } from '../storage/registerStorageIpc'
 import { StorageBackupService } from '../storage/StorageBackupService'
 import { registerSyncIpc } from '../sync/registerSyncIpc'
+import { registerFileIconIpc } from '../themes/registerFileIconIpc'
 import { registerThemeIpc } from '../themes/registerThemeIpc'
 import { createDesktopTray } from '../tray'
 import { registerDesktopUpdates } from '../updates/registerDesktopUpdates'
@@ -89,6 +91,16 @@ export class DesktopIntegrations {
     const runtime = this.#runtime
     const windows = this.#windows
     const service = runtime.service
+    const fileIcons = new FileIconThemeService(async (preference, guard) => {
+      await runtime.configStore.update({ desktop: { fileIconTheme: preference } }, config => this.applyConfig(config), guard)
+    }, this.#environment.events.publish)
+    fileIcons.applyPreference(runtime.config!.desktop.fileIconTheme)
+    this.#subscriptions.push(() => fileIcons.dispose())
+    this.#subscriptions.push(registerFileIconIpc(fileIcons, () => windows.window))
+    this.#subscriptions.push(runtime.configStore.onDidChange((change) => {
+      if (change.kind === 'committed')
+        fileIcons.applyPreference(change.config.desktop.fileIconTheme)
+    }).dispose)
     const themes = new ThemeService(paths.buddyHome, async (preference, assertCurrent) => {
       await runtime.configStore.update({ desktop: { theme: preference } }, config => this.applyConfig(config), assertCurrent)
     }, {
@@ -105,6 +117,7 @@ export class DesktopIntegrations {
     this.#subscriptions.push(() => themes.dispose())
     await themes.initialize(runtime.config!.desktop.theme, nativeTheme.shouldUseDarkColors)
     const extensions = registerExtensionIpc({
+      fileIcons,
       themes,
       record: this.#environment.events.publish,
       home: paths.buddyHome,

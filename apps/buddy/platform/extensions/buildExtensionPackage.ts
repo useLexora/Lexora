@@ -5,6 +5,7 @@ import { zipSync } from 'fflate/browser'
 import { extensionError } from '../../shared/extensions/extensionApi'
 import { extensionBuildRequestSchema } from '../../shared/extensions/extensionAuthoring'
 import { extensionManifestSchema } from '../../shared/extensions/extensionManifest'
+import { validateFileIconThemeFiles } from '../icons/fileIconThemeAssets'
 import { validateThemeFiles } from '../themes/themeAssets'
 import { unpackExtension, validateExtensionFiles } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
@@ -32,11 +33,13 @@ export async function buildExtensionPackage(input: unknown, compile: ExtensionCo
       }
     }
     validateThemeFiles(files, manifest.contributes.themes)
+    validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
     extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
     const compiled = manifest.format === 'source' ? await compile(files, manifest, signal, report) : files
     signal.throwIfAborted()
     validateExtensionFiles(compiled)
     validateThemeFiles(compiled, manifest.contributes.themes)
+    validateFileIconThemeFiles(compiled, manifest.contributes.iconThemes)
     const bytes = zipSync(Object.fromEntries(compiled), { level: 6 })
     return { ok: true, id: manifest.id, name: manifest.name, author: manifest.author ?? '', version: manifest.version, archive: Buffer.from(bytes).toString('base64'), diagnostics }
   }

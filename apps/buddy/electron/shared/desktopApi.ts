@@ -201,6 +201,7 @@ export interface LexoraConfig {
     profile: DesktopUserProfileConfig
     pluginAuthor: string
     sidebarCollapsed: boolean
+    fileIconTheme: { id: string }
     theme: ThemePreference
     typography: import('../../shared/typography/typographyPreferences').TypographyPreferences
   }
@@ -227,6 +228,7 @@ export interface LexoraConfigPatch {
 export interface LexoraDesktopApi {
   sync: import('../../shared/sync/syncApi').SyncApi
   storage: import('../../shared/storage/storageApi').StorageApi
+  fileIcons: import('../../shared/icons/fileIconThemeApi').FileIconThemeApi
   themes: import('../../shared/theme/themeApi').ThemeApi
   extensions: import('../../shared/extensions/extensionApi').ExtensionApi
   workbench: import('../../shared/workbench/workbenchState').WorkbenchStateApi

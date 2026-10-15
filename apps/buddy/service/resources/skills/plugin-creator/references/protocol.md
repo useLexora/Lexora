@@ -24,7 +24,7 @@
 
 `<plugin-id>` 是占位符，填写时必须替换为新插件身份工具返回的 ID，或正在维护的源码清单中的既有 ID；后续声明中的占位符同样替换。宿主代码通过 `context.extension.id` 引用当前插件，不复制示例身份。作者署名 `author` 可选，支持 Unicode，最多 80 个用户可见字符，不含换行或控制字符；留空表示未署名。不符合规则时说明原因，给出候选并通过对话确定，不静默截断或替换。作者与显示名可变，ID 和末尾的调用名保持稳定。使用作者字段的包要求 Lexora 0.9.0 或更新版本。
 
-可选字段：`author`、`icon`（包内 SVG/PNG/JPEG/WebP，≤64 KiB）、`categories`、`tags`、宿主 `entry`、`dataVersion`。不要添加未定义的字段。命令、视图和挂载声明的 ID 以插件 ID 加 `.` 开头且不重复。文件路径相对包根，不能包含 `..` 或符号链接；512 文件、单文件 4 MiB、合计 16 MiB 上限。
+可选字段：`author`、`icon`（包内 SVG/PNG/JPEG/WebP，≤64 KiB）、`categories`、`tags`、宿主 `entry`、`dataVersion`。不要添加未定义的字段。命令、视图和挂载声明的 ID 以插件 ID 加 `.` 开头且不重复。文件路径相对包根，不能包含 `..` 或符号链接；最多 4096 个文件，其中非图片文件最多 512 个，单文件 4 MiB、合计 16 MiB 上限。
 
 `contributes` 内的声明结构如下。省略不用的项；每项权限和运行方式见后文，无需查找应用实现或复制某个示例清单。
 
@@ -196,6 +196,8 @@ context.subscriptions.add(context.commands.register(`${context.extension.id}.ope
 ## 主题与样式
 
 完整主题包、欢迎内容与主题编辑器 API 见 [主题](themes.md)。修改用户主题需要 `themeManagement: true`；仅贡献主题无需权限。
+
+API 3 的 `contributes.iconThemes` 可贡献独立的文件与目录图标主题，无需脚本入口或权限，详见 [文件图标主题](file-icon-themes.md)。
 
 源码包可在清单声明 `"styles": { "uno": true }`，编译器提取包内 TS/JS 的完整类名并生成 `lexora-uno.css`，宿主在视图渲染前自动加载。该文件名保留给编译器，源码不要自行创建。不需要安装 UnoCSS，也不执行插件的 UnoCSS 配置或构建脚本。预编译包使用同一编译工具生成并携带该 CSS。使用此能力时，`engines.lexora` 的最低版本须覆盖提供该能力的宿主。
 

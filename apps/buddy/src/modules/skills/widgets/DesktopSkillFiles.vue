@@ -4,7 +4,7 @@ import { NSpin } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
-import DesktopContextFileTree from '@/shared/ui/files/DesktopContextFileTree.vue'
+import ExplorerTree from '@/shared/ui/explorer/ExplorerTree.vue'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
 import DesktopFileToolbar from '@/shared/ui/files/DesktopFileToolbar.vue'
 import DesktopMonacoFile from '@/shared/ui/files/DesktopMonacoFile.vue'
@@ -50,7 +50,7 @@ defineExpose({ open })
         <div v-if="treeFailed" class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted" role="alert">
           {{ t('desktop.context.directoryLoadFailed') }}
         </div>
-        <DesktopContextFileTree v-model:expanded-keys="expandedKeys" :nodes="nodes" :selected-key="path" :language="language" :load="load" @select="open" />
+        <ExplorerTree v-model:expanded-keys="expandedKeys" :nodes="nodes" :selected-key="path" :language="language" :load="load" @select="open" />
       </template>
     </DesktopContextSplit>
   </div>

@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
+import type { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
 import type { ThemeService } from '../../../platform/themes/ThemeService'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
@@ -26,6 +27,7 @@ import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 export function registerExtensionIpc(options: {
   home: string
   themes: ThemeService
+  fileIcons: FileIconThemeService
   version: string
   getWindow: () => BrowserWindow | null
   readText: (target: SpaceFileTarget, signal: AbortSignal) => Promise<string>
@@ -143,7 +145,13 @@ export function registerExtensionIpc(options: {
       current.webContents.send(EXTENSION_IPC.workbench, event)
     }),
   })
-  const refreshThemes = () => options.themes.refresh(Object.values(store.installed).filter(record => record.enabled && record.current.manifest.contributes.themes.length).map(record => ({ package: record.current, root: store.packageRoot(record.current) })))
+  const refreshThemes = async () => {
+    const packages = Object.values(store.installed).filter(record => record.enabled).map(record => ({ package: record.current, root: store.packageRoot(record.current) }))
+    await Promise.all([
+      options.themes.refresh(packages.filter(item => item.package.manifest.contributes.themes.length)),
+      options.fileIcons.refresh(packages.filter(item => item.package.manifest.contributes.iconThemes.length)),
+    ])
+  }
   const subscriptions = [
     service.onDidChange((change) => {
       if (change.kind === 'package' || change.kind === 'enabled')

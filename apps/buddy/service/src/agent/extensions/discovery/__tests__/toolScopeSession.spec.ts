@@ -193,6 +193,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
       return { approvalId: `approval-${approved.length}`, decision: 'approved_once' }
     } },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
+    fileResources: {} as BuddySessionExtensionServices['fileResources'],
     mutations: new MutationCoordinator(),
     changeCaptureService: { beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }), finishInvocation: async () => ({ complete: true }), markPartial: async () => {} },
     createCapabilities: async () => [custom],

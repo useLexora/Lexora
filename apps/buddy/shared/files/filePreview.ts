@@ -6,6 +6,7 @@ export const fileEntrySchema = z.object({
   path: z.string().min(1),
   kind: z.enum(['directory', 'file']),
   unavailable: z.boolean(),
+  identity: z.string().nullable().optional(),
 }).strict()
 
 export const directoryPageSchema = z.object({

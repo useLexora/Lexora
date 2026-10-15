@@ -31,6 +31,8 @@ description: 创建、修改并验证可安装的 Lexora 桌面插件，包括�
 
 主题配色、欢迎文字／插画或主题编辑器需求，先读 [主题](references/themes.md)。纯主题包只需清单、JSON 与图片，无需创建脚本入口。
 
+文件或目录图标需求，读取 [文件图标主题](references/file-icon-themes.md)，通过独立的 `contributes.iconThemes` 提供图片与名称映射。
+
 1. 读取 [协议与清单](references/protocol.md) 和 [完整 API 类型](references/api.d.ts)。这些文件与当前 Lexora 一起分发；不要根据其他产品的插件格式猜测接口。
    需要实时配置、表单依赖或运行状态判断时，读取 [条件函数](references/conditions.md)，声明数据输入与作用域，不将函数序列化进清单。需要 Agent 指令、后台任务动作、模型调用、任务标题或原生设置时，追加读取 [Agent 与设置](references/agent-settings.md)，并确认当前宿主能力目录支持。事件驱动动作与订阅按 [事件与触发列表](references/events.md) 选择精确入口和载荷，不把普通事件监听器当作任务能力调用。
 2. 在当前可写工作区创建独立源码目录，例如 `plugins/<插件名>/`。通过文件工具写入真实文件，保留源码以便后续对话修改。不需要用户另外安装 Node、Bun 或 SDK。

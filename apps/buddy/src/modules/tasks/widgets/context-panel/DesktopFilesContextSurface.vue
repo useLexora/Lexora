@@ -4,7 +4,7 @@ import type { WorkspaceFilesApi } from './useWorkspaceFilePreview'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopContextFileTree from '@/shared/ui/files/DesktopContextFileTree.vue'
+import { WorkspaceExplorer } from '@/modules/files/ui'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
 import DesktopFileToolbar from '@/shared/ui/files/DesktopFileToolbar.vue'
 import WorkbenchPanelContent from '@/workbench/browser/WorkbenchPanelContent.vue'
@@ -44,7 +44,7 @@ const fileView = filePreview.current
             {{ t('desktop.context.retry') }}
           </button>
         </div>
-        <DesktopContextFileTree v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :selected-key="fileTab.target.path || null" :language="language" :load="filePreview.load" @select="emit('select', fileTab.id, $event)" />
+        <WorkspaceExplorer v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :target="fileTab.target" :language="language" :load="filePreview.load" :refresh="filePreview.refresh" :api="files" @select="emit('select', fileTab.id, $event)" />
       </template>
     </DesktopContextSplit>
   </WorkbenchPanelContent>

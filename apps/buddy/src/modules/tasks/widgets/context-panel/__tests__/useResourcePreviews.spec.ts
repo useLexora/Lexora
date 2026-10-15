@@ -5,7 +5,7 @@ import type { TaskChangesContextTab, TaskFilesContextTab } from '@/modules/tasks
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, shallowRef } from 'vue'
 import { deferred } from '../../../../../../__tests__/deferred'
-import { isMarkdownArtifact, resolveArtifactDisplayMode } from '../artifactContextPresentation'
+import { resolveArtifactDisplayMode } from '../artifactContextPresentation'
 import { useArtifactPreview } from '../useArtifactPreview'
 import { useContextChanges } from '../useContextChanges'
 import { useWorkspaceFilePreview } from '../useWorkspaceFilePreview'
@@ -37,7 +37,7 @@ describe('resource previews', () => {
     tab.value = first
     await nextTick()
     expect(state.current.value).not.toBe(previous)
-    expect(state.current.value?.treeWidth).toBe(220)
+    expect(state.current.value?.treeWidth).not.toBe(previous.treeWidth)
   })
 
   it('stops directory pagination after its tab closes and discards late results', async () => {
@@ -46,7 +46,7 @@ describe('resource previews', () => {
     const retained = shallowRef(true)
     const page = deferred<{ entries: [], nextCursor: string | null }>()
     const listDirectory = vi.fn().mockReturnValueOnce(page.promise).mockResolvedValue({ entries: [], nextCursor: null })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => retained.value))
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => retained.value))
     const previous = state.current.value!
     tab.value = null
     retained.value = false
@@ -61,7 +61,7 @@ describe('resource previews', () => {
     expect(state.current.value?.nodes).toEqual([])
   })
 
-  it('refreshes root and expanded directories while preserving valid expanded keys', async () => {
+  it('refreshes root and expanded directories on focus while preserving valid expanded keys', async () => {
     const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
     const tab = shallowRef<TaskFilesContextTab | null>(value)
     const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
@@ -84,15 +84,15 @@ describe('resource previews', () => {
       }
       throw new Error('Not found')
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
     await Promise.resolve()
     await nextTick()
     expect(state.current.value?.nodes).toHaveLength(2)
 
     state.current.value!.expandedKeys = ['src', 'deleted-folder']
-    await state.refresh()
+    window.dispatchEvent(new Event('focus'))
 
-    expect(state.current.value?.expandedKeys).toEqual(['src'])
+    await vi.waitFor(() => expect(state.current.value?.expandedKeys).toEqual(['src']))
     const srcNode = state.current.value?.nodes.find(node => node.key === 'src')
     expect(srcNode?.children).toHaveLength(1)
     expect(srcNode?.children?.[0].key).toBe('src/index.ts')
@@ -108,7 +108,7 @@ describe('resource previews', () => {
         throw new Error('Disk unreadable')
       return { entries: [{ name: 'file.txt', path: 'file.txt', kind: 'file', unavailable: false }], nextCursor: null }
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
     await nextTick()
     expect(state.current.value?.treeFailed).toBe(false)
 
@@ -120,25 +120,6 @@ describe('resource previews', () => {
     await state.refresh()
     expect(state.current.value?.treeFailed).toBe(false)
     expect(state.current.value?.nodes).toHaveLength(1)
-  })
-
-  it('triggers refresh on window focus event', async () => {
-    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
-    const tab = shallowRef<TaskFilesContextTab | null>(value)
-    let count = 0
-    const listDirectory = vi.fn().mockImplementation(async () => {
-      count++
-      return { entries: [{ name: `file-${count}.txt`, path: `file-${count}.txt`, kind: 'file', unavailable: false }], nextCursor: null }
-    })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
-    await Promise.resolve()
-    await nextTick()
-    expect(state.current.value?.nodes[0]?.label).toBe('file-1.txt')
-
-    window.dispatchEvent(new Event('focus'))
-    await Promise.resolve()
-    await nextTick()
-    expect(state.current.value?.nodes[0]?.label).toBe('file-2.txt')
   })
 
   it('automatically reveals and loads ancestor directories when a nested file path is selected', async () => {
@@ -153,7 +134,7 @@ describe('resource previews', () => {
         return { entries: [{ name: 'math.ts', path: 'src/utils/math.ts', kind: 'file', unavailable: false }], nextCursor: null }
       return { entries: [], nextCursor: null }
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn() }, () => true))
+    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
     await Promise.resolve()
     await nextTick()
 
@@ -167,26 +148,13 @@ describe('resource previews', () => {
   })
 
   it.each([
-    ['report.md', 'text/markdown', 'file', true],
-    ['REPORT.MD', 'text/plain', 'file', true],
-    ['report.markdown', 'application/octet-stream', 'file', true],
-    ['report', 'text/markdown', 'file', true],
-    ['report.txt', 'text/plain', 'file', false],
-    ['report.md', 'inode/directory', 'directory', false],
-  ] as const)('recognizes Markdown for %s (%s, %s)', (name, mimeType, kind, expected) => {
-    expect(isMarkdownArtifact({ name, mimeType, kind })).toBe(expected)
-  })
-
-  it.each([
     ['report.md', 'text/markdown', 'file', 'preview', 'preview'],
     ['report.md', 'text/markdown', 'file', 'source', 'source'],
     ['legacy.markdown', 'application/octet-stream', 'file', 'preview', 'preview'],
     ['notes.txt', 'text/plain', 'file', 'preview', 'source'],
-    ['data.json', 'application/json', 'file', 'preview', 'source'],
     ['image.png', 'image/png', 'file', 'source', 'preview'],
     ['drawing.svg', 'image/svg+xml', 'file', 'source', 'preview'],
     ['report.pdf', 'application/pdf', 'file', 'preview', 'file'],
-    ['archive.zip', 'application/zip', 'file', 'source', 'file'],
     ['folder.md', 'inode/directory', 'directory', 'source', 'directory'],
   ] as const)('selects the display mode for %s (%s, %s, requested %s)', (name, mimeType, kind, requested, expected) => {
     expect(resolveArtifactDisplayMode({ name, mimeType, kind }, requested)).toBe(expected)

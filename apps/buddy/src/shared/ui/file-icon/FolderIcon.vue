@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { getFolderIconUrl } from './fileIcon'
+import { computed } from 'vue'
+import { applyIconFallback, resolveResourceIcon } from './fileIcon'
 
-defineProps<{
+const props = defineProps<{
+  name?: string
   expanded?: boolean
 }>()
+const icon = computed(() => resolveResourceIcon({ path: props.name ?? '', kind: 'directory', expanded: props.expanded }))
 </script>
 
 <template>
   <img
     alt=""
-    class="buddy-folder-icon flex-none"
+    class="buddy-folder-icon block flex-none"
+    :data-folder-icon="icon.id"
     draggable="false"
-    :src="getFolderIconUrl(expanded)"
+    :src="icon.url"
+    @error="applyIconFallback($event, icon.fallbackUrl)"
   >
 </template>
 

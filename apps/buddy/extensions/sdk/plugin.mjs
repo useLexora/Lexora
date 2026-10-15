@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { zipSync } from 'fflate'
-import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPathSchema, validateThemeFiles } from './authoring.mjs'
+import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPathSchema, validateExtensionFileCounts, validateFileIconThemeFiles, validateThemeFiles } from './authoring.mjs'
 
 export async function readPlugin(source) {
   const files = new Map()
@@ -25,7 +25,8 @@ export async function readPlugin(source) {
       const bytes = await fs.readFile(absolute)
       total += bytes.length
       names.add(name.toLowerCase())
-      assert(total <= 16 * 1024 * 1024 && names.size <= 512, 'Plugin package exceeds limits')
+      assert(total <= 16 * 1024 * 1024, 'Plugin package exceeds limits')
+      validateExtensionFileCounts(names)
       files.set(name, bytes)
     }
   }
@@ -34,6 +35,7 @@ export async function readPlugin(source) {
   for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)].filter(Boolean))
     assert(files.has(entry), `Missing entry: ${entry}`)
   validateThemeFiles(files, manifest.contributes.themes)
+  validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
   const iconUrl = extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
   return { manifest, files, iconUrl }
 }

@@ -7,6 +7,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
+import DesktopFileIconSettings from './DesktopFileIconSettings.vue'
 import DesktopThemeSettings from './DesktopThemeSettings.vue'
 import DesktopTypographySettings from './DesktopTypographySettings.vue'
 import DesktopWelcomeSettings from './DesktopWelcomeSettings.vue'
@@ -31,6 +32,7 @@ const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map
         {{ t('desktop.settings.applicationAppearance') }}
       </h2>
       <DesktopThemeSettings :language="language" />
+      <DesktopFileIconSettings :language="language" />
     </section>
     <DesktopTypographySettings v-bind="props" />
     <section class="grid gap-[0.8rem]">

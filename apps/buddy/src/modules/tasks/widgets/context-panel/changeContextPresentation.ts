@@ -1,6 +1,6 @@
 import type { LocalFileChangeDetail } from '@buddy-shared/changes/changeApi'
 
-import type { TreeOption } from 'naive-ui'
+import type { ExplorerNode } from '@/shared/ui/explorer/treeCollection'
 import type { FileIconName } from '@/shared/ui/file-icon'
 import { diffLines } from 'diff'
 import { resolveFileIcon } from '@/shared/ui/file-icon'
@@ -33,7 +33,7 @@ export function presentChangeFiles(files: readonly LocalFileChangeDetail[], prev
   })
 }
 
-export interface ChangeFileTreeNode extends TreeOption {
+export interface ChangeFileTreeNode extends ExplorerNode {
   changeType?: FileChangeType
   fileId?: string
   fileIcon?: FileIconName
@@ -68,7 +68,7 @@ export const fileIconNameFromPath = resolveFileIcon
 
 export function buildChangeFileTree(
   files: ReadonlyArray<ChangeFilePresentation>,
-): TreeOption[] {
+): ChangeFileTreeNode[] {
   const root: DirectoryNode = {
     directories: new Map(),
     files: [],
@@ -112,7 +112,6 @@ function buildDirectoryChildren(directory: DirectoryNode): ChangeFileTreeNode[] 
       changeType: file.changeType,
       fileId: file.id,
       fileIcon: fileIconNameFromPath(file.path),
-      isLeaf: true,
       key: file.id,
       kind: 'file' as const,
       label: file.sourceOrder ? `${fileNameFromPath(file.path)} · ${file.source?.actorName ?? ''} #${file.sourceOrder}` : fileNameFromPath(file.path),

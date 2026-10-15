@@ -1,4 +1,5 @@
 import { win32 } from 'node:path'
+import { validFileName } from '../../shared/files/fileName'
 
 export function validateWindowsFilePath(path: string): string {
   const input = path.replaceAll('/', '\\')
@@ -11,9 +12,7 @@ export function validateWindowsFilePath(path: string): string {
   for (const [index, segment] of segments.entries()) {
     if ((drivePath || index >= 2) && (segment === '.' || segment === '..'))
       continue
-    if (/[<>:"|?*]/.test(segment) || [...segment].some(character => character.charCodeAt(0) < 32)
-      || /[. ]$/.test(segment)
-      || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:[ .]|$)/i.test(segment)) {
+    if (segment && !validFileName(segment, 'win32')) {
       throw new Error('Windows file path contains an unsupported stream or device name')
     }
   }

@@ -16,6 +16,7 @@ import { addedExtensionPermissions, extensionIdSchema, extensionManifestSchema, 
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
+import { validateFileIconThemeFiles } from '../icons/fileIconThemeAssets'
 import { validateThemeFiles } from '../themes/themeAssets'
 import { EXTENSION_PACKAGE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
@@ -146,6 +147,7 @@ export class ExtensionPackageStore {
     if (manifest.format === 'compiled' && manifest.styles?.uno && !files.has(EXTENSION_UNO_STYLESHEET))
       throw new Error('EXTENSION_STYLES_MISSING')
     validateThemeFiles(files, manifest.contributes.themes)
+    validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
     const current = this.installed[manifest.id]
     const unavailable = this.#unavailable.get(manifest.id) ?? this.#unavailablePending.get(manifest.id)
     if (unavailable)

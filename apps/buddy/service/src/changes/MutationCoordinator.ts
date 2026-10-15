@@ -1,3 +1,4 @@
+import type { FileResourceCoordinator } from '../files/FileResourceCoordinator'
 import type { MutationRepository, OwnedProcessSettlement } from './mutationRepository'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
@@ -61,6 +62,8 @@ export class MutationCoordinator {
   readonly #pending: PendingMutation[] = []
   readonly #invocation = new AsyncLocalStorage<MutationLease>()
   readonly #processes = new Map<string, Map<string, OwnedProcessSettlement>>()
+  readonly #resources: FileResourceCoordinator | undefined
+  readonly #settlements = new Set<Promise<void>>()
   readonly #repository: MutationRepository | undefined
   readonly #changes = new Emitter<{ runId: string }>(() => console.error('MUTATION_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
@@ -68,7 +71,8 @@ export class MutationCoordinator {
   #sequence = 0
   #disposed = false
 
-  constructor(options: { repository?: MutationRepository } = {}) {
+  constructor(options: { repository?: MutationRepository, resources?: FileResourceCoordinator } = {}) {
+    this.#resources = options.resources
     const repository = options.repository
     this.#repository = repository
     if (!repository)
@@ -90,7 +94,7 @@ export class MutationCoordinator {
     if (this.#active.has(input.invocationId) || this.#hazards.has(input.invocationId) || this.#pending.some(pending => pending.invocationId === input.invocationId))
       return Promise.reject(new MutationCoordinatorError('MUTATION_INVOCATION_CONFLICT'))
     const claims = normalizeClaims(input.claims)
-    return new Promise((resolve, reject) => {
+    const lease = await new Promise<MutationLease>((resolve, reject) => {
       const pending: PendingMutation = {
         runId: input.runId,
         invocationId: input.invocationId,
@@ -117,6 +121,19 @@ export class MutationCoordinator {
       this.#publish(input.runId)
       this.#drain()
     })
+    try {
+      await this.#resources?.acquire(lease.invocationId, lease.claims, lease.lifetime, input.signal)
+      input.signal.throwIfAborted()
+      return lease
+    }
+    catch (error) {
+      lease.release()
+      throw error
+    }
+  }
+
+  async initialize(): Promise<void> {
+    await this.#resources?.reconcile([...this.#hazards.values()], id => this.#repository?.isReleased(id) === true)
   }
 
   getRunState(runId: string): MutationRunState {
@@ -188,19 +205,21 @@ export class MutationCoordinator {
     if (!hazard)
       return
     this.#repository?.settle(invocationId, 'released', null)
+    this.#settleResource(invocationId, false)
     this.#hazards.delete(invocationId)
     this.#processes.delete(invocationId)
     this.#publish(hazard.runId)
     this.#drain()
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.#disposed = true
     for (const pending of this.#pending.splice(0)) {
       pending.unsubscribe()
       pending.reject(new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED'))
       this.#publish(pending.runId)
     }
+    await Promise.allSettled(this.#settlements)
   }
 
   #drain(): void {
@@ -255,6 +274,7 @@ export class MutationCoordinator {
     catch {
       hazard = 'MUTATION_SETTLEMENT_PERSISTENCE_FAILED'
     }
+    this.#settleResource(lease.invocationId, Boolean(hazard))
     this.#active.delete(lease.invocationId)
     if (hazard) {
       this.#hazards.set(lease.invocationId, copyEventSnapshot({
@@ -269,6 +289,15 @@ export class MutationCoordinator {
     }
     this.#publish(lease.runId)
     this.#drain()
+  }
+
+  #settleResource(id: string, hazard: boolean): void {
+    if (!this.#resources)
+      return
+    const pending = this.#resources.release(id, hazard).catch(() => {
+      console.error('FILE_RESOURCE_SETTLEMENT_FAILED')
+    }).finally(() => this.#settlements.delete(pending))
+    this.#settlements.add(pending)
   }
 
   #publish(runId: string): void {

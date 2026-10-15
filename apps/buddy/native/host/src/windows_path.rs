@@ -23,28 +23,38 @@ pub(crate) fn valid(path: &str) -> bool {
     } else {
         return false;
     };
-    components.split('\\').all(|component| {
-        let stem = component
-            .split('.')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches(' ')
-            .to_uppercase();
-        let device = matches!(
-            stem.as_str(),
-            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-        ) || ["COM", "LPT"].iter().any(|prefix| {
-            stem.strip_prefix(prefix).is_some_and(|suffix| {
-                matches!(
-                    suffix,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
-        });
-        !device
-            && !component.ends_with(['.', ' '])
-            && !component
-                .chars()
-                .any(|c| c < ' ' || "<>:\"|?*/".contains(c))
-    })
+    components
+        .split('\\')
+        .all(|component| component.is_empty() || valid_component(component))
 }
+
+pub(crate) fn valid_component(component: &str) -> bool {
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_uppercase();
+    let device = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        stem.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    });
+    !component.is_empty()
+        && component.encode_utf16().count() <= 255
+        && !device
+        && !component.ends_with(['.', ' '])
+        && !component
+            .chars()
+            .any(|c| c < ' ' || "<>:\"|?*/\\".contains(c))
+}
+
+#[cfg(test)]
+#[path = "../__tests__/windows_path.rs"]
+mod tests;

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getFileIconUrl } from './fileIcon'
-import { resolveFileIcon } from './resolveFileIcon'
+import { applyIconFallback, resolveResourceIcon } from './fileIcon'
 
 const props = withDefaults(defineProps<{
   name: string
@@ -10,8 +9,7 @@ const props = withDefaults(defineProps<{
   size: 'small',
 })
 
-const iconName = computed(() => resolveFileIcon(props.name))
-const iconUrl = computed(() => getFileIconUrl(iconName.value))
+const icon = computed(() => resolveResourceIcon({ path: props.name, kind: 'file' }))
 </script>
 
 <template>
@@ -19,9 +17,10 @@ const iconUrl = computed(() => getFileIconUrl(iconName.value))
     alt=""
     class="buddy-file-icon block flex-none"
     :class="`is-${size}`"
-    :data-file-icon="iconName"
+    :data-file-icon="icon.id"
     draggable="false"
-    :src="iconUrl"
+    :src="icon.url"
+    @error="applyIconFallback($event, icon.fallbackUrl)"
   >
 </template>
 

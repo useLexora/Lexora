@@ -229,6 +229,7 @@ async function fixture() {
         return { approvalId: 'unexpected-approval', decision: 'approved_once' }
       } },
       attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
+      fileResources: {} as BuddySessionExtensionServices['fileResources'],
       mutations: new MutationCoordinator(),
       changeCaptureService: { beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }), finishInvocation: async () => ({ complete: true }), markPartial: async () => {} },
       createCapabilities: async () => [],

@@ -20,6 +20,8 @@ export const rendererDiagnosticSchema = applicationDiagnosticSchema.pick({
     'workbench.copy.loaded',
     'workbench.copy.load_failed',
     'workbench.copy.dirty_changed',
+    'workbench.copy.guarded',
+    'workbench.copy.moved',
     'workbench.copy.save_started',
     'workbench.copy.saved',
     'workbench.copy.save_conflict',

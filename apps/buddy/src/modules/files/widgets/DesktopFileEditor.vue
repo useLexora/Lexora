@@ -29,7 +29,7 @@ function resourceIdentity(resource: ResourceRef): string {
 }
 const identity = computed(() => resourceIdentity(props.view.resource))
 function captureResource() {
-  return { resource: spaceFileTargetSchema.parse(props.view.resource.data) }
+  return { resource: spaceFileTargetSchema.strip().parse(props.view.resource.data) }
 }
 const viewId = computed(() => props.view.id)
 let editor: Monaco.editor.IStandaloneCodeEditor | undefined
@@ -92,7 +92,7 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
     release = lease.release
     ownedEditor = lease.monaco.editor.create(element, {
       model: lease.model,
-      readOnly: mode.value !== 'edit',
+      readOnly: mode.value !== 'edit' || copy.value?.blocked,
       domReadOnly: mode.value !== 'edit',
       automaticLayout: true,
       fontSize: 13,
@@ -123,7 +123,7 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
       failed.value = true
   }
 }, { immediate: true })
-watch(mode, value => editor?.updateOptions({ readOnly: value !== 'edit', domReadOnly: value !== 'edit' }))
+watch([mode, () => copy.value?.blocked], ([value, blocked]) => editor?.updateOptions({ readOnly: value !== 'edit' || blocked, domReadOnly: value !== 'edit' || blocked }))
 watch(() => props.view.state.wrap, value => editor?.updateOptions({ wordWrap: (value ?? controller.configuration.get('workbench.wordWrap')) ? 'on' : 'off' }))
 async function retry() {
   const key = identity.value
@@ -148,7 +148,7 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
           <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
-          <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
+          <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || copy.blocked || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
             {{ labels.save }}
           </NButton>
         </template>

@@ -5,7 +5,7 @@ import type { TaskChatWorkspace } from '@/modules/tasks/contracts'
 import { NSpin } from 'naive-ui'
 import { computed, nextTick, toRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopContextFileTree from '@/shared/ui/files/DesktopContextFileTree.vue'
+import ExplorerTree from '@/shared/ui/explorer/ExplorerTree.vue'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
 import WorkbenchPanelContent from '@/workbench/browser/WorkbenchPanelContent.vue'
 import DesktopChangeList from './DesktopChangeList.vue'
@@ -60,7 +60,7 @@ async function selectChangeFile(id: string) {
       </div>
       <DesktopChangeList v-else ref="changeList" :files="changeView.detail.files" :language="language" :collapsed-files="changeView.collapsedFiles" :wrap="changeView.wrap" :side-by-side="changeView.sideBySide" @toggle="changes.toggleFile" />
       <template #tree>
-        <DesktopContextFileTree v-model:expanded-keys="changeView.expandedKeys" :nodes="changes.nodes.value" :selected-key="changeView.selectedFileId" :language="language" @select="selectChangeFile" />
+        <ExplorerTree v-model:expanded-keys="changeView.expandedKeys" :nodes="changes.nodes.value" :selected-key="changeView.selectedFileId" :language="language" @select="selectChangeFile" />
       </template>
     </DesktopContextSplit>
   </WorkbenchPanelContent>

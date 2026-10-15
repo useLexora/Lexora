@@ -1,5 +1,6 @@
-export { getFileIconUrl, getFolderIconUrl, resolveFileIconUrl } from './fileIcon'
+export { resolveFileIconUrl, resolveResourceIcon } from './fileIcon'
 export { default as FileIcon } from './FileIcon.vue'
 export { default as FolderIcon } from './FolderIcon.vue'
 export type { FileIconName } from './iconUrls'
 export { resolveFileIcon } from './resolveFileIcon'
+export { resolveFolderIcon } from './resolveFolderIcon'

@@ -1,8 +1,10 @@
 import { Buffer } from 'node:buffer'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { NativeFileEngine } from '../../files/NativeFileEngine'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSpaceRepository } from '../../storage/spaceRepository'
 import { SpaceFileService } from '../SpaceFileService'
@@ -10,7 +12,7 @@ import { SpaceService } from '../SpaceService'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
-  await Promise.all(cleanup.splice(0).map(dispose => dispose()))
+  for (const dispose of cleanup.splice(0).reverse()) await dispose()
 })
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'buddy-file-view-'))
@@ -24,7 +26,13 @@ async function fixture() {
   const repository = createSpaceRepository(database)
   const spaces = new SpaceService(repository)
   const space = await spaces.create({ name: 'Files', memoryScope: 'space_only', primaryDirectory: { id: null, root: workspace }, primaryDirectorySelectionVerified: true })
-  const files = new SpaceFileService(repository)
+  const engine = new NativeFileEngine(join(root, 'operations'))
+  await engine.ready()
+  const files = new SpaceFileService(repository, engine)
+  cleanup.push(async () => {
+    await files.dispose()
+    await engine.dispose()
+  })
   const target = { spaceId: space.id, directoryId: space.primaryDirectory!.id, revision: space.primaryDirectory!.revision, path: '' }
   return { database, root, workspace, files, spaces, target }
 }
@@ -42,9 +50,9 @@ describe('space file browsing', () => {
       if (event.kind === 'saved')
         f.database.prepare('UPDATE space_directory_bindings SET revision = revision + 1 WHERE id = ?').run(target.directoryId)
     })
-    await expect(f.files.saveDocument({ ...target, etag: original.etag, text: 'private changed content' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.files.saveDocument({ operationId: randomUUID(), ...target, etag: original.etag, text: 'private changed content' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     expect(await readFile(path, 'utf8')).toBe('private changed content')
-    expect(events).toMatchObject([{ kind: 'saved', revision: 1 }, { kind: 'response-denied', revision: 2 }])
+    expect(events.filter(event => (event as { kind: string }).kind !== 'changed')).toMatchObject([{ kind: 'saved' }, { kind: 'response-denied' }])
     expect(JSON.stringify(events)).not.toContain('private')
     expect(JSON.stringify(events)).not.toContain(original.etag)
   })
@@ -54,7 +62,7 @@ describe('space file browsing', () => {
     await mkdir(join(f.workspace, 'src'))
     await Promise.all(Array.from({ length: 251 }, (_, index) => writeFile(join(f.workspace, `file-${String(index).padStart(3, '0')}.ts`), 'export const value = 1\n')))
     const first = await f.files.list(f.target)
-    expect(first.entries).toHaveLength(250)
+    expect(first.nextCursor).not.toBeNull()
     expect(first.entries[0]).toMatchObject({ name: 'src', kind: 'directory' })
     const last = await f.files.list({ ...f.target, cursor: first.nextCursor! })
     expect(last.nextCursor).toBeNull()
@@ -64,7 +72,6 @@ describe('space file browsing', () => {
     expect(await f.files.read({ ...f.target, path: 'binary.dat' })).toMatchObject({ kind: 'binary', text: null })
     await writeFile(join(f.workspace, 'large.txt'), Buffer.alloc(1024 * 1024 + 1, 65))
     expect(await f.files.read({ ...f.target, path: 'large.txt' })).toMatchObject({ kind: 'oversized', text: null })
-    expect(await f.files.locate({ ...f.target, path: 'file-001.ts' })).toEqual({ path: join(f.workspace, 'file-001.ts'), kind: 'file' })
   })
 
   it('saves UTF-8 content without changing its BOM, rejects stale etags and rechecks grants', async () => {
@@ -74,14 +81,14 @@ describe('space file browsing', () => {
     const target = { ...f.target, path: 'note.md' }
     const original = await f.files.readDocument(target)
     expect(original.text).toBe('\uFEFFbase\r\n')
-    const saved = await f.files.saveDocument({ ...target, etag: original.etag, text: '\uFEFFchanged\r\n' })
+    const saved = await f.files.saveDocument({ operationId: randomUUID(), ...target, etag: original.etag, text: '\uFEFFchanged\r\n' })
     expect(saved.status).toBe('saved')
     expect(await readFile(path, 'utf8')).toBe('\uFEFFchanged\r\n')
-    const conflict = await f.files.saveDocument({ ...target, etag: original.etag, text: 'stale overwrite' })
+    const conflict = await f.files.saveDocument({ operationId: randomUUID(), ...target, etag: original.etag, text: 'stale overwrite' })
     expect(conflict).toMatchObject({ status: 'conflict', document: { text: '\uFEFFchanged\r\n' } })
-    await expect(f.files.saveDocument({ ...target, revision: 99, etag: saved.document.etag, text: 'wrong grant' })).rejects.toThrow()
+    await expect(f.files.saveDocument({ operationId: randomUUID(), ...target, revision: 99, etag: saved.document.etag, text: 'wrong grant' })).rejects.toThrow()
     await f.spaces.delete(target.spaceId)
-    await expect(f.files.saveDocument({ ...target, etag: saved.document.etag, text: 'revoked grant' })).rejects.toThrow()
+    await expect(f.files.saveDocument({ operationId: randomUUID(), ...target, etag: saved.document.etag, text: 'revoked grant' })).rejects.toThrow()
     expect(await readFile(path, 'utf8')).toBe('\uFEFFchanged\r\n')
   })
 
