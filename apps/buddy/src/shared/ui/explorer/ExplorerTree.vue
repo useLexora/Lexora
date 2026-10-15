@@ -12,6 +12,7 @@ const props = defineProps<{
   language: BuddyLocale
   nodes: readonly ExplorerNode[]
   selectedKey: string | null
+  loadingKeys?: ReadonlySet<string>
   load?: (node: ExplorerNode) => Promise<void>
 }>()
 const emit = defineEmits<{ select: [key: string], contextmenu: [node: ExplorerNode | null, event: MouseEvent], command: [command: string, node: ExplorerNode | null] }>()
@@ -70,7 +71,7 @@ function keydown(event: KeyboardEvent) {
   <div ref="tree" role="tree" tabindex="0" :aria-label="t('desktop.context.files')" :aria-activedescendant="focused ? rowId(focused) : undefined" class="explorer-tree min-h-0 flex-1" data-testid="context-file-tree" @keydown="keydown" @contextmenu.prevent="emit('contextmenu', null, $event)">
     <NVirtualList ref="list" :items="rows" :item-size="24" :padding-top="4" :padding-bottom="4" class="explorer-list">
       <template #default="{ item }">
-        <ExplorerRow :id="rowId(item.key)" :key="item.key" :row="item" :expanded="expanded.has(item.key)" :focused="focused === item.key" :selected="selectedKey === item.key" :loading="pending.has(item.key)" :status-label="statusLabel(item.node)" @activate="activate(item)" @toggle="toggle(item)" @contextmenu="contextmenu(item, $event)" />
+        <ExplorerRow :id="rowId(item.key)" :key="item.key" :row="item" :expanded="expanded.has(item.key)" :focused="focused === item.key" :selected="selectedKey === item.key" :loading="pending.has(item.key) || !!loadingKeys?.has(item.key)" :status-label="statusLabel(item.node)" @activate="activate(item)" @toggle="toggle(item)" @contextmenu="contextmenu(item, $event)" />
       </template>
     </NVirtualList>
   </div>

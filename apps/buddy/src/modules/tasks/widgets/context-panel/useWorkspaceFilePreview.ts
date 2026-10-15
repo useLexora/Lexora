@@ -15,6 +15,8 @@ interface FileView {
   treeWidth: number
   wrap: boolean
   treeFailed: boolean
+  loadingKeys: Set<string>
+  requests: Map<string, Promise<void>>
 }
 
 export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | null>>, api: WorkspaceFilesApi, hasTab: (id: string) => boolean) {
@@ -35,42 +37,35 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     if (!value)
       return
     let view = views.get(value.id)
-    if (!view) {
-      view = shallowReactive<FileView>({ generation: 0, tab: value, nodes: [], expandedKeys: [], treeVisible: true, treeWidth: 220, wrap: false, treeFailed: false })
+    if (!view || view.tab.target.directoryId !== value.target.directoryId || view.tab.target.revision !== value.target.revision || view.tab.target.spaceId !== value.target.spaceId) {
+      view = shallowReactive<FileView>({ generation: 0, tab: value, nodes: [], expandedKeys: [], treeVisible: true, treeWidth: 220, wrap: false, treeFailed: false, loadingKeys: shallowReactive(new Set<string>()), requests: new Map() })
       views.set(value.id, view)
       void refresh(value)
     }
+    view.tab = value
   }, { immediate: true, flush: 'sync' })
 
-  watch(() => tab.value?.target.path, async (newPath) => {
-    if (!newPath || !tab.value)
-      return
+  watch(() => [tab.value?.id, tab.value?.target.path], async (_, __, onCleanup) => {
     const value = tab.value
     const view = current.value
-    if (!view)
+    if (!value?.target.path || !view)
       return
-    const segments = newPath.split('/').filter(Boolean)
-    if (segments.length <= 1)
-      return
-    const ancestorKeys: string[] = []
-    let currentPath = ''
-    for (let i = 0; i < segments.length - 1; i++) {
-      currentPath = currentPath ? `${currentPath}/${segments[i]}` : segments[i]!
-      ancestorKeys.push(currentPath)
-    }
-    const missingKeys = ancestorKeys.filter(key => !view.expandedKeys.includes(key))
-    if (!missingKeys.length)
-      return
-    view.expandedKeys = [...view.expandedKeys, ...missingKeys]
-    for (const key of missingKeys) {
-      if (!retained(value.id, view))
+    let active = true
+    onCleanup(() => active = false)
+    await view.requests.get('')
+    const segments = value.target.path.split('/').filter(Boolean)
+    let path = ''
+    for (const segment of segments.slice(0, -1)) {
+      if (!active || !retained(value.id, view))
         return
-      try {
-        const children = await readNodes(value, key, view)
-        if (retained(value.id, view))
-          view.nodes = replaceChildren(view.nodes, key, children)
-      }
-      catch {}
+      path = path ? `${path}/${segment}` : segment
+      const node = findNode(view.nodes, path)
+      if (!node || node.kind !== 'directory' || node.disabled)
+        return
+      if (!view.expandedKeys.includes(path))
+        view.expandedKeys = [...view.expandedKeys, path]
+      if (!node.children || view.loadingKeys.has(path))
+        await readNodes(value, path, view)
     }
   }, { immediate: true })
 
@@ -78,45 +73,75 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     return !disposed && hasTab(id) && views.get(id) === view
   }
 
-  async function readNodes(value: TaskFilesContextTab, path: string, view: FileView): Promise<ExplorerNode[]> {
-    const nodes: ExplorerNode[] = []
-    const cursors = new Set<string>()
-    let cursor: string | undefined
-    do {
-      const page = await api.listDirectory({ ...value.target, path, cursor })
-      if (!retained(value.id, view))
-        return []
-      nodes.push(...page.entries.map(entry => ({
-        key: entry.path,
-        label: entry.name,
-        kind: entry.kind,
-        disabled: entry.unavailable,
-      })))
-      cursor = page.nextCursor ?? undefined
-      if (cursor && cursors.has(cursor))
-        throw new Error('FILE_LIST_CHANGED')
-      if (cursor)
-        cursors.add(cursor)
-    } while (cursor)
-    return nodes
+  function findNode(nodes: readonly ExplorerNode[], path: string): ExplorerNode | undefined {
+    let key = ''
+    let node: ExplorerNode | undefined
+    for (const segment of path.split('/')) {
+      key = key ? `${key}/${segment}` : segment
+      node = nodes.find(node => node.key === key)
+      nodes = node?.children ?? []
+    }
+    return node
+  }
+
+  function readNodes(value: TaskFilesContextTab, path: string, view: FileView): Promise<void> {
+    const pending = view.requests.get(path)
+    if (pending)
+      return pending
+    const generation = view.generation
+    const active = () => retained(value.id, view) && generation === view.generation
+    view.loadingKeys.add(path)
+    const request = (async () => {
+      const previous = path ? findNode(view.nodes, path)?.children ?? [] : view.nodes
+      const previousByKey = new Map(previous.map(node => [node.key, node]))
+      const nodes: ExplorerNode[] = []
+      const cursors = new Set<string>()
+      let cursor: string | undefined
+      do {
+        const page = await api.listDirectory({ ...value.target, path, cursor })
+        if (!active())
+          return
+        nodes.push(...page.entries.map((entry) => {
+          const old = previousByKey.get(entry.path)
+          return {
+            key: entry.path,
+            label: entry.name,
+            kind: entry.kind,
+            disabled: entry.unavailable,
+            children: entry.kind === 'directory' && !entry.unavailable && view.expandedKeys.includes(entry.path) ? old?.children : undefined,
+          }
+        }))
+        const currentNodes = new Map((path ? findNode(view.nodes, path)?.children ?? [] : view.nodes).map(node => [node.key, node]))
+        const visibleNodes = nodes.map(node => node.kind === 'directory' && !node.disabled && view.expandedKeys.includes(node.key)
+          ? { ...node, children: currentNodes.get(node.key)?.children ?? node.children }
+          : node)
+        view.nodes = path ? replaceChildren(view.nodes, path, visibleNodes) : visibleNodes
+        cursor = page.nextCursor ?? undefined
+        if (cursor && cursors.has(cursor))
+          throw new Error('FILE_LIST_CHANGED')
+        if (cursor)
+          cursors.add(cursor)
+      } while (cursor)
+    })().catch(() => {
+      if (active())
+        view.treeFailed = true
+    }).finally(() => {
+      if (active()) {
+        view.loadingKeys.delete(path)
+        view.requests.delete(path)
+      }
+    })
+    view.requests.set(path, request)
+    return request
   }
 
   async function load(node: ExplorerNode): Promise<void> {
     const value = tab.value
     const view = current.value
-    if (!value || !view)
-      return
-    const generation = view.generation
-    try {
-      const children = await readNodes(value, String(node.key), view)
-      if (retained(value.id, view) && view.generation === generation) {
-        view.nodes = replaceChildren(view.nodes, node.key!, children)
-        view.treeFailed = false
-      }
-    }
-    catch {
-      if (retained(value.id, view) && generation === view.generation)
-        view.treeFailed = true
+    if (value && view) {
+      const generation = view.generation
+      await readNodes(value, node.key, view)
+      await loadExpanded(value, view, generation, node.key)
     }
   }
 
@@ -128,40 +153,29 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     if (!view)
       return
     const generation = ++view.generation
-    try {
-      let rootNodes = await readNodes(value, '', view)
-      if (!retained(value.id, view))
+    view.requests.clear()
+    view.loadingKeys.clear()
+    view.treeFailed = false
+    await readNodes(value, '', view)
+    await loadExpanded(value, view, generation)
+  }
+
+  async function loadExpanded(value: TaskFilesContextTab, view: FileView, generation: number, parent = ''): Promise<void> {
+    const sortedKeys = view.expandedKeys.filter(key => !parent || key.startsWith(`${parent}/`)).sort((a, b) => a.split('/').length - b.split('/').length)
+    for (const key of sortedKeys) {
+      if (!retained(value.id, view) || generation !== view.generation)
         return
-      const validExpandedKeys: string[] = []
-      const expandedAtStart = [...view.expandedKeys]
-      const sortedKeys = [...expandedAtStart].sort((a, b) => {
-        const depthA = String(a).split('/').filter(Boolean).length
-        const depthB = String(b).split('/').filter(Boolean).length
-        return depthA - depthB
-      })
-      for (const key of sortedKeys) {
-        if (!retained(value.id, view))
-          return
-        try {
-          const children = await readNodes(value, String(key), view)
-          rootNodes = replaceChildren(rootNodes, key, children)
-          validExpandedKeys.push(key)
-        }
-        catch {
-          // Skip missing or unreadable directories
-        }
+      const segments = key.split('/')
+      const visible = segments.slice(0, -1).every((_, index) => view.expandedKeys.includes(segments.slice(0, index + 1).join('/')))
+      if (!view.expandedKeys.includes(key) || !visible)
+        continue
+      const node = findNode(view.nodes, key)
+      if (node?.kind === 'directory' && !node.disabled) {
+        await readNodes(value, key, view)
       }
-      if (retained(value.id, view) && generation === view.generation) {
-        if (expandedAtStart.length !== view.expandedKeys.length || expandedAtStart.some((key, index) => view.expandedKeys[index] !== key))
-          return refresh(value)
-        view.nodes = rootNodes
-        view.expandedKeys = validExpandedKeys
-        view.treeFailed = false
+      else if (!view.treeFailed) {
+        view.expandedKeys = view.expandedKeys.filter(path => path !== key && !path.startsWith(`${key}/`))
       }
-    }
-    catch {
-      if (retained(value.id, view) && generation === view.generation)
-        view.treeFailed = true
     }
   }
 
@@ -173,7 +187,8 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
       clearTimeout(refreshTimers.get(id))
       refreshTimers.set(id, setTimeout(() => {
         refreshTimers.delete(id)
-        void refresh(view.tab)
+        if (retained(id, view))
+          void refresh(view.tab)
       }, 200))
     }
   }))

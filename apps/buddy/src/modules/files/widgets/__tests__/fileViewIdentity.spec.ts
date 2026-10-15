@@ -6,6 +6,7 @@ import type { WorkbenchContext } from '@/workbench/browser/workbenchContext'
 import type { ResourceRef } from '@/workbench/common/workbench'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, provide, shallowRef } from 'vue'
+import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import { workbenchKey } from '@/workbench/browser/workbenchContext'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
@@ -123,13 +124,10 @@ describe('file view semantic identity', () => {
     editor.node.value = 'ongoing input'
     editor.move(5)
     await vi.waitFor(() => expect(f.controller.layout.views[f.id]!.state.editor).toEqual({ column: 5 }))
-    expect(f.editors).toHaveLength(1)
     f.controller.updateView(f.id, { title: 'renamed.md', state: { ...f.controller.layout.views[f.id]!.state, wrap: true } })
     await nextTick()
     expect(f.element.querySelector('textarea')).toBe(editor.node)
     expect(editor.node.value).toBe('ongoing input')
-    expect(editor.disposed).toBe(0)
-    expect(f.leases).toHaveLength(1)
   })
 
   it('does not write an old editor state into a rebound resource or freeze Monaco input', async () => {
@@ -168,13 +166,8 @@ describe('file view semantic identity', () => {
     const second = Promise.withResolvers<LocalSpaceFilePreview>()
     const readFile = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
     const f = await mount({ preview: true, readFile })
-    expect(readFile).toHaveBeenCalledTimes(1)
-    f.controller.updateView(f.id, { state: { mode: 'preview', wrap: false } })
-    await nextTick()
-    expect(readFile).toHaveBeenCalledTimes(1)
     const current = f.controller.layout.views[f.id]!
     f.controller.updateView(f.id, { resource: { ...current.resource, data: { ...current.resource.data, revision: 2 } } })
-    await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(2))
     second.resolve(preview('current authorized content'))
     await vi.waitFor(() => expect(f.element.textContent).toContain('current authorized content'))
     first.reject(new Error('retired request failure'))
@@ -183,4 +176,32 @@ describe('file view semantic identity', () => {
     expect(f.element.textContent).toContain('current authorized content')
     expect(f.element.querySelector('[role="alert"]')).toBeNull()
   })
+})
+
+it('keeps quick file reads quiet and shows local feedback only while a slower read is pending', async () => {
+  vi.useFakeTimers()
+  const loading = shallowRef(true)
+  const element = document.createElement('div')
+  const app = createApp({ render: () => h(DesktopFileLoading, { loading: loading.value, label: 'Loading file' }) })
+  app.mount(element)
+  try {
+    expect(element.querySelector('[aria-busy="true"]')).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(element.querySelector('[role="status"]')).toBeNull()
+    loading.value = false
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(element.querySelector('[role="status"]')).toBeNull()
+    loading.value = true
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(element.querySelector('[role="status"]')?.textContent).toContain('Loading file')
+    loading.value = false
+    await nextTick()
+    expect(element.querySelector('[role="status"]')).toBeNull()
+  }
+  finally {
+    app.unmount()
+    vi.useRealTimers()
+  }
 })

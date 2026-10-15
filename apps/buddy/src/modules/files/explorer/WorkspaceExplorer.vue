@@ -4,17 +4,21 @@ import type { SpaceFileOperation, SpaceFileTarget } from '@buddy-shared/spaces/s
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ExplorerNode } from '@/shared/ui/explorer/treeCollection'
 import { DocumentAdd20Regular, FolderAdd20Regular, SubtractSquare20Regular } from '@vicons/fluent'
-import { NDropdown } from 'naive-ui'
+import { NDropdown, NSpin } from 'naive-ui'
 import { computed, onMounted, onScopeDispose, shallowRef, watch } from 'vue'
+import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { loadDesktopAppInfo } from '@/platform/desktop/desktopCapabilities'
 import ExplorerTree from '@/shared/ui/explorer/ExplorerTree.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
+import { useDelayedLoading } from '@/shared/ui/loading/useDelayedLoading'
 import ExplorerNameDialog from './ExplorerNameDialog.vue'
 import ExplorerRecovery from './ExplorerRecovery.vue'
 import { useExplorerCommands } from './useExplorerCommands'
 
 const props = defineProps<{
   nodes: readonly ExplorerNode[]
+  loadingKeys: ReadonlySet<string>
   target: SpaceFileTarget
   language: BuddyLocale
   api: Pick<LocalChatApi['spaces'], 'revealFile' | 'fileHistory' | 'acknowledgeFileOperation' | 'cancelFileOperation' | 'onFilesChanged'>
@@ -22,6 +26,8 @@ const props = defineProps<{
   refresh: () => Promise<void>
 }>()
 const emit = defineEmits<{ select: [key: string] }>()
+const showRefreshing = useDelayedLoading(() => props.loadingKeys.has('') && props.nodes.length > 0)
+const { t } = useBuddyI18n(() => props.language)
 const expandedKeys = defineModel<string[]>('expandedKeys', { required: true })
 const menu = shallowRef<{ node: ExplorerNode | null, x: number, y: number } | null>(null)
 const recoveryOperations = shallowRef<SpaceFileOperation[]>([])
@@ -93,6 +99,7 @@ async function acknowledge(operation: SpaceFileOperation) {
   <div class="workspace-explorer flex min-h-0 flex-1 flex-col">
     <div class="explorer-toolbar">
       <span class="explorer-root truncate">{{ target.path ? target.path.split('/').slice(0, -1).join('/') || '/' : '/' }}</span>
+      <NSpin v-if="showRefreshing" :size="12" class="mr-[4px]" />
       <button type="button" :aria-label="labels.newFile" :disabled="!!busy" @click="commands.command('newFile', null)">
         <DesktopIcon :component="DocumentAdd20Regular" :size="16" />
       </button>
@@ -111,7 +118,10 @@ async function acknowledge(operation: SpaceFileOperation) {
     <div v-if="error" class="explorer-notice" role="alert">
       <span>{{ error }}</span>
     </div>
-    <ExplorerTree v-model:expanded-keys="expandedKeys" :nodes="nodes" :selected-key="target.path || null" :language="language" :load="load" @select="emit('select', $event)" @contextmenu="contextmenu" @command="commands.command" />
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      <DesktopFileLoading v-if="!nodes.length && loadingKeys.has('')" class="absolute inset-0" :loading="true" tree :label="t('desktop.loading.pane')" />
+      <ExplorerTree v-model:expanded-keys="expandedKeys" :loading-keys="loadingKeys" :aria-busy="loadingKeys.has('')" :nodes="nodes" :selected-key="target.path || null" :language="language" :load="load" @select="emit('select', $event)" @contextmenu="contextmenu" @command="commands.command" />
+    </div>
     <ExplorerRecovery v-if="recoveryOperations.length" :operations="recoveryOperations" :language="language" :busy="!!busy" @acknowledge="acknowledge" />
     <NDropdown :show="!!menu" :x="menu?.x ?? 0" :y="menu?.y ?? 0" :options="menuOptions" trigger="manual" placement="bottom-start" @select="selectCommand" @clickoutside="menu = null" />
     <ExplorerNameDialog :request="nameRequest" :language="language" :platform="platform" @finish="commands.finishName" />

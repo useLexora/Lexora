@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
-import { NSpin } from 'naive-ui'
 import { computed, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import { DesktopTaskIndexView, DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
+import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
 import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
@@ -79,9 +79,7 @@ function focusContext() {
           </template>
           <template #file="{ wrap, setWrap }">
             <DesktopDirectoryFileSurface v-if="selectedFile" :view="selectedFile" :wrap="wrap" :visible="contextVisible" @update-wrap="setWrap" />
-            <div v-else class="desktop-workbench-area__file-loading grid flex-1 gap-[12px] text-muted text-[12px]">
-              <NSpin size="small" />{{ labels.loading }}
-            </div>
+            <DesktopFileLoading v-else :key="fileTab?.target.path" :loading="true" :label="labels.loading" />
           </template>
         </DesktopTaskResourcePanel>
       </div>
@@ -91,5 +89,4 @@ function focusContext() {
 
 <style scoped lang="scss">
 .desktop-workbench-area__tasks > :deep(*) { flex: 1; }
-.desktop-workbench-area__file-loading { place-content: center; }
 </style>

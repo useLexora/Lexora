@@ -9,6 +9,7 @@ import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, isMarkdownFile, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
+import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
 import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteReveal'
 import { useSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
@@ -83,6 +84,7 @@ function captureResource() {
         {{ labels.retry }}
       </button>
     </div>
+    <DesktopFileLoading v-else-if="!preview" :loading="true" :label="labels.loading" />
     <DesktopDocumentContent
       v-else
       ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"

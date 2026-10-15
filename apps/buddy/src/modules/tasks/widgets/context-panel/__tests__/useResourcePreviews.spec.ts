@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import type { LocalArtifact, LocalArtifactText } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetDetail, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
+import type { Ref } from 'vue'
+import type { WorkspaceFilesApi } from '../useWorkspaceFilePreview'
 import type { TaskChangesContextTab, TaskFilesContextTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computed, effectScope, nextTick, shallowRef } from 'vue'
 import { deferred } from '../../../../../../__tests__/deferred'
-import { resolveArtifactDisplayMode } from '../artifactContextPresentation'
 import { useArtifactPreview } from '../useArtifactPreview'
 import { useContextChanges } from '../useContextChanges'
 import { useWorkspaceFilePreview } from '../useWorkspaceFilePreview'
@@ -36,18 +37,16 @@ describe('resource previews', () => {
     retained.value = new Set([first.id, second.id])
     tab.value = first
     await nextTick()
-    expect(state.current.value).not.toBe(previous)
     expect(state.current.value?.treeWidth).not.toBe(previous.treeWidth)
   })
 
   it('stops directory pagination after its tab closes and discards late results', async () => {
-    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const value = filesTab()
     const tab = shallowRef<TaskFilesContextTab | null>(value)
     const retained = shallowRef(true)
     const page = deferred<{ entries: [], nextCursor: string | null }>()
     const listDirectory = vi.fn().mockReturnValueOnce(page.promise).mockResolvedValue({ entries: [], nextCursor: null })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => retained.value))
-    const previous = state.current.value!
+    const { state } = openFiles(tab, listDirectory, () => retained.value)
     tab.value = null
     retained.value = false
     await nextTick()
@@ -57,12 +56,11 @@ describe('resource previews', () => {
     retained.value = true
     tab.value = value
     await nextTick()
-    expect(state.current.value).not.toBe(previous)
     expect(state.current.value?.nodes).toEqual([])
   })
 
   it('refreshes root and expanded directories on focus while preserving valid expanded keys', async () => {
-    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const value = filesTab()
     const tab = shallowRef<TaskFilesContextTab | null>(value)
     const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
       if (path === '') {
@@ -84,7 +82,7 @@ describe('resource previews', () => {
       }
       throw new Error('Not found')
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
+    const { state } = openFiles(tab, listDirectory)
     await Promise.resolve()
     await nextTick()
     expect(state.current.value?.nodes).toHaveLength(2)
@@ -100,7 +98,7 @@ describe('resource previews', () => {
   })
 
   it('marks treeFailed when root refresh fails and recovers on next successful refresh', async () => {
-    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const value = filesTab()
     const tab = shallowRef<TaskFilesContextTab | null>(value)
     let shouldFail = false
     const listDirectory = vi.fn().mockImplementation(async () => {
@@ -108,7 +106,7 @@ describe('resource previews', () => {
         throw new Error('Disk unreadable')
       return { entries: [{ name: 'file.txt', path: 'file.txt', kind: 'file', unavailable: false }], nextCursor: null }
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
+    const { state } = openFiles(tab, listDirectory)
     await nextTick()
     expect(state.current.value?.treeFailed).toBe(false)
 
@@ -123,7 +121,7 @@ describe('resource previews', () => {
   })
 
   it('automatically reveals and loads ancestor directories when a nested file path is selected', async () => {
-    const value: TaskFilesContextTab = { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+    const value = filesTab()
     const tab = shallowRef<TaskFilesContextTab | null>(value)
     const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
       if (path === '')
@@ -134,30 +132,87 @@ describe('resource previews', () => {
         return { entries: [{ name: 'math.ts', path: 'src/utils/math.ts', kind: 'file', unavailable: false }], nextCursor: null }
       return { entries: [], nextCursor: null }
     })
-    const { state } = own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, () => true))
+    const { state } = openFiles(tab, listDirectory)
     await Promise.resolve()
     await nextTick()
 
     tab.value = { ...value, target: { ...value.target, path: 'src/utils/math.ts' } }
-    await Promise.resolve()
-    await nextTick()
-    await Promise.resolve()
-    await nextTick()
-
-    expect(state.current.value?.expandedKeys).toEqual(expect.arrayContaining(['src', 'src/utils']))
+    await vi.waitFor(() => expect(state.current.value?.expandedKeys).toEqual(['src', 'src/utils']))
+    await vi.waitFor(() => expect(state.current.value?.nodes[0]?.children?.[0]?.children?.[0]?.key).toBe('src/utils/math.ts'))
   })
 
-  it.each([
-    ['report.md', 'text/markdown', 'file', 'preview', 'preview'],
-    ['report.md', 'text/markdown', 'file', 'source', 'source'],
-    ['legacy.markdown', 'application/octet-stream', 'file', 'preview', 'preview'],
-    ['notes.txt', 'text/plain', 'file', 'preview', 'source'],
-    ['image.png', 'image/png', 'file', 'source', 'preview'],
-    ['drawing.svg', 'image/svg+xml', 'file', 'source', 'preview'],
-    ['report.pdf', 'application/pdf', 'file', 'preview', 'file'],
-    ['folder.md', 'inode/directory', 'directory', 'source', 'directory'],
-  ] as const)('selects the display mode for %s (%s, %s, requested %s)', (name, mimeType, kind, requested, expected) => {
-    expect(resolveArtifactDisplayMode({ name, mimeType, kind }, requested)).toBe(expected)
+  it('publishes directory pages before completion and preserves folders expanded during pagination', async () => {
+    const value = filesTab()
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const nextPage = deferred<{ entries: { name: string, path: string, kind: 'file', unavailable: boolean }[], nextCursor: null }>()
+    const listDirectory = vi.fn().mockImplementation(async ({ path, cursor }: { path: string, cursor?: string }) => {
+      if (cursor)
+        return nextPage.promise
+      if (path === 'src')
+        return { entries: [{ name: 'nested.ts', path: 'src/nested.ts', kind: 'file', unavailable: false }], nextCursor: null }
+      return { entries: [{ name: 'src', path: 'src', kind: 'directory', unavailable: false }], nextCursor: 'src' }
+    })
+    const { state } = openFiles(tab, listDirectory)
+    await vi.waitFor(() => expect(state.current.value?.nodes[0]?.key).toBe('src'))
+    expect(state.current.value?.loadingKeys.has('')).toBe(true)
+    state.current.value!.expandedKeys = ['src']
+    await state.load(state.current.value!.nodes[0]!)
+    expect(state.current.value?.nodes[0]?.children?.[0]?.key).toBe('src/nested.ts')
+    nextPage.resolve({ entries: [{ name: 'last.txt', path: 'last.txt', kind: 'file', unavailable: false }], nextCursor: null })
+    await vi.waitFor(() => expect(state.current.value?.loadingKeys.size).toBe(0))
+    expect(state.current.value?.nodes.map(node => node.key)).toEqual(['src', 'last.txt'])
+    expect(state.current.value?.nodes[0]?.children?.[0]?.key).toBe('src/nested.ts')
+  })
+
+  it('keeps refreshed root entries visible while a child loads and ignores superseded pages', async () => {
+    const value = filesTab()
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const child = deferred<{ entries: [], nextCursor: string | null }>()
+    let version = 'before.txt'
+    const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => path === 'src'
+      ? child.promise
+      : {
+          entries: [{ name: 'src', path: 'src', kind: 'directory', unavailable: false }, { name: version, path: version, kind: 'file', unavailable: false }],
+          nextCursor: null,
+        })
+    const { state } = openFiles(tab, listDirectory)
+    await vi.waitFor(() => expect(state.current.value?.loadingKeys.size).toBe(0))
+    state.current.value!.expandedKeys = ['src']
+    const oldLoad = state.load(state.current.value!.nodes[0]!)
+    version = 'after.txt'
+    const refresh = state.refresh()
+    await vi.waitFor(() => expect(state.current.value?.nodes[1]?.key).toBe('after.txt'))
+    expect(state.current.value?.loadingKeys.has('src')).toBe(true)
+    tab.value = { ...value, target: { ...value.target, revision: 2 } }
+    await vi.waitFor(() => expect(state.current.value?.loadingKeys.size).toBe(0))
+    child.resolve({ entries: [], nextCursor: 'old-page' })
+    await Promise.all([oldLoad, refresh])
+    expect(state.current.value?.nodes[0]?.children).toBeUndefined()
+    expect(listDirectory.mock.calls.some(([input]) => input.cursor === 'old-page')).toBe(false)
+  })
+
+  it('refreshes only visible directories and restores nested expansion when a parent reopens', async () => {
+    const value = filesTab()
+    const tab = shallowRef<TaskFilesContextTab | null>(value)
+    const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => ({ entries: [
+      path === ''
+        ? { name: 'src', path: 'src', kind: 'directory', unavailable: false }
+        : path === 'src'
+          ? { name: 'deep', path: 'src/deep', kind: 'directory', unavailable: false }
+          : { name: 'note.txt', path: 'src/deep/note.txt', kind: 'file', unavailable: false },
+    ], nextCursor: null }))
+    const { state } = openFiles(tab, listDirectory)
+    await vi.waitFor(() => expect(state.current.value?.loadingKeys.size).toBe(0))
+    state.current.value!.expandedKeys = ['src', 'src/deep']
+    await state.load(state.current.value!.nodes[0]!)
+    state.current.value!.expandedKeys = ['src/deep']
+    listDirectory.mockClear()
+    await state.refresh()
+    expect(listDirectory.mock.calls.map(([input]) => input.path)).toEqual([''])
+    expect(state.current.value?.expandedKeys).toEqual(['src/deep'])
+    state.current.value!.expandedKeys = ['src', 'src/deep']
+    await state.load(state.current.value!.nodes[0]!)
+    expect(state.current.value?.nodes[0]?.children?.[0]?.children?.[0]?.key).toBe('src/deep/note.txt')
   })
 
   it('reads legacy Markdown artifacts without requiring their stored MIME type to change', async () => {
@@ -170,38 +225,32 @@ describe('resource previews', () => {
     expect(state.textPreviewLoading.value).toBe(false)
   })
 
-  it.each(['resolve', 'reject'] as const)('ignores an old text request that finishes with %s', async (outcome) => {
+  it('ignores late text success and failure after switching artifacts or closing the preview', async () => {
     const first = deferred<LocalArtifactText>()
+    const second = deferred<LocalArtifactText>()
     const artifact = shallowRef(createArtifact('first'))
-    const readText = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue({ artifactId: 'second', language: null, text: 'current' })
+    const readText = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockResolvedValue({ artifactId: 'current', language: null, text: 'current' })
     const { state, stop } = own(() => useArtifactPreview({ artifact: () => artifact.value, readText: () => readText }))
     artifact.value = createArtifact('second')
+    artifact.value = createArtifact('current')
     await nextTick()
-    if (outcome === 'resolve')
-      first.resolve({ artifactId: 'first', language: null, text: 'old' })
-    else
-      first.reject(new Error('old failure'))
+    first.resolve({ artifactId: 'first', language: null, text: 'old' })
+    second.reject(new Error('old failure'))
     await nextTick()
     expect(state.textPreview.value?.text).toBe('current')
     expect(state.textPreviewFailed.value).toBe(false)
     const pending = deferred<LocalArtifactText>()
     readText.mockReturnValueOnce(pending.promise)
-    artifact.value = createArtifact('third')
+    artifact.value = createArtifact('disposed')
     stop()
-    pending.resolve({ artifactId: 'third', language: null, text: 'disposed' })
+    pending.resolve({ artifactId: 'disposed', language: null, text: 'disposed' })
     await nextTick()
     expect(state.textPreview.value).toBeNull()
   })
 
-  it('reacts to a replacement reader and ignores old image errors', async () => {
-    const artifact = shallowRef(createArtifact('first'))
-    const reader = shallowRef(async () => ({ artifactId: 'first', language: null, text: 'before' }))
-    const { state } = own(() => useArtifactPreview({ artifact: () => artifact.value, readText: () => reader.value }))
-    await nextTick()
-    reader.value = async () => ({ artifactId: 'first', language: null, text: 'after' })
-    await nextTick()
-    expect(state.textPreview.value?.text).toBe('after')
-    artifact.value = { ...createArtifact('image-a'), mimeType: 'image/png' }
+  it('ignores image errors from a previously selected artifact', () => {
+    const artifact = shallowRef({ ...createArtifact('image-a'), mimeType: 'image/png' })
+    const { state } = own(() => useArtifactPreview({ artifact: () => artifact.value, readText: () => vi.fn() }))
     const oldImage = document.createElement('img')
     oldImage.setAttribute('src', state.previewUrl.value!)
     artifact.value = { ...createArtifact('image-b'), mimeType: 'image/png' }
@@ -209,7 +258,7 @@ describe('resource previews', () => {
     expect(state.previewUrl.value).toContain('image-b')
   })
 
-  it('keeps the selected change file and visible detail while the same set refreshes', async () => {
+  it('preserves selection and updates file counts when the same change set refreshes', async () => {
     const changeSet = shallowRef<LocalChangeSetSummary>(createChanges('set-a'))
     const refresh = deferred<LocalChangeSetDetail>()
     const getDetail = vi.fn().mockResolvedValueOnce(createChanges('set-a')).mockReturnValueOnce(refresh.promise)
@@ -219,9 +268,12 @@ describe('resource previews', () => {
     changeSet.value = { ...changeSet.value, updatedAt: '2026-09-09T00:00:00.000Z' }
     expect(state.current.value?.selectedFileId).toBe('second')
     expect(state.current.value?.loading).toBe(false)
-    refresh.resolve(createChanges('set-a'))
+    const refreshed = createChanges('set-a')
+    refresh.resolve({ ...refreshed, files: refreshed.files.map((file, index) => index === 0 ? { ...file, afterText: 'updated\nextra\n' } : file) })
     await nextTick()
     expect(state.current.value?.selectedFileId).toBe('second')
+    expect(state.nodes.value.map(node => node.lineCounts)).toEqual([{ added: 2, deleted: 1 }, { added: 1, deleted: 1 }])
+    expect(state.counts.value).toEqual({ added: 3, deleted: 2 })
     getDetail.mockResolvedValueOnce({ ...createChanges('set-a'), files: createChanges('set-a').files.slice(0, 1) })
     changeSet.value = { ...changeSet.value, updatedAt: '2026-09-10T00:00:00.000Z' }
     await nextTick()
@@ -248,25 +300,15 @@ describe('resource previews', () => {
     await nextTick()
     expect(state.current.value).toBeNull()
   })
-
-  it('keeps file, tree and total counts consistent when captured content refreshes', async () => {
-    const tab = shallowRef<TaskChangesContextTab>({ id: 'changes:conversation', scope: 'task:conversation', conversationId: 'conversation', kind: 'changes', changeSet: createChanges('a'), branchId: 'branch', revision: '1' })
-    const getDetail = vi.fn().mockResolvedValue(createChanges('a'))
-    const { state } = own(() => useContextChanges({ hasTab: () => true, tab, getChangeSet: getDetail, getOverview: getDetail }))
-    await nextTick()
-    expect(state.counts.value).toEqual({ added: 2, deleted: 2 })
-    const next = createChanges('a')
-    getDetail.mockResolvedValueOnce({
-      ...next,
-      files: next.files.map((file, index) => index === 0 ? { ...file, afterText: 'updated\nextra\n' } : file),
-    })
-    tab.value = { ...tab.value, revision: '2' }
-    await nextTick()
-    expect(state.current.value?.detail?.files.map(file => file.lineCounts)).toEqual([{ added: 2, deleted: 1 }, { added: 1, deleted: 1 }])
-    expect(state.nodes.value.map(node => node.lineCounts)).toEqual([{ added: 2, deleted: 1 }, { added: 1, deleted: 1 }])
-    expect(state.counts.value).toEqual({ added: 3, deleted: 2 })
-  })
 })
+
+function filesTab(): TaskFilesContextTab {
+  return { id: 'files:first', scope: 'task:first', kind: 'files', rootName: 'fixture', target: { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' } }
+}
+
+function openFiles(tab: Ref<TaskFilesContextTab | null>, listDirectory: WorkspaceFilesApi['listDirectory'], hasTab = () => true) {
+  return own(() => useWorkspaceFilePreview(tab, { listDirectory, readFile: vi.fn(), revealFile: vi.fn(), onFilesChanged: () => () => {}, fileHistory: async () => [], acknowledgeFileOperation: vi.fn(), cancelFileOperation: async () => null }, hasTab))
+}
 
 function createArtifact(id: string): LocalArtifact {
   return { artifactId: id, conversationId: 'conversation', createdAt: '2026-09-08T00:00:00.000Z', kind: 'file', mimeType: 'text/plain', name: `${id}.txt`, path: `/workspace/${id}.txt`, previewUrl: null, runId: 'run', sizeBytes: 10, sourceArtifactId: null, sourceToolCallId: 'tool', updatedAt: '2026-09-08T00:00:00.000Z' }

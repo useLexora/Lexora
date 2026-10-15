@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ExplorerRow } from './treeCollection'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
+import { useDelayedLoading } from '@/shared/ui/loading/useDelayedLoading'
 import { desktopFileIconSnapshot } from '@/theme/desktopFileIconState'
 
 const props = defineProps<{
@@ -12,6 +13,7 @@ const props = defineProps<{
   statusLabel?: string
 }>()
 const emit = defineEmits<{ activate: [], toggle: [], contextmenu: [event: MouseEvent] }>()
+const showLoading = useDelayedLoading(() => props.loading)
 </script>
 
 <template>
@@ -25,14 +27,15 @@ const emit = defineEmits<{ activate: [], toggle: [], contextmenu: [event: MouseE
   >
     <span v-for="level in row.level - 1" :key="level" aria-hidden="true" class="explorer-guide" :style="{ insetInlineStart: `${11 + (level - 1) * 12}px` }" />
     <span v-if="!desktopFileIconSnapshot.active?.document.hidesExplorerArrows" class="explorer-disclosure" aria-hidden="true" @click.stop="emit('toggle')">
-      <svg v-if="row.node.kind === 'directory'" viewBox="0 0 16 16" :class="{ 'is-expanded': expanded, 'is-loading': loading }">
-        <path v-if="!loading" d="m6 4 4 4-4 4" />
+      <svg v-if="row.node.kind === 'directory'" viewBox="0 0 16 16" :class="{ 'is-expanded': expanded, 'is-loading': showLoading }">
+        <path v-if="!showLoading" d="m6 4 4 4-4 4" />
         <path v-else d="M13 8a5 5 0 1 1-5-5" />
       </svg>
     </span>
     <FolderIcon v-if="row.node.kind === 'directory'" :name="row.key" :expanded="expanded" class="explorer-folder" />
     <FileIcon v-else :name="row.key" class="explorer-file-icon" />
     <span class="explorer-label">{{ row.node.label }}</span>
+    <svg v-if="showLoading && desktopFileIconSnapshot.active?.document.hidesExplorerArrows" class="explorer-loading w-[12px] h-[12px] flex-none fill-none stroke-current" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-8-8" /></svg>
     <span v-if="row.node.changeType" class="explorer-status" :class="`is-${row.node.changeType}`" :aria-label="statusLabel">{{ props.row.node.changeType === 'created' ? '+' : props.row.node.changeType === 'deleted' ? '−' : '●' }}</span>
   </div>
 </template>
@@ -90,7 +93,8 @@ const emit = defineEmits<{ activate: [], toggle: [], contextmenu: [event: MouseE
 .explorer-disclosure .is-expanded {
   transform: rotate(90deg);
 }
-.explorer-disclosure .is-loading {
+.explorer-loading { stroke-width: 1.8; stroke-linecap: round; }
+.explorer-disclosure .is-loading, .explorer-loading {
   animation: explorer-spin 1s linear infinite;
 }
 .explorer-folder, .explorer-file-icon {
@@ -126,6 +130,7 @@ const emit = defineEmits<{ activate: [], toggle: [], contextmenu: [event: MouseE
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .explorer-disclosure .is-loading, .explorer-loading { animation: none; }
   .explorer-disclosure svg {
     transition: none;
   }

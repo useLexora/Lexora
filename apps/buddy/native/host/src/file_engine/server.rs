@@ -3,14 +3,14 @@ use super::{
     journal::Journal,
     operations,
     protocol::{Command, Error, MAX_FRAME, Request, Result, Status, VERSION},
-    resources::{Claim, Roots, contains, overlap, path_key},
+    resources::{Claim, Roots, contains, identity, overlap, path_key},
 };
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufRead, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -108,7 +108,8 @@ pub fn serve(directory: &Path) -> Result<()> {
         controls,
         output,
         watcher,
-        watched: Vec::new(),
+        subscriptions: HashSet::new(),
+        watched: HashMap::new(),
         pending: VecDeque::new(),
     };
     send(
@@ -142,8 +143,9 @@ pub fn serve(directory: &Path) -> Result<()> {
                 .roots
                 .0
                 .iter()
-                .filter(|(_, root)| {
-                    !root.revoked.load(Ordering::SeqCst)
+                .filter(|(key, root)| {
+                    engine.subscriptions.contains(*key)
+                        && !root.revoked.load(Ordering::SeqCst)
                         && paths
                             .iter()
                             .any(|path| path.as_os_str().is_empty() || path.starts_with(&root.path))
@@ -164,11 +166,65 @@ struct Engine {
     controls: Arc<Mutex<Controls>>,
     output: Output,
     watcher: Option<notify::RecommendedWatcher>,
-    watched: Vec<std::path::PathBuf>,
+    subscriptions: HashSet<String>,
+    watched: HashMap<PathBuf, String>,
     pending: VecDeque<Request>,
 }
 
 impl Engine {
+    fn watch_directory(&mut self, key: &str, path: &str) -> Result<()> {
+        if !self.subscriptions.contains(key) {
+            return Ok(());
+        }
+        let root = self.roots.get(key)?;
+        let directory = root.resolve(path)?;
+        let Some(watcher) = &mut self.watcher else {
+            return Ok(());
+        };
+        for directory in directory
+            .ancestors()
+            .take_while(|path| path.starts_with(&root.path))
+        {
+            let relative = directory
+                .strip_prefix(&root.path)
+                .map_err(|_| Error::Invalid)?;
+            let dir = root.dir.open_dir(if relative.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                relative
+            })?;
+            let current = identity(&dir.dir_metadata()?)?;
+            if self.watched.get(directory) == Some(&current) {
+                continue;
+            }
+            if self.watched.remove(directory).is_some() {
+                let _ = watcher.unwatch(directory);
+            }
+            if watcher
+                .watch(directory, RecursiveMode::NonRecursive)
+                .is_ok()
+            {
+                self.watched.insert(directory.to_owned(), current);
+            }
+        }
+        root.check()
+    }
+
+    fn revoke_watch(&mut self, key: &str) {
+        self.subscriptions.remove(key);
+        self.watched.retain(|path, _| {
+            let retained = self.subscriptions.iter().any(|key| {
+                self.roots.0.get(key).is_some_and(|root| {
+                    !root.revoked.load(Ordering::SeqCst) && path.starts_with(&root.path)
+                })
+            });
+            if !retained && let Some(watcher) = &mut self.watcher {
+                let _ = watcher.unwatch(path);
+            }
+            retained
+        });
+    }
+
     fn dispatch(&mut self, request: &Request) -> Result<bool> {
         match self.handle(&request.command) {
             Ok(Some(result)) => send(&self.output, json!({ "id": request.id, "result": result }))?,
@@ -224,11 +280,9 @@ impl Engine {
                     .or_default()
                     .clone();
                 let root = self.roots.register(key.clone(), path.clone(), revoked)?;
-                if *watch && !self.watched.iter().any(|path| root.path.starts_with(path)) {
-                    if let Some(watcher) = &mut self.watcher {
-                        let _ = watcher.watch(&root.path, RecursiveMode::Recursive);
-                    }
-                    self.watched.push(root.path.clone());
+                if *watch {
+                    self.subscriptions.insert(key.clone());
+                    self.watch_directory(key, "")?;
                 }
                 json!({ "identity": root.identity, "path": root.path })
             }
@@ -236,12 +290,18 @@ impl Engine {
                 if let Some(root) = self.roots.0.get(key) {
                     root.revoked.store(true, Ordering::SeqCst);
                 }
+                self.revoke_watch(key);
                 Value::Null
             }
             Command::List { root, path, cursor } => {
+                self.watch_directory(root, path)?;
                 io::list(self.roots.get(root)?.as_ref(), path, cursor.as_deref())?
             }
-            Command::Read { root, path } => io::read(self.roots.get(root)?.as_ref(), path)?,
+            Command::Read { root, path } => {
+                let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+                self.watch_directory(root, parent)?;
+                io::read(self.roots.get(root)?.as_ref(), path)?
+            }
             Command::Acquire {
                 lease_id,
                 claims,

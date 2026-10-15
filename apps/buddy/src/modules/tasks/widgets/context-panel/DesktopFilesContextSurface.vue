@@ -44,7 +44,7 @@ const fileView = filePreview.current
             {{ t('desktop.context.retry') }}
           </button>
         </div>
-        <WorkspaceExplorer v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :target="fileTab.target" :language="language" :load="filePreview.load" :refresh="filePreview.refresh" :api="files" @select="emit('select', fileTab.id, $event)" />
+        <WorkspaceExplorer :key="`${fileTab.id}:${fileTab.target.directoryId}:${fileTab.target.revision}`" v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :loading-keys="fileView.loadingKeys" :target="fileTab.target" :language="language" :load="filePreview.load" :refresh="filePreview.refresh" :api="files" @select="emit('select', fileTab.id, $event)" />
       </template>
     </DesktopContextSplit>
   </WorkbenchPanelContent>
