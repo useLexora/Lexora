@@ -63,8 +63,10 @@ export class S3Adapter implements SyncAdapter {
       if (error instanceof Error && error.message.startsWith('SYNC_'))
         throw error
       if (error instanceof S3ServiceException) {
-        if ([401, 403].includes(error.$metadata.httpStatusCode ?? 0))
+        if (error.$metadata.httpStatusCode === 401 || ['InvalidAccessKeyId', 'SignatureDoesNotMatch', 'ExpiredToken', 'InvalidToken'].includes(error.name))
           throw new Error('SYNC_AUTHENTICATION_FAILED')
+        if (error.$metadata.httpStatusCode === 403)
+          throw new Error('SYNC_PERMISSION_DENIED')
         if (error.name === 'NoSuchBucket')
           throw new Error('SYNC_BUCKET_MISSING')
       }

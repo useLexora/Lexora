@@ -26,9 +26,9 @@ export class WebDavAdapter implements SyncAdapter {
 
   async #sendUrl(url: string, method: string, signal: AbortSignal, headers: Record<string, string> = {}, body?: Uint8Array): Promise<Response> {
     const response = await this.#request(url, { method, headers: { ...headers, Authorization: this.#authorization }, ...(body ? { body } : {}), signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]) })
-    if ([401, 403].includes(response.status)) {
+    if (response.status === 401 || response.status === 403) {
       await response.body?.cancel()
-      throw new Error('SYNC_AUTHENTICATION_FAILED')
+      throw new Error(response.status === 401 ? 'SYNC_AUTHENTICATION_FAILED' : 'SYNC_PERMISSION_DENIED')
     }
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel()
@@ -40,6 +40,8 @@ export class WebDavAdapter implements SyncAdapter {
   async test(signal: AbortSignal): Promise<void> {
     const response = await this.#send('', 'PROPFIND', signal, { Depth: '0' })
     await response.body?.cancel()
+    if (response.status === 404)
+      throw new Error('SYNC_ENDPOINT_MISSING')
     if (response.status !== 207)
       throw new Error('SYNC_WEBDAV_UNAVAILABLE')
   }
@@ -48,17 +50,32 @@ export class WebDavAdapter implements SyncAdapter {
     let directory = ''
     for (const segment of this.#directory.split('/').filter(Boolean)) {
       directory += `${segment}/`
-      const response = await this.#sendUrl(new URL(directory, this.#base).href, 'MKCOL', signal)
-      await response.body?.cancel()
-      if (![201, 204, 405].includes(response.status))
-        throw new Error('SYNC_REMOTE_WRITE_FAILED')
+      await this.#createDirectory(new URL(directory, this.#base).href, signal)
     }
     for (const key of ['lexora-backups-v1/', 'lexora-backups-v1/objects/', 'lexora-backups-v1/snapshots/']) {
-      const response = await this.#send(key, 'MKCOL', signal)
-      await response.body?.cancel()
-      if (![201, 204, 405].includes(response.status))
-        throw new Error('SYNC_REMOTE_WRITE_FAILED')
+      await this.#createDirectory(new URL(key, this.#root).href, signal)
     }
+  }
+
+  async #createDirectory(url: string, signal: AbortSignal): Promise<void> {
+    const response = await this.#sendUrl(url, 'MKCOL', signal)
+    await response.body?.cancel()
+    if (response.status === 405) {
+      const existing = await this.#sendUrl(url, 'PROPFIND', signal, { Depth: '0' })
+      if (existing.status === 207) {
+        const xml = new TextDecoder().decode(await readLimitedResponse(existing, 4 * 1024 * 1024))
+        if (!/<!DOCTYPE|<!ENTITY/i.test(xml) && (Array.from(new DOMParser().parseFromString(xml, 'text/xml').querySelectorAll('*')) as Array<{ localName: string }>).some(element => element.localName.split(':').at(-1) === 'collection'))
+          return
+      }
+      else { await existing.body?.cancel() }
+      throw new Error('SYNC_REMOTE_DIRECTORY_INVALID')
+    }
+    if (response.status === 404 || response.status === 409)
+      throw new Error('SYNC_REMOTE_DIRECTORY_MISSING')
+    if (response.status === 507)
+      throw new Error('SYNC_QUOTA_EXCEEDED')
+    if (![201, 204].includes(response.status))
+      throw new Error('SYNC_REMOTE_WRITE_FAILED')
   }
 
   async list(signal: AbortSignal): Promise<string[]> {
@@ -76,6 +93,8 @@ export class WebDavAdapter implements SyncAdapter {
     if (/<!DOCTYPE|<!ENTITY/i.test(xml))
       throw new Error('SYNC_INVALID_RESPONSE')
     const document = new DOMParser().parseFromString(xml, 'text/xml')
+    if (document.documentElement?.localName.split(':').at(-1) !== 'multistatus')
+      throw new Error('SYNC_INVALID_RESPONSE')
     const prefix = new URL(key, this.#root)
     const ids = new Set<string>()
     for (const element of Array.from(document.querySelectorAll('*')) as Array<{ localName: string, textContent: string | null }>) {
@@ -121,6 +140,6 @@ export class WebDavAdapter implements SyncAdapter {
       return
     }
     if (![200, 201, 204].includes(response.status))
-      throw new Error('SYNC_REMOTE_WRITE_FAILED')
+      throw new Error(response.status === 507 ? 'SYNC_QUOTA_EXCEEDED' : response.status === 404 || response.status === 409 ? 'SYNC_REMOTE_DIRECTORY_MISSING' : 'SYNC_REMOTE_WRITE_FAILED')
   }
 }

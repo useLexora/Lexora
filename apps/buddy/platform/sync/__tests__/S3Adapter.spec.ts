@@ -63,7 +63,7 @@ it('accepts an existing identical object but reports conflicting bytes', async (
   }
 })
 
-it.each([[403, 'SYNC_AUTHENTICATION_FAILED'], [404, 'SYNC_BUCKET_MISSING'], [301, 'SYNC_REDIRECT_REFUSED']] as const)('reports an actionable error for status %s', async (status, error) => {
+it.each([[401, 'SYNC_AUTHENTICATION_FAILED'], [403, 'SYNC_PERMISSION_DENIED'], [404, 'SYNC_BUCKET_MISSING'], [301, 'SYNC_REDIRECT_REFUSED']] as const)('reports an actionable error for status %s', async (status, error) => {
   const adapter = new S3Adapter(connection, 'fixture-secret', async () => new Response(null, { status }))
   await expect(adapter.test(signal)).rejects.toThrow(error)
 })
@@ -94,7 +94,7 @@ it('distinguishes missing objects from missing buckets and authentication failur
   const bucket = new S3Adapter(connection, 'fixture-secret', async () => new Response('<Error><Code>NoSuchBucket</Code></Error>', { status: 404 }))
   await expect(bucket.read(key, 8, signal)).rejects.toThrow('SYNC_BUCKET_MISSING')
   const denied = new S3Adapter(connection, 'fixture-secret', async () => new Response('<Error><Code>AccessDenied</Code></Error>', { status: 403 }))
-  await expect(denied.write(key, new Uint8Array(1), signal)).rejects.toThrow('SYNC_AUTHENTICATION_FAILED')
+  await expect(denied.write(key, new Uint8Array(1), signal)).rejects.toThrow('SYNC_PERMISSION_DENIED')
 })
 
 it('retries a transient server error with the same object bytes and conditional write', async () => {
@@ -128,4 +128,9 @@ it('propagates cancellation through the configured transport without retrying', 
 it('rejects an unexpected listing instead of presenting it as an empty backup list', async () => {
   const adapter = new S3Adapter(connection, 'fixture-secret', async () => new Response('<html>Wrong endpoint</html>'))
   await expect(adapter.list(signal)).rejects.toThrow('SYNC_INVALID_RESPONSE')
+})
+
+it.each(['InvalidAccessKeyId', 'SignatureDoesNotMatch'])('identifies invalid credentials from S3 error %s even with HTTP 403', async (code) => {
+  const adapter = new S3Adapter(connection, 'fixture-secret', async () => new Response(`<Error><Code>${code}</Code></Error>`, { status: 403 }))
+  await expect(adapter.write(key, new Uint8Array(1), signal)).rejects.toThrow('SYNC_AUTHENTICATION_FAILED')
 })

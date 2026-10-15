@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readStorageJson, writeStorageJson } from '../../../platform/storage/storageFiles'
 import { createSyncAdapter } from '../../../platform/sync/createSyncAdapter'
+import { probeSyncConnection } from '../../../platform/sync/probeSyncConnection'
 import { SnapshotTransfer } from '../../../platform/sync/SnapshotTransfer'
 import { syncConnectionStoreSchema } from '../../../platform/sync/syncConnectionStore'
 import { syncConnectionSchema } from '../../../shared/sync/syncApi'
@@ -47,7 +48,17 @@ export class SyncHub {
     const credential = input.password ?? (input.id ? await this.credential(input.id) : '')
     const { password: _password, ...rest } = input
     const connection = syncConnectionSchema.parse({ ...rest, id: input.id ?? randomUUID() })
-    await createSyncAdapter(connection, credential, this.#transport).test(AbortSignal.timeout(120000))
+    const signal = AbortSignal.timeout(30_000)
+    try {
+      await probeSyncConnection(createSyncAdapter(connection, credential, this.#transport), signal)
+    }
+    catch (error) {
+      if (signal.aborted)
+        throw new Error('SYNC_TIMEOUT')
+      if (error instanceof Error && /^SYNC_[A-Z_]+$/.test(error.message))
+        throw error
+      throw new Error('SYNC_NETWORK_ERROR')
+    }
   }
 
   async credential(id: string): Promise<string> {
