@@ -7,14 +7,23 @@ use std::{
     time::Duration,
 };
 
+#[cfg(windows)]
+static WINDOWS_ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Engine {
     child: Child,
     input: ChildStdin,
     output: Receiver<Value>,
     sequence: u64,
+    #[cfg(windows)]
+    _windows_instance: std::sync::MutexGuard<'static, ()>,
 }
 impl Engine {
     fn new(journal: &Path) -> Self {
+        #[cfg(windows)]
+        let windows_instance = WINDOWS_ENGINE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut child = Command::new(env!("CARGO_BIN_EXE_lexora-buddy-file-reader"))
             .args(["--serve", journal.to_str().unwrap()])
             .env(
@@ -37,14 +46,20 @@ impl Engine {
                 }
             }
         });
-        let ready = output.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert_eq!(ready, json!({"event":"ready", "version":1}));
-        Self {
+        let engine = Self {
             child,
             input,
             output,
             sequence: 0,
-        }
+            #[cfg(windows)]
+            _windows_instance: windows_instance,
+        };
+        let ready = engine
+            .output
+            .recv_timeout(Duration::from_secs(10))
+            .expect("File engine did not become ready");
+        assert_eq!(ready, json!({"event":"ready", "version":1}));
+        engine
     }
     fn send(&mut self, command: Value) -> u64 {
         self.sequence += 1;
@@ -58,7 +73,10 @@ impl Engine {
     }
     fn response(&self, id: u64) -> Value {
         loop {
-            let value = self.output.recv_timeout(Duration::from_secs(10)).unwrap();
+            let value = self
+                .output
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|error| panic!("File engine response {id} failed: {error}"));
             if value["id"] == id {
                 return value;
             }
