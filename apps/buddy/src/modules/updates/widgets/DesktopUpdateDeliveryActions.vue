@@ -27,6 +27,9 @@ const verifying = computed(() => supported.value && props.delivery?.status === '
 </script>
 
 <template>
+  <NButton v-if="supported && delivery?.status === 'error'" :disabled="pending" @click="emit('openRelease')">
+    {{ t('desktop.update.manualDownload') }}
+  </NButton>
   <NButton v-if="verifying" :aria-labelledby="labelId" disabled loading>
     <span :id="labelId">{{ t('desktop.update.verifying') }}</span>
   </NButton>

@@ -75,7 +75,8 @@ function updateVersionReminder() {
     :show="show"
     preset="card"
     class="desktop-update-dialog"
-    :style="{ width: 'min(42rem, calc(100vw - 2rem))' }"
+    :style="{ width: 'min(42rem, calc(100vw - 2rem))', maxHeight: 'calc(100vh - 2rem)' }"
+    content-class="min-h-0 flex flex-col"
     :title="t('desktop.update.title')"
     :auto-focus="false"
     :closable="!installing"
@@ -86,7 +87,7 @@ function updateVersionReminder() {
     <template v-if="result">
       <!-- 发现新版本视图 -->
       <template v-if="updateAvailable">
-        <header class="flex items-center gap-[14px] pt-[2px] pr-0 pb-[14px] pl-0">
+        <header class="flex items-center gap-[14px] pt-[2px] pr-0 pb-[14px] pl-0 flex-none">
           <div class="desktop-update-dialog__icon-wrap is-update flex items-center justify-center flex-none w-[44px] h-[44px] rounded-[12px]">
             <DesktopIcon :component="ArrowDownload20Regular" :size="22" aria-hidden="true" />
           </div>
@@ -103,8 +104,8 @@ function updateVersionReminder() {
           </div>
         </header>
 
-        <section class="rounded-[8px] border border-solid border-border bg-raised py-[12px] px-[14px]">
-          <div class="flex items-center justify-between gap-[12px] mb-[8px]">
+        <section class="rounded-[8px] border border-solid border-border bg-raised py-[12px] px-[14px] min-h-0 flex flex-col">
+          <div class="flex items-center justify-between gap-[12px] mb-[8px] flex-none">
             <h3 class="desktop-update-dialog__card-title m-0 text-strong text-[12px] font-600">
               {{ t('desktop.update.releaseNotes') }}
             </h3>
@@ -140,6 +141,7 @@ function updateVersionReminder() {
           <NScrollbar
             v-if="result.releaseNotes.trim()"
             :key="result.latestVersion"
+            class="min-h-0"
             style="max-height: min(50vh, 30rem)"
           >
             <section

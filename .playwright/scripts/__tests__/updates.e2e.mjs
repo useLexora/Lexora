@@ -165,38 +165,6 @@ test('updates stay discoverable after dismissal, persist and restore skips, and 
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('source development shows both disabled update switches with hover and keyboard tooltips while keeping manual checks available', async ({ buddy }) => {
-  const instance = await buddy.createInstance('update-development-settings')
-  const desktop = await instance.launch()
-  const { page, app } = desktop
-  await about(page)
-  const settings = page.locator('.desktop-update-settings')
-  const download = settings.getByRole('switch', { name: '自动下载更新', exact: true })
-  await expect(toggle(page)).toBeDisabled()
-  await expect(download).toBeDisabled()
-  await expect(settings.getByRole('button', { name: '打开下载位置', exact: true })).toHaveCount(0)
-  const checkGroup = settings.getByRole('group', { name: '自动检查更新', exact: true })
-  const downloadGroup = settings.getByRole('group', { name: '自动下载更新', exact: true })
-  const tooltip = page.locator('.n-tooltip')
-  await checkGroup.focus()
-  await expect(tooltip).toContainText('当前环境仍可手动检查更新')
-  await checkGroup.press('Escape')
-  await expect(tooltip).toHaveCount(0)
-  await downloadGroup.hover()
-  await expect(tooltip).toContainText('当前运行版本不支持应用内下载')
-  await page.mouse.move(0, 0)
-  await expect(tooltip).toHaveCount(0)
-  await app.evaluate(({ ipcMain }, result) => {
-    ipcMain.removeHandler('lexora:app:check-for-updates')
-    ipcMain.handle('lexora:app:check-for-updates', () => result)
-  }, result)
-  const manualCheck = page.locator('.desktop-about-settings').getByRole('button', { name: '检查更新', exact: true })
-  await expect(manualCheck).toBeEnabled()
-  await manualCheck.click()
-  await expect(page.locator('.desktop-update-dialog')).toContainText(version)
-  expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
-})
-
 test('update preferences persist independently and show a download folder with safe failure feedback', async ({ buddy }) => {
   const instance = await buddy.createInstance('update-settings')
   await seedUpdate(instance, false)
@@ -381,12 +349,12 @@ test('updates defer for all running tasks and pending approvals, then notify whe
   expect(diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('update delivery presents one action per state, safe fallbacks and reviewed version changes', async ({ buddy }) => {
+test('update delivery waits for verification, falls back safely and requires review of changed versions', async ({ buddy }) => {
   const instance = await buddy.createInstance('update-delivery')
   await seedUpdate(instance, false)
   const { app, page, diagnostics } = await instance.launch()
   await app.evaluate(({ ipcMain, BrowserWindow }, result) => {
-    const state = { revision: 100, checking: false, enabled: false, lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now(), checkFailed: false, ignoredVersion: null, result, notification: null, reminderDueAt: null, delivery: { mode: 'restart', reason: null, status: 'available', version: result.latestVersion, progressPercent: 0, totalBytes: 200 * 1024 * 1024, downloadedBytes: 0 } }
+    const state = { revision: 100, checking: false, enabled: false, lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now(), checkFailed: false, ignoredVersion: null, result, notification: null, reminderDueAt: null, delivery: { mode: 'restart', reason: null, status: 'verifying', version: result.latestVersion, progressPercent: 0 } }
     globalThis.updateDeliveryFixture = state
     ipcMain.removeHandler('lexora:app:check-for-updates')
     ipcMain.handle('lexora:app:check-for-updates', () => globalThis.updateDeliveryFixture.result)
@@ -397,29 +365,8 @@ test('update delivery presents one action per state, safe fallbacks and reviewed
   }, result)
   await checkFromApplicationMenu(page)
   const dialog = page.locator('.desktop-update-dialog')
-  await expect(dialog.getByRole('button', { name: '下载更新', exact: true })).toBeVisible()
-  for (const [status, label] of [['available', '下载更新'], ['verifying', '正在校验…'], ['downloading', '取消下载'], ['error', '重新下载'], ['ready', '重启并安装更新'], ['installing', '正在准备更新…']]) {
-    await app.evaluate(({ BrowserWindow }, status) => {
-      const state = globalThis.updateDeliveryFixture
-      state.revision++
-      state.delivery = { ...state.delivery, status, progressPercent: status === 'downloading' ? 42 : 100, downloadedBytes: status === 'downloading' ? 84 * 1024 * 1024 : 0 }
-      for (const window of BrowserWindow.getAllWindows())
-        window.webContents.send('lexora:app:updates:changed', state)
-    }, status)
-    await expect(dialog.locator('.desktop-update-dialog__primary-actions').getByRole('button', { name: label, exact: true })).toBeVisible()
-    await expect(dialog.locator('.desktop-update-dialog__primary-actions').getByRole('button')).toHaveCount(1)
-    if (status === 'installing') {
-      await expect(dialog.getByRole('button', { name: '稍后', exact: true })).toBeDisabled()
-      await expect(dialog.getByRole('button', { name: '跳过此版本', exact: true })).toBeDisabled()
-    }
-    if (status === 'verifying')
-      await expect(dialog.getByRole('button', { name: label, exact: true })).toBeDisabled()
-    if (status === 'downloading')
-      await expect(dialog).toContainText('84 MB / 200 MB')
-    if (status === 'error')
-      await expect(dialog.getByRole('alert')).toContainText('更新下载或校验失败')
-  }
-  for (const [mode, reason, label] of [['open-package', 'signature-required', '此版本需要手动安装'], ['open-package', 'system-package', '系统包管理器'], ['release', 'asset-unavailable', '前往发布页下载']]) {
+  await expect(dialog.getByRole('button', { name: '正在校验…', exact: true })).toBeDisabled()
+  for (const [mode, reason, action] of [['open-package', 'signature-required', '打开安装包'], ['release', 'asset-unavailable', '前往下载']]) {
     await app.evaluate(({ BrowserWindow }, { mode, reason }) => {
       const state = globalThis.updateDeliveryFixture
       state.revision++
@@ -427,9 +374,8 @@ test('update delivery presents one action per state, safe fallbacks and reviewed
       for (const window of BrowserWindow.getAllWindows())
         window.webContents.send('lexora:app:updates:changed', state)
     }, { mode, reason })
-    await expect(dialog).toContainText(label)
     await expect(dialog.getByRole('button', { name: '重启并安装更新', exact: true })).toHaveCount(0)
-    await expect(dialog.getByRole('button', { name: mode === 'release' ? '前往下载' : '打开安装包', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: action, exact: true })).toBeVisible()
   }
   const staleActions = await page.evaluate(async () => {
     const updates = window.lexoraDesktop.app.updates

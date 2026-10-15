@@ -13,6 +13,7 @@ import { checkForDesktopUpdate } from '../desktopUpdateService'
 import { assertTrustedSender } from '../ipc'
 import { DesktopUpdateCache } from './DesktopUpdateCache'
 import { DesktopUpdateDelivery } from './DesktopUpdateDelivery'
+import { readDesktopUpdateFailure } from './DesktopUpdateFailure'
 import { DesktopUpdatePolicy, readDesktopDistribution } from './DesktopUpdatePolicy'
 import { DesktopUpdates } from './DesktopUpdates'
 import { DesktopUpdateStore } from './DesktopUpdateStore'
@@ -49,7 +50,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
       if (await shell.openPath(path))
         throw new Error('UPDATE_PACKAGE_OPEN_FAILED')
     },
-    reportFailure: error => environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error }),
+    reportFailure: error => environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error, errorCode: readDesktopUpdateFailure(error).code }),
   })
   const service = runtime.service
   const updates = new DesktopUpdates({
@@ -143,7 +144,10 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   }
   register(DESKTOP_IPC_CHANNELS.appUpdatesDownload, (input) => {
     assertTarget(input)
-    void delivery.download().catch(error => environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error }))
+    return delivery.download().catch((error: unknown) => {
+      environment.diagnostics.record({ scope: 'desktop', component: 'desktop.updates', event: 'update.download.failed', level: 'warn', error, errorCode: readDesktopUpdateFailure(error).code })
+      throw error
+    })
   })
   register(DESKTOP_IPC_CHANNELS.appUpdatesCancelDownload, (input) => {
     assertTarget(input)

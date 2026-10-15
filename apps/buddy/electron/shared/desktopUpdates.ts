@@ -27,6 +27,7 @@ export interface DesktopUpdateNotification {
 
 export type DesktopUpdateDeliveryMode = 'restart' | 'open-package' | 'release'
 export type DesktopUpdateDeliveryReason = 'signature-required' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
+export type DesktopUpdateFailureKind = 'download' | 'verification' | 'storage' | 'timeout'
 
 export interface DesktopUpdateDeliveryState {
   readonly mode: DesktopUpdateDeliveryMode
@@ -36,6 +37,7 @@ export interface DesktopUpdateDeliveryState {
   readonly progressPercent: number
   readonly downloadedBytes?: number
   readonly totalBytes?: number | null
+  readonly failure?: DesktopUpdateFailureKind
 }
 
 export interface DesktopUpdateCacheSummary {

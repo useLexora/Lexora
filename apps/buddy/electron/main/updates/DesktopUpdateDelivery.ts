@@ -4,6 +4,7 @@ import type { DesktopUpdatePackage } from './DesktopUpdatePackage'
 import type { DesktopUpdatePlan } from './DesktopUpdatePolicy'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { readDesktopUpdateFailure } from './DesktopUpdateFailure'
 import { downloadDesktopUpdatePackage, verifyDesktopUpdatePackage } from './DesktopUpdatePackage'
 
 interface DeliveryOptions {
@@ -108,7 +109,7 @@ export class DesktopUpdateDelivery {
         this.#setState({ status: path ? 'ready' : 'available', version: update.version, progressPercent: path ? 100 : 0 })
       }).catch((error: unknown) => {
         if (generation === this.#generation && !this.#stopped)
-          this.#setState({ status: 'error', version: update.version, progressPercent: 0 })
+          this.#setState({ status: 'error', version: update.version, progressPercent: 0, failure: readDesktopUpdateFailure(error).kind })
         this.#options.reportFailure(error)
       }).finally(() => {
         if (this.#restoration === restoration)
@@ -181,7 +182,7 @@ export class DesktopUpdateDelivery {
       await this.#options.cache?.cleanup(this.#plan).catch(this.#options.reportFailure)
     }).catch((error: unknown) => {
       if (this.#update === update && !this.#stopped)
-        this.#setState({ status: controller.signal.aborted ? 'available' : 'error', version: update.version, progressPercent: 0 })
+        this.#setState({ status: controller.signal.aborted ? 'available' : 'error', version: update.version, progressPercent: 0, ...(controller.signal.aborted ? {} : { failure: readDesktopUpdateFailure(error).kind }) })
       if (!controller.signal.aborted)
         throw error
     }).finally(() => {
@@ -212,7 +213,7 @@ export class DesktopUpdateDelivery {
     this.#installation = (async () => {
       if (!await this.#verifyReady(ready)) {
         this.#ready = null
-        this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0 })
+        this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0, failure: 'verification' })
         throw new Error('UPDATE_PACKAGE_INVALID')
       }
       this.#setState({ status: 'installing', version: ready.update.version, progressPercent: 100 })
@@ -235,7 +236,7 @@ export class DesktopUpdateDelivery {
           this.#options.reportFailure(error)
           return
         }
-        this.#setState({ status: this.#ready ? 'ready' : 'error', version: ready.update.version, progressPercent: this.#ready ? 100 : 0 })
+        this.#setState({ status: this.#ready ? 'ready' : 'error', version: ready.update.version, progressPercent: this.#ready ? 100 : 0, ...(this.#ready ? {} : { failure: readDesktopUpdateFailure(error).kind }) })
         throw error
       }
     })().finally(() => {
@@ -251,7 +252,7 @@ export class DesktopUpdateDelivery {
       throw new Error('UPDATE_INSTALL_UNAVAILABLE')
     if (!await this.#verifyReady(ready)) {
       this.#ready = null
-      this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0 })
+      this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0, failure: 'verification' })
       throw new Error('UPDATE_PACKAGE_INVALID')
     }
     await this.#options.openPackage(ready.path)

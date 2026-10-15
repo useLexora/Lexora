@@ -66,7 +66,7 @@ export class DesktopNetwork {
 
   readonly download = (url: string, init: Pick<RequestInit, 'signal'>): Promise<Response> => {
     this.assertAvailable()
-    return session.defaultSession.fetch(url, { ...init, redirect: 'manual', credentials: 'omit' })
+    return requestThroughHost(session.defaultSession, { url, method: 'GET', headers: {} }, init.signal ?? AbortSignal.timeout(30_000), this.authenticateProxy)
   }
 
   readonly authenticateProxy = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void): boolean => {

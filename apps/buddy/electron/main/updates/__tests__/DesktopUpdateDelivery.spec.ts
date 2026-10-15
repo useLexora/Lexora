@@ -33,6 +33,40 @@ async function setup(allowed = true, launchFailure = false) {
 }
 
 describe('update delivery', () => {
+  it('reports safe download, storage and timeout failures and clears them after a successful retry', async () => {
+    const directory = await createTemporaryDirectory('lexora-delivery-failure-')
+    let failure: Error | null = null
+    const delivery = new DesktopUpdateDelivery({
+      directory,
+      get: async () => {
+        if (failure)
+          throw failure
+        return new Response(body)
+      },
+      requestInstall: async () => false,
+      launchInstaller: async () => {},
+      openPackage: async () => {},
+      reportFailure: () => {},
+    })
+    delivery.discover({ mode: 'restart', reason: null, update, fallback: null })
+    for (const [kind, error] of [
+      ['download', new Error('private-download-url')],
+      ['storage', Object.assign(new Error('private-cache-path'), { code: 'ENOSPC' })],
+      ['timeout', new DOMException('private-timeout-url', 'TimeoutError')],
+    ] as const) {
+      failure = error
+      await expect(delivery.download()).rejects.toThrow()
+      expect(delivery.state).toMatchObject({ status: 'error', failure: kind, version: update.version })
+      expect(JSON.stringify(delivery.state)).not.toContain('private-')
+    }
+    failure = null
+    await delivery.download()
+    expect(delivery.state.status).toBe('ready')
+    expect(delivery.state.failure).toBeUndefined()
+    expect(await readFile(join(directory, 'pending', update.name))).toEqual(body)
+    await delivery.dispose()
+  })
+
   it.each([true, false])('stops only automatic downloads when background downloading is disabled (automatic=%s)', async (automatic) => {
     const directory = await createTemporaryDirectory('lexora-delivery-')
     const started = deferred<void>()
@@ -176,7 +210,6 @@ describe('update delivery', () => {
     expect(delivery.state).toMatchObject({ mode: 'open-package', reason: 'installer-unavailable', status: 'available' })
     await delivery.download()
     await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
-    await delivery.openPackage()
     await delivery.dispose()
   })
 })

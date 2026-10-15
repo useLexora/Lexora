@@ -21,6 +21,31 @@ const { reminder, dismiss } = useUpdateReminder(updates, focused, api.localChat)
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const pending = shallowRef(false)
+const downloadingVersion = shallowRef<string | null>(null)
+const delivery = computed(() => {
+  const current = state.value?.delivery
+  if (current && current.version === downloadingVersion.value && ['available', 'error'].includes(current.status))
+    return { ...current, status: 'downloading' as const, progressPercent: 0, downloadedBytes: 0, failure: undefined }
+  return current
+})
+
+async function download() {
+  const version = details.value?.latestVersion
+  if (!version || pending.value || downloadingVersion.value)
+    return
+  downloadingVersion.value = version
+  try {
+    await api.app.updates.download(version)
+  }
+  catch {
+    if (state.value?.result?.latestVersion === version)
+      message.error(t(state.value?.delivery?.failure === 'verification' ? 'desktop.update.verificationFailed' : 'desktop.update.downloadFailed'))
+  }
+  finally {
+    if (downloadingVersion.value === version)
+      downloadingVersion.value = null
+  }
+}
 
 async function action(operation: () => Promise<unknown>) {
   if (pending.value)
@@ -58,7 +83,7 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
   <DesktopUpdateDialog
     :show="details !== null"
     :result="details"
-    :delivery="state?.delivery"
+    :delivery="delivery"
     :ignored="state?.ignoredVersion === details?.latestVersion"
     :check-failed="state?.checkFailed"
     :reminder-deferred-until="state?.result?.latestVersion === details?.latestVersion ? state?.reminderDeferredUntil : null"
@@ -73,7 +98,7 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
     @cancel-snooze="version => action(() => updates.cancelSnooze(version))"
     @snooze="(version, delay) => action(() => updates.snooze(version, delay))"
     @show-latest="action(updates.openDetails)"
-    @download="versionedAction(api.app.updates.download)"
+    @download="download"
     @cancel-download="versionedAction(api.app.updates.cancelDownload)"
     @install="versionedAction(api.app.updates.install)"
     @open-package="versionedAction(api.app.updates.openPackage)"
