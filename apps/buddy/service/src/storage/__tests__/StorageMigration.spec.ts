@@ -10,6 +10,7 @@ import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nati
 import { writeStorageJson } from '../../../../platform/storage/storageFiles'
 import { StorageLocationStore } from '../../../../platform/storage/StorageLocationStore'
 import { acquireStorageRootLease } from '../../../../platform/storage/StorageRootLease'
+import { readDiagnosticError } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { SkillService } from '../../skills/SkillService'
 import { BuddyDataPaths } from '../BuddyDataPaths'
 import { openBuddyDatabase } from '../database'
@@ -228,8 +229,11 @@ it('resumes an interrupted commit without reopening cancellation or recopying th
   const { root, directory, store, run } = await fixture()
   const target = join(directory, 'committed')
   await store.request('relocate', target)
-  const activate = vi.spyOn(StorageLocationStore.prototype, 'activate').mockRejectedValueOnce(new Error('STORAGE_FIXTURE_INTERRUPTED'))
-  await expect(run()).rejects.toThrow('STORAGE_FIXTURE_INTERRUPTED')
+  const cause = Object.assign(new Error('private-fixture-path-or-content'), { code: 'EACCES' })
+  const activate = vi.spyOn(StorageLocationStore.prototype, 'activate').mockRejectedValueOnce(cause)
+  const failure = await run().catch((error: unknown) => error)
+  expect(failure).toMatchObject({ message: 'STORAGE_MIGRATION_FAILED', cause })
+  expect(readDiagnosticError(failure)).toEqual({ errorCode: 'EACCES', errorType: 'Error' })
   activate.mockRestore()
   expect(await store.read()).toMatchObject({ activeRoot: root, pending: { phase: 'ready' } })
   await expect(store.cancel()).rejects.toThrow('STORAGE_COMMITTING')

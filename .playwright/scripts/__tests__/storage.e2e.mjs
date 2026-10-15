@@ -41,6 +41,65 @@ test('stopping initial consolidation exits with source data intact and offers re
   expect(await recovery.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
 })
 
+test('initial consolidation failure exports safe diagnostics and opens a prefilled issue without changing source data', async ({ buddy }) => {
+  const { mkdir, readFile, writeFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { createRequire } = await import('node:module')
+  const { unzipSync, strFromU8 } = createRequire(new URL('../../../apps/buddy/package.json', import.meta.url))('fflate')
+  const instance = await buddy.createInstance('initial-diagnostics')
+  const source = join(instance.home, '.runtime/cache/chromium/Local Storage/fixture')
+  const occupied = join(instance.home, 'device/chromium/keep.txt')
+  for (const file of [source, occupied]) {
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, 'private-fixture-content')
+  }
+  const { app, page } = await instance.launch({ maintenance: true })
+  await expect(page.locator('#error-code')).toHaveText('STORAGE_TARGET_NOT_EMPTY')
+  expect(await app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
+  for (const theme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    await page.screenshot({ path: join(instance.artifactDirectory, `initial-failure-${theme}.png`), fullPage: true })
+  }
+  const destination = join(instance.artifactDirectory, 'migration-diagnostics.zip')
+  await app.evaluate(({ dialog, shell }) => {
+    globalThis.migrationIssueUrl = null
+    dialog.showSaveDialog = async () => {
+      throw new Error('private-fixture-dialog-error')
+    }
+    shell.openExternal = async (url) => {
+      globalThis.migrationIssueUrl = url
+    }
+  })
+  const action = id => app.evaluate(({ BrowserWindow }, id) => BrowserWindow.getAllWindows()[0].webContents.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).click()`), id)
+  const status = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.getElementById(\'support-status\').textContent'))
+  await action('export')
+  await expect.poll(status).toContain('未能导出')
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
+  }, destination)
+  await action('export')
+  await expect.poll(status).toContain('已保存到本机')
+  const archive = unzipSync(await readFile(destination))
+  const context = strFromU8(archive['context.jsonl']).trim().split('\n').map(line => JSON.parse(line))
+  const failure = context.find(record => record.event === 'storage.consolidate.failed')
+  expect(failure).toMatchObject({ errorCode: 'STORAGE_TARGET_NOT_EMPTY', level: 'error', attempt: 1 })
+  expect(context).toEqual(expect.arrayContaining([expect.objectContaining({ event: 'storage.migration.started', operationId: failure.operationId })]))
+  const exported = Object.values(archive).map(value => strFromU8(value)).join('\n')
+  expect(exported).not.toContain(instance.home)
+  expect(exported).not.toContain('private-fixture')
+  expect(await app.evaluate(() => globalThis.migrationIssueUrl)).toBeNull()
+  await action('issue')
+  await expect.poll(status).toContain('已打开 Issue 页面')
+  const issue = new URL(await app.evaluate(() => globalThis.migrationIssueUrl))
+  expect(issue.origin + issue.pathname).toBe('https://github.com/useLexora/Lexora/issues/new')
+  expect(issue.searchParams.get('body')).toContain(failure.operationId)
+  expect(issue.searchParams.get('body')).toContain('STORAGE_TARGET_NOT_EMPTY')
+  expect(issue.searchParams.get('body')).not.toContain(instance.home)
+  expect(issue.searchParams.get('body')).not.toContain('private-fixture')
+  for (const file of [source, occupied])
+    expect(await readFile(file, 'utf8')).toBe('private-fixture-content')
+})
+
 test('storage settings keep the active path and block backups until a pending move is cancelled', async ({ buddy }) => {
   const instance = await buddy.createInstance('storage')
   const { page, app } = await instance.launch()

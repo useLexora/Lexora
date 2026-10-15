@@ -1,5 +1,6 @@
 import type { StorageMigrationInput } from './StorageMigration'
 import { parentPort, workerData } from 'node:worker_threads'
+import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { runStorageMigration } from './StorageMigration'
 import { createStorageSnapshot } from './StorageSnapshots'
 
@@ -14,7 +15,7 @@ if (workerData.kind === 'snapshot') {
 else {
   void runStorageMigration(workerData as StorageMigrationInput, controller.signal, progress => parentPort!.postMessage({ progress })).then(() => {
     parentPort!.postMessage({ done: true })
-  }, () => {
-    parentPort!.postMessage({ done: false })
+  }, (error: unknown) => {
+    parentPort!.postMessage({ done: false, failure: readDiagnosticError(error) })
   }).finally(() => parentPort!.close())
 }

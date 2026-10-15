@@ -114,7 +114,7 @@ export async function runStorageMigration(input: StorageMigrationInput, signal: 
     if (current.pending?.id === operation.id)
       await store.checkpoint(operation, current.pending.phase === 'ready' ? 'ready' : 'failed', code)
     publish({ phase: cancelled ? 'cancelled' : 'failed', error: code })
-    throw storageError(code)
+    throw Object.assign(storageError(code), { cause: error })
   }
   finally {
     releaseTarget()

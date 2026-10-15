@@ -258,7 +258,7 @@ export async function startDesktopApplication(): Promise<void> {
     }
     environment = prepareDesktopEnvironment()
     if (environment.storage.state.pending) {
-      await showStorageMigration(environment.storage)
+      await showStorageMigration(environment.storage, environment.diagnostics)
       return
     }
     initializeDesktopEnvironment(environment)
