@@ -32,7 +32,7 @@ it('allocates readable local dates and independent same-second invocations witho
   assert.equal(await fs.readFile(path.join(first, 'evidence.txt'), 'utf8'), 'first invocation')
   const summary = JSON.parse(await fs.readFile(path.join(second, 'run.json'), 'utf8'))
   assert.equal(summary.startedAt, now.toISOString())
-  assert.equal(summary.utcOffsetMinutes, -now.getTimezoneOffset())
+  assert.equal(summary.utcOffsetMinutes + now.getTimezoneOffset(), 0)
   assert.equal(summary.status, 'created')
   assert.notEqual(summary.runId, JSON.parse(await fs.readFile(path.join(first, 'run.json'), 'utf8')).runId)
 })
