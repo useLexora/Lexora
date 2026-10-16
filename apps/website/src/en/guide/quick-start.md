@@ -1,6 +1,11 @@
+---
+title: "Quick start: install Lexora and run your first task"
+description: "Install Lexora on Windows, macOS, or Linux, connect a model, and complete your first task. Follow a walk-planning exercise, save the result, and keep refining it."
+---
+
 # Your first task
 
-Start small and specific. For example: “Turn these meeting notes into an action plan.”
+This chapter walks through a small weekend walking route: connect a model, send your first message, and save the result as a file. Start with a little text before moving on to your own projects.
 
 ## 1. Install Lexora
 
@@ -30,26 +35,55 @@ Then open Lexora from Applications. This command removes the quarantine attribut
 
 ## 2. Connect a model
 
-Open settings, add your model service, and enter its API key or complete account authorization as required. Then choose an available model.
+1. Open **Settings → Model services** and choose **Add service**.
+2. Select your provider under **Built-in**. For a compatible endpoint or your own server, use **Custom API**.
+3. Configure an API key, or complete OAuth authorization if the service offers it.
+4. Enable at least one model in the model configuration step, then choose **Finish and enable**.
 
-Lexora does not include a free model allowance. Availability and costs depend on your chosen provider.
+Back in Tasks, the model selector beside the composer should offer your enabled model. Saving credentials without enabling a model is not enough to start a conversation.
 
-[About models and tools →](./settings-and-models)
+<GuideImage src="/guide/images/model-service-en.webp" alt="The Add service dialog with built-in providers and a Custom API tab" caption="Choose a service, then configure its connection and models." :width="1024" :height="616" />
 
-## 3. Start a task
+::: tip Already paying for a chat subscription?
+Chat subscriptions and API credits may be billed separately. Use the access method your provider supports. Lexora does not include free model credits. See [Connect a model](./settings-and-models).
+:::
 
-Create a task and describe your goal, source material, and desired output. Choose a working directory or a space if you need to work with local files.
+## 3. Organize a little text
 
-For example:
+Open **Tasks**, create a task, select an available model, and send the following. You can copy it or substitute your own notes.
 
-> Read these meeting notes. Extract confirmed decisions, owners, and open questions. Save a Markdown action plan in the current working directory.
+```text
+Turn these notes into a relaxed weekend walking route:
+- Breakfast at a bakery. I want to photograph the bell by its door.
+- A slow walk by the river afterwards.
+- A quiet bookshop to rest in during the afternoon.
 
-You can also start with a simple conversation that needs no files.
+Organize it by morning, midday, and afternoon.
+List what I need to confirm before leaving.
+Do not invent shop names, addresses, or opening hours.
+```
 
-## 4. Follow along and review
+This request needs neither browsing nor an existing file. Expect a route organized by time of day, plus details to confirm about places, transport, and opening hours. The wording will vary; check whether your requirements survived.
 
-Lexora shows its work as it progresses. When asked for permission, check what a tool will access or do before approving.
+If the composer says “No models found,” check that both the service and a model are enabled. For authentication or quota errors, see [Troubleshooting](./troubleshooting).
 
-Open the resulting file or artifact preview and check the facts, format, and location. Then add a follow-up, such as “Sort the actions by priority.”
+## 4. Save the result
 
-Back up important files before changing them. AI-generated results need your review.
+Continue in the same task:
+
+```text
+Save this route as weekend-route.md in the current working directory.
+Keep the “To confirm” section and tell me where the file is saved.
+```
+
+This step writes a file. If the task uses local read-only permissions, switch to a mode that allows changes. Choose manual approval if you want to review operations individually. When an approval appears, check its path and action before allowing it.
+
+Open the resulting file from the output entry or working directory. Check its name, location, route, and outstanding questions.
+
+## 5. Keep improving the same result
+
+Continue with: “Keep just one afternoon stop, leave time to rest, and update the file.” You can also open the file, select a passage, and quote it into the composer with your revision request.
+
+The conversation remains when you close and reopen the task. Later, put the route in a travel space and create separate tasks for packing or a journal.
+
+Continue with [Tasks and conversations](./ai-chat) for quotes, queues, and branches, or [Files and spaces](./files-and-spaces) to work with your own materials.

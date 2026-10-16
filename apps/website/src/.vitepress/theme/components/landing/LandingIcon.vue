@@ -2,6 +2,8 @@
 withDefaults(defineProps<{ name?: string }>(), { name: 'spark' })
 
 const paths: Record<string, string> = {
+  plus: 'M12 5v14M5 12h14',
+  play: 'm9 5 11 7-11 7V5Z',
   spark: 'M12 2 15 9 22 12 15 15 12 22 9 15 2 12 9 9Z',
   arrow: 'M5 12h14m-6-6 6 6-6 6',
   external: 'M14 3h7v7m0-7L10 14M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6',

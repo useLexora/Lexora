@@ -1,86 +1,80 @@
 <script setup lang="ts">
 import type { LandingContent } from './landingContent'
 import { withBase } from 'vitepress'
-import { computed, shallowRef, useTemplateRef } from 'vue'
+import { computed, shallowRef } from 'vue'
 import LandingIcon from './LandingIcon.vue'
+import LandingImagePreview from './LandingImagePreview.vue'
 import { getProductScreenshots } from './landingMedia'
 
 const props = defineProps<{ content: LandingContent['workbench'], english: boolean }>()
-const screenshots = computed(() => getProductScreenshots(props.english))
-const selected = shallowRef(0)
-const current = computed(() => screenshots.value[selected.value]!)
-const preview = useTemplateRef<HTMLDialogElement>('preview')
-
-function openPreview(index: number) {
-  selected.value = index
-  preview.value?.showModal()
-}
+const selected = shallowRef('workspace')
+const scenes = computed(() => getProductScreenshots(props.english))
+const scene = computed(() => scenes.value.find(scene => scene.id === selected.value) ?? scenes.value[0]!)
 </script>
 
 <template>
-  <section id="product" class="workbench site-section site-container" aria-labelledby="workbench-title">
-    <div class="workbench-heading">
-      <p class="eyebrow">
-        {{ content.eyebrow }}
-      </p>
-      <h2 id="workbench-title">
-        {{ content.title }}
-      </h2>
-      <p class="workbench-description">
-        {{ content.description }}
-      </p>
-      <p class="preview-caption">
-        {{ content.caption }}
-      </p>
-    </div>
-    <div class="product-gallery">
-      <figure v-for="(shot, index) in screenshots" :key="shot.id" class="product-shot">
-        <button class="app-preview" :aria-label="`${content.enlarge} · ${shot.title}`" @click="openPreview(index)">
-          <img :src="withBase(shot.src)" :alt="shot.alt" :width="shot.width" :height="shot.height" loading="lazy">
-          <span class="enlarge-hint"><LandingIcon name="expand" />{{ content.enlarge }}</span>
-        </button>
-        <figcaption><span class="shot-number">0{{ index + 1 }}</span><div><h3>{{ shot.title }}</h3><p>{{ shot.description }}</p></div></figcaption>
-      </figure>
-    </div>
-    <dialog ref="preview" class="preview-dialog" :aria-label="current.title" @click="event => { if (event.target === preview) preview?.close() }">
-      <div class="dialog-toolbar">
-        <span>{{ current.title }}</span><button class="dialog-close" :aria-label="content.close" autofocus @click="preview?.close()">
-          <LandingIcon name="close" />
-        </button>
+  <section id="workspace" class="workbench site-container site-section" aria-labelledby="workspace-title">
+    <div class="section-heading">
+      <div>
+        <h2 id="workspace-title">
+          {{ content.title }}
+        </h2>
       </div>
-      <img :src="withBase(current.src)" :alt="current.alt" :width="current.width" :height="current.height">
-    </dialog>
+      <div class="workspace-intro">
+        <p>{{ content.description }}</p><div class="reference-sources" :aria-label="content.sourcesLabel">
+          <span v-for="(source, index) in content.sources" :key="source"><LandingIcon :name="['chat', 'file', 'globe'][index]" />{{ source }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="evidence-selector" :aria-label="content.label">
+      <button v-for="(item, index) in scenes" :key="item.id" :aria-pressed="selected === item.id" :class="{ active: selected === item.id }" @click="selected = item.id">
+        <span class="scene-number">0{{ index + 1 }}</span>{{ item.tab }}<LandingIcon name="arrow" />
+      </button>
+    </div>
+    <div class="evidence-body">
+      <div class="evidence-copy" aria-live="polite">
+        <h3>{{ scene.title }}</h3><p>{{ scene.description }}</p>
+      </div>
+      <LandingImagePreview :key="scene.id" :src="scene.src" :alt="scene.alt" :title="scene.title" :enlarge="content.enlarge" :close="content.close" :original="content.original" :width="scene.width" :height="scene.height" :mobile-position="scene.mobilePosition" :mobile-src="scene.mobileSrc" :mobile-width="scene.mobileWidth" :mobile-height="scene.mobileHeight" />
+      <div class="evidence-caption">
+        <div><span>{{ scene.caption }}</span><span class="mobile-crop-note">{{ content.crop }}</span></div>
+        <a :href="withBase(scene.guide)">{{ english ? 'Learn how' : '查看操作指南' }}<LandingIcon name="arrow" /></a>
+      </div>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.workbench { padding-top: 25px; position: relative; }
-.workbench-heading { text-align: center; }
-.workbench-description { max-width: 495px; margin: 24px auto 0; font-size: 14px; line-height: 2; color: var(--site-muted); }
-.preview-caption { margin-top: 18px; color: var(--site-faint); font-size: 10px; line-height: 1.8; }
-.product-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 34px 24px; margin-top: 46px; }
-.product-shot { margin: 0; min-width: 0; }
-.app-preview { position: relative; display: block; width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--site-line); padding: 0; cursor: zoom-in; box-shadow: 0 15px 40px var(--site-shadow); background: var(--site-surface); transition: transform .2s, border-color .2s; }
-.app-preview:hover { transform: translateY(-3px); border-color: var(--site-gold); }
-.app-preview img { display: block; width: 100%; height: auto; }
-.enlarge-hint { position: absolute; right: 13px; bottom: 13px; border-radius: 6px; padding: 9px 12px; font-size: 10px; background: #111827ed; color: #f0eee7; display: flex; align-items: center; gap: 8px; opacity: 0; transform: translateY(5px); transition: opacity .2s, transform .2s; }
-.enlarge-hint svg { width: 13px; height: 13px; }
-.app-preview:hover .enlarge-hint, .app-preview:focus-visible .enlarge-hint { opacity: 1; transform: translateY(0); }
-figcaption { display: flex; gap: 14px; padding: 21px 3px 0; }
-.shot-number { font-family: var(--site-mono); font-size: 10px; padding-top: 2px; color: var(--site-gold); }
-figcaption h3 { font-size: 15px; font-weight: 500; line-height: 1.5; }
-figcaption p { font-size: 11px; line-height: 1.8; color: var(--site-muted); margin-top: 7px; }
-.preview-dialog { padding: 0; border: 1px solid var(--site-line); border-radius: 10px; max-width: min(95vw, 1600px); max-height: 93vh; margin: auto; background: var(--site-raised); color: var(--site-ink); overflow: auto; }
-.preview-dialog::backdrop { background: #070b14db; backdrop-filter: blur(8px); }
-.dialog-toolbar { display: flex; align-items: center; justify-content: space-between; padding-left: 20px; font-size: 12px; gap: 18px; }
-.preview-dialog > img { display: block; width: auto; max-width: 94vw; max-height: 82vh; object-fit: contain; }
-.dialog-close { width: 44px; height: 44px; display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
-.dialog-close:hover { color: var(--site-gold); }
+.workbench { padding-top: 88px; }
+.section-heading { display: grid; grid-template-columns: 1.1fr 1fr; gap: 80px; align-items: end; margin-bottom: 39px; }
+.workspace-intro > p { font-size: 15px; line-height: 1.9; color: var(--site-muted); }
+.reference-sources { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 23px; }
+.reference-sources > span { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--site-blue); }
+.reference-sources svg { width: 15px; height: 15px; }
+.evidence-selector { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--site-line); }
+.evidence-selector button { display: flex; align-items: center; justify-content: flex-start; gap: 14px; min-height: 73px; padding: 0 24px; font-size: 15px; color: var(--site-muted); cursor: pointer; position: relative; text-align: left; }
+.evidence-selector button + button { border-left: 1px solid var(--site-line); }
+.evidence-selector button.active { color: var(--site-blue); background: var(--site-accent-soft); }
+.evidence-selector button.active::after { content: ''; height: 3px; position: absolute; bottom: -1px; left: 0; right: 0; background: var(--site-blue); }
+.scene-number { font: 500 11px var(--site-mono); opacity: .7; }
+.evidence-selector svg { width: 17px; height: 17px; margin-left: auto; }
+.evidence-body { padding-top: 28px; }
+.evidence-copy { display: grid; grid-template-columns: 1fr 1.6fr; align-items: start; gap: 50px; padding-bottom: 25px; }
+.evidence-copy h3 { font-size: 21px; line-height: 1.5; letter-spacing: -.02em; }
+.evidence-copy > p { color: var(--site-muted); font-size: 13px; line-height: 1.9; max-width: 690px; }
+.evidence-body :deep(.image-preview) { border: 1px solid var(--site-line); box-shadow: 0 14px 45px var(--site-shadow); }
+.evidence-caption { margin-top: 15px; display: flex; justify-content: space-between; align-items: center; gap: 20px; font-size: 11px; line-height: 1.8; color: var(--site-muted); }
+.evidence-caption > a { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; flex-shrink: 0; font-size: 13px; color: var(--site-blue); }
+.evidence-caption > a:hover { text-decoration: underline; }
+.evidence-caption > a svg { width: 16px; height: 16px; }
+.mobile-crop-note { display: none; }
+@media (max-width: 1000px) { .section-heading { gap: 40px; } .evidence-selector button { padding-inline: 15px; gap: 9px; font-size: 13px; } }
 @media (max-width: 760px) {
-  .workbench { padding-top: 0; }
-  .workbench-description { font-size: 13px; max-width: 350px; }
-  .product-gallery { grid-template-columns: minmax(0, 1fr); gap: 28px; margin-top: 28px; }
-  figcaption { padding-top: 16px; }
-  .enlarge-hint { display: none; }
+  .workbench { padding-top: 54px; } .section-heading { grid-template-columns: 1fr; gap: 22px; margin-bottom: 27px; } .workspace-intro > p { font-size: 13px; } .reference-sources { margin-top: 18px; gap: 10px 15px; } .reference-sources > span { font-size: 10px; }
+  .evidence-selector { grid-template-columns: 1fr 1fr; }
+  .evidence-selector button { gap: 10px; min-height: 58px; padding-inline: 12px; font-size: 12px; line-height: 1.5; } .evidence-selector svg { display: none; } .scene-number { font-size: 10px; }
+  .evidence-selector button:nth-child(3) { border-left: 0; } .evidence-selector button:nth-child(n+3) { border-top: 1px solid var(--site-line); }
+  .evidence-body { padding-top: 23px; } .evidence-copy { grid-template-columns: 1fr; gap: 12px; padding-bottom: 20px; } .evidence-copy h3 { font-size: 20px; } .evidence-copy > p { font-size: 12px; }
+  .evidence-caption { display: block; font-size: 10px; } .mobile-crop-note { display: block; margin-top: 5px; }
 }
 </style>

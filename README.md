@@ -1,57 +1,118 @@
 <p align="center">
-  <img src="packages/assets/brand/lexora-avatar.png" width="128" alt="Lexora" />
+  <img src="apps/website/src/public/favicon.png" width="112" height="112" alt="Lexora" />
 </p>
 
 <h1 align="center">Lexora</h1>
 
-<p align="center">想你所想，行你所行。</p>
+<p align="center"><strong>想你所想，行你所行。</strong></p>
+
+Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限于代码助手的角色，也能陪你整理资料、打磨作品、安排日常。你说出目标，它持续推进，让文字成为工作、创作与生活的起点。
 
 <p align="center">
-  <strong>中文</strong> · <a href="./README.en.md">English</a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/useLexora/Lexora?style=flat&amp;label=release&amp;color=blue" /></a>
+  <a href="./LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-green?style=flat" /></a>
+  <a href="https://github.com/useLexora/Lexora/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/useLexora/Lexora/total?style=flat&amp;label=downloads&amp;color=orange" /></a>
+  <a href="https://uselexora.app/guide/quick-start"><img alt="Desktop: Windows, macOS, Linux" src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS%20%7C%20Linux-blueviolet?style=flat" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/useLexora/Lexora/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/useLexora/Lexora/ci.yml?branch=master&amp;style=flat&amp;label=CI&amp;labelColor=232b35" /></a>
-  <a href="./LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-927442?style=flat&amp;labelColor=232b35" /></a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest">下载 Lexora</a> · <a href="https://uselexora.app/">官网</a> · <a href="https://uselexora.app/guide/quick-start">使用指南</a>
 </p>
+
+<p align="center"><strong>中文</strong> · <a href="./README.en.md">English</a></p>
 
 <p align="center">
-  <a href="https://github.com/useLexora/Lexora/releases"><img alt="Release asset downloads" src="https://img.shields.io/github/downloads/useLexora/Lexora/total?style=flat&amp;label=downloads&amp;labelColor=232b35&amp;color=4f8a78" /></a>
-  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/useLexora/Lexora?style=flat&amp;logo=github&amp;label=release&amp;labelColor=232b35&amp;color=927442" /></a>
-  <a href="https://github.com/useLexora/Lexora/releases/latest"><img alt="Desktop: Windows, Linux and macOS" src="https://img.shields.io/badge/desktop-Windows%20%7C%20Linux%20%7C%20macOS-607fa5?style=flat&amp;labelColor=232b35" /></a>
+  <img src="apps/website/src/public/landing/crew-cover-zh.webp" width="1200" alt="Lexora 调度大肥鱼、小克、小白，伙伴再按需调度四位 NPC" />
 </p>
 
-<p align="center">
-  <a href="https://github.com/useLexora/Lexora/releases/latest">下载 Lexora</a>
-  ·
-  <a href="https://uselexora.app/">官网</a>
-  ·
-  <a href="https://uselexora.app/guide/quick-start">使用指南</a>
-</p>
+## 围绕目标，持续工作
 
-Lexora 是在真实桌面实践中自我演化的个人 AI Agent。不依附单一模型，不局限于代码助手；依托独立的本地执行运行时与安全沙箱，在你授权的范围内调度工具、处理文件与自动化任务，让文字成为工作、创作与生活的起点。
+从工作中的资料整理、创作中的反复打磨，到生活里的行程规划，先说出你想完成的事。Lexora 围绕目标安排步骤，在你的桌面上持续推进，你可以随时补充要求、查看成果。
 
-## 你的桌面 Agent
-
-Lexora 将任务对话、本地上下文、沙箱工具执行与产物交付整合在同一套桌面工作流中。从读取资料、运行命令到直接修改代码与生成成果，任务的执行过程与产物都清晰可见。
-
-模型自由接入，文件与工具的访问由你严格授权。无论是推进复杂的日常项目，还是验证一个突发奇想，它都能替你把对话中的想法落为现实。
+对话和执行记录会保留在任务中。今天没做完的事，下次打开接着做；用顺手的方法和工具，也可以留下来继续用。
 
 <table>
-  <tr>
-    <td width="50%"><img src="apps/website/src/public/landing/screenshots/tasks-zh.webp" alt="生图任务与图片预览" /></td>
-    <td width="50%"><img src="apps/website/src/public/landing/screenshots/artifacts-zh.webp" alt="边聊边看文件" /></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="apps/website/src/public/landing/screenshots/automations-zh.webp" alt="安排定时任务" /></td>
-    <td width="50%"><img src="apps/website/src/public/landing/screenshots/models-zh.webp" alt="连接自己的模型" /></td>
-  </tr>
+<tr>
+<td width="50%" valign="top">
+<h3>把材料和任务放在一起</h3>
+<p>并排打开任务、文件与预览，边看成果边修改。多个任务各自保留上下文。</p>
+<a href="apps/website/src/public/landing/screenshots/workspace-zh.webp"><img src="apps/website/src/public/landing/screenshots/workspace-zh.webp" width="640" alt="文件与多分屏" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>指着具体内容继续改</h3>
+<p>选中对话、文件或网页中的内容，带着来源补充要求，让下一步有据可依。</p>
+<a href="apps/website/src/public/landing/screenshots/references-zh.webp"><img src="apps/website/src/public/landing/screenshots/references-zh.webp" width="640" alt="上下文引用" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>让合适的伙伴接手</h3>
+<p>同一任务，多位伙伴。由 Lexora 统筹，也可以点名伙伴接手，协力推进目标。</p>
+<a href="apps/website/src/public/landing/screenshots/collaboration-zh.webp"><img src="apps/website/src/public/landing/screenshots/collaboration-zh.webp" width="640" alt="伙伴协作" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>组建自己的伙伴小队</h3>
+<p>按需要设定伙伴的模型、行动准则与能力，招募 NPC 协助完成子任务。</p>
+<a href="apps/website/src/public/landing/screenshots/companions-zh.webp"><img src="apps/website/src/public/landing/screenshots/companions-zh.webp" width="640" alt="伙伴小队" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>把想法做成插件</h3>
+<p>说出需求，确认安装，再继续修改。图中是对话制作的「月光唱片」。</p>
+<a href="apps/website/src/public/landing/screenshots/plugin-moonlight.webp"><img src="apps/website/src/public/landing/screenshots/plugin-moonlight.webp" width="640" alt="通过对话制作插件" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>让日常任务按时推进</h3>
+<p>为重复任务设置时间与目标，查看每次运行的记录和结果。</p>
+<a href="apps/website/src/public/landing/screenshots/schedules-zh.webp"><img src="apps/website/src/public/landing/screenshots/schedules-zh.webp" width="640" alt="定时自动化" /></a>
+</td>
+</tr>
 </table>
 
-- **不止给答案，也动手做。** 读取资料、编写文件、修改代码，把对话继续成看得见的结果。
-- **模型和工具，按你习惯来。** 连接自己的模型，用 Skills 带上熟悉的做事方法，通过 MCP 接入更多工具。
-- **琐事排进日程，脑子留给灵感。** 让定时任务整理工作记录、生成周报，把重复的步骤交给自动化。
-- **桌面上，还有一点可爱。** 小小的桌宠，陪你开工，也带来任务反馈。
+### 更多能力
+
+- **空间与任务管理**：按项目或主题组织任务，置顶常用入口，通过搜索找回已有任务。
+- **执行中继续沟通**：工作没结束也能补充要求，选择排队处理，或把消息送入当前执行。
+- **对话分支**：从已有对话尝试不同方向，在分支画布中查看并继续，保留各次尝试。
+- **模型自由选择**：连接自己的模型服务，为不同伙伴和任务选择合适的模型。
+- **Skills**：把写作规范、研究流程和项目约定保存为可复用的工作方法。
+- **MCP**：接入本地或远程服务，把已有工具带进任务。
+- **变更与执行记录**：查看工具做过什么、命令返回什么，以及已记录的文件改动。
+- **用量统计**：按任务、模型查看 Token 消耗，了解额度花在了哪里。
+- **权限选择**：按任务选择只读、人工审批、智能审批或完全访问，执行中也可以调整或停止。
+
+## 插件，让 Lexora 越用越合手
+
+为整理资料做一个文件分析面板，给创作加一套专用工具，或在休息时打开自己的播放器。一次临时的需要，可以变成以后随手可用的功能。
+
+你可以从插件市场安装，也可以直接在对话里描述需求，让伙伴生成源码与安装包。确认安装后继续试、继续改，源码留在任务工作区，方便自己维护和分享。
+
+插件可以把这些能力组合起来：
+
+- **界面与外观**：独立页面、分屏面板、小组件、完整主题与窗口特效，让功能出现在顺手的位置。
+- **交互与数据**：菜单和输入命令、获准访问的本地文件、独立设置与私有存储，让小工具记住你的用法。
+- **伙伴与模型**：提供 Agent 指令和专用工具，调用已配置的模型，把摘要、转换或分析结果交回任务。
+- **事件与定时**：响应任务进展、定时执行命令、发送系统通知，把重复步骤连起来。
+
+插件按声明的权限使用宿主能力。定时命令需要 Lexora 运行、电脑保持唤醒。
+
+[了解插件](https://uselexora.app/guide/settings-and-models#插件-扩展工作台) · [浏览插件源码](https://github.com/useLexora/plugins)
+
+## 本地优先
+
+Lexora 不会在后台把你的整个项目打包上传到我们的服务器，**不替你“开源”你的代码**。数据存在哪里、请求发给谁，写在这里：
+
+| 数据 | 保存位置或发送目标 |
+| --- | --- |
+| 项目文件 | 你的本地目录，直接在本机读写 |
+| 任务记录、伙伴与设置 | 保存在本机，支持备份与恢复 |
+| API Key 与登录凭据 | 使用操作系统提供的加密能力，在本机加密保存 |
+| 模型请求 | 从本机发往你配置的模型服务，不经过 Lexora 云端中转 |
+| 外部工具调用 | 发往你启用的 MCP 服务或插件获准访问的地址 |
+| 远程备份 | 由你配置并启用，上传到你指定的 WebDAV 或 S3 存储 |
+
+使用远程模型时，对话、引用内容，以及工具读到并放入上下文的代码或文件内容，会发送给对应的模型服务。外部工具也会收到调用所需的数据，具体处理方式取决于你选择的服务。
 
 ## 开始使用
 
@@ -59,31 +120,22 @@ Lexora 将任务对话、本地上下文、沙箱工具执行与产物交付整�
 2. 在设置中连接模型服务，按服务商要求配置 API Key 或账号授权。
 3. 新建任务，给 Lexora 一个目标；需要处理文件时，再选择工作目录。
 
-无需注册 Lexora 账号。模型服务的使用条件与费用以服务商为准；自动化需要应用在本机保持运行。重要文件记得备份，AI 生成的结果也请核对。
+无需注册 Lexora 账号。Lexora 不内含模型额度，模型服务的使用条件与费用以服务商为准。
 
-详细步骤见[使用指南](https://uselexora.app/guide/quick-start)。macOS 首次安装需要按指南执行一次 `xattr` 命令。
+详细步骤见[使用指南](https://uselexora.app/guide/quick-start)。macOS 首次安装需要按指南执行一次 `xattr` 命令。定时任务需要 Lexora 保持运行、电脑保持唤醒。
 
-## 桌面之下
+## 参与开发
 
-Vue + Electron 承载桌面体验，独立的 TypeScript Runtime 承载本地 Agent。Lexora 管理任务、上下文、授权与产物；Pi 提供 Agent Loop，Rust 处理原生能力。
+### 本地开发
 
-[![Lexora 底层架构：Renderer、Electron Main、独立 Agent Runtime、Pi 执行循环、权限审批、存储与 Rust 原生组件](apps/website/src/public/landing/architecture-zh.svg)](apps/website/src/public/landing/architecture-zh.svg)
-
-模型可以换，工具可以扩展，文件与工具的访问权限由你决定。产品数据保存在本机；使用在线模型或外部工具时，相关内容会发送给你选择的服务。
-
-## 本地开发
-
-需要 Node.js 26+、pnpm 11.5+ 与 Rust 工具链；平台依赖见[构建说明](packaging/buddy/README.md)。在仓库根目录运行：
+需要 Node.js 26+、pnpm 12.5.1+ 与 Rust 工具链；平台依赖见[构建说明](packaging/buddy/README.md)。在仓库根目录运行：
 
 ```bash
 pnpm --filter @uselexora/lexora --filter '@uselexora/lexora-buddy...' --filter @uselexora/lexora-website install --frozen-lockfile
 pnpm dev
-
-# 启动官网开发服务
-pnpm dev:website
 ```
 
-## 参与贡献
+### 参与贡献
 
 发现问题，欢迎[提个 Issue](https://github.com/useLexora/Lexora/issues)。若你已经动手实现了自己的想法，欢迎按[贡献说明](CONTRIBUTING.md)提交 PR，和大家分享你的方案。
 
