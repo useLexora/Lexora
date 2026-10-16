@@ -23,6 +23,7 @@ export interface ChatAgentReasoningNode {
   contentIndex: number
   id: string
   kind: 'reasoning'
+  messageId: string
   status: 'completed' | 'interrupted' | 'running'
   text: string
 }
@@ -235,6 +236,7 @@ export function createChatAgentTurnReducer(
         contentIndex,
         id,
         kind: 'reasoning' as const,
+        messageId,
         status: 'running' as const,
         text: '',
       }

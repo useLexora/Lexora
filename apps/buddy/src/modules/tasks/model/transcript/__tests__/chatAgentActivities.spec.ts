@@ -128,5 +128,5 @@ function tool(id: string, status: ChatAgentToolNode['status'] = 'completed'): Ch
 }
 
 function thought(id: string, status: ChatAgentReasoningNode['status'] = 'completed'): ChatAgentReasoningNode {
-  return { id, contentIndex: 0, kind: 'reasoning', status, text: '**Checking the display**' }
+  return { id, contentIndex: 0, kind: 'reasoning', messageId: 'reply', status, text: '**Checking the display**' }
 }

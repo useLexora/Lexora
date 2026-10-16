@@ -18,11 +18,21 @@ export function interleaveChatTranscriptSegments(
       continue
     const trigger = positions.get(`message:${row.turn.triggeringMessageId}`) ?? -1
     const groups = new Map<number, ChatAgentTurnNode[]>()
+    const replyBoundaries = new Map<string, number>()
+    let replyBoundary = timeline.length
+    for (const node of row.turn.nodes.toReversed()) {
+      if (node.kind === 'reasoning') {
+        const replyPosition = positions.get(`message:${node.messageId}`)
+        if (replyPosition !== undefined && replyPosition > trigger)
+          replyBoundary = Math.min(replyBoundary, replyPosition)
+      }
+      replyBoundaries.set(node.id, replyBoundary)
+    }
     for (const node of row.turn.nodes) {
       const startedAt = row.turn.nodeStartedAt?.[node.id]
       let position = trigger
       if (startedAt) {
-        for (let index = trigger + 1; index < timeline.length; index++) {
+        for (let index = trigger + 1; index < replyBoundaries.get(node.id)!; index++) {
           const candidate = timeline[index]!
           if (candidate.kind === 'message' && candidate.message.id === row.turn.finalMessageId && row.turn.status !== 'running' && row.turn.status !== 'queued')
             break

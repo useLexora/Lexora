@@ -87,7 +87,7 @@ describe('activity disclosure', () => {
   it('keeps execution, approval, issues and stopping distinct through tool and model progress', async () => {
     const first = readTool('one', 'preparing')
     const second = readTool('two', 'failed')
-    const { root, turn, stopping } = mountTurn([{ id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking output' }, first, second])
+    const { root, turn, stopping } = mountTurn([{ id: 'thought', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'completed', text: 'Checking output' }, first, second])
     const header = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
     const status = () => root.querySelector('.buddy-chat-run-activity')!
     header().click()
@@ -120,7 +120,7 @@ describe('activity disclosure', () => {
   })
 
   it('keeps a manually closed reasoning row closed as more blocks arrive and interruption settles it', async () => {
-    const thought: ChatAgentTurnNode = { id: 'thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'First thought' }
+    const thought: ChatAgentTurnNode = { id: 'thought', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'completed', text: 'First thought' }
     const { root, turn } = mountTurn([thought])
     const header = () => root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!
     header().click()
@@ -165,8 +165,8 @@ describe('activity disclosure', () => {
 
   it('discloses long thoughts independently without truncation and retains the reader choice through group changes', async () => {
     const text = `The beginning\n\n${'Reasoning detail. '.repeat(5_000)}\n\nThe end`
-    const thought: ChatAgentTurnNode = { id: 'long-thought', contentIndex: 0, kind: 'reasoning', status: 'completed', text }
-    const interrupted: ChatAgentTurnNode = { id: 'interrupted-thought', contentIndex: 0, kind: 'reasoning', status: 'interrupted', text: 'Partial reasoning' }
+    const thought: ChatAgentTurnNode = { id: 'long-thought', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'completed', text }
+    const interrupted: ChatAgentTurnNode = { id: 'interrupted-thought', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'interrupted', text: 'Partial reasoning' }
     const { root, turn } = mountTurn([thought, readTool('one', 'completed'), interrupted], 'completed')
     const group = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
     group().click()
@@ -205,7 +205,7 @@ describe('activity disclosure', () => {
     expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
     root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
     await nextTick()
-    const leading: ChatAgentTurnNode = { id: 'leading', contentIndex: 0, kind: 'reasoning', status: 'completed', text: 'Checking the returned file' }
+    const leading: ChatAgentTurnNode = { id: 'leading', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'completed', text: 'Checking the returned file' }
     turn.value = { ...turn.value, nodes: [leading, { ...node, status: 'completed' }, readTool('two', 'completed')], progress: { phase: 'model_responding', toolName: null } }
     await nextTick()
     const group = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
@@ -299,7 +299,7 @@ describe('activity disclosure', () => {
 
 describe('current status and historical activity', () => {
   it('disables empty thoughts and retains open merged reasoning through grouping and interruption', async () => {
-    const thought: ChatAgentTurnNode = { id: 'thought', kind: 'reasoning', contentIndex: 0, status: 'running', text: '' }
+    const thought: ChatAgentTurnNode = { id: 'thought', kind: 'reasoning', messageId: 'reply', contentIndex: 0, status: 'running', text: '' }
     const { root, turn } = mountTurn([thought])
     const header = () => root.querySelector<HTMLButtonElement>('.buddy-chat-reasoning-entry__header')!
     expect(header().disabled).toBe(true)

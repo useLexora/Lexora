@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { describeChatCompaction } from '../chatCompactionDisplay'
 import { describeChatCurrentActivity } from '../chatCurrentActivity'
 
-const thought: ChatAgentTurnNode = { id: 'reasoning', kind: 'reasoning', contentIndex: 0, status: 'running', text: '**Reviewing the implementation**\n\nDetails' }
+const thought: ChatAgentTurnNode = { id: 'reasoning', kind: 'reasoning', messageId: 'reply', contentIndex: 0, status: 'running', text: '**Reviewing the implementation**\n\nDetails' }
 const compaction = { id: 'compaction', kind: 'compaction', status: 'running', tokensBefore: null, estimatedTokensAfter: null } as const
 function tool(id: string, status: ChatAgentToolNode['status']): ChatAgentToolNode {
   return { id, kind: 'tool', status, toolCallId: id, toolName: 'bash', description: null, isError: false, presentation: { card: 'terminal', command: 'pnpm test > output.log 2>&1; result=$?; tail -12 output.log', cwd: '.', description: null, output: null, exitCode: null, signal: null, truncated: false } }

@@ -48,6 +48,57 @@ function order(projection: ReturnType<typeof projectChatTranscript>) {
 }
 
 describe('interleaved conversation segments', () => {
+  it.each([
+    { sameTimestamp: false, phase: undefined },
+    { sameTimestamp: true, phase: undefined },
+    { sameTimestamp: false, phase: 'final_answer' },
+    { sameTimestamp: true, phase: 'final_answer' },
+  ])('keeps reasoning before its reply through rebuild, persistence and completion ($sameTimestamp, $phase)', ({ sameTimestamp, phase }) => {
+    const history: LocalRunEvent[] = [
+      { runId: run.id, sequence: 1, createdAt: time(1), type: 'message.started', payload: { messageId: 'reply', role: 'assistant' } },
+      { runId: run.id, sequence: 2, createdAt: time(sameTimestamp ? 1 : 2), type: 'message.block.completed', payload: { messageId: 'reply', contentIndex: 0, kind: 'reasoning', content: 'Planning' } },
+      { runId: run.id, sequence: 3, createdAt: time(3), type: 'message.delta', payload: { messageId: 'reply', contentIndex: 1, phase, delta: 'Hello' } },
+      { runId: run.id, sequence: 4, createdAt: time(4), type: 'message.delta', payload: { messageId: 'reply', contentIndex: 1, phase, delta: ' world' } },
+    ]
+    const first = input(run, history.slice(0, 2), [message('initial', 'user', 0)])
+    const projector = createChatTranscriptProjector()
+    projector.project(first)
+    for (const count of [3, 4]) {
+      const current = { ...first, runProjections: [{ turn: projectChatAgentTurn(run, history.slice(0, count)), recoveryNotices: [], streamingMessages: projectChatRunStreamingMessages(run, history.slice(0, count)) }] }
+      const live = projector.project(current)
+      const rebuilt = projectChatTranscript(current)
+      expect(rebuilt.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply', 'activity:run'])
+      expect(live.rows).toEqual(rebuilt.rows)
+      expect(rebuilt.rows[1]).toMatchObject({ turn: { nodes: [{ kind: 'reasoning', messageId: 'reply' }] } })
+    }
+    const done = [...history, { runId: run.id, sequence: 5, createdAt: time(5), type: 'message.completed', payload: { messageId: 'reply', phase: 'final_answer', content: { text: 'Hello world' } } }]
+    for (const status of ['running', 'completed', 'failed', 'cancelled'] as const) {
+      const currentRun = { ...run, status, completedAt: status === 'running' ? null : time(6) }
+      const current = input(currentRun, done, [message('initial', 'user', 0), message('reply', 'assistant', 5)])
+      const replay = projectChatTranscript(current)
+      expect(replay.rows.slice(0, 3).map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
+      expect(projector.project(current).rows).toEqual(replay.rows)
+    }
+  })
+
+  it.each(['user', 'assistant'] as const)('keeps preceding actions with reasoning and later reasoning with its own reply around another %s message', (role) => {
+    const history: LocalRunEvent[] = [
+      { runId: run.id, sequence: 1, createdAt: time(1), type: 'message.started', payload: { messageId: 'first', role: 'assistant' } },
+      { runId: run.id, sequence: 2, createdAt: time(3), type: 'message.block.completed', payload: { messageId: 'first', contentIndex: 0, kind: 'reasoning', content: 'First thought' } },
+      { runId: run.id, sequence: 3, createdAt: time(4), type: 'message.completed', payload: { messageId: 'first', phase: 'final_answer', content: { text: 'First reply' } } },
+      { runId: run.id, sequence: 4, createdAt: time(6), type: 'message.started', payload: { messageId: 'second', role: 'assistant' } },
+      { runId: run.id, sequence: 5, createdAt: time(8), type: 'message.block.completed', payload: { messageId: 'second', contentIndex: 0, kind: 'reasoning', content: 'Second thought' } },
+      { runId: run.id, sequence: 6, createdAt: time(9), type: 'message.delta', payload: { messageId: 'second', contentIndex: 1, delta: 'Second reply' } },
+    ]
+    const interjection = { ...message('interjection', role, 5), runId: role === 'assistant' ? 'other-run' : null }
+    const items = [message('initial', 'user', 0), message('first', 'assistant', 4), interjection, action(2), action(7)]
+    const current = input(run, history, items)
+    current.runProjections[0]!.streamingMessages = projectChatRunStreamingMessages(run, history)
+    const projected = projectChatTranscript(current)
+    const contents = projected.rows.flatMap(row => row.kind === 'message' ? [row.message.id] : row.kind === 'agent-turn' ? row.turn.nodes.map(node => node.id) : [])
+    expect(contents).toEqual(['initial', 'extension-action:action-2', 'reasoning:first:0', 'first', 'interjection', 'extension-action:action-7', 'reasoning:second:0', 'second'])
+  })
+
   it('keeps completed speeches in place and restores the caller identity after another actor speaks', () => {
     const actorReply = (id: string, actor: string, seconds: number) => ({ ...message(id, 'assistant', seconds), runId: actor })
     const items = [message('initial', 'user', 0), actorReply('actor-a', 'actor-a-run', 10), actorReply('actor-a-again', 'actor-a-run', 11)]
@@ -194,7 +245,7 @@ describe('interleaved conversation segments', () => {
     const first = input(run, [], items)
     const projector = createChatTranscriptProjector()
     expect(projector.project(first).rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'activity:run'])
-    const thinking = { ...first, runProjections: [{ ...first.runProjections[0]!, turn: { ...first.runProjections[0]!.turn, nodes: [{ id: 'reasoning', kind: 'reasoning' as const, contentIndex: 0, status: 'running' as const, text: 'Planning' }], nodeStartedAt: { reasoning: time(3) } } }] }
+    const thinking = { ...first, runProjections: [{ ...first.runProjections[0]!, turn: { ...first.runProjections[0]!.turn, nodes: [{ id: 'reasoning', kind: 'reasoning' as const, messageId: 'reply', contentIndex: 0, status: 'running' as const, text: 'Planning' }], nodeStartedAt: { reasoning: time(3) } } }] }
     expect(projector.project(thinking).rows).toEqual(projectChatTranscript(thinking).rows)
     const narration: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(3), type: 'message.completed', payload: { role: 'assistant', messageId: 'reply', phase: 'commentary', content: { text: 'Working' } } }
     const next = { ...first, runProjections: input(run, [narration], items).runProjections }
