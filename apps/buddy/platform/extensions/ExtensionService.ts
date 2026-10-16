@@ -3,6 +3,7 @@ import type { ExtensionMenuInvocation, ExtensionResource, ExtensionStatus, Exten
 import type { ExtensionInspection } from '../../shared/extensions/extensionAuthoring'
 import type { ExtensionConditionRuntime } from '../../shared/extensions/extensionConditionContext'
 import type { ExtensionConditionState } from '../../shared/extensions/extensionConditions'
+import type { ExtensionDiagnostic, ExtensionHostFailure } from '../../shared/extensions/extensionDiagnostic'
 import type { ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
@@ -19,10 +20,11 @@ import { Emitter } from '../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../shared/events/eventSnapshot'
 import { extensionAgentInvocationLimits, extensionAgentRequestSchema } from '../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../shared/extensions/extensionAgentCapabilities'
-import { extensionError, extensionJsonSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
+import { extensionError, extensionJsonSchema, extensionResourceSchema, parseExtensionRequestParams } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
+import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
 import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
@@ -48,7 +50,7 @@ export interface ExtensionHost {
 }
 export interface ExtensionServicePorts {
   themes?: ThemeService
-  createHost: (pkg: ExtensionPackage, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: () => void) => ExtensionHost
+  createHost: (pkg: ExtensionPackage, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure?: ExtensionHostFailure) => void) => ExtensionHost
   createView: (pkg: ExtensionPackage) => { token: string, url: string, dispose: () => void }
   workbench: (event: ExtensionWorkbenchEvent, signal: AbortSignal) => Promise<string | null>
   readText: (target: SpaceFileTarget, signal: AbortSignal) => Promise<string>
@@ -660,9 +662,23 @@ export class ExtensionService {
       resource = await this.store.grant(running.package.manifest.id, target, () => this.#assertCurrent(running))
     }
     this.#assertCurrent(running)
-    const result = await running.host.call('command', { command, resource, arguments: argumentsValue, invocation })
-    this.#assertCurrent(running)
-    return extensionJsonSchema.parse(result)
+    try {
+      const result = await this.#callCommand(running, { command, resource, arguments: argumentsValue, invocation })
+      this.#assertCurrent(running)
+      return result
+    }
+    catch (error) {
+      this.#requestFailed(running.package.manifest.id, 'command', error)
+      throw error instanceof z.ZodError ? new Error('EXTENSION_INVALID_ARGUMENT') : error
+    }
+  }
+
+  async #callCommand(running: RunningExtension, params: JsonValue): Promise<JsonValue> {
+    const result = await running.host.call('command', params)
+    const parsed = extensionJsonSchema.safeParse(result)
+    if (!parsed.success)
+      throw new ExtensionRequestError('EXTENSION_INVALID_RESULT', 'command', parsed.error, 'result')
+    return parsed.data
   }
 
   async openView(input: ExtensionViewInput): Promise<ExtensionViewSession> {
@@ -717,8 +733,20 @@ export class ExtensionService {
     }
   }
 
-  viewRequest(id: string, generation: string, token: string, method: string, params: JsonValue): Promise<JsonValue> {
-    const pending = Promise.resolve().then(() => this.#viewRequest(id, generation, token, method, params)).finally(() => this.#viewRequests.delete(pending))
+  viewRequest(id: string, generation: string, token: string, method: string, params: unknown): Promise<JsonValue> {
+    const pending = Promise.resolve().then(async () => {
+      const view = this.#views.get(id)
+      if (!view || view.session.generation !== generation || view.session.token !== token)
+        throw new Error('EXTENSION_VIEW_EXPIRED')
+      this.#assertCurrent(view.running)
+      try {
+        return await this.#viewRequest(id, generation, token, method, parseExtensionRequestParams(method, params))
+      }
+      catch (error) {
+        this.#requestFailed(view.running.package.manifest.id, method, error)
+        throw error instanceof z.ZodError ? new Error('EXTENSION_INVALID_ARGUMENT') : error
+      }
+    }).finally(() => this.#viewRequests.delete(pending))
     this.#viewRequests.add(pending)
     return pending
   }
@@ -924,7 +952,7 @@ export class ExtensionService {
       const input = z.object({ command: z.string().max(180), arguments: extensionJsonSchema }).strict().parse(params)
       if (!view.running.package.manifest.contributes.commands.some(item => item.id === input.command))
         throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-      result = extensionJsonSchema.parse(await view.running.host.call('command', { ...input, resource: view.input.resource, invocation: { target: 'view', instanceId: view.input.instanceId ?? null } }))
+      result = await this.#callCommand(view.running, { ...input, resource: view.input.resource, invocation: { target: 'view', instanceId: view.input.instanceId ?? null } })
     }
     else {
       if (method === 'resources.readText') {
@@ -993,7 +1021,7 @@ export class ExtensionService {
         const abort = new AbortController()
         let host: ExtensionHost
         try {
-          host = this.#ports.createHost(pkg, (method, params) => this.#brokerByGeneration(dependency, generation, method, params), () => this.#failed(dependency, generation))
+          host = this.#ports.createHost(pkg, (method, params) => this.#brokerByGeneration(dependency, generation, method, params), failure => this.#failed(dependency, generation, failure))
         }
         catch (error) {
           this.#log(dependency, 'activation.failed', extensionError(error))
@@ -1053,14 +1081,24 @@ export class ExtensionService {
     const input = themeRequestSchema.parse(params)
     if (!['list', 'get', 'active', 'describe', 'validate', 'resolve', 'export'].includes(input.action) && !running.package.manifest.permissions.themeManagement)
       throw new Error('EXTENSION_PERMISSION_DENIED')
-    return themeTransportSchema.parse(await this.#ports.themes.request(owner, input, assertCurrent))
+    const result = await this.#ports.themes.request(owner, input, assertCurrent)
+    const parsed = themeTransportSchema.safeParse(result)
+    if (!parsed.success)
+      throw new ExtensionRequestError('EXTENSION_INVALID_RESULT', 'themes.request', parsed.error, 'result')
+    return parsed.data
   }
 
   async #brokerByGeneration(id: string, generation: string, method: string, params: unknown): Promise<JsonValue> {
     const running = this.#running.get(id)
     if (!running || running.generation !== generation)
       throw new Error('EXTENSION_HOST_STOPPED')
-    return this.#broker(running, method, params)
+    try {
+      return await this.#broker(running, method, parseExtensionRequestParams(method, params))
+    }
+    catch (error) {
+      this.#requestFailed(id, method, error)
+      throw error instanceof z.ZodError ? new Error('EXTENSION_INVALID_ARGUMENT') : error
+    }
   }
 
   async #broker(running: RunningExtension, method: string, params: unknown): Promise<JsonValue> {
@@ -1261,11 +1299,13 @@ export class ExtensionService {
     throw new Error('EXTENSION_NETWORK_REDIRECT_LIMIT')
   }
 
-  #failed(id: string, generation: string): void {
+  #failed(id: string, generation: string, failure?: ExtensionHostFailure): void {
     if (this.#running.get(id)?.generation !== generation)
       return
-    this.#log(id, 'host.failed', 'EXTENSION_HOST_CRASHED')
-    this.#publish({ kind: 'host', extensionId: id, generation, status: 'failed', errorCode: 'EXTENSION_HOST_CRASHED' })
+    const code = failure?.code ?? 'EXTENSION_HOST_CRASHED'
+    const diagnostic = extensionDiagnostic(failure?.method ?? 'unknown', null, failure?.stage ?? 'process')
+    this.#log(id, 'host.failed', code, undefined, diagnostic)
+    this.#publish({ kind: 'host', extensionId: id, generation, status: 'failed', errorCode: code, diagnostic })
     void this.#stopClosure(id).catch(() => {})
   }
 
@@ -1321,10 +1361,14 @@ export class ExtensionService {
     await Promise.all([...affected].reverse().map(next => this.#stop(next)))
   }
 
-  #log(id: string, event: string, code?: string, durationMs?: number): void {
+  #requestFailed(id: string, method: string, error: unknown): void {
+    this.#log(id, 'request.failed', extensionError(error), undefined, extensionDiagnostic(method, error))
+  }
+
+  #log(id: string, event: string, code?: string, durationMs?: number, diagnostic?: ExtensionDiagnostic): void {
     const previous = this.#diagnostics.get(id)
-    this.#diagnostics.set(id, { error: event === 'activation.failed' || event === 'host.failed' ? code ?? null : previous?.error ?? null, activationMs: durationMs ?? previous?.activationMs ?? null, logs: [...previous?.logs ?? [], { time: new Date().toISOString(), event, ...(code ? { code } : {}), ...(durationMs !== undefined ? { durationMs } : {}) }].slice(-50) })
-    this.#publish({ kind: 'diagnostic', extensionId: id, event, ...(code ? { errorCode: code } : {}), ...(durationMs === undefined ? {} : { durationMs }) })
+    this.#diagnostics.set(id, { error: event === 'activation.failed' || event === 'host.failed' ? code ?? null : previous?.error ?? null, activationMs: durationMs ?? previous?.activationMs ?? null, logs: [...previous?.logs ?? [], { time: new Date().toISOString(), event, ...(code ? { code } : {}), ...(durationMs !== undefined ? { durationMs } : {}), ...(diagnostic ? { diagnostic } : {}) }].slice(-50) })
+    this.#publish({ kind: 'diagnostic', extensionId: id, event, ...(code ? { errorCode: code } : {}), ...(durationMs === undefined ? {} : { durationMs }), ...(diagnostic ? { diagnostic } : {}) })
     if (event === 'activation.failed' || event === 'host.failed')
       void this.#refreshAgentContributions().catch(() => {})
   }

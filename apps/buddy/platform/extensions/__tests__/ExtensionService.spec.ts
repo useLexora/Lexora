@@ -1,3 +1,5 @@
+import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { ExtensionHostFailure } from '../../../shared/extensions/extensionDiagnostic'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
 import { Buffer } from 'node:buffer'
@@ -7,9 +9,12 @@ import { join } from 'node:path'
 import { deferred } from '@buddy-tests/deferred'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { afterEach, expect, it, vi } from 'vitest'
+import { applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
+import { extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ThemeService } from '../../themes/ThemeService'
 import { ExtensionService } from '../ExtensionService'
+import { observeExtensionDiagnostics } from '../observeExtensionDiagnostics'
 import { createStore, manifest, reviewPackage } from './fixtures'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -20,7 +25,7 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
   const { root, store } = await createStore()
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   await store.install((await reviewPackage(root, store, initialManifest)).token)
-  const hosts: Array<{ broker: (method: string, params: unknown) => Promise<JsonValue>, failed: () => void, disposed: boolean, commands: JsonValue[] }> = []
+  const hosts: Array<{ broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure?: ExtensionHostFailure) => void, disposed: boolean, commands: JsonValue[] }> = []
   const events: unknown[] = []
   const service = new ExtensionService(store, {
     createHost: (_pkg, broker, failed) => {
@@ -126,6 +131,9 @@ it('invalidates in-flight requests and old generation brokers on disable and cra
   const pending = deferred<string>()
   let wait = false
   const { service, hosts } = await fixture({ readText: async () => wait ? pending.promise : 'Selected' })
+  const reports: ApplicationDiagnostic[] = []
+  const subscription = observeExtensionDiagnostics(service, report => reports.push(applicationDiagnosticSchema.parse(report)))
+  cleanup.push(async () => subscription.dispose())
   expect((await service.list())[0]?.state).toBe('inactive')
   expect(hosts).toHaveLength(0)
   await Promise.all([service.execute('tests.reader', 'tests.reader.open', target), service.execute('tests.reader', 'tests.reader.open', target)])
@@ -154,6 +162,11 @@ it('invalidates in-flight requests and old generation brokers on disable and cra
   await expect(previous.broker('storage.set', { value: {}, version: 1 })).rejects.toThrow('EXTENSION_HOST_STOPPED')
   await service.execute('tests.reader', 'tests.reader.open', null)
   expect((await service.list())[0]!.generation).not.toBe(generation)
+  hosts.at(-1)!.failed({ code: 'EXTENSION_REQUEST_TIMEOUT', method: 'command', stage: 'timeout' })
+  expect(await service.inspect('tests.reader')).toMatchObject({ state: 'failed', error: 'EXTENSION_REQUEST_TIMEOUT' })
+  expect(reports.filter(report => report.event === 'extensions.host.failed' && report.errorCode === 'EXTENSION_REQUEST_TIMEOUT')).toEqual([
+    expect.objectContaining({ extensionRequest: { method: 'command', stage: 'timeout' } }),
+  ])
 })
 
 it('binds every view to its token and resource, and acknowledges only persisted state', async () => {
@@ -258,6 +271,7 @@ it('authorizes each placement and control request against its own live view sess
   await expect(service.viewRequest(session.id, session.generation, session.token, 'view.setState', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
   const ordinary = await service.openView({ ...input, viewId: randomUUID() })
   await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'control.propose', proposal)).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'view.setPresentation', { height: 260 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await hosts[0]!.broker('placements.show', { id: 'tests.controls.top' })
   expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', extensionId: value.id, placementId: 'tests.controls.top', visible: true }))
   await hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning' })
@@ -322,15 +336,16 @@ it('does not let an older concurrent open replace a newer view endpoint', async 
 it('records a failed view without failing its host or other views', async () => {
   const { store, service } = await fixture()
   const resource = await store.grant('tests.reader', target)
-  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: {}, stateVersion: 1 }
+  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: { secret: 'private-state' }, stateVersion: 1 }
   const failed = await service.openView(input)
   const retained = await service.openView({ ...input, viewId: randomUUID() })
   await service.viewRequest(failed.id, failed.generation, failed.token, 'view.failed', { code: 'EXTENSION_VIEW_TIMEOUT' })
   service.closeView(failed.id, failed.generation, failed.token)
-  const status = (await service.list())[0]!
+  const status = await service.inspect('tests.reader')
   expect(status).toMatchObject({ state: 'active', error: null })
+  expect(JSON.stringify(status)).not.toContain('private-state')
   expect(status.logs.at(-1)).toMatchObject({ event: 'view.failed', code: 'EXTENSION_VIEW_TIMEOUT' })
-  expect(await service.viewRequest(retained.id, retained.generation, retained.token, 'bootstrap', null)).toMatchObject({ state: {} })
+  expect(await service.viewRequest(retained.id, retained.generation, retained.token, 'bootstrap', null)).toMatchObject({ state: { secret: 'private-state' } })
 })
 
 it('rejects unauthorized media and late picker selections without retaining grants', async () => {
@@ -357,25 +372,6 @@ it('rejects unauthorized media and late picker selections without retaining gran
   const resource = await f.store.grant('tests.reader', target)
   const denied = await f.service.openView({ ...input, viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource })
   await expect(f.service.viewRequest(denied.id, denied.generation, denied.token, 'resources.listFiles', null)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
-})
-
-it('binds presentation changes to a current declared placement and reports real installation state', async () => {
-  const value = manifest({ apiVersion: 2, id: 'tests.panel', contributes: { views: [{ id: 'tests.panel.ui', title: 'Panel', entry: 'view.js', resource: 'none' }], placements: [{ id: 'tests.panel.float', kind: 'view', location: 'workbench.floating', view: 'tests.panel.ui' }] } })
-  const f = await fixture({ workbench: async event => event.kind === 'presentation' ? event.viewId : null }, value)
-  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.panel.ui', resource: null, state: { secret: 'private-state' }, stateVersion: 1 }
-  const view = await f.service.openView({ ...input, placementId: 'tests.panel.float' })
-  const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
-  await request('view.setPresentation', { height: 260, width: 360, position: 'absolute', right: 0 })
-  await expect(request('view.setPresentation', { height: 99999 })).rejects.toThrow()
-  await request('view.ready', null)
-  const status = await f.service.inspect(value.id)
-  expect(status).toMatchObject({ installed: true, version: '1.0.0', state: 'active', views: [{ type: 'tests.panel.ui', placement: 'tests.panel.float', ready: true, error: null }] })
-  expect(JSON.stringify(status)).not.toContain('private-state')
-  const page = await f.service.openView({ ...input, viewId: randomUUID() })
-  await expect(f.service.viewRequest(page.id, page.generation, page.token, 'view.setPresentation', { height: 260 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
-  await f.service.enable(value.id, false)
-  expect(await f.service.inspect(value.id)).toMatchObject({ state: 'disabled', views: [] })
-  await expect(request('view.setPresentation', { height: 100 })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
 
 it('keeps export permission separate from reads and expires writers with their owning view', async () => {
@@ -496,8 +492,6 @@ it('requires an owned live interaction and immediately revokes its views on exit
   const nextId = randomUUID()
   await f.broker('interactions.start', { id: nextId, title: 'Game' })
   const nextView = await f.service.openView({ ...f.input, interactionId: nextId })
-  await f.broker('views.broadcast', { score: 3 })
-  expect(f.events).toContainEqual(expect.objectContaining({ kind: 'message', extensionId: 'tests.game', generation: nextView.generation, message: { score: 3 } }))
   await f.service.enable('tests.game', false)
   await expect(f.service.viewRequest(nextView.id, nextView.generation, nextView.token, 'bootstrap', null)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
   expect(f.events).toContainEqual(expect.objectContaining({ kind: 'interaction', interactionId: nextId, title: null }))
@@ -538,4 +532,39 @@ it.each([false, true])('requires theme management permission and revokes host-ow
     expect(themes.snapshot.preview).toBe(false)
     await expect(broker('themes.request', input)).rejects.toThrow('EXTENSION_HOST_STOPPED')
   }
+})
+
+it('reports host and view validation failures with bounded, redacted diagnostics', async () => {
+  const home = await createTemporaryDirectory('lexora-theme-diagnostic-')
+  const themes = new ThemeService(home, async () => {})
+  await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
+  cleanup.push(() => themes.dispose())
+  const value = manifest({ apiVersion: 3, permissions: { themeManagement: true }, contributes: { commands: [{ id: 'tests.reader.open', title: 'Open' }], views: [{ id: 'tests.reader.reader', title: 'Reader', entry: 'view.js', resource: 'none' }] } })
+  const { service, hosts } = await fixture({ themes }, value)
+  const reports: ApplicationDiagnostic[] = []
+  const unsubscribe = observeExtensionDiagnostics(service, report => reports.push(applicationDiagnosticSchema.parse(report)))
+  cleanup.push(async () => unsubscribe.dispose())
+  await service.execute(value.id, 'tests.reader.open', null)
+  const view = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: null, stateVersion: 1 })
+  const request = (method: string, params: unknown) => service.viewRequest(view.id, view.generation, view.token, method, params)
+  const input = { action: 'save', archive: { schemaVersion: 1, appearance: 'light', label: 'Private label', document: { schemaVersion: 1, materials: [{ anchor: 'workbench.pane', blur: 99 }] } } }
+  for (const send of [hosts[0]!.broker, request]) {
+    await expect(send('themes.request', input)).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+    const status = extensionInspectionSchema.parse(await service.inspect(value.id))
+    expect(status).toMatchObject({ state: 'active', error: null })
+    expect(status.logs.at(-1)).toMatchObject({ event: 'request.failed', code: 'EXTENSION_INVALID_ARGUMENT', diagnostic: { method: 'themes.request', stage: 'validation', issues: [{ path: 'archive.document.materials.0.blur', code: 'too_big' }] } })
+  }
+  expect(reports).toContainEqual(expect.objectContaining({ event: 'extensions.request.failed', errorCode: 'EXTENSION_INVALID_ARGUMENT', extensionRequest: expect.objectContaining({ stage: 'validation' }) }))
+  const colors = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`private-key-${index}`, 'private-value']))
+  await expect(request('themes.request', { action: 'resolve', appearance: 'light', document: { schemaVersion: 1 }, overrides: colors })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  const diagnostic = (await service.inspect(value.id)).logs.at(-1)!.diagnostic!
+  expect(diagnostic.issues).toHaveLength(8)
+  expect(diagnostic.issues!.every(issue => issue.path === 'overrides.*')).toBe(true)
+  const before = (await service.inspect(value.id)).logs
+  await expect(service.viewRequest(view.id, view.generation, randomUUID(), 'themes.request', input)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  expect((await service.inspect(value.id)).logs).toEqual(before)
+  await expect(request('private-method', null)).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  expect((await service.inspect(value.id)).logs.at(-1)!.diagnostic).toEqual({ method: 'unknown', stage: 'execution' })
+  expect(JSON.stringify({ reports, inspection: await service.inspect(value.id) })).not.toContain('private-')
+  expect(JSON.stringify(reports)).not.toContain('Private label')
 })

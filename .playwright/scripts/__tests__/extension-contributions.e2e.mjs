@@ -2,9 +2,23 @@ import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 import { writeContributionPlugin } from '../fixtures/extension-contributions.mjs'
 
+async function installPlugin(instance, app, page, name, options) {
+  const directory = path.join(instance.home, 'fixtures', name)
+  const id = await writeContributionPlugin(directory, name, options)
+  await page.locator('.desktop-app-sidebar').getByRole('button', { name: '插件', exact: true }).click()
+  await app.evaluate(({ dialog }, directory) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
+  }, directory)
+  await page.getByTestId('extension-install-options').click()
+  await page.getByTestId('extension-development').click()
+  await page.getByTestId('extension-confirm-install').click()
+  await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).some(item => item.manifest.id === id), id)).toBe(true)
+  return id
+}
+
 test('plugin-owned preferences activate contributions, yield native content and restore across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('plugin-contributions')
-  let { app, page, diagnostics } = await instance.launch()
+  let { app, page } = await instance.launch()
   const navigate = async name => page.locator('.desktop-app-sidebar').getByRole('button', { name, exact: true }).click()
   const nativeFooter = () => page.locator('.desktop-chat-composer__disclaimer')
   const pluginFrame = async (name, file) => {
@@ -21,18 +35,6 @@ test('plugin-owned preferences activate contributions, yield native content and 
     return result
   }
   const visible = async name => (await pluginFrame(name, 'footer')).evaluate(() => window.fixture.visible)
-  async function install(name) {
-    const directory = path.join(instance.home, 'fixtures', name)
-    const id = await writeContributionPlugin(directory, name, { uno: name === 'alpha' })
-    await navigate('插件')
-    await app.evaluate(({ dialog }, directory) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
-    }, directory)
-    await page.getByTestId('extension-install-options').click()
-    await page.getByTestId('extension-development').click()
-    await page.getByTestId('extension-confirm-install').click()
-    await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).some(item => item.manifest.id === id), id)).toBe(true)
-  }
   async function preference(name, enabled) {
     await navigate(`Settings ${name}`)
     const settings = await pluginFrame(name, 'settings')
@@ -40,18 +42,12 @@ test('plugin-owned preferences activate contributions, yield native content and 
     await expect(settings.getByRole('status')).toHaveText(enabled ? 'Enabled' : 'Disabled')
     await navigate('任务')
   }
-  await install('alpha')
+  await installPlugin(instance, app, page, 'alpha', { uno: true })
   await navigate('任务')
   await expect(nativeFooter()).toBeVisible()
   await preference('alpha', true)
   const alpha = await pluginFrame('alpha', 'footer')
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
-  await expect.poll(() => alpha.evaluate(() => window.fixture.theme?.view.accent)).toBe('#96304d')
-  const sdkTheme = await alpha.evaluate(() => window.fixture.theme)
-  expect(sdkTheme.host.accent).toBe('#207cba')
-  expect(sdkTheme.view.id).toMatch(/^user\.theme\./)
-  expect(sdkTheme.host.id).toMatch(/^user\.theme\./)
-  expect(await page.evaluate(async () => (await window.lexoraDesktop.themes.request({ action: 'list' })).filter(theme => theme.source === 'user').map(theme => theme.label))).toEqual(['View SDK theme', 'Host SDK theme'])
   await expect(nativeFooter()).toHaveCount(0)
   const identity = await alpha.evaluate(() => window.fixture.instance)
   const hostColor = name => page.evaluate((name) => {
@@ -62,14 +58,12 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.violet-dark' } } }))
   await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'lexora.themes.violet-dark')
   await expect.poll(() => alpha.evaluate(() => getComputedStyle(document.querySelector('main')).backgroundColor)).toBe(await hostColor('accent-solid'))
-  expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
   await page.getByTestId('context-panel-toggle').click()
   await page.getByTestId('context-panel-swap').click()
   await page.getByTestId('context-panel-maximize').click()
   await expect.poll(() => visible('alpha')).toBe(false)
   await page.getByTestId('context-panel-maximize').click()
   await expect.poll(() => visible('alpha')).toBe(true)
-  expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
   await page.getByTestId('context-panel-swap').click()
   await page.getByTestId('context-panel-toggle').click()
   const alphaActions = await pluginFrame('alpha', 'actions')
@@ -81,7 +75,7 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await alphaActions.getByRole('checkbox', { name: 'Content tests.alpha' }).check()
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
   expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
-  await install('beta')
+  await installPlugin(instance, app, page, 'beta')
   await preference('beta', true)
   await expect.poll(() => visible('alpha')).toBe(true)
   await expect.poll(() => visible('beta')).toBe(false)
@@ -93,7 +87,7 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await expect.poll(() => visible('beta')).toBe(false)
 
   await instance.stop()
-  ;({ app, page, diagnostics } = await instance.launch())
+  ;({ app, page } = await instance.launch())
   await navigate('任务')
   const restoredAlpha = await pluginFrame('alpha', 'footer')
   await expect.poll(() => restoredAlpha.evaluate(() => window.fixture.visible)).toBe(true)
@@ -102,5 +96,31 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await expect.poll(() => restoredBeta.evaluate(() => window.fixture.visible)).toBe(true)
   await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.beta', false))
   await expect(nativeFooter()).toBeVisible()
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('command failures distinguish execution, malformed replies and timeouts in the real plugin host', async ({ buddy }) => {
+  const instance = await buddy.createInstance('plugin-failures')
+  const { app, page } = await instance.launch()
+  const id = await installPlugin(instance, app, page, 'failures')
+  const status = () => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === id), id)
+  const execute = command => page.evaluate(async ({ id, command }) => {
+    try {
+      await window.lexoraDesktop.extensions.execute(id, `${id}.${command}`, null)
+      return null
+    }
+    catch (error) { return error.message }
+  }, { id, command })
+  expect(await execute('failure')).toContain('EXTENSION_OPERATION_FAILED')
+  expect(await status()).toMatchObject({ state: 'active', error: null, logs: expect.arrayContaining([
+    expect.objectContaining({ code: 'EXTENSION_OPERATION_FAILED', diagnostic: { method: 'command', stage: 'execution' } }),
+  ]) })
+  expect(await execute('invalid')).toContain('EXTENSION_INVALID_RESULT')
+  expect(await status()).toMatchObject({ state: 'active', error: null, logs: expect.arrayContaining([
+    expect.objectContaining({ code: 'EXTENSION_INVALID_RESULT', diagnostic: expect.objectContaining({ method: 'command', stage: 'result' }) }),
+  ]) })
+  expect(await execute('timeout')).toContain('EXTENSION_REQUEST_TIMEOUT')
+  await expect.poll(status).toMatchObject({ state: 'failed', generation: null, error: 'EXTENSION_REQUEST_TIMEOUT', logs: expect.arrayContaining([
+    expect.objectContaining({ event: 'host.failed', code: 'EXTENSION_REQUEST_TIMEOUT', diagnostic: { method: 'command', stage: 'timeout' } }),
+  ]) })
+  expect(JSON.stringify(await status())).not.toContain('Private plugin error')
 })

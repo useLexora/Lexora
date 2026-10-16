@@ -1,16 +1,19 @@
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import type { ExtensionPackage } from '../../../platform/extensions/ExtensionPackageStore'
 import type { ExtensionHost } from '../../../platform/extensions/ExtensionService'
+import type { ExtensionHostFailure } from '../../../shared/extensions/extensionDiagnostic'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionProtocol } from './ExtensionProtocol'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { BrowserWindow, session } from 'electron'
 import { z } from 'zod'
-import { EXTENSION_IPC, extensionError, extensionJsonSchema, parseExtensionRequestParams } from '../../../shared/extensions/extensionApi'
+import { EXTENSION_IPC, extensionError, extensionJsonSchema } from '../../../shared/extensions/extensionApi'
+import { ExtensionRequestError } from '../../../shared/extensions/extensionDiagnostic'
 
-interface Pending { resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer: ReturnType<typeof setTimeout> }
+interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer: ReturnType<typeof setTimeout> }
 const replySchema = z.object({ id: z.string().uuid(), ok: z.boolean(), value: extensionJsonSchema }).strict()
+const replyIdentitySchema = z.object({ id: z.string().uuid() })
 
 export class SandboxedExtensionHost implements ExtensionHost {
   readonly window: BrowserWindow
@@ -18,7 +21,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
   readonly #ready: Promise<void>
   readonly #broker: (method: string, params: unknown) => Promise<JsonValue>
   readonly #cleanup: () => void
-  readonly #onFailure: () => void
+  readonly #onFailure: (failure: ExtensionHostFailure) => void
   #resolveReady!: () => void
   #rejectReady!: (error: Error) => void
   #closing = false
@@ -26,7 +29,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
   #developerWindow: BrowserWindow | null = null
   #readyTimer: ReturnType<typeof setTimeout>
 
-  constructor(pkg: ExtensionPackage, protocol: ExtensionProtocol, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: () => void) {
+  constructor(pkg: ExtensionPackage, protocol: ExtensionProtocol, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure: ExtensionHostFailure) => void) {
     this.#broker = broker
     this.#onFailure = failed
     const endpoint = protocol.register(pkg, 'host')
@@ -45,7 +48,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       this.#rejectReady = reject
     })
     void this.#ready.catch(() => {})
-    this.#readyTimer = setTimeout(() => this.#fail(failed), 15000)
+    this.#readyTimer = setTimeout(() => this.#fail({ code: 'EXTENSION_REQUEST_TIMEOUT', method: 'ready', stage: 'timeout' }), 15000)
     this.#cleanup = () => {
       endpoint.dispose()
       stopProtocol()
@@ -56,11 +59,11 @@ export class SandboxedExtensionHost implements ExtensionHost {
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-attach-webview', event => event.preventDefault())
     contents.on('will-frame-navigate', event => event.preventDefault())
-    contents.on('render-process-gone', () => this.#fail(failed))
-    contents.on('unresponsive', () => this.#fail(failed))
+    contents.on('render-process-gone', () => this.#fail())
+    contents.on('unresponsive', () => this.#fail({ code: 'EXTENSION_HOST_UNRESPONSIVE', method: 'unknown', stage: 'process' }))
     contents.on('devtools-closed', () => this.#closeDeveloperWindow())
-    this.window.on('closed', () => this.#fail(failed))
-    void this.window.loadURL(endpoint.url).catch(() => this.#fail(failed))
+    this.window.on('closed', () => this.#fail())
+    void this.window.loadURL(endpoint.url).catch(() => this.#fail({ code: 'EXTENSION_HOST_LOAD_FAILED', method: 'unknown', stage: 'process' }))
   }
 
   owns(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
@@ -81,7 +84,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       }
       if (!this.#started || typeof method !== 'string' || method.length > 80)
         throw new Error('EXTENSION_METHOD_DENIED')
-      return await this.#broker(method, parseExtensionRequestParams(method, params))
+      return await this.#broker(method, params)
     }
     catch (error) {
       throw new Error(extensionError(error))
@@ -90,8 +93,16 @@ export class SandboxedExtensionHost implements ExtensionHost {
 
   reply(raw: unknown): void {
     const parsed = replySchema.safeParse(raw)
-    if (!parsed.success)
+    if (!parsed.success) {
+      const identity = replyIdentitySchema.safeParse(raw)
+      const pending = identity.success ? this.#pending.get(identity.data.id) : undefined
+      if (pending && identity.success) {
+        this.#pending.delete(identity.data.id)
+        clearTimeout(pending.timer)
+        pending.reject(new ExtensionRequestError('EXTENSION_INVALID_RESULT', pending.method, parsed.error, 'result'))
+      }
       return
+    }
     const { id, ok, value } = parsed.data
     const pending = this.#pending.get(id)
     if (!pending)
@@ -153,9 +164,9 @@ export class SandboxedExtensionHost implements ExtensionHost {
         this.#pending.delete(id)
         reject(new Error('EXTENSION_REQUEST_TIMEOUT'))
         if (method !== 'deactivate')
-          this.#fail(this.#onFailure)
+          this.#fail({ code: 'EXTENSION_REQUEST_TIMEOUT', method, stage: 'timeout' })
       }, timeout)
-      this.#pending.set(id, { resolve, reject, timer })
+      this.#pending.set(id, { method, resolve, reject, timer })
       this.window.webContents.send(EXTENSION_IPC.hostMessage, { id, method, params })
     })
   }
@@ -167,16 +178,16 @@ export class SandboxedExtensionHost implements ExtensionHost {
       window.destroy()
   }
 
-  #fail(failed: () => void): void {
+  #fail(failure: ExtensionHostFailure = { code: 'EXTENSION_HOST_CRASHED', method: 'unknown', stage: 'process' }): void {
     if (this.#closing)
       return
-    this.#rejectAll()
-    failed()
+    this.#rejectAll(failure.code)
+    this.#onFailure(failure)
   }
 
-  #rejectAll(): void {
+  #rejectAll(readyError = 'EXTENSION_HOST_STOPPED'): void {
     clearTimeout(this.#readyTimer)
-    this.#rejectReady(new Error('EXTENSION_HOST_STOPPED'))
+    this.#rejectReady(new Error(readyError))
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer)
       pending.reject(new Error('EXTENSION_HOST_STOPPED'))

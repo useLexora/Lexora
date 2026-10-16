@@ -1,5 +1,6 @@
 import type { LifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { z } from 'zod'
+import { extensionDiagnosticSchema } from '../extensions/extensionDiagnostic'
 import { extensionIdSchema } from '../extensions/extensionManifest'
 import { readLifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { sandboxProcessStateSchema } from '../permissions/sandboxLifecycle'
@@ -46,6 +47,7 @@ export const applicationDiagnosticSchema = z.object({
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
   failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
+  extensionRequest: extensionDiagnosticSchema.optional(),
   performanceSample: performanceSampleSchema.optional(),
   cpuProfile: cpuProfileSummarySchema.optional(),
   output: z.object({ bytes: z.number().int().nonnegative(), chunks: z.number().int().nonnegative() }).strict().optional(),

@@ -13,9 +13,8 @@ export async function writeContributionPlugin(directory, name, { uno = false } =
     apiVersion: 3,
     engines: { lexora: '*' },
     entry: 'host.js',
-    permissions: { themeManagement: uno },
     contributes: {
-      commands: ['read', 'save', 'theme'].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
+      commands: ['read', 'save', 'failure', 'invalid', 'timeout'].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
       views: [
         { id: `${id}.settings`, title: `Settings ${name}`, entry: 'settings.js', resource: 'none', location: 'page' },
         { id: `${id}.footer`, title: `Footer ${name}`, entry: 'footer.js', resource: 'none' },
@@ -48,12 +47,11 @@ async function activate(context) {
     await context.views.broadcast(state)
   }
   context.subscriptions.add(context.commands.register(`${id}.read`, () => state))
-  context.subscriptions.add(context.commands.register(`${id}.theme`, async () => {
-    const document = { schemaVersion: 1, colors: { accent: '#207cba' } }
-    const resolved = await context.themes.resolve('light', document)
-    const saved = await context.themes.save({ schemaVersion: 1, label: 'Host SDK theme', appearance: 'light', document })
-    return { accent: resolved.colors.accent, id: saved.id }
+  context.subscriptions.add(context.commands.register(`${id}.failure`, () => {
+    throw new Error('Private plugin error')
   }))
+  context.subscriptions.add(context.commands.register(`${id}.invalid`, () => Number.NaN))
+  context.subscriptions.add(context.commands.register(`${id}.timeout`, () => new Promise(() => {})))
   context.subscriptions.add(context.commands.register(`${id}.save`, async ({ arguments: patch }) => {
     state = { ...state, ...patch }
     await context.storage.set(state)
@@ -86,12 +84,6 @@ async function footer(pluginId, uno, context, container) {
   const apply = state => context.setActive(state.active)
   context.onMessage(state => void apply(state))
   await apply(await context.commands.execute(`${pluginId}.read`))
-  if (uno) {
-    const document = { schemaVersion: 1, colors: { accent: '#96304d' } }
-    const resolved = await context.themes.resolve('light', document)
-    const saved = await context.themes.save({ schemaVersion: 1, label: 'View SDK theme', appearance: 'light', document })
-    window.fixture.theme = { view: { accent: resolved.colors.accent, id: saved.id }, host: await context.commands.execute(`${pluginId}.theme`) }
-  }
 }
 
 async function actions(pluginId, context, container) {

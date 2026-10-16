@@ -19,7 +19,7 @@ let context
 let registrationError = null
 let activated = false
 const interactions = new Map()
-const code = error => /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : 'EXTENSION_ACTIVATION_FAILED'
+const code = (error, method) => /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : method === 'activate' ? 'EXTENSION_ACTIVATION_FAILED' : 'EXTENSION_OPERATION_FAILED'
 const request = (method, params = null) => bridge.request(method, params)
 function disposable(cleanup) {
   let disposed = false
@@ -248,7 +248,7 @@ bridge.subscribe(async ({ id, method, params }) => {
     bridge.reply(id, true, result)
   }
   catch (error) {
-    bridge.reply(id, false, code(error))
+    bridge.reply(id, false, code(error, method))
   }
 })
 void request('ready').catch(() => {})

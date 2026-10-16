@@ -1,5 +1,6 @@
 import type { EventSnapshot } from '../../shared/events/eventTypes'
 import type { ExtensionAgentDescriptor } from '../../shared/extensions/extensionAgent'
+import type { ExtensionDiagnostic } from '../../shared/extensions/extensionDiagnostic'
 
 export interface ExtensionConfigurationApplication {
   readonly operationId: string
@@ -14,11 +15,11 @@ export type ExtensionServiceFact
     | { readonly kind: 'enabled', readonly extensionId: string, readonly enabled: boolean }
     | { readonly kind: 'resources-revoked', readonly extensionId: string }
     | { readonly kind: 'configuration', readonly extensionId: string, readonly application: ExtensionConfigurationApplication, readonly changedKeys: readonly string[], readonly errorCode?: string }
-    | { readonly kind: 'host', readonly extensionId: string, readonly generation: string, readonly status: 'starting' | 'active' | 'failed' | 'stopping' | 'stopped' | 'stop-failed', readonly durationMs?: number, readonly errorCode?: string }
+    | { readonly kind: 'host', readonly extensionId: string, readonly generation: string, readonly status: 'starting' | 'active' | 'failed' | 'stopping' | 'stopped' | 'stop-failed', readonly durationMs?: number, readonly errorCode?: string, readonly diagnostic?: ExtensionDiagnostic }
     | { readonly kind: 'view', readonly extensionId: string, readonly generation: string, readonly viewId: string, readonly status: 'opened' | 'ready' | 'failed' | 'closed' | 'cleanup-failed', readonly errorCode?: string }
     | { readonly kind: 'contributions', readonly initial: boolean, readonly descriptors: EventSnapshot<ExtensionAgentDescriptor[]> }
     | { readonly kind: 'installation-progress' }
-    | { readonly kind: 'diagnostic', readonly extensionId: string, readonly event: string, readonly errorCode?: string, readonly durationMs?: number }
+    | { readonly kind: 'diagnostic', readonly extensionId: string, readonly event: string, readonly errorCode?: string, readonly durationMs?: number, readonly diagnostic?: ExtensionDiagnostic }
 
 export type ExtensionServiceChange = ExtensionServiceFact & { readonly revision: number }
 export interface ExtensionServiceSnapshot {

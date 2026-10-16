@@ -2,8 +2,10 @@ import type { ResolvedTheme } from './resolveTheme'
 import type { ThemeArchiveInput, ThemePreview, ThemeRequest, ThemeSnapshot, ThemeValidation } from './themeApi'
 import type { describeTheme, ThemeDescriptor, ThemeDocument, ThemeDocumentInput } from './themeDocument'
 import type { ThemePreference } from './themePreferences'
+import { serializeThemeRequest } from './themeTransport'
 
-export function createThemeClient(request: (input: ThemeRequest) => Promise<unknown>, subscribe: (listener: () => void) => { dispose: () => void }) {
+export function createThemeClient(send: (input: ThemeRequest) => Promise<unknown>, subscribe: (listener: () => void) => { dispose: () => void }) {
+  const request = async (input: ThemeRequest) => send(serializeThemeRequest(input))
   return Object.freeze({
     list: () => request({ action: 'list' }) as Promise<ThemeDescriptor[]>,
     get: (id: string) => request({ action: 'get', id }) as Promise<{ descriptor: ThemeDescriptor, document: ThemeDocument }>,
