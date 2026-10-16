@@ -1,21 +1,8 @@
-import App from '@/App.vue'
-import { createAppRouter } from '@/router'
-import {
-  setupAssets,
-  setupAuth,
-  setupCreateApp,
-  setupRouter,
-} from '@/setup'
+import { createApp } from 'vue'
+import App from './App.vue'
+import { i18n } from './i18n'
+import { router } from './router'
+import 'virtual:uno.css'
+import './styles.scss'
 
-async function bootstrap() {
-  await setupAssets()
-
-  const app = setupCreateApp(App)
-  const router = createAppRouter()
-
-  await setupAuth(router)
-  await setupRouter(app, router)
-  app.mount('#app')
-}
-
-void bootstrap()
+createApp(App).use(i18n).use(router).mount('#app')

@@ -5,3 +5,97 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum ReleaseStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+  YANKED
+}
+
+model User {
+  id        String @id @default(uuid()) @db.Uuid
+  name      String
+  accounts  OAuthAccount[]
+  sessions  Session[]
+  publisher Publisher?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OAuthAccount {
+  id       String @id @default(uuid()) @db.Uuid
+  provider String
+  subject  String
+  userId   String @db.Uuid
+  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([provider, subject])
+  @@unique([userId, provider])
+}
+
+model Session {
+  tokenHash String @id
+  userId    String @db.Uuid
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
+}
+
+model OAuthFlow {
+  state       String @id
+  provider    String
+  bindingHash String
+  verifier    String
+  nonce       String
+  userId      String? @db.Uuid
+  sessionHash String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  @@index([expiresAt])
+}
+
+model Publisher {
+  id          String @id @default(uuid()) @db.Uuid
+  userId      String? @unique @db.Uuid
+  user        User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+  handle      String @unique
+  displayName String
+  plugins     Plugin[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Plugin {
+  id          String @id
+  publisherId String @db.Uuid
+  publisher   Publisher @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  releases    PluginRelease[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([publisherId])
+}
+
+model PluginRelease {
+  id           String @id @default(uuid()) @db.Uuid
+  pluginId     String
+  plugin       Plugin @relation(fields: [pluginId], references: [id], onDelete: Restrict)
+  version      String
+  name         String
+  description  String
+  manifest     Json
+  repository   String
+  artifactUrl  String
+  sha256       String
+  size         Int
+  notes        String
+  status       ReleaseStatus @default(PENDING)
+  reviewReason String?
+  reviewedBy   String? @db.Uuid
+  publishedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@unique([pluginId, version])
+  @@index([status, createdAt])
+}

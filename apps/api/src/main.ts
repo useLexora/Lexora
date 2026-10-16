@@ -1,62 +1,31 @@
-import type { NestFastifyApplication } from '@nestjs/platform-fastify'
 import process from 'node:process'
-import helmet from '@fastify/helmet'
-import multipart from '@fastify/multipart'
-import { Logger as AppLogger, RequestMethod, ValidationPipe } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
-import { NestFactory } from '@nestjs/core'
-import { FastifyAdapter } from '@nestjs/platform-fastify'
-import { Logger, LoggerErrorInterceptor } from 'nestjs-pino'
-import { AppModule } from './app.module'
-import { GlobalExceptionFilter } from './filters/global-exception.filter'
-import { ResponseInterceptor } from './interceptors/response.interceptor'
+import { createApp } from './app.ts'
+import { readConfig } from './config.ts'
+import { createDatabase } from './database.ts'
 
-async function bootstrap() {
-  const logger = new AppLogger('Bootstrap')
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter(),
-    { bufferLogs: true },
-  )
-  app.useLogger(app.get(Logger))
-  app.enableShutdownHooks()
-
-  const configService = app.get(ConfigService)
-  const port = configService.getOrThrow<number>('server.port')
-  const apiPrefix = configService.getOrThrow<string>('server.apiPrefix')
-
-  await app.register(helmet)
-  await app.register(multipart)
-
-  app.enableCors({
-    origin: true,
-    credentials: true,
+const config = readConfig()
+const db = createDatabase(config.DATABASE_URL)
+const app = createApp(db, config, { logger: true })
+const cleanup = setInterval(() => {
+  Promise.all([
+    db.session.deleteMany({ where: { expiresAt: { lt: new Date() } } }),
+    db.oAuthFlow.deleteMany({ where: { expiresAt: { lt: new Date() } } }),
+  ]).catch(() => app.log.error('Session cleanup failed'))
+}, 60 * 60 * 1000)
+cleanup.unref()
+app.addHook('onClose', async () => {
+  clearInterval(cleanup)
+  await db.$disconnect()
+})
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => {
+    app.close().catch(() => {
+      process.exitCode = 1
+    })
   })
-  app.setGlobalPrefix(apiPrefix, {
-    exclude: [
-      { path: 'health', method: RequestMethod.GET },
-      { path: 'internal/{*path}', method: RequestMethod.ALL },
-    ],
-  })
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      forbidUnknownValues: true,
-      stopAtFirstError: true,
-      disableErrorMessages: process.env.NODE_ENV === 'production',
-    }),
-  )
-  app.useGlobalFilters(new GlobalExceptionFilter())
-  app.useGlobalInterceptors(
-    new LoggerErrorInterceptor(),
-    new ResponseInterceptor(),
-  )
-
-  await app.listen(port, '0.0.0.0')
-  const appUrl = await app.getUrl()
-  logger.log(`API is running on ${appUrl}/${apiPrefix}`)
 }
-bootstrap()
+app.listen({ port: config.PORT, host: '0.0.0.0' }).catch(async (error: unknown) => {
+  app.log.error({ errorType: error instanceof Error ? error.name : 'Unknown' }, 'Community API failed to start')
+  await app.close()
+  process.exitCode = 1
+})

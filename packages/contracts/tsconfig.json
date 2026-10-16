@@ -1,16 +1,4 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "rootDir": "./src",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "declaration": true,
-    "declarationMap": true,
-    "outDir": "./dist",
-    "esModuleInterop": true,
-    "skipLibCheck": true
-  },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "compilerOptions": { "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "noEmit": true, "skipLibCheck": true },
+  "include": ["src/**/*.ts"]
 }

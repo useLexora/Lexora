@@ -1,8 +1,14 @@
 {
-  "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.vitest.json" },
-    { "path": "./tsconfig.node.json" }
-  ],
-  "files": []
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["vite/client", "node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "components.d.ts", "vite.config.ts", "uno.config.ts"]
 }

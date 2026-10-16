@@ -1,64 +1,28 @@
-FROM node:26-slim AS build
-
+FROM node:26-bookworm-slim AS build
 ENV PNPM_HOME=/pnpm
 ENV PATH="${PNPM_HOME}:${PATH}"
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-
 RUN npm install --global pnpm@12.5.1 \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends openssl \
+  && apt-get update && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /workspace
-
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches patches
 COPY apps/api/package.json apps/api/package.json
-COPY apps/api/prisma apps/api/prisma
-COPY apps/api/prisma.config.ts apps/api/prisma.config.ts
 COPY packages/contracts/package.json packages/contracts/package.json
-COPY packages/shared/package.json packages/shared/package.json
-
-RUN pnpm install --filter @haohaoxue/lexora-api... --frozen-lockfile
-
+RUN pnpm install --filter @uselexora/lexora-api... --frozen-lockfile --ignore-scripts
 COPY packages/contracts packages/contracts
-COPY packages/shared packages/shared
 COPY apps/api apps/api
+RUN pnpm --filter @uselexora/lexora-api build \
+  && pnpm --config.allow-unused-patches=true --filter @uselexora/lexora-api deploy --prod --legacy /out \
+  && cd /out && node_modules/.bin/prisma generate
 
-RUN pnpm --filter @haohaoxue/lexora-api build
-
-FROM node:26-slim
-
-ENV PNPM_HOME=/pnpm
+FROM node:26-bookworm-slim
 ENV NODE_ENV=production
 ENV PRISMA_HIDE_UPDATE_MESSAGE=1
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-
-RUN npm install --global pnpm@12.5.1 \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends openssl \
-  && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /app/apps/api /pnpm \
-  && chown -R node:node /app /pnpm
-
-ENV PATH="/app/apps/api/node_modules/.bin:/app/node_modules/.bin:${PNPM_HOME}:${PATH}"
-
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-
-COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY --chown=node:node apps/api/package.json apps/api/package.json
-COPY --chown=node:node apps/api/assets apps/api/assets
-COPY --chown=node:node apps/api/prisma apps/api/prisma
-COPY --chown=node:node apps/api/prisma.config.ts apps/api/prisma.config.ts
-
+COPY --from=build --chown=node:node /out /app
 USER node
-
-RUN pnpm install --filter @haohaoxue/lexora-api --prod --frozen-lockfile \
-  && rm -rf apps/api/node_modules/@haohaoxue
-
-COPY --chown=node:node --from=build /workspace/apps/api/dist /app/apps/api/dist
-
-WORKDIR /app/apps/api
-
 EXPOSE 3000
-
 CMD ["node", "dist/main.mjs"]

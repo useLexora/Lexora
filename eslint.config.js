@@ -9,6 +9,7 @@ export default antfu({
 }, {
   ignores: [
     '**/.output/**',
+    'legacy/**',
     '**/native/target/**',
     '**/native-pet/target/**',
   ],
@@ -44,11 +45,11 @@ export default antfu({
   rules: {
     'no-restricted-imports': ['error', {
       paths: [{
-        name: '@haohaoxue/lexora-contracts',
+        name: '@uselexora/lexora-contracts',
         allowTypeImports: true,
         message: '运行时契约值请使用领域子入口，类型继续使用 import type。',
       }, {
-        name: '@haohaoxue/lexora-shared',
+        name: '@uselexora/lexora-shared',
         allowTypeImports: true,
         message: 'shared 函数请使用具体子入口，避免根 barrel 扩大首包。',
       }, {
@@ -63,7 +64,7 @@ export default antfu({
   rules: {
     'no-restricted-imports': ['error', {
       paths: [{
-        name: '@haohaoxue/lexora-contracts',
+        name: '@uselexora/lexora-contracts',
         allowTypeImports: true,
         message: 'shared 包内运行时契约值请使用 contracts 领域子入口，类型继续使用 import type。',
       }],

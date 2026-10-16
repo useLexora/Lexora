@@ -1,151 +1,63 @@
-name: lexora
-
-x-logging: &default-logging
-  driver: local
-  options:
-    max-size: '10m'
-    max-file: '5'
+name: lexora-community
 
 services:
   postgres:
-    container_name: lexora-postgres
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     restart: unless-stopped
-    logging: *default-logging
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-lexora_community}
+      POSTGRES_USER: ${POSTGRES_USER:-lexora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
-      - lexora-postgres-data:/var/lib/postgresql/data
+      - community-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
-
-  redis:
-    container_name: lexora-redis
-    image: redis:7-alpine
-    restart: unless-stopped
-    logging: *default-logging
-    command: ['redis-server', '--appendonly', 'yes']
-    volumes:
-      - lexora-redis-data:/data
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 5s
-
-  rustfs:
-    container_name: lexora-rustfs
-    image: rustfs/rustfs:latest
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      RUSTFS_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
-      RUSTFS_SECRET_KEY: ${STORAGE_SECRET_KEY}
-      RUSTFS_REGION: auto
-      RUSTFS_CONSOLE_ENABLE: 'false'
-      RUSTFS_VOLUMES: /data
-    volumes:
-      - lexora-rustfs-data:/data
 
   migrate:
-    container_name: lexora-migrate
     image: ${IMAGE_NAMESPACE:-uselexora}/lexora-api:${IMAGE_TAG:-latest}
     restart: 'no'
-    logging: *default-logging
-    working_dir: /app/apps/api
     command: ['node_modules/.bin/prisma', 'migrate', 'deploy']
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL for the new community database}
     depends_on:
       postgres:
         condition: service_healthy
 
   api:
-    container_name: lexora-api
     image: ${IMAGE_NAMESPACE:-uselexora}/lexora-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    logging: *default-logging
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      APP_SECRET: ${APP_SECRET}
-      APP_INTERNAL_KEY: ${APP_INTERNAL_KEY}
-      SYSTEM_ADMIN: ${SYSTEM_ADMIN}
-      LEXORA_TRUST_CLOUDFLARE_IP_HEADERS: ${LEXORA_TRUST_CLOUDFLARE_IP_HEADERS:-false}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL for the new community database}
+      PUBLIC_ORIGIN: https://${LEXORA_WEB_HOST:-plugins.uselexora.app}
+      LEXORA_ADMIN_IDENTITIES: ${LEXORA_ADMIN_IDENTITIES:-}
       OAUTH_PROXY_URL: ${OAUTH_PROXY_URL:-}
-      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT}
-      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
-      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      LINUX_DO_CLIENT_ID: ${LINUX_DO_CLIENT_ID}
-      LINUX_DO_CLIENT_SECRET: ${LINUX_DO_CLIENT_SECRET}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      LINUX_DO_CLIENT_ID: ${LINUX_DO_CLIENT_ID:-}
+      LINUX_DO_CLIENT_SECRET: ${LINUX_DO_CLIENT_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rustfs:
-        condition: service_started
     healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "fetch('http://127.0.0.1:3000/health').then(response=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 10s
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
       timeout: 5s
-      retries: 12
-      start_period: 20s
-
-  agent:
-    container_name: lexora-agent
-    image: ${IMAGE_NAMESPACE:-uselexora}/lexora-agent:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      NODE_ENV: production
-      REDIS_URL: ${REDIS_URL}
-      AGENT_CHECKPOINTER_DATABASE_URL: ${DATABASE_URL}
-      API_INTERNAL_URL: http://api:3000
-      APP_INTERNAL_KEY: ${APP_INTERNAL_KEY}
-    depends_on:
-      api:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "fetch('http://127.0.0.1:4200/healthz').then(response=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
+      retries: 5
+    logging:
+      driver: local
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   web:
-    container_name: lexora-web
     image: ${IMAGE_NAMESPACE:-uselexora}/lexora-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    logging: *default-logging
     depends_on:
       api:
         condition: service_healthy
@@ -155,19 +67,18 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
-      - "traefik.http.routers.lexora.entrypoints=web"
-      - "traefik.http.routers.lexora.rule=Host(`${LEXORA_WEB_HOST:?Set LEXORA_WEB_HOST to the Web application hostname}`)"
-      - "traefik.http.routers.lexora.middlewares=https-redirect@file"
-      - "traefik.http.routers.lexora.service=lexora"
-      - "traefik.http.routers.lexora-secure.entrypoints=websecure"
-      - "traefik.http.routers.lexora-secure.rule=Host(`${LEXORA_WEB_HOST:?Set LEXORA_WEB_HOST to the Web application hostname}`)"
-      - "traefik.http.routers.lexora-secure.service=lexora"
-      - "traefik.http.services.lexora.loadbalancer.server.port=80"
+      - "traefik.http.routers.lexora-community.entrypoints=web"
+      - "traefik.http.routers.lexora-community.rule=Host(`${LEXORA_WEB_HOST:-plugins.uselexora.app}`)"
+      - "traefik.http.routers.lexora-community.middlewares=https-redirect@file"
+      - "traefik.http.routers.lexora-community.service=lexora-community"
+      - "traefik.http.routers.lexora-community-secure.entrypoints=websecure"
+      - "traefik.http.routers.lexora-community-secure.rule=Host(`${LEXORA_WEB_HOST:-plugins.uselexora.app}`)"
+      - "traefik.http.routers.lexora-community-secure.tls=true"
+      - "traefik.http.routers.lexora-community-secure.service=lexora-community"
+      - "traefik.http.services.lexora-community.loadbalancer.server.port=80"
 
 volumes:
-  lexora-postgres-data:
-  lexora-redis-data:
-  lexora-rustfs-data:
+  community-postgres-data:
 
 networks:
   traefik:

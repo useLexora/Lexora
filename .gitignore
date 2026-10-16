@@ -146,6 +146,7 @@ vite.config.ts.timestamp-*
 auto-imports.d.ts
 components.d.ts
 !apps/web/components.d.ts
+!legacy/web-stack/apps/web/components.d.ts
 
 # me
 .agents
@@ -166,3 +167,5 @@ todos/
 /apps/buddy/native/target/
 infrastructure/_scripts
 .local/agent-work/
+!/apps/api/src/**/__tests__/
+!/apps/api/src/**/__tests__/**

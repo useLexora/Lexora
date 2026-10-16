@@ -1,34 +1,4 @@
 {
-  "compilerOptions": {
-    "incremental": true,
-    "target": "ESNext",
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "resolvePackageJsonExports": true,
-    "strictBindCallApply": false,
-    "strictNullChecks": true,
-    "noFallthroughCasesInSwitch": false,
-    "noImplicitAny": false,
-    "declaration": true,
-    "outDir": "./dist",
-    "removeComments": true,
-    "sourceMap": true,
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-    "skipLibCheck": true
-  },
-  "exclude": [
-    "node_modules",
-    "dist",
-    "test",
-    "__tests__/**",
-    "src/**/__tests__/**",
-    "**/*.spec.ts",
-    "**/*.test.ts"
-  ]
+  "compilerOptions": { "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler", "types": ["node"], "allowImportingTsExtensions": true, "strict": true, "noEmit": true, "skipLibCheck": true },
+  "include": ["src/**/*.ts", "prisma.config.ts", "tsdown.config.ts"]
 }

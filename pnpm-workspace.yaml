@@ -7,9 +7,12 @@ trustPolicyExclude:
   - 'semver@5.7.2 || 6.3.1'
   - tinyexec@1.2.2
 packages:
-  - 'apps/*'
-  - evals
-  - 'packages/*'
+  - apps/buddy
+  - apps/website
+  - apps/web
+  - apps/api
+  - packages/assets
+  - packages/contracts
 overrides:
   '@prisma/config>deepmerge-ts': 8.0.0
   esbuild: 0.28.2

@@ -17,3 +17,12 @@ todos
 *.log
 .env
 .env.*
+
+legacy/
+infrastructure/_scripts/
+apps/buddy/
+apps/website/
+packages/assets/
+packaging/
+.local/
+**/__tests__/
