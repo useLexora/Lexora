@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
-import { computed, watch } from 'vue'
+import { computed, useTemplateRef, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import { DesktopTaskIndexView, DesktopTaskResourcePanel } from '@/modules/tasks/ui'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
@@ -15,6 +16,8 @@ import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
 import DesktopDirectoryFileSurface from './DesktopDirectoryFileSurface.vue'
 
 const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean }>()
+const taskWorkspace = useTemplateRef<HTMLElement>('taskWorkspace')
+useWorkbenchAnchor('workbench.workspace', () => taskWorkspace.value)
 const { controller, layout, revision, labels, panels } = useWorkbench()
 const route = useRoute()
 const contextVisible = computed(() => (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
@@ -60,7 +63,7 @@ function focusContext() {
       </WorkbenchMountPoint>
     </template>
     <template #workspace>
-      <div v-show="tasksVisible" class="desktop-workbench-area__tasks flex flex-1 min-w-0 min-h-0">
+      <div v-show="tasksVisible" ref="taskWorkspace" class="desktop-workbench-area__tasks relative flex flex-1 min-w-0 min-h-0" data-theme-surface="layout" data-workbench-workspace>
         <WorkbenchLayoutNode :node="layout.root" />
       </div>
       <RouterView v-if="!tasksVisible" />

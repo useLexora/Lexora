@@ -43,8 +43,8 @@ async function refresh(): Promise<void> {
 </script>
 
 <template>
-  <section class="desktop-automation-workbench flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface">
-    <header class="desktop-automation-workbench__header flex flex-none items-center justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header">
+  <section class="desktop-automation-workbench flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface" data-theme-surface="layout">
+    <header class="desktop-automation-workbench__header flex flex-none items-center justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header" data-theme-surface="header">
       <div class="desktop-automation-workbench__primary min-w-0 gap-[8px]">
         <nav :aria-label="t('desktop.automations.title')">
           <RouterLink

@@ -21,7 +21,7 @@ withDefaults(defineProps<{
   >
     <slot name="attachments" />
 
-    <div class="desktop-chat-composer relative w-full min-w-0 border-1 border-solid border-border-strong rounded-[10px] bg-composer text-composer-fg p-[0.7rem] shadow-soft focus-within:border-focus" :style="{ borderRadius }">
+    <div class="desktop-chat-composer relative w-full min-w-0 border-1 border-solid border-border-strong rounded-[10px] bg-composer text-composer-fg p-[0.7rem] shadow-soft focus-within:border-focus" :style="{ borderRadius }" data-theme-surface="input">
       <slot name="overlay" />
 
       <div class="relative">

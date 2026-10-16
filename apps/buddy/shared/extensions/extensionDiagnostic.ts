@@ -9,6 +9,8 @@ const methods = new Set([
   'agent.cancel',
   'agent.request',
   'bootstrap',
+  'window.styles.set',
+  'window.styles.remove',
   'themes.request',
   'themes.changed',
   'configuration.get',

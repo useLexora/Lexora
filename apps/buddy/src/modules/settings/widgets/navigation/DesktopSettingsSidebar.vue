@@ -49,8 +49,8 @@ const visibleGroups = computed(() => settingsNavigationSections.map(section => (
 </script>
 
 <template>
-  <nav class="desktop-settings-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar">
-    <header class="flex flex-none items-center gap-[0.35rem] border-b-1 border-b-solid border-b-border py-0 px-3 h-region-header">
+  <nav class="desktop-settings-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar" data-theme-surface="layout">
+    <header class="desktop-settings-sidebar__header flex flex-none items-center gap-[0.35rem] border-b-1 border-b-solid border-b-border py-0 px-3 h-region-header" data-theme-surface="header">
       <DesktopWorkspaceSidebarIdentity
         :label="t('desktop.navigation.settings')"
         :visible="appSidebarCollapsed"

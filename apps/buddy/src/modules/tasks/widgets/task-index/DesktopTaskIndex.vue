@@ -136,7 +136,7 @@ function openSearchSpace(spaceId: string) {
 </script>
 
 <template>
-  <aside class="desktop-task-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar text-workspace-sidebar-fg">
+  <aside class="desktop-task-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar text-workspace-sidebar-fg" data-theme-surface="layout">
     <header class="flex flex-none items-center justify-between gap-1 border-b-1 border-b-solid border-b-border pt-0 pr-2 pb-0 pl-3 h-region-header">
       <DesktopWorkspaceSidebarIdentity
         :label="t('desktop.navigation.tasks')"

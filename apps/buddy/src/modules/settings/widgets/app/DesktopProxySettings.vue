@@ -62,7 +62,7 @@ async function select(next: ProxySettings['mode']) {
     <h2 class="m-0 text-[0.92rem]">
       {{ t('desktop.settings.proxy.title') }}
     </h2>
-    <div class="border border-solid border-border rounded-[0.65rem] bg-surface p-[0.9rem]">
+    <div class="desktop-proxy-settings__panel border border-solid border-border rounded-[0.65rem] bg-surface p-[0.9rem]" data-theme-surface="panel">
       <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.proxy.mode')" :description="t('desktop.settings.proxy.description')" toggle class="[--setting-row-height:0px] [--setting-row-px:0px] [--setting-row-py:0px] [--setting-control-min:0px] [--setting-control-max:max-content]">
         <div class="desktop-proxy-settings__modes relative grid grid-cols-[repeat(3,_minmax(0,_1fr))] w-60 max-w-full rounded-[0.65rem] bg-subtle p-[0.2rem]" v-bind="controlAttrs" role="radiogroup" :aria-busy="pending" :style="{ '--selected-index': selectedIndex }">
           <span class="desktop-proxy-settings__slider absolute top-[0.2rem] bottom-[0.2rem] left-[0.2rem] w-[calc((100%_-_0.4rem)_/_3)] rounded-[0.45rem] bg-surface shadow-soft" aria-hidden="true" />

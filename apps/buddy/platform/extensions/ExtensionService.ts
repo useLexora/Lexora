@@ -4,12 +4,11 @@ import type { ExtensionInspection } from '../../shared/extensions/extensionAutho
 import type { ExtensionConditionRuntime } from '../../shared/extensions/extensionConditionContext'
 import type { ExtensionConditionState } from '../../shared/extensions/extensionConditions'
 import type { ExtensionDiagnostic, ExtensionHostFailure } from '../../shared/extensions/extensionDiagnostic'
-import type { ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
+import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
-import type { ThemeAssetSource } from '../themes/ThemeAssetStore'
 import type { ThemeService } from '../themes/ThemeService'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
@@ -26,11 +25,12 @@ import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
-import { extensionCompatible, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
+import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
 import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, validateExtensionSetting } from '../../shared/extensions/extensionSettings'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
+import { windowStyleIdSchema, windowStyleSchema } from '../../shared/extensions/extensionWindowStyles'
 import { themeRequestSchema, themeTransportSchema } from '../../shared/theme/themeApi'
 import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
@@ -74,6 +74,8 @@ interface RunningExtension {
   host: ExtensionHost
   ready: Promise<void>
   active: boolean
+  windowStyles?: Map<string, string>
+  resourceEndpoint?: { url: string, dispose: () => void }
   inFlight: number
   drained: Set<() => void>
   panesPending?: boolean
@@ -219,7 +221,7 @@ export class ExtensionService {
             incompatibility = error.review.incompatibility
         }
       }
-      return { source: record.current.source ?? undefined, manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), incompatibility, pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision, incompatibility: extensionCompatibilityIssue(record.pending.manifest, this.store.appVersion) } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
+      return { windowStyles: [...running?.windowStyles ?? []].map(([id, css]) => ({ id, css })), source: record.current.source ?? undefined, manifest: record.current.manifest, iconUrl: await this.store.icon(record.current), revision: record.current.revision, enabled: record.enabled, development: record.development, compatible: extensionCompatible(record.current.manifest, this.store.appVersion), incompatibility, pending: record.pending ? { manifest: record.pending.manifest, revision: record.pending.revision, incompatibility: extensionCompatibilityIssue(record.pending.manifest, this.store.appVersion) } : null, ...diagnostics, error: blocked ?? diagnostics.error, generation: running?.generation ?? null, state: !record.enabled ? 'disabled' : blocked ? 'blocked' : running ? running.active ? 'active' : 'activating' : diagnostics.error ? 'failed' : 'inactive' }
     }))
   }
 
@@ -926,13 +928,18 @@ export class ExtensionService {
         const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
         result = await this.store.resources.readBytes(extensionId, input.id, input.offset, input.length, view.abort.signal, allowLocal)
       }
+      else if (method === 'resources.getUrl') {
+        const path = await this.#resourcePath(view.running, params)
+        assertView()
+        result = new URL(path, view.session.url).href
+      }
       else if (method === 'resources.readText') {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
         result = await this.store.resources.readText(extensionId, input.id, view.abort.signal, allowLocal)
       }
       else if (method === 'resources.importFile') {
         const input = z.object({ resourceId: z.string().uuid() }).passthrough().parse(params)
-        if (input.resourceId !== view.input.resource?.id)
+        if (input.resourceId !== view.input.resource?.id && !(await this.store.resources.list(extensionId, allowLocal)).some(file => file.id === input.resourceId))
           throw new Error('EXTENSION_RESOURCE_DENIED')
         result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
       }
@@ -948,11 +955,6 @@ export class ExtensionService {
         if (method === 'resources.revokeDirectory') {
           await this.store.resources.revokeDirectory(extensionId, input.id, assertView)
           result = null
-        }
-        else if (method === 'resources.getUrl') {
-          if (!(await this.store.resources.list(extensionId, allowLocal)).some(resource => resource.id === input.id))
-            throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-          result = new URL(`/__resource/${input.id}`, view.session.url).href
         }
         else if (method === 'resources.release') {
           await this.store.resources.release(extensionId, input.id, assertView)
@@ -1109,7 +1111,7 @@ export class ExtensionService {
       throw new Error('EXTENSION_PERMISSION_DENIED')
     const result = await this.#ports.themes.request(owner, input, assertCurrent, {
       signal: AbortSignal.any([lifetime, running.abort.signal]),
-      read: source => this.#themeAsset(running, source, assertCurrent, lifetime, spaceResource),
+      read: source => this.#fileResponse(running, source, assertCurrent, lifetime, spaceResource),
     })
     const parsed = themeTransportSchema.safeParse(result)
     if (!parsed.success)
@@ -1139,7 +1141,22 @@ export class ExtensionService {
     const { id, dataVersion } = running.package.manifest
     try {
       let result: JsonValue
-      if (method === 'themes.request') {
+      if (method === 'window.styles.set' || method === 'window.styles.remove') {
+        if (running.package.manifest.apiVersion < 3 || !running.package.manifest.permissions.windowEffects)
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        running.windowStyles ??= new Map()
+        if (method === 'window.styles.set') {
+          const input = windowStyleSchema.parse(params)
+          running.windowStyles.set(input.id, input.css)
+        }
+        else {
+          const input = z.object({ id: windowStyleIdSchema }).strict().parse(params)
+          running.windowStyles.delete(input.id)
+        }
+        this.#publish({ kind: 'window-styles', extensionId: id })
+        result = null
+      }
+      else if (method === 'themes.request') {
         result = await this.#themeRequest(running, `${id}:${running.generation}`, params, () => this.#assertCurrent(running))
       }
       else if (method === 'configuration.get') {
@@ -1217,6 +1234,12 @@ export class ExtensionService {
       else if (method === 'resources.listFiles') {
         result = await this.store.resources.list(id, running.package.manifest.permissions.localResources)
       }
+      else if (method === 'resources.getUrl') {
+        const path = await this.#resourcePath(running, params)
+        this.#assertCurrent(running)
+        running.resourceEndpoint ??= this.#ports.createView(running.package)
+        result = new URL(path, running.resourceEndpoint.url).href
+      }
       else if (method === 'resources.readBytes') {
         const input = z.object({ id: z.string().uuid(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
         result = await this.store.resources.readBytes(id, input.id, input.offset, input.length, lifetime, running.package.manifest.permissions.localResources)
@@ -1245,9 +1268,9 @@ export class ExtensionService {
             response = await this.#networkResponse(running, input.url, signal)
           }
           else {
-            if (!input.resourceId || input.url || !this.#ports.readResource)
+            if (!input.resourceId || input.url)
               throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-            response = await this.#ports.readResource(await this.#resource(running, input.resourceId), signal)
+            response = await this.#fileResponse(running, { resourceId: input.resourceId }, guard, signal)
           }
           const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
           const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
@@ -1371,7 +1394,23 @@ export class ExtensionService {
     return target
   }
 
-  async #themeAsset(running: RunningExtension, source: ThemeAssetSource, assertCurrent: () => void, lifetime: AbortSignal, spaceResource?: string | null): Promise<Response> {
+  async #resourcePath(running: RunningExtension, params: unknown): Promise<string> {
+    const input = z.union([
+      z.object({ id: z.string().uuid() }).strict(),
+      z.object({ packagePath: extensionPathSchema }).strict(),
+    ]).parse(params)
+    if ('packagePath' in input) {
+      if (!running.package.hashes[input.packagePath])
+        throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+      return `/__package/${input.packagePath.split('/').map(encodeURIComponent).join('/')}`
+    }
+    const files = await this.store.resources.list(running.package.manifest.id, running.package.manifest.permissions.localResources)
+    if (!files.some(file => file.id === input.id))
+      throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+    return `/__resource/${input.id}`
+  }
+
+  async #fileResponse(running: RunningExtension, source: ExtensionFileSource, assertCurrent: () => void, lifetime: AbortSignal, spaceResource?: string | null): Promise<Response> {
     assertCurrent()
     if ('packagePath' in source) {
       const hash = running.package.hashes[source.packagePath]
@@ -1457,6 +1496,7 @@ export class ExtensionService {
     if (!running)
       return
     this.#running.delete(id)
+    running.resourceEndpoint?.dispose()
     this.#ports.themes?.releaseOwner(`${id}:${running.generation}`)
     if (running.inFlight)
       this.#retired.add(running)

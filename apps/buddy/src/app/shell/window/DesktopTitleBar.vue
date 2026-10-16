@@ -150,7 +150,7 @@ function applyWindowState(state: DesktopWindowState) {
 </script>
 
 <template>
-  <header class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none" @dblclick="toggleMaximize">
+  <header class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none" data-theme-surface="header" @dblclick="toggleMaximize">
     <div class="absolute inset-0 flex items-center justify-between">
       <DesktopWindowMenuBar
         :app-sidebar-collapsed="appSidebarCollapsed"

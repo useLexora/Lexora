@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { DesktopShellBindings } from './desktopShellBindings'
-import { computed } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DesktopStartupScreen from '@/app/bootstrap/DesktopStartupScreen.vue'
 import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
 import DesktopTitleBar from '@/app/shell/window/DesktopTitleBar.vue'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import WorkbenchHost from '@/workbench/browser/WorkbenchHost.vue'
@@ -16,6 +17,8 @@ const { bindings } = defineProps<{ bindings: DesktopShellBindings }>()
 const route = useRoute()
 const router = useRouter()
 const { appSidebarCollapsed, language } = useDesktopUi()
+const windowElement = useTemplateRef<HTMLElement>('windowElement')
+useWorkbenchAnchor('window', () => windowElement.value)
 const startupVisible = computed(() => !bindings.lifecycle.state.value.hasBeenReady && route.meta.settingsCategory !== 'logs')
 const activeView = computed(() => bindings.pages.current.value)
 const navigation = computed(() => bindings.pages.navigation.value)
@@ -27,7 +30,7 @@ function navigate(id: string) {
 </script>
 
 <template>
-  <div class="desktop-shell flex min-w-0 min-h-0 flex-col bg-canvas">
+  <div ref="windowElement" class="desktop-shell relative flex min-w-0 min-h-0 flex-col bg-canvas" data-theme-surface="layout" :data-lexora-page="activeView">
     <DesktopTitleBar
       :app-info="bindings.appInfo.value"
       :shortcut-bindings="bindings.shortcuts.bindings.value"
@@ -59,7 +62,7 @@ function navigate(id: string) {
               @refresh-notifications="bindings.notifications.load"
             />
           </Transition>
-          <WorkbenchMountPoint target="workbench" class="desktop-shell__workbench">
+          <WorkbenchMountPoint target="workbench" class="desktop-shell__workbench" data-theme-surface="layout">
             <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="activeView === 'lexora.tasks'" />
           </WorkbenchMountPoint>
         </div>

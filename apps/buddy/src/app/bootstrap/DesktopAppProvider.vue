@@ -9,7 +9,7 @@ import { useRouter } from 'vue-router'
 import { resolveBuddyLocale, translateBuddy } from '@/i18n/buddyI18n'
 import { useProvideAutomationContext } from '@/modules/automations'
 import { useProvideBuddiesContext } from '@/modules/buddies'
-import { useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
+import { ExtensionWindowStyleController, useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
 import { fileOperationsKey } from '@/modules/files/ui'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
@@ -28,6 +28,7 @@ import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiCont
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import { workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { useDesktopTypography } from '@/theme/desktopTypography'
+import { ThemeMaterialController } from '@/theme/ThemeMaterialController'
 import { useDesktopTheme } from '@/theme/useDesktopTheme'
 import { SemanticAnchorRegistry } from '@/workbench/browser/surfaces/SemanticAnchorRegistry'
 import { WorkbenchPaneRegistry } from '@/workbench/browser/surfaces/WorkbenchPaneRegistry'
@@ -110,7 +111,13 @@ const pageContext = workbench.controller.contextKeys.bind()
 onScopeDispose(pageContext.dispose)
 watch(() => pages.context.value.values, values => pageContext.update(values), { immediate: true, flush: 'sync' })
 const anchors = new SemanticAnchorRegistry()
-onScopeDispose(() => anchors.dispose())
+const windowStyles = new ExtensionWindowStyleController(extensions.installed)
+onScopeDispose(() => windowStyles.dispose())
+const materials = new ThemeMaterialController(anchors)
+onScopeDispose(() => {
+  materials.dispose()
+  anchors.dispose()
+})
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
 useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized })

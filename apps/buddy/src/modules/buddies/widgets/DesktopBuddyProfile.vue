@@ -53,8 +53,8 @@ async function profileSaved() {
 </script>
 
 <template>
-  <section class="desktop-buddy-profile flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface" data-testid="buddy-profile">
-    <header class="flex h-region-header flex-none items-center justify-between gap-2 px-[18px] border-b-1 border-b-solid border-b-border">
+  <section class="desktop-buddy-profile flex w-full min-w-0 min-h-0 flex-1 flex-col bg-surface" data-testid="buddy-profile" data-theme-surface="layout">
+    <header class="desktop-buddy-profile__header flex h-region-header flex-none items-center justify-between gap-2 px-[18px] border-b-1 border-b-solid border-b-border" data-theme-surface="header">
       <h1 class="m-0 min-w-0 flex-1 truncate text-[14px] font-600 text-fg">
         {{ labels.configuration }}
       </h1>
@@ -113,7 +113,7 @@ async function profileSaved() {
       </div>
     </header>
     <NScrollbar class="min-h-0 flex-1">
-      <div class="box-border mx-auto w-full max-w-[1240px] px-[clamp(16px,3cqw,32px)] pt-6 pb-10">
+      <div class="desktop-buddy-profile__content box-border mx-auto w-full max-w-[1240px] px-[clamp(16px,3cqw,32px)] pt-6 pb-10">
         <NAlert v-if="failed" type="error" class="mb-6" :show-icon="false">
           {{ labels.loadFailed }}
           <NButton v-if="failed" size="small" @click="refresh">

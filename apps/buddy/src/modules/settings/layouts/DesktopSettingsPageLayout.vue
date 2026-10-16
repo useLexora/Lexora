@@ -12,8 +12,8 @@ defineSlots<{
 </script>
 
 <template>
-  <section class="desktop-settings-page flex w-full h-full min-w-0 min-h-0 flex-col bg-surface">
-    <header class="desktop-settings-page__header flex flex-none items-center justify-between gap-4 border-b-1 border-b-solid border-b-border py-0 px-4 h-region-header">
+  <section class="desktop-settings-page flex w-full h-full min-w-0 min-h-0 flex-col bg-surface" data-theme-surface="layout">
+    <header class="desktop-settings-page__header flex flex-none items-center justify-between gap-4 border-b-1 border-b-solid border-b-border py-0 px-4 h-region-header" data-theme-surface="header">
       <div class="flex min-w-0 flex-1 items-center gap-[12px]">
         <h1 class="desktop-settings-page__title overflow-hidden min-w-0 max-w-full flex-none m-0 text-[14px] font-600 text-ellipsis whitespace-nowrap">
           <slot name="title" />
@@ -28,13 +28,13 @@ defineSlots<{
     </header>
 
     <DesktopRuntimePane :enabled="requiresRuntime" :loading="loading">
-      <div v-if="fill" class="flex w-full h-full min-h-0 flex-col overflow-hidden">
+      <div v-if="fill" class="desktop-settings-page__content flex w-full h-full min-h-0 flex-col overflow-hidden">
         <div class="flex min-w-0 min-h-0 flex-1">
           <slot />
         </div>
       </div>
       <NScrollbar v-else class="desktop-settings-page__scroll">
-        <div class="grid w-[min(100%,_64rem)] gap-[1.8rem] my-0 mx-auto pt-[clamp(20px,_3cqw,_24px)] pr-[clamp(1rem,_3cqw,_2.8rem)] pb-12 pl-[clamp(1rem,_3cqw,_2.8rem)]">
+        <div class="desktop-settings-page__content grid w-[min(100%,_64rem)] gap-[1.8rem] my-0 mx-auto pt-[clamp(20px,_3cqw,_24px)] pr-[clamp(1rem,_3cqw,_2.8rem)] pb-12 pl-[clamp(1rem,_3cqw,_2.8rem)]">
           <slot />
         </div>
       </NScrollbar>

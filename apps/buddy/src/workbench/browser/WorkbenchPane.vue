@@ -38,7 +38,7 @@ const drop = computed(() => dropPosition.value?.paneId === props.pane.id ? dropP
 </script>
 
 <template>
-  <section ref="element" class="workbench-pane relative flex flex-col min-w-0 min-h-0 h-full overflow-hidden bg-canvas" :class="{ 'is-focused': focused }" :data-pane-id="pane.id" tabindex="-1" @focusin="controller.activate(pane.id)" @pointerdown="controller.activate(pane.id)">
+  <section ref="element" class="workbench-pane relative flex flex-col min-w-0 min-h-0 h-full overflow-hidden bg-canvas" :class="{ 'is-focused': focused }" :data-pane-id="pane.id" data-theme-surface="layout" tabindex="-1" @focusin="controller.activate(pane.id)" @pointerdown="controller.activate(pane.id)">
     <WorkbenchMountPoint target="workbench.pane" :instance-id="pane.id">
       <WorkbenchSurface v-for="id in viewIds" :key="id" :view-id="id" :preparing="id !== pane.view" />
       <WorkbenchSlot v-if="!pane.view" target="workbench.pane.empty" class="workbench-pane__empty-slot">

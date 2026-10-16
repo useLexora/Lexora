@@ -50,7 +50,7 @@
 
 页面与小视图由插件绘制，均使用 `render(context, container)`，共用隔离和通信 API。API 2 起将视图内容与挂载位置分开，通过 `contributes.placements` 选择正式扩展点；`page` 和 `window-overlay` 继续可用。插件不能查询或修改宿主 DOM。
 
-装饰、替换控件和普通挂载面板的 `container` 默认填满隔离视图，无内边距，支持子元素使用百分比高度。装饰的绘制范围仍受锚点及祖先裁剪约束；页面保持普通文档流，可按内容滚动。
+所有视图的 `container` 默认填满隔离视口，无内边距，根元素与子元素使用 `border-box`，支持 `w-full`、`h-full` 和百分比高度。页面、插槽、控件和挂载面板使用相同盒模型，插件自行提供间距；宿主不为插件内部的 `main` 等语义元素增加样式。页面内容超出视口时可正常滚动；需要内部滚动时由插件明确设置自身滚动区域。装饰的绘制范围受锚点及祖先裁剪约束，装饰视口不滚动。
 
 导航入口位于自动化下方，声明 `contributes.navigation: { "title": "插件名称", "view": "<plugin-id>.settings" }`，引用一个 `resource: "none"` 的视图（API 1 仍需 `location: "page"`）。不需要设置页的效果插件可以没有导航。
 
@@ -64,7 +64,7 @@
 | `models: true` | 工具或动作调用期间请求已配置模型，凭据留在宿主 |
 | `tasks: "read" / "title"` | 读取当前任务标题元数据；title 额外允许安全改名 |
 | `taskMessages: true` | 工具或动作调用期间读取原任务可见分支的有限消息文本，详见 [任务权限](agent-settings.md#模型与任务权限) |
-| `windowEffects: true` | 锚点装饰、窗口效果与无内容的对话输入活动 |
+| `windowEffects: true` | 窗口 CSS、锚点装饰、窗口效果与无内容的对话输入活动 |
 | `controls: ["model.reasoning"]` | 提供可由用户选用的思考等级控件 |
 | `notifications: true` | 宿主 `context.notifications.show({title,body})` |
 | `schedules: true` | 宿主持久间隔任务，需要宿主入口与已声明命令 |
@@ -84,8 +84,11 @@
 
 | 呈现范围 | 声明 | 活动与坐标 |
 | --- | --- | --- |
-| 输入框内部 | `kind: "decoration"`、`anchor: "composer.input"` | 只接收该输入框活动，caret 相对输入框，绘制裁剪在输入框内 |
+| 整个客户端窗口 | `kind: "decoration"`、`anchor: "window"` | 在所有页面显示，包括设置页、顶栏和两侧栏，输入活动坐标相对窗口；不接收指针与焦点 |
+| 任务主工作区 | `kind: "decoration"`、`anchor: "workbench.workspace"` | 仅任务页的跨分屏连续区域；不包括顶栏、侧栏和资源面板，切换到其他页面时隐藏，输入活动坐标相对该区域 |
 | 整个输入所在分屏 | `kind: "decoration"`、`anchor: "workbench.pane"` | 每个分屏独立实例，只接收自己内部的对话输入活动，caret 相对该分屏；可以覆盖对话区域，不能越过分屏边界 |
+| 对话历史区 | `kind: "decoration"`、`anchor: "task.history"` | 每个可见历史视口独立实例，背景不随消息滚动；不提供消息内容，不覆盖输入框 |
+| 输入框内部 | `kind: "decoration"`、`anchor: "composer.input"` | 只接收该输入框活动，caret 相对输入框，绘制裁剪在输入框内 |
 | 整个 Lexora 窗口 | 视图 `location: "window-overlay"` | API 1、API 2 均只收到 `{type:"composer-input"}`，不含来源分屏与坐标；插件自行选择窗口内的位置 |
 
 分屏装饰随分屏创建、改变尺寸和关闭；页面隐藏时保留实例并更新可见性。事件绑定输入发生的分屏，不随之后的焦点切换转交其他分屏；插件无需读取任务或分屏 ID。多个分屏及多个插件的实例各自隔离。此锚点提供透明装饰区域，不提供交互面板外壳。
@@ -100,7 +103,7 @@
 
 | kind | 必填字段 | 行为 |
 | --- | --- | --- |
-| `decoration` | `anchor` | 自动挂载至 `app.sidebar`、`workbench.sidebar`、`workbench.pane` 或 `composer.input`；每个锚点实例分别挂载，只在该区域内绘制，不接收指针和焦点 |
+| `decoration` | `anchor` | 通过 `lexora_plugin_capabilities({kind:"decoration"})` 查询背景与装饰区域；每个锚点实例分别挂载，只在该区域内绘制，不接收指针和焦点；需要 `windowEffects` |
 | `view` | `target` | 用 `lexora_plugin_capabilities({kind:"mount"})` 查询目标；`presentation` 描述区域内布局，宿主入口调用 `context.placements.show(id, instanceId?)` / `hide(id, instanceId?)` |
 | `control` | `target` | 当前支持 `model.reasoning`；由插件自身配置启停，运行规则见 [内容插槽与替换控件](slots.md) |
 | `slot` | `target` | 需要将 `apiVersion` 设为 3；由插件自身配置启停，目标、尺寸和默认内容回退见 [内容插槽](slots.md) |
@@ -145,7 +148,7 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 
 插件下载和私有文件资源不需要 `localResources` 或额外审批。`network.download(url,{name?,signal?})` 在已批准的网络 origin 范围内流式写盘，返回 `{id,name,mimeType,size}`；不设总大小和总时长配额，可用 AbortSignal 取消。重定向逐跳核对授权，关闭发起视图或停用插件会取消下载并清理未完成文件。资源属于插件私有数据，跨重启保存；普通卸载保留，清除数据时删除。用 `resources.release(file)` 回收不再需要的下载副本。
 
-宿主和视图均可 `resources.listFiles/readBytes/readText` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的 Space 文件句柄复制到插件私有资源，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
+宿主和视图均可 `resources.listFiles/readBytes/readText` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的本地文件、Space 文件或本插件私有文件复制到新的私有资源，默认保留文件名，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
 
 视图 `openExternal(url)` 使用系统浏览器打开已批准 origin 的 HTTPS 链接，保留 fragment。无需逐次授权，不授予文件或自定义协议访问。
 
@@ -168,6 +171,47 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 包内静态资源使用 `new URL('./assets/file.ext', import.meta.url).href`，遵循包大小上限。音视频支持流式读取和 seek，具体解码能力取决于运行平台；复杂格式可使用包内自包含 JS 解析器。通用文件通道不等于内置任意格式解码器、原生模块或外部可执行程序支持。
 
 验收实际读取、解析、保存结果和取消路径。涉及音视频时验证 metadata、实际进度与 seek；关闭时停止工作、清除 URL 和定时器。交互期间保存进度，销毁后不得再异步回写状态。
+
+## 窗口样式
+
+API 3 的宿主 `context.window.styles.set(id, css)` 注入普通 CSS，需要 `windowEffects`。同一插件的同名样式表原位替换，`remove(id)` 仅撤回自己的样式表；停用、崩溃、更新和卸载会清理全部注入样式。样式不持久化，激活时由插件恢复；主页面重载会停止插件宿主并撤回样式，重新激活后可再次注入。
+
+CSS 作用于整个应用文档，支持选择器、变量、伪元素、动画、媒体查询和其他浏览器支持的 CSS；不限定为工作台、背景或某一组属性。宿主不向插件开放父页面 DOM 或脚本执行。已有区域提供稳定的 `[data-lexora-region="window"]`、`app.sidebar`、`workbench.sidebar`、`workbench.workspace`、`workbench.pane`、`task.history` 和 `composer.input` 标识。跨插件按插件 ID、样式表 ID 升序放置，之后遵循标准 CSS 层叠规则。
+
+窗口根节点的 `data-lexora-page` 与 `page.id` 一致：任务为 `lexora.tasks`，自动化为 `lexora.automations`，伙伴为 `lexora.buddies`，插件管理为 `lexora.extensions`，设置为 `lexora.settings`。插件自有页面为 `extension:<插件 ID>`；其 iframe 内部样式由插件自身管理。
+
+`data-theme-surface` 标记可定制的宿主表面，输入框等嵌套部件的标记位于实际绘制底色的节点。值为 `layout`（页面布局和侧栏）、`header`（区域标题栏）、`panel`（内容卡片和设置分组）、`input`（任务和自动化提示词输入框）。标记本身不修改外观，插件可按类别选择透明化、边框等效果，或用以下语义 class 选取、排除具体部件：
+
+| 部件 | 稳定 class |
+| --- | --- |
+| 任务标题、输入框 | `desktop-chat-workspace-header`、`desktop-chat-composer` |
+| 自动化列表、编辑页 | `desktop-automation-workbench`、`desktop-automation-editor`；各自的 `__header`、`__content` |
+| 伙伴侧栏、资料页 | `desktop-buddies-sidebar`、`desktop-buddy-profile`；各自的 `__header` |
+| 伙伴资料卡片、设置区 | `buddy-profile-card`、`buddy-settings-section` |
+| 插件管理页 | `desktop-extension-workbench` 及其 `__header`、`__content` |
+| 已安装、不可用、市场插件卡片 | `extension-card`、`extension-unavailable-card`、`extension-catalog-card` |
+| 设置侧栏、设置页 | `desktop-settings-sidebar`、`desktop-settings-page`；各自的 `__header` |
+| 设置分组 | `desktop-settings-group`；登记的分组另有 `data-settings-group` |
+
+例如 `[data-lexora-page="lexora.tasks"] [data-theme-surface]:not([data-theme-surface="input"])` 可选择任务页表面并保留输入框底色；`:not(.desktop-settings-group)` 可排除设置分组。表格之外的内部 DOM 层级与原子 class 不作为稳定接口。
+
+`context.resources.getUrl({id})` 返回本插件私有文件或已授权本地文件的 URL；`getUrl({packagePath})` 返回已验证的包内资源 URL。视图也支持这两种形式。无需再次选图审批，不接受任意本机路径；URL 只在当前宿主 generation 有效，停用后失效，资源释放后不能再读取。资源 URL 可用于 CSS 图片、字体或包内样式表，不应保存进插件数据；每次激活重新取得。窗口的 CSP 继续限制网络和脚本。
+
+```ts
+const image = await context.resources.getUrl(file)
+await context.window.styles.set('appearance', `
+  [data-lexora-region="task.history"] {
+    border: 1px solid var(--buddy-accent);
+    background: url(${JSON.stringify(image)}) center / cover;
+  }
+  @media (width < 800px) {
+    [data-lexora-region="task.history"] { border-width: 0; }
+  }
+`)
+await context.window.styles.remove('appearance')
+```
+
+窗口样式不会修改主题选择或主题数据；CSS 可以覆盖主题的视觉输出，撤回后按正常层叠恢复。作者也可使用主题入口，或把主题和窗口样式组合使用。需要交互的按钮和面板继续通过视图、挂载与交互区域能力接入。
 
 ## 页面、宿主与设置
 

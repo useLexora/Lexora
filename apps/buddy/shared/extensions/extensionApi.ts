@@ -9,6 +9,7 @@ import type { ExtensionDiagnostic } from './extensionDiagnostic'
 import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from './extensionSettings'
+import type { ExtensionWindowStyle } from './extensionWindowStyles'
 import { z } from 'zod'
 import { spaceFileTargetSchema } from '../spaces/spaceFileApi'
 import { themeTransportSchema } from '../theme/themeApi.ts'
@@ -70,6 +71,7 @@ export interface ExtensionLog {
   diagnostic?: ExtensionDiagnostic
 }
 export interface ExtensionStatus {
+  windowStyles?: ExtensionWindowStyle[]
   source?: ExtensionReview['source']
   manifest: ExtensionManifest
   iconUrl?: string

@@ -24,6 +24,7 @@ export interface ResourceTransferOptions { name?: string, signal?: AbortSignal }
 export interface ResourceApi {
   readText: (resource: Resource) => Promise<string>
   listFiles: () => Promise<LocalFile[]>
+  getUrl: (resource: Pick<LocalFile, 'id'> | { packagePath: string }) => Promise<string>
   readBytes: (resource: Pick<LocalFile, 'id'>, options?: { offset?: number, length?: number }) => Promise<{ data: Uint8Array, size: number, eof: boolean }>
   importFile: (resource: Resource, options?: ResourceTransferOptions) => Promise<LocalFile>
   release: (resource: Pick<LocalFile, 'id'>) => Promise<void>
@@ -32,7 +33,6 @@ export interface LocalFile extends Resource { readonly mimeType: string, readonl
 export interface LocalDirectory extends Resource {}
 export interface LocalResourceApi extends ResourceApi {
   pickFiles: (options?: { filters?: { name: string, extensions: string[] }[], multiple?: boolean }) => Promise<LocalFile[]>
-  getUrl: (resource: Pick<LocalFile, 'id'>) => Promise<string>
   revokeFile: (resource: Pick<LocalFile, 'id'>) => Promise<void>
   pickDirectory: () => Promise<LocalDirectory | null>
   listDirectories: () => Promise<LocalDirectory[]>
@@ -136,6 +136,7 @@ export interface ExtensionContext {
   readonly subscriptions: { add: <T extends Disposable>(disposable: T) => T }
   readonly commands: { register: (id: string, execute: (context: { resource: Resource | null, arguments: Json, invocation: CommandInvocation | null }) => Json | void | Promise<Json | void>) => Disposable }
   readonly placements: { show: (id: string, options?: string | PlacementOptions) => Promise<string>, hide: (id: string, options?: string | PlacementOptions) => Promise<string | null> }
+  readonly window: { readonly styles: { set: (id: string, css: string) => Promise<void>, remove: (id: string) => Promise<void> } }
   readonly workbench: { readonly panes: readonly PaneSnapshot[], onPanesChange: (listener: (panes: readonly PaneSnapshot[]) => void) => Disposable }
   readonly interactions: { start: (title: string) => Promise<Interaction> }
   readonly views: { broadcast: (message: Json) => Promise<void>, open: (type: string, options?: { resource?: Resource | null, state?: Json }) => Promise<string> }
@@ -145,8 +146,16 @@ export interface ExtensionContext {
   readonly notifications: { show: (notification: { title: string, body: string }) => Promise<boolean> }
   readonly schedules: ScheduleApi
 }
+export type WorkbenchRegion
+  = | 'window'
+    | 'app.sidebar'
+    | 'workbench.sidebar'
+    | 'workbench.workspace'
+    | 'workbench.pane'
+    | 'task.history'
+    | 'composer.input'
 export interface AnchorGeometry {
-  readonly kind: 'app.sidebar' | 'workbench.sidebar' | 'workbench.pane' | 'composer.input'
+  readonly kind: WorkbenchRegion
   readonly visible: boolean
   readonly width: number
   readonly height: number
@@ -289,7 +298,7 @@ export interface FileIconThemeContribution { id: string, label: string, path: st
 export interface ThemePreference { id: string }
 export interface ThemeDescriptor { id: string, label: string, appearance: ThemeAppearance, source: 'plugin' | 'user' | 'fallback', extensionId: string | null, packageName: string, swatch: string }
 export interface ThemeMaterial {
-  anchor: 'app.sidebar' | 'workbench.sidebar' | 'workbench.pane' | 'composer.input'
+  anchor: WorkbenchRegion
   image?: string
   color?: string
   gradient?: { angle: number, stops: { color: string, at: number }[] }

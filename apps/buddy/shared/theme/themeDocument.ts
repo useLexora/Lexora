@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { extensionPathSchema } from '../extensions/extensionPath.ts'
+import { workbenchRegionSchema } from '../workbench/workbenchRegions.ts'
 import { themeIdSchema } from './themePreferences.ts'
 import { semanticColorTokens } from './themeTokens.ts'
 
 export const themeColorSchema = z.string().regex(/^#[\da-f]{6}(?:[\da-f]{2})?$/i, 'Expected #RRGGBB or #RRGGBBAA')
 export const themeAppearanceSchema = z.enum(['light', 'dark'])
 export const themeImageSchema = extensionPathSchema.refine(value => /\.(?:png|jpe?g|webp|svg)$/i.test(value), 'Expected a package image')
-export const themeAnchorSchema = z.enum(['app.sidebar', 'workbench.sidebar', 'workbench.pane', 'composer.input'])
+export const themeAnchorSchema = workbenchRegionSchema
 const localizedText = z.object({ 'zh-CN': z.string().max(160), 'en-US': z.string().max(160) }).strict()
 
 export const themeContributionSchema = z.object({
@@ -41,7 +42,7 @@ export const themeDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   colors: z.partialRecord(z.enum(themeColorNames), themeColorSchema).default({}),
   shadows: z.partialRecord(z.enum(['soft', 'raised', 'overlay', 'window', 'illustration']), z.array(shadowSchema).max(4)).default({}),
-  materials: z.array(materialSchema).max(4).default([]),
+  materials: z.array(materialSchema).max(themeAnchorSchema.options.length).default([]),
   welcome: z.object({ text: localizedText.nullable().optional(), image: themeImageSchema.nullable().optional() }).strict().optional(),
 }).strict().superRefine((document, context) => {
   if (new Set(document.materials.map(material => material.anchor)).size !== document.materials.length)

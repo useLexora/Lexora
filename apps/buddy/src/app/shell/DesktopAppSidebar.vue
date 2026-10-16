@@ -56,7 +56,7 @@ function openNotification(notification: DesktopNotification) {
 </script>
 
 <template>
-  <aside id="desktop-app-sidebar" ref="sidebar" class="desktop-app-sidebar flex w-app-sidebar h-full min-h-0 flex-none flex-col overflow-hidden border-r-1 border-r-solid border-r-border bg-app-sidebar text-app-sidebar-fg">
+  <aside id="desktop-app-sidebar" ref="sidebar" class="desktop-app-sidebar relative flex w-app-sidebar h-full min-h-0 flex-none flex-col overflow-hidden border-r-1 border-r-solid border-r-border bg-app-sidebar text-app-sidebar-fg" data-theme-surface="layout">
     <WorkbenchMountPoint target="app.sidebar">
       <header class="flex flex-none items-center justify-between gap-[0.65rem] border-b-1 border-b-solid border-b-border py-0 px-3 h-region-header">
         <div class="flex min-w-0 items-baseline gap-2">

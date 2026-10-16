@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export type ExtensionFileSource = { resourceId: string } | { packagePath: string }
+
 export const extensionLocalFileSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(512),

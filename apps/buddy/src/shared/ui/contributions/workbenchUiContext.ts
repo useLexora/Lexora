@@ -5,7 +5,6 @@ import type { ComposerActivity, WorkbenchAnchor, WorkbenchControl, WorkbenchMenu
 import type { Component } from 'vue'
 import { createInjectionState } from '@vueuse/core'
 import { watch } from 'vue'
-import { useThemeMaterial } from '@/theme/useThemeMaterial'
 
 export interface SemanticAnchor {
   readonly id: string
@@ -50,7 +49,6 @@ const [useProvideWorkbenchUiScope, useWorkbenchUiScope] = createInjectionState((
 export { useProvideWorkbenchUiScope, useWorkbenchUiScope }
 
 export function useWorkbenchAnchor(kind: WorkbenchAnchor, element: () => HTMLElement | null, caret?: () => DOMRect | null): void {
-  useThemeMaterial(kind, element)
   const host = useOptionalWorkbenchUi()
   if (!host)
     return

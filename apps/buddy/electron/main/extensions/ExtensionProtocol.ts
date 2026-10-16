@@ -60,7 +60,7 @@ export class ExtensionProtocol {
         return await this.#store.resources.response(endpoint.package.manifest.id, path.slice('/__resource/'.length), request, endpoint.abort.signal, endpoint.package.manifest.permissions.localResources)
       }
       if (path === `/__${kind}.html`) {
-        return new Response(`<!doctype html><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><style>html,body{margin:0;min-height:100%;font:14px system-ui;color-scheme:light dark}main{padding:16px;overflow-wrap:anywhere}button,input{font:inherit}pre{overflow:auto}</style><main></main><script type="module" src="/__${kind}.js"></script>`, { headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } })
+        return new Response(`<!doctype html><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;min-width:0;min-height:0;font:14px system-ui;color-scheme:light dark;background:transparent}body>main{width:100%;height:100%;min-width:0;min-height:0;padding:0;overflow-wrap:anywhere}button,input,textarea,select{font:inherit}pre{overflow:auto}</style><main></main><script type="module" src="/__${kind}.js"></script>`, { headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } })
       }
       if (path === `/__${kind}.js`)
         return new Response(kind === 'host' ? hostSource : viewSource, { headers: { ...headers, 'content-type': 'text/javascript; charset=utf-8' } })

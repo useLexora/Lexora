@@ -369,6 +369,15 @@ it('rejects unauthorized media and late picker selections without retaining gran
   selection.resolve([path])
   await rejected
   expect(await f.store.resources.list(value.id)).toEqual([])
+  const current = await f.service.openView({ ...input, viewId: randomUUID() })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(current.id, current.generation, current.token, method, params)
+  const [picked] = await request('resources.pickFiles', {}) as { id: string }[]
+  const copy = await request('resources.importFile', { id: randomUUID(), resourceId: picked!.id, name: 'copy.mp3' }) as { id: string }
+  await request('resources.revokeFile', { id: picked!.id })
+  expect(await request('resources.readText', { id: copy.id })).toBe('media bytes')
+  expect(await readFile(path, 'utf8')).toBe('media bytes')
+  const [foreign] = await f.store.resources.grant('tests.reader', [path], () => {})
+  await expect(request('resources.importFile', { id: randomUUID(), resourceId: foreign!.id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   const resource = await f.store.grant('tests.reader', target)
   const denied = await f.service.openView({ ...input, viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource })
   expect(await f.service.viewRequest(denied.id, denied.generation, denied.token, 'resources.listFiles', null)).toEqual([])
@@ -534,6 +543,51 @@ it.each([false, true])('requires theme management permission and revokes host-ow
   }
 })
 
+it.each([false, true])('owns window styles behind the effects permission and resolves only owned resources: %s', async (windowEffects) => {
+  const home = await createTemporaryDirectory('lexora-window-style-')
+  const themes = new ThemeService(home, async () => {})
+  await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
+  cleanup.push(() => themes.dispose())
+  const value = manifest({ apiVersion: 3, permissions: { windowEffects, selectedResource: 'read', network: ['https://media.example.com'] } })
+  const f = await fixture({ themes, get: async () => new Response('image', { headers: { 'content-type': 'image/png' } }) }, value)
+  await f.service.execute(value.id, 'tests.reader.open', null)
+  const broker = f.hosts[0]!.broker
+  const file = await broker('network.download', { id: randomUUID(), url: 'https://media.example.com/image.png' }) as { id: string }
+  const url = await broker('resources.getUrl', { id: file.id })
+  expect(url).toEqual(expect.stringContaining(`/__resource/${file.id}`))
+  await expect(broker('resources.getUrl', { id: randomUUID() })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  await expect(broker('resources.getUrl', { packagePath: '../private.png' })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  await expect(broker('resources.getUrl', { packagePath: 'missing.png' })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  expect(await broker('resources.getUrl', { packagePath: 'extension.js' })).toEqual(expect.stringContaining('/__package/extension.js'))
+  const input = { id: 'wallpaper', css: `body::before { background-image: url("${url}"); }` }
+  if (!windowEffects) {
+    await expect(broker('window.styles.set', input)).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
+    await expect(broker('window.styles.remove', { id: input.id })).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
+    return
+  }
+  const current = async () => (await f.service.list())[0]!.windowStyles
+  await broker('window.styles.set', input)
+  await broker('window.styles.set', { id: 'controls', css: 'button:hover { border-radius: 2rem; } @media (width < 800px) { button { padding: 2px; } }' })
+  await broker('window.styles.set', { ...input, css: ':root { --custom-accent: red; }' })
+  expect(await current()).toEqual([{ id: 'wallpaper', css: ':root { --custom-accent: red; }' }, { id: 'controls', css: expect.stringContaining('@media') }])
+  await expect(broker('window.styles.set', { id: '', css: '' })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  expect(themes.snapshot.preference).toEqual(DEFAULT_THEME_PREFERENCE)
+  expect(themes.snapshot.themes.filter(theme => theme.source === 'user')).toEqual([])
+  await broker('window.styles.remove', { id: 'wallpaper' })
+  expect(await current()).toEqual([{ id: 'controls', css: expect.any(String) }])
+  await broker('resources.release', { id: file.id })
+  await expect(broker('resources.getUrl', { id: file.id })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  const gate = deferred<Awaited<ReturnType<typeof f.store.resources.list>>>()
+  vi.spyOn(f.store.resources, 'list').mockReturnValueOnce(gate.promise)
+  const resolving = broker('resources.getUrl', { id: file.id })
+  const rejected = expect(resolving).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  await f.service.enable(value.id, false)
+  gate.resolve([{ id: file.id, name: 'next.png', size: 5, mimeType: 'image/png' }])
+  await rejected
+  expect(await current()).toEqual([])
+  await expect(broker('window.styles.set', input)).rejects.toThrow('EXTENSION_HOST_STOPPED')
+})
+
 it('reports host and view validation failures with bounded, redacted diagnostics', async () => {
   const home = await createTemporaryDirectory('lexora-theme-diagnostic-')
   const themes = new ThemeService(home, async () => {})
@@ -587,6 +641,9 @@ it('downloads files and saves standalone theme images using existing grants with
   const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
   const resource = await request('network.download', { id: randomUUID(), url: 'https://media.example.com/wallpaper.png' }) as { id: string, size: number }
   expect(resource.size).toBe(8 * 1024 * 1024)
+  const copy = await request('resources.importFile', { id: randomUUID(), resourceId: resource.id, name: 'copy.png' }) as { id: string, size: number }
+  expect(copy.size).toBe(resource.size)
+  await request('resources.release', { id: copy.id })
   expect(await request('resources.getUrl', { id: resource.id })).toContain(`/__resource/${resource.id}`)
   const saved = await f.hosts[0]!.broker('themes.request', { action: 'save', archive: { schemaVersion: 1, appearance: 'dark', label: 'Media', document: { schemaVersion: 1, welcome: { image: 'wallpaper.png' } }, assets: { 'wallpaper.png': { resourceId: resource.id } } } }) as { id: string }
   await request('resources.release', { id: resource.id })

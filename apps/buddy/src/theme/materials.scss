@@ -1,0 +1,23 @@
+.buddy-theme-material,
+.buddy-theme-material__group,
+.buddy-theme-material__image,
+.buddy-theme-material__gradient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.buddy-theme-material {
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  user-select: none;
+}
+
+.buddy-theme-material__image {
+  background-repeat: no-repeat;
+}
+
+[data-theme-surface]:has(> .buddy-theme-material) {
+  isolation: isolate;
+}

@@ -129,8 +129,6 @@ watch(
 
 <style scoped lang="scss">
 .desktop-automation-prompt-composer {
-  :deep(.desktop-chat-composer) {
-    background: var(--buddy-surface-raised);
-  }
+  --buddy-composer: var(--buddy-surface-raised);
 }
 </style>

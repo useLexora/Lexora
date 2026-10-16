@@ -60,6 +60,10 @@ bridge.subscribe(async ({ id, method, params }) => {
           commands.set(id, callback)
           return disposable(() => commands.delete(id))
         } },
+        window: { styles: Object.freeze({
+          set: (id, css) => request('window.styles.set', { id, css }),
+          remove: id => request('window.styles.remove', { id }),
+        }) },
         workbench: {
           get panes() { return source.panes },
           onPanesChange: listener => events.on('workbench:panes:changed', event => listener(event.data.panes)),

@@ -7,8 +7,8 @@ defineProps<{ manifest: ExtensionMetadata, iconUrl?: string, language: string }>
 </script>
 
 <template>
-  <article class="flex min-w-0 flex-col gap-[10px] border border-solid border-border rounded-micro bg-surface p-[18px]">
-    <header class="flex min-w-0 items-center gap-[10px]">
+  <article class="extension-catalog-card flex min-w-0 flex-col gap-[10px] border border-solid border-border rounded-micro bg-surface p-[18px]" data-theme-surface="panel">
+    <header class="extension-catalog-card__header flex min-w-0 items-center gap-[10px]">
       <DesktopPluginIcon :src="iconUrl" :size="28" />
       <h2 class="m-0 min-w-0 flex-1 text-strong text-[14px] font-600 leading-[1.5] [overflow-wrap:anywhere]">
         {{ manifest.name }}

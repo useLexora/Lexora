@@ -20,7 +20,7 @@ const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
-  <header class="desktop-chat-workspace-header flex flex-none items-center justify-between gap-[0.85rem] border-b-1 border-b-solid border-b-border bg-surface pt-0 pr-3 pb-0 pl-4 h-region-header">
+  <header class="desktop-chat-workspace-header flex flex-none items-center justify-between gap-[0.85rem] border-b-1 border-b-solid border-b-border bg-surface pt-0 pr-3 pb-0 pl-4 h-region-header" data-theme-surface="header">
     <div class="desktop-chat-workspace-header__copy grid min-w-0 flex-1 gap-[0.05rem] select-none">
       <slot name="title">
         <strong>{{ title }}</strong>

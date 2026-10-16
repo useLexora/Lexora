@@ -8,7 +8,6 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 import peekingIllustrationUrl from '@/shared/branding/welcome/assets/peeking.png'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
-import { useThemeMaterial } from '@/theme/useThemeMaterial'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
 import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
@@ -71,7 +70,6 @@ watch(() => props.viewMode, (value) => {
   else nodeDetail.close()
 }, { immediate: true })
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
-useThemeMaterial('workbench.pane', () => pageRef.value)
 const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
 watch([pageRef, isLoading], ([element, loading], _, cleanup) => {
   if (!element || loading)
@@ -192,7 +190,7 @@ function openDetailChanges(id: string) {
 
 <template>
   <DesktopRuntimePane :loading="isLoading" :language="language" :animate="false">
-    <section ref="pageRef" class="desktop-chat-page relative grid min-w-0 min-h-0 flex-1 grid-cols-[minmax(0,_1fr)] grid-rows-[minmax(0,_1fr)_auto] bg-reading text-reading-fg" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode">
+    <section ref="pageRef" class="desktop-chat-page relative grid min-w-0 min-h-0 flex-1 grid-cols-[minmax(0,_1fr)] grid-rows-[minmax(0,_1fr)_auto] bg-reading text-reading-fg" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode" data-theme-surface="layout">
       <main class="desktop-chat-page__content [grid-area:content] flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
         <DesktopConversationCanvas
           v-if="canvasVisited"

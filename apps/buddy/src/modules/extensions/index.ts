@@ -1,4 +1,5 @@
 export { useProvideExtensionContext } from './extensionContext'
+export { ExtensionWindowStyleController } from './state/ExtensionWindowStyleController'
 export { useExtensionState } from './state/useExtensionState'
 export type { ExtensionUiContributions } from './state/useExtensionUiContributions'
 export { useExtensionUiContributions } from './state/useExtensionUiContributions'

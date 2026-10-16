@@ -56,8 +56,8 @@ function handleAction(key: string | number) {
 </script>
 
 <template>
-  <article class="extension-card box-border h-[200px] flex min-w-0 flex-col gap-2 border border-solid border-border rounded-micro bg-surface p-4" :data-extension-id="item.manifest.id">
-    <header class="flex min-w-0 flex-none items-start gap-3">
+  <article class="extension-card box-border h-[200px] flex min-w-0 flex-col gap-2 border border-solid border-border rounded-micro bg-surface p-4" :data-extension-id="item.manifest.id" data-theme-surface="panel">
+    <header class="extension-card__header flex min-w-0 flex-none items-start gap-3">
       <DesktopPluginIcon :src="item.iconUrl" :size="28" />
       <div class="min-w-0 flex-1">
         <h2 class="m-0 min-w-0 text-strong text-[14px] font-600 leading-[1.5]">

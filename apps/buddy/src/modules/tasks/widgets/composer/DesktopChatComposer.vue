@@ -18,6 +18,7 @@ import DesktopChatComposerInteractionHost from '@/modules/tasks/widgets/composer
 import { useChatComposer } from '@/modules/tasks/widgets/composer/useChatComposer'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import ResourceQuoteStrip from '@/shared/ui/selection/ResourceQuoteStrip.vue'
 import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
 import ChatSessionReferenceStrip from '../references/ChatSessionReferenceStrip.vue'
@@ -47,6 +48,7 @@ defineSlots<{
 
 const { t } = useBuddyI18n(() => props.language)
 const resourceStrip = useTemplateRef('resourceStrip')
+const inputSurface = useTemplateRef<HTMLElement>('inputSurface')
 const {
   activeSuggestionIndex,
   activeTrigger,
@@ -107,6 +109,14 @@ const {
 const queuesSubmission = computed(() => !props.isActorInput && !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
 const collaborationCount = computed(() => isLocalCommand.value ? 0 : getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(props.composerContent)).length)
 const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
+
+useWorkbenchAnchor('composer.input', () => inputSurface.value, () => {
+  const current = editor.value
+  if (!current || current.isDestroyed)
+    return null
+  const position = current.view.coordsAtPos(current.state.selection.head)
+  return new DOMRect(position.left, position.top, position.right - position.left, position.bottom - position.top)
+})
 
 defineExpose({
   focus: () => editor.value?.commands.focus(),
@@ -213,7 +223,9 @@ function captureDraft(): WorkbenchMenuSelection {
     </template>
 
     <template #editor>
-      <EditorContent v-if="editor" :editor="editor" />
+      <div v-if="editor" ref="inputSurface" class="desktop-chat-composer__surface relative" data-theme-surface="layout">
+        <EditorContent :editor="editor" />
+      </div>
     </template>
 
     <template #leading>

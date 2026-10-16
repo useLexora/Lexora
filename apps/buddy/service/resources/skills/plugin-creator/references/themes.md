@@ -38,7 +38,19 @@
 
 颜色使用 `#RRGGBB` 或 `#RRGGBBAA`。完整键与范围见 `ThemeDocument` 类型或 `themes.describe()` 返回的 JSON Schema。缺失值由明暗基础主题与已合并的颜色派生；显式 hover、selected、selected-hover、pressed 等值优先。状态颜色、编辑器与语法、终端、正文、侧栏、输入框可以分别配置。`code-header`、`code-border`、`code-line-number` 控制代码块配套，`table-stripe`、`table-hover` 控制表格状态，`canvas-grid` 控制画布网格；省略时沿用已合并的相关颜色。代码区、编辑器与终端的默认底色和前景成对派生，显式设置优先。主题不改变用户字号、行高、分屏尺寸、键盘行为或 Space 标记色。
 
-图片只能引用包内 PNG/JPEG/WebP/SVG；不得使用绝对路径、远端 URL、CSS 或脚本。材质锚点为 `app.sidebar`、`workbench.sidebar`、`workbench.pane`、`composer.input`，每个最多一层，支持图片、底色、渐变覆盖、0–1 透明度、0–24 模糊、百分比位置与 cover/contain。`imageOpacity` 独立控制图片透明度，`scale` 在适配尺寸上缩放 0.1–2 倍。透明度只作用于背景，背景不接收点击。动画与交互内容使用普通隔离视图扩展点。
+图片使用 PNG/JPEG/WebP/SVG 资产名，通过包内文件或 `ThemeArchive.assets` 的受控资源提供；不得使用绝对路径、远端 URL、CSS 或脚本。每个材质锚点最多一层：
+
+| 锚点 | 范围 |
+| --- | --- |
+| `window` | 所有页面的整个客户端窗口，包括设置页、顶栏和两侧栏 |
+| `app.sidebar` | 应用侧栏 |
+| `workbench.sidebar` | 任务侧栏 |
+| `workbench.workspace` | 任务页中跨全部分屏的连续主工作区，不包括顶栏、应用侧栏、任务侧栏和资源面板；切换到设置等其他页面时隐藏 |
+| `workbench.pane` | 每个分屏，分别适配背景尺寸 |
+| `task.history` | 每个对话历史视口，背景固定，不随消息滚动，不包含标题和输入框 |
+| `composer.input` | 每个输入框内部 |
+
+较小区域的材质叠加在所在的大区域背景之上。宿主不自动修改子表面的底色；作者通过主题颜色或窗口 CSS 决定透明、半透明或实色。若希望材质透过布局、卡片或输入框，需要同时设置对应表面的颜色，稳定选择器见 protocol.md。材质支持图片、底色、渐变覆盖、0–1 透明度、0–24 模糊、百分比位置与 cover/contain。`imageOpacity` 独立控制图片透明度，`scale` 在适配尺寸上缩放 0.1–2 倍。透明度和模糊只作用于背景，背景不接收点击。动画使用相同区域的 `decoration`，交互内容使用普通隔离视图扩展点。旧有锚点与主题文档保持兼容。
 
 声明 `welcome` 后由主题提供欢迎内容，不受内置欢迎语选项影响；文字或图片省略、设为 `null` 时均不显示对应内容。不声明 `welcome` 就沿用用户选择的内置欢迎内容。`task.welcome` 是独立的整体内容插槽，可承载工具、导航或其他界面；已就绪的插槽插件优先，加载失败时回退到主题或内置欢迎内容。
 

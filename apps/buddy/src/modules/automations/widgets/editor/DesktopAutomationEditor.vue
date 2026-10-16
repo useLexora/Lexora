@@ -28,8 +28,8 @@ function close(): void {
 </script>
 
 <template>
-  <section class="desktop-automation-editor flex w-full h-full min-w-0 min-h-0 flex-col bg-surface">
-    <header class="desktop-automation-editor__header flex-none justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header">
+  <section class="desktop-automation-editor flex w-full h-full min-w-0 min-h-0 flex-col bg-surface" data-theme-surface="layout">
+    <header class="desktop-automation-editor__header flex-none justify-between gap-[16px] border-b-1 border-b-solid border-b-border py-0 px-[18px] h-region-header" data-theme-surface="header">
       <div class="desktop-automation-editor__breadcrumb min-w-0 gap-[7px] text-muted text-[13px]">
         <DesktopIcon name="navigationAutomation" />
         <button type="button" @click="close">

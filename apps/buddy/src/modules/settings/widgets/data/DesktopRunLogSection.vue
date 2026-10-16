@@ -76,7 +76,7 @@ function summarizePayload(payload: unknown) {
 
 <template>
   <section class="desktop-run-log-section grid gap-4">
-    <div class="desktop-run-log-section__body grid min-h-88 grid-cols-[minmax(14rem,_18rem)_minmax(0,_1fr)] overflow-hidden border-1 border-solid border-border rounded-[0.85rem] bg-raised">
+    <div class="desktop-run-log-section__body grid min-h-88 grid-cols-[minmax(14rem,_18rem)_minmax(0,_1fr)] overflow-hidden border-1 border-solid border-border rounded-[0.85rem] bg-raised" data-theme-surface="panel">
       <aside>
         <NSpin v-if="isLoading && !runs.length" size="small" />
         <NEmpty

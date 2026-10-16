@@ -62,8 +62,8 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
 </script>
 
 <template>
-  <section class="desktop-task-context-panel flex w-full min-w-0 min-h-0 flex-none flex-col bg-surface" data-testid="task-context-panel">
-    <header class="flex min-w-0 flex-none items-stretch border-b-1 border-b-solid border-b-border bg-surface h-region-header" :style="{ '--tab-count': tabs.length }">
+  <section class="desktop-task-context-panel flex w-full min-w-0 min-h-0 flex-none flex-col bg-surface" data-testid="task-context-panel" data-theme-surface="layout">
+    <header class="desktop-task-context-panel__header flex min-w-0 flex-none items-stretch border-b-1 border-b-solid border-b-border bg-surface h-region-header" :style="{ '--tab-count': tabs.length }" data-theme-surface="header">
       <div v-if="tabs.length" ref="tabsScrollRoot" class="desktop-task-context-panel__tabs-scroll min-w-0 overflow-x-auto" @wheel="handleTabsWheel">
         <div class="desktop-task-context-panel__tabs flex w-full min-w-[calc(var(--tab-count)_*_7.5rem)] h-full items-center gap-1 py-0 px-[0.375rem]" role="tablist" :aria-label="t('desktop.context.tabCount', { count: tabs.length })">
           <div v-for="(tab, index) in tabs" :key="tab.id" class="desktop-task-context-panel__tab relative flex h-8 min-w-30 max-w-56 items-center overflow-hidden border-0 rounded-icon" :class="tab.id === activeTabId ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'bg-transparent text-muted hover:(bg-hover text-strong) active:bg-pressed'">

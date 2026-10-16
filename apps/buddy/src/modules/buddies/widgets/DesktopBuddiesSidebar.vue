@@ -36,8 +36,8 @@ async function created(buddy: LocalBuddy) {
 </script>
 
 <template>
-  <nav class="desktop-buddies-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar" :aria-label="labels.title" data-testid="buddy-list">
-    <header class="flex h-region-header flex-none items-center px-3 border-b-1 border-b-solid border-b-border">
+  <nav class="desktop-buddies-sidebar flex w-workspace-sidebar h-full min-h-0 flex-none flex-col border-r-1 border-r-solid border-r-border bg-workspace-sidebar" :aria-label="labels.title" data-testid="buddy-list" data-theme-surface="layout">
+    <header class="desktop-buddies-sidebar__header flex h-region-header flex-none items-center px-3 border-b-1 border-b-solid border-b-border" data-theme-surface="header">
       <DesktopWorkspaceSidebarIdentity :label="labels.title" :visible="appSidebarCollapsed" />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto px-[0.7rem] py-[0.9rem]">

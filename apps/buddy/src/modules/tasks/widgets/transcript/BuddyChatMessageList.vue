@@ -16,6 +16,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NSpin } from 'naive-ui'
 import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import {
   formatChatDayDividerLabel,
 } from '../../model/transcript/chatMessageTime'
@@ -61,6 +62,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
+const historyElement = useTemplateRef<HTMLElement>('historyElement')
+useWorkbenchAnchor('task.history', () => historyElement.value)
 const transcriptViewport = useTemplateRef<BuddyChatTranscriptViewportHandle>('transcriptViewport')
 const OUTLINE_HIGHLIGHT_DURATION_MS = 1_200
 const activeOutlineMessageId = shallowRef<string | null>(null)
@@ -162,8 +165,10 @@ onBeforeUnmount(clearOutlineHighlight)
 
 <template>
   <div
+    ref="historyElement"
     class="buddy-chat-message-list relative h-full min-w-0 min-h-0"
     role="log"
+    data-theme-surface="layout"
     @click.capture="handleReaderLayoutIntent"
   >
     <div

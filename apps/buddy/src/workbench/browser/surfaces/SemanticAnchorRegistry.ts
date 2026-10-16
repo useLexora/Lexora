@@ -20,6 +20,8 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
     if (this.#disposed)
       throw new Error('WORKBENCH_ANCHORS_DISPOSED')
     const anchor: SemanticAnchor = Object.freeze({ id: crypto.randomUUID(), kind, element, caret })
+    const previousRegion = element.getAttribute('data-lexora-region')
+    element.setAttribute('data-lexora-region', kind)
     this.#entries.set(anchor.id, anchor)
     let frame = 0
     let lastActivity = 0
@@ -28,7 +30,7 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
         return
       if (frame)
         return
-      const pane = [...this.entries.values()].find(candidate => candidate.kind === 'workbench.pane' && candidate.element.contains(element))
+      const parents = [...this.entries.values()].filter(candidate => candidate !== anchor && candidate.element.contains(element))
       frame = requestAnimationFrame(() => {
         frame = 0
         if (!element.isConnected || !element.contains(document.activeElement) || element.closest('[inert], [hidden]') || document.visibilityState !== 'visible' || !document.hasFocus() || matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -36,8 +38,10 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
         lastActivity = performance.now()
         const position = caret?.()
         this.#activity(anchor, position)
-        if (pane && this.entries.get(pane.id) === pane && pane.element.contains(element))
-          this.#activity(pane, position)
+        for (const parent of parents) {
+          if (this.entries.get(parent.id) === parent && parent.element.contains(element))
+            this.#activity(parent, position)
+        }
       })
     }
     element.addEventListener('input', input)
@@ -46,6 +50,10 @@ export class SemanticAnchorRegistry implements WorkbenchAnchors {
         return
       cancelAnimationFrame(frame)
       element.removeEventListener('input', input)
+      if (previousRegion === null)
+        element.removeAttribute('data-lexora-region')
+      else
+        element.setAttribute('data-lexora-region', previousRegion)
       this.#entries.delete(anchor.id)
       this.#cleanup.delete(dispose)
       this.#changes.fire(Object.freeze({ revision: ++this.#revision, kind: 'removed', anchor }))

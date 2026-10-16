@@ -67,7 +67,7 @@ function handleSelect(key: string) {
 </script>
 
 <template>
-  <section class="buddy-profile-card relative isolate overflow-hidden flex flex-wrap items-center gap-4 rounded-[0.65rem] border border-solid border-border bg-surface p-5" data-testid="buddy-profile-card">
+  <section class="buddy-profile-card relative isolate overflow-hidden flex flex-wrap items-center gap-4 rounded-[0.65rem] border border-solid border-border bg-surface p-5" data-testid="buddy-profile-card" data-theme-surface="panel">
     <BuddyAvatar :buddy-id="buddy.id" :src="buddy.avatar" class="relative size-16" data-testid="buddy-profile-avatar" />
     <div class="relative min-w-0 flex-1 basis-40">
       <div class="flex flex-wrap items-center gap-2">

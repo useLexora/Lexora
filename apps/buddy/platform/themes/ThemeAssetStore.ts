@@ -1,4 +1,4 @@
-import type { ThemeArchive } from '../../shared/theme/themeApi'
+import type { ExtensionFileSource } from '../../shared/extensions/extensionResources'
 import { Buffer } from 'node:buffer'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -10,7 +10,7 @@ import { FileAssetStore } from '../filesystem/FileAssetStore'
 const assetSchema = z.object({ key: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), mimeType: z.string().min(1).max(80) }).strict()
 export const storedThemeSchema = themeArchiveSchema.extend({ assets: z.record(themeImageSchema, assetSchema) }).refine(archive => themeAssetPaths(archive.document).length === Object.keys(archive.assets).length && themeAssetPaths(archive.document).every(path => Object.hasOwn(archive.assets, path)), 'Invalid theme asset references')
 export type StoredTheme = z.infer<typeof storedThemeSchema>
-export type ThemeAssetSource = Exclude<ThemeArchive['assets'][string], string>
+export type ThemeAssetSource = ExtensionFileSource
 export interface ThemeResourceAccess { signal: AbortSignal, read: (source: ThemeAssetSource) => Promise<Response> }
 
 export class ThemeAssetStore {

@@ -1,10 +1,12 @@
-import type { ThemeColor } from '../../../service/resources/skills/plugin-creator/references/api'
+import type { ThemeColor, WorkbenchRegion } from '../../../service/resources/skills/plugin-creator/references/api'
+import type { WorkbenchRegion as HostWorkbenchRegion } from '../../workbench/workbenchRegions'
 import type { ThemeColorName } from '../themeDocument'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { fallbackTheme, resolveTheme } from '../resolveTheme'
 import { themeColorNames, themeColorSchema } from '../themeDocument'
 
 expectTypeOf<ThemeColor>().toEqualTypeOf<ThemeColorName>()
+expectTypeOf<WorkbenchRegion>().toEqualTypeOf<HostWorkbenchRegion>()
 
 describe('resolved theme colors', () => {
   it.each(['light', 'dark'] as const)('derives complete surface pairs from merged %s colors', (appearance) => {

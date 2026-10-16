@@ -74,11 +74,6 @@ async function initialize() {
     interactionId = initial.interactionId
     overlay = initial.presentation === 'decoration'
     state.initialize({ workbench: initial.workbench, visible: initial.visible, environment: initial.environment, anchor: initial.anchor ?? null, mount: initial.mount ?? null, control: initial.control }, overlay, initial.eventCursor, !!interactionId)
-    if (overlay || initial.presentation === 'control' || initial.presentation === 'slot' || initial.location === 'mount') {
-      const style = document.createElement('style')
-      style.textContent = 'html,body{height:100%;background:transparent}body>main{height:100%;box-sizing:border-box;padding:0}'
-      document.head.append(style)
-    }
     if (overlay) {
       document.documentElement.style.overflow = 'hidden'
       document.body.style.overflow = 'hidden'
@@ -139,7 +134,6 @@ async function initialize() {
       resources: {
         ...createExtensionResourceClient(request),
         pickFiles: (options = {}) => request('resources.pickFiles', options),
-        getUrl: resource => request('resources.getUrl', { id: resource.id }),
         revokeFile: resource => request('resources.revokeFile', { id: resource.id }),
         pickDirectory: () => request('resources.pickDirectory'),
         listDirectories: () => request('resources.listDirectories'),

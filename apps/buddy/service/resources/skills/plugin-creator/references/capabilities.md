@@ -21,8 +21,10 @@
 | 将编辑结果或生成内容保存到本机 | `resourceExport: true`；交互视图调用 `resources.saveFile({name,data})` | 每次弹出系统另存为窗口，用户决定目标；取消返回 false。文本先编码为 Blob 或字节。读取授权不授予原文件覆写权限；保存成功后才报告完成 |
 | 局部装饰、输入位置附近的短暂动画 | `windowEffects: true`；`kind: "decoration"` 与正式 `anchor` | 使用 `anchor/onAnchorChange` 的局部尺寸；输入活动经 `onActivity` 提供，可带局部 caret。不获取字符或全局键盘，不接收指针或焦点 |
 | 在输入所在的整个分屏内绘制装饰 | `windowEffects: true`；`kind: "decoration"`、`anchor: "workbench.pane"` | 每个分屏独立实例，画布覆盖该分屏；只接收该分屏内的对话输入活动，caret 相对分屏。绘制位置由插件决定，不受输入框边界限制；不接收指针或焦点 |
+| 跨分屏的主工作区、对话历史区或整个窗口背景与装饰 | 主题材质锚点或 `windowEffects: true` 的 `decoration` | 使用 `workbench.workspace`、`task.history` 或 `window`；范围见 themes.md 与 protocol.md。主题可声明静态材质，窗口 CSS 可独立调整外观，动态装饰使用隔离视图，不开放消息正文或父页面 DOM |
 | 整个 Lexora 窗口上的透明效果 | `windowEffects: true`；`resource: "none"`、`location: "window-overlay"` | API 1 和 API 2 均可用，每插件一个全窗口实例；收到无坐标的对话输入活动，不区分分屏。插件按窗口尺寸绘制，不接收指针或焦点 |
 | 改变宿主控件的操作方式 | `controls: ["model.reasoning"]`；`kind: "control"`、`target: "model.reasoning"` | 安装后由用户选择样式。读取 `control.snapshot/onChange`，以当前快照 revision 提交 `propose`；值和允许选项归宿主管理，不能自建一份业务真源 |
+| 自定义整个窗口的样式 | `windowEffects: true`；宿主 `window.styles.set/remove` | 注入普通 CSS，支持背景、边框、布局、伪元素、动画及媒体查询。稳定区域通过 `data-lexora-region` 选择；图片、字体及包内样式表使用 `resources.getUrl`，停用撤回。作者也可组合主题入口 |
 | 读取远端公开信息 | 声明实际需要的 HTTPS origins，以宿主或视图的 `network.get` 获取 | 只有 GET，不携带浏览器登录态；直接 fetch、远程图片或媒体不替代网络代理。需要其他方法、凭据或实时连接时先说明能力缺口 |
 | 关闭页面后仍定期执行插件动作 | `schedules: true`、宿主入口与已声明命令；`schedules.get/set/remove` | 定时任务归应用，最短一分钟；应用退出时暂停，错过的不补发。页面计时器只适合页面自身交互，不承担后台任务 |
 | 系统提示 | `notifications: true`；宿主 `notifications.show` | 通知受用户全局开关和限速约束，返回 false 不表示插件崩溃。按真实需要与命令、调度组合 |
@@ -33,7 +35,7 @@
 - 资源页签及普通挂载面板用 `ViewContext.state/setState` 保存该实例的筛选、阅读位置等 JSON。升级比较 `stateVersion` 与 `expectedStateVersion`，转换后再保存。导航页面、装饰、内容插槽和替换控件不支持这条持久化路径。
 - 挂载目标和外框布局通过 `setPresentation` 更新；内容样式、交互及业务状态完全由插件实现，业务状态使用 `setState` 或宿主私有存储。宿主不会依据插件数量提供面板切换或自动避让。不能用父页面 CSS 选择器或 Vue Teleport 穿透隔离。
 - 扩展级配置用宿主 `storage.get/set`。视图通过自身命令读写，不访问宿主内存；更改数据结构时增加 `dataVersion` 并提供 `migrate`。不要把一个文件的阅读位置存成覆盖所有文件的全局值。
-- 每个视图具有独立 JS 环境。没有通用跨视图广播；需要设置同步时设计明确刷新入口或有界的读取周期，并在销毁时取消，不能承诺不存在的订阅事件。源码中的纯函数可通过包内相对导入复用。
+- 每个视图具有独立 JS 环境。宿主通过 `views.broadcast(message)` 向本插件当前 generation 的视图同步状态，视图使用 `onMessage` 订阅；首次读取仍通过自身命令获取快照。共享状态由宿主持有，视图提交局部操作，避免旧快照覆盖其他视图的更改。源码中的纯函数可通过包内相对导入复用。
 - 视图通过 `signal` 清理监听、定时器、音频和异步回写；销毁时不要再异步保存状态，正常交互中及时保存，并处理保存失败；宿主通过 `subscriptions` 释放注册。恢复视图不代表自动播放音频或重放上次用户提交。
 
 ## 组合验收

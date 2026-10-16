@@ -11,7 +11,8 @@ export interface ExtensionConfigurationApplication {
 }
 
 export type ExtensionServiceFact
-  = | { readonly kind: 'package', readonly action: 'installed' | 'promoted' | 'uninstalled', readonly extensionId: string, readonly packageRevision?: string, readonly pendingRevision?: string }
+  = | { readonly kind: 'window-styles', readonly extensionId: string }
+    | { readonly kind: 'package', readonly action: 'installed' | 'promoted' | 'uninstalled', readonly extensionId: string, readonly packageRevision?: string, readonly pendingRevision?: string }
     | { readonly kind: 'enabled', readonly extensionId: string, readonly enabled: boolean }
     | { readonly kind: 'resources-revoked', readonly extensionId: string }
     | { readonly kind: 'configuration', readonly extensionId: string, readonly application: ExtensionConfigurationApplication, readonly changedKeys: readonly string[], readonly errorCode?: string }
