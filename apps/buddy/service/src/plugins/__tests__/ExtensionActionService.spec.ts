@@ -12,7 +12,8 @@ import { ExtensionActionService } from '../ExtensionActionService'
 import { ExtensionAgentRuntime } from '../ExtensionAgentRuntime'
 
 describe('extension action dispatch', () => {
-  it.each([90000, 121000])('gives manual actions their execution budget after queueing over RPC for duration %s', async (duration) => {
+  it('allows manual actions to finish after lengthy queueing and execution over RPC', async () => {
+    const duration = 180000
     vi.useFakeTimers()
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const descriptor: ExtensionAgentDescriptor = {
@@ -71,17 +72,10 @@ describe('extension action dispatch', () => {
       await vi.advanceTimersByTimeAsync(75000)
       expect(result).toBeUndefined()
       expect(manualSignal?.aborted).toBe(false)
-      await vi.advanceTimersByTimeAsync(duration <= 120000 ? 15000 : 45000)
+      await vi.advanceTimersByTimeAsync(duration - 75000)
       await manual
-      if (duration <= 120000) {
-        expect(result).toEqual({ status: 'completed' })
-        expect(database.prepare('SELECT status FROM extension_invocations').all()).toEqual([{ status: 'completed' }])
-      }
-      else {
-        expect(manualSignal?.aborted).toBe(true)
-        expect(result).toBeInstanceOf(Error)
-        expect(database.prepare('SELECT status FROM extension_invocations').all()).toEqual([{ status: 'failed' }])
-      }
+      expect(result).toEqual({ status: 'completed' })
+      expect(database.prepare('SELECT status FROM extension_invocations').all()).toEqual([{ status: 'completed' }])
     }
     finally {
       await service.dispose()
@@ -93,7 +87,7 @@ describe('extension action dispatch', () => {
     }
   })
 
-  it('runs all sixteen automatic actions alongside a tool within the host quota and gives each its execution deadline', async () => {
+  it('runs all sixteen automatic actions alongside a tool within the host quota without counting queue time as execution', async () => {
     vi.useFakeTimers()
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const descriptor: ExtensionAgentDescriptor = {

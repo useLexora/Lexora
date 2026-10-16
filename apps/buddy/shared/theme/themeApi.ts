@@ -7,8 +7,10 @@ import { themeIdSchema, themePreferenceSchema } from './themePreferences.ts'
 
 export const themeTransportSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 16 * 1024 * 1024, 'Theme data is too large')
 
+export const THEME_ASSET_PROTOCOL = 'lexora-theme'
+
 export const THEME_IPC = { request: 'lexora:themes:request', changed: 'lexora:themes:changed', initial: 'lexora:themes:initial' } as const
-const assetsSchema = z.record(themeImageSchema, z.string().max(6 * 1024 * 1024).regex(/^[A-Z0-9+/]*={0,2}$/i)).refine(value => Object.keys(value).length <= 16)
+const assetsSchema = z.record(themeImageSchema, z.union([z.string().max(16 * 1024 * 1024).regex(/^[A-Z0-9+/]*={0,2}$/i), z.object({ resourceId: z.string().uuid() }).strict(), z.object({ packagePath: themeImageSchema }).strict()])).refine(value => Object.keys(value).length <= 16)
 export const themeArchiveSchema = z.object({
   schemaVersion: z.literal(1),
   label: themeContributionSchema.shape.label,

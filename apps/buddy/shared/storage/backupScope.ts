@@ -9,11 +9,11 @@ export const backupOptionsSchema = backupRequestSchema.refine(value => !value.cr
 export type BackupOptions = z.infer<typeof backupOptionsSchema>
 
 export function backupPathScope(path: string): BackupScope | null {
-  if (path === 'config.toml')
+  if (path === 'config.toml' || /^buddy\/themes\/(?:user-themes\.json|assets\/[a-f0-9]{64})$/.test(path))
     return 'settings'
   if (path === 'device/sync.json')
     return 'connections'
-  if (/^buddy\/extensions\/(?:installed\.json|schedules\.json|packages\/.+|data\/[^/]+\/(?:configuration|state)\.json)$/.test(path))
+  if (/^buddy\/extensions\/(?:installed\.json|schedules\.json|packages\/.+|data\/[^/]+\/(?:(?:configuration|state|owned-resources)\.json|files\/[a-f0-9]{64}))$/.test(path))
     return 'plugins'
   if (/^buddy\/(?:skills|agent\/skills|spaces\/[^/]+\/skills)(?:\/|$)/.test(path))
     return 'skills'
@@ -31,8 +31,9 @@ export function backupPathAllowed(path: string, scopes: readonly BackupScope[]):
 }
 export function backupDirectoryAllowed(path: string, scopes: readonly BackupScope[]): boolean {
   return backupPathAllowed(path, scopes) || path === 'buddy'
+    || (scopes.includes('settings') && /^buddy\/themes(?:\/assets)?$/.test(path))
     || (scopes.includes('connections') && path === 'device')
     || (scopes.includes('skills') && (path === 'buddy/agent' || /^buddy\/spaces(?:\/[^/]+)?$/.test(path)))
     || (scopes.includes('workspaces') && /^buddy\/(?:conversations|spaces)(?:\/[^/]+)?$/.test(path))
-    || (scopes.includes('plugins') && /^buddy\/extensions(?:\/(?:data|packages)(?:\/[^/]+)?)?$/.test(path))
+    || (scopes.includes('plugins') && /^buddy\/extensions(?:\/(?:data|packages)(?:\/[^/]+(?:\/files)?)?)?$/.test(path))
 }

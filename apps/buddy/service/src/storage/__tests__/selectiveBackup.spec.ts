@@ -217,7 +217,18 @@ it('resumes an interrupted in-place replacement and preserves original settings 
   await writeStorageJson(join(f.root, 'buddy/extensions/schedules.json'), { version: 1, jobs: [{ extensionId: 'test.plugin', id: 'reminder', command: 'test.plugin.remind', enabled: true, intervalMinutes: 5, nextRunAt: 1800000000000 }] })
   await writeStorageJson(join(f.root, 'buddy/extensions/data/test.plugin/state.json'), { value: 'backup' })
   await writeFile(join(f.root, 'config.toml'), '[desktop]\nlanguage = "zh-CN"\nlaunch_at_login = false\n[desktop.profile]\nuser_name = "Restored name"\ndevice_name = "Source machine"\n')
+  const assetKey = 'b'.repeat(64)
+  const privateFile = `buddy/extensions/data/test.plugin/files/${assetKey}`
+  const themeFile = `buddy/themes/assets/${assetKey}`
+  for (const path of [privateFile, themeFile]) {
+    await mkdir(join(f.root, path, '..'), { recursive: true })
+    await writeFile(join(f.root, path), 'backed up image')
+  }
+  await writeStorageJson(join(f.root, 'buddy/extensions/data/test.plugin/owned-resources.json'), [{ resource: { id: randomUUID(), name: 'image.png', mimeType: 'image/png', size: 15 }, key: assetKey }])
+  await writeStorageJson(join(f.root, 'buddy/themes/user-themes.json'), { version: 2, themes: {} })
   const snapshot = await f.snapshot(['plugins', 'settings'])
+  for (const path of [privateFile, themeFile])
+    await writeFile(join(f.root, path), 'current image')
   await writeStorageJson(join(f.root, 'buddy/extensions/data/test.plugin/state.json'), { value: 'current' })
   await writeStorageJson(join(f.root, 'buddy/extensions/data/test.plugin/resources/grant.json'), { path: 'fixture-only' })
   await writeStorageJson(join(f.root, 'buddy/extensions/data/test.plugin/local-directories.json'), [{ path: 'fixture-only' }])
@@ -233,6 +244,12 @@ it('resumes an interrupted in-place replacement and preserves original settings 
   await f.run()
   expect(await f.store.read()).toMatchObject({ activeRoot: f.root, pending: null })
   expect(JSON.parse(await readFile(join(f.root, 'buddy/extensions/data/test.plugin/state.json'), 'utf8'))).toEqual({ value: 'backup' })
+  for (const path of [privateFile, themeFile]) {
+    expect(await readFile(join(f.root, path), 'utf8')).toBe('backed up image')
+    expect(await readFile(join(restoreRetained(operation), path), 'utf8')).toBe('current image')
+  }
+  expect(JSON.parse(await readFile(join(f.root, 'buddy/extensions/data/test.plugin/owned-resources.json'), 'utf8'))[0].key).toBe(assetKey)
+  expect(JSON.parse(await readFile(join(f.root, 'buddy/themes/user-themes.json'), 'utf8')).version).toBe(2)
   expect(JSON.parse(await readFile(join(f.root, 'buddy/extensions/installed.json'), 'utf8')).installed['test.plugin'].enabled).toBe(false)
   expect(JSON.parse(await readFile(join(f.root, 'buddy/extensions/schedules.json'), 'utf8')).jobs).toEqual([{ extensionId: 'test.plugin', id: 'reminder', command: 'test.plugin.remind', enabled: false, intervalMinutes: 5, nextRunAt: null }])
   await expect(readFile(join(f.root, 'buddy/extensions/data/test.plugin/resources/grant.json'))).rejects.toMatchObject({ code: 'ENOENT' })

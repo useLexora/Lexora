@@ -4,7 +4,7 @@ export const extensionLocalFileSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(512),
   mimeType: z.string().max(80),
-  size: z.number().int().min(0).max(2 * 1024 ** 3),
+  size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   relativePath: z.string().max(32768).optional(),
 }).strict()
 export const extensionFileExtensionsSchema = z.array(z.string().min(1).max(32).regex(/^(?:[a-z0-9][\w-]*|\*)$/i)).max(64)

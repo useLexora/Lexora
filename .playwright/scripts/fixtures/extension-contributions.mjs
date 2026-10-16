@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-export async function writeContributionPlugin(directory, name, { uno = false } = {}) {
+export async function writeContributionPlugin(directory, name, { uno = false, media = false } = {}) {
   const id = `tests.${name}`
   const manifest = {
     schemaVersion: 1,
@@ -13,8 +13,9 @@ export async function writeContributionPlugin(directory, name, { uno = false } =
     apiVersion: 3,
     engines: { lexora: '*' },
     entry: 'host.js',
+    ...(media ? { permissions: { network: ['https://media.example.com'], themeManagement: true } } : {}),
     contributes: {
-      commands: ['read', 'save', 'failure', 'invalid', 'timeout'].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
+      commands: ['read', 'save', 'failure', 'invalid', 'timeout', ...(media ? ['download'] : [])].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
       views: [
         { id: `${id}.settings`, title: `Settings ${name}`, entry: 'settings.js', resource: 'none', location: 'page' },
         { id: `${id}.footer`, title: `Footer ${name}`, entry: 'footer.js', resource: 'none' },
@@ -29,8 +30,8 @@ export async function writeContributionPlugin(directory, name, { uno = false } =
   }
   const files = {
     'extension.json': JSON.stringify(manifest),
-    'host.js': `export const activate = ${activate.toString()}`,
-    'settings.js': `export const render = (...args) => (${settings.toString()})(${JSON.stringify(id)}, ...args)`,
+    'host.js': `export const activate = context => (${activate.toString()})(${media}, context)`,
+    'settings.js': `export const render = (...args) => (${media ? mediaSettings.toString() : settings.toString()})(${JSON.stringify(id)}, ...args)`,
     'footer.js': `export const render = (...args) => (${footer.toString()})(${JSON.stringify(id)}, ${uno}, ...args)`,
     'actions.js': `export const render = (...args) => (${actions.toString()})(${JSON.stringify(id)}, ...args)`,
   }
@@ -39,8 +40,11 @@ export async function writeContributionPlugin(directory, name, { uno = false } =
   return id
 }
 
-async function activate(context) {
+async function activate(media, context) {
   const id = context.extension.id
+  if (media) {
+    context.subscriptions.add(context.commands.register(`${id}.download`, async ({ arguments: { url } }) => context.network.download(url)))
+  }
   let state = { enabled: false, active: true, ...await context.storage.get() }
   const apply = async () => {
     await context.placements[state.enabled ? 'show' : 'hide'](`${id}.footer-slot`)
@@ -99,4 +103,29 @@ async function actions(pluginId, context, container) {
   checkbox.onchange = async () => {
     await context.commands.execute(`${pluginId}.save`, { active: checkbox.checked })
   }
+}
+
+async function mediaSettings(pluginId, context, container) {
+  container.dataset.contributionFixture = `${pluginId}.settings`
+  container.innerHTML = '<button>Download wallpaper</button><img alt="Downloaded wallpaper"><a>Source</a><p role="status">Ready</p>'
+  const status = container.querySelector('[role=status]')
+  window.fixture = { ready: true, resource: null, themeId: null }
+  container.querySelector('button').onclick = async () => {
+    try {
+      status.textContent = 'Downloading'
+      const file = await context.commands.execute(`${pluginId}.download`, { url: 'https://media.example.com/wallpaper.svg' })
+      window.fixture.resource = file
+      const image = container.querySelector('img')
+      image.src = await context.resources.getUrl(file)
+      await image.decode()
+      const theme = await context.themes.save({ schemaVersion: 1, label: 'Downloaded wallpaper', appearance: 'dark', document: { schemaVersion: 1, welcome: { image: 'wallpaper.svg' } }, assets: { 'wallpaper.svg': { resourceId: file.id } } })
+      await context.resources.release(file)
+      await context.themes.setPreference({ id: theme.id })
+      window.fixture.themeId = theme.id
+      status.textContent = 'Saved'
+    }
+    catch (error) { status.textContent = error.message }
+  }
+  container.querySelector('a').onclick = () => context.openExternal('https://media.example.com/source#credits')
+  container.querySelector('a').textContent = 'Source'
 }

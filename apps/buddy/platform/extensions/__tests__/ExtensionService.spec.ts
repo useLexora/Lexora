@@ -371,7 +371,7 @@ it('rejects unauthorized media and late picker selections without retaining gran
   expect(await f.store.resources.list(value.id)).toEqual([])
   const resource = await f.store.grant('tests.reader', target)
   const denied = await f.service.openView({ ...input, viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource })
-  await expect(f.service.viewRequest(denied.id, denied.generation, denied.token, 'resources.listFiles', null)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  expect(await f.service.viewRequest(denied.id, denied.generation, denied.token, 'resources.listFiles', null)).toEqual([])
 })
 
 it('keeps export permission separate from reads and expires writers with their owning view', async () => {
@@ -389,7 +389,7 @@ it('keeps export permission separate from reads and expires writers with their o
   const owner = await f.service.openView(input)
   const other = await f.service.openView({ ...input, viewId: randomUUID() })
   const request = (method: string, params: JsonValue) => f.service.viewRequest(owner.id, owner.generation, owner.token, method, params)
-  await expect(request('resources.listFiles', null)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  expect(await request('resources.listFiles', null)).toEqual([])
   const id = await request('resources.beginSave', payload)
   await expect(f.service.viewRequest(other.id, other.generation, other.token, 'resources.commitSave', { id })).rejects.toThrow('EXTENSION_RESOURCE_WRITE_EXPIRED')
   await request('resources.writeChunk', { id, offset: 0, base64: Buffer.from('new!').toString('base64') })
@@ -567,4 +567,61 @@ it('reports host and view validation failures with bounded, redacted diagnostics
   expect((await service.inspect(value.id)).logs.at(-1)!.diagnostic).toEqual({ method: 'unknown', stage: 'execution' })
   expect(JSON.stringify({ reports, inspection: await service.inspect(value.id) })).not.toContain('private-')
   expect(JSON.stringify(reports)).not.toContain('Private label')
+})
+
+it('downloads files and saves standalone theme images using existing grants without another picker', async () => {
+  const home = await createTemporaryDirectory('lexora-media-theme-')
+  const themes = new ThemeService(home, async () => {})
+  await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
+  cleanup.push(() => themes.dispose())
+  const opened: string[] = []
+  const picker = vi.fn()
+  const value = manifest({ apiVersion: 3, permissions: { network: ['https://media.example.com'], themeManagement: true }, contributes: {
+    commands: [{ id: 'tests.reader.open', title: 'Open' }],
+    views: [{ id: 'tests.reader.reader', title: 'Media', entry: 'view.js', resource: 'none' }],
+  } })
+  const f = await fixture({ themes, get: async () => new Response(Buffer.alloc(8 * 1024 * 1024, 42), { headers: { 'content-type': 'image/png' } }), openExternal: async (url) => {
+    opened.push(url)
+  }, selectResources: picker }, value)
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  const resource = await request('network.download', { id: randomUUID(), url: 'https://media.example.com/wallpaper.png' }) as { id: string, size: number }
+  expect(resource.size).toBe(8 * 1024 * 1024)
+  expect(await request('resources.getUrl', { id: resource.id })).toContain(`/__resource/${resource.id}`)
+  const saved = await f.hosts[0]!.broker('themes.request', { action: 'save', archive: { schemaVersion: 1, appearance: 'dark', label: 'Media', document: { schemaVersion: 1, welcome: { image: 'wallpaper.png' } }, assets: { 'wallpaper.png': { resourceId: resource.id } } } }) as { id: string }
+  await request('resources.release', { id: resource.id })
+  await request('themes.request', { action: 'preference', preference: { id: saved.id } })
+  const url = themes.snapshot.active.assets['wallpaper.png']!
+  expect([...new Uint8Array(await (await themes.assetResponse(new Request(url, { headers: { range: 'bytes=0-2' } }))).arrayBuffer())]).toEqual([42, 42, 42])
+  await request('links.openExternal', { url: 'https://media.example.com/source#credits' })
+  expect(opened).toEqual(['https://media.example.com/source#credits'])
+  await expect(request('links.openExternal', { url: 'https://other.example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  expect(picker).not.toHaveBeenCalled()
+})
+
+it('revalidates download redirects and cancels work owned by a closed view without retaining partial files', async () => {
+  const started = deferred<void>()
+  let redirect = true
+  const f = await fixture({ get: async () => {
+    if (redirect)
+      return new Response(null, { status: 302, headers: { location: 'https://unapproved.example.com/image.png' } })
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(64 * 1024)) },
+      pull() { started.resolve() },
+    }))
+  } }, manifest({ apiVersion: 3, permissions: { network: ['https://media.example.com'] }, contributes: { views: [{ id: 'tests.reader.reader', title: 'Media', entry: 'view.js', resource: 'none' }] } }))
+  const input = { viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 }
+  const view = await f.service.openView(input)
+  const other = await f.service.openView({ ...input, viewId: randomUUID() })
+  const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  await expect(request('network.download', { id: randomUUID(), url: 'https://media.example.com/image.png' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  redirect = false
+  const id = randomUUID()
+  const pending = request('network.download', { id, url: 'https://media.example.com/large.mp4' })
+  const rejected = expect(pending).rejects.toThrow()
+  await started.promise
+  await expect(f.service.viewRequest(other.id, other.generation, other.token, 'network.cancel', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  f.service.closeView(view.id, view.generation, view.token)
+  await rejected
+  expect(await f.store.resources.list('tests.reader', false)).toEqual([])
 })

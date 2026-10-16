@@ -2,7 +2,7 @@ import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { ThemeArchiveInput, ThemePreview, ThemeSnapshot } from '../../../shared/theme/themeApi'
 import type { ThemeDescriptor } from '../../../shared/theme/themeDocument'
 import { Buffer } from 'node:buffer'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
@@ -10,7 +10,6 @@ import { LexoraConfigStore } from '../../../electron/main/config/LexoraConfigSto
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ExtensionPackageStore } from '../../extensions/ExtensionPackageStore'
 import { bundledThemeFiles, seedBundledThemes } from '../bundledThemes'
-import { validateThemeArchive } from '../themeAssets'
 import { ThemeService } from '../ThemeService'
 
 const archive: ThemeArchiveInput = { schemaVersion: 1, label: 'Ocean', appearance: 'light', document: { schemaVersion: 1, colors: { accent: '#207cba' } } }
@@ -204,7 +203,8 @@ describe('theme data and lifecycle', () => {
     const current = service.snapshot
     expect(current.active.colors.accent).toBe('#207cba')
     expect(current.active.document.colors.accent).toBe('#207cba')
-    expect(current.active.assets['welcome.svg']).toBe(`data:image/svg+xml;base64,${encoded}`)
+    expect(current.active.assets['welcome.svg']).toMatch(/^lexora-theme:\/\/asset\//)
+    expect(await (await service.assetResponse(new Request(current.active.assets['welcome.svg']!))).text()).toBe(Buffer.from(encoded, 'base64').toString('utf8'))
     expect(current.themes[0]!.label).toBe('Ocean')
     await service.request('desktop', { action: 'save', id: saved.id, archive: { ...archive, label: 'Changed', document: { schemaVersion: 1, colors: { accent: '#96304d' } } } })
     expect(service.snapshot.active.colors.accent).toBe('#96304d')
@@ -230,10 +230,17 @@ describe('theme data and lifecycle', () => {
     await service.dispose()
   })
 
-  it('rejects executable theme values, asset traversal and missing assets', () => {
-    expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, colors: { accent: 'url(https://example.test/a)' } } })).toThrow()
-    expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, welcome: { image: '../outside.png' } } })).toThrow()
-    expect(() => validateThemeArchive({ ...archive, document: { schemaVersion: 1, welcome: { image: 'missing.png' } } })).toThrow('EXTENSION_THEME_ASSET_MISSING')
+  it('rejects executable values, traversal and missing assets without saving a user theme', async () => {
+    const { service } = await fixture()
+    for (const document of [
+      { schemaVersion: 1 as const, colors: { accent: 'url(https://example.test/a)' } },
+      { schemaVersion: 1 as const, welcome: { image: '../outside.png' } },
+      { schemaVersion: 1 as const, welcome: { image: 'missing.png' } },
+    ]) {
+      await expect(Promise.resolve().then(() => service.request('desktop', { action: 'save', archive: { ...archive, document } }))).rejects.toThrow()
+    }
+    expect(service.snapshot.themes).toEqual([])
+    await service.dispose()
   })
 
   it('loads bundled packages, preserves missing selections, restores enabled themes and honors uninstall across restart', async () => {
@@ -282,7 +289,17 @@ describe('theme data and lifecycle', () => {
     await expect(service.request('editor:1', { action: 'commitPreview', ...first })).rejects.toThrow('EXPIRED')
     const changed = await service.request('editor:2:view', { action: 'updatePreview', ...second, archive: { ...archive, label: 'Changed' } }) as ThemePreview
     await expect(service.request('editor:2:view', { action: 'commitPreview', ...second })).rejects.toThrow('EXPIRED')
+    const source = Promise.withResolvers<Response>()
+    const entered = Promise.withResolvers<void>()
+    const update = service.request('editor:2:view', { action: 'updatePreview', ...changed, archive: { ...archive, document: { schemaVersion: 1, welcome: { image: 'preview.svg' } }, assets: { 'preview.svg': { resourceId: 'fd46dbad-2e48-4fa3-82f7-5bf94cfccf81' } } } }, () => {}, { signal: new AbortController().signal, read: () => {
+      entered.resolve()
+      return source.promise
+    } })
+    const rejected = expect(update).rejects.toThrow('EXPIRED')
+    await entered.promise
     service.releaseOwner('editor:2')
+    source.resolve(new Response('<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    await rejected
     expect(service.snapshot.preview).toBe(false)
     expect(preference().id).toBe(DEFAULT_THEME_PREFERENCE.id)
     await expect(service.request('editor:2:view', { action: 'updatePreview', ...changed, archive })).rejects.toThrow('EXPIRED')
@@ -307,4 +324,63 @@ describe('theme data and lifecycle', () => {
     expect(restored.snapshot.unavailable).toBe(saved.id)
     await restored.dispose()
   })
+})
+
+it('migrates legacy inline images on save while keeping the original store readable until commit', async () => {
+  const { home, service: initial } = await fixture()
+  await initial.dispose()
+  const encoded = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')
+  const id = 'user.theme.legacy'
+  const path = join(home, 'themes', 'user-themes.json')
+  const legacy = JSON.stringify({ version: 1, themes: { [id]: { ...archive, document: { schemaVersion: 1, welcome: { image: 'wallpaper.svg' } }, assets: { 'wallpaper.svg': encoded } } } })
+  await mkdir(join(home, 'themes'), { recursive: true })
+  await writeFile(path, legacy)
+  const service = new ThemeService(home, async () => {})
+  await service.initialize({ id }, false)
+  expect(await readFile(path, 'utf8')).toBe(legacy)
+  const url = service.snapshot.active.assets['wallpaper.svg']!
+  expect(await (await service.assetResponse(new Request(url))).text()).toBe(Buffer.from(encoded, 'base64').toString('utf8'))
+  await service.request('desktop', { action: 'save', archive })
+  const persisted = await readFile(path, 'utf8')
+  expect(JSON.parse(persisted).version).toBe(2)
+  expect(persisted).not.toContain(encoded)
+  await service.dispose()
+  const restored = new ThemeService(home, async () => {})
+  await restored.initialize({ id }, false)
+  expect(await (await restored.assetResponse(new Request(url))).text()).toBe(Buffer.from(encoded, 'base64').toString('utf8'))
+  await restored.dispose()
+  await rm(join(home, 'themes', 'assets', new URL(url).pathname.split('/')[1]!))
+  const damaged = new ThemeService(home, async () => {})
+  await damaged.initialize({ id }, false)
+  expect(damaged.snapshot.unavailable).toBe(id)
+  await expect(damaged.request('desktop', { action: 'save', archive })).rejects.toThrow('EXTENSION_THEME_STORE_UNREADABLE')
+  expect(await readFile(path, 'utf8')).toBe(persisted)
+  await damaged.dispose()
+})
+
+it('retains large resource images as theme-owned files across source release and restart, then collects removed assets', async () => {
+  const { home, service } = await fixture()
+  const bytes = Buffer.alloc(8 * 1024 * 1024, 42)
+  const saved = await service.request('plugin', {
+    action: 'save',
+    archive: { ...archive, document: { schemaVersion: 1, welcome: { image: 'wallpaper.png' } }, assets: { 'wallpaper.png': { resourceId: 'fd46dbad-2e48-4fa3-82f7-5bf94cfccf81' } } },
+  }, () => {}, { signal: new AbortController().signal, read: async () => new Response(bytes) }) as ThemeDescriptor
+  await service.request('desktop', { action: 'preference', preference: { id: saved.id } })
+  const url = service.snapshot.active.assets['wallpaper.png']!
+  bytes.fill(0)
+  service.releaseOwner('plugin')
+  await service.dispose()
+  const restored = new ThemeService(home, async () => {})
+  await restored.initialize({ id: saved.id }, false)
+  const response = await restored.assetResponse(new Request(url, { headers: { range: 'bytes=8388605-8388607' } }))
+  expect(response.status).toBe(206)
+  expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([42, 42, 42])
+  expect((await readFile(join(home, 'themes', 'user-themes.json'))).length).toBeLessThan(2048)
+  const portable = await restored.request('desktop', { action: 'export', id: saved.id }) as string
+  const imported = await restored.request('desktop', { action: 'import', content: portable }) as ThemeDescriptor
+  await restored.request('desktop', { action: 'remove', id: saved.id })
+  await restored.request('desktop', { action: 'remove', id: imported.id })
+  expect((await restored.assetResponse(new Request(url))).status).toBe(404)
+  expect(await readdir(join(home, 'themes', 'assets'))).toEqual([])
+  await restored.dispose()
 })

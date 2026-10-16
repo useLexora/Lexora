@@ -2,7 +2,7 @@ import type { Session } from 'electron'
 import { rm } from 'node:fs/promises'
 import { afterEach, expect, it } from 'vitest'
 import { createStore, manifest, reviewPackage } from '../../../../platform/extensions/__tests__/fixtures'
-import { ExtensionProtocol, extensionSchemePrivileges } from '../ExtensionProtocol'
+import { ExtensionProtocol } from '../ExtensionProtocol'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -18,7 +18,6 @@ it('serves verified package media with range semantics and invalidates disposed 
   protocol.install({ protocol: { handle: (_scheme: string, handler: typeof respond) => {
     respond = handler
   } } } as unknown as Session, 'view')
-  expect(extensionSchemePrivileges.privileges?.stream).toBe(true)
   const url = new URL('/__package/clip.mp3', endpoint.url)
   const part = await respond(new Request(url, { headers: { range: 'bytes=3-6' } }))
   expect(part.status).toBe(206)
@@ -29,6 +28,16 @@ it('serves verified package media with range semantics and invalidates disposed 
   const head = await respond(new Request(url, { method: 'HEAD' }))
   expect(head.headers.get('content-length')).toBe('10')
   expect(await head.text()).toBe('')
+  const signal = new AbortController().signal
+  const file = await store.resources.import('tests.reader', 'download.mp3', 'audio/mpeg', new Response('downloaded media'), signal, () => {})
+  const resourceUrl = new URL(`/__resource/${file.id}`, endpoint.url)
+  const resource = await respond(new Request(resourceUrl, { headers: { range: 'bytes=0-9' } }))
+  expect(resource.status).toBe(206)
+  expect(await resource.text()).toBe('downloaded')
+  const other = await store.resources.import('tests.other', 'private.mp3', 'audio/mpeg', new Response('private'), signal, () => {})
+  expect((await respond(new Request(new URL(`/__resource/${other.id}`, endpoint.url)))).status).toBe(403)
+  await store.resources.release('tests.reader', file.id, () => {})
+  expect((await respond(new Request(resourceUrl))).status).toBe(403)
   endpoint.dispose()
   expect((await respond(new Request(url))).status).toBe(403)
 })

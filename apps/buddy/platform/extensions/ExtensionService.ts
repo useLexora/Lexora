@@ -9,6 +9,7 @@ import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
+import type { ThemeAssetSource } from '../themes/ThemeAssetStore'
 import type { ThemeService } from '../themes/ThemeService'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
@@ -37,14 +38,14 @@ import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
 import { ExtensionConditionInvalidatedError } from './ExtensionConditionEvaluator'
 import { ExtensionConditions } from './ExtensionConditions'
-import { sha256, unpackExtension } from './extensionFiles'
+import { sha256, unpackExtension, verifiedExtensionAsset } from './extensionFiles'
 import { ExtensionInstallations } from './ExtensionInstallations'
 import { extensionActivationOrder } from './ExtensionPackageStore'
 import { ExtensionResourceWriter } from './ExtensionResourceWriter'
 import { ExtensionScheduler } from './ExtensionScheduler'
 
 export interface ExtensionHost {
-  call: (method: string, params: JsonValue) => Promise<JsonValue>
+  call: (method: string, params: JsonValue, signal?: AbortSignal) => Promise<JsonValue>
   dispose: () => Promise<void>
   devtools: () => void
 }
@@ -54,6 +55,8 @@ export interface ExtensionServicePorts {
   createView: (pkg: ExtensionPackage) => { token: string, url: string, dispose: () => void }
   workbench: (event: ExtensionWorkbenchEvent, signal: AbortSignal) => Promise<string | null>
   readText: (target: SpaceFileTarget, signal: AbortSignal) => Promise<string>
+  openExternal?: (url: string) => Promise<void>
+  readResource?: (target: SpaceFileTarget, signal: AbortSignal) => Promise<Response>
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   changed?: () => void
   agentChanged?: () => void
@@ -102,6 +105,7 @@ export class ExtensionService {
   readonly #viewOpenings = new Map<string, symbol>()
   readonly #views = new Map<string, RunningView>()
   readonly #diagnostics = new Map<string, Pick<ExtensionStatus, 'error' | 'activationMs' | 'logs'>>()
+  readonly #downloads = new Map<string, { running: RunningExtension, owner: string, abort: AbortController }>()
   readonly #notificationTimes = new Map<string, number>()
   readonly #interactions = new Map<string, { running: RunningExtension, title: string, abort: AbortController }>()
   readonly #agentInvocations = new Map<string, { running: RunningExtension, signal: AbortSignal, abort: AbortController }>()
@@ -395,7 +399,7 @@ export class ExtensionService {
     if (references.length && (await this.agentContributions()).find(item => item.id === input.extensionId)?.configurationRevision !== input.configurationRevision)
       throw new Error('EXTENSION_AGENT_UNAVAILABLE')
     const controller = new AbortController()
-    const abort = AbortSignal.any([signal, running.abort.signal, controller.signal, AbortSignal.timeout(120000)])
+    const abort = AbortSignal.any([signal, running.abort.signal, controller.signal])
     abort.throwIfAborted()
     if (this.#agentInvocations.has(input.invocationId) || [...this.#agentInvocations.values()].filter(item => item.running === running).length >= extensionAgentInvocationLimits.concurrentPerExtension)
       throw new Error('EXTENSION_REQUEST_LIMIT')
@@ -405,7 +409,7 @@ export class ExtensionService {
     }
     abort.addEventListener('abort', cancel, { once: true })
     try {
-      const result = await running.host.call('agent.invoke', { invocationId: input.invocationId, ...('tool' in input ? { tool: input.tool, input: input.input } : { action: input.action, cause: input.cause }) })
+      const result = await running.host.call('agent.invoke', { invocationId: input.invocationId, ...('tool' in input ? { tool: input.tool, input: input.input } : { action: input.action, cause: input.cause }) }, abort)
       abort.throwIfAborted()
       this.#assertCurrent(running)
       return extensionJsonSchema.parse(result)
@@ -657,7 +661,11 @@ export class ExtensionService {
       throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
     let resource: ExtensionResource | null = null
     if (target && running.package.manifest.permissions.selectedResource === 'read') {
-      await this.#ports.readText(target, running.abort.signal)
+      if (this.#ports.readResource) {
+        const response = await this.#ports.readResource(target, running.abort.signal)
+        await response.body?.cancel()
+      }
+      else { await this.#ports.readText(target, running.abort.signal) }
       this.#assertCurrent(running)
       resource = await this.store.grant(running.package.manifest.id, target, () => this.#assertCurrent(running))
     }
@@ -767,7 +775,7 @@ export class ExtensionService {
         this.#assertCurrent(view.running)
         if (view.abort.signal.aborted || this.#views.get(id) !== view)
           throw new Error('EXTENSION_VIEW_EXPIRED')
-      })
+      }, view.abort.signal, view.input.resource?.id ?? null)
     }
     else if (method === 'view.setActive') {
       if (placement?.kind !== 'slot' && placement?.kind !== 'control')
@@ -833,7 +841,7 @@ export class ExtensionService {
       if (method === 'resources.beginSave') {
         if (!this.#ports.selectSavePath || view.writers.size >= 2)
           throw new Error('EXTENSION_RESOURCE_SAVE_UNAVAILABLE')
-        const input = z.object({ name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/), size: z.number().int().min(0).max(2 * 1024 ** 3) }).strict().parse(params)
+        const input = z.object({ name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/), size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict().parse(params)
         const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(120000)])
         const path = await this.#ports.selectSavePath(view.running.package.manifest.name, input.name, signal)
         signal.throwIfAborted()
@@ -876,15 +884,23 @@ export class ExtensionService {
       }
     }
     else if (method.startsWith('resources.') && (method !== 'resources.readText' || !view.input.resource || !params || typeof params !== 'object' || Array.isArray(params) || params.id !== view.input.resource.id)) {
-      if (!view.running.package.manifest.permissions.localResources || placement?.kind === 'decoration' || contribution.location === 'window-overlay')
+      const allowLocal = view.running.package.manifest.permissions.localResources
+      if ((!allowLocal && !['resources.listFiles', 'resources.readBytes', 'resources.readText', 'resources.getUrl', 'resources.release', 'resources.importFile'].includes(method)))
         throw new Error('EXTENSION_RESOURCE_DENIED')
       const extensionId = view.input.extensionId
+      if (!allowLocal && ['resources.readText', 'resources.readBytes', 'resources.getUrl'].includes(method)) {
+        const input = z.object({ id: z.string().uuid() }).passthrough().parse(params)
+        if (!(await this.store.resources.list(extensionId, false)).some(resource => resource.id === input.id))
+          throw new Error('EXTENSION_RESOURCE_DENIED')
+      }
       const assertView = () => {
         this.#assertCurrent(view.running)
         if (view.abort.signal.aborted || this.#views.get(id) !== view)
           throw new Error('EXTENSION_VIEW_EXPIRED')
       }
       if (method === 'resources.pickFiles' || method === 'resources.pickDirectory') {
+        if (placement?.kind === 'decoration' || contribution.location === 'window-overlay')
+          throw new Error('EXTENSION_RESOURCE_DENIED')
         if (!this.#ports.selectResources)
           throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
         const selection = method === 'resources.pickDirectory' ? { filters: [], multiple: false, directory: true } : extensionResourceSelectionSchema.parse(params)
@@ -901,18 +917,24 @@ export class ExtensionService {
           : await this.store.resources.grant(extensionId, paths, assertSelection)
       }
       else if (method === 'resources.listFiles') {
-        result = await this.store.resources.list(extensionId)
+        result = await this.store.resources.list(extensionId, allowLocal)
       }
       else if (method === 'resources.listDirectories') {
         result = await this.store.resources.directories(extensionId)
       }
       else if (method === 'resources.readBytes') {
-        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).max(2 * 1024 ** 3), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
-        result = await this.store.resources.readBytes(extensionId, input.id, input.offset, input.length, view.abort.signal)
+        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
+        result = await this.store.resources.readBytes(extensionId, input.id, input.offset, input.length, view.abort.signal, allowLocal)
       }
       else if (method === 'resources.readText') {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
-        result = await this.store.resources.readText(extensionId, input.id, view.abort.signal)
+        result = await this.store.resources.readText(extensionId, input.id, view.abort.signal, allowLocal)
+      }
+      else if (method === 'resources.importFile') {
+        const input = z.object({ resourceId: z.string().uuid() }).passthrough().parse(params)
+        if (input.resourceId !== view.input.resource?.id)
+          throw new Error('EXTENSION_RESOURCE_DENIED')
+        result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
       }
       else if (method === 'resources.scanDirectory') {
         const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(10000)])
@@ -928,9 +950,13 @@ export class ExtensionService {
           result = null
         }
         else if (method === 'resources.getUrl') {
-          if (!(await this.store.resources.list(extensionId)).some(resource => resource.id === input.id))
+          if (!(await this.store.resources.list(extensionId, allowLocal)).some(resource => resource.id === input.id))
             throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
           result = new URL(`/__resource/${input.id}`, view.session.url).href
+        }
+        else if (method === 'resources.release') {
+          await this.store.resources.release(extensionId, input.id, assertView)
+          result = null
         }
         else if (method === 'resources.revokeFile') {
           await this.store.resources.revoke(extensionId, input.id, assertView)
@@ -960,10 +986,10 @@ export class ExtensionService {
         if (resource.id !== view.input.resource?.id)
           throw new Error('EXTENSION_RESOURCE_DENIED')
       }
-      else if (method !== 'network.get') {
+      else if (!['network.get', 'network.download', 'network.cancel', 'links.openExternal'].includes(method)) {
         throw new Error('EXTENSION_METHOD_DENIED')
       }
-      result = await this.#broker(view.running, method, params)
+      result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
     }
     this.#assertCurrent(view.running)
     if (this.#views.get(id) !== view)
@@ -1075,13 +1101,16 @@ export class ExtensionService {
       throw new Error('EXTENSION_HOST_STOPPED')
   }
 
-  async #themeRequest(running: RunningExtension, owner: string, params: unknown, assertCurrent: () => void): Promise<JsonValue> {
+  async #themeRequest(running: RunningExtension, owner: string, params: unknown, assertCurrent: () => void, lifetime = running.abort.signal, spaceResource?: string | null): Promise<JsonValue> {
     if (!this.#ports.themes || running.package.manifest.apiVersion < 3)
       throw new Error('EXTENSION_METHOD_DENIED')
     const input = themeRequestSchema.parse(params)
     if (!['list', 'get', 'active', 'describe', 'validate', 'resolve', 'export'].includes(input.action) && !running.package.manifest.permissions.themeManagement)
       throw new Error('EXTENSION_PERMISSION_DENIED')
-    const result = await this.#ports.themes.request(owner, input, assertCurrent)
+    const result = await this.#ports.themes.request(owner, input, assertCurrent, {
+      signal: AbortSignal.any([lifetime, running.abort.signal]),
+      read: source => this.#themeAsset(running, source, assertCurrent, lifetime, spaceResource),
+    })
     const parsed = themeTransportSchema.safeParse(result)
     if (!parsed.success)
       throw new ExtensionRequestError('EXTENSION_INVALID_RESULT', 'themes.request', parsed.error, 'result')
@@ -1101,7 +1130,7 @@ export class ExtensionService {
     }
   }
 
-  async #broker(running: RunningExtension, method: string, params: unknown): Promise<JsonValue> {
+  async #broker(running: RunningExtension, method: string, params: unknown, lifetime = running.abort.signal, owner = running.generation): Promise<JsonValue> {
     this.#assertCurrent(running)
     if (++running.inFlight > 64) {
       running.inFlight--
@@ -1180,7 +1209,73 @@ export class ExtensionService {
       }
       else if (method === 'resources.readText') {
         const { id: resource } = z.object({ id: z.string().uuid() }).strict().parse(params)
-        result = await this.#ports.readText(await this.#resource(running, resource), running.abort.signal)
+        const allowLocal = running.package.manifest.permissions.localResources
+        result = (await this.store.resources.list(id, allowLocal)).some(item => item.id === resource)
+          ? await this.store.resources.readText(id, resource, lifetime, allowLocal)
+          : await this.#ports.readText(await this.#resource(running, resource), lifetime)
+      }
+      else if (method === 'resources.listFiles') {
+        result = await this.store.resources.list(id, running.package.manifest.permissions.localResources)
+      }
+      else if (method === 'resources.readBytes') {
+        const input = z.object({ id: z.string().uuid(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
+        result = await this.store.resources.readBytes(id, input.id, input.offset, input.length, lifetime, running.package.manifest.permissions.localResources)
+      }
+      else if (method === 'resources.release') {
+        const input = z.object({ id: z.string().uuid() }).strict().parse(params)
+        await this.store.resources.release(id, input.id, () => this.#assertCurrent(running))
+        result = null
+      }
+      else if (method === 'resources.importFile' || method === 'network.download') {
+        const input = z.object({ id: z.string().uuid(), url: z.string().url().max(8192).optional(), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/).optional() }).strict().parse(params)
+        if (this.#downloads.has(input.id))
+          throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
+        const abort = new AbortController()
+        this.#downloads.set(input.id, { running, owner, abort })
+        const signal = AbortSignal.any([running.abort.signal, lifetime, abort.signal])
+        const guard = () => {
+          signal.throwIfAborted()
+          this.#assertCurrent(running)
+        }
+        let response: Response | undefined
+        try {
+          if (method === 'network.download') {
+            if (!input.url || input.resourceId)
+              throw new Error('EXTENSION_INVALID_ARGUMENT')
+            response = await this.#networkResponse(running, input.url, signal)
+          }
+          else {
+            if (!input.resourceId || input.url || !this.#ports.readResource)
+              throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+            response = await this.#ports.readResource(await this.#resource(running, input.resourceId), signal)
+          }
+          const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
+          const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+          result = await this.store.resources.import(id, name.slice(0, 255), mimeType, response, signal, guard)
+        }
+        finally {
+          this.#downloads.delete(input.id)
+          await response?.body?.cancel().catch(() => {})
+        }
+      }
+      else if (method === 'network.cancel') {
+        const input = z.object({ id: z.string().uuid() }).strict().parse(params)
+        const download = this.#downloads.get(input.id)
+        if (download) {
+          if (download.running !== running || download.owner !== owner)
+            throw new Error('EXTENSION_RESOURCE_DENIED')
+          download.abort.abort(new Error('EXTENSION_RESOURCE_DOWNLOAD_CANCELLED'))
+        }
+        result = null
+      }
+      else if (method === 'links.openExternal') {
+        if (!this.#ports.openExternal || running.package.manifest.apiVersion < 3)
+          throw new Error('EXTENSION_METHOD_DENIED')
+        const input = z.object({ url: z.string().url().max(8192) }).strict().parse(params)
+        const url = this.#networkUrl(running, input.url)
+        url.hash = new URL(input.url).hash
+        await this.#ports.openExternal(url.href)
+        result = null
       }
       else if (method === 'interactions.start') {
         const input = z.object({ id: z.string().uuid(), title: z.string().min(1).max(100) }).strict().parse(params)
@@ -1250,7 +1345,7 @@ export class ExtensionService {
       }
       else if (method === 'network.get') {
         const { url } = z.object({ url: z.string().url().max(8192) }).strict().parse(params)
-        result = await this.#fetch(running, url)
+        result = await this.#fetch(running, url, lifetime)
       }
       else {
         throw new Error('EXTENSION_METHOD_DENIED')
@@ -1276,15 +1371,43 @@ export class ExtensionService {
     return target
   }
 
-  async #fetch(running: RunningExtension, raw: string): Promise<JsonValue> {
+  async #themeAsset(running: RunningExtension, source: ThemeAssetSource, assertCurrent: () => void, lifetime: AbortSignal, spaceResource?: string | null): Promise<Response> {
+    assertCurrent()
+    if ('packagePath' in source) {
+      const hash = running.package.hashes[source.packagePath]
+      if (!hash)
+        throw new Error('EXTENSION_THEME_ASSET_UNAVAILABLE')
+      return new Response(await verifiedExtensionAsset(this.store.packageRoot(running.package), source.packagePath, hash))
+    }
+    const id = running.package.manifest.id
+    const allowLocal = running.package.manifest.permissions.localResources
+    if ((await this.store.resources.list(id, allowLocal)).some(item => item.id === source.resourceId))
+      return this.store.resources.response(id, source.resourceId, new Request('https://resource.invalid/'), AbortSignal.any([lifetime, running.abort.signal]), allowLocal)
+    if (spaceResource !== undefined && source.resourceId !== spaceResource)
+      throw new Error('EXTENSION_RESOURCE_DENIED')
+    if (!this.#ports.readResource)
+      throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+    return this.#ports.readResource(await this.#resource(running, source.resourceId), AbortSignal.any([lifetime, running.abort.signal]))
+  }
+
+  #networkUrl(running: RunningExtension, raw: string): URL {
+    const parsed = publicWebUrl(raw)
+    if (parsed.protocol !== 'https:' || !running.package.manifest.permissions.network.includes(parsed.origin))
+      throw new Error('EXTENSION_NETWORK_DENIED')
+    return parsed
+  }
+
+  async #networkResponse(running: RunningExtension, raw: string, signal: AbortSignal): Promise<Response> {
     let url = raw
-    const signal = AbortSignal.any([running.abort.signal, AbortSignal.timeout(15000)])
     for (let redirects = 0; redirects < 4; redirects++) {
-      const parsed = publicWebUrl(url)
-      if (parsed.protocol !== 'https:' || !running.package.manifest.permissions.network.includes(parsed.origin))
-        throw new Error('EXTENSION_NETWORK_DENIED')
+      signal.throwIfAborted()
+      const parsed = this.#networkUrl(running, url)
       this.#assertCurrent(running)
       const response = await this.#ports.get(parsed.href, { signal })
+      if (signal.aborted) {
+        await response.body?.cancel()
+        signal.throwIfAborted()
+      }
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel()
         const location = response.headers.get('location')
@@ -1293,10 +1416,23 @@ export class ExtensionService {
         url = new URL(location, parsed).href
         continue
       }
+      return response
+    }
+    throw new Error('EXTENSION_NETWORK_REDIRECT_LIMIT')
+  }
+
+  async #fetch(running: RunningExtension, raw: string, lifetime: AbortSignal): Promise<JsonValue> {
+    const signal = AbortSignal.any([running.abort.signal, lifetime, AbortSignal.timeout(15000)])
+    try {
+      const response = await this.#networkResponse(running, raw, signal)
       const body = await readResponseBytes(response, 1024 * 1024)
       return { status: response.status, text: new TextDecoder().decode(body) }
     }
-    throw new Error('EXTENSION_NETWORK_REDIRECT_LIMIT')
+    catch (error) {
+      if (signal.aborted && signal.reason?.name === 'TimeoutError')
+        throw new Error('EXTENSION_NETWORK_TIMEOUT')
+      throw error
+    }
   }
 
   #failed(id: string, generation: string, failure?: ExtensionHostFailure): void {

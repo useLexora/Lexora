@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import hostSource from 'virtual:extension-runtime/host'
 import viewSource from 'virtual:extension-runtime/view'
-import { extensionResourceRange } from '../../../platform/extensions/extensionResourceResponse'
+import { fileRange } from '../../../platform/filesystem/fileRange'
 import { EXTENSION_PROTOCOL } from '../../../shared/extensions/extensionManifest'
 import { extensionResourceMimeType } from '../../../shared/extensions/extensionResources'
 
@@ -55,9 +55,9 @@ export class ExtensionProtocol {
       const csp = `default-src 'none'; script-src ${origin}/__package/ ${origin}/__${kind}.js; style-src ${origin}/__package/ 'unsafe-inline'; img-src ${origin} data: blob:; font-src ${origin} data: blob:; media-src ${origin} blob:; connect-src ${origin}/__package/ ${origin}/__resource/; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'; ${kind === 'view' ? 'sandbox allow-scripts allow-forms; frame-ancestors lexora-app://renderer http://localhost:1420 http://127.0.0.1:1420' : 'frame-ancestors \'none\''}`
       const headers = { 'content-security-policy': csp, 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
       if (path.startsWith('/__resource/')) {
-        if (kind !== 'view' || !endpoint.package.manifest.permissions.localResources)
+        if (kind !== 'view')
           return new Response(null, { status: 403 })
-        return await this.#store.resources.response(endpoint.package.manifest.id, path.slice('/__resource/'.length), request, endpoint.abort.signal)
+        return await this.#store.resources.response(endpoint.package.manifest.id, path.slice('/__resource/'.length), request, endpoint.abort.signal, endpoint.package.manifest.permissions.localResources)
       }
       if (path === `/__${kind}.html`) {
         return new Response(`<!doctype html><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><style>html,body{margin:0;min-height:100%;font:14px system-ui;color-scheme:light dark}main{padding:16px;overflow-wrap:anywhere}button,input{font:inherit}pre{overflow:auto}</style><main></main><script type="module" src="/__${kind}.js"></script>`, { headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } })
@@ -71,7 +71,7 @@ export class ExtensionProtocol {
       if (!this.#endpoints.has(endpoint.token))
         return new Response(null, { status: 410 })
       const type = codeMime[extname(name)] ?? extensionResourceMimeType(extname(name).slice(1))
-      const range = extensionResourceRange(body.byteLength, request.headers.get('range'))
+      const range = fileRange(body.byteLength, request.headers.get('range'))
       return new Response(request.method === 'HEAD' || range.status === 416 ? null : body.subarray(range.start, range.end + 1) as Uint8Array<ArrayBuffer>, { status: range.status, headers: { ...headers, ...range.headers, 'content-type': type } })
     }
     catch { return new Response(null, { status: 403 }) }

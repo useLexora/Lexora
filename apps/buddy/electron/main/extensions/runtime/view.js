@@ -1,3 +1,4 @@
+import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionViewState } from './ExtensionViewState'
 
@@ -19,10 +20,13 @@ function request(method, params = null) {
     if (pending.size >= 64)
       return reject(new Error('EXTENSION_REQUEST_LIMIT'))
     const id = crypto.randomUUID()
-    const timer = setTimeout(() => {
-      pending.delete(id)
-      reject(new Error('EXTENSION_REQUEST_TIMEOUT'))
-    }, ['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave'].includes(method) ? 125000 : 15000)
+    const longRunning = ['network.get', 'network.download', 'resources.importFile', 'themes.request', 'commands.execute'].includes(method)
+    const timer = longRunning
+      ? undefined
+      : setTimeout(() => {
+          pending.delete(id)
+          reject(new Error('EXTENSION_REQUEST_TIMEOUT'))
+        }, ['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave'].includes(method) ? 125000 : 15000)
     pending.set(id, { resolve, reject, timer })
     parent.postMessage({ channel: 'lexora-extension', token, id, method, params }, '*')
   })
@@ -133,13 +137,8 @@ async function initialize() {
       setActive: active => request('view.setActive', { active }),
       setPresentation: presentation => request('view.setPresentation', presentation),
       resources: {
-        readText: resource => request('resources.readText', { id: resource.id }),
-        readBytes: async (resource, options = {}) => {
-          const result = await request('resources.readBytes', { id: resource.id, offset: options.offset ?? 0, length: options.length ?? 65536 })
-          return { data: Uint8Array.from(atob(result.base64), byte => byte.charCodeAt(0)), size: result.size, eof: result.eof }
-        },
+        ...createExtensionResourceClient(request),
         pickFiles: (options = {}) => request('resources.pickFiles', options),
-        listFiles: () => request('resources.listFiles'),
         getUrl: resource => request('resources.getUrl', { id: resource.id }),
         revokeFile: resource => request('resources.revokeFile', { id: resource.id }),
         pickDirectory: () => request('resources.pickDirectory'),
@@ -166,7 +165,8 @@ async function initialize() {
           }
         },
       },
-      network: { get: url => request('network.get', { url }) },
+      openExternal: url => request('links.openExternal', { url }),
+      network: createExtensionNetworkClient(request),
       commands: { execute: (command, args = null) => request('commands.execute', { command, arguments: args }) },
     })
     if (typeof entry.render !== 'function')

@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer'
+import { createServer } from 'node:http'
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 import { writeContributionPlugin } from '../fixtures/extension-contributions.mjs'
@@ -123,4 +125,64 @@ test('command failures distinguish execution, malformed replies and timeouts in 
     expect.objectContaining({ event: 'host.failed', code: 'EXTENSION_REQUEST_TIMEOUT', diagnostic: { method: 'command', stage: 'timeout' } }),
   ]) })
   expect(JSON.stringify(await status())).not.toContain('Private plugin error')
+})
+
+test('streams a large download through the real host and keeps its theme image after resource release and restart', async ({ buddy }) => {
+  const instance = await buddy.createInstance('plugin-media')
+  const image = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"><rect width="12" height="8" fill="#247aaa"/><!--${'x'.repeat(8 * 1024 * 1024)}--></svg>`
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'image/svg+xml' })
+    response.write(image.slice(0, 1024))
+    const timer = setTimeout(() => response.end(image.slice(1024)), 16000)
+    response.on('close', () => clearTimeout(timer))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    let { app, page } = await instance.launch()
+    const url = `http://127.0.0.1:${server.address().port}/wallpaper.svg`
+    await app.evaluate(({ net, shell }, url) => {
+      const original = net.request.bind(net)
+      net.request = input => original(typeof input === 'object' && input.url === 'https://media.example.com/wallpaper.svg' ? { ...input, url } : input)
+      globalThis.extensionOpenedUrls = []
+      shell.openExternal = async (target) => {
+        globalThis.extensionOpenedUrls.push(target)
+      }
+    }, url)
+    await installPlugin(instance, app, page, 'media', { media: true })
+    await page.locator('.desktop-app-sidebar').getByRole('button', { name: 'Settings media', exact: true }).click()
+    let frame
+    await expect.poll(async () => {
+      for (const candidate of page.frames()) {
+        if (await candidate.locator('[data-contribution-fixture="tests.media.settings"]').count().catch(() => 0)) {
+          frame = candidate
+          return true
+        }
+      }
+      return false
+    }).toBe(true)
+    await expect(frame.getByRole('status')).toHaveText('Ready')
+    await frame.getByRole('button', { name: 'Download wallpaper' }).evaluate(button => button.click())
+    await expect(frame.getByRole('status')).toHaveText('Saved', { timeout: 30000 })
+    const result = await frame.evaluate(() => ({ size: window.fixture.resource.size, themeId: window.fixture.themeId }))
+    expect(result.size).toBe(Buffer.byteLength(image))
+    await frame.getByText('Source', { exact: true }).evaluate(link => link.click())
+    await expect.poll(() => app.evaluate(() => globalThis.extensionOpenedUrls)).toEqual(['https://media.example.com/source#credits'])
+    const checkImage = () => page.evaluate(async () => {
+      const theme = await window.lexoraDesktop.themes.request({ action: 'active' })
+      const image = new Image()
+      image.src = theme.active.assets['wallpaper.svg']
+      await image.decode()
+      return { url: image.src, width: image.naturalWidth, height: image.naturalHeight }
+    })
+    expect(await checkImage()).toMatchObject({ url: expect.stringMatching(/^lexora-theme:/), width: 12, height: 8 })
+    await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.media', false))
+    await instance.stop()
+    ;({ app, page } = await instance.launch())
+    expect(await checkImage()).toMatchObject({ width: 12, height: 8 })
+    expect(await page.evaluate(() => window.lexoraDesktop.themes.request({ action: 'active' }))).toMatchObject({ preference: { id: result.themeId } })
+  }
+  finally {
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
 })

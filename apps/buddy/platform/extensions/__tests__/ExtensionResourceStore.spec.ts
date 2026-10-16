@@ -1,10 +1,11 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deferred } from '@buddy-tests/deferred'
 import { afterEach, expect, it } from 'vitest'
-import { extensionResourceRange } from '../extensionResourceResponse'
+import { fileRange } from '../../filesystem/fileRange'
 import { ExtensionResourceStore } from '../ExtensionResourceStore'
 
 const roots: string[] = []
@@ -78,12 +79,12 @@ it('does not commit an expired selection and handles concurrent grants without l
 })
 
 it('bounds open, suffix, invalid and unsatisfiable byte ranges', () => {
-  expect(extensionResourceRange(100, null)).toMatchObject({ start: 0, end: 99, status: 200 })
-  expect(extensionResourceRange(100, 'bytes=50-')).toMatchObject({ start: 50, end: 99, status: 206 })
-  expect(extensionResourceRange(100, 'bytes=-10')).toMatchObject({ start: 90, end: 99, status: 206 })
-  expect(extensionResourceRange(100, 'bytes=90-999')).toMatchObject({ start: 90, end: 99, status: 206 })
+  expect(fileRange(100, null)).toMatchObject({ start: 0, end: 99, status: 200 })
+  expect(fileRange(100, 'bytes=50-')).toMatchObject({ start: 50, end: 99, status: 206 })
+  expect(fileRange(100, 'bytes=-10')).toMatchObject({ start: 90, end: 99, status: 206 })
+  expect(fileRange(100, 'bytes=90-999')).toMatchObject({ start: 90, end: 99, status: 206 })
   for (const range of ['bytes=100-', 'bytes=20-10', 'bytes=-0', 'bytes=0-1,3-4', 'invalid'])
-    expect(extensionResourceRange(100, range)).toMatchObject({ status: 416, headers: { 'content-range': 'bytes */100' } })
+    expect(fileRange(100, range)).toMatchObject({ status: 416, headers: { 'content-range': 'bytes */100' } })
 })
 
 it('applies plugin filters inside a directory, refreshes files and revokes the directory independently', async () => {
@@ -163,4 +164,62 @@ it('keeps independent directory scopes and other scan filters while refreshing o
   await f.store.revokeDirectory('tests.resources', dir.id, () => {})
   expect(await f.store.list('tests.resources')).toEqual([f.resource, selected])
   expect(await f.store.readText('tests.resources', selected!.id, f.lifetime.signal)).toBe('chapter')
+})
+
+it('reads sparse media beyond 2 GiB without buffering the file', async () => {
+  const f = await fixture()
+  const path = join(f.root, 'large.mp4')
+  const file = await open(path, 'w')
+  const offset = 3 * 1024 ** 3
+  await file.truncate(offset + 4)
+  await file.write(Buffer.from('tail'), 0, 4, offset)
+  await file.close()
+  const [resource] = await f.store.grant('tests.resources', [path], () => {})
+  expect(resource!.size).toBe(offset + 4)
+  const result = await f.store.readBytes('tests.resources', resource!.id, offset, 4, f.lifetime.signal)
+  expect(result).toEqual({ base64: Buffer.from('tail').toString('base64'), size: offset + 4, eof: true })
+})
+
+it('owns downloaded files independently from local grants and releases shared content only after its last handle', async () => {
+  const f = await fixture()
+  const bytes = Buffer.alloc(8 * 1024 * 1024, 42)
+  const first = await f.store.import('tests.resources', 'download.bin', 'application/octet-stream', new Response(bytes), f.lifetime.signal, () => {})
+  const second = await f.store.import('tests.resources', 'copy.bin', 'application/octet-stream', new Response(bytes), f.lifetime.signal, () => {})
+  const restored = new ExtensionResourceStore(join(f.root, 'extensions'))
+  expect(await restored.list('tests.resources', false)).toEqual([first, second])
+  await expect(restored.response('tests.resources', f.resource.id, new Request('https://resource.invalid/'), f.lifetime.signal, false)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  await expect(restored.response('tests.other', first.id, new Request('https://resource.invalid/'), f.lifetime.signal, false)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  await restored.release('tests.resources', first.id, () => {})
+  expect(await restored.readBytes('tests.resources', second.id, second.size - 3, 3, f.lifetime.signal, false)).toEqual({ base64: 'Kioq', size: bytes.length, eof: true })
+  await restored.revoke('tests.resources')
+  expect(await restored.list('tests.resources', false)).toEqual([second])
+  await restored.release('tests.resources', second.id, () => {})
+  expect(await readdir(join(f.root, 'extensions', 'data', 'tests.resources', 'files'))).toEqual([])
+  expect(await readFile(f.path)).toHaveLength(256 * 1024)
+})
+
+it('cancels a parallel import without waiting for another download or retaining partial bytes', async () => {
+  const f = await fixture()
+  const controller = new AbortController()
+  const other = new AbortController()
+  const held = f.store.import('tests.resources', 'held.bin', 'application/octet-stream', new Response(new ReadableStream<Uint8Array>({ start(stream) {
+    stream.enqueue(new Uint8Array(64 * 1024))
+  } })), other.signal, () => {})
+  const heldRejected = expect(held).rejects.toThrow()
+  const started = deferred<void>()
+  const response = new Response(new ReadableStream<Uint8Array>({
+    start(stream) {
+      stream.enqueue(new Uint8Array(64 * 1024))
+    },
+    pull() { started.resolve() },
+  }))
+  const pending = f.store.import('tests.resources', 'cancelled.bin', 'application/octet-stream', response, controller.signal, () => {})
+  const rejected = expect(pending).rejects.toThrow()
+  await started.promise
+  controller.abort()
+  await rejected
+  other.abort()
+  await heldRejected
+  expect(await f.store.list('tests.resources', false)).toEqual([])
+  expect(await readdir(join(f.root, 'extensions', 'data', 'tests.resources', 'files'))).toEqual([])
 })

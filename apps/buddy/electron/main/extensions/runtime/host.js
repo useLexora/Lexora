@@ -1,4 +1,5 @@
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
+import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionHostEvents } from './ExtensionHostEvents'
 
@@ -81,7 +82,7 @@ bridge.subscribe(async ({ id, method, params }) => {
         } },
         views: { broadcast: message => request('views.broadcast', message), open: (type, options = {}) => request('views.open', { type, resource: options.resource ?? null, state: options.state ?? {} }) },
         placements: { show: (id, options) => request('placements.show', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }), hide: (id, options) => request('placements.hide', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }) },
-        resources: { readText: resource => request('resources.readText', { id: resource.id }) },
+        resources: createExtensionResourceClient(request),
         storage: { get: () => request('storage.get'), set: value => request('storage.set', { value, version: manifest.dataVersion }) },
         conditions: {
           register(id, callback) {
@@ -113,7 +114,7 @@ bridge.subscribe(async ({ id, method, params }) => {
           agentActions.set(id, callback)
           return disposable(() => agentActions.delete(id))
         } },
-        network: { get: url => request('network.get', { url }) },
+        network: createExtensionNetworkClient(request),
         notifications: { show: notification => request('notifications.show', notification) },
         schedules: {
           get: id => request('schedules.get', { id }),

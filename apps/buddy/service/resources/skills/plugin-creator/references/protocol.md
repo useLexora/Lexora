@@ -72,7 +72,7 @@
 | `selectedContent: true` | API 3；用户点击插件操作时获取当前草稿或该条消息文本，不订阅输入或读取对话历史 |
 | `localResources: true` | 用户通过系统窗口选择文件或目录，视图读取文本、二进制或受控 URL |
 | `resourceExport: true` | 用户通过系统另存为窗口确认目标后，保存插件提供的字节 |
-| `network: ["https://example.com"]` | 通过宿主向列出的 HTTPS origin 发 GET 请求 |
+| `network: ["https://example.com"]` | 通过宿主向列出的 HTTPS origin 发 GET 请求、下载文件或打开外链 |
 
 未声明权限默认为关闭。视图无法访问 Node、宿主 DOM、全局键盘、网络 fetch 或任意本地文件。资源和网络调用通过 API；用户在安装确认中查看权限。没有一般性消息订阅、系统剪贴板或屏幕截图接口。
 
@@ -143,9 +143,17 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 
 资源授权与文件格式无关。宿主不限制业务格式，不解析文档或工程文件；插件负责解析、显示和编辑。`mimeType` 是根据扩展名给出的提示，未知格式为 `application/octet-stream`，不是授权白名单。文件选择的 `filters: [{name,extensions}]` 与目录扫描的 `extensions` 由插件按需求提供；省略筛选即接受所有格式。
 
-声明 `localResources: true` 后，在可见的交互视图中响应用户操作调用 `resources.pickFiles({filters?,multiple?})` 或 `resources.pickDirectory()`。取消分别返回 `[]` 和 `null`。宿主只接受系统窗口确认的路径，插件不能提交或取得绝对路径。文件句柄为 `{id,name,mimeType,size,relativePath?}`，目录句柄为 `{id,name}`；单次最多选择 100 个文件，单文件不超过 2 GiB，每插件最多 1000 个文件句柄和 32 个目录。
+插件下载和私有文件资源不需要 `localResources` 或额外审批。`network.download(url,{name?,signal?})` 在已批准的网络 origin 范围内流式写盘，返回 `{id,name,mimeType,size}`；不设总大小和总时长配额，可用 AbortSignal 取消。重定向逐跳核对授权，关闭发起视图或停用插件会取消下载并清理未完成文件。资源属于插件私有数据，跨重启保存；普通卸载保留，清除数据时删除。用 `resources.release(file)` 回收不再需要的下载副本。
 
-`resources.listFiles/listDirectories` 返回已有授权。`scanDirectory(directory,{extensions?,recursive?})` 返回授权根内的文件句柄及相对路径，默认递归，跳过符号链接，限制 10000 项与 16 层；超限明确报错，不静默截断。扫描负责刷新相同筛选范围，保留其他筛选范围的句柄；它不是自动监听。文件删除或变化后，刷新撤销旧句柄，变化的文件返回新 ID。独立选择和不同目录的授权分别管理。目录内引用可以根据返回的 `relativePath` 解析，但不能越过授权根。
+宿主和视图均可 `resources.listFiles/readBytes/readText` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的 Space 文件句柄复制到插件私有资源，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
+
+视图 `openExternal(url)` 使用系统浏览器打开已批准 origin 的 HTTPS 链接，保留 fragment。无需逐次授权，不授予文件或自定义协议访问。
+
+`network.get(url)` 适用于最多 1 MiB 的文本响应；媒体和大文件使用 `download` 后通过资源 URL 或分段接口读取。大文件不放进 JSON 或命令返回值。下载等待期间不计入宿主普通命令的响应期限；宿主失去响应、退出或用户取消仍会终止操作。
+
+声明 `localResources: true` 后，在可见的交互视图中响应用户操作调用 `resources.pickFiles({filters?,multiple?})` 或 `resources.pickDirectory()`。取消分别返回 `[]` 和 `null`。宿主只接受系统窗口确认的路径，插件不能提交或取得绝对路径。文件句柄为 `{id,name,mimeType,size,relativePath?}`，目录句柄为 `{id,name}`；单次最多选择 100 个文件，文件大小不设产品配额，每插件最多 1000 个文件句柄和 32 个目录。
+
+`resources.listFiles` 返回插件私有资源及已授权的本地文件，`listDirectories` 返回已有目录授权。`scanDirectory(directory,{extensions?,recursive?})` 返回授权根内的文件句柄及相对路径，默认递归，跳过符号链接，限制 10000 项与 16 层；超限明确报错，不静默截断。扫描负责刷新相同筛选范围，保留其他筛选范围的句柄；它不是自动监听。文件删除或变化后，刷新撤销旧句柄，变化的文件返回新 ID。独立选择和不同目录的授权分别管理。目录内引用可以根据返回的 `relativePath` 解析，但不能越过授权根。
 
 按内容选择读取方式：
 

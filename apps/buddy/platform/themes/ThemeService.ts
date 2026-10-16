@@ -5,6 +5,7 @@ import type { ThemeArchive, ThemePreview, ThemeRequest, ThemeSnapshot } from '..
 import type { ThemeDescriptor, ThemeDocument } from '../../shared/theme/themeDocument'
 import type { ThemePreference } from '../../shared/theme/themePreferences'
 import type { ExtensionPackage } from '../extensions/ExtensionPackageStore'
+import type { StoredTheme, ThemeResourceAccess } from './ThemeAssetStore'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -17,17 +18,20 @@ import { themeArchiveSchema, themeRequestSchema } from '../../shared/theme/theme
 import { describeTheme, themeAssetPaths, themeDocumentSchema } from '../../shared/theme/themeDocument'
 import { DEFAULT_THEME_PREFERENCE, themeIdSchema, themePreferenceSchema } from '../../shared/theme/themePreferences'
 import { readExtensionJson, verifiedExtensionAsset, writeExtensionJson } from '../extensions/extensionFiles'
-import { themeAssetUrl, validateThemeArchive } from './themeAssets'
+import { storedThemeSchema, ThemeAssetStore } from './ThemeAssetStore'
 
-interface ThemeEntry { descriptor: ThemeDescriptor, document: ThemeDocument, resolved: ResolvedTheme, archive: ThemeArchive }
+interface ThemeEntry { descriptor: ThemeDescriptor, document: ThemeDocument, resolved: ResolvedTheme, archive: StoredTheme }
 interface Preview extends ThemePreview { owner: string, entry: ThemeEntry }
-const userThemesSchema = z.object({ version: z.literal(1), themes: z.record(themeIdSchema, themeArchiveSchema) }).strict()
+const legacyThemesSchema = z.object({ version: z.literal(1), themes: z.record(themeIdSchema, themeArchiveSchema) }).strict()
+const userThemesSchema = z.object({ version: z.literal(2), themes: z.record(themeIdSchema, storedThemeSchema) }).strict()
 type UserThemes = z.infer<typeof userThemesSchema>
 interface UserThemeSave { entry: ThemeEntry, users: UserThemes, entries: Map<string, ThemeEntry> }
 export interface ThemePackage { package: ExtensionPackage, root: string }
 
 export class ThemeService {
   readonly #path: string
+  readonly #assets: ThemeAssetStore
+  readonly #abort = new AbortController()
   readonly #savePreference: (preference: ThemePreference, assertCurrent: () => void) => Promise<void>
   readonly #readSystemDark?: () => boolean
   readonly #record: ApplicationDiagnosticReporter
@@ -35,7 +39,7 @@ export class ThemeService {
   readonly #changes = new Emitter<EventSnapshot<ThemeSnapshot>>(() => console.error('THEME_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   #plugins = new Map<string, ThemeEntry>()
-  #users: UserThemes = { version: 1, themes: {} }
+  #users: UserThemes = { version: 2, themes: {} }
   #userEntries = new Map<string, ThemeEntry>()
   #storeReadable = true
   #pendingSave: UserThemeSave | null = null
@@ -52,25 +56,33 @@ export class ThemeService {
 
   constructor(home: string, savePreference: (preference: ThemePreference, assertCurrent: () => void) => Promise<void>, options: { readSystemDark?: () => boolean, record?: ApplicationDiagnosticReporter } = {}) {
     this.#path = join(home, 'themes', 'user-themes.json')
+    this.#assets = new ThemeAssetStore(home)
     this.#savePreference = savePreference
     this.#readSystemDark = options.readSystemDark
     this.#record = safeDiagnosticReporter(options.record)
   }
 
   async initialize(preference: ThemePreference, dark: boolean): Promise<void> {
+    let loaded = false
     try {
-      const stored = userThemesSchema.parse(await readExtensionJson(this.#path, 32 * 1024 * 1024))
+      const raw = await readExtensionJson(this.#path, 32 * 1024 * 1024)
+      loaded = true
+      const legacy = legacyThemesSchema.safeParse(raw)
+      const stored: UserThemes = legacy.success
+        ? { version: 2, themes: Object.fromEntries(await Promise.all(Object.entries(legacy.data.themes).map(async ([id, archive]) => [id, await this.#assets.prepare(archive, () => {})]))) }
+        : userThemesSchema.parse(raw)
       const entries = new Map<string, ThemeEntry>()
       for (const [id, archive] of Object.entries(stored.themes)) {
         if (!id.startsWith('user.theme.'))
           throw new Error('EXTENSION_THEME_ID_INVALID')
-        entries.set(id, this.#userEntry(id, archive))
+        await this.#assets.verify(archive)
+        entries.set(id, this.#storedEntry(id, archive))
       }
       this.#users = stored
       this.#userEntries = entries
     }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (loaded || (error as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.#storeReadable = false
         this.#record({ component: 'desktop.themes', level: 'warn', event: 'themes.store.unreadable', errorCode: 'EXTENSION_THEME_STORE_UNREADABLE' })
       }
@@ -123,7 +135,13 @@ export class ThemeService {
       this.#publish()
   }
 
-  async refresh(packages: ThemePackage[]): Promise<void> {
+  refresh(packages: ThemePackage[]): Promise<void> {
+    const operation = this.#tail.then(() => this.#refresh(packages))
+    this.#tail = operation.catch(() => {})
+    return operation
+  }
+
+  async #refresh(packages: ThemePackage[]): Promise<void> {
     const generation = ++this.#catalogGeneration
     const entries = new Map<string, ThemeEntry>()
     for (const { package: pkg, root } of packages) {
@@ -131,16 +149,21 @@ export class ThemeService {
         try {
           const bytes = await verifiedExtensionAsset(root, contribution.path, pkg.hashes[contribution.path]!)
           const document = themeDocumentSchema.parse(JSON.parse(Buffer.from(bytes).toString('utf8')))
-          const assets: Record<string, string> = {}
-          const encoded: Record<string, string> = {}
-          for (const path of themeAssetPaths(document)) {
-            const bytes = await verifiedExtensionAsset(root, path, pkg.hashes[path]!)
-            assets[path] = themeAssetUrl(path, bytes)
-            encoded[path] = Buffer.from(bytes).toString('base64')
-          }
+          const sources: ThemeArchive['assets'] = {}
+          for (const path of themeAssetPaths(document))
+            sources[path] = { packagePath: path }
+          const archive = await this.#assets.prepare({ schemaVersion: 1, label: contribution.label, appearance: contribution.appearance, document, assets: sources }, () => {
+            if (this.#disposed || generation !== this.#catalogGeneration)
+              throw new Error('EXTENSION_THEME_STOPPED')
+          }, { signal: this.#abort.signal, read: async (source) => {
+            if (!('packagePath' in source))
+              throw new Error('EXTENSION_THEME_ASSET_INVALID')
+            return new Response(await verifiedExtensionAsset(root, source.packagePath, pkg.hashes[source.packagePath]!))
+          } })
+          const assets = this.#assets.urls(archive)
           const descriptor: ThemeDescriptor = { id: contribution.id, label: contribution.label, appearance: contribution.appearance, source: 'plugin', extensionId: pkg.manifest.id, packageName: pkg.manifest.name, swatch: document.colors.accent ?? this.#fallbacks[contribution.appearance].colors.accent }
           const resolved = resolveTheme(descriptor, document, {}, assets)
-          entries.set(contribution.id, { descriptor: resolved.descriptor, document, resolved, archive: { schemaVersion: 1, label: contribution.label, appearance: contribution.appearance, document, assets: encoded } })
+          entries.set(contribution.id, { descriptor: resolved.descriptor, document, resolved, archive })
         }
         catch {
           this.#record({ component: 'desktop.themes', level: 'warn', event: 'themes.package.invalid', extensionId: pkg.manifest.id, errorCode: 'EXTENSION_THEME_UNAVAILABLE' })
@@ -151,14 +174,22 @@ export class ThemeService {
       return
     this.#plugins = entries
     this.#publish()
+    await this.#collect()
   }
 
-  request(owner: string, raw: ThemeRequest, assertCurrent: () => void = () => {}): Promise<unknown> {
+  request(owner: string, raw: ThemeRequest, assertCurrent: () => void = () => {}, access?: ThemeResourceAccess): Promise<unknown> {
     const input = themeRequestSchema.parse(raw)
+    const ownerCurrent = assertCurrent
+    const guard = () => {
+      if (this.#disposed)
+        throw new Error('EXTENSION_THEME_STOPPED')
+      ownerCurrent()
+    }
+    const resources = access ? { ...access, signal: AbortSignal.any([access.signal, this.#abort.signal]) } : undefined
     const operation = this.#tail.then(async () => {
       if (this.#disposed)
         throw new Error('EXTENSION_THEME_STOPPED')
-      assertCurrent()
+      guard()
       switch (input.action) {
         case 'active': return this.snapshot
         case 'list': return structuredClone((this.#snapshot ??= this.#buildSnapshot()).themes)
@@ -172,22 +203,22 @@ export class ThemeService {
           return { valid: result.success, diagnostics: result.success ? [] : result.error.issues.map(issue => ({ path: issue.path.join('.'), message: issue.message })) }
         }
         case 'resolve': return resolveTheme(this.#descriptor('user.preview', { label: 'Preview', appearance: input.appearance }), input.document, input.overrides)
-        case 'export': return JSON.stringify(this.#require(input.id).archive, null, 2)
-        case 'import': return this.#save(undefined, JSON.parse(input.content), assertCurrent)
-        case 'save': return this.#save(input.id, input.archive, assertCurrent)
+        case 'export': return this.#assets.export(this.#require(input.id).archive)
+        case 'import': return this.#save(undefined, JSON.parse(input.content), guard, resources)
+        case 'save': return this.#save(input.id, input.archive, guard, resources)
         case 'remove': {
           if (!Object.hasOwn(this.#users.themes, input.id))
             throw new Error('EXTENSION_THEME_READONLY')
           const next = structuredClone(this.#users)
           delete next.themes[input.id]
-          await this.#write(next, assertCurrent)
+          await this.#write(next, guard)
           this.#users = next
           this.#userEntries.delete(input.id)
           this.#publish()
           return null
         }
         case 'preference': {
-          await this.#savePreference(input.preference, assertCurrent)
+          await this.#savePreference(input.preference, guard)
           this.applyPreference(input.preference)
           if (this.#preview) {
             this.#preview = null
@@ -196,14 +227,24 @@ export class ThemeService {
           return this.snapshot
         }
         case 'beginPreview': {
-          const entry = this.#userEntry('user.preview', input.archive)
+          const revision = this.#revision
+          const current = () => {
+            guard()
+            if (revision !== this.#revision)
+              throw new Error('EXTENSION_THEME_PREVIEW_EXPIRED')
+          }
+          const entry = this.#storedEntry('user.preview', await this.#assets.prepare(input.archive, current, resources))
           this.#preview = { token: randomUUID(), revision: 0, owner, entry }
           this.#publish()
           return { token: this.#preview.token, revision: 0 }
         }
         case 'updatePreview': {
           const preview = this.#ownedPreview(owner, input.token, input.revision)
-          const entry = this.#userEntry('user.preview', input.archive)
+          const current = () => {
+            guard()
+            this.#ownedPreview(owner, input.token, input.revision)
+          }
+          const entry = this.#storedEntry('user.preview', await this.#assets.prepare(input.archive, current, resources))
           this.#preview = { ...preview, revision: preview.revision + 1, entry }
           this.#publish()
           return { token: preview.token, revision: preview.revision + 1 }
@@ -217,16 +258,16 @@ export class ThemeService {
         }
         case 'commitPreview': {
           const preview = this.#ownedPreview(owner, input.token, input.revision)
-          const guard = () => {
-            assertCurrent()
+          const current = () => {
+            guard()
             this.#ownedPreview(owner, input.token, input.revision)
           }
-          const saved = await this.#storeUser(undefined, preview.entry.archive, guard)
+          const saved = await this.#storeUser(undefined, preview.entry.archive, current)
           this.#pendingSave = saved
           try {
-            guard()
+            current()
             const preference = { id: saved.entry.descriptor.id }
-            await this.#savePreference(preference, guard)
+            await this.#savePreference(preference, current)
             this.applyPreference(preference)
             return structuredClone(saved.entry.descriptor)
           }
@@ -240,19 +281,23 @@ export class ThemeService {
         }
       }
     })
-    this.#tail = operation.then(() => {}, () => {})
-    return operation
+    const mutatesAssets = ['save', 'import', 'remove', 'beginPreview', 'updatePreview', 'commitPreview', 'cancelPreview', 'preference'].includes(input.action)
+    const settled = mutatesAssets ? operation.finally(() => this.#collect()) : operation
+    this.#tail = settled.then(() => {}, () => {})
+    return settled
   }
 
   releaseOwner(owner: string): void {
     if (this.#preview?.owner === owner || this.#preview?.owner.startsWith(`${owner}:`)) {
       this.#preview = null
       this.#publish()
+      this.#tail = this.#tail.then(() => this.#collect()).catch(() => {})
     }
   }
 
   async dispose(): Promise<void> {
     this.#disposed = true
+    this.#abort.abort()
     ++this.#catalogGeneration
     this.#preview = null
     await this.#tail
@@ -281,27 +326,31 @@ export class ThemeService {
     return { id, label: archive.label, appearance: archive.appearance, source: 'user', extensionId: null, packageName: '', swatch: archive.document?.colors.accent ?? this.#fallbacks[archive.appearance].colors.accent }
   }
 
-  #userEntry(id: string, input: unknown): ThemeEntry {
-    const { archive, assets } = validateThemeArchive(input)
+  #storedEntry(id: string, archive: StoredTheme): ThemeEntry {
+    const assets = this.#assets.urls(archive)
     const descriptor = this.#descriptor(id, archive)
     const resolved = resolveTheme(descriptor, archive.document, {}, assets)
     return { descriptor: resolved.descriptor, document: archive.document, archive, resolved }
   }
 
-  async #save(id: string | undefined, input: unknown, assertCurrent: () => void): Promise<ThemeDescriptor> {
-    const saved = await this.#storeUser(id, input, assertCurrent)
+  async #save(id: string | undefined, input: unknown, assertCurrent: () => void, access?: ThemeResourceAccess): Promise<ThemeDescriptor> {
+    if (!this.#storeReadable)
+      throw new Error('EXTENSION_THEME_STORE_UNREADABLE')
+    if (id && !Object.hasOwn(this.#users.themes, id))
+      throw new Error('EXTENSION_THEME_READONLY')
+    const saved = await this.#storeUser(id, await this.#assets.prepare(input, assertCurrent, access), assertCurrent)
     this.#acceptSave(saved)
     this.#publish()
     return structuredClone(saved.entry.descriptor)
   }
 
-  async #storeUser(id: string | undefined, input: unknown, assertCurrent: () => void): Promise<UserThemeSave> {
+  async #storeUser(id: string | undefined, archive: StoredTheme, assertCurrent: () => void): Promise<UserThemeSave> {
     if (id && !Object.hasOwn(this.#users.themes, id))
       throw new Error('EXTENSION_THEME_READONLY')
     const key = id ?? `user.theme.${randomUUID()}`
-    const entry = this.#userEntry(key, input)
-    const next = { version: 1 as const, themes: { ...this.#users.themes, [key]: entry.archive } }
-    if (Object.keys(next.themes).length > 128 || Buffer.byteLength(JSON.stringify(next)) > 32 * 1024 * 1024)
+    const entry = this.#storedEntry(key, archive)
+    const next = { version: 2 as const, themes: { ...this.#users.themes, [key]: entry.archive } }
+    if (Buffer.byteLength(JSON.stringify(next)) > 32 * 1024 * 1024)
       throw new Error('EXTENSION_THEME_STORE_LIMIT')
     await this.#write(next, assertCurrent)
     return { entry, users: next, entries: new Map(this.#userEntries).set(key, entry) }
@@ -320,6 +369,19 @@ export class ThemeService {
         throw new Error('EXTENSION_THEME_STOPPED')
       assertCurrent()
     })
+  }
+
+  assetResponse(request: Request): Promise<Response> {
+    return this.#assets.response(request.url, request, this.#entries().map(entry => entry.archive), this.#abort.signal)
+  }
+
+  #entries(): ThemeEntry[] {
+    return [...this.#plugins.values(), ...this.#userEntries.values(), ...(this.#preview ? [this.#preview.entry] : [])]
+  }
+
+  async #collect(): Promise<void> {
+    if (this.#storeReadable)
+      await this.#assets.files.collect(new Set(this.#entries().flatMap(entry => Object.values(entry.archive.assets).map(asset => asset.key))))
   }
 
   #publish(): void {

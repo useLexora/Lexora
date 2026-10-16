@@ -10,7 +10,7 @@ import type { ExtensionConditionRuntime } from '../../../shared/extensions/exten
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { join } from 'node:path'
-import { dialog, ipcMain, Notification, powerMonitor, session } from 'electron'
+import { dialog, ipcMain, Notification, powerMonitor, session, shell } from 'electron'
 import { z } from 'zod'
 import { ExtensionPackageStore } from '../../../platform/extensions/ExtensionPackageStore'
 import { ExtensionService } from '../../../platform/extensions/ExtensionService'
@@ -30,6 +30,7 @@ export function registerExtensionIpc(options: {
   fileIcons: FileIconThemeService
   version: string
   getWindow: () => BrowserWindow | null
+  readResource: (target: SpaceFileTarget, signal: AbortSignal) => Promise<Response>
   readText: (target: SpaceFileTarget, signal: AbortSignal) => Promise<string>
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   developmentDirectory?: string
@@ -74,6 +75,8 @@ export function registerExtensionIpc(options: {
     },
     createView: pkg => protocol.register(pkg, 'view'),
     readText: options.readText,
+    readResource: options.readResource,
+    openExternal: url => shell.openExternal(url),
     agentRequest: options.agentRequest,
     conditionRuntime: options.conditionRuntime,
     get: options.get,

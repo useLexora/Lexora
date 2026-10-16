@@ -80,7 +80,7 @@ context.agent.registerAction(`${context.extension.id}.inspect`, async (invocatio
 
 ## 模型与任务权限
 
-`permissions.models: true` 开放 `invocation.models.generateText({prompt,system?,model?,maxTokens?})`，返回 `{text,model}`。未指定模型时，工具继承原运行的模型，动作使用调用开始时的任务模型选择或对应输入的对话模型；没有可用模型时失败。请求仅有文本，没有工具或隐式对话历史；不允许自定义凭据、URL 或 Provider 参数。凭据留在宿主。工具用量计入原运行，动作用量属于独立调用，同样出现在任务用量统计中。每次调用最多 4 次模型请求，同时最多 1 次，每次最多 4096 输出 token，整次调用限时 120 秒。
+`permissions.models: true` 开放 `invocation.models.generateText({prompt,system?,model?,maxTokens?})`，返回 `{text,model}`。未指定模型时，工具继承原运行的模型，动作使用调用开始时的任务模型选择或对应输入的对话模型；没有可用模型时失败。请求仅有文本，没有工具或隐式对话历史；不允许自定义凭据、URL 或 Provider 参数。凭据留在宿主。工具用量计入原运行，动作用量属于独立调用，同样出现在任务用量统计中。每次调用最多 4 次模型请求，同时最多 1 次，每次最多 4096 输出 token；取消由调用任务或 AbortSignal 控制，不设整次调用的固定时长配额。
 
 `permissions.tasks: "read"` 开放 `task.get()`，返回当前任务的 id/title/titleSource。titleSource 为 `fallback`（消息截取）、`generated`（生成）、`manual`（用户明确命名）或 `legacy`（历史来源未确认）。`"title"` 额外开放 `task.rename({title})`，标题为单行 1–80 字符，返回 `{applied}`。宿主捕获本次调用开始时的标题版本，只接受该版本上的更新；重新读取标题不会刷新写入资格。自动动作与工具不能覆盖 manual/legacy，只有从任务菜单显式发起的 user 动作可以替换，期间的并发修改仍受保护。改名不更新任务活动时间。
 

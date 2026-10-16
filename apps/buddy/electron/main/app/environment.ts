@@ -20,6 +20,7 @@ import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { prepareStorageBootstrap, readStorageBootstrap, unifiedStoragePaths } from '../storage/storageBootstrap'
 import { fileIconSchemePrivileges } from '../themes/registerFileIconIpc'
+import { themeSchemePrivileges } from '../themes/registerThemeIpc'
 import { bootstrapStep } from './desktopBootstrap'
 import { desktopIcons } from './desktopIcons'
 import { DesktopStartup } from './DesktopStartup'
@@ -129,7 +130,7 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
     }
   }
   bootstrapStep('register_protocols', () => {
-    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges, fileIconSchemePrivileges])
+    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges, fileIconSchemePrivileges, themeSchemePrivileges])
   })
   bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity?.(paths.desktopName))
 }

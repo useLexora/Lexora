@@ -11,7 +11,7 @@ import { z } from 'zod'
 import { EXTENSION_IPC, extensionError, extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionRequestError } from '../../../shared/extensions/extensionDiagnostic'
 
-interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer: ReturnType<typeof setTimeout> }
+interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer?: ReturnType<typeof setTimeout>, timeout: number, expire: () => void, cleanup: () => void }
 const replySchema = z.object({ id: z.string().uuid(), ok: z.boolean(), value: extensionJsonSchema }).strict()
 const replyIdentitySchema = z.object({ id: z.string().uuid() })
 
@@ -24,6 +24,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
   readonly #onFailure: (failure: ExtensionHostFailure) => void
   #resolveReady!: () => void
   #rejectReady!: (error: Error) => void
+  #io = 0
   #closing = false
   #started = false
   #developerWindow: BrowserWindow | null = null
@@ -84,7 +85,22 @@ export class SandboxedExtensionHost implements ExtensionHost {
       }
       if (!this.#started || typeof method !== 'string' || method.length > 80)
         throw new Error('EXTENSION_METHOD_DENIED')
-      return await this.#broker(method, params)
+      const io = ['network.get', 'network.download', 'resources.importFile', 'themes.request'].includes(method)
+      if (io && this.#io++ === 0) {
+        for (const pending of this.#pending.values())
+          clearTimeout(pending.timer)
+      }
+      try {
+        return await this.#broker(method, params)
+      }
+      finally {
+        if (io && --this.#io === 0 && !this.#closing) {
+          for (const pending of this.#pending.values()) {
+            if (pending.timeout)
+              pending.timer = setTimeout(pending.expire, pending.timeout)
+          }
+        }
+      }
     }
     catch (error) {
       throw new Error(extensionError(error))
@@ -98,7 +114,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       const pending = identity.success ? this.#pending.get(identity.data.id) : undefined
       if (pending && identity.success) {
         this.#pending.delete(identity.data.id)
-        clearTimeout(pending.timer)
+        pending.cleanup()
         pending.reject(new ExtensionRequestError('EXTENSION_INVALID_RESULT', pending.method, parsed.error, 'result'))
       }
       return
@@ -108,19 +124,19 @@ export class SandboxedExtensionHost implements ExtensionHost {
     if (!pending)
       return
     this.#pending.delete(id)
-    clearTimeout(pending.timer)
+    pending.cleanup()
     if (ok)
       pending.resolve(value)
     else pending.reject(new Error(typeof value === 'string' && /^EXTENSION_[A-Z_]+$/.test(value) ? value : 'EXTENSION_OPERATION_FAILED'))
   }
 
-  async call(method: string, params: JsonValue): Promise<JsonValue> {
+  async call(method: string, params: JsonValue, signal?: AbortSignal): Promise<JsonValue> {
     await this.#ready
     if (this.#closing || this.window.isDestroyed())
       throw new Error('EXTENSION_HOST_STOPPED')
     if (this.#pending.size >= 64)
       throw new Error('EXTENSION_REQUEST_LIMIT')
-    return this.#send(method, params, method === 'agent.invoke' ? 125000 : 15000)
+    return this.#send(method, params, method === 'agent.invoke' ? 0 : 15000, signal)
   }
 
   devtools(): void {
@@ -157,16 +173,32 @@ export class SandboxedExtensionHost implements ExtensionHost {
       this.window.destroy()
   }
 
-  #send(method: string, params: JsonValue, timeout: number): Promise<JsonValue> {
+  #send(method: string, params: JsonValue, timeout: number, signal?: AbortSignal): Promise<JsonValue> {
+    signal?.throwIfAborted()
     return new Promise((resolve, reject) => {
       const id = randomUUID()
-      const timer = setTimeout(() => {
-        this.#pending.delete(id)
+      const pending = this.#pending
+      let entry: Pending
+      function cleanup() {
+        clearTimeout(entry.timer)
+        signal?.removeEventListener('abort', cancel)
+      }
+      function cancel() {
+        cleanup()
+        pending.delete(id)
+        reject(new Error('EXTENSION_AGENT_CANCELLED'))
+      }
+      const expire = () => {
+        cleanup()
+        pending.delete(id)
         reject(new Error('EXTENSION_REQUEST_TIMEOUT'))
         if (method !== 'deactivate')
           this.#fail({ code: 'EXTENSION_REQUEST_TIMEOUT', method, stage: 'timeout' })
-      }, timeout)
-      this.#pending.set(id, { method, resolve, reject, timer })
+      }
+      const timer = timeout && (!this.#io || method === 'deactivate') ? setTimeout(expire, timeout) : undefined
+      entry = { method, resolve, reject, timer, timeout, expire, cleanup }
+      pending.set(id, entry)
+      signal?.addEventListener('abort', cancel, { once: true })
       this.window.webContents.send(EXTENSION_IPC.hostMessage, { id, method, params })
     })
   }
@@ -189,7 +221,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
     clearTimeout(this.#readyTimer)
     this.#rejectReady(new Error(readyError))
     for (const pending of this.#pending.values()) {
-      clearTimeout(pending.timer)
+      pending.cleanup()
       pending.reject(new Error('EXTENSION_HOST_STOPPED'))
     }
     this.#pending.clear()

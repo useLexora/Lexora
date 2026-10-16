@@ -100,7 +100,6 @@ export class ExtensionAgentRuntime {
   async #execute(descriptor: ExtensionAgentDescriptor, request: InvocationRequest, invocation: Invocation, controller: AbortController): Promise<JsonValue> {
     const scope = invocation.scope
     const { invocationId, signal: abort } = scope
-    const timeout = setTimeout(() => controller.abort(new DOMException('Extension invocation timed out', 'TimeoutError')), 120000)
     this.#invocations.set(invocationId, invocation)
     const identity = { invocationId, extensionId: descriptor.id, conversationId: scope.conversationId, runId: scope.runId, ...(scope.action ? { actionId: scope.action.id, trigger: scope.action.cause.type } : {}) }
     const startedAt = performance.now()
@@ -108,7 +107,7 @@ export class ExtensionAgentRuntime {
     this.#publish({ kind: 'invocation', stage: 'started', ...identity })
     try {
       const input: ExtensionAgentInvocation = { extensionId: descriptor.id, revision: descriptor.revision, configurationRevision: descriptor.configurationRevision, invocationId, context: { taskId: scope.conversationId, runId: scope.runId }, ...request }
-      const result = extensionJsonSchema.parse(await this.#options.rpc.request(extensionAgentRpc.invoke, input, 125000, abort))
+      const result = extensionJsonSchema.parse(await this.#options.rpc.request(extensionAgentRpc.invoke, input, null, abort))
       abort.throwIfAborted()
       return result
     }
@@ -120,7 +119,6 @@ export class ExtensionAgentRuntime {
       throw error
     }
     finally {
-      clearTimeout(timeout)
       invocation.accepting = false
       this.#publish({ kind: 'invocation', stage: 'returned', outcome, durationMs: Math.round(performance.now() - startedAt), ...identity })
       controller.abort()

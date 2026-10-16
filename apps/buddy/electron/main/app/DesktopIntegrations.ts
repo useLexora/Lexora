@@ -20,13 +20,14 @@ import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAu
 import { extensionConditionSnapshotRpc } from '../../../shared/extensions/extensionConditionContext'
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { runNotifications } from '../../../shared/runs/runApi'
-import { spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
+import { spaceFilesRpc, spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
 import { registerContextPanelIpc } from '../context-panel/registerContextPanelIpc'
 import { createDesktopCommandExecutor } from '../desktopCommands'
 import { DesktopNotificationService } from '../DesktopNotificationService'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
+import { readSpaceFileResource } from '../extensions/readSpaceFileResource'
 import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
@@ -130,7 +131,8 @@ export class DesktopIntegrations {
       taskActions: async () => extensionActionRpc.list.response.parse(await service.request(extensionActionRpc.list.method, {})),
       invokeTaskAction: async input => extensionActionRpc.invoke.response.parse(await service.request(extensionActionRpc.invoke.method, input, { timeoutMs: null })),
       agentChanged: catalog => service.notify(extensionAgentRpc.changed, catalog),
-      agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: 120000 })),
+      agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: null })),
+      readResource: (target, signal) => readSpaceFileResource(target, signal, async input => spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, input, { signal }))),
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
     this.#subscriptions.push(extensions.dispose)

@@ -20,14 +20,19 @@ export interface EventSubscriber<Events> {
 }
 export type EventSnapshot<Value> = Value extends object ? { readonly [Key in keyof Value]: EventSnapshot<Value[Key]> } : Value
 export interface Resource { readonly id: string, readonly name: string }
-export interface ResourceApi { readText: (resource: Resource) => Promise<string> }
+export interface ResourceTransferOptions { name?: string, signal?: AbortSignal }
+export interface ResourceApi {
+  readText: (resource: Resource) => Promise<string>
+  listFiles: () => Promise<LocalFile[]>
+  readBytes: (resource: Pick<LocalFile, 'id'>, options?: { offset?: number, length?: number }) => Promise<{ data: Uint8Array, size: number, eof: boolean }>
+  importFile: (resource: Resource, options?: ResourceTransferOptions) => Promise<LocalFile>
+  release: (resource: Pick<LocalFile, 'id'>) => Promise<void>
+}
 export interface LocalFile extends Resource { readonly mimeType: string, readonly size: number, readonly relativePath?: string }
 export interface LocalDirectory extends Resource {}
 export interface LocalResourceApi extends ResourceApi {
   pickFiles: (options?: { filters?: { name: string, extensions: string[] }[], multiple?: boolean }) => Promise<LocalFile[]>
-  listFiles: () => Promise<LocalFile[]>
   getUrl: (resource: Pick<LocalFile, 'id'>) => Promise<string>
-  readBytes: (resource: Pick<LocalFile, 'id'>, options?: { offset?: number, length?: number }) => Promise<{ data: Uint8Array, size: number, eof: boolean }>
   revokeFile: (resource: Pick<LocalFile, 'id'>) => Promise<void>
   pickDirectory: () => Promise<LocalDirectory | null>
   listDirectories: () => Promise<LocalDirectory[]>
@@ -35,7 +40,10 @@ export interface LocalResourceApi extends ResourceApi {
   revokeDirectory: (directory: Pick<LocalDirectory, 'id'>) => Promise<void>
   saveFile: (options: { name: string, data: Blob | ArrayBuffer | Uint8Array }) => Promise<boolean>
 }
-export interface NetworkApi { get: (url: string) => Promise<{ status: number, text: string }> }
+export interface NetworkApi {
+  get: (url: string) => Promise<{ status: number, text: string }>
+  download: (url: string, options?: ResourceTransferOptions) => Promise<LocalFile>
+}
 export interface ScheduleInput { id: string, command: string, enabled: boolean, intervalMinutes: number }
 export interface Schedule extends ScheduleInput { nextRunAt: number | null }
 export interface ScheduleApi {
@@ -209,6 +217,7 @@ export interface ViewContext {
   readonly expectedStateVersion: number
   readonly signal: AbortSignal
   onActivity: (listener: (event: { readonly type: 'composer-input', readonly caret?: { readonly x: number, readonly y: number, readonly width: number, readonly height: number } | null }) => void) => Disposable
+  openExternal: (url: string) => Promise<void>
   readonly resources: LocalResourceApi
   readonly network: NetworkApi
   readonly commands: { execute: (command: string, args?: Json) => Promise<Json> }
@@ -298,7 +307,7 @@ export interface ThemeDocument {
   materials?: ThemeMaterial[]
   welcome?: { text?: { 'zh-CN': string, 'en-US': string } | null, image?: string | null }
 }
-export interface ThemeArchive { schemaVersion: 1, label: string, appearance: ThemeAppearance, document: ThemeDocument, assets?: Record<string, string> }
+export interface ThemeArchive { schemaVersion: 1, label: string, appearance: ThemeAppearance, document: ThemeDocument, assets?: Record<string, string | { resourceId: string } | { packagePath: string }> }
 export interface ResolvedTheme { descriptor: ThemeDescriptor, colors: Record<ThemeColor, string>, variables: Record<string, string>, document: ThemeDocument, assets: Record<string, string> }
 export interface ThemeSnapshot { revision: number, preference: ThemePreference, active: ResolvedTheme, themes: ThemeDescriptor[], unavailable: string | null, preview: boolean }
 export interface ThemePreview { token: string, revision: number }

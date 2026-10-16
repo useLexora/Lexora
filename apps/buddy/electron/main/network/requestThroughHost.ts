@@ -1,5 +1,6 @@
 import type { AuthInfo, Session } from 'electron'
 import type { Buffer } from 'node:buffer'
+import type { Readable } from 'node:stream'
 import { WebError } from '../../../shared/network/webProtocol'
 
 export type ProxyAuthenticator = (authInfo: AuthInfo, callback: (username?: string, password?: string) => void) => boolean
@@ -44,8 +45,11 @@ export async function requestThroughHost(session: Session, input: { url: string,
         if (value !== undefined && !['set-cookie', 'content-length', 'content-encoding', 'transfer-encoding'].includes(key.toLowerCase()))
           headers.set(key, Array.isArray(value) ? value.join(', ') : value)
       }
+      const readable = incoming as typeof incoming & Pick<Readable, 'pause' | 'resume'>
+      readable.pause()
       const body = new ReadableStream<Uint8Array>({
         start(controller) { stream = controller },
+        pull() { readable.resume() },
         cancel() {
           ended = true
           cleanup()
@@ -53,8 +57,11 @@ export async function requestThroughHost(session: Session, input: { url: string,
         },
       })
       incoming.on('data', (chunk: Uint8Array) => {
-        if (!ended)
+        if (!ended) {
           stream!.enqueue(chunk)
+          if ((stream!.desiredSize ?? 0) <= 0)
+            readable.pause()
+        }
       })
       incoming.on('error', fail)
       incoming.on('aborted', () => fail(new WebError('WEB_NETWORK_ERROR')))

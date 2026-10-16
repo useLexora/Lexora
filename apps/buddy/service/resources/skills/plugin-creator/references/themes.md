@@ -52,7 +52,22 @@
 - `remove(id)` 删除用户主题。选择仍保留，直到再次可用或用户改选。
 - `setPreference({ id })` 保存当前主题；`id: 'system'` 表示跟随系统。
 - `beginPreview(archive)` 返回 `{token, revision}`；更新后使用 `updatePreview` 返回的新版本；`commitPreview` 保存为用户主题并选中；`cancelPreview(token)` 撤销。其他选择或新的预览使旧租约失效，插件卸载／关闭或应用重启不会保存未提交的预览。
-- `export(id)` 返回自包含 JSON 文本，`import(text)` 创建用户副本。`ThemeArchive.assets` 按相对路径保存图片 base64，最多 16 张，单图 4 MiB，整个传输 16 MiB。宿主持有副本，不依赖编辑器插件持续存在。
+- `export(id)` 返回自包含 JSON 文本，`import(text)` 创建用户副本。自包含 JSON 是兼容的导入导出格式，受 16 MiB 传输预算限制。日常保存和预览使用资源引用，图片不会内嵌在主题存储或快照中。
+
+`ThemeArchive.assets` 按文档中的图片相对路径提供来源：插件下载或已有本地资源用 `{resourceId: file.id}`，安装包图片用 `{packagePath: 'assets/background.jpg'}`。已有 Space 文件句柄也可直接作为 `resourceId`。这些资源复用已有授权，不逐张请求审批。宿主保存或预览时复制为主题独立持有的资产，源文件删除、下载副本回收或插件卸载不会破坏已保存主题。旧的 base64 来源继续读取，下一次保存转为文件资产。
+
+```ts
+const file = await context.network.download('https://example.com/background.jpg', { signal: context.signal })
+const theme = await context.themes.save({
+  schemaVersion: 1,
+  label: 'Wallpaper',
+  appearance: 'dark',
+  document: { schemaVersion: 1, materials: [{ anchor: 'workbench.pane', image: 'assets/background.jpg' }] },
+  assets: { 'assets/background.jpg': { resourceId: file.id } },
+})
+await context.resources.release(file)
+await context.themes.setPreference({ id: theme.id })
+```
 
 修改、导入或预览需要 `permissions.themeManagement: true`。导入文件通过视图 `resources.pickFiles/readText`；导出通过 `resources.saveFile({name: 'ocean.lexora-theme', data: new Blob([await context.themes.export(id)])})`，分别声明现有 `localResources` 与 `resourceExport` 权限。主题 API 不接受任意文件路径。
 

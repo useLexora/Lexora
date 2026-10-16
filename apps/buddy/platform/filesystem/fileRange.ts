@@ -1,4 +1,4 @@
-export function extensionResourceRange(size: number, raw: string | null): { start: number, end: number, status: number, headers: Record<string, string> } {
+export function fileRange(size: number, raw: string | null): { start: number, end: number, status: number, headers: Record<string, string> } {
   const headers: Record<string, string> = { 'accept-ranges': 'bytes', 'content-length': String(size) }
   if (!raw)
     return { start: 0, end: size - 1, status: 200, headers }
