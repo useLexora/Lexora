@@ -93,7 +93,7 @@ class FakeWebContents extends EventEmitter {
     toPNG: () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
   }))
 
-  readonly debugger = {
+  readonly debugger = Object.assign(new EventEmitter(), {
     attach: vi.fn(() => {
       this.debuggerAttached = true
     }),
@@ -109,7 +109,7 @@ class FakeWebContents extends EventEmitter {
         this.lifecycleState = params?.state as 'active' | 'frozen'
       return {}
     }),
-  }
+  })
 
   readonly focus = vi.fn()
   readonly loadURL = vi.fn(async (url: string) => {

@@ -1,3 +1,28 @@
+export const BROWSER_ELEMENT_PICKER_SCROLL_BINDING = '__lexoraElementPickerScrolled'
+
+export const BROWSER_ELEMENT_PICKER_SCROLL_SCRIPT = String.raw`function(bindingName, requestId) {
+  globalThis.__lexoraElementPickerScroll?.dispose();
+  let frame;
+  function changed() {
+    if (frame !== undefined) return;
+    frame = requestAnimationFrame(() => {
+      frame = undefined;
+      globalThis[bindingName](requestId);
+    });
+  }
+  function dispose() {
+    cancelAnimationFrame(frame);
+    removeEventListener('scroll', changed, true);
+    removeEventListener('resize', changed);
+    delete globalThis.__lexoraElementPickerScroll;
+  }
+  addEventListener('scroll', changed, true);
+  addEventListener('resize', changed);
+  globalThis.__lexoraElementPickerScroll = { dispose };
+}`
+
+export const BROWSER_ELEMENT_PICKER_SCROLL_CLEAR_SCRIPT = 'globalThis.__lexoraElementPickerScroll?.dispose()'
+
 export const BROWSER_ELEMENT_SNAPSHOT_SCRIPT = String.raw`function() {
   const element = this;
   if (!(element instanceof Element) || !element.isConnected || ['html', 'body', 'iframe', 'frame'].includes(element.localName))

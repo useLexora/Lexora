@@ -1,4 +1,5 @@
 import accountAvatarUrl from './assets/account-avatar.svg'
+import browserPickElementUrl from './assets/browser-pick-element.svg'
 import contextPanelActiveUrl from './assets/context-panel-active.svg'
 import contextPanelUrl from './assets/context-panel.svg'
 import deleteUrl from './assets/delete.svg'
@@ -28,6 +29,7 @@ import windowRestoreUrl from './assets/window-restore.svg'
 
 export const DESKTOP_ICON_URLS = {
   accountAvatar: accountAvatarUrl,
+  browserPickElement: browserPickElementUrl,
   contextPanel: contextPanelUrl,
   contextPanelActive: contextPanelActiveUrl,
   delete: deleteUrl,

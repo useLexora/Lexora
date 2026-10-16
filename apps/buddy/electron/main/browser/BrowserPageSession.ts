@@ -14,6 +14,7 @@ import { BrowserSecurityPolicy, isLoopbackBrowserUrl } from './BrowserSecurityPo
 import { SemanticBrowserDriver } from './SemanticBrowserDriver'
 
 export interface BrowserPage extends BrowserSecurityPage {
+  debugger: BrowserSecurityPage['debugger'] & Pick<WebContents['debugger'], 'on' | 'off'>
   isCurrentlyAudible: () => boolean
   getBackgroundThrottling: () => boolean
   setBackgroundThrottling: (allowed: boolean) => void
@@ -182,6 +183,9 @@ export class BrowserPageSession {
     this.page = page
     this.#connection = new BrowserDebugger(page.debugger)
     this.elementPicker = new BrowserElementPicker(this.#connection, () => page.getZoomFactor())
+    this.#listen(page.debugger, 'message', (_event: unknown, method: string, params: Record<string, unknown>) => {
+      this.elementPicker?.handleDebuggerMessage(method, params)
+    })
     this.#activity = new BrowserPageActivity({
       connection: this.#connection,
       getFreezeDelay: () => this.state.controller === 'human'
@@ -470,7 +474,7 @@ export class BrowserPageSession {
   }
 
   #listen<Args extends unknown[]>(
-    page: BrowserPage,
+    page: BrowserPage | BrowserPage['debugger'],
     event: string,
     listener: (...args: Args) => void,
   ): void {

@@ -7,7 +7,10 @@ import { BrowserDebugger } from '../BrowserDebugger'
 import { BrowserElementPicker } from '../BrowserElementPicker'
 
 function fixture(snapshot: unknown = { status: 'selected', text: browserQuote.text, element: browserQuote.element }) {
+  const viewport = { clientWidth: 200, clientHeight: 100, pageX: 0, pageY: 0 }
   const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+    if (method === 'Page.getFrameTree')
+      return { frameTree: { frame: { id: 'main-frame' } } }
     if (method === 'DOM.getNodeForLocation')
       return browserQuote.element.locator
     if (method === 'Page.createIsolatedWorld')
@@ -15,14 +18,14 @@ function fixture(snapshot: unknown = { status: 'selected', text: browserQuote.te
     if (method === 'DOM.resolveNode')
       return { object: { objectId: 'element' } }
     if (method === 'Page.getLayoutMetrics')
-      return { cssVisualViewport: { clientWidth: 200, clientHeight: 100, pageX: 0, pageY: 0 } }
+      return { cssVisualViewport: viewport }
     if (method === 'Runtime.callFunctionOn')
       return { result: { value: snapshot } }
     return {}
   })
   const picker = new BrowserElementPicker(new BrowserDebugger({ attach: vi.fn(), detach: vi.fn(), isAttached: () => true, sendCommand }), () => 2)
   const mouse = (type: string) => ({ type, button: 'left', x: 100, y: 80 } as MouseInputEvent)
-  return { picker, sendCommand, mouse }
+  return { picker, sendCommand, mouse, viewport }
 }
 describe('native browser element picker', () => {
   it.each([{ x: -0.1, y: 0.5 }, { x: 0.5, y: 1.1 }, { x: Number.NaN, y: 0.5 }, { x: 0.5, y: Number.POSITIVE_INFINITY }])('rejects an invalid transient menu anchor %j', (anchor) => {
@@ -62,6 +65,17 @@ describe('native browser element picker', () => {
     await vi.waitFor(() => expect(points).toEqual([{ x: 50, y: 40 }, { x: 90, y: 70 }]))
     f.picker.cancel()
     expect(await pending).toEqual({ status: 'cancelled' })
+    f.picker.dispose()
+  })
+  it('uses document coordinates for hover and selection while keeping the menu anchored in the viewport', async () => {
+    const f = fixture()
+    Object.assign(f.viewport, { pageX: 75.25, pageY: 400.25 })
+    const pending = f.picker.start('request')
+    f.picker.handleMouse({ ...f.mouse('mouseMove'), x: 100.6, y: 80.6 }, () => browserQuote.source)
+    await vi.waitFor(() => expect(f.sendCommand).toHaveBeenCalledWith('DOM.getNodeForLocation', { x: 126, y: 441 }))
+    f.picker.handleMouse(f.mouse('mouseDown'), () => browserQuote.source)
+    expect(await pending).toMatchObject({ status: 'selected', anchor: { x: 0.25, y: 0.4 } })
+    expect(f.sendCommand).toHaveBeenCalledWith('DOM.getNodeForLocation', { x: 125, y: 440 })
     f.picker.dispose()
   })
   it('cancels with Esc and only the matching token; late cancellation cannot cancel a new run', async () => {
