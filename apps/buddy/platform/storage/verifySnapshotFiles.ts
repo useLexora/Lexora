@@ -1,8 +1,10 @@
 import type { SnapshotManifest } from '../../shared/storage/snapshot'
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { snapshotStoredBytes } from '../../shared/storage/snapshot'
+import { consumeSnapshotFile } from './snapshotFile'
 import { storageError } from './storageFiles'
-import { hashStorageFile, walkStorage } from './storageTree'
+import { walkStorage } from './storageTree'
 
 export async function verifySnapshotFiles(directory: string, manifest: SnapshotManifest, signal: AbortSignal): Promise<void> {
   const root = join(directory, 'files')
@@ -15,8 +17,11 @@ export async function verifySnapshotFiles(directory: string, manifest: SnapshotM
     const recorded = expected.get(entry.path)
     if (entry.link !== null || !recorded || entry.directory !== (recorded.kind === 'directory'))
       throw storageError('SNAPSHOT_UNEXPECTED_FILE')
-    if (recorded.kind === 'file' && (entry.size !== recorded.size || await hashStorageFile(join(root, entry.path), signal) !== recorded.hash))
-      throw storageError('SNAPSHOT_CHECKSUM_FAILED')
+    if (recorded.kind === 'file') {
+      if (entry.size !== snapshotStoredBytes(recorded))
+        throw storageError('SNAPSHOT_CHECKSUM_FAILED')
+      await consumeSnapshotFile(directory, recorded, signal, () => {})
+    }
     expected.delete(entry.path)
   }
   if (expected.size)

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, expect, it } from 'vitest'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
+import { extractSnapshotFiles } from '../../../../platform/storage/extractSnapshotFiles'
 import { writeStorageJson } from '../../../../platform/storage/storageFiles'
 import { StorageLocationStore } from '../../../../platform/storage/StorageLocationStore'
 import { AutomationService } from '../../automations/AutomationService'
@@ -44,7 +45,9 @@ it('creates portable snapshots without credentials or recursive backups and rest
   expect(snapshot.excludedLinks).toBe(1)
   expect(snapshot.files.every(entry => !/secrets|device\/fixture|exports/.test(entry.path))).toBe(true)
   expect(await verifyStorageSnapshot(snapshotDirectory(root, snapshot.id), signal)).toEqual(snapshot)
-  const copy = openBuddyDatabase({ databasePath: join(snapshotDirectory(root, snapshot.id), 'files', 'buddy', 'buddy.sqlite3') })
+  const extracted = join(directory, 'snapshot-files')
+  await extractSnapshotFiles(snapshotDirectory(root, snapshot.id), extracted, snapshot, { signal, report: () => {}, privateDirectoriesExecutable })
+  const copy = openBuddyDatabase({ databasePath: join(extracted, 'buddy', 'buddy.sqlite3') })
   expect(copy.prepare('SELECT request_headers_json FROM provider_states').get()?.request_headers_json).toBe('[]')
   const restoredAutomations = new AutomationService({ repositories: createAutomationRepositories(copy) })
   expect(restoredAutomations.get(automation.id)?.status).toBe('paused')

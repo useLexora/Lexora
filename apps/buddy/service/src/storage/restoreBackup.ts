@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { restoreExtensionBackup } from '../../../platform/extensions/restoreExtensionBackup'
+import { extractSnapshotFiles } from '../../../platform/storage/extractSnapshotFiles'
 import { isMissing, readStorageJson, storageError, syncStorageFile, writeStorageJson } from '../../../platform/storage/storageFiles'
 import { restoreCredentialStage } from '../../../platform/storage/storageOperationFiles'
 import { copyStorageTree, syncStorageDirectories } from '../../../platform/storage/storageTree'
@@ -28,7 +29,7 @@ export async function prepareBackupRestore(operation: StorageOperation, stage: s
   const incoming = join(stage, 'incoming')
   const options = { signal, report, privateDirectoriesExecutable }
   await copyStorageTree(join(operation.source, 'buddy'), join(candidate, 'buddy'), { ...options, destinationRoot: join(operation.target, 'buddy') })
-  await copyStorageTree(join(directory, 'files'), incoming, { ...options, exclude: path => !backupDirectoryAllowed(path, scopes) })
+  await extractSnapshotFiles(directory, incoming, manifest, { ...options, exclude: path => !backupDirectoryAllowed(path, scopes) })
   const sourcePath = join(incoming, 'buddy', 'buddy.sqlite3')
   const targetPath = join(candidate, 'buddy', 'buddy.sqlite3')
   const source = openBuddyDatabase({ databasePath: sourcePath })

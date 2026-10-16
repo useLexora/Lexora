@@ -3,11 +3,13 @@ import type { BackupOptions } from '../../../shared/storage/backupScope'
 import type { StorageSummary } from '../../../shared/storage/storageApi'
 import type { DesktopRuntimeHost } from '../app/DesktopRuntimeHost'
 import type { DesktopEnvironment } from '../app/typing'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { readFile, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { decryptBackupCredentials, encryptBackupCredentials } from '../../../platform/storage/backupEncryption'
 import { copySnapshot } from '../../../platform/storage/copySnapshot'
+import { consumeSnapshotFile } from '../../../platform/storage/snapshotFile'
 import { readSnapshotManifest, SnapshotRepository } from '../../../platform/storage/SnapshotRepository'
 import { assertStorageIdentity } from '../../../platform/storage/StorageLocationStore'
 import { restoreCredentialStage } from '../../../platform/storage/storageOperationFiles'
@@ -104,7 +106,14 @@ export class StorageBackupService {
     try {
       if (options.credentials) {
         await verifySnapshotFiles(this.snapshots.directory(id), manifest, this.controller.signal)
-        const value = await decryptBackupCredentials(await readFile(join(this.snapshots.directory(id), 'files', 'credentials.enc')), options.password!)
+        const entry = manifest.files.find(entry => entry.kind === 'file' && entry.path === 'credentials.enc')
+        if (entry?.kind !== 'file' || entry.size > 24 * 1024 * 1024)
+          throw new Error('SNAPSHOT_INVALID_CREDENTIALS')
+        const bytes: Uint8Array[] = []
+        await consumeSnapshotFile(this.snapshots.directory(id), entry, this.controller.signal, (chunk) => {
+          bytes.push(chunk)
+        })
+        const value = await decryptBackupCredentials(Buffer.concat(bytes), options.password!)
         await stageBackupCredentials(stage, value, options.scopes)
       }
       await store.request('restore', (await store.read()).activeRoot, [], id, options.scopes, options.credentials, operationId)

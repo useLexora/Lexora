@@ -5,6 +5,7 @@ import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { SNAPSHOT_CHUNK_BYTES, SNAPSHOT_MANIFEST_BYTES, snapshotSummary } from '../../shared/storage/snapshot'
 import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
+import { readSnapshotChunks } from '../storage/snapshotFile'
 import { collectSnapshotCatalog, encodeSnapshotManifest, parseSnapshotManifest, SnapshotRepository, writeSnapshotManifest } from '../storage/SnapshotRepository'
 import { isMissing, syncStorageDirectory } from '../storage/storageFiles'
 import { syncStorageDirectories } from '../storage/storageTree'
@@ -50,29 +51,11 @@ export class SnapshotTransfer {
     for (const entry of manifest.files) {
       if (entry.kind !== 'file')
         continue
-      const file = await open(join(directory, 'files', entry.path), 'r')
-      try {
-        let offset = 0
-        for (const chunk of entry.chunks) {
-          signal.throwIfAborted()
-          const bytes = new Uint8Array(chunk.size)
-          let filled = 0
-          while (filled < bytes.length) {
-            const { bytesRead } = await file.read(bytes, filled, bytes.length - filled, offset + filled)
-            if (!bytesRead)
-              throw new Error('SYNC_SNAPSHOT_CHANGED')
-            filled += bytesRead
-          }
-          if (hash(bytes) !== chunk.hash)
-            throw new Error('SYNC_SNAPSHOT_CHANGED')
-          await this.adapter.write(chunkKey(manifest, chunk.hash), bytes, signal)
-          offset += filled
-          completed += filled
-          this.progress(completed, total)
-        }
-      }
-      finally {
-        await file.close()
+      let index = 0
+      for await (const bytes of readSnapshotChunks(directory, entry, signal)) {
+        await this.adapter.write(chunkKey(manifest, entry.chunks[index++]!.hash), bytes, signal)
+        completed += bytes.length
+        this.progress(completed, total)
       }
     }
     signal.throwIfAborted()
@@ -109,25 +92,22 @@ export class SnapshotTransfer {
         }
         await mkdir(dirname(path), { recursive: true, mode: 0o700 })
         const file = await open(path, 'wx', entry.executable ? 0o700 : 0o600)
-        const digest = createHash('sha256')
         try {
           for (const chunk of entry.chunks) {
             const bytes = await this.adapter.read(chunkKey(manifest, chunk.hash), SNAPSHOT_CHUNK_BYTES, signal)
             if (!bytes || bytes.length !== chunk.size || hash(bytes) !== chunk.hash)
               throw new Error('SYNC_CHECKSUM_FAILED')
-            digest.update(bytes)
             await file.writeFile(bytes)
             completed += bytes.length
             this.progress(completed, total)
           }
           await file.sync()
-          if (digest.digest('hex') !== entry.hash)
-            throw new Error('SYNC_CHECKSUM_FAILED')
         }
         finally {
           await file.close()
         }
       }
+      await verifySnapshotFiles(stage, manifest, signal)
       await writeSnapshotManifest(stage, manifest)
       signal.throwIfAborted()
       await syncStorageDirectories(stage)

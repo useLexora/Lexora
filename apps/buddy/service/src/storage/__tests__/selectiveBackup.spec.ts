@@ -9,6 +9,7 @@ import { parse } from 'smol-toml'
 import { afterEach, expect, it, vi } from 'vitest'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
 import { copySnapshot } from '../../../../platform/storage/copySnapshot'
+import { extractSnapshotFiles } from '../../../../platform/storage/extractSnapshotFiles'
 import { writeStorageJson } from '../../../../platform/storage/storageFiles'
 import { StorageLocationStore } from '../../../../platform/storage/StorageLocationStore'
 import { restoreCredentialStage } from '../../../../platform/storage/storageOperationFiles'
@@ -188,7 +189,9 @@ it('backs up workspace files with minimal owner metadata, without task messages 
   await mkdir(join(f.root, 'buddy/conversations/owner/workspace'), { recursive: true })
   await writeFile(join(f.root, 'buddy/conversations/owner/workspace/result.txt'), 'workspace result')
   const snapshot = await f.snapshot(['workspaces'])
-  const backup = openBuddyDatabase({ databasePath: join(snapshotDirectory(f.root, snapshot.id), 'files/buddy/buddy.sqlite3') })
+  const extracted = join(f.directory, 'workspace-backup')
+  await extractSnapshotFiles(snapshotDirectory(f.root, snapshot.id), extracted, snapshot, { signal, report, privateDirectoriesExecutable })
+  const backup = openBuddyDatabase({ databasePath: join(extracted, 'buddy/buddy.sqlite3') })
   expect(backup.prepare('SELECT id FROM conversations').all()).toEqual([{ id: 'owner' }])
   expect(backup.prepare('SELECT COUNT(*) AS count FROM messages').get()?.count).toBe(0)
   expect(backup.prepare('SELECT id FROM conversation_branches').all()).toEqual([{ id: 'branch' }])

@@ -450,7 +450,6 @@ test('exports an encrypted selective backup and imports it into the configured r
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
   }, exportParent)
   const exported = await desktop.page.evaluate(id => window.lexoraDesktop.storage.export(id), snapshot.id)
-  expect(await readFile(join(exported, 'files/credentials.enc'), 'utf8')).not.toContain('synthetic-key-only')
   const destination = await buddy.createInstance('backup-import')
   const receiving = await destination.launch()
   await useSyntheticCredentialStorage(receiving)

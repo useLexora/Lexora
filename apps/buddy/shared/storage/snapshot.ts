@@ -7,11 +7,11 @@ export const SNAPSHOT_MANIFEST_BYTES = 64 * 1024 * 1024
 export const snapshotPathSchema = z.string().min(1).max(4096).refine(path => !path.includes('\\') && path.split('/').every(part => part && part !== '.' && part !== '..' && !Array.from(part).some(character => character.charCodeAt(0) < 32) && !/[:<>"|?*]/.test(part) && !/[. ]$/.test(part) && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)))
 export const snapshotChunkSchema = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(SNAPSHOT_CHUNK_BYTES) }).strict()
 export const snapshotFileSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('file'), path: snapshotPathSchema, size: z.number().int().nonnegative(), hash: z.string().regex(/^[a-f0-9]{64}$/), chunks: z.array(snapshotChunkSchema), executable: z.boolean() }).strict(),
+  z.object({ kind: z.literal('file'), path: snapshotPathSchema, size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), hash: z.string().regex(/^[a-f0-9]{64}$/), chunks: z.array(snapshotChunkSchema), executable: z.boolean(), compression: z.literal('gzip').optional() }).strict(),
   z.object({ kind: z.literal('directory'), path: snapshotPathSchema }).strict(),
 ])
 export const snapshotManifestSchema = z.object({
-  version: z.literal(3),
+  version: z.union([z.literal(3), z.literal(4)]),
   automatic: z.uuid().optional(),
   scopes: backupSelectionSchema,
   credentials: z.boolean(),
@@ -33,8 +33,11 @@ export const snapshotManifestSchema = z.object({
     if (['config.toml', 'device/sync.json', 'credentials.enc'].includes(entry.path) && entry.kind !== 'file')
       context.addIssue({ code: 'custom', message: 'Invalid snapshot file' })
     paths.set(normalized, entry.kind)
-    if (entry.kind === 'file' && entry.chunks.reduce((total, chunk) => total + chunk.size, 0) !== entry.size)
-      context.addIssue({ code: 'custom', message: 'Invalid snapshot length' })
+    if (entry.kind === 'file') {
+      const stored = snapshotStoredBytes(entry)
+      if (entry.compression ? manifest.version === 3 || stored === 0 || stored >= entry.size : stored !== entry.size)
+        context.addIssue({ code: 'custom', message: 'Invalid snapshot length or compression' })
+    }
   }
   for (const path of paths.keys()) {
     let parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
@@ -50,6 +53,10 @@ export const snapshotManifestSchema = z.object({
     context.addIssue({ code: 'custom', message: 'Missing snapshot database' })
 })
 export type SnapshotManifest = z.infer<typeof snapshotManifestSchema>
+export type SnapshotFile = Extract<z.infer<typeof snapshotFileSchema>, { kind: 'file' }>
+export function snapshotStoredBytes(entry: SnapshotFile): number {
+  return entry.chunks.reduce((total, chunk) => total + chunk.size, 0)
+}
 export interface SnapshotSummary {
   automatic?: string
   scopes: BackupScope[]
@@ -66,5 +73,5 @@ export interface SnapshotCatalog {
   cleanupError?: boolean
 }
 export function snapshotSummary(manifest: SnapshotManifest): SnapshotSummary {
-  return { ...(manifest.automatic ? { automatic: manifest.automatic } : {}), scopes: manifest.scopes, credentials: manifest.credentials, id: manifest.id, createdAt: manifest.createdAt, files: manifest.files.filter(entry => entry.kind === 'file').length, bytes: manifest.files.reduce((sum, entry) => sum + (entry.kind === 'file' ? entry.size : 0), 0), excludedLinks: manifest.excludedLinks }
+  return { ...(manifest.automatic ? { automatic: manifest.automatic } : {}), scopes: manifest.scopes, credentials: manifest.credentials, id: manifest.id, createdAt: manifest.createdAt, files: manifest.files.filter(entry => entry.kind === 'file').length, bytes: manifest.files.reduce((sum, entry) => sum + (entry.kind === 'file' ? snapshotStoredBytes(entry) : 0), 0), excludedLinks: manifest.excludedLinks }
 }

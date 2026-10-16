@@ -48,11 +48,7 @@ async function cleanup() {
 
 <template>
   <DesktopSettingRow v-slot="{ controlAttrs }" :label="text('本地备份保留数量', 'Local backup limit')" :description="text('下次成功备份后清理超额副本。待上传或恢复的副本暂时保留，云端和导出副本不受影响。', 'Older copies are removed after the next successful backup. Pending uploads and restores are retained. Cloud backups and exported copies are kept.')" toggle>
-    <NInputNumber class="w-28" :input-props="{ ...controlAttrs, 'role': 'spinbutton', 'aria-valuemin': 1, 'aria-valuemax': 10, 'aria-valuenow': limit }" :value="limit" :min="1" :max="10" :precision="0" :update-value-on-input="false" :disabled="storage.busy.value || !!storage.summary.value?.pending || pending.has('localBackupLimit')" @update:value="updateLimit">
-      <template #suffix>
-        {{ text('份', 'copies') }}
-      </template>
-    </NInputNumber>
+    <NInputNumber class="w-28 shrink-0" :input-props="{ ...controlAttrs, 'role': 'spinbutton', 'aria-valuemin': 1, 'aria-valuemax': 10, 'aria-valuenow': limit }" :value="limit" :min="1" :max="10" :precision="0" :update-value-on-input="false" :disabled="storage.busy.value || !!storage.summary.value?.pending || pending.has('localBackupLimit')" @update:value="updateLimit" />
   </DesktopSettingRow>
   <NModal v-model:show="showCleanup" preset="dialog" type="warning" :title="cleanupTitle" :aria-labelledby="cleanupTitleId" :content="text(`保留数量已调整为 ${limit} 份，现有备份尚未删除。下次成功备份后会自动清理，也可以现在处理。`, `The limit is now ${limit}. Existing backups have not been deleted. Older copies will be removed after the next successful backup, or you can clean them up now.`)" :positive-text="text('立即清理', 'Clean up now')" :negative-text="text('下次备份时处理', 'With next backup')" :closable="!storage.busy.value" :mask-closable="!storage.busy.value" :close-on-esc="!storage.busy.value" :positive-button-props="{ loading: storage.busy.value, disabled: storage.busy.value }" :negative-button-props="{ disabled: storage.busy.value }" @positive-click="cleanup">
     <template #header>

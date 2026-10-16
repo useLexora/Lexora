@@ -7,7 +7,7 @@ import process from 'node:process'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { expect, it } from 'vitest'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
-import { snapshotManifestSchema } from '../../../shared/storage/snapshot'
+import { snapshotManifestSchema, snapshotSummary } from '../../../shared/storage/snapshot'
 import { SnapshotRepository, writeSnapshotManifest } from '../../storage/SnapshotRepository'
 import { writeStorageJson } from '../../storage/storageFiles'
 import { SnapshotTransfer } from '../SnapshotTransfer'
@@ -72,11 +72,16 @@ it('never publishes a failed upload or activates corrupted downloaded bytes', as
   await expect(new SnapshotTransfer(adapter, destination, () => { }, privateDirectoriesExecutable).download(id, signal)).rejects.toThrow('SYNC_CHECKSUM_FAILED')
   expect(await readdir(destination)).toEqual([])
 })
-it('rejects traversal, file/directory collisions and device-only files in remote manifests', async () => {
+it('validates backup versions, stored lengths and allowed paths in remote manifests', async () => {
   const { manifest } = await fixture()
   for (const path of ['buddy/../secrets', 'buddy/conversations/a/../../bad', 'buddy/secrets/key', 'buddy/agent/auth.json', 'buddy/conversations/CON', 'buddy/conversations/x:stream'])
     expect(snapshotManifestSchema.safeParse({ ...manifest, files: [...manifest.files, { kind: 'directory', path }] }).success).toBe(false)
   expect(snapshotManifestSchema.safeParse({ ...manifest, files: [...manifest.files, { kind: 'file', path: 'buddy/buddy.sqlite3/evil', size: 0, hash: 'a'.repeat(64), chunks: [] }] }).success).toBe(false)
+  const compressed = { ...manifest, version: 4, files: manifest.files.map(entry => entry.kind === 'file' ? { ...entry, compression: 'gzip', chunks: [{ hash: entry.hash, size: 1 }] } : entry) }
+  const parsed = snapshotManifestSchema.parse(compressed)
+  expect(snapshotSummary(parsed).bytes).toBe(1)
+  expect(snapshotManifestSchema.safeParse({ ...compressed, version: 3 }).success).toBe(false)
+  expect(snapshotManifestSchema.safeParse({ ...compressed, files: compressed.files.map(entry => entry.kind === 'file' ? { ...entry, compression: undefined } : entry) }).success).toBe(false)
 })
 it('reads namespaced WebDAV responses and refuses credentials on redirects', async () => {
   const id = randomUUID()

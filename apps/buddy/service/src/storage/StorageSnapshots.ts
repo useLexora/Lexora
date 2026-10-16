@@ -1,16 +1,17 @@
 import type { StorageReporter } from '../../../platform/storage/storageTree'
 import type { BackupOptions } from '../../../shared/storage/backupScope'
 import type { SnapshotManifest } from '../../../shared/storage/snapshot'
-import { createHash, randomUUID } from 'node:crypto'
-import { lstat, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ensurePrivateDirectories } from '../../../platform/filesystem/privateDirectories'
+import { packSnapshotFile } from '../../../platform/storage/snapshotFile'
 import { readSnapshotManifest, writeSnapshotManifest } from '../../../platform/storage/SnapshotRepository'
 import { storageError, syncStorageDirectory, syncStorageFile } from '../../../platform/storage/storageFiles'
 import { copyStorageTree, syncStorageDirectories, walkStorage } from '../../../platform/storage/storageTree'
 import { verifySnapshotFiles } from '../../../platform/storage/verifySnapshotFiles'
 import { backupDirectoryAllowed, backupScopes } from '../../../shared/storage/backupScope'
-import { SNAPSHOT_CHUNK_BYTES, snapshotManifestSchema } from '../../../shared/storage/snapshot'
+import { snapshotManifestSchema } from '../../../shared/storage/snapshot'
 import { selectBackupDatabase } from './backupDatabase'
 import { portableSettings } from './backupSettings'
 import { openBuddyDatabase } from './database'
@@ -74,37 +75,13 @@ export async function createStorageSnapshot(root: string, dataId: string, signal
       }
       if (entry.link !== null)
         throw storageError('SNAPSHOT_INVALID_LINK')
-      const file = await open(join(stage, 'files', entry.path), 'r')
-      const chunks: Array<{
-        hash: string
-        size: number
-      }> = []
-      const hash = createHash('sha256')
-      try {
-        let offset = 0
-        while (offset < entry.size) {
-          signal.throwIfAborted()
-          const buffer = new Uint8Array(Math.min(SNAPSHOT_CHUNK_BYTES, entry.size - offset))
-          let filled = 0
-          while (filled < buffer.length) {
-            const { bytesRead } = await file.read(buffer, filled, buffer.length - filled, offset + filled)
-            if (!bytesRead)
-              throw storageError('SNAPSHOT_FILE_CHANGED')
-            filled += bytesRead
-          }
-          hash.update(buffer)
-          chunks.push({ hash: createHash('sha256').update(buffer).digest('hex'), size: filled })
-          offset += filled
-        }
-      }
-      finally {
-        await file.close()
-      }
-      files.push({ kind: 'file', path: entry.path, size: entry.size, hash: hash.digest('hex'), chunks, executable: entry.executable })
+      files.push({ kind: 'file', path: entry.path, executable: entry.executable, ...await packSnapshotFile(join(stage, 'files', entry.path), entry.size, entry.executable, signal) })
     }
-    const manifest = snapshotManifestSchema.parse({ version: 3, ...(options.automatic ? { automatic: options.automatic } : {}), scopes: options.scopes, credentials: !!encryptedCredentials, id, dataId, sourceRoot: root, createdAt: new Date().toISOString(), databaseVersion: BUDDY_SCHEMA_VERSION, files, excludedLinks })
+    const manifest = snapshotManifestSchema.parse({ version: 4, ...(options.automatic ? { automatic: options.automatic } : {}), scopes: options.scopes, credentials: !!encryptedCredentials, id, dataId, sourceRoot: root, createdAt: new Date().toISOString(), databaseVersion: BUDDY_SCHEMA_VERSION, files, excludedLinks })
+    await verifySnapshotFiles(stage, manifest, signal)
     await writeSnapshotManifest(stage, manifest)
     await syncStorageDirectories(stage)
+    signal.throwIfAborted()
     await rename(stage, directory)
     await syncStorageDirectory(join(root, 'exports', 'snapshots'))
     return manifest
