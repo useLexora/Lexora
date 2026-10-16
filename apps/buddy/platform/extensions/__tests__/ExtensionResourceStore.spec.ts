@@ -1,8 +1,11 @@
 import { Buffer } from 'node:buffer'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
+import { promisify } from 'node:util'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, expect, it } from 'vitest'
 import { fileRange } from '../../filesystem/fileRange'
@@ -171,9 +174,15 @@ it('reads sparse media beyond 2 GiB without buffering the file', async () => {
   const path = join(f.root, 'large.mp4')
   const file = await open(path, 'w')
   const offset = 3 * 1024 ** 3
-  await file.truncate(offset + 4)
-  await file.write(Buffer.from('tail'), 0, 4, offset)
-  await file.close()
+  try {
+    if (process.platform === 'win32')
+      await promisify(execFile)('fsutil.exe', ['sparse', 'setflag', path], { windowsHide: true, timeout: 5000 })
+    await file.truncate(offset + 4)
+    await file.write(Buffer.from('tail'), 0, 4, offset)
+  }
+  finally {
+    await file.close()
+  }
   const [resource] = await f.store.grant('tests.resources', [path], () => {})
   expect(resource!.size).toBe(offset + 4)
   const result = await f.store.readBytes('tests.resources', resource!.id, offset, 4, f.lifetime.signal)
