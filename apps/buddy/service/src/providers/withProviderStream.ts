@@ -5,6 +5,7 @@ import { lazyStream } from '@earendil-works/pi-ai'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { diagnosticResponseType, diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
+import { readOpenAiUsage, reconcileOpenAiUsage } from './providerUsage'
 
 export const MODEL_PROGRESS_TIMEOUT_MS = 5 * 60 * 1000
 export const INFERRED_STREAM_COMPLETION = 'model.stream.completion_inferred'
@@ -24,6 +25,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
   let startedAt = performance.now()
   let receivedDone = false
   let finished = false
+  let reportedUsage: ReturnType<typeof readOpenAiUsage>
   const observedResponse = (status: number, headers: Headers) => {
     evidence.responseObserved = true
     evidence.status = status
@@ -33,6 +35,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
   const request = options?.fetch ?? globalThis.fetch
   const fetch: typeof globalThis.fetch = async (input, init) => {
     receivedDone = false
+    reportedUsage = undefined
     Object.assign(evidence, { responseObserved: false, status: undefined, responseType: undefined, responseMs: undefined, doneMarker: 'unknown', failureStage: undefined, transportCode: undefined })
     let response: Response
     try {
@@ -82,7 +85,15 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     finished = true
     if (failed && !evidence.failureStage)
       evidence.failureStage = evidence.status && evidence.status >= 400 ? 'http' : evidence.doneMarker !== 'unknown' || evidence.contentEvents! > 0 ? 'stream' : 'unknown'
-    report({ ...context, event: `provider.request.${cancelled ? 'cancelled' : failed ? 'failed' : 'completed'}`, level: cancelled ? 'info' : failed ? 'error' : evidence.completion === 'inferred' ? 'warn' : 'info', durationMs: Math.round(performance.now() - startedAt), providerRequest: { ...evidence } })
+    report({ ...context, event: `provider.request.${cancelled ? 'cancelled' : failed ? 'failed' : 'completed'}`, level: cancelled ? 'info' : failed ? 'error' : evidence.completion === 'inferred' || evidence.usage?.reconciliation === 'inconsistent' ? 'warn' : 'info', durationMs: Math.round(performance.now() - startedAt), providerRequest: { ...evidence } })
+  }
+
+  function reconcileUsage(message: AssistantMessage): AssistantMessage {
+    if (!reportedUsage)
+      return message
+    const result = reconcileOpenAiUsage(model, message, reportedUsage)
+    evidence.usage = result.diagnostic
+    return result.message
   }
 
   async function* finish(): AsyncIterable<AssistantMessageEvent> {
@@ -108,6 +119,8 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     let iterator: AsyncIterator<AssistantMessageEvent> | undefined
     try {
       const source = start({ ...options, fetch, signal, onProviderStreamEvent: async (event, responseModel) => {
+        if (model.api === 'openai-completions')
+          reportedUsage = readOpenAiUsage(event) ?? reportedUsage
         if (hasProviderProgress(event))
           progress()
         await options?.onProviderStreamEvent?.(event, responseModel)
@@ -168,6 +181,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
         if (event.type === 'done' || event.type === 'error') {
           ended = true
           clearTimeout(timer)
+          event = event.type === 'done' ? { ...event, message: reconcileUsage(event.message) } : { ...event, error: reconcileUsage(event.error) }
           const message = event.type === 'done' ? event.message : event.error
           evidence.textCharacters = message.content.reduce((count, block) => count + (block.type === 'text' ? block.text.length : 0), 0)
           evidence.toolCalls = message.content.filter(block => block.type === 'toolCall').length
@@ -188,8 +202,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
       ended = true
       clearTimeout(timer)
       evidence.completion = evidence.contentEvents! > 0 ? 'incomplete' : 'unknown'
-      recordEnd(true, options?.signal?.aborted)
-      const message: AssistantMessage = {
+      const message = reconcileUsage({
         ...latest ?? {
           role: 'assistant',
           api: model.api,
@@ -201,7 +214,8 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
         },
         stopReason: options?.signal?.aborted ? 'aborted' : 'error',
         errorMessage: options?.signal?.aborted ? 'Request aborted' : error instanceof Error ? error.message : String(error),
-      }
+      })
+      recordEnd(true, options?.signal?.aborted)
       yield { type: 'error', reason: options?.signal?.aborted ? 'aborted' : 'error', error: message }
     }
     finally {

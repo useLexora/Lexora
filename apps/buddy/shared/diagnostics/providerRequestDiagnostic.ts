@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+const tokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
+
 export const providerRequestDiagnosticSchema = z.object({
   operation: z.enum(['completion', 'models']),
   api: z.enum(['openai-completions', 'openai-responses', 'other']),
@@ -13,6 +15,11 @@ export const providerRequestDiagnosticSchema = z.object({
   toolCalls: z.number().int().nonnegative().optional(),
   doneMarker: z.enum(['observed', 'not_observed', 'unknown']).optional(),
   completion: z.enum(['sdk', 'inferred', 'incomplete', 'unknown']).optional(),
+  usage: z.object({
+    reported: z.object({ promptTokens: tokenCount, completionTokens: tokenCount, reasoningTokens: tokenCount, cacheReadTokens: tokenCount, cacheWriteTokens: tokenCount, totalTokens: tokenCount }).strict(),
+    normalized: z.object({ inputTokens: tokenCount, outputTokens: tokenCount, reasoningTokens: tokenCount, cacheReadTokens: tokenCount, cacheWriteTokens: tokenCount, totalTokens: tokenCount }).strict(),
+    reconciliation: z.enum(['unchanged', 'reasoning_included', 'inconsistent']),
+  }).strict().optional(),
   failureStage: z.enum(['request', 'http', 'decode', 'schema', 'stream', 'unknown']).optional(),
   transportCode: z.enum(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ABORTED', 'UNKNOWN']).optional(),
 }).strict()
