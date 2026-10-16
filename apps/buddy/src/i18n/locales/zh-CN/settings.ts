@@ -38,7 +38,7 @@ export default {
   'desktop.settings.runtime.retryCountUnit': '次',
   'desktop.settings.runtime.toolExecution': '工具执行',
   'desktop.settings.runtime.codemode': 'Codemode 工具编排',
-  'desktop.settings.runtime.codemodeDescription': '允许模型通过代码编排各类工具并过滤结果，减少上下文消耗。默认关闭，从下一次运行生效；所有调用仍遵循任务权限。',
+  'desktop.settings.runtime.codemodeDescription': '开启后，模型通过代码调用普通工具，可合批查询并过滤结果。默认关闭，从下一次运行生效；所有调用仍遵循任务权限。',
   'desktop.settings.runtime.taskPermissions': '任务权限',
   'desktop.settings.runtime.defaultPermissionMode': '新任务权限',
   'desktop.settings.runtime.defaultPermissionModeDescription': '新建任务时使用所选权限；已有任务（包括未发送的草稿）保持当前设置。',

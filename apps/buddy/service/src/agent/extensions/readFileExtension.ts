@@ -18,7 +18,7 @@ export function createBuddyReadTool(cwd: string, options?: Pick<ReadToolOptions,
   const tool: ToolDefinition<typeof native.parameters, BuddyReadToolDetails | undefined> = {
     ...native,
     description: `${native.description}\nBOM-marked UTF-16 text is decoded. Recognized media, PDF, and archive/container formats return metadata with a notice that no content was extracted. Use native content for the sent snapshot when supplied, or a format-aware tool for the current file. For byte inspection, use a bounded hex dump.`,
-    promptGuidelines: ['Use read for text and supported images instead of cat or sed. read does not play audio or video or extract document contents.'],
+    promptGuidelines: ['Use read for text and supported images instead of cat or sed. For a known location in a large text file, set offset and limit to read the relevant lines; read a small file in full when needed. read does not play audio or video or extract document contents.'],
     async execute(toolCallId, parameters, signal, onUpdate, context) {
       signal?.throwIfAborted()
       const path = filePaths.resolveInput(parameters.path, context.cwd || cwd)

@@ -6,7 +6,7 @@ import type { BuddySessionExtensionServices } from '../../extensions/createBuddy
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { createCodemodeExtension, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -15,10 +15,11 @@ import { ApprovalCancelledError } from '../../../approvals/ApprovalService'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { FileResourceCoordinator } from '../../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../../files/NativeFileEngine'
+import { createEstimatedContextUsage } from '../../context/contextUsageBreakdown'
 import { CODEMODE_EXTENSION } from '../../extensions/codemodeExtension'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
 import { createReusableBuddySession } from '../createReusableBuddySession'
-import { createIsolatedBuddySession } from './isolatedBuddySession'
+import { createIsolatedBuddyContextSnapshot, createIsolatedBuddySession } from './isolatedBuddySession'
 
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -31,7 +32,7 @@ describe('codemode runtime preference', () => {
     const fixture = await createFixture()
     fixture.apply(true)
     await fixture.turn({ name: 'codemode', arguments: { code: 'text({ callable: "lexora_agents" in tools, listed: ALL_TOOLS.some(tool => tool.name === "lexora_agents") });' } })
-    expect(fixture.session.getActiveToolNames()).toContain('lexora_agents')
+    expect(fixture.requests.at(-1)?.names).toContain('lexora_agents')
     expect(fixture.lastResult()).toContain('"callable":false')
     expect(fixture.lastResult()).toContain('"listed":false')
     await fixture.turn({ name: 'lexora_agents', arguments: { operation: 'status' } })
@@ -41,14 +42,28 @@ describe('codemode runtime preference', () => {
   it('cannot be enabled through discovery or expose host globals', async () => {
     const fixture = await createFixture()
     await fixture.turn({ name: 'lexora_tool_search', arguments: { toolNames: ['codemode'] } })
-    expect(fixture.session.getActiveToolNames()).not.toContain('codemode')
+    expect(fixture.requests.at(-1)?.names).not.toContain('codemode')
     expect(fixture.lastResult()).toContain('"notFound":["codemode"]')
+    expect(fixture.requests.at(-1)?.prompt).not.toMatch(/\b(?:searchTools|describeNamespace)\b/)
 
     fixture.apply(true)
     await fixture.turn({ name: 'codemode', arguments: { code: 'text({ node: typeof process, network: typeof fetch, models: typeof models });' } })
     expect(fixture.lastResult()).toContain('"node":"undefined"')
     expect(fixture.lastResult()).toContain('"network":"undefined"')
     expect(fixture.lastResult()).toContain('"models":"undefined"')
+    expect(fixture.requests.at(-1)?.names).toContain('codemode')
+    expect(fixture.requests.at(-1)?.names).not.toContain('read')
+    expect(fixture.requests.at(-1)?.prompt).toContain('describeNamespace')
+
+    fixture.apply(false)
+    await fixture.turn()
+    expect(fixture.requests.at(-1)?.names).not.toContain('codemode')
+    expect(fixture.requests.at(-1)?.names).toContain('read')
+    expect(fixture.requests.at(-1)?.prompt).not.toMatch(/\b(?:searchTools|describeNamespace)\b/)
+
+    fixture.apply(true)
+    await fixture.turn()
+    expect((await fixture.preview())?.toolTokens).toBe(fixture.requests.at(-1)?.toolTokens)
   })
 
   it('authorizes nested tools individually and keeps their parent and bounded journal records', async () => {
@@ -230,7 +245,9 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   let nextCall: Pick<ToolCall, 'name' | 'arguments'> | undefined
   let first = false
   let run = 0
-  vi.spyOn(runtime, 'streamSimple').mockImplementation((target) => {
+  const requests: { prompt: string, names: string[], toolTokens: number }[] = []
+  vi.spyOn(runtime, 'streamSimple').mockImplementation((target, context) => {
+    requests.push({ prompt: getCurrentSystemPrompt(context.messages), names: getCurrentTools(context.messages).map(tool => tool.name), toolTokens: createEstimatedContextUsage(context).toolTokens })
     const call = first ? nextCall : undefined
     first = false
     return response(target, call, run)
@@ -325,7 +342,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     spaceId: null,
   })
   cleanups.push(() => extensions.dispose())
-  const created = await createIsolatedBuddySession({
+  const options: Parameters<typeof createIsolatedBuddySession>[0] = {
     agentDir: join(root, 'agent'),
     canonicalRoot: cwd,
     cwd,
@@ -339,9 +356,10 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     thinkingLevel: 'off',
     resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
     inProcessExtensions: extensions.inProcessExtensions.map(extension => runtimeOptions && extension.name === CODEMODE_EXTENSION
-      ? { ...extension, factory: createCodemodeExtension({ mode: 'on', models: false, runtime: runtimeOptions }) }
+      ? { ...extension, factory: createCodemodeExtension({ mode: 'only', models: false, runtime: runtimeOptions }) }
       : extension),
-  })
+  }
+  const created = await createIsolatedBuddySession(options)
   cleanups.push(() => created.shutdown('quit'))
   cleanups.push(async () => {
     cleanup.resolve()
@@ -367,6 +385,8 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     cwd,
     session,
     reusable,
+    requests,
+    preview: () => createIsolatedBuddyContextSnapshot(options),
     events,
     waiting,
     cleanup,

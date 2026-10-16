@@ -8,6 +8,12 @@ export function buildBuddySystemSections(messages: AgentSession['messages'], too
   const guidelines = [...new Set(tools.flatMap(tool => !tool.name.startsWith('mcp__')
     ? tool.promptGuidelines ?? []
     : []).map(value => value.trim()).filter(Boolean))]
+  if (tools.some(tool => tool.name === 'codemode')) {
+    guidelines.push(
+      'Use one codemode call with Promise.allSettled for two or more independent lookups. Inspect fulfilled and rejected results, and print a compact result for each query with its source and any error or truncation notice. Keep dependent calls and mutations sequential; do not replay completed mutations after a later failure.',
+      'Discover unlisted codemode tools with searchTools or describeNamespace, and use describeTool for their exact inputs and result type. Filter tool results before printing; MCP results include content, structuredContent, and isError. Tools marked invocation: codemode are script-only. Other specialized tools may need lexora_tool_search followed by a new codemode invocation.',
+    )
+  }
   const hasResources = messages.some((message) => {
     const input = readBuddyInputReference(message)
     if (input && (input.attachmentIds?.length || input.images.length || input.documents?.length))

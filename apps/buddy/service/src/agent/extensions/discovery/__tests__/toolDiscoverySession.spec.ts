@@ -91,9 +91,9 @@ describe('real Pi tool discovery loop', () => {
     let directlyExposed = false
     const { root, options, runtime } = await fixture((tool, context) => tool.name === name && directlyExposed && context.model ? 'direct' : undefined)
     await writeFile(join(root, 'input.txt'), 'Read this fixture while host policy changes')
-    const requests: { names: string[], prompt: string }[] = []
+    const requests: { names: string[], prompt: string, toolTokens: number }[] = []
     vi.spyOn(runtime, 'streamSimple').mockImplementation((model, context) => {
-      requests.push({ names: getCurrentTools(context.messages).map(tool => tool.name), prompt: getCurrentSystemPrompt(context.messages) })
+      requests.push({ names: getCurrentTools(context.messages).map(tool => tool.name), prompt: getCurrentSystemPrompt(context.messages), toolTokens: createEstimatedContextUsage(context).toolTokens })
       if (requests.length === 1) {
         directlyExposed = true
         return response(model, [{ name: 'read', arguments: { path: join(root, 'input.txt') } }])
@@ -118,8 +118,7 @@ describe('real Pi tool discovery loop', () => {
       expect(requests.at(-1)?.names).not.toContain(name)
       expect(requests.at(-1)?.prompt).not.toContain('DISCLOSED_SAMPLE_GUIDELINE')
       const preview = await createBuddyContextSnapshot({ ...options, piSessionFile: created.piSessionFile })
-      const context = requests.at(-1)!
-      expect(preview?.toolTokens).toBe(createEstimatedContextUsage({ systemPrompt: context.prompt, messages: [], tools: resumed.session.getAllTools().filter(tool => context.names.includes(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters })) }).toolTokens)
+      expect(preview?.toolTokens).toBe(requests.at(-1)?.toolTokens)
     }
     finally { await resumed.shutdown('quit') }
   })
@@ -268,7 +267,7 @@ describe('real Pi tool discovery loop', () => {
     vi.spyOn(runtime, 'streamSimple').mockImplementation((model, context) => {
       requests.push(structuredClone({
         systemPrompt: getCurrentSystemPrompt(context.messages),
-        tools: getCurrentTools(context.messages)?.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        tools: getCurrentTools(context.messages),
         messages: context.messages.filter(message => message.role !== 'system'),
       }))
       if (requests.length === 1)

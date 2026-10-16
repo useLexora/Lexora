@@ -9,7 +9,7 @@ export function createCodemodeCapability(isEnabled: () => boolean): BuddyCapabil
     extension: {
       name: CODEMODE_EXTENSION,
       factory: createCodemodeExtension({
-        mode: 'on',
+        mode: 'only',
         models: false,
         runtime: { computeTimeoutMs: 30_000, maxPendingToolCalls: 16, maxQueuedToolCalls: 128 },
       }),

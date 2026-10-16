@@ -162,6 +162,7 @@ export async function createBuddyContextSnapshot(
       return null
 
     const tools = result.session.agent.state.tools.map(tool => ({
+      constrainedSampling: tool.constrainedSampling,
       description: tool.description,
       name: tool.name,
       parameters: tool.parameters,
@@ -173,6 +174,10 @@ export async function createBuddyContextSnapshot(
     }, result.session.getAllTools())
     requestContext = withRequestSystemSection(requestContext, 'buddy_actor', options.resources.actorPrompt ?? '')
     requestContext = withRequestSystemSection(requestContext, 'buddy_permissions', createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, tools.map(tool => tool.name)))
+    requestContext = {
+      ...requestContext,
+      messages: convertToLlm(await result.session.agent.transformContext?.(requestContext.messages, new AbortController().signal) ?? requestContext.messages),
+    }
     return createEstimatedContextUsage(requestContext)
   }
   finally {

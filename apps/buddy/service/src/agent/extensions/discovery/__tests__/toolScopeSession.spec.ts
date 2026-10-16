@@ -31,38 +31,37 @@ describe('role tool scope in real Pi sessions', () => {
   it.skipIf(process.platform !== 'linux')('keeps discovered host commands authorized across full-access turns and session recovery', async () => {
     const f = await fixture({ executionProfile: 'workspace_write' })
     const command = { command: 'printf host-command-output' }
-    await f.turn({ name: 'lexora_tool_search', arguments: { toolNames: ['lexora_host_shell'] } })
-    await f.turn({ name: 'lexora_host_shell', arguments: command })
-    expect(f.lastResult()).toBe('host-command-output')
+    await f.turn(scriptCall('lexora_tool_search', { toolNames: ['lexora_host_shell'] }))
+    await f.turn(scriptCall('lexora_host_shell', command))
+    expect(f.lastResult()).toContain('host-command-output')
     expect(f.approved).toEqual(['lexora_host_shell'])
 
     f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
     for (const name of ['lexora_host_shell', 'bash', 'lexora_host_shell']) {
-      await f.turn({ name, arguments: command })
-      expect(f.lastResult()).toBe('host-command-output')
+      await f.turn(scriptCall(name, command))
+      expect(f.lastResult()).toContain('host-command-output')
     }
     expect(f.approved).toEqual(['lexora_host_shell'])
     await f.shutdown()
 
     const resumed = await fixture({ root: f.root, piSessionFile: f.sessionFile, executionProfile: 'full_access' })
-    await resumed.turn({ name: 'lexora_host_shell', arguments: command })
-    expect(resumed.lastResult()).toBe('host-command-output')
+    await resumed.turn(scriptCall('lexora_host_shell', command))
+    expect(resumed.lastResult()).toContain('host-command-output')
     expect(resumed.approved).toEqual([])
-    expect(resumed.requests[0]?.names).toContain('lexora_host_shell')
 
     resumed.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
-    await resumed.turn({ name: 'lexora_host_shell', arguments: command })
-    expect(resumed.lastResult()).toBe('host-command-output')
+    await resumed.turn(scriptCall('lexora_host_shell', command))
+    expect(resumed.lastResult()).toContain('host-command-output')
     expect(resumed.approved).toEqual(['lexora_host_shell'])
     resumed.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
-    await resumed.turn({ name: 'lexora_host_shell', arguments: command })
+    await resumed.turn(scriptCall('lexora_host_shell', command))
     expect(resumed.lastResult()).toContain('READ_ONLY_PROFILE')
     expect(resumed.approved).toEqual(['lexora_host_shell'])
   })
 
   it('keeps none empty across declarations, search and native CodeMode catalogs', async () => {
     const f = await fixture({ tools: { mode: 'none' } })
-    await f.turn({ name: 'lexora_tool_search', arguments: { toolNames: [deniedMcp] } })
+    await f.turn(scriptCall('lexora_tool_search', { toolNames: [deniedMcp] }))
     expect(f.lastResult()).not.toContain(marker)
     expect(f.lastResult()).toContain('"tools":[]')
     await f.turn({ name: 'codemode', arguments: { code: `text(ALL_TOOLS); text(await searchTools(${JSON.stringify(marker)})); text({ write: "write" in tools, external: ${JSON.stringify(deniedMcp)} in tools });` } })
@@ -85,7 +84,7 @@ describe('role tool scope in real Pi sessions', () => {
     expect(f.lastResult()).not.toContain(deniedMcp)
     expect(f.lastResult()).toContain('"external":false')
     expect(f.approved).toEqual([allowedMcp])
-    await f.turn({ name: 'lexora_tool_search', arguments: { toolNames: [deniedMcp, allowedMcp] } })
+    await f.turn(scriptCall('lexora_tool_search', { toolNames: [deniedMcp, allowedMcp] }))
     expect(f.lastResult()).toContain(`"notFound":["${deniedMcp}"]`)
     expect(f.requests.map(request => request.tools).join('\n')).not.toContain(marker)
     expect(await readFile(f.document, 'utf8')).toBe('original document')
@@ -93,7 +92,7 @@ describe('role tool scope in real Pi sessions', () => {
 
   it('cannot restore removed tools through old discovery state or system tool declarations', async () => {
     const first = await fixture()
-    await first.turn({ name: 'lexora_tool_search', arguments: { toolNames: [deniedMcp, pluginTool] } })
+    await first.turn(scriptCall('lexora_tool_search', { toolNames: [deniedMcp, pluginTool] }))
     await first.shutdown()
     const resumed = await fixture({ tools: { mode: 'none' }, root: first.root, piSessionFile: first.sessionFile })
     await resumed.turn({ name: 'codemode', arguments: { code: `text(ALL_TOOLS); text({ external: ${JSON.stringify(deniedMcp)} in tools, plugin: ${JSON.stringify(pluginTool)} in tools });` } })
@@ -246,6 +245,10 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
       extensions.runContext.current = null
     },
   }
+}
+
+function scriptCall(name: string, args: Record<string, unknown>): Pick<ToolCall, 'name' | 'arguments'> {
+  return { name: 'codemode', arguments: { code: `text(await tools.${name}(${JSON.stringify(args)}));` } }
 }
 
 function response(model: Model<Api>, call: Pick<ToolCall, 'name' | 'arguments'> | undefined, turn: number) {

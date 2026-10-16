@@ -84,7 +84,7 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
     catalogReady.resolve()
     await preparation
     expect(service.state('maps').status).toBe('ready')
-    let codemodeEnabled = true
+    let codemodeEnabled = mode === 'codemode'
     const mcp = createMcpCapability(service.getTools(), () => codemodeEnabled)
     const codemode = createCodemodeCapability(() => codemodeEnabled)
     const discovery = createToolDiscoveryCapability([...mcp.disclosure!, ...codemode.disclosure!])
@@ -114,7 +114,7 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
     vi.spyOn(runtime, 'streamSimple').mockImplementation((selected, context) => {
       requests.push(structuredClone({
         systemPrompt: getCurrentSystemPrompt(context.messages),
-        tools: getCurrentTools(context.messages).map(({ name, description, parameters }) => ({ name, description, parameters })),
+        tools: getCurrentTools(context.messages),
         messages: context.messages.filter(message => message.role !== 'system'),
       }))
       if (mode === 'codemode') {
