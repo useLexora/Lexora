@@ -1,85 +1,53 @@
 name: 缺陷报告 / Bug report
-description: 报告可复现的产品问题 / Report a reproducible product issue
+description: 报告使用中遇到的问题 / Report a problem you encountered
 title: "[Bug] "
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        请先搜索已有 Issue。疑似安全漏洞请通过[私密漏洞报告](https://github.com/useLexora/Lexora/security/advisories)提交。填写时可使用中文或 English；日志和截图请先移除 API Key、个人文件路径及其他敏感信息。
+        可使用中文或 English，只需描述遇到的问题，其余信息按需补充；偶发或暂时无法复现的问题也欢迎反馈。提交前可搜索已有 Issue。
 
-        Please search existing issues first. Report suspected security vulnerabilities through [private vulnerability reporting](https://github.com/useLexora/Lexora/security/advisories). You may write in Chinese or English. Remove API keys, personal file paths, and other sensitive details from logs and screenshots.
-  - type: checkboxes
-    id: existing-issues
+        Write in Chinese or English. Only the problem description is required; add other details if available. Intermittent issues are welcome too. Consider searching existing issues before submitting.
+
+        疑似安全漏洞请通过[私密漏洞报告](https://github.com/useLexora/Lexora/security/advisories)提交。日志和截图请移除密钥、个人路径等敏感信息。
+
+        Report suspected vulnerabilities [privately](https://github.com/useLexora/Lexora/security/advisories). Remove keys, personal paths, and other sensitive details from logs and screenshots.
+  - type: textarea
+    id: actual
     attributes:
-      label: 提交前 / Before submitting
-      options:
-        - label: 我已搜索现有 Issue，确认没有相同报告。 / I searched existing issues for duplicates.
-          required: true
-  - type: dropdown
-    id: area
-    attributes:
-      label: 影响范围 / Affected area
-      options:
-        - Desktop (Buddy)
-        - Website
-        - Self-hosted Web / API / Agent
-        - Other / 不确定
-    validations:
-      required: true
-  - type: input
-    id: version
-    attributes:
-      label: Lexora 版本 / Lexora version
-      description: 填写应用版本或提交号；不知道时填“不清楚”。 / Enter the app version or commit; write "unknown" if unsure.
-      placeholder: "e.g. 0.9.1, commit abc123, unknown"
-    validations:
-      required: true
-  - type: input
-    id: environment
-    attributes:
-      label: 运行环境 / Environment
-      description: 桌面端填写系统版本、架构和安装方式；网站填写浏览器；自部署填写部署方式。 / Include OS, architecture, and install source for Desktop; browser for Website; deployment method for self-hosting.
-      placeholder: "e.g. Windows 11 x64, GitHub installer; macOS 15 arm64; Chrome 129"
+      label: 遇到的问题 / What happened
+      description: 描述你在做什么、遇到了什么问题，可附截图或错误消息。 / Describe what you were doing and what went wrong. Screenshots or error messages are welcome.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: 复现步骤 / Steps to reproduce
-      description: 从应用启动或相关页面开始，按顺序写出具体操作。 / Start from app launch or the relevant page and list the actions in order.
+      label: 复现步骤（选填） / Steps to reproduce (optional)
+      description: 如果知道如何触发，请列出操作步骤；无法复现也可以提交。 / If you know how to trigger the issue, list the steps. You can submit even if you cannot reproduce it.
       placeholder: |
         1. ...
         2. ...
         3. ...
-    validations:
-      required: true
-  - type: textarea
-    id: actual
-    attributes:
-      label: 实际结果 / Actual behavior
-      description: 描述看到的现象或错误消息。 / Describe what happened or the error shown.
-    validations:
-      required: true
   - type: textarea
     id: expected
     attributes:
-      label: 预期结果 / Expected behavior
+      label: 预期结果（选填） / Expected behavior (optional)
       description: 描述你原本希望发生的结果。 / Describe what you expected to happen.
-    validations:
-      required: true
   - type: input
-    id: last-working-version
+    id: version
     attributes:
-      label: 上次正常版本 / Last working version
-      description: 如果这是回归问题，请填写上次正常的版本。 / If this is a regression, enter the last version that worked.
-  - type: textarea
-    id: ai-context
+      label: Lexora 版本（选填） / Lexora version (optional)
+      description: 不清楚可留空。 / Leave blank if unsure.
+      placeholder: "e.g. 0.12.0"
+  - type: input
+    id: environment
     attributes:
-      label: 模型与工具信息 / Model and tool details
-      description: 仅 AI 任务相关时填写服务商、模型、工具或插件，以及认证类型（API Key 或 OAuth）；不要提供密钥或完整对话。 / For AI-related issues, include the provider, model, tools or plugins, and whether you use an API key or OAuth. Do not include the key or full conversation.
+      label: 运行环境（选填） / Environment (optional)
+      description: 系统或浏览器；知道的话也可补充安装或部署方式。 / OS or browser; add the installation or deployment method if known.
+      placeholder: "e.g. Windows 11, macOS 15, Chrome"
   - type: textarea
     id: evidence
     attributes:
-      label: 补充材料 / Additional context
-      description: 错误日志请尽量粘贴脱敏后的文本；界面问题可附截图或录屏。 / Paste redacted error logs as text when possible; add screenshots or recordings for UI issues.
+      label: 补充信息（选填） / Additional context (optional)
+      description: 可附脱敏日志、录屏、上次正常版本；AI 相关问题可补充服务商、模型或工具名称。 / Add redacted logs, recordings, or the last working version. For AI issues, provider, model, or tool names may help.

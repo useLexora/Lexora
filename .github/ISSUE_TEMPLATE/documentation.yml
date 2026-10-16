@@ -6,16 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        请先搜索已有 Issue。可使用中文或 English，并提供具体页面或文件，方便定位。
+        可使用中文或 English，描述哪里不清楚、缺少什么信息即可；其余按需补充。
 
-        Please search existing issues first. You may write in Chinese or English. Include the specific page or file so we can find it.
-  - type: input
-    id: location
-    attributes:
-      label: 文档位置 / Documentation location
-      description: 页面链接、标题或仓库路径。 / Page URL, heading, or repository path.
-    validations:
-      required: true
+        Write in Chinese or English. Describe what is unclear or missing; other details are optional.
   - type: textarea
     id: problem
     attributes:
@@ -23,15 +16,13 @@ body:
       description: 哪一步不准确、不清楚或缺失？ / What is inaccurate, unclear, or missing?
     validations:
       required: true
-  - type: textarea
-    id: expected
+  - type: input
+    id: location
     attributes:
-      label: 需要的信息 / Information needed
-      description: 你希望文档能帮助你完成什么？ / What should the documentation help you do?
-    validations:
-      required: true
+      label: 文档位置（选填） / Documentation location (optional)
+      description: 如有，可提供页面链接、标题或文件路径。 / Add a page URL, heading, or file path if available.
   - type: textarea
     id: suggestion
     attributes:
-      label: 修改建议 / Suggested change
-      description: 如有，可提供改写建议或示例。 / If you have one, add suggested wording or an example.
+      label: 修改建议或需要的信息（选填） / Suggested change or information needed (optional)
+      description: 你希望文档补充什么？也可提供改写建议或示例。 / What should the documentation explain? Suggested wording or examples are welcome.
