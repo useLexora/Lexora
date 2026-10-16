@@ -17,6 +17,7 @@ import {
 import {
   BROWSER_ACT_TOOL_NAME,
   BROWSER_OPEN_TOOL_NAME,
+  BROWSER_READ_TOOL_NAME,
   BROWSER_SNAPSHOT_TOOL_NAME,
   isBrowserActToolInput,
 } from './browserToolContract'
@@ -95,6 +96,8 @@ export function createBrowserToolPresentation(
 function readOperation(toolName: string): BrowserToolOperation | null {
   if (toolName === BROWSER_ACT_TOOL_NAME)
     return 'act'
+  if (toolName === BROWSER_READ_TOOL_NAME)
+    return 'read'
   if (toolName === BROWSER_OPEN_TOOL_NAME)
     return 'open'
   return toolName === BROWSER_SNAPSHOT_TOOL_NAME ? 'snapshot' : null

@@ -53,6 +53,28 @@ const ACTION_INPUT = {
 }
 
 describe('browserCapabilityService', () => {
+  it('keeps screenshot resolution bound to the current session and observation across async changes', async () => {
+    const host = createHost()
+    const state = { ...READY_STATE, pageId: CURRENT_PAGE_ID }
+    const observation: BrowserObservation = { ...OBSERVATION, screenshot: { byteLength: 8, height: 600, mimeType: 'image/png', reasons: ['explicit-request'], screenshotId: 'da56fda3-f4de-4622-908b-39978c98194d', width: 800 } }
+    host.openUrl.mockResolvedValue({ ok: true, state })
+    host.getState.mockResolvedValue({ ok: true, state })
+    host.observe.mockResolvedValue({ ok: true, observation })
+    const service = createService(host)
+    await service.open({ kind: 'url', url: state.url })
+    await service.observe({ mode: 'screenshot' })
+    for (const stale of [{ ...observation, sessionId: OTHER_SESSION_ID }, { ...observation, pageId: PAGE_ID }, { ...observation, documentRevision: 1 }])
+      expect(await service.readScreenshot(stale)).toMatchObject({ ok: false, error: { code: 'BROWSER_TARGET_STALE' } })
+    const pending = createDeferred<Awaited<ReturnType<BrowserCapabilityHost['readScreenshot']>>>()
+    host.readScreenshot.mockReturnValue(pending.promise)
+    const resolving = service.readScreenshot(observation)
+    await vi.waitFor(() => expect(service.snapshot.pending).toBe(1))
+    await service.open({ kind: 'url', url: state.url })
+    pending.resolve({ ok: true, image: { data: 'iVBORw0KGgo=', mimeType: 'image/png' } })
+    expect(await resolving).toMatchObject({ ok: false, error: { code: 'BROWSER_TARGET_STALE' } })
+    await service.dispose()
+  })
+
   it('reads and copies the current Pi session grants for local files', async () => {
     const host = createHost()
     host.openLocal.mockResolvedValue({ ok: true, state: READY_STATE })
@@ -145,6 +167,35 @@ describe('browserCapabilityService', () => {
       pageId: CURRENT_PAGE_ID,
       sessionId: SESSION_ID,
     })
+  })
+
+  it.each(['session', 'page'] as const)('rejects content returned for a different %s', async (identity) => {
+    const host = createHost()
+    host.openUrl.mockResolvedValue({ ok: true, state: READY_STATE })
+    host.getState.mockResolvedValue({ ok: true, state: READY_STATE })
+    host.read.mockResolvedValue({
+      content: {
+        documentRevision: 0,
+        frameId: 'main-frame',
+        items: [{ kind: 'text', text: 'Content belonging to another browser target' }],
+        mode: 'text',
+        pageId: identity === 'page' ? CURRENT_PAGE_ID : PAGE_ID,
+        sessionId: identity === 'session' ? OTHER_SESSION_ID : SESSION_ID,
+        sourceTruncated: false,
+        title: 'Foreign content',
+        truncated: false,
+        url: READY_STATE.url,
+      },
+      ok: true,
+    })
+    const service = createService(host)
+    await service.open({ kind: 'url', url: READY_STATE.url })
+    const result = await service.read({ mode: 'text' })
+    expect(result).toEqual({
+      error: { code: identity === 'session' ? 'BROWSER_SESSION_NOT_FOUND' : 'BROWSER_TARGET_STALE', reason: null, recovery: identity === 'session' ? 'open_again' : 'read_again' },
+      ok: false,
+    })
+    await service.dispose()
   })
 
   it('classifies actions only from an immutable latest Host observation', async () => {
@@ -550,6 +601,8 @@ function createHost() {
     close: vi.fn<BrowserCapabilityHost['close']>(),
     getState: vi.fn<BrowserCapabilityHost['getState']>(),
     observe: vi.fn<BrowserCapabilityHost['observe']>(),
+    read: vi.fn<BrowserCapabilityHost['read']>(),
+    readScreenshot: vi.fn<BrowserCapabilityHost['readScreenshot']>(),
     openLocal: vi.fn<BrowserCapabilityHost['openLocal']>(),
     openUrl: vi.fn<BrowserCapabilityHost['openUrl']>(),
     releaseControl: vi.fn(),

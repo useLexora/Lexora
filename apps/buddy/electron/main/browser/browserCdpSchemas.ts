@@ -28,7 +28,9 @@ export const cdpAxTreeSchema = z.object({
 
 export const cdpDocumentSchema = z.object({
   root: z.object({
+    backendNodeId: z.number().int().positive().optional(),
     frameId: z.string().min(1).optional(),
+    nodeId: z.number().int().positive().optional(),
   }).passthrough(),
 }).passthrough()
 
@@ -62,6 +64,7 @@ export const cdpDomSnapshotSchema = z.object({
       attributes: z.array(z.array(z.number().int().min(-1))).optional(),
       backendNodeId: z.array(z.number().int().nonnegative()),
       nodeName: z.array(z.number().int().nonnegative()).optional(),
+      parentIndex: z.array(z.number().int()).optional(),
     }),
   })),
   strings: z.array(z.string()),
@@ -75,6 +78,12 @@ export const cdpLayoutMetricsSchema = z.object({
     pageY: z.number(),
   }),
 })
+
+export const cdpIsolatedWorldSchema = z.object({ executionContextId: z.number().int().positive() })
+
+export const cdpQuerySelectorSchema = z.object({ nodeId: z.number().int().nonnegative() })
+
+export const cdpDescribeNodeSchema = z.object({ node: z.object({ backendNodeId: z.number().int().positive() }) })
 
 export const cdpResolveNodeSchema = z.object({
   object: z.object({

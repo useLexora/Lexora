@@ -7,8 +7,12 @@ import type {
   BrowserObserveParams,
   BrowserObserveResult,
   BrowserOpenResult,
+  BrowserReadParams,
+  BrowserReadResult,
   BrowserReleaseControlParams,
   BrowserReleaseControlResult,
+  BrowserScreenshotReadParams,
+  BrowserScreenshotReadResult,
   BrowserStateResult,
   BrowserValidateActionParams,
   BrowserValidateActionResult,
@@ -30,8 +34,12 @@ import {
   browserObserveResultSchema,
   browserOpenParamsSchema,
   browserOpenResultSchema,
+  browserReadParamsSchema,
+  browserReadResultSchema,
   browserReleaseControlParamsSchema,
   browserReleaseControlResultSchema,
+  browserScreenshotReadParamsSchema,
+  browserScreenshotReadResultSchema,
   browserSessionParamsSchema,
   browserStateResultSchema,
   browserValidateActionParamsSchema,
@@ -115,6 +123,16 @@ export class BrowserHostClient {
       'host.browser.observe',
       request,
     ))
+  }
+
+  async read(input: BrowserReadParams): Promise<BrowserReadResult> {
+    const request = browserReadParamsSchema.parse(input)
+    return browserReadResultSchema.parse(await this.#peer.request('host.browser.read', request))
+  }
+
+  async readScreenshot(input: BrowserScreenshotReadParams): Promise<BrowserScreenshotReadResult> {
+    const request = browserScreenshotReadParamsSchema.parse(input)
+    return browserScreenshotReadResultSchema.parse(await this.#peer.request('host.browser.readScreenshot', request))
   }
 
   async act(input: BrowserActParams): Promise<BrowserActResult> {

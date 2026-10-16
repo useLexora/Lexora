@@ -9,6 +9,7 @@ import type {
 } from '../../../shared/browser/browserAdapterProtocol'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BrowserHost } from './BrowserHost'
+import { Buffer } from 'node:buffer'
 import {
   BROWSER_WAIT_DEFAULT_QUIET_MS,
   browserAcquireControlParamsSchema,
@@ -23,8 +24,12 @@ import {
   browserObserveResultSchema,
   browserOpenParamsSchema,
   browserOpenResultSchema,
+  browserReadParamsSchema,
+  browserReadResultSchema,
   browserReleaseControlParamsSchema,
   browserReleaseControlResultSchema,
+  browserScreenshotReadParamsSchema,
+  browserScreenshotReadResultSchema,
   browserSessionParamsSchema,
   browserStateResultSchema,
   browserValidateActionParamsSchema,
@@ -96,6 +101,24 @@ export function registerBrowserHostRpc(
           ok: true,
         }),
         browserObserveResultSchema,
+        'read_again',
+      )
+    }),
+    peer.onRequest('host.browser.read', async (params) => {
+      const input = browserReadParamsSchema.parse(params)
+      return runBrowserHostOperation(
+        () => requireBrowserHost(options.getHost()).read(input),
+        content => ({ content, ok: true }),
+        browserReadResultSchema,
+        'read_again',
+      )
+    }),
+    peer.onRequest('host.browser.readScreenshot', async (params) => {
+      const input = browserScreenshotReadParamsSchema.parse(params)
+      return runBrowserHostOperation(
+        () => requireBrowserHost(options.getHost()).readScreenshot(input),
+        screenshot => ({ image: { data: Buffer.from(screenshot.bytes).toString('base64'), mimeType: screenshot.mimeType }, ok: true }),
+        browserScreenshotReadResultSchema,
         'read_again',
       )
     }),

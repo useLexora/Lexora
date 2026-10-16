@@ -5,11 +5,17 @@ export function getBrowserObservationTextByteLength(observation: object): number
   return new TextEncoder().encode(JSON.stringify(observation)).byteLength
 }
 
-export const browserObserveParamsSchema = z.object({
+export const browserSnapshotOptionsSchema = z.object({
+  mode: z.enum(['semantic', 'screenshot']).optional(),
+  query: z.string().trim().min(1).max(256).optional(),
+  selector: z.string().trim().min(1).max(512).optional(),
   maxElements: z.number().int().min(1).max(BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT).optional(),
+}).strict()
+
+export const browserObserveParamsSchema = browserSnapshotOptionsSchema.extend({
   pageId: browserIdSchema,
   sessionId: browserIdSchema,
-}).strict()
+})
 
 export const observedStringSchema = browserFrameIdSchema
 
@@ -23,6 +29,7 @@ export const browserObservationTruncationReasonSchema = z.enum([
 ])
 
 export const browserScreenshotFallbackReasonSchema = z.enum([
+  'explicit-request',
   'semantic-content-empty',
   'semantic-content-truncated',
   'visual-content',
@@ -112,7 +119,10 @@ export const browserObservationSchema = z.object({
   elements: z.array(browserObservedElementSchema).max(BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT),
   observationId: browserIdSchema,
   pageId: browserIdSchema,
+  mode: z.enum(['semantic', 'screenshot']).optional(),
   screenshot: browserScreenshotRefSchema.optional(),
+  screenshotIssue: z.enum(['sensitive-input', 'privacy-unavailable', 'capture-failed']).optional(),
+  semanticUnavailable: z.literal(true).optional(),
   sessionId: browserIdSchema,
   status: z.enum(['error', 'loading', 'ready']),
   title: z.string().max(512),
@@ -148,3 +158,19 @@ export type BrowserObservationTruncation = z.infer<typeof browserObservationTrun
 export type BrowserScreenshotRef = z.infer<typeof browserScreenshotRefSchema>
 
 export type BrowserObservation = z.infer<typeof browserObservationSchema>
+
+export const browserScreenshotReadParamsSchema = z.object({
+  documentRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  observationId: browserIdSchema,
+  pageId: browserIdSchema,
+  screenshotId: browserIdSchema,
+  sessionId: browserIdSchema,
+}).strict()
+
+export const browserScreenshotImageSchema = z.object({
+  data: z.string().min(12).max(Math.ceil(BROWSER_MAX_SCREENSHOT_BYTES / 3) * 4).regex(/^[A-Z0-9+/]+={0,2}$/i).refine(data => data.length % 4 === 0 && data.length / 4 * 3 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) <= BROWSER_MAX_SCREENSHOT_BYTES),
+  mimeType: z.literal('image/png'),
+}).strict()
+
+export type BrowserScreenshotReadParams = z.infer<typeof browserScreenshotReadParamsSchema>
+export type BrowserScreenshotImage = z.infer<typeof browserScreenshotImageSchema>

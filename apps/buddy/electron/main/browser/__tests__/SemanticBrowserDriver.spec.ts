@@ -1,6 +1,3 @@
-import type {
-  SemanticBrowserDriverError,
-} from '../SemanticBrowserDriver'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -479,17 +476,21 @@ describe('semanticBrowserDriver', () => {
       page: fixture.page,
     })
 
+    const bounded = await driver.observe({ ...createObservationInput(), maxElements: 2 })
+    expect(bounded.screenshot).toBeUndefined()
+    expect(fixture.capturePage).not.toHaveBeenCalled()
     const observation = await driver.observe({
       ...createObservationInput(),
+      mode: 'screenshot',
       maxElements: 2,
     })
 
-    expect(observation.elements.map(element => element.name)).toEqual([
+    expect(bounded.elements.map(element => element.name)).toEqual([
       'Continue',
       'Email address',
     ])
-    expect(observation.truncated).toBe(true)
-    expect(observation.truncation).toEqual({
+    expect(bounded.truncated).toBe(true)
+    expect(bounded.truncation).toEqual({
       reasons: ['element-limit'],
       suggestedMaxElements: 4,
     })
@@ -497,7 +498,7 @@ describe('semanticBrowserDriver', () => {
       byteLength: 10,
       height: 600,
       mimeType: 'image/png',
-      reasons: ['semantic-content-truncated'],
+      reasons: ['explicit-request'],
       screenshotId: SCREENSHOT_ID,
       width: 800,
     })
@@ -521,7 +522,7 @@ describe('semanticBrowserDriver', () => {
     }))).toEqual(expect.objectContaining({ code: 'BROWSER_TARGET_STALE' }))
   })
 
-  it('does not let screenshot fallback bypass sensitive field redaction', async () => {
+  it('does not let requested screenshots bypass sensitive field redaction', async () => {
     const fixture = createFixture(false, [
       createAxNode({
         backendDOMNodeId: 10,
@@ -549,13 +550,14 @@ describe('semanticBrowserDriver', () => {
 
     const observation = await driver.observe({
       ...createObservationInput(),
+      mode: 'screenshot',
       maxElements: 1,
     })
 
-    expect(observation).toMatchObject({
-      elements: [{ valueState: 'redacted' }],
-      truncated: true,
-    })
+    const semantic = await driver.observe({ ...createObservationInput(), maxElements: 1 })
+    expect(semantic).toMatchObject({ elements: [{ valueState: 'redacted' }], truncated: true })
+    expect(observation).toMatchObject({ elements: [], screenshotIssue: 'sensitive-input' })
+    expect(JSON.stringify([semantic, observation])).not.toContain('token-private-value')
     expect(observation).not.toHaveProperty('screenshot')
     expect(fixture.capturePage).not.toHaveBeenCalled()
   })
@@ -584,9 +586,7 @@ describe('semanticBrowserDriver', () => {
     expect(observation.elements.length).toBeLessThan(24)
     expect(observation.truncated).toBe(true)
     expect(observation.truncation).toEqual({ reasons: ['text-limit'] })
-    expect(observation.screenshot?.reasons).toEqual([
-      'semantic-content-truncated',
-    ])
+    expect(observation.screenshot).toBeUndefined()
   })
 
   it('validates observation, frame, declared action, and live actionability before clicking', async () => {
@@ -821,14 +821,13 @@ describe('semanticBrowserDriver', () => {
     const ids = [OBSERVATION_ID, SECOND_OBSERVATION_ID, THIRD_OBSERVATION_ID]
     const driver = new SemanticBrowserDriver({ page: fixture.page, createId: () => ids.shift()! })
     try {
-      const first = await driver.observe({ ...createObservationInput(), maxElements: 2 })
-      const second = await driver.observe({ ...createObservationInput(), maxElements: 2 })
-      const third = await driver.observe({ ...createObservationInput(), maxElements: 2 })
+      const first = await driver.observe({ ...createObservationInput(), mode: 'screenshot', maxElements: 2 })
+      const second = await driver.observe({ ...createObservationInput(), mode: 'screenshot', maxElements: 2 })
+      const third = await driver.observe({ ...createObservationInput(), mode: 'screenshot', maxElements: 2 })
       expect(() => driver.resolveScreenshot({ ...first, screenshotId: first.screenshot!.screenshotId }))
         .toThrow(expect.objectContaining({ code: 'BROWSER_TARGET_STALE' }))
       for (const observation of [second, third]) {
         expect(driver.resolveScreenshot({ ...observation, screenshotId: observation.screenshot!.screenshotId }).bytes.byteLength).toBe(bytes.byteLength)
-        expect(driver.resolveTarget({ ...observation, ref: 'e1' })).toMatchObject({ backendDOMNodeId: 4 })
       }
     }
     finally { driver.dispose() }
@@ -839,7 +838,7 @@ describe('semanticBrowserDriver', () => {
     const pending = deferred<Awaited<ReturnType<typeof fixture.capturePage>>>()
     fixture.capturePage.mockReturnValue(pending.promise)
     const driver = new SemanticBrowserDriver({ page: fixture.page })
-    const observing = driver.observe({ ...createObservationInput(), maxElements: 2 })
+    const observing = driver.observe({ ...createObservationInput(), mode: 'screenshot', maxElements: 2 })
     const rejected = expect(observing).rejects.toMatchObject({ code: 'BROWSER_PAGE_FAILED' })
     await vi.waitFor(() => expect(fixture.capturePage).toHaveBeenCalledOnce())
     driver.dispose()
@@ -847,21 +846,28 @@ describe('semanticBrowserDriver', () => {
     await rejected
   })
 
-  it('fails closed when CDP returns a malformed accessibility response', async () => {
+  it('falls back to a real image when semantics fail and keeps privacy failures closed', async () => {
     const fixture = createFixture()
-    fixture.sendCommand.mockImplementation(async (method, commandParams) => (
-      method === 'Accessibility.getFullAXTree'
-        ? { nodes: 'not-an-array' }
-        : fixture.respond(method, commandParams)
-    ))
+    let privateDomAvailable = true
+    fixture.sendCommand.mockImplementation(async (method, commandParams) => {
+      if (method === 'Accessibility.getFullAXTree')
+        return { nodes: 'not-an-array' }
+      if (method === 'DOMSnapshot.captureSnapshot' && !privateDomAvailable)
+        throw new Error('DOM unavailable')
+      return fixture.respond(method, commandParams)
+    })
     const driver = new SemanticBrowserDriver({ page: fixture.page })
-
-    await expect(driver.observe(createObservationInput())).rejects.toEqual(
-      expect.objectContaining<Partial<SemanticBrowserDriverError>>({
-        code: 'BROWSER_PAGE_FAILED',
-        name: 'SemanticBrowserDriverError',
-      }),
-    )
+    const visual = await driver.observe({ ...createObservationInput(), mode: 'screenshot' })
+    expect(visual).toMatchObject({ elements: [], screenshot: { reasons: ['explicit-request'] } })
+    const semantic = await driver.observe({ ...createObservationInput(), mode: 'semantic' })
+    expect(semantic).toMatchObject({ elements: [], semanticUnavailable: true })
+    expect(semantic.screenshot).toBeUndefined()
+    privateDomAvailable = false
+    await expect(driver.observe(createObservationInput())).rejects.toMatchObject({ code: 'BROWSER_PAGE_FAILED' })
+    const protectedResult = await driver.observe({ ...createObservationInput(), mode: 'screenshot' })
+    expect(protectedResult).toMatchObject({ screenshotIssue: 'privacy-unavailable' })
+    expect(protectedResult.screenshot).toBeUndefined()
+    driver.dispose()
   })
 
   it('detaches the debugger only when the driver attached it', async () => {

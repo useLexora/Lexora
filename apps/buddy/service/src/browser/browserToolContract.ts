@@ -6,6 +6,7 @@ import type {
   BrowserErrorCode,
   BrowserFailureReason,
   BrowserObservation,
+  BrowserReadOptions,
   BrowserRecoveryAction,
   BrowserStateSnapshot,
 } from '../../../shared/browser'
@@ -28,14 +29,16 @@ import {
   BROWSER_WAIT_MAX_QUIET_MS,
   BROWSER_WAIT_TEXT_MAX_LENGTH,
   browserCapabilityActParamsSchema,
+  browserReadOptionsSchema,
 } from '../../../shared/browser'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 
-export const BROWSER_TOOLS = toPiToolGroup({ name: 'lexora_browser', description: 'Open browser pages, inspect their state, and interact with page elements.', tools: [{ name: 'open' }, { name: 'snapshot' }, { name: 'act' }] })
+export const BROWSER_TOOLS = toPiToolGroup({ name: 'lexora_browser', description: 'Open browser pages, read their content, inspect their state, and interact with page elements.', tools: [{ name: 'open' }, { name: 'snapshot' }, { name: 'read' }, { name: 'act' }] })
 
 export const BROWSER_ACT_TOOL_NAME = BROWSER_TOOLS.act.name
 export const BROWSER_OPEN_TOOL_NAME = BROWSER_TOOLS.open.name
+export const BROWSER_READ_TOOL_NAME = BROWSER_TOOLS.read.name
 export const BROWSER_SNAPSHOT_TOOL_NAME = BROWSER_TOOLS.snapshot.name
 
 const browserUrl = Type.String({
@@ -98,6 +101,9 @@ export const browserOpenToolParameters = Type.Union([
 ], { type: 'object' })
 
 export const browserSnapshotToolParameters = Type.Object({
+  mode: Type.Optional(Type.Union(['semantic', 'screenshot'].map(mode => Type.Literal(mode)), { description: 'Defaults to semantic for DOM/accessibility inspection. Choose screenshot for visual reasoning or unavailable semantics; returns the current viewport image, not an entire PDF or original image. Sensitive-input protection applies. Filters apply only to semantic mode.' })),
+  query: Type.Optional(Type.String({ minLength: 1, maxLength: 256, pattern: '\\S', description: 'Match all whitespace-separated tokens in element names, descriptions, roles or safe values.' })),
+  selector: Type.Optional(Type.String({ minLength: 1, maxLength: 512, pattern: '\\S', description: 'Limit interactive elements to the first matching CSS region in the main document.' })),
   maxElements: Type.Optional(Type.Integer({
     maximum: BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT,
     minimum: 1,
@@ -113,6 +119,19 @@ const browserRevision = Type.Integer({
   maximum: Number.MAX_SAFE_INTEGER,
   minimum: 0,
 })
+export const browserReadToolParameters = Type.Object({
+  cursor: Type.Optional(Type.String({ maxLength: 128, pattern: '^[\\da-fA-F-]{36}:\\d{1,6}$', description: 'Continue the captured read using the returned cursor; omit mode, selector and target.' })),
+  maxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+  mode: Type.Optional(Type.Union(['text', 'links', 'tables'].map(mode => Type.Literal(mode)), { description: 'Content to extract; defaults to text. Tables return caption and indexed rows.' })),
+  selector: Type.Optional(Type.String({ minLength: 1, maxLength: 512, pattern: '\\S', description: 'CSS region in the main document; text defaults to article, main or body.' })),
+  target: Type.Optional(Type.Object({
+    documentRevision: browserRevision,
+    frameId: browserFrameId,
+    observationId: browserId,
+    ref: browserElementRef,
+  }, { additionalProperties: false, description: 'Read an element from the latest snapshot, including elements in frames. Use target or selector.' })),
+}, { additionalProperties: false })
+
 const browserPressKey = Type.Union(BROWSER_PRESS_KEYS.map(key => Type.Literal(key)))
 const browserActionIdentity = {
   documentRevision: browserRevision,
@@ -220,7 +239,7 @@ function targetlessBrowserAction(action: Record<string, TSchema>) {
 
 export type BrowserOpenToolInput = Static<typeof browserOpenToolParameters>
 export type BrowserSnapshotToolInput = Static<typeof browserSnapshotToolParameters>
-export type BrowserToolOperation = 'act' | 'open' | 'snapshot'
+export type BrowserToolOperation = 'act' | 'open' | 'read' | 'snapshot'
 export type BrowserToolFailureCode
   = BrowserErrorCode
     | GrantedPathError['code']
@@ -261,6 +280,10 @@ export function isBrowserOpenToolInput(input: unknown): input is BrowserOpenTool
 
 export function isBrowserSnapshotToolInput(input: unknown): input is BrowserSnapshotToolInput {
   return Check(browserSnapshotToolParameters, input)
+}
+
+export function isBrowserReadToolInput(input: unknown): input is BrowserReadOptions {
+  return browserReadOptionsSchema.safeParse(input).success
 }
 
 export function isBrowserActToolInput(input: unknown): input is BrowserCapabilityActParams {
@@ -317,6 +340,11 @@ export function classifyBrowserTool(
       case 'reversible-edit':
         return { access: 'interaction' }
     }
+  }
+  if (event.toolName === BROWSER_READ_TOOL_NAME) {
+    return isBrowserReadToolInput(event.input)
+      ? { access: 'read' }
+      : createToolClassificationFailure('VALIDATION_FAILED')
   }
   if (event.toolName === BROWSER_SNAPSHOT_TOOL_NAME) {
     return isBrowserSnapshotToolInput(event.input)

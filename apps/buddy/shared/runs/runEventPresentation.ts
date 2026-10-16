@@ -109,7 +109,7 @@ export const buddyToolPresentationSchema = z.discriminatedUnion('card', [
     fieldType: z.enum(['selection', 'text']).nullable(),
     inputLength: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
     observationTruncated: z.boolean().nullable(),
-    operation: z.enum(['act', 'open', 'snapshot']),
+    operation: z.enum(['act', 'open', 'read', 'snapshot']),
     origin: z.string().min(1).max(4_096).refine((value) => {
       if (value === 'file://')
         return true

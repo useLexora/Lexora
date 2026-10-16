@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { browserWaitOutcomeSchema } from './actions'
-import { browserObservationSchema } from './observation'
+import { browserObservationSchema, browserScreenshotImageSchema } from './observation'
 import { browserActionKindSchema, browserErrorSchema } from './primitives'
+import { browserReadContentSchema } from './reading'
 import { browserControlLeaseSchema, browserStateSnapshotSchema } from './session'
 
 export const browserFailureResultSchema = z.object({
@@ -25,6 +26,13 @@ export const browserObserveResultSchema = z.discriminatedUnion('ok', [
   }).strict(),
   browserFailureResultSchema,
 ])
+
+export const browserReadResultSchema = z.discriminatedUnion('ok', [
+  z.object({ content: browserReadContentSchema, ok: z.literal(true) }).strict(),
+  browserFailureResultSchema,
+])
+
+export type BrowserReadResult = z.infer<typeof browserReadResultSchema>
 
 export const browserActResultSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -82,3 +90,10 @@ export type BrowserReleaseControlResult = z.infer<typeof browserReleaseControlRe
 export type BrowserStateResult = z.infer<typeof browserStateResultSchema>
 
 export type BrowserCloseResult = z.infer<typeof browserCloseResultSchema>
+
+export const browserScreenshotReadResultSchema = z.discriminatedUnion('ok', [
+  z.object({ image: browserScreenshotImageSchema, ok: z.literal(true) }).strict(),
+  browserFailureResultSchema,
+])
+
+export type BrowserScreenshotReadResult = z.infer<typeof browserScreenshotReadResultSchema>

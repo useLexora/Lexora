@@ -195,21 +195,6 @@ export function createTruncation(
   return { reasons: orderedReasons }
 }
 
-export function getScreenshotFallbackReasons(
-  truncated: boolean,
-  empty: boolean,
-  visualContent: boolean,
-): BrowserScreenshotRef['reasons'] {
-  const reasons: BrowserScreenshotRef['reasons'] = []
-  if (empty)
-    reasons.push('semantic-content-empty')
-  if (truncated)
-    reasons.push('semantic-content-truncated')
-  if (visualContent)
-    reasons.push('visual-content')
-  return reasons
-}
-
 export function createScreenshotRef(
   screenshot: {
     bytes: Uint8Array
@@ -227,29 +212,6 @@ export function createScreenshotRef(
     screenshotId: screenshot.screenshotId,
     width: screenshot.width,
   }
-}
-
-export function hasVisualContent(
-  snapshot: z.infer<typeof cdpDomSnapshotSchema>,
-  nodes: CdpAxNode[],
-): boolean {
-  for (const document of snapshot.documents) {
-    for (const nodeNameIndex of document.nodes.nodeName ?? []) {
-      if (snapshot.strings[nodeNameIndex]?.toLowerCase() === 'canvas')
-        return true
-    }
-  }
-
-  const meaningfulNodes = nodes.filter(node => !node.ignored && node.backendDOMNodeId)
-  const visualNodeCount = meaningfulNodes.filter((node) => {
-    const role = normalizeRole(readAxString(node.role))
-    return role === 'canvas'
-      || role === 'figure'
-      || role === 'graphics-document'
-      || role === 'graphics-object'
-      || role === 'image'
-  }).length
-  return visualNodeCount > 0 && visualNodeCount * 2 >= meaningfulNodes.length
 }
 
 export function hasPngSignature(bytes: Uint8Array): boolean {
@@ -272,6 +234,7 @@ export function projectElements(
   observationHeader: BrowserObservationHeader,
   viewportNodeIds: ReadonlySet<number>,
   fieldMetadata: ReadonlyMap<number, DomFieldMetadata>,
+  filter: { query?: string, region?: { frameId: string, nodes: ReadonlySet<number> } } = {},
 ): {
   containsSensitiveInputs: boolean
   elements: BrowserObservedElement[]
@@ -296,8 +259,15 @@ export function projectElements(
   const containsSensitiveInputs = projectedNodes.some(
     node => node.element.inputMode === 'human',
   )
-  const focusedIndex = projectedNodes.findIndex(node => node.focused)
-  const rankedNodes = projectedNodes
+  const tokens = filter.query?.normalize('NFKC').toLowerCase().split(/\s+/).filter(Boolean) ?? []
+  const filteredNodes = projectedNodes.filter((node) => {
+    if (filter.region && (node.element.frameId !== filter.region.frameId || !filter.region.nodes.has(node.backendDOMNodeId)))
+      return false
+    const text = [node.element.name, node.element.description, node.element.role, node.element.value].filter(Boolean).join(' ').normalize('NFKC').toLowerCase()
+    return tokens.every(token => text.includes(token))
+  })
+  const focusedIndex = filteredNodes.findIndex(node => node.focused)
+  const rankedNodes = filteredNodes
     .map((node, index) => ({
       index,
       node,

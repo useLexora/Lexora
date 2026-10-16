@@ -11,8 +11,13 @@ import type {
   BrowserObserveParams,
   BrowserObserveResult,
   BrowserOpenResult,
+  BrowserReadOptions,
+  BrowserReadParams,
+  BrowserReadResult,
   BrowserReleaseControlParams,
   BrowserReleaseControlResult,
+  BrowserScreenshotReadParams,
+  BrowserScreenshotReadResult,
   BrowserStateResult,
   BrowserValidateActionParams,
   BrowserValidateActionResult,
@@ -41,9 +46,7 @@ export type BrowserCapabilityOpenTarget = {
   until?: BrowserWaitSpec
 }
 
-export interface BrowserCapabilityObserveInput {
-  maxElements?: number
-}
+export type BrowserCapabilityObserveInput = Omit<BrowserObserveParams, 'pageId' | 'sessionId'>
 
 export type BrowserCapabilityActInput = BrowserCapabilityActParams
 
@@ -65,6 +68,8 @@ export interface BrowserCapabilityHost {
   close: (sessionId: string) => Promise<BrowserCloseResult>
   getState: (sessionId: string) => Promise<BrowserStateResult>
   observe: (input: BrowserObserveParams) => Promise<BrowserObserveResult>
+  read: (input: BrowserReadParams) => Promise<BrowserReadResult>
+  readScreenshot: (input: BrowserScreenshotReadParams) => Promise<BrowserScreenshotReadResult>
   openLocal: (input: OpenBrowserLocalInput) => Promise<BrowserOpenResult>
   openUrl: (input: OpenBrowserUrlInput) => Promise<BrowserOpenResult>
   releaseControl: (
@@ -176,9 +181,9 @@ export class BrowserCapabilityService {
     if (!state.ok)
       return state
     const request: BrowserObserveParams = {
+      ...input,
       pageId: state.state.pageId,
       sessionId: state.state.sessionId,
-      ...(input.maxElements === undefined ? {} : { maxElements: input.maxElements }),
     }
     const result = await this.#host.observe(request)
     if (!result.ok) {
@@ -193,6 +198,47 @@ export class BrowserCapabilityService {
       return targetStale()
     this.#setPolicy(createPolicyObservation(result.observation))
     return result
+  }
+
+  read(input: BrowserReadOptions): Promise<BrowserReadResult> {
+    const captured = copyEventSnapshot(input)
+    return this.#track(async () => {
+      const state = await this.#getState()
+      if (!state.ok)
+        return state
+      const result = await this.#host.read({ ...captured, pageId: state.state.pageId, sessionId: state.state.sessionId })
+      if (!result.ok) {
+        this.#clearUnavailableBinding(result.error.code)
+        return result
+      }
+      if (result.content.sessionId !== state.state.sessionId) {
+        this.#setBinding(null)
+        return sessionNotFound()
+      }
+      if (result.content.pageId !== state.state.pageId)
+        return targetStale()
+      return result
+    })
+  }
+
+  readScreenshot(observation: BrowserObservation): Promise<BrowserScreenshotReadResult> {
+    const captured = copyEventSnapshot(observation)
+    return this.#track(async () => {
+      const matches = () => captured.sessionId === this.#sessionId
+        && captured.pageId === this.#policyObservation?.pageId
+        && captured.observationId === this.#policyObservation?.observationId
+        && captured.documentRevision === this.#policyObservation?.documentRevision
+      if (!captured.screenshot || !matches())
+        return targetStale()
+      const result = await this.#host.readScreenshot({
+        documentRevision: captured.documentRevision,
+        observationId: captured.observationId,
+        pageId: captured.pageId,
+        screenshotId: captured.screenshot.screenshotId,
+        sessionId: captured.sessionId,
+      })
+      return matches() ? result : targetStale()
+    })
   }
 
   classifyAction(

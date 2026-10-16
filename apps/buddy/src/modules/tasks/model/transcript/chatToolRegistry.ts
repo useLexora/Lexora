@@ -42,6 +42,7 @@ const webOperations = {
 
 const browserOperations = {
   open: { ...cards.browser, icon: 'browser-open', label: 'desktop.chat.processToolBrowserOpen' },
+  read: { ...cards.browser, icon: 'file', label: 'desktop.chat.processToolBrowserRead' },
   snapshot: { ...cards.browser, icon: 'browser-snapshot', label: 'desktop.chat.processToolBrowserSnapshot' },
   act: cards.browser,
 } as const satisfies Record<string, ChatToolRegistration>
@@ -60,6 +61,7 @@ const builtins: Readonly<Record<string, ChatToolRegistration>> = {
   lexora_web_search: webOperations.search,
   lexora_web_fetch: webOperations.fetch,
   lexora_browser_open: browserOperations.open,
+  lexora_browser_read: browserOperations.read,
   lexora_browser_snapshot: browserOperations.snapshot,
   lexora_browser_act: browserOperations.act,
   lexora_buddy_pet: cards.pet,

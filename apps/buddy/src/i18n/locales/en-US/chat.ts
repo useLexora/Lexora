@@ -368,6 +368,7 @@ export default {
   'desktop.chat.processToolBrowserAct': 'Interact with page',
   'desktop.chat.processToolBrowserElementCount': '{count} interactive elements',
   'desktop.chat.processToolBrowserOpen': 'Open web page',
+  'desktop.chat.processToolBrowserRead': 'Read page content',
   'desktop.chat.processToolBrowserSnapshot': 'Read page snapshot',
   'desktop.chat.processToolApprovalDenied': 'Not approved',
   'desktop.chat.processToolChanges': 'Changes',

@@ -6,6 +6,8 @@ import type {
   BrowserControlLease,
   BrowserObservation,
   BrowserObserveParams,
+  BrowserReadContent,
+  BrowserReadParams,
   BrowserReleaseControlParams,
   BrowserValidateActionParams,
   BrowserWaitOutcome,
@@ -326,7 +328,10 @@ export class BrowserHost {
     if (recoverablePageError)
       session.refreshPageState()
     const observation = await session.runWhileActive(() => this.#requireSemanticDriver(session).observe({
+      mode: input.mode,
       maxElements: input.maxElements,
+      query: input.query,
+      selector: input.selector,
       pageId: session.state.pageId,
       sessionId: session.state.sessionId,
       status: recoverablePageError || session.state.status === 'idle'
@@ -360,6 +365,21 @@ export class BrowserHost {
       ...(input.frameId ? { frameId: input.frameId } : {}),
       observationId: input.observationId,
     })
+  }
+
+  async read(input: BrowserReadParams): Promise<BrowserReadContent> {
+    const session = this.#requireSession(input.sessionId)
+    this.#assertCurrentPage(session, input.pageId, 'before reading content')
+    await this.#waitForPage(session)
+    this.#sessions.touch(input.sessionId)
+    const content = await session.runWhileActive(() => this.#requireSemanticDriver(session).read({
+      ...input,
+      status: session.state.status === 'loading' ? 'loading' : 'ready',
+      title: session.state.title,
+      url: session.state.url,
+    }))
+    this.#assertCurrentPage(session, input.pageId, 'after reading content')
+    return content
   }
 
   async act(input: BrowserActParams): Promise<BrowserHostActionResult> {

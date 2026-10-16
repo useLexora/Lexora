@@ -366,6 +366,7 @@ export default {
   'desktop.chat.processToolBrowserAct': '操作网页',
   'desktop.chat.processToolBrowserElementCount': '{count} 个可交互元素',
   'desktop.chat.processToolBrowserOpen': '打开网页',
+  'desktop.chat.processToolBrowserRead': '读取网页内容',
   'desktop.chat.processToolBrowserSnapshot': '读取网页快照',
   'desktop.chat.processToolApprovalDenied': '未获批准',
   'desktop.chat.processToolChanges': '更改',

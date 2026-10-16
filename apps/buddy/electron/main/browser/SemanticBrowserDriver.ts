@@ -5,6 +5,8 @@ import type {
   BrowserFailureReason,
   BrowserObservation,
   BrowserObservationTruncation,
+  BrowserReadContent,
+  BrowserReadOptions,
   BrowserScreenshotRef,
 } from '../../../shared/browser'
 import type { BrowserObservationHeader, SemanticBrowserTarget } from './browserObservationProjection'
@@ -19,8 +21,11 @@ import {
 } from '../../../shared/browser'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { browserTargetActionabilitySchema, cdpAxTreeSchema, cdpBoxModelSchema, cdpDocumentSchema, cdpDomSnapshotSchema, cdpLayoutMetricsSchema, cdpResolveNodeSchema, cdpRuntimeResultSchema } from './browserCdpSchemas'
+import { BrowserContentReader } from './BrowserContentReader'
 import { BrowserDebugger } from './BrowserDebugger'
-import { collectDomFieldMetadata, collectFrameIds, collectViewportNodeIds, containsSensitiveFieldMetadata, createScreenshotRef, createTruncation, deduplicateAccessibilityNodes, getScreenshotFallbackReasons, hasPngSignature, hasVisualContent, MAX_OBSERVED_FRAMES, normalizeElementLimit, projectElements, scopeAccessibilityNodes } from './browserObservationProjection'
+import { collectBrowserRegionNodes, resolveBrowserRegion } from './browserDomRegion'
+import { BrowserHostError } from './BrowserHostError'
+import { collectDomFieldMetadata, collectFrameIds, collectViewportNodeIds, containsSensitiveFieldMetadata, createScreenshotRef, createTruncation, deduplicateAccessibilityNodes, hasPngSignature, MAX_OBSERVED_FRAMES, normalizeElementLimit, projectElements, scopeAccessibilityNodes } from './browserObservationProjection'
 import {
   projectBrowserObservedValue,
   redactBrowserRuntimeUrl,
@@ -53,6 +58,9 @@ interface SemanticBrowserDriverOptions {
 }
 
 export interface SemanticBrowserObservationInput {
+  mode?: 'semantic' | 'screenshot'
+  query?: string
+  selector?: string
   maxElements?: number
   pageId: string
   sessionId: string
@@ -223,6 +231,7 @@ export class SemanticBrowserDriver {
   readonly #observations = new Map<string, StoredObservation>()
   #observationExpiryTimer: ReturnType<typeof setTimeout> | null = null
   readonly #observationTtlMs: number
+  readonly #contentReader: BrowserContentReader
   readonly #page: SemanticBrowserPage
   #documentRevision = 0
   #disposed = false
@@ -235,6 +244,7 @@ export class SemanticBrowserDriver {
     this.#maxObservations = options.maxObservations ?? DEFAULT_MAX_OBSERVATIONS
     this.#now = options.now ?? Date.now
     this.#observationTtlMs = options.observationTtlMs ?? DEFAULT_OBSERVATION_TTL_MS
+    this.#contentReader = new BrowserContentReader(this.#now, this.#observationTtlMs)
     this.#page = options.page
     this.#connection = options.connection ?? new BrowserDebugger(options.page.debugger)
     this.#ownsConnection = !options.connection
@@ -244,12 +254,13 @@ export class SemanticBrowserDriver {
     try {
       this.#assertActive()
       this.#ensureDebugger()
+      const revision = this.#documentRevision
       const [
         frameTreeResult,
         documentResult,
         domSnapshotResult,
         layoutMetricsResult,
-      ] = await Promise.all([
+      ] = await Promise.allSettled([
         this.#connection.sendCommand('Page.getFrameTree'),
         this.#connection.sendCommand('DOM.getDocument', {
           depth: 0,
@@ -260,17 +271,20 @@ export class SemanticBrowserDriver {
         }),
         this.#connection.sendCommand('Page.getLayoutMetrics'),
       ])
-      const document = cdpDocumentSchema.parse(documentResult)
-      const domSnapshot = cdpDomSnapshotSchema.parse(domSnapshotResult)
-      const layoutMetrics = cdpLayoutMetricsSchema.parse(layoutMetricsResult)
-      const frameTree = collectFrameIds(frameTreeResult)
-      const mainFrameId = document.root.frameId ?? frameTree.frameIds[0]
-      if (!mainFrameId)
+      const document = documentResult.status === 'fulfilled' ? cdpDocumentSchema.safeParse(documentResult.value) : undefined
+      const domResult = domSnapshotResult.status === 'fulfilled' ? cdpDomSnapshotSchema.safeParse(domSnapshotResult.value) : undefined
+      const domSnapshot = domResult?.success ? domResult.data : undefined
+      if (!domSnapshot && input.mode !== 'screenshot')
         throw new SemanticBrowserDriverError()
-      const observedFrameIds = [
-        mainFrameId,
-        ...frameTree.frameIds.filter(frameId => frameId !== mainFrameId),
-      ].slice(0, MAX_OBSERVED_FRAMES)
+      const metricsResult = layoutMetricsResult.status === 'fulfilled' ? cdpLayoutMetricsSchema.safeParse(layoutMetricsResult.value) : undefined
+      const layoutMetrics = metricsResult?.success ? metricsResult.data : undefined
+      const frameTree = frameTreeResult.status === 'fulfilled'
+        ? collectFrameIds(frameTreeResult.value)
+        : { frameIds: [], truncated: false }
+      const mainFrameId = (document?.success ? document.data.root.frameId : undefined) ?? frameTree.frameIds[0]
+      const observedFrameIds = mainFrameId
+        ? [mainFrameId, ...frameTree.frameIds.filter(frameId => frameId !== mainFrameId)].slice(0, MAX_OBSERVED_FRAMES)
+        : []
       const accessibilityResults = await Promise.allSettled(observedFrameIds.map(async (frameId) => {
         const result = await this.#connection.sendCommand(
           'Accessibility.getFullAXTree',
@@ -282,8 +296,7 @@ export class SemanticBrowserDriver {
         )
       }))
       const mainFrameAccessibility = accessibilityResults[0]
-      if (!mainFrameAccessibility || mainFrameAccessibility.status === 'rejected')
-        throw new SemanticBrowserDriverError()
+      const semanticUnavailable = !mainFrameAccessibility || mainFrameAccessibility.status === 'rejected'
       const unavailableFrameCount = accessibilityResults.filter(
         result => result.status === 'rejected',
       ).length
@@ -292,21 +305,21 @@ export class SemanticBrowserDriver {
           result.status === 'fulfilled' ? result.value : []
         )),
       )
-      const { cssVisualViewport } = layoutMetrics
-      const viewportNodeIds = collectViewportNodeIds(
-        domSnapshot,
-        mainFrameId,
-        {
-          height: cssVisualViewport.clientHeight,
-          width: cssVisualViewport.clientWidth,
-          x: cssVisualViewport.pageX,
-          y: cssVisualViewport.pageY,
-        },
-      )
-      const fieldMetadata = collectDomFieldMetadata(domSnapshot)
+      const viewport = layoutMetrics
+        ? {
+            height: layoutMetrics.cssVisualViewport.clientHeight,
+            width: layoutMetrics.cssVisualViewport.clientWidth,
+            x: layoutMetrics.cssVisualViewport.pageX,
+            y: layoutMetrics.cssVisualViewport.pageY,
+          }
+        : undefined
+      const viewportNodeIds = domSnapshot && viewport && mainFrameId
+        ? collectViewportNodeIds(domSnapshot, mainFrameId, viewport)
+        : new Set<number>()
+      const fieldMetadata = domSnapshot ? collectDomFieldMetadata(domSnapshot) : new Map()
 
       const observationHeader: BrowserObservationHeader = {
-        documentRevision: this.#documentRevision,
+        documentRevision: revision,
         observationId: this.#createId(),
         pageId: input.pageId,
         sessionId: input.sessionId,
@@ -315,13 +328,19 @@ export class SemanticBrowserDriver {
         url: redactBrowserRuntimeUrl(input.url),
       }
       const maxElements = normalizeElementLimit(input.maxElements)
+      if (input.mode !== 'screenshot' && input.selector && (!domSnapshot || !mainFrameId || !document?.success))
+        throw new SemanticBrowserDriverError()
+      const region = input.mode !== 'screenshot' && input.selector && domSnapshot && mainFrameId && document?.success
+        ? collectBrowserRegionNodes(domSnapshot, mainFrameId, await resolveBrowserRegion(this.#connection, document.data.root.nodeId, input.selector))
+        : undefined
       const projected = projectElements(
         accessibilityNodes,
-        mainFrameId,
+        mainFrameId ?? '',
         maxElements,
         observationHeader,
         viewportNodeIds,
         fieldMetadata,
+        { query: input.query, ...(region ? { region: { frameId: mainFrameId, nodes: region } } : {}) },
       )
       const truncationReasons = new Set<BrowserObservationTruncation['reasons'][number]>()
       if (
@@ -330,24 +349,33 @@ export class SemanticBrowserDriver {
       ) {
         truncationReasons.add('frame-limit')
       }
-      if (unavailableFrameCount > 0)
+      if (unavailableFrameCount > 0 || semanticUnavailable || !domSnapshot)
         truncationReasons.add('frame-unavailable')
       if (projected.truncationReason)
         truncationReasons.add(projected.truncationReason)
+      if (input.mode === 'screenshot')
+        truncationReasons.clear()
 
-      const visualContent = hasVisualContent(domSnapshot, accessibilityNodes)
-      const screenshotAllowed = !projected.containsSensitiveInputs
-        && !containsSensitiveFieldMetadata(fieldMetadata)
-      let screenshotReasons = screenshotAllowed
-        ? getScreenshotFallbackReasons(
-            truncationReasons.size > 0,
-            projected.elements.length === 0,
-            visualContent,
-          )
-        : []
-      let screenshot = screenshotReasons.length > 0
-        ? await this.#captureScreenshot()
-        : undefined
+      const screenshotReasons: BrowserScreenshotRef['reasons'] = input.mode === 'screenshot' ? ['explicit-request'] : []
+      let screenshotIssue: BrowserObservation['screenshotIssue']
+      let screenshot: { bytes: Uint8Array, height: number, screenshotId: string, width: number } | undefined
+      if (screenshotReasons.length > 0) {
+        if (!domSnapshot || !domSnapshot.documents.some(document => domSnapshot.strings[document.frameId] === mainFrameId)) {
+          screenshotIssue = 'privacy-unavailable'
+        }
+        else if (projected.containsSensitiveInputs || containsSensitiveFieldMetadata(fieldMetadata)) {
+          screenshotIssue = 'sensitive-input'
+        }
+        else {
+          try {
+            screenshot = await this.#captureScreenshot()
+          }
+          catch { screenshotIssue = 'capture-failed' }
+        }
+      }
+      this.#assertActive()
+      if (revision !== this.#documentRevision)
+        throw new SemanticBrowserDriverError('BROWSER_TARGET_STALE')
       let observation: BrowserObservation
 
       while (true) {
@@ -360,7 +388,10 @@ export class SemanticBrowserDriver {
           : undefined
         const candidate = {
           ...observationHeader,
-          elements: projected.elements,
+          elements: input.mode === 'screenshot' ? [] : projected.elements,
+          ...(input.mode === 'screenshot' ? { mode: 'screenshot' as const } : {}),
+          ...(semanticUnavailable && input.mode !== 'screenshot' ? { semanticUnavailable: true as const } : {}),
+          ...(screenshotIssue ? { screenshotIssue } : {}),
           ...(screenshotRef ? { screenshot: screenshotRef } : {}),
           truncated: Boolean(truncation),
           ...(truncation ? { truncation } : {}),
@@ -374,14 +405,6 @@ export class SemanticBrowserDriver {
         }
 
         truncationReasons.add('text-limit')
-        if (screenshotAllowed) {
-          screenshotReasons = getScreenshotFallbackReasons(
-            true,
-            projected.elements.length === 0,
-            visualContent,
-          )
-          screenshot ??= await this.#captureScreenshot()
-        }
         const removed = projected.elements.pop()
         if (!removed)
           throw new SemanticBrowserDriverError()
@@ -390,7 +413,7 @@ export class SemanticBrowserDriver {
 
       this.#storeObservation(
         observation.observationId,
-        projected.targets,
+        input.mode === 'screenshot' ? new Map() : projected.targets,
         screenshot && observation.screenshot
           ? {
               bytes: screenshot.bytes,
@@ -401,10 +424,26 @@ export class SemanticBrowserDriver {
       return observation
     }
     catch (error) {
-      if (error instanceof SemanticBrowserDriverError)
+      if (error instanceof SemanticBrowserDriverError || error instanceof BrowserHostError)
         throw error
       throw new SemanticBrowserDriverError()
     }
+  }
+
+  async read(input: BrowserReadOptions & Omit<SemanticBrowserObservationInput, 'mode'>): Promise<BrowserReadContent> {
+    this.#assertActive()
+    this.#ensureDebugger()
+    const revision = this.#documentRevision
+    return this.#contentReader.read(input, {
+      assertCurrent: () => {
+        this.#assertActive()
+        if (revision !== this.#documentRevision)
+          throw new SemanticBrowserDriverError('BROWSER_TARGET_STALE')
+      },
+      connection: this.#connection,
+      documentRevision: revision,
+      resolveTarget: target => this.resolveTarget(target),
+    })
   }
 
   async executeAction(input: SemanticBrowserActionInput): Promise<void> {
@@ -551,6 +590,7 @@ export class SemanticBrowserDriver {
     if (this.#documentRevision >= Number.MAX_SAFE_INTEGER)
       throw new SemanticBrowserDriverError()
     this.#documentRevision += 1
+    this.#contentReader.clear()
     this.#clearObservations()
   }
 
@@ -641,6 +681,7 @@ export class SemanticBrowserDriver {
     if (this.#disposed)
       return
     this.#disposed = true
+    this.#contentReader.clear()
     this.#clearObservations()
     if (this.#ownsConnection)
       this.#connection.dispose()

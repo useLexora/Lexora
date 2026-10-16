@@ -60,6 +60,23 @@ const POST_ACTION_OBSERVATION: BrowserObservation = {
 }
 
 describe('browserExtension', () => {
+  it('returns native image blocks and preserves completed actions when screenshot delivery fails', async () => {
+    const fixture = createFixture()
+    const observation = { ...OBSERVATION, elements: [], screenshot: { byteLength: 8, height: 600, mimeType: 'image/png', reasons: ['explicit-request'], screenshotId: 'da56fda3-f4de-4622-908b-39978c98194d', width: 800 } }
+    const image = { data: 'iVBORw0KGgo=', mimeType: 'image/png' }
+    fixture.service.observe.mockResolvedValue({ ok: true, observation })
+    fixture.service.readScreenshot.mockResolvedValue({ ok: true, image })
+    const snapshot = await execute(requireTool(fixture.tools, 'lexora_browser_snapshot'), { mode: 'screenshot' })
+    expect(snapshot.content).toEqual([{ type: 'text', text: JSON.stringify(observation) }, { type: 'image', ...image }])
+    fixture.service.act.mockResolvedValue({ ok: true, actionKind: 'reload', observation, state: READY_STATE })
+    fixture.service.readScreenshot.mockRejectedValue(new Error('private host failure'))
+    const action = await execute(requireTool(fixture.tools, 'lexora_browser_act'), { action: { kind: 'reload' }, documentRevision: 3, observationId: OBSERVATION_ID, pageId: PAGE_ID })
+    expect(action.isError).toBe(false)
+    expect(readContent(action)).toMatchObject({ actionKind: 'reload', observation })
+    expect(action.content).toContainEqual({ type: 'text', text: JSON.stringify({ screenshotDeliveryIssue: { code: 'BROWSER_CAPABILITY_FAILED', recovery: 'read_again' } }) })
+    expect(JSON.stringify(action)).not.toContain('private host failure')
+  })
+
   it('presents a successful browser through the desktop without changing the model result', async () => {
     const operations: ContextPanelOperationRecord[] = []
     const host = new ContextPanelHost(async (operation) => {
@@ -87,7 +104,7 @@ describe('browserExtension', () => {
     expect(operations.map(operation => operation.action)).toEqual(['open', 'close'])
   })
 
-  it('registers strict open, snapshot, and act tools', () => {
+  it('validates browser tool inputs at the model boundary', () => {
     const { tools } = createFixture()
     const act = requireTool(tools, 'lexora_browser_act')
     const open = requireTool(tools, 'lexora_browser_open')
@@ -95,11 +112,11 @@ describe('browserExtension', () => {
     for (const tool of [open, snapshot, act])
       expect(tool.parameters).toMatchObject({ type: 'object' })
 
-    expect([...tools.keys()]).toEqual([
-      'lexora_browser_open',
-      'lexora_browser_snapshot',
-      'lexora_browser_act',
-    ])
+    const read = requireTool(tools, 'lexora_browser_read')
+    expect(Check(snapshot.parameters, { mode: 'screenshot' })).toBe(true)
+    expect(Check(snapshot.parameters, { mode: 'auto' })).toBe(false)
+    expect(Check(read.parameters, { mode: 'tables', selector: '#report', maxItems: 50 })).toBe(true)
+    expect(Check(read.parameters, { mode: 'text', evaluate: 'document.cookie' })).toBe(false)
     expect(Check(open.parameters, {
       kind: 'url',
       url: 'https://example.com/docs',
@@ -152,7 +169,7 @@ describe('browserExtension', () => {
     })).toBe(false)
     expect(Check(snapshot.parameters, { maxElements: 400 })).toBe(true)
     expect(Check(snapshot.parameters, { maxElements: 401 })).toBe(false)
-    expect(Check(snapshot.parameters, { selector: 'body' })).toBe(false)
+    expect(Check(snapshot.parameters, { selector: 'body', query: 'checkout', mode: 'screenshot' })).toBe(true)
     expect(Check(act.parameters, {
       action: { kind: 'fill', ref: 'e1', text: 'query' },
       documentRevision: 3,
@@ -446,6 +463,8 @@ function createFixture(onOpened?: () => Promise<void>) {
   const service = {
     act: vi.fn(),
     observe: vi.fn(),
+    read: vi.fn(),
+    readScreenshot: vi.fn(),
     open: vi.fn(),
   }
   const tools = new Map<string, ToolDefinition>()

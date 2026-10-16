@@ -274,6 +274,8 @@ function createUnavailableBrowserHost(): BrowserCapabilityHost {
     close: unavailable,
     getState: unavailable,
     observe: unavailable,
+    read: unavailable,
+    readScreenshot: unavailable,
     openLocal: unavailable,
     openUrl: unavailable,
     releaseControl: unavailable,
