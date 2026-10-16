@@ -102,6 +102,7 @@
     "katex": "^0.19.0",
     "marked": "^18.1.0",
     "markstream-vue": "^2.0.19",
+    "mermaid": "^12.2.0",
     "monaco-editor": "^0.57.0",
     "naive-ui": "^2.45.3",
     "sass-embedded": "^1.105.1",
