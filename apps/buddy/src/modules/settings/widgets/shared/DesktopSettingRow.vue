@@ -26,7 +26,7 @@ const controlAttrs = computed(() => ({
       <small v-if="description" :id="descriptionId" class="text-[length:var(--setting-description-size,0.7rem)] leading-[var(--setting-description-leading,1.5)]" :class="disabled ? 'text-disabled' : 'text-muted'">{{ description }}</small>
       <slot name="hint" />
     </div>
-    <div class="desktop-settings-row__control min-w-0 items-center gap-[0.55rem]" :class="toggle ? 'is-toggle flex flex-wrap justify-end' : 'grid grid-cols-[minmax(0,1fr)_auto]'">
+    <div class="desktop-settings-row__control min-w-0 items-center gap-[0.55rem]" :class="toggle ? 'is-toggle flex flex-wrap justify-end' : 'grid grid-cols-1'">
       <slot :label-id="labelId" :control-attrs="controlAttrs" />
       <small v-if="error" :id="errorId" class="col-span-full basis-full text-[0.7rem] text-danger leading-[1.5]" :class="{ 'text-right': toggle }" role="alert">{{ error }}</small>
     </div>

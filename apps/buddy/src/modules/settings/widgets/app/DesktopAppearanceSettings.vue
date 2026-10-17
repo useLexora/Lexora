@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ApplicationSettingsProps } from './typing'
 import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '@buddy-electron/shared/desktopApi'
-import { NSelect, NSpin, useMessage } from 'naive-ui'
+import { NSelect, useMessage } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useSettingMutation } from '../../state/useSettingMutation'
@@ -43,10 +43,10 @@ const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map
         <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.outlinePosition')" :description="t('desktop.settings.outlinePositionDescription')">
           <NSelect
             v-bind="controlAttrs" :options="outlinePositionOptions" :value="config.desktop.chat.outlinePosition"
+            :loading="pending.has('outlinePosition')"
             :disabled="pending.has('outlinePosition')"
             @update:value="save('outlinePosition', { desktop: { chat: { outlinePosition: $event } } })"
           />
-          <NSpin v-if="pending.has('outlinePosition')" size="small" />
         </DesktopSettingRow>
       </DesktopSettingsGroup>
     </section>
