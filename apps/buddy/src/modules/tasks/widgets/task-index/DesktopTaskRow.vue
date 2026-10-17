@@ -7,25 +7,19 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import {
   ApprovalsApp20Regular,
-  Copy20Regular,
   Edit20Regular,
   MoreHorizontal20Regular,
-  Settings20Regular,
   SpinnerIos20Regular,
-  Tag20Regular,
-  TagDismiss20Regular,
 } from '@vicons/fluent'
-import { NDropdown, NTooltip, useMessage } from 'naive-ui'
+import { NDropdown, NTooltip } from 'naive-ui'
 import { computed, h, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { formatSessionReferenceClipboard } from '@/modules/tasks/model/sessionReferenceClipboard'
-import { useTaskEnvironment } from '@/modules/tasks/taskContext'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import DesktopTaskMarkOption from './DesktopTaskMarkOption.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
 import { formatTaskRelativeTime } from './taskRelativeTime'
 import { useTaskHistoryDrag } from './useTaskHistoryDrag'
+import { useTaskMenuActions } from './useTaskMenuActions'
 
 const props = defineProps<{
   taskId: string
@@ -63,8 +57,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
-const { clipboard } = useTaskEnvironment()
-const notification = useMessage()
 const opening = shallowRef(false)
 watch(() => props.loading, (loading, _, cleanup) => {
   opening.value = false
@@ -87,31 +79,16 @@ const pinLabel = computed(() => props.pinMode === 'pin'
   : t('desktop.tasks.unpin'))
 const marker = computed(() => props.marks.find(mark => mark.id === props.markState?.markId)
   ?? (props.markState?.unread ? { name: t('desktop.marks.unread'), description: t('desktop.marks.unreadDescription'), color: 'var(--buddy-accent-solid)' } : null))
+const { actions: taskActions, select: selectTaskAction } = useTaskMenuActions({
+  task: () => props,
+  language: () => props.language,
+  assignMark: (_, markId) => emit('assignMark', markId),
+  clearMarks: () => emit('clearMarks'),
+  setRead: (_, read) => emit('setRead', read),
+  manageMarks: () => emit('manageMarks'),
+})
 const actions = computed<DropdownOption[]>(() => [
-  {
-    icon: () => hIcon(Tag20Regular),
-    key: 'marks',
-    label: t('desktop.marks.select'),
-    children: [
-      {
-        key: 'read',
-        icon: () => h(DesktopTaskMarkSwatch, { color: 'var(--buddy-accent-solid)' }),
-        label: () => h(DesktopTaskMarkOption, { name: t('desktop.marks.unread'), selected: props.markState?.unread === true }),
-        disabled: props.marksBusy || !props.markState,
-      },
-      ...props.marks.map(mark => ({
-        key: `mark:${mark.id}`,
-        label: () => h(DesktopTaskMarkOption, { name: mark.name, selected: props.markState?.markId === mark.id }),
-        icon: () => h(DesktopTaskMarkSwatch, { color: mark.color }),
-        disabled: props.marksBusy || !props.markState,
-      })),
-      { type: 'divider', key: 'mark-divider' },
-      { key: 'clear-marks', icon: () => hIcon(TagDismiss20Regular), label: t('desktop.marks.none'), disabled: props.marksBusy || !(props.markState?.markId || props.markState?.unread) },
-      { key: 'manage-marks', icon: () => hIcon(Settings20Regular), label: t('desktop.marks.manage') },
-    ],
-  },
-  { type: 'divider', key: 'task-actions-divider' },
-  { icon: () => hIcon(Copy20Regular), key: 'copy', label: t('desktop.tasks.copy'), children: [{ key: 'copy-session-reference', label: t('desktop.tasks.sessionReference') }] },
+  ...taskActions.value,
   { icon: () => hIcon(Edit20Regular), key: 'rename', label: t('desktop.tasks.renameTask') },
   { icon: () => h(DesktopIcon, { name: 'delete' }), key: 'delete', label: t('desktop.tasks.deleteTask') },
 ])
@@ -121,22 +98,11 @@ function hIcon(component: typeof Edit20Regular) {
 }
 
 function handleAction(action: string | number) {
-  if (action === 'read')
-    emit('setRead', props.markState?.unread === true)
-  if (action === 'manage-marks')
-    emit('manageMarks')
-  if (action === 'clear-marks')
-    emit('clearMarks')
-  if (typeof action === 'string' && action.startsWith('mark:'))
-    emit('assignMark', action.slice(5))
+  selectTaskAction(action)
   if (action === 'rename')
     emit('rename')
   if (action === 'delete')
     emit('delete')
-  if (action === 'copy-session-reference') {
-    void clipboard.writeText(formatSessionReferenceClipboard({ id: props.taskId, title: props.title.slice(0, 80) }))
-      .catch(() => notification.error(t('desktop.chat.copyFailed')))
-  }
 }
 
 const dragId = useId()
@@ -220,7 +186,7 @@ useTaskHistoryDrag({
           <DesktopIcon :size="16" :component="activityIcon" />
         </span>
         <div class="desktop-task-row__actions flex items-center gap-[var(--buddy-task-sidebar-action-gap,_0.125rem)] opacity-0 pointer-events-none [grid-area:1/1] justify-self-end">
-          <NDropdown trigger="click" placement="bottom-start" :options="actions" @select="handleAction">
+          <NDropdown class="buddy-spaced-submenus" trigger="click" placement="bottom-start" :options="actions" @select="handleAction">
             <button
               class="desktop-task-sidebar__more ui-focus-ring transition-state-colors grid w-[var(--buddy-task-sidebar-action-size,1.75rem)] h-[var(--buddy-task-sidebar-action-size,1.75rem)] flex-none place-items-center p-0 border-0 rounded-icon bg-transparent cursor-pointer leading-[1]"
               :class="active ? 'text-inherit hover:bg-nav-selected-hover' : 'text-muted hover:(bg-nav-hover text-strong)'"

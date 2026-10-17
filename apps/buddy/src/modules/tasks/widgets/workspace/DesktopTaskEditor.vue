@@ -11,6 +11,7 @@ import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conve
 import { useConversationStatus } from '@/modules/tasks/state/runs/useConversationStatus'
 import { useTaskContext } from '@/modules/tasks/taskContext'
 import DesktopTaskSpaceSelector from '@/modules/tasks/widgets/composer/DesktopTaskSpaceSelector.vue'
+import { useTaskMenuActions } from '@/modules/tasks/widgets/task-index/useTaskMenuActions'
 import { useProvideChatContent } from '@/modules/tasks/widgets/transcript/chatContentContext'
 import DesktopChatWorkspace from '@/modules/tasks/widgets/workspace/DesktopChatWorkspace.vue'
 import DesktopChatWorkspaceHeader from '@/modules/tasks/widgets/workspace/DesktopChatWorkspaceHeader.vue'
@@ -35,6 +36,19 @@ const { t } = useBuddyI18n(language)
 const { workspace } = tasks
 const { spaces, ...indexActions } = tasks.index
 const { activeSpace, activeTaskId, currentTitle } = tasks.session
+const { actions: taskActions, select: selectTaskAction } = useTaskMenuActions({
+  task: () => ({
+    taskId: activeTaskId.value,
+    title: currentTitle.value,
+    marks: workspace.marks.items.value,
+    markState: activeTaskId.value ? workspace.marks.states.value.get(activeTaskId.value) : undefined,
+    marksBusy: workspace.marks.busy.value,
+  }),
+  language: () => language.value,
+  assignMark: workspace.marks.assign,
+  clearMarks: workspace.marks.clear,
+  setRead: workspace.marks.setRead,
+})
 const startTask = navigateDraft ?? tasks.session.startTask
 const chatSession = workspace.session
 const viewMode = shallowRef<'chat' | 'canvas'>('chat')
@@ -116,7 +130,7 @@ useProvideChatContent({
         </NPopover>
       </template>
       <template #actions>
-        <slot name="actions" />
+        <slot name="actions" :options="taskActions" :select="selectTaskAction" :label="t('desktop.tasks.moreActions')" />
       </template>
     </DesktopChatWorkspaceHeader>
     <DesktopChatWorkspace

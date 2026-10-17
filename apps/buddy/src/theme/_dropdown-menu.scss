@@ -1,0 +1,19 @@
+.buddy-spaced-submenus.n-dropdown-menu {
+  --buddy-submenu-gap: 6px;
+
+  &.popover-transition-enter-from,
+  &.popover-transition-leave-to {
+    transform: scale(1);
+  }
+
+  .n-dropdown-option > .n-dropdown-offset-container {
+    left: calc(-1 * var(--buddy-submenu-gap));
+    right: calc(-1 * var(--buddy-submenu-gap));
+  }
+
+  .n-dropdown-option-body--pending:has(.n-dropdown-option-body__suffix--has-submenu)::after {
+    position: absolute;
+    inset: 0 calc(-1 * var(--buddy-submenu-gap));
+    content: '';
+  }
+}

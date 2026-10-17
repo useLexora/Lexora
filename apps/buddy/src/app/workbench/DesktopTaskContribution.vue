@@ -62,8 +62,8 @@ watch(() => task.value?.session.currentTitle.value, (title) => {
       <template #title>
         <WorkbenchPaneTitle :view="view" />
       </template>
-      <template #actions>
-        <WorkbenchPaneActions :view-id="view.id" @split="workbench.newTask(task.session.spaceId.value, workbench.controller.owner(view.id)?.id, $event)" />
+      <template #actions="{ options, select, label }">
+        <WorkbenchPaneActions :view-id="view.id" :actions="options" :label="label" @select="select" @split="workbench.newTask(task.session.spaceId.value, workbench.controller.owner(view.id)?.id, $event)" />
       </template>
     </DesktopTaskEditor>
   </DesktopTaskViewProvider>

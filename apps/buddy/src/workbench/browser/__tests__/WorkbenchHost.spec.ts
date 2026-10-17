@@ -220,7 +220,7 @@ it('hides close action in WorkbenchPaneActions when only a single pane exists', 
     await nextTick()
 
     const singleLabels = [...document.querySelectorAll('.n-dropdown-option-body__label')].map(el => el.textContent?.trim())
-    expect(singleLabels).toEqual(['向左分屏', '向右分屏', '向上分屏', '向下分屏'])
+    expect(singleLabels).toEqual(['分屏'])
     expect(document.querySelector('.n-dropdown-divider')).toBeNull()
 
     // Split to 2 panes

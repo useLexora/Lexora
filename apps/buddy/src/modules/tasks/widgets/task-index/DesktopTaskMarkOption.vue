@@ -7,7 +7,7 @@ defineProps<{ name: string, selected: boolean }>()
 </script>
 
 <template>
-  <span class="desktop-task-mark-option flex w-[140px] items-center gap-[8px]">
+  <span class="desktop-task-mark-option flex max-w-[140px] items-center gap-[8px]">
     <NEllipsis class="desktop-task-mark-option__name" :tooltip="{ placement: 'right', width: 260 }">{{ name }}</NEllipsis>
     <span class="grid w-[16px] flex-none place-items-center">
       <DesktopIcon v-if="selected" :component="Checkmark16Regular" :size="16" />

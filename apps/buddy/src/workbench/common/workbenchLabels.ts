@@ -1,5 +1,6 @@
 const zh = {
   resizeBoth: '同时调整相邻面板',
+  splitMenu: '分屏',
   split: '向右分屏',
   splitLeft: '向左分屏',
   splitUp: '向上分屏',
@@ -61,6 +62,7 @@ const zh = {
 type Labels = { [K in keyof typeof zh]: string }
 const en: Labels = {
   resizeBoth: 'Resize adjacent panes in both directions',
+  splitMenu: 'Split',
   split: 'Split right',
   splitLeft: 'Split left',
   splitUp: 'Split up',
