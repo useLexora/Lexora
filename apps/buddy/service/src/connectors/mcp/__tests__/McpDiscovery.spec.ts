@@ -155,7 +155,10 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
     }
     else {
       expect(output).toContain(`\"discovered\":[\"${toolName}\"]`)
-      expect(output).toContain('CallToolResult')
+      expect(output).toContain(`declare const tools: { ${toolName}`)
+      expect(output).toContain('content: Array<')
+      expect(output).toContain('structuredContent?: { routes:')
+      expect(output).toContain('isError?: boolean')
       expect(output).toContain('3999')
       expect(output).toContain('4000')
       expect(output).toContain('businessError')

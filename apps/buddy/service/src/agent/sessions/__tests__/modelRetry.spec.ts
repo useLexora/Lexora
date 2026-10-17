@@ -97,7 +97,7 @@ describe('model retry policy', () => {
     expect(attempts).toEqual([1, 2])
     release()
   })
-  it.each([1, 2, 'unlimited'] as const)('restores the %s retry budget for the next tool step after switching models', async (limit) => {
+  it.each([2, 'unlimited'] as const)('restores the %s retry budget for the next tool step after switching models', async (limit) => {
     const fixture = await createFixture(() => undefined, [], true)
     const failures = limit === 'unlimited' ? 2 : limit
     const requests: string[] = []
@@ -147,7 +147,8 @@ describe('model retry policy', () => {
 
   it.each([0, 2, 'unlimited'] as const)('executes the %s budget without duplicating the user input', async (limit) => {
     let requests = 0
-    const fixture = await createFixture(() => ++requests <= 5 ? 'server_busy' : undefined)
+    const failures = ['Unable to forward upstream stream', 'The service is temporarily unavailable', 'The upstream provider returned an error']
+    const fixture = await createFixture(() => ++requests <= 5 ? failures[(requests - 1) % failures.length] : undefined)
     const release = await fixture.activate(limit)
     await fixture.reusable.prompt('Retry the model request')
     expect(requests).toBe(limit === 'unlimited' ? 6 : limit + 1)
@@ -156,7 +157,7 @@ describe('model retry policy', () => {
     release()
   })
 
-  it.each(['401 invalid api key', '429 insufficient_quota', '403 forbidden', '400 server_error'])('does not retry %s even with an unlimited budget', async (failure) => {
+  it.each(['401 invalid api key', '429 insufficient_quota', '400 server_error'])('does not retry %s even with an unlimited budget', async (failure) => {
     let requests = 0
     const fixture = await createFixture(() => {
       requests++

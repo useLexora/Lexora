@@ -44,6 +44,7 @@ export interface CreateReusableBuddySessionOptions {
   getPermissionSettings?: (runId: string) => BuddyPermissionSettings
   updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
   setCodemodeEnabled?: (enabled: boolean) => void
+  assertCodemodeReady?: () => void
   skillReferences?: readonly SkillReference[]
   tree?: BuddyConversationTreeCursor
   assertModelAccess: (
@@ -74,6 +75,7 @@ export function createReusableBuddySession(
   let generation: number | undefined
   const prepareRequest = session.agent.prepareRequest
   session.agent.prepareRequest = async (request, signal) => {
+    options.assertCodemodeReady?.()
     const run = options.runContext.current
     if (pendingRetryOffset !== null) {
       retryOffset = pendingRetryOffset
@@ -302,6 +304,7 @@ export function createReusableBuddySession(
       session.settingsManager.getCompactionSettings(session.model),
     ),
     async activateTurn(input) {
+      options.assertCodemodeReady?.()
       input.signal.throwIfAborted()
       finishingTurn = undefined
       generation = input.generation
@@ -373,11 +376,12 @@ export function createReusableBuddySession(
         session,
         async () => {
           try {
-            return await session.prompt(text, piPromptOptions)
+            await session.prompt(text, piPromptOptions)
           }
           finally {
             await session.waitForIdle()
           }
+          options.assertCodemodeReady?.()
         },
       ).finally(() => {
         if (options.inputReferences.pending === inputReference)
@@ -459,6 +463,7 @@ export function createReusableBuddySession(
       pendingInputs.clear()
       session.agent.clearSteeringQueue()
       session.agent.clearFollowUpQueue()
+      options.assertCodemodeReady?.()
       options.tree?.finish()
     }),
     subscribe: listener => session.subscribe((event) => {

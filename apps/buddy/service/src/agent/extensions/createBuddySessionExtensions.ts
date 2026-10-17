@@ -78,6 +78,7 @@ export interface BuddySessionExtensions {
   getPermissionSettings: () => BuddyPermissionSettings
   updatePermissionSettings: (settings: BuddyPermissionSettings) => void
   setCodemodeEnabled: (enabled: boolean) => void
+  assertCodemodeReady: () => void
   toolCapabilities: Pick<SessionToolCapabilities, 'onDidChange' | 'snapshot'>
   dispose: () => Promise<void>
   resourceRevisions: readonly BuddyCapabilityResourceRevision[]
@@ -99,6 +100,7 @@ export async function createBuddySessionExtensions(
   const runContext: BuddyExtensionRunContextStore = { current: null }
   let permissionSettings: BuddyPermissionSettings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
   let codemodeEnabled = false
+  const codemode = createCodemodeCapability(() => codemodeEnabled)
   const fileAccessLimit = options.fileAccessLimit ?? 'inherit'
   const getExecutionProfile = () => fileAccessLimit === 'read_only' ? 'read_only' : permissionSettings.executionProfile
   const inputReferences: BuddyInputReferenceStore = { pending: null }
@@ -152,7 +154,7 @@ export async function createBuddySessionExtensions(
         ? { id: options.spaceId, kind: 'space' }
         : { id: options.conversationId, kind: 'conversation' },
     })
-    capabilities.push(createCodemodeCapability(() => codemodeEnabled), ...await services.createCapabilities({
+    capabilities.push(codemode, ...await services.createCapabilities({
       isCodemodeEnabled: () => codemodeEnabled,
       conversationId: options.conversationId,
       get executionProfile() { return getExecutionProfile() },
@@ -253,6 +255,7 @@ export async function createBuddySessionExtensions(
         authorization.updatePermissionSettings(settings)
       },
       setCodemodeEnabled: enabled => codemodeEnabled = enabled,
+      assertCodemodeReady: codemode.assertReady,
       dispose,
       resourceRevisions,
       toolCapabilities,

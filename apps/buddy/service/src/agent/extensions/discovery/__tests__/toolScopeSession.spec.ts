@@ -100,6 +100,11 @@ describe('role tool scope in real Pi sessions', () => {
     expect(resumed.lastResult()).not.toContain(deniedMcp)
     expect(resumed.requests.every(request => !request.names.includes(deniedMcp) && !request.names.includes(pluginTool))).toBe(true)
     expect(resumed.requests.map(request => request.tools).join('\n')).not.toContain(marker)
+    for (const name of [deniedMcp, pluginTool]) {
+      await resumed.turn(scriptCall(name, {}))
+      expect(await readFile(resumed.document, 'utf8')).toBe('original document')
+    }
+    expect(resumed.approved).toEqual([])
   })
 
   it('keeps role read-only limits after a full-access update and excludes unknown external effects', async () => {

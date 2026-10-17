@@ -32,7 +32,7 @@ index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347
  /**
   * Get path to built-in themes directory (shipped with package)
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index c5ad71905832cac59341cff04729260936dfba77..55be2ca2c55d16b64e7ffb941da79f2ac505b9ea 100644
+index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483606fe19a 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
 @@ -320,11 +320,11 @@ export class AgentSession {
@@ -66,7 +66,7 @@ index c5ad71905832cac59341cff04729260936dfba77..55be2ca2c55d16b64e7ffb941da79f2a
                      afterToolCall: (context) => this._afterToolCall(context, parentId),
                      signal,
                      onUpdate,
-@@ -2976,6 +2977,8 @@ export class AgentSession {
+@@ -3009,6 +3010,8 @@ export class AgentSession {
       * Context overflow errors are NOT retryable (handled by compaction instead).
       */
      _isRetryableError(message) {
@@ -76,10 +76,10 @@ index c5ad71905832cac59341cff04729260936dfba77..55be2ca2c55d16b64e7ffb941da79f2a
          if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0))
              return false;
 diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
-index 586c761f16bbdf4885bd31d4d6890fdfd2c27815..654727af6f0f8585594a9f6a5b50ed07272cb475 100644
+index 43c7ad43b394c7a9266dbcac0bee1e675b721713..d5299e8d3f61fd246fb0856534c45696a11a8b09 100644
 --- a/dist/core/extensions/types.d.ts
 +++ b/dist/core/extensions/types.d.ts
-@@ -906,6 +906,7 @@ export type InputEventResult = {
+@@ -930,6 +930,7 @@ export type InputEventResult = {
  };
  interface ToolCallEventBase {
      type: "tool_call";
@@ -808,20 +808,113 @@ index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb8
 +    return Math.min(Math.max(1, value), maximum);
 +}
 diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/execute.js
-index 4b00fa14744bac1674d133b4841e217e4ed64cf0..d6dfa692e95b90bff0104e7108cc27c0819677fd 100644
+index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a457dd5efc 100644
 --- a/dist/extensions/codemode/execute.js
 +++ b/dist/extensions/codemode/execute.js
-@@ -412,6 +412,9 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -384,6 +384,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+     const startedAt = performance.now();
+     const { code, options: sourceOptions } = parseCodemodeSource(input.code);
+     const calls = [];
++    const cleanupTimeoutMs = options.runtime?.cleanupTimeoutMs ?? 1000;
++    if (!Number.isSafeInteger(cleanupTimeoutMs) || cleanupTimeoutMs <= 0)
++        throw new RangeError("cleanupTimeoutMs must be a positive integer");
++    let publishing = true;
++    const cleanupState = { toolCalls: "completed", worker: "exited" };
++    let toolCleanup = Promise.resolve();
++    let workerExit = Promise.resolve();
+     // Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
+     let modelUsage;
+     // Images returned by `models.generateImages()`, to notice a script that never shows them.
+@@ -395,7 +402,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+         modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
+     };
+     const snapshot = () => ({ calls: calls.map((call) => ({ ...call })) });
+-    const publish = () => onUpdate?.({ content: [], details: snapshot() });
++    const publish = () => { if (publishing) onUpdate?.({ content: [], details: snapshot() }); };
+     // Show the script as running before its first nested call, so the row's timer starts.
+     publish();
+     const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
+@@ -418,22 +425,44 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+             // Only tools from ctx.tools are callable, so ctx is set here.
+             if (!ctx)
+                 throw new Error("Tool calls need a session");
+-            const outcome = await ctx.executeTool(tool.name, args, { signal: callSignal });
+-            record.id = outcome.toolCall.id;
+-            record.durationMs = performance.now() - callStartedAt;
+-            if (outcome.isError) {
++            try {
++                callSignal.throwIfAborted();
++                const outcome = await ctx.executeTool(tool.name, args, { signal: callSignal });
++                record.id = outcome.toolCall.id;
++                callSignal.throwIfAborted();
++                if (outcome.isError) {
++                    record.status = "error";
++                    record.error = truncateText(textOf(outcome.result) || `Tool "${tool.name}" failed`, ERROR_PREVIEW_CHARS);
++                }
++                else {
++                    record.status = "ok";
++                }
++                return toScriptValue(tool, outcome);
++            }
++            catch (error) {
+                 record.status = callSignal.aborted ? "cancelled" : "error";
+-                record.error = truncateText(textOf(outcome.result) || `Tool "${tool.name}" failed`, ERROR_PREVIEW_CHARS);
++                record.error = truncateText(error instanceof Error ? error.message : String(error), ERROR_PREVIEW_CHARS);
++                throw error;
+             }
+-            else {
+-                record.status = "ok";
++            finally {
++                record.durationMs = performance.now() - callStartedAt;
++                publish();
+             }
+-            publish();
+-            return toScriptValue(tool, outcome);
+         },
      }));
      const sandbox = new CodemodeSandbox({
          tools: sandboxTools,
 +        computeTimeoutMs: options.runtime?.computeTimeoutMs,
 +        maxPendingToolCalls: options.runtime?.maxPendingToolCalls,
 +        maxQueuedToolCalls: options.runtime?.maxQueuedToolCalls,
++        onCleanup: (settled) => {
++            cleanupState.toolCalls = "pending";
++            toolCleanup = settled.then(() => { cleanupState.toolCalls = "completed"; });
++        },
++        onWorkerStarted: (exited) => {
++            cleanupState.worker = "pending";
++            workerExit = exited.then(() => { cleanupState.worker = "exited"; });
++        },
          globals: [
              ...createDiscoveryGlobals(callable, samples, options),
              ...(options.models && ctx
-@@ -447,8 +450,11 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -462,6 +491,25 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+     finally {
+         await sandbox.close();
+     }
++    const cleanup = toolCleanup.then(() => workerExit);
++    let cleanupTimer;
++    try {
++        await Promise.race([cleanup, new Promise((resolve) => { cleanupTimer = setTimeout(resolve, cleanupTimeoutMs); })]);
++    }
++    finally {
++        clearTimeout(cleanupTimer);
++        publishing = false;
++    }
++    const cleanupStatus = { ...cleanupState };
++    if (cleanupStatus.toolCalls === "pending" || cleanupStatus.worker === "pending") {
++        options.runtime?.onCleanupIncomplete?.(cleanup);
++        result = {
++            ok: false,
++            error: result.ok ? { kind: "sandbox", message: "CodeMode cleanup is incomplete; nested side effects or a worker may still be active." } : result.error,
++            output: result.output,
++            calls: result.calls,
++        };
++    }
+     // Calls still marked running were cut off by the script ending, a timeout, or an abort.
+     for (const call of calls) {
+         if (call.status === "running")
+@@ -478,8 +526,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
              scriptOutput.push({ type: "text", text: valueText(result.value) });
      }
      const items = formatOutput(scriptOutput);
@@ -831,26 +924,37 @@ index 4b00fa14744bac1674d133b4841e217e4ed64cf0..d6dfa692e95b90bff0104e7108cc27c0
 +        if (calls.length > 0)
 +            items.push({ type: "text", text: "Nested tools may have completed or left partial effects before the script failed. Inspect the current state before continuing; do not replay the entire script or completed actions." });
 +    }
++    if (cleanupStatus.toolCalls === "pending" || cleanupStatus.worker === "pending")
++        items.push({ type: "text", text: "Cleanup is incomplete: nested side effects or a worker may still be active. Do not treat cancellation as rollback or repeat these actions." });
      if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
          items.push({
              type: "text",
+@@ -492,7 +545,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+     const output = joinAdjacentText(await saveImages(truncated.items));
+     const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
+     const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
+-    const details = snapshot();
++    const details = { ...snapshot(), cleanup: cleanupStatus };
+     if (truncated.fullOutputPath)
+         details.fullOutputPath = truncated.fullOutputPath;
+     return {
 diff --git a/dist/extensions/codemode/index.d.ts b/dist/extensions/codemode/index.d.ts
-index 7de9c24e9d7ac437265eeb911ca9c841b36dca9f..891f90bd0eff36ca5facc2f32fb4a2902de7aedb 100644
+index 7de9c24e9d7ac437265eeb911ca9c841b36dca9f..2dc7d99e01d13b33e83159270db3bc34ef95f1f2 100644
 --- a/dist/extensions/codemode/index.d.ts
 +++ b/dist/extensions/codemode/index.d.ts
 @@ -8,6 +8,7 @@
  import type { ExtensionFactory } from "../../core/extensions/types.ts";
  import type { CodemodeMode } from "../../core/settings-manager.ts";
  export interface CodemodeExtensionOptions {
-+    runtime?: { computeTimeoutMs?: number; maxPendingToolCalls?: number; maxQueuedToolCalls?: number };
++    runtime?: import("./tool.js").CodemodeRuntimeOptions;
      /** Overrides the `codemode.mode` setting. */
      mode?: CodemodeMode;
      /** Overrides the `codemode.inlineBudget` setting. */
 diff --git a/dist/extensions/codemode/index.js b/dist/extensions/codemode/index.js
-index 94edd2166b4d5e3821795bc936a68c6ca4d03305..958c5400e98645522e575e84dd48355e379e32c2 100644
+index 5c7cf3ca70024249b0bac77db4ad03687e28564a..392b918c5fdd6cb89ec21478eb1dc5f9e0359a7d 100644
 --- a/dist/extensions/codemode/index.js
 +++ b/dist/extensions/codemode/index.js
-@@ -19,6 +19,7 @@ export function createCodemodeExtension(options = {}) {
+@@ -20,6 +20,7 @@ export function createCodemodeExtension(options = {}) {
              ...createCodemodeToolDefinition({
                  appendEntry: (customType, data) => pi.appendEntry(customType, data),
                  models: options.models ?? true,
@@ -859,19 +963,37 @@ index 94edd2166b4d5e3821795bc936a68c6ca4d03305..958c5400e98645522e575e84dd48355e
                  getToolGuidelines: () => new Map(pi.getAllTools().map((tool) => [tool.name, tool.promptGuidelines ?? []])),
                  getMode: () => options.mode ?? readMode(pi),
 diff --git a/dist/extensions/codemode/tool.d.ts b/dist/extensions/codemode/tool.d.ts
-index 5e667824a3e4615df9c82c949256e9720faffc72..c392da59bcce89ad5edc917f84ee12dd74e3c9b3 100644
+index 342278ad8d4bd590a9886c3171b968e6fd242628..7b871bf2e6825c91d6c3f966d939af1e0ea97d28 100644
 --- a/dist/extensions/codemode/tool.d.ts
 +++ b/dist/extensions/codemode/tool.d.ts
-@@ -36,6 +36,7 @@ export interface CodemodeStoreEntryData {
+@@ -35,7 +35,17 @@ export interface CodemodeStoreEntryData {
+ }
  /** The part of the model registry that scripts reach through `models`. */
  export type CodemodeModelRuntime = Pick<ModelRegistry, "getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages">;
++export interface CodemodeRuntimeOptions {
++    computeTimeoutMs?: number;
++    maxPendingToolCalls?: number;
++    maxQueuedToolCalls?: number;
++    /** Grace period for nested effects and worker exit after the script responds. Default: 1000 ms. */
++    cleanupTimeoutMs?: number;
++    /** Quarantine the owning session until pending cleanup settles. Must not throw. */
++    onCleanupIncomplete?(pending: Promise<void>): void;
++}
  export interface CodemodeToolOptions {
-+    runtime?: { computeTimeoutMs?: number; maxPendingToolCalls?: number; maxQueuedToolCalls?: number };
++    runtime?: CodemodeRuntimeOptions;
      /** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
      getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
      /** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
+@@ -75,6 +85,7 @@ export interface CodemodeNestedCall {
+ }
+ export interface CodemodeToolDetails {
+     calls: CodemodeNestedCall[];
++    cleanup?: { toolCalls: "completed" | "pending"; worker: "exited" | "pending" };
+     /** Temp file with the full text output, when the output was truncated. */
+     fullOutputPath?: string;
+ }
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 9f9bd7370e5ecc288de58d20e81b2a0aadb6ea4b..bc07b6f2ef57e81762c7f159d3c2b02103654eaa 100644
+index 3821d9f41564a68e990d233b260427d6a5681f42..b8b0b3cf5d3fbb5e7b2e67ba04644cda5401fa7b 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -3,7 +3,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
@@ -881,10 +1003,10 @@ index 9f9bd7370e5ecc288de58d20e81b2a0aadb6ea4b..bc07b6f2ef57e81762c7f159d3c2b021
 -export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
 +export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, prepareCompaction, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
  export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
- export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartCustomEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeAgentStartUserEvent, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
 diff --git a/dist/index.js b/dist/index.js
-index c48934f78d61fd5f5f8008bc9e09d8c4558d330a..d563686b971390d8ab816e38684f7797171662c6 100644
+index ab5cfccc3a90939e533b9118122189507a7af326..fcbf18f19fe66d722af3000f39e60a856c429d1c 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -5,7 +5,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
@@ -952,13 +1074,13 @@ index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb7868
      if (existsSync(localPath)) {
 diff --git a/examples/extensions/custom-provider-anthropic/package-lock.json b/examples/extensions/custom-provider-anthropic/package-lock.json
 deleted file mode 100644
-index c42cc37205ed3120ac234575dba2de27052d8afe..0000000000000000000000000000000000000000
+index 7a9cc69020074e9b3e2a5e0d3487c8927124fb82..0000000000000000000000000000000000000000
 diff --git a/examples/extensions/gondolin/package-lock.json b/examples/extensions/gondolin/package-lock.json
 deleted file mode 100644
-index d47e327924bcf79aaeb8ac2c0035c0f4a978cbd0..0000000000000000000000000000000000000000
+index 9ad047db2d7513c92cd204c2ccddb17799c05813..0000000000000000000000000000000000000000
 diff --git a/examples/extensions/sandbox/package-lock.json b/examples/extensions/sandbox/package-lock.json
 deleted file mode 100644
-index d67e9229aaf4603c92ead47b00e3cf83d2e9913e..0000000000000000000000000000000000000000
+index fbe7ec7c6885abfd3124b31e87267700226438ba..0000000000000000000000000000000000000000
 diff --git a/examples/extensions/with-deps/package-lock.json b/examples/extensions/with-deps/package-lock.json
 deleted file mode 100644
-index 4b2a877a14d66c9aed27865bf9ff7ba4a545994a..0000000000000000000000000000000000000000
+index ba9a0ce5131a0bf8f6aa6491183740985778ffff..0000000000000000000000000000000000000000

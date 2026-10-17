@@ -22,6 +22,7 @@ import type {
 import { diagnosticContext } from '../../diagnostics/diagnosticContext'
 import { RunEventLogFatalError } from '../../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from '../../runs/runError'
+import { CodemodeCleanupIncompleteError } from '../extensions/codemodeExtension'
 
 export const AUTOMATION_SESSION_STARTUP_TIMEOUT_MS = 60_000
 
@@ -294,7 +295,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
     const errorCode = readStableRunErrorCode(input.error)
     if (errorCode === 'SESSION_STORAGE_UNAVAILABLE')
       await this.#invalidateSessionContinuity(input.identity, input.runId)
-    else if (errorCode === 'AUTOMATION_RUN_TIMEOUT')
+    else if (errorCode === 'AUTOMATION_RUN_TIMEOUT' || input.error instanceof CodemodeCleanupIncompleteError)
       await this.#sessions.invalidateSession(input.identity)
   }
 

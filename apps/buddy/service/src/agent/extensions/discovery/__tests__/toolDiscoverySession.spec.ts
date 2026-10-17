@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, Context, JsonObject, Model } from '@earendil-works/pi-ai'
 import type { BuddyInProcessExtension } from '../../BuddyInProcessExtension'
-import type { BuddyToolExposureResolver } from '../toolDiscoveryContract'
+import type { BuddyToolDisclosurePolicy, BuddyToolExposureResolver } from '../toolDiscoveryContract'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToolAuthorizationService } from '../../../../permissions/ToolAuthorizationService'
 import { createEstimatedContextUsage } from '../../../context/contextUsageBreakdown'
 import { createIsolatedBuddyContextSnapshot as createBuddyContextSnapshot, createIsolatedBuddySession as createBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
-import { createReusableBuddySession } from '../../../sessions/createReusableBuddySession'
 import { toPiToolGroup } from '../../piToolGroup'
 import { createToolPolicyExtension } from '../../toolPolicyExtension'
 import { SessionToolCapabilities } from '../SessionToolCapabilities'
@@ -26,7 +25,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture(resolveExposure?: BuddyToolExposureResolver) {
+async function fixture(resolveExposure?: BuddyToolExposureResolver, available?: BuddyToolDisclosurePolicy['available']) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-discovery-')))
   roots.push(root)
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
@@ -52,7 +51,7 @@ async function fixture(resolveExposure?: BuddyToolExposureResolver) {
       pi.registerTool(tools.save)
     },
   }
-  const discovery: BuddyInProcessExtension = { name: 'lexora-tool-discovery', factory: pi => createToolDiscoveryCapability([{ source: { kind: 'builtin', id: 'sample', title: 'Sample' }, exposure: 'on_demand', tools: [sampleTools.save], keywords: 'sample 保存' }], new SessionToolCapabilities([], resolveExposure)).extension.factory(pi) }
+  const discovery: BuddyInProcessExtension = { name: 'lexora-tool-discovery', factory: pi => createToolDiscoveryCapability([{ source: { kind: 'builtin', id: 'sample', title: 'Sample' }, exposure: 'on_demand', tools: [sampleTools.save], keywords: 'sample 保存', available }], new SessionToolCapabilities([], resolveExposure)).extension.factory(pi) }
   const options = {
     agentDir: join(root, 'agent'),
     branchId: 'branch-1',
@@ -136,6 +135,44 @@ describe('real Pi tool discovery loop', () => {
       expect(resumed.session.getActiveToolNames()).toContain(name)
       await resumed.session.prompt('Continue legacy task')
       expect(readToolDiscoveryState(resumed.session.sessionManager.getBranch())?.discovered).toContain(JSON.stringify(['builtin', 'sample', name]))
+    }
+    finally { await resumed.shutdown('quit') }
+  })
+
+  it.each(['legacy', 'discovered'] as const)('does not revive currently unavailable tools from a %s session during custom continuation', async (history) => {
+    let available = true
+    const { root, options, runtime } = await fixture(undefined, () => available)
+    let request = 0
+    const stream = vi.spyOn(runtime, 'streamSimple').mockImplementation(model => response(model, history === 'discovered' && request++ === 0
+      ? [{ name: 'lexora_tool_search', arguments: { toolNames: [name] } }]
+      : []))
+    const previous = await createBuddySession({ ...options, inProcessExtensions: history === 'legacy' ? options.inProcessExtensions.slice(0, 1) : options.inProcessExtensions })
+    try {
+      await previous.session.prompt('Previously available sample tool')
+      expect(previous.session.getActiveToolNames()).toContain(name)
+      expect(getCurrentSystemMessage(previous.session.messages)?.toolsAdded?.map(tool => tool.name)).toContain(name)
+    }
+    finally { await previous.shutdown('quit') }
+
+    available = false
+    const requests: { names: string[], prompt: string }[] = []
+    stream.mockImplementation((model, context) => {
+      requests.push({ names: getCurrentTools(context.messages).map(tool => tool.name), prompt: getCurrentSystemPrompt(context.messages) })
+      return response(model, requests.length === 1
+        ? [{ name, arguments: { text: 'Must remain blocked' } }]
+        : requests.length === 2 ? [{ name: 'lexora_tool_search', arguments: { toolNames: [name] } }] : [])
+    })
+    const resumed = await createBuddySession({ ...options, piSessionFile: previous.piSessionFile })
+    try {
+      expect(resumed.session.getActiveToolNames()).not.toContain(name)
+      await resumed.session.sendCustomMessage({ customType: 'lexora.execution.resume.v1', content: 'Continue using current permissions', display: false }, { triggerTurn: true })
+      expect(requests).toHaveLength(3)
+      expect(requests.every(request => request.names.includes('lexora_tool_search') && !request.names.includes(name) && !request.prompt.includes('DISCLOSED_SAMPLE_GUIDELINE'))).toBe(true)
+      const results = resumed.session.messages.filter(message => message.role === 'toolResult')
+      expect(results.some(message => message.toolName === name && message.isError)).toBe(true)
+      expect(results.at(-1)).toMatchObject({ toolName: 'lexora_tool_search', isError: false, details: { tools: [], notFound: [name] } })
+      await expect(readFile(join(root, 'result.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(resumed.session.messages.filter(message => message.role === 'user')).toHaveLength(1)
     }
     finally { await resumed.shutdown('quit') }
   })
@@ -278,22 +315,12 @@ describe('real Pi tool discovery loop', () => {
     })
     const initialPreview = await createBuddyContextSnapshot(options)
     const created = await createBuddySession(options)
-    const reusable = createReusableBuddySession({
-      session: created.session,
-      shutdown: created.shutdown,
-      assertModelAccess: async () => options.model!,
-      runContext: { current: null },
-      inputReferences: { pending: null },
-      materializeInput: async input => input.prompt,
-    })
     try {
       await created.session.prompt('Save the sample')
       expect(requests[0]?.tools?.map(tool => tool.name)).not.toContain(name)
       expect(requests[0]?.systemPrompt).not.toContain('DISCLOSED_SAMPLE_GUIDELINE')
       expect(requests[1]?.tools?.filter(tool => tool.name === name)).toHaveLength(1)
       expect(requests[1]?.systemPrompt).toContain('DISCLOSED_SAMPLE_GUIDELINE')
-      expect(getCurrentSystemPrompt(reusable.getInputContext!().messages)).toBe(requests.at(-1)?.systemPrompt)
-      expect(getCurrentSystemMessage(reusable.getInputContext!().messages)?.sections?.buddy_tool_guidelines).toContain('DISCLOSED_SAMPLE_GUIDELINE')
       expect(await readFile(join(root, 'result.txt'), 'utf8')).toBe('Original tool execution')
       const recorded = created.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'system' && entry.message.sections?.buddy_tool_guidelines?.includes('DISCLOSED_SAMPLE_GUIDELINE'))
       expect(recorded).toHaveLength(1)

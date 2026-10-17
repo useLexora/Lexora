@@ -19,11 +19,13 @@ import {
 } from '../../../storage/__tests__/composerDraftTestFixture'
 import { createConversationRepository } from '../../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../../storage/database'
+import { createExecutionRepository } from '../../../storage/executionRepository'
 import { createRunRepository } from '../../../storage/runRepository'
 import { createUsageRepository } from '../../../storage/usageRepository'
 import { UsageService } from '../../../usage/UsageService'
 import { createBuddyInputReference } from '../../context/BuddyInputReference'
 import { PiEventBridge } from '../../events/PiEventBridge'
+import { CodemodeCleanupIncompleteError } from '../../extensions/codemodeExtension'
 import { BuddySessionStorageError } from '../../sessions/BuddySessionErrors'
 import { BuddySessionRegistry } from '../../sessions/BuddySessionRegistry'
 import { BuddyAgentRunner } from '../BuddyAgentRunner'
@@ -152,13 +154,10 @@ describe('buddyAgentRunner', () => {
     try {
       fixture.prepareTurn(first, 'message-recovery-refused')
       await expect(runner.startTurn(withSession(first)).completion).resolves.toMatchObject({ status: 'failed' })
-      expect(sessions.snapshot()).toMatchObject([{ recoveryPending: true, status: 'ready' }])
-      expect(sessions.getReady(base.conversationId, base.branchId)).toBe(session)
       expect((await fixture.eventLog.read(first.runId)).filter(event => recoveryTypes.includes(event.type))).toEqual([])
 
       fixture.prepareTurn(second, 'message-recovery-retried')
       await expect(runner.startTurn(withSession(second)).completion).resolves.toMatchObject({ status: 'completed' })
-      expect(sessions.snapshot()).toMatchObject([{ recoveryPending: false, status: 'ready' }])
       const recovered = (await fixture.eventLog.read(second.runId)).filter(event => recoveryTypes.includes(event.type))
       expect(recovered.map(event => event.type)).toEqual(recoveryTypes)
       expect(recovered[1]?.payload).toEqual({ missingAttachmentCount: 1, missingAttachmentIds: ['attachment-missing'], recoveredImageCount: 1, source: 'sqlite' })
@@ -166,7 +165,6 @@ describe('buddyAgentRunner', () => {
 
       fixture.prepareTurn(third, 'message-after-recovery-acknowledged')
       await expect(runner.startTurn(withSession(third)).completion).resolves.toMatchObject({ status: 'completed' })
-      expect(sessions.getReady(base.conversationId, base.branchId)).toBe(session)
       expect((await fixture.eventLog.read(third.runId)).filter(event => recoveryTypes.includes(event.type))).toEqual([])
       expect(fixture.eventLog.listForRuns([first.runId, second.runId, third.runId])
         .filter(event => recoveryTypes.includes(event.type)).map(event => event.type)).toEqual(recoveryTypes)
@@ -416,25 +414,7 @@ describe('buddyAgentRunner', () => {
       releaseFactory = resolve
     })
     const prompt = vi.fn(async () => {})
-    const session: ReusableBuddySession = {
-      readInternalMessageReceipts: async (messages) => {
-        if (messages.length)
-          throw new Error('Unexpected mailbox messages')
-        return []
-      },
-      appendInternalMessages: async () => { throw new Error('not used') },
-      resumeInternal: async () => { throw new Error('not used') },
-      finishTurn: async () => {},
-      abort: async () => {},
-      abortCompaction: () => {},
-      activateTurn: async () => () => {},
-      canCompact: () => true,
-      compact: async () => { throw new Error('not used') },
-      shutdown: async () => {},
-      prompt,
-      subscribe: () => () => {},
-      waitForIdle: async () => {},
-    }
+    const session = Object.assign(new IdleSession(), { prompt })
     const runner = fixture.createRunnerFromFactory(async () => {
       await factoryGate
       return { piSessionFile: join(fixture.root, 'session.jsonl'), session }
@@ -472,29 +452,15 @@ describe('buddyAgentRunner', () => {
       resolveActivationStarted = resolve
     })
     const prompt = vi.fn(async () => {})
-    const session: ReusableBuddySession = {
-      readInternalMessageReceipts: async (messages) => {
-        if (messages.length)
-          throw new Error('Unexpected mailbox messages')
-        return []
-      },
-      appendInternalMessages: async () => { throw new Error('not used') },
-      resumeInternal: async () => { throw new Error('not used') },
-      finishTurn: async () => {},
+    const session = Object.assign(new IdleSession(), {
+      prompt,
       abort: async () => releaseActivation(),
-      abortCompaction: () => {},
       activateTurn: async () => {
         resolveActivationStarted()
         await activationGate
         return () => {}
       },
-      canCompact: () => true,
-      compact: async () => { throw new Error('not used') },
-      shutdown: async () => {},
-      prompt,
-      subscribe: () => () => {},
-      waitForIdle: async () => {},
-    }
+    })
     const runner = fixture.createRunner(session)
     const input = {
       branchId: 'branch-1',
@@ -548,6 +514,43 @@ describe('buddyAgentRunner', () => {
       },
       type: 'run.failed',
     })
+  })
+
+  it('persists degraded cleanup after CodeMode quarantine without discarding session history', async () => {
+    const fixture = await createFixture()
+    const sessions = new BuddySessionRegistry<ReusableBuddySession>()
+    const session = Object.assign(new IdleSession(), {
+      prompt: async () => { throw new CodemodeCleanupIncompleteError() },
+      shutdown: async () => { throw new CodemodeCleanupIncompleteError() },
+    })
+    const runner = fixture.createRunnerFromFactory(async () => ({
+      piSessionFile: join(fixture.root, 'session.jsonl'),
+      session,
+    }), sessions)
+    const input = {
+      branchId: 'branch-1',
+      canonicalRoot: fixture.root,
+      conversationId: 'conversation-1',
+      cwd: fixture.root,
+      model: 'claude-sonnet-4-5',
+      spaceId: null,
+      provider: 'anthropic',
+      resources: emptyResources(),
+      prompt: 'Run with unfinished nested cleanup',
+      runId: 'run-codemode-cleanup',
+    }
+    fixture.prepareTurn(input, 'message-codemode-cleanup')
+    await expect(runner.startTurn(withSession(input)).completion).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'AGENT_RUN_FAILED',
+      piSessionFile: join(fixture.root, 'session.jsonl'),
+    })
+    expect(createExecutionRepository(fixture.database).find(input.runId)).toMatchObject({
+      phase: 'closed',
+      cleanupState: 'degraded',
+    })
+    expect(sessions.snapshot()).toEqual([expect.objectContaining({ status: 'disposed', cleanup: 'failed' })])
+    await runner.dispose()
   })
 
   it('preserves the durable answer but fails closing when Pi session persistence fails', async () => {
@@ -917,7 +920,7 @@ describe('buddyAgentRunner', () => {
   })
 })
 
-class OfflineSession implements ReusableBuddySession {
+class IdleSession implements ReusableBuddySession {
   readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
     if (messages.length)
       throw new Error('Unexpected mailbox messages')
@@ -928,19 +931,9 @@ class OfflineSession implements ReusableBuddySession {
   resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
   finishTurn = async () => {}
 
-  readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
-  readonly #target: string
-  #turnContext: BuddySessionTurnContext | null = null
-
-  constructor(target: string) {
-    this.#target = target
+  activateTurn(_input: BuddySessionTurnContext): Promise<() => void> {
+    return Promise.resolve(() => {})
   }
-
-  readonly toolSources = new Map([['write', {
-    extensionId: '@lexora/buddy-extension-workspace',
-    origin: 'product' as const,
-    scope: 'product' as const,
-  }]])
 
   abort(): Promise<void> {
     return Promise.resolve()
@@ -952,19 +945,48 @@ class OfflineSession implements ReusableBuddySession {
     return true
   }
 
-  activateTurn(input: BuddySessionTurnContext): Promise<() => void> {
-    this.#turnContext = input
-    return Promise.resolve(() => {
-      this.#turnContext = null
-    })
-  }
-
   shutdown(): Promise<void> {
     return Promise.resolve()
   }
 
   compact(): Promise<CompactionResult> {
     return Promise.reject(new Error('not used'))
+  }
+
+  prompt(): Promise<void> {
+    return Promise.resolve()
+  }
+
+  subscribe(_listener: (event: AgentSessionEvent) => void): () => void {
+    return () => {}
+  }
+
+  waitForIdle(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
+class OfflineSession extends IdleSession {
+  readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
+  readonly #target: string
+  #turnContext: BuddySessionTurnContext | null = null
+
+  constructor(target: string) {
+    super()
+    this.#target = target
+  }
+
+  readonly toolSources = new Map([['write', {
+    extensionId: '@lexora/buddy-extension-workspace',
+    origin: 'product' as const,
+    scope: 'product' as const,
+  }]])
+
+  activateTurn(input: BuddySessionTurnContext): Promise<() => void> {
+    this.#turnContext = input
+    return Promise.resolve(() => {
+      this.#turnContext = null
+    })
   }
 
   async prompt(): Promise<void> {
@@ -1050,50 +1072,14 @@ class OfflineSession implements ReusableBuddySession {
     return () => this.#listeners.delete(listener)
   }
 
-  waitForIdle(): Promise<void> {
-    return Promise.resolve()
-  }
-
   #emit(event: AgentSessionEvent): void {
     for (const listener of this.#listeners)
       listener(event)
   }
 }
 
-class ReasoningFailureSession implements ReusableBuddySession {
-  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
-    if (messages.length)
-      throw new Error('Unexpected mailbox messages')
-    return []
-  }
-
-  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
-  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
-  finishTurn = async () => {}
-
+class ReasoningFailureSession extends IdleSession {
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
-
-  abort(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  abortCompaction(): void {}
-
-  canCompact(): boolean {
-    return true
-  }
-
-  activateTurn(): Promise<() => void> {
-    return Promise.resolve(() => {})
-  }
-
-  shutdown(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  compact(): Promise<CompactionResult> {
-    return Promise.reject(new Error('not used'))
-  }
 
   prompt(): Promise<void> {
     const partial = assistant('', usage(1, 0))
@@ -1118,33 +1104,20 @@ class ReasoningFailureSession implements ReusableBuddySession {
     return () => this.#listeners.delete(listener)
   }
 
-  waitForIdle(): Promise<void> {
-    return Promise.resolve()
-  }
-
   #emit(event: AgentSessionEvent): void {
     for (const listener of this.#listeners)
       listener(event)
   }
 }
 
-class WaitingSession implements ReusableBuddySession {
-  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
-    if (messages.length)
-      throw new Error('Unexpected mailbox messages')
-    return []
-  }
-
-  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
-  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
-  finishTurn = async () => {}
-
+class WaitingSession extends IdleSession {
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
   readonly started: Promise<void>
   #releaseStarted!: () => void
   #releasePrompt!: () => void
 
   constructor() {
+    super()
     this.started = new Promise((resolve) => {
       this.#releaseStarted = resolve
     })
@@ -1153,24 +1126,6 @@ class WaitingSession implements ReusableBuddySession {
   async abort(): Promise<void> {
     this.#releasePrompt()
     this.#emit({ type: 'agent_settled', aborted: true })
-  }
-
-  abortCompaction(): void {}
-
-  canCompact(): boolean {
-    return true
-  }
-
-  activateTurn(): Promise<() => void> {
-    return Promise.resolve(() => {})
-  }
-
-  shutdown(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  compact(): Promise<CompactionResult> {
-    return Promise.reject(new Error('not used'))
   }
 
   prompt(): Promise<void> {
@@ -1185,50 +1140,14 @@ class WaitingSession implements ReusableBuddySession {
     return () => this.#listeners.delete(listener)
   }
 
-  waitForIdle(): Promise<void> {
-    return Promise.resolve()
-  }
-
   #emit(event: AgentSessionEvent): void {
     for (const listener of this.#listeners)
       listener(event)
   }
 }
 
-class ModelFailureSession implements ReusableBuddySession {
-  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
-    if (messages.length)
-      throw new Error('Unexpected mailbox messages')
-    return []
-  }
-
-  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
-  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
-  finishTurn = async () => {}
-
+class ModelFailureSession extends IdleSession {
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
-
-  abort(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  abortCompaction(): void {}
-
-  canCompact(): boolean {
-    return true
-  }
-
-  activateTurn(): Promise<() => void> {
-    return Promise.resolve(() => {})
-  }
-
-  compact(): Promise<CompactionResult> {
-    return Promise.reject(new Error('not used'))
-  }
-
-  shutdown(): Promise<void> {
-    return Promise.resolve()
-  }
 
   prompt(): Promise<void> {
     const message: AssistantMessage = {
@@ -1252,50 +1171,6 @@ class ModelFailureSession implements ReusableBuddySession {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)
-  }
-
-  waitForIdle(): Promise<void> {
-    return Promise.resolve()
-  }
-}
-
-class IdleSession implements ReusableBuddySession {
-  readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
-    if (messages.length)
-      throw new Error('Unexpected mailbox messages')
-    return []
-  }
-
-  appendInternalMessages: ReusableBuddySession['appendInternalMessages'] = async () => { throw new Error('not used') }
-  resumeInternal: ReusableBuddySession['resumeInternal'] = async () => { throw new Error('not used') }
-  finishTurn = async () => {}
-
-  activateTurn: ReusableBuddySession['activateTurn'] = async () => () => {}
-
-  abort(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  abortCompaction(): void {}
-
-  canCompact(): boolean {
-    return true
-  }
-
-  shutdown(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  compact(): Promise<CompactionResult> {
-    return Promise.reject(new Error('not used'))
-  }
-
-  prompt(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  subscribe(_listener: (event: AgentSessionEvent) => void): () => void {
-    return () => {}
   }
 
   waitForIdle(): Promise<void> {

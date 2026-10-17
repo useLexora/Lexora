@@ -180,6 +180,7 @@ export class BuddySessionFactory {
         },
         updatePermissionSettings: settings => extensions.updatePermissionSettings(restrictPermissions(settings)),
         setCodemodeEnabled: extensions.setCodemodeEnabled,
+        assertCodemodeReady: extensions.assertCodemodeReady,
         skillReferences: blueprint.resources.availableSkillReferences ?? blueprint.resources.skillReferences,
         tree,
         assertModelAccess: async (provider, model, contextWindow, maxTokens) => {

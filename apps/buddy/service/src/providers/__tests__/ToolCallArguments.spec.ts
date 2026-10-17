@@ -1,8 +1,8 @@
-import type { Api, AssistantMessageFrame, ToolCall } from '@earendil-works/pi-ai'
+import type { Api, AssistantMessage, Context } from '@earendil-works/pi-ai'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AssistantMessageFrameEncoder, InMemoryCredentialStore, normalizeContext, reduceAssistantMessageFrames, validateToolArguments } from '@earendil-works/pi-ai'
+import { InMemoryCredentialStore, normalizeContext, validateToolArguments } from '@earendil-works/pi-ai'
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -26,29 +26,56 @@ beforeAll(async () => {
 })
 
 describe.each(apis)('%s final tool arguments', (api) => {
-  it('rejects truncated arguments through permissive schemas and replay', async () => {
-    const json = '{"path":"unsafe.txt","content":"partial"'
-    const { call, frames } = await stream(api, json)
+  it.each(['{"path":"unsafe.txt","content":"partial"', '[]', 'null', '"not an object"'])('rejects malformed arguments through stream, journal and replay: %s', async (json) => {
+    const { call, message } = await stream(api, json)
     expect(call.arguments).toEqual({})
-    expect(call.argumentsError).toContain('not a complete JSON object')
-    expect(() => validateToolArguments(tool, call)).toThrow('not a complete JSON object')
-    const replayed = reduceAssistantMessageFrames(frames)!.content.find(block => block.type === 'toolCall')!
-    expect(replayed).toMatchObject({ arguments: {}, argumentsError: call.argumentsError })
-    expect(() => validateToolArguments(tool, replayed)).toThrow('not a complete JSON object')
+    expect(call.argumentsError).toContain(`Received arguments:\n${json}`)
+    expect(() => validateToolArguments(tool, call)).toThrow(call.argumentsError)
+
+    const history = await journal(message)
+    const replayed = history.find(message => message.role === 'assistant')!.content.find(block => block.type === 'toolCall')!
+    expect(replayed).toEqual(call)
+    expect(() => validateToolArguments(tool, replayed)).toThrow(call.argumentsError)
+    const validationError = `Invalid arguments for tool "${call.name}": ${call.argumentsError}`
+    history.push({ role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: validationError }], isError: true, timestamp: 2 })
+    const payload = await replay(api, history)
+    expect(JSON.stringify(payload)).toContain(JSON.stringify(validationError).slice(1, -1))
+    expect(JSON.stringify(payload)).not.toContain('"argumentsError"')
   })
 
-  it('preserves complete JSON arguments', async () => {
-    const { call } = await stream(api, '{"path":"safe.txt","content":"complete"}')
+  it('keeps an unfinished stream in the journal but excludes its partial tool call from replay', async () => {
+    const model = runtime.getModels(api)[0]!
+    const partialBody = `${body(api, '{"path":"unfinished-marker.txt","content":"partial').split('\n\n').slice(0, api === 'openai-completions' ? 1 : 3).join('\n\n')}\n\n`
+    const message = await runtime.getProvider(api)!.stream(model, context, {
+      apiKey: 'offline-fixture',
+      maxRetries: 0,
+      fetch: async () => new Response(partialBody, { headers: { 'content-type': 'text/event-stream' } }),
+    }).result()
+    expect(message.stopReason).toBe('error')
+    expect(message.content).toContainEqual(expect.objectContaining({ type: 'toolCall' }))
+    const history = await journal(message)
+    expect(history.find(message => message.role === 'assistant')).toEqual(message)
+    expect(JSON.stringify(await replay(api, history))).not.toContain('unfinished-marker')
+  })
+
+  it.each([
+    { json: '{"path":"safe.txt","content":"complete"}', expected: { path: 'safe.txt', content: 'complete' } },
+    { json: '{"content":"line one\nline two"}', expected: { content: 'line one\nline two' } },
+    { json: ' ', expected: {} },
+  ])('preserves complete or repairable JSON arguments: $json', async ({ json, expected }) => {
+    const { call, message } = await stream(api, json)
     expect(call.argumentsError).toBeUndefined()
-    expect(validateToolArguments(tool, call)).toEqual({ path: 'safe.txt', content: 'complete' })
+    expect(validateToolArguments(tool, call)).toEqual(expected)
+    const history = await journal(message)
+    const replayed = history.find(message => message.role === 'assistant')!.content.find(block => block.type === 'toolCall')!
+    expect(validateToolArguments(tool, replayed)).toEqual(expected)
   })
 })
 
-it('projects invalid names and orphaned results safely without rewriting stored history', async () => {
-  const api = 'openai-completions'
+it.each(apis)('projects invalid names and orphaned results safely over %s without rewriting stored history', async (api) => {
   const model = runtime.getModels(api)[0]!
   const longName = 'x'.repeat(129)
-  const invalid = ['bad name', longName, '']
+  const invalid = ['bad name', longName, '', 'bad\u0000name', 'bad\u007Fname']
   const usage = { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0 } }
   const history = normalizeContext({ messages: [
     { role: 'assistant', api, provider: api, model: model.id, timestamp: 1, stopReason: 'toolUse', usage, content: [
@@ -56,6 +83,7 @@ it('projects invalid names and orphaned results safely without rewriting stored 
       { type: 'toolCall', id: 'valid', name: 'write', arguments: { content: 'valid arguments' } },
       { type: 'toolCall', id: 'orphan', name: 'write', arguments: { path: 'possibly-written.txt' } },
     ] },
+    { role: 'system', content: 'Keep the current tool policy', timestamp: 2 },
     ...invalid.map((_name, index) => ({ role: 'toolResult' as const, toolCallId: `invalid-${index}`, toolName: 'invalid', content: [{ type: 'text' as const, text: 'invalid-result-marker' }], isError: true, timestamp: 2 })),
     { role: 'toolResult', toolCallId: 'valid', toolName: 'write', content: [{ type: 'text', text: 'valid-result-marker' }], isError: false, timestamp: 3 },
     { role: 'user', content: 'Continue', timestamp: 4 },
@@ -77,6 +105,24 @@ it('projects invalid names and orphaned results safely without rewriting stored 
   expect(serialized).toContain('its outcome is unknown')
   expect(serialized).toContain('verify the current state first')
   expect(history).toEqual(saved)
+})
+
+it.each(apis)('retains a usable assistant placeholder when all tool names are invalid over %s', async (api) => {
+  const { message } = await stream(api, '{}')
+  const history: Context['messages'] = [
+    { ...message, content: [{ type: 'toolCall', id: 'invalid-only', name: 'bad name', arguments: {} }] },
+    { role: 'toolResult', toolCallId: 'invalid-only', toolName: 'bad name', content: [{ type: 'text', text: 'invalid-result-marker' }], isError: true, timestamp: 2 },
+    { role: 'user', content: 'Try again with an available tool', timestamp: 3 },
+    { ...message, content: [{ type: 'toolCall', id: 'invalid-only', name: 'write', arguments: {} }] },
+    { role: 'toolResult', toolCallId: 'invalid-only', toolName: 'write', content: [{ type: 'text', text: 'valid-later-result' }], isError: false, timestamp: 4 },
+  ]
+  const original = structuredClone(history)
+  const serialized = JSON.stringify(await replay(api, history))
+  expect(serialized).toContain('A tool call with an invalid name was omitted from replay')
+  expect(serialized).not.toContain('bad name')
+  expect(serialized).not.toContain('invalid-result-marker')
+  expect(serialized).toContain('valid-later-result')
+  expect(history).toEqual(original)
 })
 
 it('rejects duplicate tool IDs before any tool side effect', async () => {
@@ -138,25 +184,32 @@ it('rejects duplicate tool IDs before any tool side effect', async () => {
   }
 })
 
-it('keeps an unfinished streaming preview non-executable when its progress frames are reconstructed', () => {
-  const partial = {
-    role: 'assistant' as const,
-    api: 'openai-completions' as const,
-    provider: 'fixture',
-    model: 'fixture',
-    content: [],
-    stopReason: 'toolUse' as const,
-    timestamp: 1,
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+async function journal(message: AssistantMessage): Promise<Context['messages']> {
+  const root = await mkdtemp(join(tmpdir(), 'buddy-tool-journal-'))
+  try {
+    const manager = SessionManager.create(root, root)
+    manager.appendMessage(context.messages[0]!)
+    manager.appendMessage(message)
+    const restored = SessionManager.open(manager.getSessionFile()!, root, root)
+    return restored.buildSessionContext().messages as Context['messages']
   }
-  const frames: AssistantMessageFrame[] = [
-    { type: 'start', partial },
-    { type: 'toolcall_start', contentIndex: 0, toolCall: { type: 'toolCall', id: 'call', name: 'write', arguments: {} } },
-    { type: 'toolcall_delta', contentIndex: 0, delta: '{"content":"unfinished' },
-  ]
-  const call = reduceAssistantMessageFrames(frames)!.content[0] as ToolCall
-  expect(() => validateToolArguments(tool, call)).toThrow('not a complete JSON object')
-})
+  finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function replay(api: Api, messages: Context['messages']) {
+  let payload: unknown
+  const model = runtime.getModels(api)[0]!
+  const result = await runtime.getProvider(api)!.stream(model, normalizeContext({ messages, tools: [tool] }), {
+    apiKey: 'offline-fixture',
+    maxRetries: 0,
+    onPayload: (value) => { payload = value },
+    fetch: async () => new Response(body(api, '{}'), { headers: { 'content-type': 'text/event-stream' } }),
+  }).result()
+  expect(result.stopReason, result.errorMessage).toBe('toolUse')
+  return payload
+}
 
 async function stream(api: Api, json: string) {
   const model = runtime.getModels(api)[0]!
@@ -166,16 +219,16 @@ async function stream(api: Api, json: string) {
     maxRetries: 0,
     fetch: async () => new Response(body(api, json), { headers: { 'content-type': 'text/event-stream' } }),
   })
-  const encoder = new AssistantMessageFrameEncoder()
-  const frames: AssistantMessageFrame[] = []
+  const endedCalls = []
   for await (const event of source) {
-    const frame = encoder.encode(event)
-    if (frame)
-      frames.push(frame)
+    if (event.type === 'toolcall_end')
+      endedCalls.push(structuredClone(event.toolCall))
   }
   const message = await source.result()
   expect(message.stopReason, message.errorMessage).toBe('toolUse')
-  return { call: message.content.find(block => block.type === 'toolCall')!, frames }
+  const call = message.content.find(block => block.type === 'toolCall')!
+  expect(endedCalls).toEqual([call])
+  return { call, message }
 }
 
 function body(api: Api, json: string, ids = ['call']) {

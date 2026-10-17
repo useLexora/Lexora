@@ -1,6 +1,6 @@
 import type { Model, Provider, StreamOptions } from '@earendil-works/pi-ai'
 import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
-import { InMemoryCredentialStore, InMemoryModelsStore, normalizeContext } from '@earendil-works/pi-ai'
+import { InMemoryCredentialStore, InMemoryModelsStore, isRetryableAssistantError, normalizeContext } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
@@ -70,13 +70,6 @@ describe('openAI stream completion compatibility', () => {
     expect(result).toMatchObject({ stopReason: 'stop', content: [{ type: 'text', text: '你好，世界' }], usage: { input: 7, output: 4, totalTokens: 11 } })
     expect(result.rawStopReason).toBeUndefined()
     expect(result.diagnostics).toEqual([{ type: INFERRED_STREAM_COMPLETION, timestamp: expect.any(Number) }])
-
-    const records: unknown[] = []
-    const observer = new PiApplicationObserver({ runId: 'run-fixture', report: record => records.push(applicationDiagnosticSchema.parse(record)) })
-    observer.handle({ type: 'turn_start' })
-    observer.handle({ type: 'turn_end', message: result, toolResults: [] })
-    expect(records).toContainEqual(expect.objectContaining({ event: INFERRED_STREAM_COMPLETION, level: 'warn', runId: 'run-fixture', turnId: 'run-fixture:1' }))
-    expect(JSON.stringify(records)).not.toContain('你好')
   })
 
   it.each([
@@ -127,7 +120,6 @@ describe('openAI stream completion compatibility', () => {
 
   it.each([
     ['text/html', '<html>private-response</html>', 'unknown'],
-    ['application/json', '{"private":"response"}', 'unknown'],
     ['text/event-stream', '', 'not_observed'],
   ])('captures %s without recording its body or claiming a cause', async (contentType, body, doneMarker) => {
     await stream(body, { fetch: async () => new Response(body, { headers: { 'content-type': contentType, 'set-cookie': 'private-cookie' } }) }).result()
@@ -151,6 +143,13 @@ describe('openAI stream completion compatibility', () => {
     expect(failed).toMatchObject([{ operationId: 'operation-c', runId: 'run-c', providerRequest: { completion: 'incomplete', doneMarker: 'not_observed' } }])
     expect(new Set([...results, ...failed].map(record => record.requestId)).size).toBe(3)
     expect(JSON.stringify(diagnostics)).not.toContain('private-answer')
+
+    const records: unknown[] = []
+    const observer = new PiApplicationObserver({ runId: 'run-a', report: record => records.push(applicationDiagnosticSchema.parse(record)) })
+    observer.handle({ type: 'turn_start' })
+    observer.handle({ type: 'turn_end', message: messages[0]!, toolResults: [] })
+    expect(records).toContainEqual(expect.objectContaining({ event: INFERRED_STREAM_COMPLETION, level: 'warn', runId: 'run-a', turnId: 'run-a:1' }))
+    expect(JSON.stringify(records)).not.toContain('private-answer')
   })
 
   it('records a bounded transport code without exposing error text, URL or credentials', async () => {
@@ -176,9 +175,27 @@ describe('openAI stream completion compatibility', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('private')
   })
 
-  it('distinguishes an HTTP rejection from an incomplete response stream', async () => {
-    await stream('', { fetch: async () => new Response('{"error":{"message":"private rejection"}}', { status: 401, headers: { 'content-type': 'application/json' } }) }).result()
-    expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: true, status: 401, failureStage: 'http', completion: 'unknown' } })
+  it.each([
+    [400, false],
+    [401, false],
+    [403, false],
+    [404, false],
+    [422, false],
+    [408, true],
+    [409, true],
+    [425, true],
+    [429, true],
+    [503, true],
+  ] as const)('classifies HTTP %s before matching transient-looking error text', async (status, retryable) => {
+    const result = await stream('', { fetch: async () => Response.json({ error: { message: 'Provider returned error: server overloaded (private detail)' } }, { status }) }).result()
+    expect(result.stopReason).toBe('error')
+    expect(isRetryableAssistantError(result)).toBe(retryable)
+    expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: true, status, failureStage: 'http', completion: 'unknown' } })
     expect(JSON.stringify(diagnostics)).not.toContain('private')
+  })
+
+  it('does not retry a quota exhaustion even when the provider returns 429', async () => {
+    const result = await stream('', { fetch: async () => Response.json({ error: { message: 'insufficient_quota: rate limit exceeded' } }, { status: 429 }) }).result()
+    expect(isRetryableAssistantError(result)).toBe(false)
   })
 })

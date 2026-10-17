@@ -1,7 +1,9 @@
 import type { AssistantMessage, Context, Model } from '@earendil-works/pi-ai'
 import { normalizeContext } from '@earendil-works/pi-ai'
 import { stream } from '@earendil-works/pi-ai/api/openai-completions'
+import { kimiCodingProvider } from '@earendil-works/pi-ai/providers/kimi-coding'
 import { describe, expect, it } from 'vitest'
+import { createBuiltinProviderInstance } from '../createBuiltinProviderInstance'
 
 const model: Model<'openai-completions'> = {
   api: 'openai-completions',
@@ -29,9 +31,9 @@ function assistant(content: AssistantMessage['content']): AssistantMessage {
   }
 }
 
-async function requestMessages(messages: Context['messages'], reasoning = false) {
+async function requestMessages(messages: Context['messages'], reasoning = false, target = model, request: typeof stream = stream) {
   let payload: { messages: Array<Record<string, unknown>> } | undefined
-  const result = await stream({ ...model, reasoning }, normalizeContext({ messages, tools: [] }), {
+  const result = await request({ ...target, reasoning }, normalizeContext({ messages, tools: [] }), {
     apiKey: 'fixture-key',
     maxRetries: 0,
     fetch: async (_input, init) => {
@@ -41,6 +43,7 @@ async function requestMessages(messages: Context['messages'], reasoning = false)
     },
   }).result()
   expect(result.stopReason, result.errorMessage).toBe('stop')
+  expect(result.provider).toBe(target.provider)
   return payload!.messages
 }
 
@@ -63,6 +66,72 @@ describe('reasoning replay over Chat Completions', () => {
     const messages = await requestMessages(history, reasoning)
     expect(messages.filter(message => message.role === 'assistant').map(message => message.reasoning_content)).toEqual(['', thinking, ''])
     expect(messages.find(message => message.role === 'tool')).toMatchObject({ tool_call_id: 'read-1', content: 'File contents' })
+    expect(history).toEqual(original)
+  })
+
+  it.each([
+    { label: 'different provider', changes: { provider: 'other-service' } },
+    { label: 'different API', changes: { api: 'anthropic-messages' as const } },
+    { label: 'different model', changes: { model: 'other-model' } },
+  ])('replays $label without leaking another model\'s thinking into visible text', async ({ changes }) => {
+    const history: Context['messages'] = [
+      { ...assistant([
+        { type: 'thinking', thinking: 'private-reasoning-marker', thinkingSignature: 'reasoning_content' },
+        { type: 'text', text: 'Visible answer' },
+        { type: 'toolCall', id: 'read-1', name: 'read', arguments: { path: 'fixture.txt' }, thoughtSignature: 'provider-specific-signature' },
+      ]), ...changes },
+      { role: 'toolResult', toolCallId: 'read-1', toolName: 'read', content: [{ type: 'text', text: 'Result retained' }], isError: false, timestamp: 2 },
+    ]
+    const original = structuredClone(history)
+    const messages = await requestMessages(history)
+    expect(messages.find(message => message.role === 'assistant')).toMatchObject({ content: 'Visible answer' })
+    expect(messages.find(message => message.role === 'tool')).toMatchObject({ tool_call_id: 'read-1', content: 'Result retained' })
+    expect(messages.find(message => message.role === 'assistant')?.reasoning_content).toBeUndefined()
+    expect(history).toEqual(original)
+  })
+
+  it('keeps native service instances distinct while mapping their own history back to the source provider', async () => {
+    const source = kimiCodingProvider()
+    const instance = createBuiltinProviderInstance({ id: 'kimi-account-a', name: 'Kimi A', source, getCatalogModels: () => source.getModels() })
+    const target = instance.getModels().find(model => model.id === 'kimi-for-coding')! as Model<'openai-completions'>
+    const histories = [source.id, 'kimi-account-b', instance.id].map((provider, index) => ({
+      ...assistant([
+        { type: 'thinking' as const, thinking: `reasoning-${provider}`, thinkingSignature: 'reasoning_content' },
+        { type: 'text' as const, text: `answer-${index}` },
+      ]),
+      provider,
+      api: target.api,
+      model: target.id,
+    }))
+    const original = structuredClone(histories)
+    const messages = await requestMessages(histories, true, target, instance.stream)
+    expect(messages.filter(message => message.role === 'assistant').map(message => message.reasoning_content)).toEqual(['', '', 'reasoning-kimi-account-a'])
+    expect(JSON.stringify(messages)).not.toContain('reasoning-kimi-coding')
+    expect(JSON.stringify(messages)).not.toContain('reasoning-kimi-account-b')
+    expect(histories).toEqual(original)
+  })
+
+  it('replays Kimi Anthropic-era history through its current Chat Completions API without stale signatures', async () => {
+    const provider = kimiCodingProvider()
+    const target = provider.getModels().find(model => model.id === 'kimi-for-coding')! as Model<'openai-completions'>
+    expect(target.api).toBe('openai-completions')
+    const history: Context['messages'] = [
+      { ...assistant([
+        { type: 'thinking', thinking: 'legacy-kimi-thought', thinkingSignature: 'legacy-anthropic-signature' },
+        { type: 'text', text: 'Checking the file' },
+        { type: 'toolCall', id: 'toolu_legacy', name: 'read', arguments: { path: 'fixture.txt' } },
+      ]), provider: target.provider, model: target.id, api: 'anthropic-messages', stopReason: 'toolUse' },
+      { role: 'toolResult', toolCallId: 'toolu_legacy', toolName: 'read', content: [{ type: 'text', text: 'Legacy result' }], isError: false, timestamp: 2 },
+    ]
+    const original = structuredClone(history)
+    const messages = await requestMessages(history, true, target, provider.stream)
+    expect(messages.find(message => message.role === 'assistant')).toMatchObject({
+      content: 'Checking the file',
+      reasoning_content: '',
+      tool_calls: [{ id: 'toolu_legacy', type: 'function', function: { name: 'read', arguments: '{"path":"fixture.txt"}' } }],
+    })
+    expect(messages.find(message => message.role === 'tool')).toMatchObject({ tool_call_id: 'toolu_legacy', content: 'Legacy result' })
+    expect(JSON.stringify(messages)).not.toMatch(/legacy-kimi-thought|legacy-anthropic-signature/)
     expect(history).toEqual(original)
   })
 

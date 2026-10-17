@@ -20,7 +20,7 @@ export function toolCatalogPolicies(baseline: readonly string[], policies: reado
     source: { kind: 'builtin', id: 'core', title: 'Files, shell and tool discovery' },
     exposure: 'direct',
     keywords: '',
-    tools: baseline.filter(name => PI_BUILTIN_TOOL_NAME_SET.has(name) || name === TOOL_SEARCH_NAME).map(name => ({ name })),
+    tools: [...baseline.filter(name => PI_BUILTIN_TOOL_NAME_SET.has(name)), TOOL_SEARCH_NAME].map(name => ({ name })),
   }, ...policies]
 }
 

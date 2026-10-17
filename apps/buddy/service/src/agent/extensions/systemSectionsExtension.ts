@@ -11,10 +11,12 @@ export function createSystemSectionsExtension(getPendingInput?: () => BuddyInput
     factory(pi) {
       pi.on('before_agent_start', (event, context) => {
         const messages = buildSessionContext(context.sessionManager.getBranch()).messages
-        const pending = getPendingInput?.()
-        messages.push(pending
-          ? createBuddyInputReferenceMessage(pending, Date.now())
-          : { role: 'user', content: [{ type: 'text', text: event.prompt }, ...event.images ?? []], timestamp: Date.now() })
+        if (event.messageType === 'user') {
+          const pending = getPendingInput?.()
+          messages.push(pending
+            ? createBuddyInputReferenceMessage(pending, Date.now())
+            : { role: 'user', content: [{ type: 'text', text: event.prompt }, ...event.images ?? []], timestamp: Date.now() })
+        }
         const active = new Set(pi.getActiveTools())
         const tools = context.model && supportsModelToolCalls(context.model) ? pi.getAllTools().filter(tool => active.has(tool.name)) : []
         Object.assign(event.systemPromptOptions.sections, buildBuddySystemSections(messages, tools))

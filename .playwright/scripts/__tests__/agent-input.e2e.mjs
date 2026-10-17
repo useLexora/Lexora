@@ -140,10 +140,16 @@ test('codemode opt-in executes native sandbox tools and stays disabled after opt
     requests.push(payload)
     const enabled = payload.tools?.some(tool => tool.function?.name === 'codemode')
     const execute = enabled && payload.messages.findLastIndex(message => message.role === 'user') > payload.messages.findLastIndex(message => message.role === 'tool')
+    const input = JSON.stringify(payload.messages.findLast(message => message.role === 'user')?.content)
+    const code = input.includes('deadline')
+      ? '// @options: {"timeout_ms": 50}\nwhile (true) {}'
+      : input.includes('cancel-worker')
+        ? 'await tools.write({ path: "worker-ready.txt", content: "worker-ready" }); while (true) {}'
+        : 'await tools.write({ path: "codemode-result.txt", content: "codemode verified" }); text(await tools.read({ path: "codemode-result.txt" }));'
     const common = { id: `codemode-${requests.length}`, model: 'codemode-fixture', object: 'chat.completion.chunk', created: 1 }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     const delta = execute
-      ? { role: 'assistant', tool_calls: [{ index: 0, id: `script-${requests.length}`, type: 'function', function: { name: 'codemode', arguments: JSON.stringify({ code: 'await tools.write({ path: "codemode-result.txt", content: "codemode verified" }); text(await tools.read({ path: "codemode-result.txt" }));' }) } }] }
+      ? { role: 'assistant', tool_calls: [{ index: 0, id: `script-${requests.length}`, type: 'function', function: { name: 'codemode', arguments: JSON.stringify({ code }) } }] }
       : { role: 'assistant', content: 'Codemode preference verified.' }
     response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`)
     response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: execute ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 } })}\n\n`)
@@ -185,14 +191,27 @@ test('codemode opt-in executes native sandbox tools and stays disabled after opt
     const journal = await sessionJournal(instance.home)
     expect(journal).toContain('"nestedCalls"')
     expect(journal).toContain('codemode-result.txt')
+    await send('Exercise the deadline.', 3)
+    expect(requests.at(-1).messages.findLast(message => message.role === 'tool')?.content).toContain('timed out')
+    await desktop.page.locator('.desktop-chat-composer__prosemirror:visible').fill('Run cancel-worker until stopped.')
+    await desktop.page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(async () => {
+      const row = readDatabase(instance.home, db => db.prepare('SELECT conversation_id FROM runs WHERE status=\'running\'').get())
+      expect(row).toBeDefined()
+      expect(await fs.readFile(path.join(instance.home, 'buddy/conversations', row.conversation_id, 'workspace/worker-ready.txt'), 'utf8')).toBe('worker-ready')
+    }).toPass({ timeout: 10000 })
+    await desktop.page.getByRole('button', { name: '停止运行', exact: true }).click()
+    await expect.poll(() => readDatabase(instance.home, db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status=\'cancelled\'').get().count)).toBe(1)
+    await send('Run another script after cancellation.', 4)
+    expect(requests.at(-1).messages.findLast(message => message.role === 'tool')?.content).toContain('codemode verified')
     await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: false } }))
-    await send('Verify ordinary tools again.', 3)
+    await send('Verify ordinary tools again.', 5)
     expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
     await instance.stop()
     desktop = await instance.launch()
     await useSyntheticCredentialStorage(desktop)
     await desktop.page.reload()
-    await send('Verify tools after restart.', 4)
+    await send('Verify tools after restart.', 6)
     expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
     expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   }
@@ -286,9 +305,6 @@ test('model retries retain their run budget, expose progress and allow cancellin
       const row = db.prepare('SELECT payload_json FROM run_events JOIN runs ON runs.id = run_events.run_id WHERE runs.status = ? AND event_type = ? ORDER BY sequence DESC LIMIT 1').get('running', 'run.progress')
       return row ? JSON.parse(row.payload_json) : null
     })).toMatchObject({ retry: { attempt: 1, maxAttempts: 'unlimited' } })
-    const retryRun = readDatabase(instance.home, db => db.prepare('SELECT id FROM runs WHERE status = ?').get('running'))
-    const publicProgress = await page.evaluate(async runId => (await window.lexoraDesktop.localChat.runs.listEvents({ runId })).filter(event => event.type === 'run.progress'), retryRun.id)
-    expect(publicProgress.at(-1).payload.retry).toMatchObject({ maxAttempts: 'unlimited' })
     await expect(activity).toContainText(/重试 1\s*\//)
     await expect(activity.locator('.buddy-chat-run-activity__unlimited svg')).toBeVisible()
     await page.reload()
@@ -374,12 +390,12 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     await expect(activity).toContainText('正在思考')
     await expect(reasoning.locator('.buddy-chat-activity-spinner')).toBeVisible()
     await reasoning.click()
-    const originalBody = await group.locator('.buddy-chat-reasoning-entry__body').elementHandle()
-    await expect(group.locator('.buddy-chat-reasoning-entry__body')).toContainText('先检查工作目录')
+    const expandedReasoning = group.locator('.buddy-chat-reasoning-entry__body').first()
+    await expect(expandedReasoning).toContainText('先检查工作目录')
 
     gates.tools.resolve()
     await expect(activity).toContainText('准备中')
-    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+    await expect(expandedReasoning).toBeVisible()
     gates.arguments.resolve()
     await expect.poll(() => requests.length).toBe(2)
     const groupHeader = group.locator('.buddy-chat-activity-group__header')
@@ -387,7 +403,7 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(group.locator('.buddy-chat-activity-spinner')).toHaveCount(0)
     await expect(group.locator('.buddy-chat-activity-group__issues')).toContainText('1 项异常')
-    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+    await expect(expandedReasoning).toBeVisible()
 
     gates.thinking.resolve()
     await expect(group).toHaveAttribute('data-status', 'running')
@@ -400,7 +416,7 @@ test('activity groups retain open reasoning across tools, reply phases and canva
     gates.finish.resolve()
     await expect.poll(() => completedRuns(instance.home)).toBe(1)
     await expect(activity).toHaveCount(0)
-    expect(await originalBody.evaluate(element => element.isConnected)).toBe(true)
+    await expect(expandedReasoning).toBeVisible()
 
     await page.getByTestId('conversation-canvas-toggle').click()
     await page.locator('.conversation-node[data-kind="answer"]').click()

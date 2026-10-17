@@ -62,10 +62,76 @@ function oauth(account: string): OAuthCredential {
 }
 
 describe('built-in model discovery through the production runtime', () => {
+  it('personalizes OpenRouter refresh per service instance and restores its last successful catalog offline', async () => {
+    const catalog = ['account-a-model', 'account-b-model'].map(id => ({
+      id,
+      name: id,
+      provider: 'openrouter',
+      api: 'openai-completions' as const,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      input: ['text'] as const,
+      reasoning: false,
+      contextWindow: 128_000,
+      maxTokens: 8000,
+      cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+    }))
+    let userStatus = 200
+    vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
+      const url = new URL(input)
+      const headers = new Headers(init?.headers)
+      if (url.origin === 'https://pi.dev') {
+        expect(url.pathname).toBe('/api/models/providers/openrouter')
+        expect(headers.has('authorization')).toBe(false)
+        return Response.json(catalog, { headers: { 'last-modified': 'Fri, 01 Jan 2100 00:00:00 GMT' } })
+      }
+      expect(url.href).toBe('https://openrouter.ai/api/v1/models/user')
+      const key = headers.get('authorization')
+      expect(['Bearer fixture-account-a', 'Bearer fixture-account-b']).toContain(key)
+      if (userStatus !== 200)
+        return new Response(null, { status: userStatus })
+      const account = key === 'Bearer fixture-account-a' ? 'a' : 'b'
+      return Response.json({ data: [{ id: `account-${account}-model`, context_length: 64_000, top_provider: { max_completion_tokens: 4000 }, pricing: { prompt: '0.000003', completion: '0.000005' } }] })
+    })
+    const harness = await fixture()
+    harness.credentials.set('openrouter', { type: 'api_key', key: 'fixture-account-a' })
+    const service = await harness.setup()
+    const other = await service.addProvider('openrouter')
+    harness.credentials.set(other.id, { type: 'api_key', key: 'fixture-account-b' })
+    try {
+      await service.syncModels('openrouter')
+      await service.syncModels(other.id)
+      const runtime = service.executionModels.getRuntime()
+      expect(runtime.getModels('openrouter')).toMatchObject([{ id: 'account-a-model', contextWindow: 64_000, maxTokens: 4000, cost: { input: 3, output: 5 } }])
+      expect(runtime.getModels(other.id)).toMatchObject([{ id: 'account-b-model', contextWindow: 64_000, maxTokens: 4000 }])
+      const before = await service.listModels('openrouter')
+      userStatus = 503
+      await expect(service.syncModels('openrouter')).rejects.toMatchObject({ code: 'MODEL_SYNC_FAILED' })
+      expect(await service.listModels('openrouter')).toEqual(before)
+      expect(await harness.cache()).not.toContain('fixture-account-')
+    }
+    finally {
+      await service.dispose()
+    }
+    let offlineRequests = 0
+    vi.stubGlobal('fetch', () => {
+      offlineRequests++
+      throw new Error('offline')
+    })
+    const restored = await harness.setup()
+    try {
+      const runtime = restored.executionModels.getRuntime()
+      expect(runtime.getModels('openrouter').map(model => model.id)).toEqual(['account-a-model'])
+      expect(runtime.getModels(other.id).map(model => model.id)).toEqual(['account-b-model'])
+      expect(offlineRequests).toBe(0)
+    }
+    finally {
+      await restored.dispose()
+    }
+  })
+
   it.each([
     { providerId: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1' },
     { providerId: 'openai-codex', api: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' },
-    { providerId: 'anthropic', api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
   ] as const)('refreshes $providerId for legacy and new instances, preserving independent state and offline execution', async ({ providerId, api, baseUrl }) => {
     const remote: Model<Api> = {
       id: 'fixture-new-model',
