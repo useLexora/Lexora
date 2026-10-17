@@ -11,7 +11,8 @@ export function isAllowedRendererNavigation(targetUrl: string, rendererUrl: stri
 }
 
 export function isAllowedExternalUrl(targetUrl: string): boolean {
-  return parseUrl(targetUrl)?.protocol === 'https:'
+  const url = parseUrl(targetUrl)
+  return url?.protocol === 'http:' || url?.protocol === 'https:'
 }
 
 export function resolveDevelopmentRendererUrl(

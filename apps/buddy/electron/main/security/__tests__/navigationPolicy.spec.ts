@@ -24,12 +24,31 @@ describe('electron navigation policy', () => {
     expect(isAllowedRendererNavigation('file:///etc/passwd', rendererUrl)).toBe(false)
   })
 
-  it('opens only HTTPS links as external browser targets', () => {
-    expect(isAllowedExternalUrl('https://openai.com/')).toBe(true)
-    expect(isAllowedExternalUrl('http://openai.com/')).toBe(false)
-    expect(isAllowedExternalUrl('javascript:alert(1)')).toBe(false)
-    expect(isAllowedExternalUrl('file:///tmp/secret')).toBe(false)
-    expect(isAllowedExternalUrl('not a URL')).toBe(false)
+  it.each([
+    'https://example.com/',
+    'http://example.com/docs',
+    'http://192.168.1.12:8765/',
+    'http://dev.example.test:3000/',
+    'http://127.0.0.1:8765',
+    'http://localhost:8765/project?view=main#home',
+    'http://[::1]:8765/',
+  ])('opens HTTP and HTTPS links externally regardless of hostname (%s)', (url) => {
+    expect(isAllowedExternalUrl(url)).toBe(true)
+  })
+
+  it.each([
+    'http://',
+    '//example.com/',
+    'httpx://example.com/',
+    'ftp://example.com/',
+    'mailto:someone@example.com',
+    'javascript:alert(1)',
+    'file:///tmp/secret',
+    'data:text/html,<h1>unsafe</h1>',
+    'lexora-app://renderer/index.html',
+    'not a URL',
+  ])('rejects malformed URLs and non-web protocols (%s)', (url) => {
+    expect(isAllowedExternalUrl(url)).toBe(false)
   })
 
   it('accepts a loopback development renderer only in unpackaged builds', () => {
