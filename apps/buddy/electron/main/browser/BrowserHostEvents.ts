@@ -4,7 +4,8 @@ import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BrowserSessionTeardownReason } from './BrowserSessionRegistry'
 
 export type BrowserHostFact
-  = | { readonly kind: 'session', readonly state: EventSnapshot<DesktopBrowserState>, readonly status: 'opened' }
+  = | { readonly kind: 'timing', readonly sessionId: string, readonly pageId: string, readonly phase: 'guest_ready' | 'authorized' | 'document_ready' | 'load_complete' | 'observation', readonly durationMs: number }
+    | { readonly kind: 'session', readonly state: EventSnapshot<DesktopBrowserState>, readonly status: 'opened' }
     | { readonly kind: 'session', readonly state: EventSnapshot<DesktopBrowserState>, readonly status: 'closed', readonly reason: BrowserSessionTeardownReason }
     | { readonly kind: 'state', readonly state: EventSnapshot<DesktopBrowserState> }
     | { readonly kind: 'guest', readonly sessionId: string, readonly pageId: string, readonly status: 'attached' | 'detached' | 'crashed' }

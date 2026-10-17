@@ -33,7 +33,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     const entry: SurfaceEntry = { element, options, observed: [] }
     this.#entries.set(element, entry)
     element.dataset.workbenchSurface = ''
-    this.#park(element)
+    this.#park(element, options.retainSizeWhenHidden)
     this.#observe(entry)
     this.invalidate()
     return {
@@ -43,7 +43,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
         entry.options = next
         this.#observe(entry)
         if (!next.visible || !next.anchor)
-          this.#park(element)
+          this.#park(element, next.retainSizeWhenHidden)
         this.invalidate()
       },
       dispose: () => {
@@ -51,7 +51,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
           return
         this.#entries.delete(element)
         this.#unobserve(entry)
-        this.#park(element)
+        this.#park(element, entry.options.retainSizeWhenHidden)
         delete element.dataset.workbenchSurface
         this.invalidate()
       },
@@ -85,7 +85,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     this.#mutation = null
     this.#observationChanged = true
     this.#queued = false
-    for (const { element } of this.#entries.values()) this.#park(element)
+    for (const { element, options } of this.#entries.values()) this.#park(element, options.retainSizeWhenHidden)
     this.#entries.clear()
     this.#observed.clear()
   }
@@ -122,8 +122,10 @@ export class SurfaceLayoutController implements SurfaceLayout {
     entry.observed = []
   }
 
-  #park(element: HTMLElement): void {
-    Object.assign(element.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', left: '-10000px', top: '0', width: '1px', height: '1px', clipPath: 'none' })
+  #park(element: HTMLElement, retainSize = false): void {
+    const width = retainSize ? element.style.width || `${window.innerWidth}px` : '1px'
+    const height = retainSize ? element.style.height || `${window.innerHeight}px` : '1px'
+    Object.assign(element.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', left: '-10000px', top: '0', width, height, clipPath: 'none' })
     element.tabIndex = -1
     element.inert = true
     element.setAttribute('aria-hidden', 'true')
@@ -132,7 +134,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
   #layout({ element, options }: SurfaceEntry): void {
     const anchor = options.anchor
     if (!options.visible || !anchor?.isConnected || anchor.closest('[hidden], [inert]') || getComputedStyle(anchor).visibility === 'hidden') {
-      this.#park(element)
+      this.#park(element, options.retainSizeWhenHidden)
       options.onLayout?.({ visible: false, width: 0, height: 0 })
       return
     }
@@ -157,7 +159,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
       }
     }
     if (clip.right <= clip.left || clip.bottom <= clip.top) {
-      this.#park(element)
+      this.#park(element, options.retainSizeWhenHidden)
       options.onLayout?.({ visible: false, width: 0, height: 0 })
       return
     }

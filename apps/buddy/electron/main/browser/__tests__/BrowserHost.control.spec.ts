@@ -580,6 +580,7 @@ describe('browserHost control and semantic actions', () => {
       sessionId: session.sessionId,
     })).resolves.toMatchObject({ documentRevision: 1 })
 
+    fixture.webContents.currentUrl = 'https://example.com/app/reports#revenue'
     fixture.webContents.emit(
       'did-navigate-in-page',
       {},

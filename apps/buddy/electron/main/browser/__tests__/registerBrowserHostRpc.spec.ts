@@ -317,7 +317,8 @@ describe('registerBrowserHostRpc', () => {
     } as const
     const host = {
       ensureSession: vi.fn().mockReturnValue(BLANK_STATE),
-      navigate: vi.fn().mockResolvedValue(READY_STATE),
+      navigate: vi.fn().mockResolvedValue({ ...READY_STATE, status: 'loading' }),
+      getState: vi.fn().mockReturnValue(READY_STATE),
       openLocalFile: vi.fn().mockResolvedValue(localState),
       waitFor: vi.fn()
         .mockResolvedValueOnce(explicitOutcome)
@@ -367,17 +368,14 @@ describe('registerBrowserHostRpc', () => {
     expect(host.navigate).toHaveBeenCalledExactlyOnceWith(
       SESSION_ID,
       'https://example.com/docs',
+      'document-ready',
     )
     expect(host.openLocalFile).toHaveBeenCalledExactlyOnceWith(SESSION_ID, {
       entryPath: '/workspace/site/index.html',
       rootPath: '/workspace',
-    })
+    }, 'document-ready')
     expect(host.waitFor).toHaveBeenNthCalledWith(1, SESSION_ID, explicitUntil)
-    expect(host.waitFor).toHaveBeenNthCalledWith(2, SESSION_ID, {
-      condition: 'dom-stable',
-      quietMs: 300,
-      timeoutMs: 1_500,
-    })
+    expect(host.waitFor).toHaveBeenCalledTimes(1)
   })
 
   it('preserves a bounded browser security reason without exposing diagnostics', async () => {

@@ -1,7 +1,6 @@
 import type {
   BrowserObservation,
   BrowserRecoveryAction,
-  BrowserWaitSpec,
 } from '../../../shared/browser'
 import type {
   BrowserAdapterIssueLeaseParams,
@@ -11,7 +10,6 @@ import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BrowserHost } from './BrowserHost'
 import { Buffer } from 'node:buffer'
 import {
-  BROWSER_WAIT_DEFAULT_QUIET_MS,
   browserAcquireControlParamsSchema,
   browserAcquireControlResultSchema,
   browserActParamsSchema,
@@ -46,12 +44,6 @@ interface BrowserResultSchema {
   parse: (value: unknown) => unknown
 }
 
-const BROWSER_OPEN_DEFAULT_WAIT = {
-  condition: 'dom-stable',
-  quietMs: BROWSER_WAIT_DEFAULT_QUIET_MS,
-  timeoutMs: 1_500,
-} as const satisfies BrowserWaitSpec
-
 export interface RegisterBrowserHostRpcOptions {
   createAdapterLease?: (input: BrowserAdapterIssueLeaseParams) => BrowserAdapterLease
   getHost: () => BrowserHost | null
@@ -69,17 +61,14 @@ export function registerBrowserHostRpc(
           const host = requireBrowserHost(options.getHost())
           const session = host.ensureSession(input.conversationId)
           const state = await (input.target.kind === 'url'
-            ? host.navigate(session.sessionId, input.target.url)
+            ? host.navigate(session.sessionId, input.target.url, 'document-ready')
             : host.openLocalFile(session.sessionId, {
                 entryPath: input.target.entryPath,
                 rootPath: input.target.rootPath,
-              }))
-          const until = await host.waitFor(
-            session.sessionId,
-            input.until ?? BROWSER_OPEN_DEFAULT_WAIT,
-          )
+              }, 'document-ready'))
+          const until = input.until ? await host.waitFor(session.sessionId, input.until) : undefined
           return {
-            state,
+            state: input.until ? host.getState(session.sessionId) : state,
             ...(input.until ? { until } : {}),
           }
         },

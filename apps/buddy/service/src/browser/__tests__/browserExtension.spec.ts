@@ -77,6 +77,25 @@ describe('browserExtension', () => {
     expect(JSON.stringify(action)).not.toContain('private host failure')
   })
 
+  it('shows the browser before navigation completes and does not reopen a panel closed during loading', async () => {
+    const host = new ContextPanelHost(async () => {})
+    const source = { conversationId: 'conversation-1', runId: 'run-1' }
+    const fixture = createFixture(async () => {
+      await host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+    })
+    let complete!: (result: unknown) => void
+    fixture.service.open.mockImplementation(() => new Promise((resolve) => {
+      complete = resolve
+    }))
+    fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
+    const opening = execute(requireTool(fixture.tools, 'lexora_browser_open'), { kind: 'url', url: READY_STATE.url })
+    await vi.waitFor(() => expect(host.getState().open).toBe(true))
+    await host.execute({ action: 'close', source })
+    complete({ ok: true, state: READY_STATE })
+    expect((await opening).isError).not.toBe(true)
+    expect(host.getState().open).toBe(false)
+  })
+
   it('presents a successful browser through the desktop without changing the model result', async () => {
     const operations: ContextPanelOperationRecord[] = []
     const host = new ContextPanelHost(async (operation) => {
@@ -100,8 +119,8 @@ describe('browserExtension', () => {
     expect(host.getState().open).toBe(false)
     fixture.service.open.mockResolvedValue({ ok: false, error: { code: 'BROWSER_SESSION_NOT_FOUND', reason: null, recovery: 'open_again' } })
     expect((await execute(open, { kind: 'url', url: READY_STATE.url })).isError).toBe(true)
-    expect(host.getState().open).toBe(false)
-    expect(operations.map(operation => operation.action)).toEqual(['open', 'close'])
+    expect(host.getState().open).toBe(true)
+    expect(operations.map(operation => operation.action)).toEqual(['open', 'close', 'open'])
   })
 
   it('validates browser tool inputs at the model boundary', () => {
@@ -213,6 +232,23 @@ describe('browserExtension', () => {
       observationId: OBSERVATION_ID,
       pageId: PAGE_ID,
     })).toBe(false)
+  })
+
+  it.each([
+    { action: { kind: 'fill', ref: 'e1' }, frameId: 'main-frame' },
+    { action: { kind: 'click', ref: 'e1', text: 'private input' }, frameId: 'main-frame' },
+    { action: { kind: 'fill', ref: 'e1', text: 'private input' } },
+    { action: { kind: 'reload' }, frameId: 'main-frame' },
+    { action: { kind: 'wait', condition: 'text-visible', timeoutMs: 100 } },
+  ])('keeps action-specific validation strict behind compact model parameters: %j', async (action) => {
+    const fixture = createFixture()
+    const act = requireTool(fixture.tools, 'lexora_browser_act')
+    const input = { ...action, documentRevision: 3, observationId: OBSERVATION_ID, pageId: PAGE_ID }
+    expect(Check(act.parameters, input)).toBe(true)
+    const result = await execute(act, input)
+    expect(result).toMatchObject({ isError: true, details: { code: 'VALIDATION_FAILED', operation: 'act' } })
+    expect(JSON.stringify(result)).not.toContain('private input')
+    expect(fixture.service.act).not.toHaveBeenCalled()
   })
 
   it('opens URL and granted-local targets with an immediate semantic read', async () => {
@@ -459,7 +495,7 @@ describe('browserExtension', () => {
   })
 })
 
-function createFixture(onOpened?: () => Promise<void>) {
+function createFixture(onOpening?: () => Promise<void>) {
   const service = {
     act: vi.fn(),
     observe: vi.fn(),
@@ -469,7 +505,7 @@ function createFixture(onOpened?: () => Promise<void>) {
   }
   const tools = new Map<string, ToolDefinition>()
   let toolResultHandler: BrowserToolResultHandler | null = null
-  createBrowserExtension({ service: service as never, onOpened }).factory({
+  createBrowserExtension({ service: service as never, onOpening }).factory({
     on(event: string, handler: (event: Record<string, unknown>) => unknown) {
       if (event === 'tool_result')
         toolResultHandler = handler

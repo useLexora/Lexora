@@ -100,7 +100,7 @@ function createGuest(descriptor: DesktopBrowserGuestDescriptor): void {
   const entry: BrowserGuestEntry = {
     descriptor,
     element,
-    layout: props.layout.attach(element, { anchor: null, visible: false, interactive: true, layer: 'content' }),
+    layout: props.layout.attach(element, { anchor: null, visible: false, interactive: true, retainSizeWhenHidden: true, layer: 'content' }),
     onReady: () => {
       if (guests.get(descriptor.sessionId)?.element !== element)
         return
@@ -144,7 +144,7 @@ function removeGuest(entry: BrowserGuestEntry): void {
 function scheduleLayout(): void {
   for (const [sessionId, entry] of guests) {
     const surface = surfaces.get(sessionId)
-    entry.layout.update({ anchor: surface?.element ?? null, visible: !!surface, interactive: true, layer: 'content' })
+    entry.layout.update({ anchor: surface?.element ?? null, visible: !!surface, interactive: true, retainSizeWhenHidden: true, layer: 'content' })
   }
   props.layout.invalidate()
 }

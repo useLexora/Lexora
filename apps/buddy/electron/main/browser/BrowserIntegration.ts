@@ -80,7 +80,10 @@ export class BrowserIntegration {
         return
       const sessionId = change.kind === 'session' ? change.state.sessionId : change.sessionId
       const common = { sessionId, revision: change.revision, component: 'desktop.browser' }
-      if (change.kind === 'action') {
+      if (change.kind === 'timing') {
+        this.#options.report?.({ ...common, event: `browser.timing.${change.phase}`, level: 'info', durationMs: change.durationMs })
+      }
+      else if (change.kind === 'action') {
         this.#options.report?.({ ...common, event: `browser.action.${change.phase}${change.phase === 'failed' ? `.${change.effect.replaceAll('-', '_')}` : ''}`, level: change.phase === 'failed' ? 'warn' : 'info', operationId: change.operationId, method: change.action, ...(change.errorCode ? { errorCode: change.errorCode } : {}) })
       }
       else {

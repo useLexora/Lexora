@@ -307,6 +307,7 @@ export class BrowserHost {
   }
 
   async observe(input: BrowserObserveParams): Promise<BrowserObservation> {
+    const startedAt = performance.now()
     const session = this.#requireSession(input.sessionId)
     if (session.state.pageId !== input.pageId) {
       return Promise.reject(new BrowserHostError(
@@ -327,24 +328,33 @@ export class BrowserHost {
     await this.#waitForPage(session)
     if (recoverablePageError)
       session.refreshPageState()
-    const observation = await session.runWhileActive(() => this.#requireSemanticDriver(session).observe({
-      mode: input.mode,
-      maxElements: input.maxElements,
-      query: input.query,
-      selector: input.selector,
-      pageId: session.state.pageId,
-      sessionId: session.state.sessionId,
-      status: recoverablePageError || session.state.status === 'idle'
-        ? 'ready'
-        : session.state.status,
-      title: session.state.title,
-      url: session.state.url,
-    }))
+    const observation = await session.runWhileActive(async () => {
+      await this.#waitForPostActionSettlement(session, false)
+      const driver = this.#requireSemanticDriver(session)
+      await driver.waitForObservationReady()
+      this.#assertCurrentPage(session, input.pageId, 'before capturing observation')
+      session.refreshPageState()
+      return driver.observe({
+        mode: input.mode,
+        maxElements: input.maxElements,
+        query: input.query,
+        selector: input.selector,
+        pageId: session.state.pageId,
+        sessionId: session.state.sessionId,
+        status: recoverablePageError || session.state.status === 'idle'
+          ? 'ready'
+          : session.state.status,
+        title: session.state.title,
+        url: session.state.url,
+      })
+    })
+    this.#assertCurrentPage(session, input.pageId, 'after capturing observation')
     if (recoverablePageError) {
       session.state.error = null
       session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
       this.#publish(session)
     }
+    this.#recordTiming(session, 'observation', startedAt)
     return observation
   }
 
@@ -372,12 +382,19 @@ export class BrowserHost {
     this.#assertCurrentPage(session, input.pageId, 'before reading content')
     await this.#waitForPage(session)
     this.#sessions.touch(input.sessionId)
-    const content = await session.runWhileActive(() => this.#requireSemanticDriver(session).read({
-      ...input,
-      status: session.state.status === 'loading' ? 'loading' : 'ready',
-      title: session.state.title,
-      url: session.state.url,
-    }))
+    const content = await session.runWhileActive(async () => {
+      await this.#waitForPostActionSettlement(session, false)
+      const driver = this.#requireSemanticDriver(session)
+      await driver.waitForObservationReady()
+      this.#assertCurrentPage(session, input.pageId, 'before reading settled content')
+      session.refreshPageState()
+      return driver.read({
+        ...input,
+        status: session.state.status === 'loading' ? 'loading' : 'ready',
+        title: session.state.title,
+        url: session.state.url,
+      })
+    })
     this.#assertCurrentPage(session, input.pageId, 'after reading content')
     return content
   }
@@ -420,7 +437,7 @@ export class BrowserHost {
       switch (input.action.kind) {
         case 'navigate':
           semanticDriver.assertObservation(reference)
-          await this.navigate(input.sessionId, input.action.url)
+          await this.navigate(input.sessionId, input.action.url, 'document-ready')
           break
         case 'back':
           semanticDriver.assertObservation(reference)
@@ -526,15 +543,19 @@ export class BrowserHost {
     }
   }
 
-  async navigate(sessionId: string, rawUrl: string): Promise<DesktopBrowserState> {
+  async navigate(sessionId: string, rawUrl: string, readiness: 'load' | 'document-ready' = 'load'): Promise<DesktopBrowserState> {
     this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
+    const startedAt = performance.now()
     await this.#waitForPage(session)
+    this.#recordTiming(session, 'guest_ready', startedAt)
     this.#operations.assertCanMutate()
     const navigationSequence = this.#beginPageAction(session)
+    const authorizationStartedAt = performance.now()
     let url: string
     try {
       url = await session.securityPolicy?.authorizeNavigation(rawUrl) ?? ''
+      this.#recordTiming(session, 'authorized', authorizationStartedAt)
     }
     catch (error) {
       if (!(error instanceof BrowserSecurityPolicyError))
@@ -554,7 +575,7 @@ export class BrowserHost {
     if (!this.#shouldContinuePageAction(session, navigationSequence))
       return snapshot(session.state)
 
-    return this.#loadPage(sessionId, session, navigationSequence, url)
+    return this.#loadPage(sessionId, session, navigationSequence, url, readiness)
   }
 
   async #loadPage(
@@ -562,12 +583,45 @@ export class BrowserHost {
     session: BrowserPageSession,
     navigationSequence: number,
     url: string,
+    readiness: 'load' | 'document-ready',
   ): Promise<DesktopBrowserState> {
+    if (readiness === 'load')
+      return this.#loadPageToCompletion(sessionId, session, navigationSequence, url)
+    const startedAt = performance.now()
+    const page = session.requirePage()
+    let resolveReady!: () => void
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve
+    })
+    const onDocumentReady = () => {
+      if (session.mainFrameCommitSequence === navigationSequence)
+        resolveReady()
+    }
+    page.on('dom-ready', onDocumentReady)
+    try {
+      const loading = this.#loadPageToCompletion(sessionId, session, navigationSequence, url)
+      const state = await Promise.race([loading, ready.then(() => this.getState(sessionId))])
+      this.#recordTiming(session, 'document_ready', startedAt)
+      return state
+    }
+    finally {
+      page.off('dom-ready', onDocumentReady)
+    }
+  }
+
+  async #loadPageToCompletion(
+    sessionId: string,
+    session: BrowserPageSession,
+    navigationSequence: number,
+    url: string,
+  ): Promise<DesktopBrowserState> {
+    const startedAt = performance.now()
     session.state.url = url
     this.#publish(session)
     try {
       const page = await this.#waitForPage(session)
       await page.loadURL(url)
+      this.#recordTiming(session, 'load_complete', startedAt)
       if (!this.#sessions.get(sessionId))
         throw this.#sessionNotFound(sessionId)
       if (!this.#isCurrentPageAction(session, navigationSequence))
@@ -733,18 +787,23 @@ export class BrowserHost {
   async openLocalFile(
     sessionId: string,
     grant: BrowserLocalFileGrant,
+    readiness: 'load' | 'document-ready' = 'load',
   ): Promise<DesktopBrowserState> {
     this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
+    const startedAt = performance.now()
     await this.#waitForPage(session)
+    this.#recordTiming(session, 'guest_ready', startedAt)
     this.#operations.assertCanMutate()
     const navigationSequence = this.#beginPageAction(session)
+    const authorizationStartedAt = performance.now()
     let url: string
     try {
       url = await session.securityPolicy?.authorizeLocalFile(
         grant.entryPath,
         grant.rootPath,
       ) ?? ''
+      this.#recordTiming(session, 'authorized', authorizationStartedAt)
     }
     catch (error) {
       if (!(error instanceof BrowserSecurityPolicyError))
@@ -763,7 +822,7 @@ export class BrowserHost {
     }
     if (!this.#shouldContinuePageAction(session, navigationSequence))
       return snapshot(session.state)
-    return this.#loadPage(sessionId, session, navigationSequence, url)
+    return this.#loadPage(sessionId, session, navigationSequence, url, readiness)
   }
 
   async #replaceSessionProfile(
@@ -834,6 +893,10 @@ export class BrowserHost {
     }
   }
 
+  #recordTiming(session: BrowserPageSession, phase: 'guest_ready' | 'authorized' | 'document_ready' | 'load_complete' | 'observation', startedAt: number): void {
+    this.#emit({ kind: 'timing', sessionId: session.state.sessionId, pageId: session.state.pageId, phase, durationMs: Math.max(0, performance.now() - startedAt) })
+  }
+
   async waitFor(sessionId: string, spec: BrowserWaitSpec): Promise<BrowserWaitOutcome> {
     const session = this.#requireSession(sessionId)
     await this.#waitForPage(session)
@@ -900,7 +963,7 @@ export class BrowserHost {
       case 'url-matches':
         return session.state.url.includes(spec.pattern)
       case 'text-visible': {
-        if (session.state.status === 'loading')
+        if (session.state.status === 'loading' && session.documentReadySequence !== session.navigationSequence)
           return false
         const driver = this.#requireSemanticDriver(session)
         return driver.isTextVisible(spec.text).catch(swallowDriverProbeFailure)
@@ -914,7 +977,7 @@ export class BrowserHost {
         return spec.condition === 'ref-visible' ? visible : !visible
       }
       case 'dom-stable': {
-        if (session.state.status === 'loading') {
+        if (session.state.status === 'loading' && session.documentReadySequence !== session.navigationSequence) {
           stability.lastFingerprint = null
           stability.stableSince = null
           return false
@@ -940,7 +1003,7 @@ export class BrowserHost {
     if (detectNavigation)
       await wait(BROWSER_ACTION_NAVIGATION_DETECTION_MS)
     const deadline = Date.now() + BROWSER_NAVIGATION_SETTLE_TIMEOUT_MS
-    while (session.state.status === 'loading') {
+    while (session.state.status === 'loading' && session.documentReadySequence !== session.navigationSequence) {
       if (this.#sessions.get(session.state.sessionId) !== session)
         throw this.#sessionNotFound(session.state.sessionId)
       if (session.state.error) {

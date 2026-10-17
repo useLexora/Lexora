@@ -112,6 +112,8 @@ class FakeWebContents extends EventEmitter {
   })
 
   readonly focus = vi.fn()
+  readonly sendInputEvent = vi.fn()
+  readonly insertText = vi.fn(async () => {})
   readonly loadURL = vi.fn(async (url: string) => {
     this.currentUrl = url
   })
@@ -151,6 +153,10 @@ class FakeWebContents extends EventEmitter {
 
 export function configureSemanticObservation(webContents: FakeWebContents): void {
   webContents.debugger.sendCommand.mockImplementation(async (method) => {
+    if (method === 'Page.createIsolatedWorld')
+      return { executionContextId: 1 }
+    if (method === 'Runtime.evaluate')
+      return { result: { value: true } }
     if (method === 'Page.getFrameTree') {
       return {
         frameTree: {

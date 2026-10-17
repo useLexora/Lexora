@@ -5,6 +5,50 @@ import { BrowserHostError } from '../BrowserHost'
 import { configureSemanticObservation, createFixture, createLocalSite } from './browserHostFixture'
 
 describe('browserHost sessions and navigation', () => {
+  it('returns a committed main document before trailing resources load and still tracks completion', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation-1')
+    const readinessListeners = fixture.webContents.listenerCount('dom-ready')
+    const load = createDeferred<void>()
+    fixture.webContents.loadURL.mockImplementation(async (url) => {
+      fixture.webContents.currentUrl = url
+      await load.promise
+    })
+    const opening = fixture.host.navigate(session.sessionId, 'https://example.com/slow', 'document-ready')
+    await vi.waitFor(() => expect(fixture.webContents.loadURL).toHaveBeenCalled())
+    let returned = false
+    void opening.then(() => {
+      returned = true
+    })
+    fixture.webContents.emit('dom-ready')
+    await Promise.resolve()
+    expect(returned).toBe(false)
+    fixture.webContents.emit('did-navigate', {}, 'https://example.com/slow')
+    fixture.webContents.emit('dom-ready')
+    await expect(opening).resolves.toMatchObject({ url: 'https://example.com/slow', status: 'loading' })
+    expect(fixture.webContents.listenerCount('dom-ready')).toBe(readinessListeners)
+    load.resolve()
+    await vi.waitFor(() => expect(fixture.host.getState(session.sessionId).status).toBe('ready'))
+    fixture.host.dispose()
+  })
+
+  it('does not return an observation when the document changes during readiness', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation-1')
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(session.sessionId, 'https://example.com/first')
+    const evaluate = createDeferred<unknown>()
+    const original = fixture.webContents.debugger.sendCommand.getMockImplementation()!
+    fixture.webContents.debugger.sendCommand.mockImplementation((method, params) => method === 'Runtime.evaluate' ? evaluate.promise : original(method, params))
+    const observing = fixture.host.observe({ sessionId: session.sessionId, pageId: session.pageId })
+    const rejected = expect(observing).rejects.toMatchObject({ code: 'BROWSER_TARGET_STALE' })
+    await vi.waitFor(() => expect(fixture.webContents.debugger.sendCommand).toHaveBeenCalledWith('Runtime.evaluate', expect.anything()))
+    fixture.webContents.emit('did-navigate-in-page', {}, 'https://example.com/next', true)
+    evaluate.resolve({ result: { value: true } })
+    await rejected
+    fixture.host.dispose()
+  })
+
   it('reads the current default zoom only for new pages and explicit reset', async () => {
     let defaultZoomFactor = 1.25
     const fixture = createFixture({ getDefaultZoomFactor: () => defaultZoomFactor })

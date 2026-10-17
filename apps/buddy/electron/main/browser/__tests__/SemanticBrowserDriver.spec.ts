@@ -737,10 +737,8 @@ describe('semanticBrowserDriver', () => {
       observationId: observation.observationId,
     })).rejects.toMatchObject({ code: 'BROWSER_HUMAN_INPUT_REQUIRED' })
 
-    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
-      'Input.insertText',
-      expect.anything(),
-    )
+    expect(fixture.page.insertText).not.toHaveBeenCalled()
+    expect(fixture.page.sendInputEvent).not.toHaveBeenCalled()
   })
 
   it('invalidates every prior ref when the main document revision advances', async () => {
@@ -1043,6 +1041,8 @@ function createFixture(
     attach,
     detach,
     page: {
+      sendInputEvent: vi.fn(),
+      insertText: vi.fn(async () => {}),
       capturePage,
       debugger: {
         attach,
@@ -1080,7 +1080,9 @@ function configureActionCommands(
     visible: boolean
   }> = {},
 ): void {
-  fixture.sendCommand.mockImplementation(async (method) => {
+  fixture.sendCommand.mockImplementation(async (method, params) => {
+    if (method === 'Runtime.callFunctionOn' && String(params?.functionDeclaration).includes('this.getRootNode().activeElement'))
+      return { result: { value: true } }
     if (method === 'DOM.resolveNode') {
       return {
         object: {

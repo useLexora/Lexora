@@ -142,3 +142,33 @@ it('synchronizes moved surfaces before another input task instead of waiting for
     layout.dispose()
   }
 })
+
+it('retains a browser viewport while hidden without exposing input or focus', async () => {
+  const layout = new SurfaceLayoutController()
+  const anchor = document.createElement('div')
+  const surface = document.createElement('div')
+  document.body.append(anchor, surface)
+  const options = { anchor, visible: false, interactive: true, retainSizeWhenHidden: true, layer: 'content' as const }
+  const lease = layout.attach(surface, options)
+  layout.start()
+  try {
+    expect(surface.style.width).toBe(`${window.innerWidth}px`)
+    expect(surface.style.height).toBe(`${window.innerHeight}px`)
+    anchor.getBoundingClientRect = () => new DOMRect(40, 50, 640, 480)
+    lease.update({ ...options, visible: true })
+    await Promise.resolve()
+    expect(surface.style.visibility).toBe('visible')
+    lease.update(options)
+    await Promise.resolve()
+    expect(surface.style.width).toBe('640px')
+    expect(surface.style.height).toBe('480px')
+    expect(surface.style.visibility).toBe('hidden')
+    expect(surface.style.pointerEvents).toBe('none')
+    expect(surface.inert).toBe(true)
+    expect(surface.tabIndex).toBe(-1)
+    expect(surface.getAttribute('aria-hidden')).toBe('true')
+  }
+  finally {
+    layout.dispose()
+  }
+})

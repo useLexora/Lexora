@@ -3,6 +3,7 @@ export interface SurfaceLayoutOptions {
   visible: boolean
   interactive: boolean
   childrenOnly?: boolean
+  retainSizeWhenHidden?: boolean
   layer: 'content' | 'decoration'
   onLayout?: (geometry: { visible: boolean, width: number, height: number }) => void
 }

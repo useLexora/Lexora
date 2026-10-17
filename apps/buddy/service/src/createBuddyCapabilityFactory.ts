@@ -91,7 +91,7 @@ export function createBuddyCapabilityFactory(
         getGrants: () => context.grants,
         getExecutionGrants: context.getExecutionGrants,
         host: services.browserHost,
-        onOpened: context.sessionMode === 'interactive'
+        onOpening: context.sessionMode === 'interactive'
           ? async () => {
             const runId = context.getRunId()
             if (runId)

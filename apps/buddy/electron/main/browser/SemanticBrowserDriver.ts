@@ -1,3 +1,4 @@
+import type { KeyboardInputEvent } from 'electron'
 import type { z } from 'zod'
 import type {
   BrowserAction,
@@ -11,7 +12,6 @@ import type {
 } from '../../../shared/browser'
 import type { BrowserObservationHeader, SemanticBrowserTarget } from './browserObservationProjection'
 import { randomUUID } from 'node:crypto'
-import { platform } from 'node:process'
 import {
   BROWSER_MAX_OBSERVATION_TEXT_BYTES,
   BROWSER_MAX_SCREENSHOT_BYTES,
@@ -19,8 +19,7 @@ import {
   getBrowserActionRef,
   getBrowserObservationTextByteLength,
 } from '../../../shared/browser'
-import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
-import { browserTargetActionabilitySchema, cdpAxTreeSchema, cdpBoxModelSchema, cdpDocumentSchema, cdpDomSnapshotSchema, cdpLayoutMetricsSchema, cdpResolveNodeSchema, cdpRuntimeResultSchema } from './browserCdpSchemas'
+import { browserTargetActionabilitySchema, cdpAxTreeSchema, cdpBoxModelSchema, cdpDocumentSchema, cdpDomSnapshotSchema, cdpIsolatedWorldSchema, cdpLayoutMetricsSchema, cdpResolveNodeSchema, cdpRuntimeResultSchema } from './browserCdpSchemas'
 import { BrowserContentReader } from './BrowserContentReader'
 import { BrowserDebugger } from './BrowserDebugger'
 import { collectBrowserRegionNodes, resolveBrowserRegion } from './browserDomRegion'
@@ -32,6 +31,8 @@ import {
 } from './browserPrivacy'
 
 interface SemanticBrowserPage {
+  insertText: (text: string) => Promise<void>
+  sendInputEvent: (event: KeyboardInputEvent) => void
   capturePage: () => Promise<{
     getSize: () => { height: number, width: number }
     toPNG: () => Uint8Array
@@ -143,7 +144,19 @@ const BROWSER_TARGET_ACTIONABILITY_FUNCTION = `async function (checkClickability
   const before = element.getBoundingClientRect()
   let after = before
   if (checkClickability && view) {
-    await new Promise(resolve => view.requestAnimationFrame(() => view.requestAnimationFrame(resolve)))
+    await new Promise(resolve => {
+      let frame
+      const finish = () => {
+        view.clearTimeout(timer)
+        if (frame !== undefined)
+          view.cancelAnimationFrame(frame)
+        resolve()
+      }
+      const timer = view.setTimeout(finish, 100)
+      frame = view.requestAnimationFrame(() => {
+        frame = view.requestAnimationFrame(finish)
+      })
+    })
     after = element.getBoundingClientRect()
   }
   const centerX = after.left + after.width / 2
@@ -173,6 +186,31 @@ const BROWSER_TARGET_ACTIONABILITY_FUNCTION = `async function (checkClickability
     visible: Boolean(style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && after.width > 0 && after.height > 0),
   }
 }`
+const BROWSER_OBSERVATION_READY_EXPRESSION = `new Promise(resolve => {
+  let quietTimer
+  let observer
+  const finish = () => {
+    clearTimeout(quietTimer)
+    clearTimeout(deadline)
+    observer?.disconnect()
+    document.removeEventListener('DOMContentLoaded', start)
+    resolve(document.readyState !== 'loading')
+  }
+  const schedule = () => {
+    clearTimeout(quietTimer)
+    quietTimer = setTimeout(finish, 100)
+  }
+  const start = () => {
+    observer = new MutationObserver(schedule)
+    observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true })
+    schedule()
+  }
+  const deadline = setTimeout(finish, 750)
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', start, { once: true })
+  else
+    start()
+})`
 const BROWSER_SELECT_FUNCTION = `function (values) {
   if (!(this instanceof HTMLSelectElement) || !this.isConnected || this.disabled)
     return false
@@ -248,6 +286,34 @@ export class SemanticBrowserDriver {
     this.#page = options.page
     this.#connection = options.connection ?? new BrowserDebugger(options.page.debugger)
     this.#ownsConnection = !options.connection
+  }
+
+  async waitForObservationReady(): Promise<void> {
+    this.#assertActive()
+    this.#ensureDebugger()
+    const revision = this.#documentRevision
+    const tree = await this.#connection.sendCommand('Page.getFrameTree')
+    const frameId = collectFrameIds(tree).frameIds[0]
+    if (!frameId)
+      throw new SemanticBrowserDriverError()
+    const { executionContextId } = cdpIsolatedWorldSchema.parse(
+      await this.#connection.sendCommand('Page.createIsolatedWorld', {
+        frameId,
+        worldName: 'lexora-browser-readiness',
+      }),
+    )
+    const result = cdpRuntimeResultSchema.parse(await this.#connection.sendCommand('Runtime.evaluate', {
+      contextId: executionContextId,
+      expression: BROWSER_OBSERVATION_READY_EXPRESSION,
+      awaitPromise: true,
+      returnByValue: true,
+      timeout: 1_500,
+    }))
+    this.#assertActive()
+    if (revision !== this.#documentRevision)
+      throw new SemanticBrowserDriverError('BROWSER_TARGET_STALE')
+    if (result.exceptionDetails || result.result.value !== true)
+      throw new SemanticBrowserDriverError()
   }
 
   async observe(input: SemanticBrowserObservationInput): Promise<BrowserObservation> {
@@ -468,17 +534,16 @@ export class SemanticBrowserDriver {
             await this.#click(target)
             return
           case 'fill':
-            await this.#focus(target)
-            await this.#selectAllAndDelete()
-            if (input.action.text)
-              await this.#insertText(input.action.text)
+            await this.#focus(target, objectId)
+            await this.#selectText(objectId)
+            await this.#page.insertText(input.action.text)
             return
           case 'type':
-            await this.#focus(target)
-            await this.#insertText(input.action.text)
+            await this.#focus(target, objectId)
+            await this.#page.insertText(input.action.text)
             return
           case 'press':
-            await this.#focus(target)
+            await this.#focus(target, objectId)
             await this.#press(input.action.key)
             return
           case 'select':
@@ -784,45 +849,48 @@ export class SemanticBrowserDriver {
     }
   }
 
-  async #focus(target: SemanticBrowserTarget): Promise<void> {
+  async #focus(target: SemanticBrowserTarget, objectId: string): Promise<void> {
     await this.#connection.sendCommand('DOM.focus', {
       backendNodeId: target.backendDOMNodeId,
     })
-  }
-
-  async #insertText(text: string): Promise<void> {
-    await this.#connection.sendCommand('Input.insertText', { text })
-  }
-
-  async #selectAllAndDelete(): Promise<void> {
-    const modifier = platform === OPERATING_SYSTEM.MacOS ? 4 : 2
-    await this.#dispatchKey({ code: 'KeyA', key: 'a', modifiers: modifier })
-    await this.#dispatchKey({ code: 'Backspace', key: 'Backspace' })
+    const focused = cdpRuntimeResultSchema.parse(await this.#connection.sendCommand('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function() { return this.isConnected && this.getRootNode().activeElement === this }',
+      returnByValue: true,
+      silent: true,
+    }))
+    if (focused.exceptionDetails || focused.result.value !== true)
+      throw new SemanticBrowserDriverError('BROWSER_TARGET_STALE', 'TARGET_NOT_FOCUSABLE')
   }
 
   async #press(key: Extract<BrowserAction, { kind: 'press' }>['key']): Promise<void> {
-    const definition = browserKeyDefinition(key)
-    await this.#dispatchKey(definition)
+    const keyCode = key.startsWith('Arrow') ? key.slice(5) : key
+    this.#page.sendInputEvent({ type: 'keyDown', keyCode })
+    if (key === 'Space' || key === 'Enter')
+      this.#page.sendInputEvent({ type: 'char', keyCode: key === 'Space' ? ' ' : '\r' })
+    this.#page.sendInputEvent({ type: 'keyUp', keyCode })
   }
 
-  async #dispatchKey(input: {
-    code: string
-    key: string
-    modifiers?: number
-    text?: string
-    windowsVirtualKeyCode?: number
-  }): Promise<void> {
-    await this.#connection.sendCommand('Input.dispatchKeyEvent', {
-      ...input,
-      type: input.text ? 'keyDown' : 'rawKeyDown',
-    })
-    await this.#connection.sendCommand('Input.dispatchKeyEvent', {
-      code: input.code,
-      key: input.key,
-      modifiers: input.modifiers,
-      type: 'keyUp',
-      windowsVirtualKeyCode: input.windowsVirtualKeyCode,
-    })
+  async #selectText(objectId: string): Promise<void> {
+    const response = cdpRuntimeResultSchema.parse(await this.#connection.sendCommand('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: `function() {
+        if (this.matches('input, textarea')) {
+          this.select()
+        } else {
+          const range = this.ownerDocument.createRange()
+          range.selectNodeContents(this)
+          const selection = this.ownerDocument.getSelection()
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+        return this.isConnected && this.getRootNode().activeElement === this
+      }`,
+      returnByValue: true,
+      silent: true,
+    }))
+    if (response.exceptionDetails || response.result.value !== true)
+      throw new SemanticBrowserDriverError('BROWSER_TARGET_STALE', 'TARGET_NOT_FOCUSABLE')
   }
 
   async #select(objectId: string, values: string[]): Promise<void> {
@@ -1069,36 +1137,4 @@ function quadSize(quad: number[]): { height: number, width: number } {
 
 function normalizeWaitText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLowerCase()
-}
-
-function browserKeyDefinition(
-  key: Extract<BrowserAction, { kind: 'press' }>['key'],
-): {
-  code: string
-  key: string
-  text?: string
-  windowsVirtualKeyCode: number
-} {
-  const definitions = {
-    ArrowDown: { code: 'ArrowDown', key: 'ArrowDown', windowsVirtualKeyCode: 40 },
-    ArrowLeft: { code: 'ArrowLeft', key: 'ArrowLeft', windowsVirtualKeyCode: 37 },
-    ArrowRight: { code: 'ArrowRight', key: 'ArrowRight', windowsVirtualKeyCode: 39 },
-    ArrowUp: { code: 'ArrowUp', key: 'ArrowUp', windowsVirtualKeyCode: 38 },
-    Backspace: { code: 'Backspace', key: 'Backspace', windowsVirtualKeyCode: 8 },
-    Delete: { code: 'Delete', key: 'Delete', windowsVirtualKeyCode: 46 },
-    End: { code: 'End', key: 'End', windowsVirtualKeyCode: 35 },
-    Enter: { code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13 },
-    Escape: { code: 'Escape', key: 'Escape', windowsVirtualKeyCode: 27 },
-    Home: { code: 'Home', key: 'Home', windowsVirtualKeyCode: 36 },
-    PageDown: { code: 'PageDown', key: 'PageDown', windowsVirtualKeyCode: 34 },
-    PageUp: { code: 'PageUp', key: 'PageUp', windowsVirtualKeyCode: 33 },
-    Space: { code: 'Space', key: ' ', text: ' ', windowsVirtualKeyCode: 32 },
-    Tab: { code: 'Tab', key: 'Tab', windowsVirtualKeyCode: 9 },
-  } satisfies Record<typeof key, {
-    code: string
-    key: string
-    text?: string
-    windowsVirtualKeyCode: number
-  }>
-  return definitions[key]
 }
