@@ -190,7 +190,7 @@ export default {
   'desktop.chat.status.averageDuration': '平均 {duration}',
   'desktop.chat.status.maxDuration': '最长 {duration}',
   'desktop.chat.status.throughput': '输出速度',
-  'desktop.chat.status.samples': '（{count} 次）',
+  'desktop.chat.status.samples': '({count} 次)',
   'desktop.chat.status.tokens': '用量与费用',
   'desktop.chat.status.totalTokens': '总 Token 数',
   'desktop.chat.status.cacheHit': '缓存命中率',

@@ -125,10 +125,13 @@ const runRows = computed(() => {
               <span v-if="status.activity.tools.running" class="conversation-status__badge is-active inline-block rounded-[3px] py-0 px-[4px] text-[12px] font-500">{{ t('desktop.chat.status.runningCount', { count: status.activity.tools.running }) }}</span>
             </span>
           </div>
-          <div v-if="status.activity.tools.top.length" class="conversation-status__row flex items-baseline justify-between gap-[10px] py-[3px] px-[2px] whitespace-nowrap">
+          <div v-if="status.activity.tools.top.length" class="conversation-status__row is-tools flex items-baseline justify-between gap-[10px] py-[3px] px-[2px]">
             <span>{{ t('desktop.chat.status.toolsTop') }}</span>
-            <span class="flex justify-end items-baseline gap-[8px]">
-              <span v-for="entry in status.activity.tools.top" :key="entry.name">{{ entry.name }} × {{ entry.count }}</span>
+            <span class="flex flex-wrap justify-end items-baseline gap-x-[8px] gap-y-[4px]">
+              <span v-for="entry in status.activity.tools.top" :key="entry.name" class="inline-flex max-w-full min-w-0 items-baseline gap-[4px]">
+                <span class="min-w-0 truncate">{{ entry.name }}</span>
+                <span class="flex-none whitespace-nowrap">× {{ entry.count }}</span>
+              </span>
             </span>
           </div>
           <div v-if="status.activity.compactions.count" class="conversation-status__row flex items-baseline justify-between gap-[10px] py-[3px] px-[2px] whitespace-nowrap">
@@ -235,7 +238,8 @@ const runRows = computed(() => {
   }
 }
 
-.conversation-status__row.is-warming > span:last-child {
+.conversation-status__row.is-warming > span:last-child,
+.conversation-status__row.is-tools > span:last-child {
   flex: 1;
   min-width: 0;
   white-space: normal;
