@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BROWSER_ACTION_KINDS, BROWSER_PRESS_KEYS } from '../browser/primitives'
 import {
   BUDDY_DEFAULT_EXECUTION_PROFILE,
   BUDDY_EXECUTION_PROFILES,
@@ -191,17 +192,17 @@ export const approvalReviewPayloadSchema = z.discriminatedUnion('card', [
     toolName: toolNameSchema,
   }).strict(),
   z.object({
-    action: z.enum(['click', 'press']),
+    action: z.enum(BROWSER_ACTION_KINDS),
     actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
     allowForTurn: z.boolean().default(false),
     card: z.literal('browser-action'),
     documentRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     effect: browserApprovalEffectSchema.nullable(),
-    key: z.enum(['Enter', 'Space']).nullable(),
+    key: z.enum(BROWSER_PRESS_KEYS).nullable(),
     observationId: z.uuid(),
     origin: browserApprovalOriginSchema,
     pageId: z.uuid(),
-    risk: z.enum(['commit-like', 'unknown-commit-like']),
+    risk: z.enum(['interaction', 'commit-like', 'unknown-commit-like']),
     reuseScopes: approvalReuseScopesSchema.optional(),
     sessionId: z.uuid(),
     targetName: z.string().max(1_024).nullable(),
@@ -215,7 +216,7 @@ export const approvalReviewPayloadSchema = z.discriminatedUnion('card', [
         path: ['effect'],
       })
     }
-    if ((review.action === 'click') !== (review.key === null)) {
+    if ((review.action === 'press') !== (review.key !== null)) {
       context.addIssue({
         code: 'custom',
         message: 'Browser approval keys must match the action kind',

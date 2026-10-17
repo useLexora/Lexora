@@ -11,7 +11,6 @@ import type {
   BrowserStateSnapshot,
 } from '../../../shared/browser'
 import type { BrowserApprovalReviewInput } from '../../../shared/permissions/approvalReviewPayload'
-import type { BrowserCommitEffect } from '../approvals/browser/classifyBrowserAction'
 import type { BuddyToolClassificationResult } from '../approvals/toolClassification'
 import type { GrantedPathError } from '../directories/resolveGrantedPath'
 import type {
@@ -313,34 +312,11 @@ export function classifyBrowserTool(
       return createToolClassificationFailure('BROWSER_TARGET_STALE')
     if ('blocked' in classification)
       return createToolClassificationFailure(classification.reason)
-    switch (classification.risk) {
-      case 'sensitive-input':
-        return createToolClassificationFailure('BROWSER_HUMAN_INPUT_REQUIRED')
-      case 'commit-like':
-        return browserApprovalClassification({
-          actionClassifier,
-          effect: classification.effect,
-          input,
-          review: classification.approvalReview,
-          risk: classification.risk,
-          summary: browserApprovalSummary(classification.effect),
-        })
-      case 'unknown-commit-like':
-        return browserApprovalClassification({
-          actionClassifier,
-          effect: null,
-          input,
-          review: classification.approvalReview,
-          risk: classification.risk,
-          summary: 'Confirm an ambiguous browser action',
-        })
-      case 'read':
-        return { access: 'read' }
-      case 'navigation':
-      case 'reversible-edit':
-        return { access: 'interaction' }
-    }
+    if (classification.access === 'read')
+      return { access: 'read' }
+    return browserInteractionClassification(actionClassifier, input, classification.approvalReview)
   }
+
   if (event.toolName === BROWSER_READ_TOOL_NAME) {
     return isBrowserReadToolInput(event.input)
       ? { access: 'read' }
@@ -363,43 +339,26 @@ export function classifyBrowserTool(
       }
 }
 
-function browserApprovalClassification(input: {
-  actionClassifier: BrowserActionPolicyClassifier | undefined
-  effect: BrowserCommitEffect | null
-  input: BrowserCapabilityActParams
-  review: BrowserApprovalReviewInput | undefined
-  risk: 'commit-like' | 'unknown-commit-like'
-  summary: string
-}): BuddyToolClassificationResult {
-  const actionClassifier = input.actionClassifier
+function browserInteractionClassification(
+  actionClassifier: BrowserActionPolicyClassifier | undefined,
+  input: BrowserCapabilityActParams,
+  review: BrowserApprovalReviewInput | undefined,
+): BuddyToolClassificationResult {
   if (
-    !input.review
-    || input.review.risk !== input.risk
-    || input.review.effect !== input.effect
+    !review
+    || review.risk !== 'interaction'
+    || review.effect !== null
     || !actionClassifier?.validateActionApproval
   ) {
     return createToolClassificationFailure('BROWSER_TARGET_STALE')
   }
-  const review = input.review
   return {
-    forceAsk: true,
+    access: 'interaction',
     approval: {
       browser: review,
       kind: 'browser',
-      summary: input.summary,
+      summary: 'Interact with a browser page',
     },
-    validateBeforeExecution: () => actionClassifier.validateActionApproval!(input.input, review),
-  }
-}
-
-function browserApprovalSummary(effect: BrowserCommitEffect): string {
-  switch (effect) {
-    case 'account-change': return 'Change an account in the browser'
-    case 'authorize': return 'Authorize access in the browser'
-    case 'delete': return 'Delete content in the browser'
-    case 'publish': return 'Publish content in the browser'
-    case 'purchase': return 'Make a purchase or payment in the browser'
-    case 'send': return 'Send content in the browser'
-    case 'submit': return 'Submit content in the browser'
+    validateBeforeExecution: () => actionClassifier.validateActionApproval!(input, review),
   }
 }

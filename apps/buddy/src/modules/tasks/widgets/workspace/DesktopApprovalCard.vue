@@ -83,6 +83,8 @@ const automationOperation = computed(() => {
 const browserEffect = computed(() => {
   if (review.value?.card !== 'browser-action')
     return ''
+  if (review.value.risk === 'interaction')
+    return t('desktop.approval.browser.effect.interaction')
   return review.value.effect
     ? t(browserEffectKeys[review.value.effect])
     : t('desktop.approval.browser.effect.unknown')
@@ -101,13 +103,9 @@ const grantNotice = computed(() => {
 const browserAction = computed(() => {
   if (review.value?.card !== 'browser-action')
     return ''
-  if (review.value.action === 'click')
-    return t('desktop.approval.browser.action.click')
-  if (review.value.key === 'Enter')
-    return t('desktop.approval.browser.action.pressEnter')
-  if (review.value.key === 'Space')
-    return t('desktop.approval.browser.action.pressSpace')
-  return t('desktop.approval.browser.action.press')
+  if (review.value.action === 'press')
+    return t('desktop.approval.browser.action.pressKey', { key: review.value.key ?? '' })
+  return t(`desktop.approval.browser.action.${review.value.action}`)
 })
 const approvalOperation = computed(() => (
   systemEffect.value

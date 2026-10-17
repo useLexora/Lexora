@@ -3,7 +3,7 @@ import type {
   BrowserStateSnapshot,
 } from '../../../../shared/browser'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
-import type { BrowserCapabilityHost } from '../BrowserCapabilityService'
+import type { BrowserCapabilityActInput, BrowserCapabilityHost } from '../BrowserCapabilityService'
 import { deferred as createDeferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserCapabilityService } from '../BrowserCapabilityService'
@@ -249,18 +249,17 @@ describe('browserCapabilityService', () => {
         action: 'click',
         actionDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         documentRevision: 2,
-        effect: 'publish',
+        effect: null,
         key: null,
         observationId: OBSERVATION_ID,
         origin: 'https://example.com',
         pageId: PAGE_ID,
-        risk: 'commit-like',
+        risk: 'interaction',
         sessionId: SESSION_ID,
         targetName: 'Publish now',
         targetRole: 'button',
       },
-      effect: 'publish',
-      risk: 'commit-like',
+      access: 'interaction',
     })
     const pressClassification = service.classifyAction({
       ...actionInput,
@@ -283,14 +282,14 @@ describe('browserCapabilityService', () => {
       frameId: 'main-frame',
       observationId: OBSERVATION_ID,
       pageId: PAGE_ID,
-    })).toEqual({ risk: 'reversible-edit' })
+    })).toMatchObject({ access: 'interaction', approvalReview: { action: 'fill', effect: null, risk: 'interaction' } })
     expect(service.classifyAction({
       action: { kind: 'fill', ref: 'e3', text: 'not-allowed' },
       documentRevision: 2,
       frameId: 'main-frame',
       observationId: OBSERVATION_ID,
       pageId: PAGE_ID,
-    })).toEqual({ risk: 'sensitive-input' })
+    })).toEqual({ blocked: true, reason: 'BROWSER_HUMAN_INPUT_REQUIRED' })
 
     if (result.ok)
       result.observation.elements[0]!.name = 'Open details'
@@ -300,18 +299,17 @@ describe('browserCapabilityService', () => {
         action: 'click',
         actionDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         documentRevision: 2,
-        effect: 'publish',
+        effect: null,
         key: null,
         observationId: OBSERVATION_ID,
         origin: 'https://example.com',
         pageId: PAGE_ID,
-        risk: 'commit-like',
+        risk: 'interaction',
         sessionId: SESSION_ID,
         targetName: 'Publish now',
         targetRole: 'button',
       },
-      effect: 'publish',
-      risk: 'commit-like',
+      access: 'interaction',
     })
     expect(secondClassification).toEqual(firstClassification)
     if (
@@ -357,6 +355,41 @@ describe('browserCapabilityService', () => {
       pageId: PAGE_ID,
     })).toEqual({ blocked: true, reason: 'BROWSER_TARGET_STALE' })
   })
+
+  it.each([
+    [{ kind: 'fill', ref: 'e1', text: 'private draft' }, { kind: 'fill', ref: 'e1', text: 'different draft' }],
+    [{ kind: 'select', ref: 'e1', values: ['draft'] }, { kind: 'select', ref: 'e1', values: ['public'] }],
+    [{ kind: 'navigate', url: 'https://example.com/a' }, { kind: 'navigate', url: 'https://example.com/b' }],
+  ] satisfies [BrowserCapabilityActInput['action'], BrowserCapabilityActInput['action']][])(
+    'binds review approval to the complete action without storing input content',
+    async (action, changedAction) => {
+      const host = createHost()
+      host.openUrl.mockResolvedValue({ ok: true, state: READY_STATE })
+      host.getState.mockResolvedValue({ ok: true, state: READY_STATE })
+      host.observe.mockResolvedValue({
+        ok: true,
+        observation: {
+          ...OBSERVATION,
+          pageId: PAGE_ID,
+          elements: [{ actions: ['fill', 'select'], frameId: 'main-frame', ref: 'e1', role: 'textbox', name: 'Draft', states: ['editable'] }],
+        },
+      })
+      const service = createService(host)
+      await service.open({ kind: 'url', url: READY_STATE.url })
+      await service.observe()
+      const input = { action, documentRevision: 2, frameId: 'main-frame', observationId: OBSERVATION_ID, pageId: PAGE_ID }
+      const classification = service.classifyAction(input)
+      if ('blocked' in classification || !classification.approvalReview)
+        throw new Error('Expected an action-bound review')
+      expect(JSON.stringify(classification.approvalReview)).not.toContain('private draft')
+      expect(classification.approvalReview).not.toHaveProperty('text')
+      await expect(service.validateActionApproval({ ...input, action: changedAction }, classification.approvalReview))
+        .resolves
+        .toEqual({ blocked: true, reason: 'BROWSER_TARGET_STALE' })
+      expect(host.validateAction).not.toHaveBeenCalled()
+      await service.dispose()
+    },
+  )
 
   it('acquires one Main lease for an action and releases it after success or failure', async () => {
     const host = createHost()
@@ -427,7 +460,7 @@ describe('browserCapabilityService', () => {
       documentRevision: 3,
       observationId: POST_ACTION_OBSERVATION_ID,
       pageId: PAGE_ID,
-    })).toEqual({ risk: 'read' })
+    })).toEqual({ access: 'read' })
     await expect(service.act(ACTION_INPUT)).resolves.toEqual(actionFailure)
     await expect(service.act(ACTION_INPUT)).rejects.toThrow('Runtime action request failed')
 

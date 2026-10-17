@@ -44,6 +44,34 @@ describe('browser approval review payload', () => {
     }).success).toBe(true)
   })
 
+  it.each([
+    ['fill', null],
+    ['type', null],
+    ['select', null],
+    ['navigate', null],
+    ['back', null],
+    ['forward', null],
+    ['reload', null],
+    ['click', null],
+    ['press', 'Enter'],
+    ['press', 'Tab'],
+    ['press', 'Delete'],
+  ])('supports neutral %s interaction reviews', (action, key) => {
+    const review = {
+      ...BROWSER_REVIEW,
+      action,
+      key,
+      risk: 'interaction',
+      effect: null,
+      allowForTurn: true,
+      card: 'browser-action',
+      toolName: 'lexora_browser_act',
+    }
+    expect(approvalReviewPayloadSchema.safeParse(review).success).toBe(true)
+    expect(approvalReviewPayloadSchema.safeParse({ ...review, effect: 'publish' }).success).toBe(false)
+    expect(approvalReviewPayloadSchema.safeParse({ ...review, key: key ? null : 'Enter' }).success).toBe(false)
+  })
+
   it('rejects private input outside the browser review contract', () => {
     expect(approvalReviewPayloadSchema.safeParse({
       ...BROWSER_REVIEW,

@@ -21,19 +21,19 @@ const BROWSER_REVIEW = {
   action: 'click' as const,
   actionDigest: 'a'.repeat(64),
   documentRevision: 2,
-  effect: 'publish' as const,
+  effect: null,
   key: null,
   observationId: 'b3a5d63b-17b7-4b5a-863a-37f135e297d4',
   origin: 'https://example.com',
   pageId: 'ed312709-baf9-44b3-a292-108055838477',
-  risk: 'commit-like' as const,
+  risk: 'interaction' as const,
   sessionId: '6f828cc1-6549-4245-b26e-43b2917c9281',
   targetName: 'Publish now',
   targetRole: 'button',
 }
 
 describe('browser approval policy', () => {
-  it('creates a dedicated non-turn approval for a consequential action', () => {
+  it('provides a neutral review for permission modes that require approval', () => {
     const validateActionApproval = vi.fn(async () => null)
     const classification = classifyBrowserTool({
       input: ACTION_INPUT,
@@ -41,18 +41,17 @@ describe('browser approval policy', () => {
     }, {
       classifyAction: () => ({
         approvalReview: BROWSER_REVIEW,
-        effect: 'publish',
-        risk: 'commit-like',
+        access: 'interaction',
       }),
       validateActionApproval,
     })
 
     expect(classification).toMatchObject({
-      forceAsk: true,
+      access: 'interaction',
       approval: {
         browser: BROWSER_REVIEW,
         kind: 'browser',
-        summary: 'Publish content in the browser',
+        summary: 'Interact with a browser page',
       },
     })
     expect(classification).toHaveProperty('validateBeforeExecution')
@@ -65,8 +64,7 @@ describe('browser approval policy', () => {
       classifyAction() {
         return {
           approvalReview: BROWSER_REVIEW,
-          effect: 'publish' as const,
-          risk: 'commit-like' as const,
+          access: 'interaction' as const,
         }
       }
 
@@ -92,7 +90,7 @@ describe('browser approval policy', () => {
     expect(actionClassifier.validated).toBe(true)
   })
 
-  it('cannot be bypassed by the full-access execution profile', async () => {
+  it.each(['full_access', 'workspace_write'] as const)('allows interactions under %s policy without approval', async (executionProfile) => {
     const validateActionApproval = vi.fn(async () => null)
     const classification = classifyBrowserTool({
       input: ACTION_INPUT,
@@ -100,8 +98,7 @@ describe('browser approval policy', () => {
     }, {
       classifyAction: () => ({
         approvalReview: BROWSER_REVIEW,
-        effect: 'publish',
-        risk: 'commit-like',
+        access: 'interaction',
       }),
       validateActionApproval,
     })
@@ -117,7 +114,7 @@ describe('browser approval policy', () => {
         approvalService: { request: requestApproval },
         cwd: '/workspace',
         approvalPolicy: 'policy' as const,
-        executionProfile: 'full_access',
+        executionProfile,
         getGrants: () => [],
       }),
       classifyTool: () => classification as BuddyToolClassificationResult,
@@ -137,16 +134,7 @@ describe('browser approval policy', () => {
       type: 'tool_call',
     })).resolves.toBeUndefined()
 
-    expect(requestApproval).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      arguments: ACTION_INPUT,
-      browser: BROWSER_REVIEW,
-      kind: 'browser',
-      runId: 'run-1',
-      signal: expect.any(AbortSignal),
-      summary: 'Publish content in the browser',
-      toolCallId: 'tool-act',
-      toolName: BROWSER_ACT_TOOL_NAME,
-    }))
+    expect(requestApproval).not.toHaveBeenCalled()
     expect(onAuthorized).toHaveBeenCalledExactlyOnceWith({
       arguments: ACTION_INPUT,
       toolCallId: 'tool-act',
@@ -158,7 +146,47 @@ describe('browser approval policy', () => {
     )
   })
 
-  it('invalidates an approval before authorization when Main reports a stale page', async () => {
+  it.each([
+    { executionProfile: 'workspace_write', approvalPolicy: 'manual', approvalAvailable: true, asks: true, allowed: true },
+    { executionProfile: 'read_only', approvalPolicy: 'policy', approvalAvailable: true, asks: true, allowed: true },
+    { executionProfile: 'workspace_write', approvalPolicy: 'manual', approvalAvailable: false, asks: false, allowed: false },
+    { executionProfile: 'read_only', approvalPolicy: 'policy', approvalAvailable: false, asks: false, allowed: false },
+    { executionProfile: 'workspace_write', approvalPolicy: 'policy', approvalAvailable: false, asks: false, allowed: true },
+    { executionProfile: 'full_access', approvalPolicy: 'policy', approvalAvailable: false, asks: false, allowed: true },
+  ] as const)('honors $executionProfile / $approvalPolicy with approvalAvailable=$approvalAvailable', async ({ executionProfile, approvalPolicy, approvalAvailable, asks, allowed }) => {
+    const requestApproval = vi.fn(async () => ({ approvalId: 'approval-1', decision: 'approved_once' as const }))
+    const onAuthorized = vi.fn(async () => {})
+    const classification = classifyBrowserTool({ input: ACTION_INPUT, toolName: BROWSER_ACT_TOOL_NAME }, {
+      classifyAction: () => ({ access: 'interaction', approvalReview: BROWSER_REVIEW }),
+      validateActionApproval: async () => null,
+    })
+    const invoke = activate(createToolPolicyExtension({
+      authorization: new ToolAuthorizationService({
+        approvalAvailable,
+        approvalPolicy,
+        executionProfile,
+        owner: { id: 'conversation-1', kind: 'conversation' },
+        approvalService: { request: requestApproval },
+        cwd: '/workspace',
+        getGrants: () => [],
+      }),
+      classifyTool: () => classification as BuddyToolClassificationResult,
+      getRunContext: () => ({
+        flushProjectedEvents: async () => {},
+        onToolExecutionAuthorized: onAuthorized,
+        runId: 'run-1',
+        signal: new AbortController().signal,
+      }),
+    }))
+    const result = await invoke({ input: ACTION_INPUT, toolCallId: 'tool-act', toolName: BROWSER_ACT_TOOL_NAME, type: 'tool_call' })
+    expect(result).toEqual(allowed ? undefined : { block: true, reason: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND', terminate: false })
+    expect(requestApproval).toHaveBeenCalledTimes(asks ? 1 : 0)
+    expect(onAuthorized).toHaveBeenCalledTimes(allowed ? 1 : 0)
+    if (asks)
+      expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({ browser: BROWSER_REVIEW, kind: 'browser' }))
+  })
+
+  it.each(['policy', 'manual'] as const)('blocks stale targets before execution under %s approval policy', async (approvalPolicy) => {
     const validateActionApproval = vi.fn(async () => ({
       blocked: true as const,
       reason: 'BROWSER_TARGET_STALE' as const,
@@ -169,8 +197,7 @@ describe('browser approval policy', () => {
     }, {
       classifyAction: () => ({
         approvalReview: BROWSER_REVIEW,
-        effect: 'publish',
-        risk: 'commit-like',
+        access: 'interaction',
       }),
       validateActionApproval,
     })
@@ -185,7 +212,7 @@ describe('browser approval policy', () => {
         owner: { id: 'conversation-1', kind: 'conversation' as const },
         approvalService: { request: requestApproval },
         cwd: '/workspace',
-        approvalPolicy: 'policy' as const,
+        approvalPolicy,
         executionProfile: 'workspace_write',
         getGrants: () => [],
       }),
@@ -209,7 +236,7 @@ describe('browser approval policy', () => {
       terminate: false,
     })
 
-    expect(requestApproval).toHaveBeenCalledOnce()
+    expect(requestApproval).toHaveBeenCalledTimes(approvalPolicy === 'manual' ? 1 : 0)
     expect(validateActionApproval).toHaveBeenCalledOnce()
     expect(onAuthorized).not.toHaveBeenCalled()
   })
@@ -222,8 +249,7 @@ describe('browser approval policy', () => {
     }, {
       classifyAction: () => ({
         approvalReview: BROWSER_REVIEW,
-        effect: 'publish',
-        risk: 'commit-like',
+        access: 'interaction',
       }),
       validateActionApproval,
     })
@@ -238,7 +264,7 @@ describe('browser approval policy', () => {
         owner: { id: 'conversation-1', kind: 'conversation' as const },
         approvalService: { request: requestApproval },
         cwd: '/workspace',
-        approvalPolicy: 'policy' as const,
+        approvalPolicy: 'manual' as const,
         executionProfile: 'workspace_write',
         getGrants: () => [],
       }),
@@ -275,8 +301,7 @@ describe('browser approval policy', () => {
     }, {
       classifyAction: () => ({
         approvalReview: BROWSER_REVIEW,
-        effect: 'publish',
-        risk: 'commit-like',
+        access: 'interaction',
       }),
       validateActionApproval,
     })
@@ -290,7 +315,7 @@ describe('browser approval policy', () => {
         owner: { id: 'conversation-1', kind: 'conversation' as const },
         approvalService: { request: requestApproval },
         cwd: '/workspace',
-        approvalPolicy: 'policy' as const,
+        approvalPolicy: 'manual' as const,
         executionProfile: 'workspace_write',
         getGrants: () => [],
       }),
@@ -317,36 +342,6 @@ describe('browser approval policy', () => {
     expect(requestApproval).toHaveBeenCalledOnce()
     expect(validateActionApproval).not.toHaveBeenCalled()
     expect(onAuthorized).not.toHaveBeenCalled()
-  })
-
-  it('requires the same dedicated approval for unknown activation despite page role or copy', () => {
-    const review = {
-      ...BROWSER_REVIEW,
-      effect: null,
-      risk: 'unknown-commit-like' as const,
-      targetName: 'Safe documentation link',
-      targetRole: 'link',
-    }
-    const classification = classifyBrowserTool({
-      input: ACTION_INPUT,
-      toolName: BROWSER_ACT_TOOL_NAME,
-    }, {
-      classifyAction: () => ({
-        approvalReview: review,
-        risk: 'unknown-commit-like',
-      }),
-      validateActionApproval: async () => null,
-    })
-
-    expect(classification).toMatchObject({
-      forceAsk: true,
-      approval: {
-        browser: review,
-        kind: 'browser',
-        summary: 'Confirm an ambiguous browser action',
-      },
-    })
-    expect(classification).toHaveProperty('validateBeforeExecution')
   })
 })
 

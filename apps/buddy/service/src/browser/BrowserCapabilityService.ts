@@ -262,24 +262,18 @@ export class BrowserCapabilityService {
       observationContainsHumanInput: observation.observationContainsHumanInput,
       target,
     })
-    if (
-      target
-      && classification.risk !== 'sensitive-input'
-      && !supportsObservedAction(target, input.action)
-    ) {
+    if ('blocked' in classification)
+      return classification
+    if (target && !supportsObservedAction(target, input.action)) {
       return staleClassification()
     }
-    if (
-      classification.risk === 'commit-like'
-      || classification.risk === 'unknown-commit-like'
-    ) {
+    if (classification.access === 'interaction') {
       return {
         ...classification,
         approvalReview: createBrowserApprovalReview(
           input,
           observation,
           target,
-          classification,
         ),
       }
     }
@@ -573,27 +567,18 @@ function createBrowserApprovalReview(
   input: BrowserCapabilityActInput,
   observation: BrowserPolicyObservation,
   target: BrowserObservedElement | null,
-  classification: Extract<
-    BrowserActionClassification,
-    { risk: 'commit-like' | 'unknown-commit-like' }
-  >,
 ): BrowserApprovalReviewInput {
   const review = {
-    action: input.action.kind as 'click' | 'press',
+    action: input.action.kind,
     documentRevision: observation.documentRevision,
-    effect: classification.risk === 'commit-like'
-      ? classification.effect
-      : null,
-    key: input.action.kind === 'press'
-      && (input.action.key === 'Enter' || input.action.key === 'Space')
-      ? input.action.key
-      : null,
+    effect: null,
+    key: input.action.kind === 'press' ? input.action.key : null,
     observationId: observation.observationId,
     origin: observation.url === 'about:blank'
       ? observation.url
       : new URL(observation.url).origin,
     pageId: observation.pageId,
-    risk: classification.risk,
+    risk: 'interaction' as const,
     sessionId: observation.sessionId,
     targetName: target?.name || null,
     targetRole: target?.role ?? null,
@@ -608,13 +593,8 @@ function createBrowserActionDigest(
   input: BrowserCapabilityActInput,
   review: Omit<BrowserApprovalReviewInput, 'actionDigest'>,
 ): string {
-  const action = input.action.kind === 'click'
-    ? { kind: input.action.kind, ref: input.action.ref }
-    : input.action.kind === 'press'
-      ? { key: input.action.key, kind: input.action.kind, ref: input.action.ref ?? null }
-      : { kind: input.action.kind }
   return createHash('sha256').update(JSON.stringify({
-    action,
+    action: input.action,
     documentRevision: review.documentRevision,
     effect: review.effect,
     frameId: input.frameId ?? null,
