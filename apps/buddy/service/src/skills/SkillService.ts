@@ -42,6 +42,8 @@ export interface BuddyMaterializedSkill {
 interface SkillServiceOptions {
   agentDirectory: string
   builtinSkillsDirectories?: readonly string[]
+  /** 开发者工具开启时，允许全局范围安装与内置 skill 同名的覆盖版本。 */
+  developerToolsEnabled?: () => Promise<boolean>
   spaces: SpaceRepository
   repository: SkillRepository
   paths: BuddyDataPaths
@@ -250,6 +252,7 @@ export class SkillService {
 
   async #preview(input: SkillPreviewInput, mode: 'import' | 'authoring'): Promise<SkillInstallPreview> {
     this.#requireSpace(input.spaceId)
+    const overridesBuiltin = await this.#canOverrideBuiltin()
     for (const [id, preview] of this.#previews) {
       if (Date.now() - preview.createdAt > 30 * 60 * 1000)
         await this.discard(id)
@@ -294,7 +297,7 @@ export class SkillService {
             throw new SkillError('SKILL_TOO_LARGE')
           const candidateId = randomUUID()
           const existing = records.find(record => record.spaceId === input.spaceId && record.name === loaded.name && record.managedBy === 'user')
-          const reserved = input.spaceId === null && records.some(record => record.managedBy === 'application' && record.name === loaded.name)
+          const reserved = input.spaceId === null && !overridesBuiltin && records.some(record => record.managedBy === 'application' && record.name === loaded.name)
           const sourcePath = relative(prepared.root, dirname(path)).split('\\').join('/')
           candidates.set(candidateId, { loaded, sourcePath, existing, existingRevision: catalog.skills.find(skill => skill.id === existing?.id)?.revision })
           items.push({
@@ -338,6 +341,7 @@ export class SkillService {
         throw new SkillError('SKILL_PREVIEW_EXPIRED')
       const scope = preview.result.spaceId
       this.#requireSpace(scope)
+      const overridesBuiltin = await this.#canOverrideBuiltin()
       const current = await this.#list(scope)
       const records = this.#options.repository.list()
       const selected = [...new Set(input.candidateIds)].map((id) => {
@@ -346,7 +350,7 @@ export class SkillService {
         if (!item || item.blocked || !candidate)
           throw new SkillError('SKILL_INVALID')
         const existing = records.find(record => record.managedBy === 'user' && record.name === item.name && record.spaceId === scope)
-        if (scope === null && records.some(record => record.managedBy === 'application' && record.name === item.name))
+        if (scope === null && !overridesBuiltin && records.some(record => record.managedBy === 'application' && record.name === item.name))
           throw new SkillError('SKILL_NAME_COLLISION')
         if (existing?.id !== candidate.existing?.id || existing?.revision !== candidate.existing?.revision
           || current.skills.find(skill => skill.id === existing?.id)?.revision !== candidate.existingRevision) {
@@ -612,7 +616,7 @@ export class SkillService {
                 candidates.push({
                   allowedRoot: root,
                   loaded,
-                  priority: source.kind === 'application' ? 3 : 4,
+                  priority: source.kind === 'application' ? 4 : 5,
                   referenceRevision: loaded.referenceRevision,
                   entry: {
                     id,
@@ -702,7 +706,7 @@ export class SkillService {
       candidates.push({
         allowedRoot,
         loaded,
-        priority: record.spaceId ? 2 : record.managedBy === 'external' ? 4 : 3,
+        priority: record.spaceId ? 2 : record.managedBy === 'user' ? 3 : record.managedBy === 'external' ? 5 : 4,
         referenceRevision: loaded?.referenceRevision ?? record.revision,
         entry: {
           id: record.id,
@@ -744,6 +748,15 @@ export class SkillService {
     const revision = createHash('sha256').update(JSON.stringify(skills.map(({ id, revision, managementRevision, status, enabled }) => ({ id, revision, managementRevision, status, enabled })))).digest('hex')
     const catalog = { skills, diagnostics, revision }
     return { candidates, catalog, sources: sourceVersions }
+  }
+
+  async #canOverrideBuiltin(): Promise<boolean> {
+    try {
+      return await this.#options.developerToolsEnabled?.() ?? false
+    }
+    catch {
+      return false
+    }
   }
 
   async #currentSkill(spaceId: string | null, id: string, revision: string, action: 'enable' | 'remove') {

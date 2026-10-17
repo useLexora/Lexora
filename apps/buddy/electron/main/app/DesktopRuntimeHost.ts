@@ -20,6 +20,7 @@ import { automationNotifications } from '../../../shared/automation/automationAp
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
 import { extensionAgentInvocationSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { isLinux } from '../../../shared/platform/identifiers'
+import { developerToolsRpc } from '../../../shared/runtime/developerTools'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
@@ -185,6 +186,7 @@ export class DesktopRuntimeHost {
             return this.extensionAgent.invoke(extensionAgentInvocationSchema.parse(input), signal ?? new AbortController().signal)
           }),
           peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
+          peer.onRequest(developerToolsRpc.get, () => this.#config?.desktop.developerToolsEnabled ?? false),
           registerExtensionAuthoringRpc(peer, (id) => {
             if (!this.inspectExtension)
               throw new Error('EXTENSION_SERVICE_UNAVAILABLE')

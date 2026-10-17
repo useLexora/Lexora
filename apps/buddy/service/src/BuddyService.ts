@@ -35,6 +35,7 @@ import { ApplicationEvents as EventPublisher } from '../../shared/observability/
 import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
 import { promptsRpc } from '../../shared/prompts/promptApi'
 import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
+import { developerToolsRpc, developerToolsStateSchema } from '../../shared/runtime/developerTools'
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { skillReviewRequested } from '../../shared/skills/skillApi'
 import { spaceChanged } from '../../shared/spaces/spaceApi'
@@ -649,6 +650,7 @@ export async function startBuddyService(
       const skillService = new SkillService({
         agentDirectory,
         builtinSkillsDirectories: options.builtinSkillsDirectories,
+        developerToolsEnabled: async () => developerToolsStateSchema.parse(await options.rpc.request(developerToolsRpc.get, {})),
         spaces: spacesRepository,
         repository: createSkillRepository(options.database),
         paths,
