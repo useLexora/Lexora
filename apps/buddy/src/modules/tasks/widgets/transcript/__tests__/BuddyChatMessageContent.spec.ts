@@ -40,7 +40,7 @@ describe('buddyChatMessageContent', () => {
     expect(document.querySelectorAll('.buddy-chat-message-content__attachment')).toHaveLength(1)
     expect(document.querySelectorAll('.buddy-chat-resource-reference')).toHaveLength(2)
     expect(document.querySelector(reference!.getAttribute('href')!)).not.toBeNull()
-    expect(document.querySelector('.buddy-chat-message-content__preview-trigger img')?.getAttribute('src')).toBe('lexora-attachment://preview/attachment-1')
+    expect(document.querySelector('[data-material-key] img')?.getAttribute('src')).toBe('lexora-attachment://preview/attachment-1')
   })
 })
 

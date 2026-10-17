@@ -4,6 +4,7 @@ import type { BuddyComposerResource } from '@buddy-shared/conversation/composerR
 import type { JSONContent } from '@tiptap/core'
 import { File as NodeFile } from 'node:buffer'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT, getAttachmentKind } from '@buddy-shared/conversation/attachmentPolicy'
+import { appendBuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { deferred } from '@buddy-tests/deferred'
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
@@ -13,7 +14,7 @@ import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, getChatComposerResourceIds, pruneChatComposerResources, userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
 import { useComposerResources } from '../../../state/composer/useComposerResources'
-import ComposerResourceStrip from '../ComposerResourceStrip.vue'
+import ChatInputMaterialStrip from '../../materials/ChatInputMaterialStrip.vue'
 import { useChatComposer } from '../useChatComposer'
 
 const cleanups: (() => void)[] = []
@@ -146,7 +147,7 @@ async function mountFlow() {
       })
       return () => h('div', [
         h(EditorContent, { editor: composer.editor.value }),
-        h(ComposerResourceStrip, { disabled: false, language: 'zh-CN', resources: composer.resourceStripResources.value, onRemove: composer.removeResource, onRetry: resources.retry, onPreviewText: composer.pastedText.open }),
+        h(ChatInputMaterialStrip, { removable: true, disabled: false, language: 'zh-CN', materials: composer.materials.value, onRemove: composer.removeMaterial, onRetry: resources.retry, onPreviewText: composer.pastedText.open }),
       ])
     },
   }))
@@ -348,6 +349,61 @@ describe('composer resource flow', () => {
     expect(flow.composer.quotes.value.map(item => item.textOffset)).toEqual([0, 20])
   })
 
+  it('keeps quote identity through inline reuse, removal, undo and a restored panel-only draft', async () => {
+    const flow = await mountFlow()
+    const quote = { id: 'quoted', text: 'Frozen reply', source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
+    flow.editor.commands.insertContent('Keep all my text')
+    flow.editor.commands.setTextSelection({ from: 1, to: 5 })
+    expect(flow.composer.addQuote(quote)).toBe('added')
+    expect(flow.draftId.value).toBe('draft-1')
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).body[0]!.content.filter(node => node.type === 'text').map(node => node.text).join('')).toBe('Keep all my text')
+    flow.editor.commands.setTextSelection(flow.editor.state.doc.content.size - 1)
+    flow.editor.commands.insertContent('@')
+    flow.composer.activeTrigger.value = { kind: 'mention', query: '' }
+    const candidate = flow.composer.suggestions.value.find(({ option }) => option.kind === 'quoteReference')!.option
+    flow.composer.selectSuggestion(candidate)
+    expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(2)
+    expect(flow.composer.materials.value).toHaveLength(1)
+    flow.composer.removeMaterial(flow.composer.materials.value[0]!)
+    expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(0)
+    expect(flow.composer.quotes.value).toEqual([])
+    flow.editor.commands.undo()
+    expect(flow.composer.quotes.value).toEqual([quote])
+    expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(2)
+    const positions: number[] = []
+    flow.editor.state.doc.descendants((node, position) => {
+      if (node.type.name === 'chatQuoteReference')
+        positions.push(position)
+    })
+    for (const position of positions.toReversed()) flow.editor.commands.deleteRange({ from: position, to: position + 1 })
+    const saved = chatComposerDocumentToUserContent(flow.editor.getJSON())
+    expect(saved.quotes).toEqual([quote])
+    flow.content.value = userContentToChatComposerDocument(saved)
+    await nextTick()
+    expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(0)
+    expect(flow.composer.materials.value).toHaveLength(1)
+    expect(flow.records.size).toBe(0)
+  })
+
+  it('undoes an externally added resource excerpt together with its inline placement without losing the previous draft', async () => {
+    const flow = await mountFlow()
+    flow.editor.commands.insertContent('Keep latest draft')
+    flow.composer.addQuote({ id: 'external', text: 'Frozen reply', source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant', runId: 'run-1' } })
+    const before = chatComposerDocumentToUserContent(flow.editor.getJSON())
+    const fileQuote = { id: 'external', text: 'Frozen file excerpt', source: { kind: 'file' as const, title: 'notes.md', file: { spaceId: 'space', directoryId: 'directory', revision: 1, path: 'notes.md' }, format: 'markdown' as const } }
+    flow.content.value = userContentToChatComposerDocument(appendBuddyResourceQuote(before, fileQuote).content)
+    await nextTick()
+    expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(2)
+    flow.editor.commands.undo()
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toEqual(before)
+    flow.editor.commands.redo()
+    expect(flow.composer.resourceQuotes.value).toEqual([fileQuote])
+    expect(flow.composer.materials.value.map(material => material.kind)).toEqual(['message_quote', 'resource_quote'])
+    flow.composer.activeTrigger.value = { kind: 'mention', query: '' }
+    const candidates = flow.composer.suggestions.value.filter(({ option }) => option.kind === 'quoteReference')
+    expect(new Set(candidates.map(({ option }) => option.value)).size).toBe(2)
+  })
+
   it('rejects overflowing quotes without altering the editor or accepted snapshots', async () => {
     const flow = await mountFlow()
     const source = { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' }
@@ -439,7 +495,7 @@ describe('composer resource flow', () => {
     flow.editor.commands.insertContent({ attrs: { resourceId: first }, type: 'chatResourceReference' })
     await nextTick()
     expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]', '[Image #1]'])
-    expect(flow.composer.resourceStripResources.value.map(card => card.imageLabel)).toEqual(['[Image #1]', '[Image #2]', '[Image #3]'])
+    expect(flow.composer.materials.value.flatMap(card => card.kind === 'resource' ? [card.imageLabel] : [])).toEqual(['[Image #1]', '[Image #2]', '[Image #3]'])
     flow.composer.removeResource(second!)
     await nextTick()
     expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #1]'])
@@ -624,7 +680,7 @@ describe('composer resource flow', () => {
     flow.uploading.reject(new Error('upload failed'))
 
     await vi.waitFor(() => expect(flow.resources.resources.value[0]?.resource.state).toBe('failed'))
-    expect(flow.composer.resourceStripResources.value.map(entry => entry.resource.resourceId)).toContain(first)
+    expect(flow.composer.materials.value.filter(entry => entry.kind === 'resource').map(entry => entry.id)).toContain(first)
 
     flow.composer.removeResource(first!)
 

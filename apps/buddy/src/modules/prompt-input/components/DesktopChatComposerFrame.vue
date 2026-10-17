@@ -111,7 +111,8 @@ withDefaults(defineProps<{
   }
 }
 
-:deep(.desktop-chat-composer__prosemirror [data-type='chat-session-reference']) {
+:deep(.desktop-chat-composer__prosemirror [data-type='chat-session-reference']),
+:deep(.desktop-chat-composer__prosemirror [data-type='chat-quote-reference']) {
   display: inline-block;
   max-width: min(24rem, calc(100% - 0.24rem));
   overflow: hidden;

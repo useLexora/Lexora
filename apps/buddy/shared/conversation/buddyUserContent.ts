@@ -125,6 +125,7 @@ export const buddyInlineNodeV1Schema = z.union([
   z.object({ type: z.literal('hard_break') }).strict().readonly(),
   z.object({ resourceId: buddyResourceIdSchema, type: z.literal('resource_ref') }).strict().readonly(),
   z.object({ sessionId: buddyResourceIdSchema, type: z.literal('session_ref') }).strict().readonly(),
+  z.object({ quoteId: buddyResourceIdSchema, quoteKind: z.enum(['message', 'resource']), type: z.literal('quote_ref') }).strict().readonly(),
   buddyActorReferenceSchema,
   buddyPromptDirectiveSchema,
 ])
@@ -143,8 +144,9 @@ export const buddyUserContentV1Schema = z.object({
   sessionReferences: buddySessionReferencesSchema.optional(),
   version: z.literal(1),
 }).strict().refine(content => content.body.every(paragraph => paragraph.content.every(node =>
-  node.type !== 'session_ref' || content.sessionReferences?.some(reference => reference.id === node.sessionId),
-)), 'Missing session reference metadata').refine(content => (content.quotes?.length ?? 0) + (content.resourceQuotes?.length ?? 0) <= BUDDY_QUOTE_COUNT_LIMIT, 'Too many quotes').refine(content => !content.resourceQuotes?.length || [...content.quotes ?? [], ...content.resourceQuotes ?? []]
+  (node.type !== 'session_ref' || content.sessionReferences?.some(reference => reference.id === node.sessionId))
+  && (node.type !== 'quote_ref' || (node.quoteKind === 'message' ? content.quotes : content.resourceQuotes)?.some(quote => quote.id === node.quoteId)),
+)), 'Missing input material metadata').refine(content => (content.quotes?.length ?? 0) + (content.resourceQuotes?.length ?? 0) <= BUDDY_QUOTE_COUNT_LIMIT, 'Too many quotes').refine(content => !content.resourceQuotes?.length || [...content.quotes ?? [], ...content.resourceQuotes ?? []]
   .reduce((total, quote) => total + buddyQuoteSnapshotLength(quote), 0) <= BUDDY_QUOTE_TOTAL_TEXT_LIMIT, 'Quoted text exceeds total limit').readonly()
 
 export type BuddyUserContentV1 = z.infer<typeof buddyUserContentV1Schema>
@@ -270,6 +272,7 @@ export function buddyUserContentToText(
       case 'hard_break': return '\n'
       case 'resource_ref': return resourceLabel(node.resourceId)
       case 'session_ref': return ''
+      case 'quote_ref': return ''
       case 'actor_ref': return `@${node.name}`
       case 'prompt_directive': return buddyPromptDirectiveToText(node)
       default: throw new Error('Unsupported Composer inline node')
@@ -309,7 +312,13 @@ export function appendBuddyResourceQuote(content: BuddyUserContentV1, quote: Bud
   if (quotes.some(item => sameResourceQuote(item, candidate))) {
     return { result: 'duplicate', content }
   }
-  const next = { ...content, resourceQuotes: [...quotes, candidate] }
+  const next: BuddyUserContentV1 = {
+    ...content,
+    body: content.body.map((paragraph, index) => index === content.body.length - 1
+      ? { ...paragraph, content: [...paragraph.content, { type: 'quote_ref', quoteKind: 'resource', quoteId: candidate.id }] }
+      : paragraph),
+    resourceQuotes: [...quotes, candidate],
+  }
   const validated = buddyUserContentV1Schema.safeParse(next)
   return validated.success ? { result: 'added', content: validated.data } : { result: 'limit', content }
 }

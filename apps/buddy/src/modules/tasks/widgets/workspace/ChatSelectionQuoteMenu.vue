@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
-import type { ChatQuoteResult } from '../composer/chatQuoteEditing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { ChatQuoteResult } from '@/modules/prompt-input/ui'
 import { TextQuote20Regular } from '@vicons/fluent'
 import { useEventListener } from '@vueuse/core'
 import { NDropdown, useMessage } from 'naive-ui'

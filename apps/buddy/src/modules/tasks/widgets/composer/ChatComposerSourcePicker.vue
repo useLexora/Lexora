@@ -3,7 +3,7 @@ import type { BuddyComposerDirectory } from '@buddy-shared/conversation/composer
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatComposerSessionScope, ChatPromptContextOption } from '@/modules/prompt-input'
 import { composerReferencePath } from '@buddy-shared/conversation/composerReferencePath'
-import { ArrowLeft20Regular, Chat20Regular, ChatMultiple20Regular } from '@vicons/fluent'
+import { ArrowLeft20Regular, Chat20Regular, ChatMultiple20Regular, TextQuote20Regular } from '@vicons/fluent'
 import { NButton, NSwitch } from 'naive-ui'
 import { computed, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -197,6 +197,7 @@ function highlight(index: number) {
               <FileIcon v-else-if="option.kind === 'file'" :name="option.fileName ?? option.label" />
               <DesktopIcon v-else-if="option.kind === 'skill'" :component="SkillIcon" :size="14" />
               <DesktopIcon v-else-if="option.kind === 'sessionReference'" :component="Chat20Regular" :size="18" />
+              <DesktopIcon v-else-if="option.kind === 'quoteReference'" :component="TextQuote20Regular" :size="18" />
               <template v-else>{{ kindLabel(option) }}</template>
             </span>
             <span class="chat-composer-source-picker__copy grid min-w-0 gap-[0.12rem]">

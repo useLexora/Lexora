@@ -3,7 +3,7 @@ import type { BuddyResourceQuote } from '@buddy-shared/conversation/buddyUserCon
 import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, provide, shallowRef } from 'vue'
-import ResourceQuoteStrip from '../ResourceQuoteStrip.vue'
+import ChatInputMaterialStrip from '@/modules/tasks/widgets/materials/ChatInputMaterialStrip.vue'
 import ResourceSelectionQuoteMenu from '../ResourceSelectionQuoteMenu.vue'
 import { WorkbenchSelectionReferences, workbenchSelectionReferencesKey } from '../workbenchSelectionReferences'
 
@@ -12,6 +12,8 @@ vi.mock('naive-ui', async () => {
   const { defineComponent, h } = await import('vue')
   return {
     useMessage: () => feedback,
+    NScrollbar: defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) }),
+    NSpin: defineComponent({ setup: () => () => h('span') }),
     NIcon: defineComponent({ setup: (_, { slots }) => () => h('span', slots.default?.()) }),
     NButton: defineComponent({ setup: (_, { slots, attrs }) => () => h('button', attrs, [slots.icon?.(), slots.default?.()]) }),
     NPopover: defineComponent({ setup: (_, { slots }) => () => h('div', [slots.trigger?.(), slots.default?.()]) }),
@@ -43,7 +45,7 @@ async function mount(kind: 'menu' | 'strip', removable = true) {
     provide(workbenchSelectionReferencesKey, host)
     return () => kind === 'menu'
       ? h(ResourceSelectionQuoteMenu, { ref: value => menu = value as InstanceType<typeof ResourceSelectionQuoteMenu>, viewId: 'file', ownerKey: ownerKey.value, language: 'zh-CN', visible: true })
-      : h(ResourceQuoteStrip, { quotes: [quote], language: 'zh-CN', removable, onRemove: remove })
+      : h(ChatInputMaterialStrip, { materials: [{ kind: 'resource_quote', id: quote.id, quote }], language: 'zh-CN', removable, onRemove: material => remove(material.id) })
   } }))
   app.mount(root)
   let mounted = true
@@ -102,7 +104,7 @@ describe('resource reference UI', () => {
     Array.from(f.root.querySelectorAll('button')).find(button => button.textContent === '定位来源')!.click()
     await nextTick()
     expect(f.locate).toHaveBeenCalledWith(quote)
-    expect(feedback.info).toHaveBeenCalled()
+    expect(f.root.textContent).toContain('来源')
     expect(f.root.querySelector('pre')!.textContent).toBe(quote.text)
   })
 

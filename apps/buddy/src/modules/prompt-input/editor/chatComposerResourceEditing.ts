@@ -10,7 +10,9 @@ import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state'
 import { watchEffect } from 'vue'
 import {
   CHAT_PROMPT_DIRECTIVE_NODE_NAME,
+  CHAT_QUOTE_REFERENCE_NODE_NAME,
   CHAT_RESOURCE_REFERENCE_NODE_NAME,
+  CHAT_SESSION_REFERENCE_NODE_NAME,
   userContentToChatComposerDocument,
 } from '../model/chatComposerDocument'
 
@@ -350,6 +352,7 @@ export function replaceChatComposerDocument(editor: Editor, content: BuddyUserCo
     .replaceWith(0, editor.state.doc.content.size, document.content)
     .setDocAttribute('panelResourceIds', document.attrs.panelResourceIds)
     .setDocAttribute('quotes', document.attrs.quotes)
+    .setDocAttribute('resourceQuotes', document.attrs.resourceQuotes)
     .setDocAttribute('sessionReferences', document.attrs.sessionReferences))
 }
 
@@ -362,7 +365,7 @@ export function dispatchComposerEdit(editor: Editor, transaction: Transaction): 
 
 export function moveChatComposerResourceSelection(editor: Editor, direction: -1 | 1): boolean {
   const { selection } = editor.state
-  if (selection instanceof NodeSelection && selection.node.type.name === CHAT_RESOURCE_REFERENCE_NODE_NAME) {
+  if (selection instanceof NodeSelection && isMaterialNode(selection.node.type.name)) {
     const position = direction < 0 ? selection.from : selection.to
     const nextSelection = TextSelection.near(editor.state.doc.resolve(position), direction)
     editor.view.dispatch(editor.state.tr.setSelection(nextSelection).scrollIntoView())
@@ -386,7 +389,7 @@ function findAdjacentChatComposerResource(editor: Editor, direction: -1 | 1): nu
   const position = direction < 0
     ? $from.pos - (node?.nodeSize ?? 0)
     : $from.pos
-  if (node?.type.name === CHAT_RESOURCE_REFERENCE_NODE_NAME)
+  if (node && isMaterialNode(node.type.name))
     return position
   if (!node?.isText || !/^\s+$/u.test(node.text ?? ''))
     return null
@@ -397,7 +400,7 @@ function findAdjacentChatComposerResource(editor: Editor, direction: -1 | 1): nu
   const neighbor = direction < 0
     ? editor.state.doc.resolve(neighborPosition).nodeBefore
     : editor.state.doc.resolve(neighborPosition).nodeAfter
-  if (neighbor?.type.name !== CHAT_RESOURCE_REFERENCE_NODE_NAME)
+  if (!neighbor || !isMaterialNode(neighbor.type.name))
     return null
   return direction < 0
     ? neighborPosition - neighbor.nodeSize
@@ -412,4 +415,8 @@ function directiveLabel(attrs: Record<string, unknown>): string {
     value: attrs.value,
   })
   return buddyPromptDirectiveToText(directive)
+}
+
+function isMaterialNode(name: string): boolean {
+  return [CHAT_RESOURCE_REFERENCE_NODE_NAME, CHAT_QUOTE_REFERENCE_NODE_NAME, CHAT_SESSION_REFERENCE_NODE_NAME].includes(name)
 }

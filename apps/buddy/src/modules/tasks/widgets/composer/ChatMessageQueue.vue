@@ -3,12 +3,12 @@ import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { buddyUserContentToText } from '@buddy-shared/conversation/buddyUserContent'
 import { ArrowEnterUp20Regular, Dismiss20Regular, Pause20Regular, TextBulletListLtr20Regular } from '@vicons/fluent'
-import { NButton, NTooltip } from 'naive-ui'
-import { computed, shallowRef } from 'vue'
+import { NButton, NPopover, NTooltip } from 'naive-ui'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { FileIcon } from '@/shared/ui/file-icon'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
+import { getInputMaterialViews, inputMaterialText } from '../../model/materials/inputMaterialView'
+import ChatInputMaterialStrip from '../materials/ChatInputMaterialStrip.vue'
 
 const props = defineProps<{
   items: readonly LocalChatQueueItem[]
@@ -18,49 +18,52 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ cancel: [id: string], steer: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
-const rows = computed(() => props.items.map(item => ({
-  ...item,
-  differentBuddy: !!props.activeBuddyId && item.buddyId !== props.activeBuddyId,
-  text: [buddyUserContentToText(item.content.userContent, () => '').trim(), ...[...item.content.userContent.quotes ?? [], ...item.content.userContent.resourceQuotes ?? []].map(quote => quote.text)].filter(Boolean).join(' · '),
-  visibleAttachments: item.attachments.slice(0, 2),
-  attachmentNames: item.attachments.map(attachment => attachment.name).join('\n'),
-})))
-const previewVisible = shallowRef(false)
-const previewSources = shallowRef<string[]>([])
-const previewIndex = shallowRef(0)
-function isImage(attachment: LocalChatQueueItem['attachments'][number]) {
-  return attachment.mimeType.startsWith('image/') && attachment.mimeType !== 'image/svg+xml'
-}
-function preview(item: LocalChatQueueItem, id: string) {
-  const images = item.attachments.filter(isImage)
-  previewSources.value = images.map(attachment => `lexora-attachment://preview/${encodeURIComponent(attachment.id)}`)
-  previewIndex.value = images.findIndex(attachment => attachment.id === id)
-  previewVisible.value = true
-}
+const rows = computed(() => props.items.map((item) => {
+  const attachments = new Map(item.attachments.map(attachment => [attachment.id, attachment]))
+  const snapshots = new Map(item.content.resourceSnapshots.map(snapshot => [snapshot.resourceId, snapshot]))
+  const materials = getInputMaterialViews(item.content.userContent, (id) => {
+    const snapshot = snapshots.get(id)
+    const attachment = snapshot?.attachmentId ? attachments.get(snapshot.attachmentId) : undefined
+    const resource = attachment
+      ? { ...attachment, kind: attachment.mimeType.startsWith('image/') ? 'image' as const : 'binary' as const, state: 'ready' as const }
+      : snapshot?.localReference ? { ...snapshot.localReference, state: 'ready' as const } : undefined
+    return resource
+      ? {
+          resource,
+          previewUrl: attachment?.mimeType.startsWith('image/') && attachment.mimeType !== 'image/svg+xml' ? `lexora-attachment://preview/${encodeURIComponent(attachment.id)}` : null,
+        }
+      : undefined
+  })
+  return {
+    ...item,
+    differentBuddy: !!props.activeBuddyId && item.buddyId !== props.activeBuddyId,
+    text: buddyUserContentToText(item.content.userContent, () => '').trim() || materials.map(inputMaterialText).join(' · '),
+    materials,
+  }
+}))
 </script>
 
 <template>
   <div v-if="rows.length" class="chat-message-queue grid grid-cols-[minmax(0,_1fr)] min-w-0 max-h-[min(10rem,_25vh)] mb-[0.45rem] border-1 border-solid border-border rounded-micro bg-surface" role="list" :aria-label="t('desktop.chat.queueWaiting')">
     <div v-for="item in rows" :key="item.id" class="chat-message-queue__row flex items-center min-w-0 h-[38px] gap-2 pt-0 pr-[0.35rem] pb-0 pl-[0.65rem]" :class="{ 'is-paused': item.state === 'paused' }" role="listitem" :data-queued-message="item.id">
-      <span class="chat-message-queue__status inline-flex flex-none text-muted text-[1rem]" :title="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')" :aria-label="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')">
+      <span class="chat-message-queue__status inline-flex flex-none text-muted text-[1rem]" :aria-label="t(item.state === 'paused' ? 'desktop.chat.queuePaused' : 'desktop.chat.queueWaiting')">
         <DesktopIcon :component="item.state === 'paused' ? Pause20Regular : TextBulletListLtr20Regular" />
       </span>
-      <div v-if="item.attachments.length" class="chat-message-queue__attachments">
-        <template v-for="attachment in item.visibleAttachments" :key="attachment.id">
-          <button v-if="isImage(attachment)" type="button" :title="attachment.name" :aria-label="t('desktop.imagePreview.open', { name: attachment.name })" @click="preview(item, attachment.id)">
-            <img :src="`lexora-attachment://preview/${encodeURIComponent(attachment.id)}`" :alt="attachment.name" width="24" height="24">
+      <ChatInputMaterialStrip v-if="item.materials.length" class="flex-none max-w-[45%]" :materials="item.materials" :language="language" compact />
+      <NPopover trigger="click" placement="top-start" :show-arrow="false">
+        <template #trigger>
+          <button type="button" class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap border-0 bg-transparent p-0 text-left text-[0.82rem] text-muted cursor-pointer ui-focus-ring">
+            {{ item.text }}
           </button>
-          <span v-else class="chat-message-queue__file" :title="attachment.name" :aria-label="attachment.name">
-            <FileIcon :name="attachment.name" size="small" />
-          </span>
         </template>
-        <span v-if="item.attachments.length > 2" class="chat-message-queue__more px-[0.15rem] text-muted" :title="item.attachmentNames">+{{ item.attachments.length - 2 }}</span>
-      </div>
-      <span class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.82rem] text-muted" :title="item.text || item.attachmentNames">{{ item.text || item.attachments.map(attachment => attachment.name).join('、') }}</span>
+        <p class="max-w-[min(24rem,_80vw)] max-h-[40vh] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] text-fg">
+          {{ item.text }}
+        </p>
+      </NPopover>
       <div class="chat-message-queue__actions">
         <NTooltip>
           <template #trigger>
-            <NButton quaternary circle size="small" :loading="pending.has(item.id)" :disabled="pending.has(item.id) || item.differentBuddy" :aria-label="t('desktop.chat.queueSteer')" @click="emit('steer', item.id)">
+            <NButton class="buddy-icon-button" quaternary size="small" :loading="pending.has(item.id)" :disabled="pending.has(item.id) || item.differentBuddy" :aria-label="t('desktop.chat.queueSteer')" @click="emit('steer', item.id)">
               <template #icon>
                 <DesktopIcon :component="ArrowEnterUp20Regular" />
               </template>
@@ -68,7 +71,7 @@ function preview(item: LocalChatQueueItem, id: string) {
           </template>
           {{ item.differentBuddy ? (language === 'en-US' ? 'Waiting for the selected companion’s next turn' : '等待所选伙伴在下一轮处理') : t('desktop.chat.queueSteer') }}
         </NTooltip>
-        <NButton quaternary circle size="small" :disabled="pending.has(item.id)" :title="t('desktop.chat.queueCancel')" :aria-label="t('desktop.chat.queueCancel')" @click="emit('cancel', item.id)">
+        <NButton class="buddy-icon-button" quaternary size="small" :disabled="pending.has(item.id)" :aria-label="t('desktop.chat.queueCancel')" @click="emit('cancel', item.id)">
           <template #icon>
             <DesktopIcon :component="Dismiss20Regular" />
           </template>
@@ -76,7 +79,6 @@ function preview(item: LocalChatQueueItem, id: string) {
       </div>
     </div>
   </div>
-  <BuddyImagePreview v-model:show="previewVisible" v-model:current="previewIndex" :language="language" :sources="previewSources" />
 </template>
 
 <style scoped lang="scss">
@@ -97,27 +99,5 @@ function preview(item: LocalChatQueueItem, id: string) {
     gap: 0.2rem;
   }
 
-  &__attachments {
-    button, .chat-message-queue__file {
-      display: grid;
-      place-items: center;
-      flex: none;
-      width: 26px;
-      height: 26px;
-      padding: 0;
-      border: 1px solid var(--buddy-border-subtle);
-      border-radius: 4px;
-      background: transparent;
-      color: inherit;
-    }
-
-    button { cursor: zoom-in; }
-    img { object-fit: cover; border-radius: 3px; }
-  }
-
-  &__more {
-    font-size: 0.7rem;
-    font-variant-numeric: tabular-nums;
-  }
 }
 </style>

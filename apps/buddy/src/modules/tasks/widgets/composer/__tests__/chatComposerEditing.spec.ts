@@ -361,7 +361,7 @@ describe('chat composer editing', () => {
     await expect.poll(inlineLabels).toEqual(['[Image #1]', '[Image #1]'])
     flow.editor.commands.insertContent(' @#1')
     await expect.poll(candidates).toEqual([['second', '[Image #1]']])
-    expect(flow.composer.resourceStripResources.value.map(entry => entry.imageLabel)).toEqual(['[Image #1]'])
+    expect(flow.composer.materials.value.flatMap(entry => entry.kind === 'resource' ? [entry.imageLabel] : [])).toEqual(['[Image #1]'])
     expect(flow.sent).toEqual([])
   })
 

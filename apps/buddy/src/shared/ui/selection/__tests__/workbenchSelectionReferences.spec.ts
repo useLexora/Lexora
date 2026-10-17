@@ -1,6 +1,6 @@
 import type { BuddyResourceQuote, BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { SelectionReferenceSource, SelectionReferenceTarget } from '../workbenchSelectionReferences'
-import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { describe, expect, it, vi } from 'vitest'
 import { WorkbenchSelectionReferences } from '../workbenchSelectionReferences'
 
@@ -23,7 +23,8 @@ describe('workbench selection target routing', () => {
     expect(f.host.add(request, 'b')).toBe('added')
     expect(f.write).toHaveBeenCalledTimes(1)
     expect(f.content.get('a')?.resourceQuotes).toBeUndefined()
-    expect(f.content.get('b')?.body).toEqual(createBuddyUserContent('B typed after menu opened').body)
+    expect(buddyUserContentToText(f.content.get('b')!)).toBe('B typed after menu opened')
+    expect(f.content.get('b')!.body[0]!.content.at(-1)).toEqual({ type: 'quote_ref', quoteKind: 'resource', quoteId: quote.id })
     expect(f.content.get('b')?.resourceQuotes).toEqual([quote])
     expect(f.host.add(request, 'b')).toBe('duplicate')
     expect(f.write).toHaveBeenCalledTimes(1)

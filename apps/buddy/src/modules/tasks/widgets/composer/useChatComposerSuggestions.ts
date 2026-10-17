@@ -1,9 +1,11 @@
 import type { UseChatComposerOptions } from './typing'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerTrigger, ChatPromptContextOption } from '@/modules/prompt-input'
+import { buddyInputMaterialKey, getBuddyInputMaterials } from '@buddy-shared/conversation/buddyInputMaterial'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { createChatComposerSourceOptions, createChatComposerSuggestions, getChatComposerResourceIds, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
+import { chatComposerDocumentToUserContent, createChatComposerSourceOptions, createChatComposerSuggestions, getChatComposerResourceIds, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
 import { useWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
+import { inputMaterialLabel } from '../../model/materials/inputMaterialView'
 
 export function useChatComposerSuggestions(
   options: Pick<UseChatComposerOptions, 'composerContent' | 'draftId' | 'language' | 'loadContextOptions' | 'resources'>,
@@ -44,13 +46,26 @@ export function useChatComposerSuggestions(
     })
   })
   const sourceOptions = computed(() => sessionScope.value ? [] : [...createChatComposerSourceOptions(currentOptions.value, fileQuery.value), ...createChatComposerSourceOptions(contextOptions.value.files)])
+  const quoteOptions = computed<ChatPromptContextOption[]>(() => getBuddyInputMaterials(chatComposerDocumentToUserContent(options.composerContent.value)).flatMap((material) => {
+    if (material.kind !== 'message_quote' && material.kind !== 'resource_quote')
+      return []
+    return [{
+      kind: 'quoteReference',
+      category: 'current',
+      label: inputMaterialLabel(material, options.language.value),
+      description: material.quote.text,
+      path: null,
+      value: buddyInputMaterialKey(material),
+      quoteReference: { type: 'quote_ref', quoteKind: material.kind === 'message_quote' ? 'message' : 'resource', quoteId: material.id },
+    }]
+  }))
   const commandOptions = computed<ChatPromptContextOption[]>(() => (commands?.entries.value ?? []).map((command) => {
     const origin = command.origin
     const repeated = origin && commands?.entries.value.some(other => other.id !== command.id && other.name === command.name && other.origin?.name === origin.name && (other.origin.author || '') === (origin.author || ''))
     const identity = origin ? [origin.name, origin.author || (options.language.value === 'en-US' ? 'Unsigned' : '未署名'), origin.version, ...(repeated ? [origin.source ? new URL(origin.source).host : (options.language.value === 'en-US' ? 'Local' : '本地'), origin.id] : [])] : []
     return { commandId: command.id, description: [...identity, command.description ?? command.title].join(' · '), kind: 'slashCommand', label: `/${command.name}`, value: `/${command.name}`, path: null }
   }))
-  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: sourceOptions.value, commands: commandOptions.value }, key => t(key)))
+  const suggestions = computed(() => createChatComposerSuggestions(activeTrigger.value, { ...contextOptions.value, files: [...sourceOptions.value, ...(sessionScope.value ? [] : quoteOptions.value)], commands: commandOptions.value }, key => t(key)))
   const needsCommandChoice = computed(() => activeTrigger.value?.kind === 'slash' && suggestions.value.filter(({ option }) => option.value === `/${activeTrigger.value?.query}`).length > 1)
 
   function invalidateQuery() {

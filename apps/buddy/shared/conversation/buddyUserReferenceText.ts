@@ -2,7 +2,7 @@ import type { BuddyPromptDirective, BuddyUserContentV1 } from './buddyUserConten
 import { buddyPromptDirectiveToText } from './buddyUserContent'
 
 export function escapeLiteralMarkers(text: string): string {
-  return text.replace(/\[(?:(IMAGE|FILE|LOCAL)#(\d+)|Image #(\d+)|SESSION:[\w-]+)\]/g, match => `［${match.slice(1, -1)}］`)
+  return text.replace(/\[(?:(IMAGE|FILE|LOCAL)#(\d+)|Image #(\d+)|SESSION:[\w-]+|QUOTE:(?:message|resource):[\w-]+)\]/g, match => `［${match.slice(1, -1)}］`)
 }
 
 export function projectBuddyUserText(
@@ -10,6 +10,10 @@ export function projectBuddyUserText(
   resolveResource: (id: string) => string = () => '@file',
   resolveDirective: (directive: BuddyPromptDirective) => string = buddyPromptDirectiveToText,
 ): string {
+  const quoteMarkers = new Map([
+    ...(content.quotes ?? []).map((quote, index) => [`message:${quote.id}`, `[QUOTE:message:${index + 1}]`] as const),
+    ...(content.resourceQuotes ?? []).map((quote, index) => [`resource:${quote.id}`, `[QUOTE:resource:${index + 1}]`] as const),
+  ])
   return content.body.map((paragraph) => {
     let literal = ''
     let projected = ''
@@ -29,8 +33,9 @@ export function projectBuddyUserText(
           break
         }
         case 'resource_ref':
+        case 'quote_ref':
         case 'session_ref': {
-          projected += escapeLiteralMarkers(literal) + (node.type === 'session_ref' ? `[SESSION:${node.sessionId}]` : resolveResource(node.resourceId))
+          projected += escapeLiteralMarkers(literal) + (node.type === 'session_ref' ? `[SESSION:${node.sessionId}]` : node.type === 'quote_ref' ? quoteMarkers.get(`${node.quoteKind}:${node.quoteId}`)! : resolveResource(node.resourceId))
           literal = ''
           break
         }

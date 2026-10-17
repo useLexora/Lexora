@@ -1,21 +1,22 @@
 import type { BuddyChatCommandName } from '@buddy-shared/conversation/buddyChatCommands'
+import type { BuddyInputMaterial } from '@buddy-shared/conversation/buddyInputMaterial'
 import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { JSONContent } from '@tiptap/core'
-import type { ComposerResourceCard, UseChatComposerOptions } from './typing'
+import type { UseChatComposerOptions } from './typing'
 import type { ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import { getBuddyChatCommandDefinition, isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { composerReferencePath } from '@buddy-shared/conversation/composerReferencePath'
-import { closeHistory } from '@tiptap/pm/history'
 import { computed, onScopeDispose, watch } from 'vue'
 import { CHAT_PROMPT_DIRECTIVE_NODE_NAME, getChatComposerResourceIds, serializeChatComposerContent } from '@/modules/prompt-input'
-import { insertChatComposerActorReference, insertChatComposerResources, insertChatComposerSessionReferences, insertResolvedChatComposerResource, removeChatComposerPanelResource, removeChatComposerResource, removeChatComposerSessionReference } from '@/modules/prompt-input/ui'
+import { addChatComposerQuote, insertChatComposerActorReference, insertChatComposerQuoteReference, insertChatComposerResources, insertChatComposerSessionReferences, insertResolvedChatComposerResource, removeChatComposerPanelResource, removeChatComposerQuote, removeChatComposerResource, removeChatComposerSessionReference } from '@/modules/prompt-input/ui'
 import { useConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { useConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { resolveComposerResourcePreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { resolveChatComposerModelInputIssue } from '../../model/composer/chatComposerModelCapability'
+import { isPastedTextResource } from '../../model/composer/pastedText'
+import { getInputMaterialViews } from '../../model/materials/inputMaterialView'
 import { composerParentDirectory } from './chatComposerSourcePresentation'
-import { addChatQuote, removeChatQuote } from './chatQuoteEditing'
 import { useChatComposerEditor } from './useChatComposerEditor'
 import { useChatComposerSuggestions } from './useChatComposerSuggestions'
 import { useComposerCommands } from './useComposerCommands'
@@ -75,6 +76,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     },
     onSubmit: submit,
     onLocateResource: locateResource,
+    onLocateQuote: reference => options.onLocateMaterial?.({ kind: reference.quoteKind === 'message' ? 'message_quote' : 'resource_quote', id: reference.quoteId }),
   })
   const resourceIds = computed(() => getChatComposerResourceIds(contentJSON.value))
   const pastedText = useComposerPastedText(options, editor, resourceIds)
@@ -109,19 +111,33 @@ export function useChatComposer(options: UseChatComposerOptions) {
     ) && resourceIds.value.every(id => resourceById.value.get(id)?.resource.state === 'ready'))
   const panelResources = computed(() => (contentJSON.value.attrs?.panelResourceIds as string[] ?? [])
     .flatMap(id => resourceById.value.get(id) ?? []))
-  const resourceStripResources = computed<ComposerResourceCard[]>(() => {
-    return resourceIds.value.flatMap((id) => {
-      const entry = resourceById.value.get(id)
-      return entry
-        ? [{
-            ...entry,
-            imageLabel: imageLabels.value.get(id),
-            textLineCount: pastedText.lineCount(id),
-            previewUrl: resolveComposerResourcePreviewUrl(entry.resource),
-          }]
-        : []
-    })
-  })
+  const materials = computed(() => serializedContent.value.userContent
+    ? getInputMaterialViews(serializedContent.value.userContent, (id) => {
+        const entry = resourceById.value.get(id)
+        return entry
+          ? {
+              resource: { ...entry.resource, path: entry.resource.localReference?.path ?? entry.resource.sourcePath },
+              canRetry: entry.canRetry,
+              imageLabel: imageLabels.value.get(id),
+              previewUrl: resolveComposerResourcePreviewUrl(entry.resource),
+              textPreview: entry.resource.state === 'ready' && isPastedTextResource(entry.resource),
+              textLineCount: pastedText.lineCount(id),
+            }
+          : undefined
+      })
+    : [])
+
+  function removeMaterial(material: BuddyInputMaterial) {
+    const current = editor.value
+    if (!current)
+      return
+    if (material.kind === 'resource')
+      removeChatComposerResource(current, material.id)
+    else if (material.kind === 'session')
+      removeChatComposerSessionReference(current, material.id)
+    else
+      removeChatComposerQuote(current, material.kind === 'message_quote' ? 'message' : 'resource', material.id)
+  }
 
   function getImageLabel(resourceId: string): string | undefined {
     return imageLabels.value.get(resourceId)
@@ -264,6 +280,12 @@ export function useChatComposer(options: UseChatComposerOptions) {
       currentEditor.commands.focus()
       return
     }
+    if (option.kind === 'quoteReference' && option.quoteReference) {
+      insertChatComposerQuoteReference(currentEditor, option.quoteReference, { from, to })
+      query.closeSuggestions()
+      currentEditor.commands.focus()
+      return
+    }
     if (option.kind === 'sessionGroup' && option.sessionScope) {
       query.sessionScope.value = option.sessionScope
       currentEditor.chain().focus().insertContentAt({ from, to }, { type: 'text', text: '@' }).run()
@@ -352,6 +374,8 @@ export function useChatComposer(options: UseChatComposerOptions) {
   }
 
   return {
+    materials,
+    removeMaterial,
     activeSuggestionIndex: query.activeSuggestionIndex,
     activeTrigger: query.activeTrigger,
     attachFiles,
@@ -373,16 +397,11 @@ export function useChatComposer(options: UseChatComposerOptions) {
     quotes,
     resourceQuotes,
     removeResourceQuote(id: string) {
-      const current = editor.value
-      if (!current || current.isDestroyed || !current.isEditable)
-        return
-      const quotes = resourceQuotes.value.filter(quote => quote.id !== id)
-      current.view.dispatch(closeHistory(current.state.tr).setDocAttribute('resourceQuotes', quotes.length ? quotes : null))
-      current.view.dispatch(closeHistory(current.state.tr))
+      removeChatComposerQuote(editor.value, 'resource', id)
     },
     sessionReferences,
-    addQuote: (quote: BuddyMessageQuote) => addChatQuote(editor.value, quote),
-    removeQuote: (id: string) => removeChatQuote(editor.value, id),
+    addQuote: (quote: BuddyMessageQuote) => addChatComposerQuote(editor.value, quote),
+    removeQuote: (id: string) => removeChatComposerQuote(editor.value, 'message', id),
     removeSessionReference(id: string) {
       const current = editor.value
       if (!current)
@@ -391,7 +410,6 @@ export function useChatComposer(options: UseChatComposerOptions) {
     },
     removeResource,
     removePanelResource: (id: string) => editor.value && removeChatComposerPanelResource(editor.value, id),
-    resourceStripResources,
     pastedText,
     selectPanelSource,
     selectSuggestion,

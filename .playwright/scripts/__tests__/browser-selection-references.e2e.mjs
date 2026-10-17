@@ -47,7 +47,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     await nativePoint('#target')
     await expect(cards).toHaveCount(1)
     await expect(cards.first()).toContainText('Frozen link excerpt')
-    await expect(input).toHaveText('Keep my latest question.')
+    await expect(input).toContainText('Keep my latest question.')
     await expect(address).toHaveValue(url)
     expect(await app.evaluate(async ({ webContents }, url) => webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url).executeJavaScript('Boolean(window.clicked)'), url)).toBe(false)
     await cards.first().locator('.chat-reference-card__link').click()
@@ -136,7 +136,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     const targets = page.locator('.resource-selection-menu:visible').filter({ has: page.locator('.resource-selection-menu-option__label').filter({ hasText: /^分屏 2/ }) })
     await targets.getByRole('menuitem').filter({ hasText: /^分屏 2/ }).click()
     await expect(page.locator('.resource-quote-card').filter({ hasText: 'New snapshot for one target' })).toHaveCount(1)
-    await expect(inputs.first()).toHaveText('Keep my latest question.')
+    await expect(inputs.first()).toContainText('Keep my latest question.')
     await page.evaluate(async () => {
       const [guest] = await window.lexoraDesktop.browser.listGuests()
       await window.lexoraDesktop.browser.setZoomFactor(guest.sessionId, 1.5)

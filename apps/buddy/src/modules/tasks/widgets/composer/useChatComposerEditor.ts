@@ -1,16 +1,18 @@
 import type { JSONContent } from '@tiptap/core'
 import type { ChatComposerEditorOptions } from './typing'
+import { resolveBuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 import Placeholder from '@tiptap/extension-placeholder'
 import { NodeSelection } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
 import { useEditor } from '@tiptap/vue-3'
 import { computed, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { createChatComposerContentFromText, findChatComposerTrigger, getChatComposerResourceIds, serializeChatComposerContent, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
-import { CHAT_COMPOSER_CLIPBOARD_TYPE, ChatComposerActorReference, ChatComposerDocument, ChatComposerPromptDirective, ChatComposerResourceClipboard, ChatComposerResourceReference, ChatComposerSessionReference, moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
+import { chatComposerDocumentToUserContent, createChatComposerContentFromText, findChatComposerTrigger, getChatComposerResourceIds, serializeChatComposerContent, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
+import { CHAT_COMPOSER_CLIPBOARD_TYPE, ChatComposerActorReference, ChatComposerDocument, ChatComposerPromptDirective, ChatComposerQuoteReference, ChatComposerResourceClipboard, ChatComposerResourceReference, ChatComposerSessionReference, moveChatComposerResourceSelection, replaceChatComposerDocument } from '@/modules/prompt-input/ui'
 import { resolveFileIcon } from '@/shared/ui/file-icon'
 import { getChatImageLabels } from '../../model/attachments/chatAttachmentView'
 import { shouldAttachPastedText } from '../../model/composer/pastedText'
+import { inputMaterialLabel } from '../../model/materials/inputMaterialView'
 import { parseSessionReferenceClipboard } from '../../model/sessionReferenceClipboard'
 
 export function useChatComposerEditor(options: ChatComposerEditorOptions) {
@@ -61,6 +63,12 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
         },
       }),
       ChatComposerSessionReference,
+      ChatComposerQuoteReference.configure({
+        label: (reference) => {
+          const material = resolveBuddyQuoteReference(chatComposerDocumentToUserContent(contentJSON.value), reference)
+          return `@${material && material.kind !== 'resource' ? inputMaterialLabel(material, options.language.value) : t('desktop.chat.quoteSelection')}`
+        },
+      }),
       ChatComposerActorReference,
       ChatComposerResourceClipboard.configure({
         draftId: () => options.draftId.value,
@@ -79,6 +87,8 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
       handleClickOn: (_view, _position, node, _nodePosition, _event, direct) => {
         if (direct && node.type.name === 'chatResourceReference')
           options.onLocateResource?.(node.attrs.resourceId)
+        if (direct && node.type.name === 'chatQuoteReference')
+          options.onLocateQuote?.({ type: 'quote_ref', quoteId: node.attrs.quoteId, quoteKind: node.attrs.quoteKind })
         return false
       },
       handleDOMEvents: {
@@ -148,12 +158,15 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
           const transaction = current.state.tr
           if (bodyChanged)
             transaction.replaceWith(0, current.state.doc.content.size, document.content)
-          current.view.dispatch(transaction
+          transaction
             .setDocAttribute('panelResourceIds', document.attrs.panelResourceIds)
             .setDocAttribute('quotes', document.attrs.quotes)
             .setDocAttribute('resourceQuotes', document.attrs.resourceQuotes)
             .setDocAttribute('sessionReferences', document.attrs.sessionReferences)
-            .setMeta('addToHistory', false))
+          if (isQuoteInsertion(current.getJSON(), nextContent))
+            replaceChatComposerDocument(current, chatComposerDocumentToUserContent(nextContent))
+          else
+            current.view.dispatch(transaction.setMeta('addToHistory', false))
         }
         options.onTrigger(null)
       }
@@ -171,6 +184,11 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     if (selection instanceof NodeSelection && selection.node.type.name === 'chatResourceReference' && shouldSubmitChatComposerKey(event)) {
       event.preventDefault()
       options.onLocateResource?.(selection.node.attrs.resourceId)
+      return true
+    }
+    if (selection instanceof NodeSelection && selection.node.type.name === 'chatQuoteReference' && shouldSubmitChatComposerKey(event)) {
+      event.preventDefault()
+      options.onLocateQuote?.({ type: 'quote_ref', quoteId: selection.node.attrs.quoteId, quoteKind: selection.node.attrs.quoteKind })
       return true
     }
 
@@ -259,4 +277,26 @@ function resolveComposerContent(
 
 function normalizeComposerContent(value: JSONContent): JSONContent {
   return JSON.parse(JSON.stringify(value)) as JSONContent
+}
+
+function isQuoteInsertion(previous: JSONContent, next: JSONContent): boolean {
+  const before = chatComposerDocumentToUserContent(previous)
+  const after = chatComposerDocumentToUserContent(next)
+  const oldQuotes = new Set([
+    ...(before.quotes ?? []).map(quote => `message:${quote.id}`),
+    ...(before.resourceQuotes ?? []).map(quote => `resource:${quote.id}`),
+  ])
+  const added = new Set([
+    ...(after.quotes ?? []).map(quote => `message:${quote.id}`),
+    ...(after.resourceQuotes ?? []).map(quote => `resource:${quote.id}`),
+  ].filter(key => !oldQuotes.has(key)))
+  if (!added.size)
+    return false
+  const retained = {
+    ...after,
+    quotes: after.quotes?.filter(quote => !added.has(`message:${quote.id}`)),
+    resourceQuotes: after.resourceQuotes?.filter(quote => !added.has(`resource:${quote.id}`)),
+    body: after.body.map(paragraph => ({ ...paragraph, content: paragraph.content.filter(node => node.type !== 'quote_ref' || !added.has(`${node.quoteKind}:${node.quoteId}`)) })),
+  }
+  return JSON.stringify([before.body, before.panelResourceIds, before.quotes ?? [], before.resourceQuotes ?? [], before.sessionReferences ?? []]) === JSON.stringify([retained.body, retained.panelResourceIds, retained.quotes ?? [], retained.resourceQuotes ?? [], retained.sessionReferences ?? []])
 }

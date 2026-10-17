@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { TextQuote20Regular } from '@vicons/fluent'
-import { inject } from 'vue'
-import { useBuddyI18n } from '@/i18n/buddyI18n'
-import ChatReferenceCard from '@/shared/ui/selection/ReferenceCard.vue'
+import { provide } from 'vue'
+import ChatInputMaterialStrip from '../materials/ChatInputMaterialStrip.vue'
 import { chatQuoteNavigationKey } from './chatQuoteContext'
 
 const props = defineProps<{
@@ -15,21 +13,14 @@ const props = defineProps<{
   navigate?: (quote: BuddyMessageQuote) => void
 }>()
 const emit = defineEmits<{ remove: [id: string] }>()
-const { t } = useBuddyI18n(() => props.language)
-const locate = inject(chatQuoteNavigationKey, null)
+if (props.navigate)
+  provide(chatQuoteNavigationKey, async quote => props.navigate?.(quote))
 </script>
 
 <template>
-  <div v-if="quotes.length" class="chat-quote-strip flex min-w-0 max-w-full gap-[8px] overflow-x-auto pb-[6px]" data-quote-exclude>
-    <ChatReferenceCard
-      v-for="quote in quotes" :key="quote.id" class="chat-quote-card" :data-quote-id="quote.id"
-      :icon="TextQuote20Regular" :label="t(quote.source.role === 'assistant' ? 'desktop.chat.quoteFromAssistant' : 'desktop.chat.quoteFromUser')"
-      :text="quote.text" :removable="removable" :disabled="disabled" :remove-label="t('desktop.chat.removeQuote')"
-      @navigate="(navigate ?? locate)?.(quote)" @remove="emit('remove', quote.id)"
-    />
-  </div>
+  <ChatInputMaterialStrip
+    :materials="quotes.map(quote => ({ kind: 'message_quote', id: quote.id, quote }))"
+    :language="language" :removable="removable" :disabled="disabled"
+    @remove="emit('remove', $event.id)"
+  />
 </template>
-
-<style scoped lang="scss">
-.chat-quote-strip { overscroll-behavior-inline: contain; }
-</style>

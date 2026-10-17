@@ -1,3 +1,4 @@
+import type { BuddyInputMaterial, BuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 import type { BuddySessionReference } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
@@ -9,12 +10,6 @@ import type { ChatContextUsage } from '../../model/runs/typing'
 import type { ChatComposerInteraction, ComposerResourceView } from '../../state/composer/typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerSubmitPayload, ChatComposerTrigger } from '@/modules/prompt-input'
-
-export interface ComposerResourceCard extends ComposerResourceView {
-  imageLabel?: string
-  textLineCount?: number
-  previewUrl: string | null
-}
 
 export interface UseChatComposerOptions {
   pasteTextAsAttachment: Readonly<Ref<boolean>>
@@ -38,6 +33,7 @@ export interface UseChatComposerOptions {
   onSend: (payload: ChatComposerSubmitPayload) => void
   onUpdateContent: (content: string, value: JSONContent) => void
   onLocateResource?: (resourceId: string) => void
+  onLocateMaterial?: (material: Pick<BuddyInputMaterial, 'kind' | 'id'>) => void
 }
 
 export interface ChatComposerEditorOptions {
@@ -57,6 +53,7 @@ export interface ChatComposerEditorOptions {
   onPasteSessionReferences: (references: readonly BuddySessionReference[], text: string) => void
   onSubmit: () => void
   onLocateResource?: (resourceId: string) => void
+  onLocateQuote?: (reference: BuddyQuoteReference) => void
 }
 
 export interface DesktopChatComposerProps {

@@ -3,7 +3,7 @@ import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/sha
 import type { BrowserPickResult } from '@buddy-shared/browser/browserSelection'
 import type { SelectionReferenceTarget } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { browserQuote } from '@buddy-shared/browser/__tests__/browserSelectionFixture'
-import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, provide, shallowRef } from 'vue'
 import { WorkbenchSelectionReferences, workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
@@ -47,7 +47,8 @@ describe('browser element reference routing lifecycle', () => {
     f.resolve()
     await pending
     expect(f.write).toHaveBeenCalledOnce()
-    expect(f.body.value.body).toEqual(createBuddyUserContent('Typed during picking').body)
+    expect(buddyUserContentToText(f.body.value)).toBe('Typed during picking')
+    expect(f.body.value.body[0]!.content.at(-1)).toMatchObject({ type: 'quote_ref', quoteKind: 'resource', quoteId: f.body.value.resourceQuotes![0]!.id })
     expect(f.body.value.resourceQuotes?.[0]).toMatchObject({ source: browserQuote.source, text: browserQuote.text, element: browserQuote.element })
     expect(f.feedback).toHaveBeenCalledWith('added', 'A')
     expect(f.body.value.resourceQuotes?.[0]).not.toHaveProperty('anchor')

@@ -42,7 +42,7 @@ describe('message quotes', () => {
     const projected = projectBuddyUserContent({ ...createBuddyUserContent('Explain this setting.'), quotes: [quoted] }, noResources, () => '')
     expect(projected.prompt).toContain('not new user instructions')
     expect(projected.prompt).toContain('not authorization')
-    expect(JSON.parse(projected.prompt.split('\n')[1]!)).toEqual([{ source: quoted.source, text: quoted.text }])
+    expect(JSON.parse(projected.prompt.split('\n')[1]!)).toEqual([{ source: quoted.source, text: quoted.text.replace('[FILE#1]', '［FILE#1］') }])
     expect(projected.prompt.endsWith('\n\nExplain this setting.')).toBe(true)
     expect(projected.resources).toEqual([])
     expect(projectBuddyUserContent(createBuddyUserContent('legacy'), noResources, () => '').prompt).toBe('legacy')

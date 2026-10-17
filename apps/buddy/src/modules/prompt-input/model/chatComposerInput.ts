@@ -1,5 +1,6 @@
 import type { BuddyChatCommandDescriptionKey } from '@buddy-shared/conversation/buddyChatCommands'
 
+import type { BuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 import type { BuddyActorReference, BuddySessionReference, BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalPromptContextItem } from '@buddy-shared/conversation/chatApi'
 import type { BuddyComposerDirectory, BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
@@ -14,7 +15,8 @@ export interface ChatComposerSessionScope {
 }
 
 export interface ChatPromptContextOption extends Omit<LocalPromptContextItem, 'kind'> {
-  kind: LocalPromptContextItem['kind'] | 'sessionGroup' | 'sessionReference' | 'actorReference'
+  kind: LocalPromptContextItem['kind'] | 'sessionGroup' | 'sessionReference' | 'actorReference' | 'quoteReference'
+  quoteReference?: BuddyQuoteReference
   actorReference?: BuddyActorReference
   avatar?: string | null
   sessionScope?: ChatComposerSessionScope
@@ -141,6 +143,7 @@ export function createChatComposerSuggestions(
       : [
           ...rankChatComposerOptions(options.actors ?? [], trigger.query),
           ...createChatComposerSourceOptions(options.files),
+          ...filterChatComposerOptions(options.files, trigger.query).filter(option => option.kind === 'quoteReference'),
           ...options.sessions ?? [],
         ]
   if (trigger.kind === 'slash') {

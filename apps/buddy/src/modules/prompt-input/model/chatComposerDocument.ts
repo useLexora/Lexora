@@ -7,6 +7,7 @@ export const CHAT_RESOURCE_REFERENCE_NODE_NAME = 'chatResourceReference'
 export const CHAT_PROMPT_DIRECTIVE_NODE_NAME = 'chatPromptDirective'
 export const CHAT_SESSION_REFERENCE_NODE_NAME = 'chatSessionReference'
 export const CHAT_ACTOR_REFERENCE_NODE_NAME = 'chatActorReference'
+export const CHAT_QUOTE_REFERENCE_NODE_NAME = 'chatQuoteReference'
 
 export function userContentToChatComposerDocument(content: BuddyUserContentV1): JSONContent {
   const body = content.body.map(paragraph => ({
@@ -58,6 +59,10 @@ function inlineNodeToEditorNode(
       attrs: { resourceId: node.resourceId },
       type: CHAT_RESOURCE_REFERENCE_NODE_NAME,
     }
+    case 'quote_ref': return {
+      attrs: { quoteId: node.quoteId, quoteKind: node.quoteKind },
+      type: CHAT_QUOTE_REFERENCE_NODE_NAME,
+    }
     case 'actor_ref': return {
       attrs: { actorId: node.actorId, name: node.name },
       type: CHAT_ACTOR_REFERENCE_NODE_NAME,
@@ -90,6 +95,11 @@ function editorNodeToInlineNode(node: JSONContent): unknown {
     case CHAT_RESOURCE_REFERENCE_NODE_NAME: return {
       resourceId: node.attrs?.resourceId,
       type: 'resource_ref',
+    }
+    case CHAT_QUOTE_REFERENCE_NODE_NAME: return {
+      quoteId: node.attrs?.quoteId,
+      quoteKind: node.attrs?.quoteKind,
+      type: 'quote_ref',
     }
     case CHAT_SESSION_REFERENCE_NODE_NAME: return {
       sessionId: node.attrs?.sessionId,

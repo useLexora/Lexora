@@ -19,11 +19,8 @@ import { useChatComposer } from '@/modules/tasks/widgets/composer/useChatCompose
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
-import ResourceQuoteStrip from '@/shared/ui/selection/ResourceQuoteStrip.vue'
-import ChatQuoteStrip from '../quotes/ChatQuoteStrip.vue'
-import ChatSessionReferenceStrip from '../references/ChatSessionReferenceStrip.vue'
+import ChatInputMaterialStrip from '../materials/ChatInputMaterialStrip.vue'
 import ChatComposerSourceMenu from './ChatComposerSourceMenu.vue'
-import ComposerResourceStrip from './ComposerResourceStrip.vue'
 import ComposerTextPreview from './ComposerTextPreview.vue'
 import DesktopComposerSubmitActions from './DesktopComposerSubmitActions.vue'
 import DesktopComposerSuggestions from './DesktopComposerSuggestions.vue'
@@ -67,16 +64,10 @@ const {
   sessionScope,
   loadContextOptions,
   modelInputIssue,
-  resourceStripResources,
+  materials,
+  removeMaterial,
   pastedText,
-  quotes,
-  resourceQuotes,
-  removeResourceQuote,
-  sessionReferences,
   addQuote,
-  removeQuote,
-  removeSessionReference,
-  removeResource,
   selectPanelSource: selectPanelResource,
   selectSuggestion,
   submit,
@@ -104,6 +95,7 @@ const {
   onSend: payload => emit('send', payload),
   onUpdateContent: (content, value) => emit('updateContent', content, value),
   onLocateResource: resourceId => resourceStrip.value?.highlightResource(resourceId),
+  onLocateMaterial: material => resourceStrip.value?.highlightMaterial(material),
 })
 
 const queuesSubmission = computed(() => !props.isActorInput && !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
@@ -189,15 +181,13 @@ function captureDraft(): WorkbenchMenuSelection {
   >
     <template #attachments>
       <WorkbenchSlot target="composer.accessory" class="desktop-chat-composer__accessory max-h-[min(240px,30vh)] overflow-auto" />
-      <ChatSessionReferenceStrip :references="sessionReferences" :language="language" :disabled="isSending" removable @remove="removeSessionReference" />
-      <ChatQuoteStrip :quotes="quotes" :language="language" :disabled="isSending" removable @remove="removeQuote" />
-      <ResourceQuoteStrip v-if="resourceQuotes.length" :quotes="resourceQuotes" :language="language" :disabled="isSending" removable @remove="removeResourceQuote" />
-      <ComposerResourceStrip
+      <ChatInputMaterialStrip
         ref="resourceStrip"
-        :resources="resourceStripResources"
+        :materials="materials"
         :language="language"
         :disabled="isSending"
-        @remove="removeResource"
+        removable
+        @remove="removeMaterial"
         @retry="emit('retryResource', $event)"
         @preview-text="pastedText.open"
       />
