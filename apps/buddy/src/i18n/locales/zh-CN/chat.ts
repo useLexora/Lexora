@@ -180,6 +180,8 @@ export default {
   'desktop.chat.status.tools': '工具调用',
   'desktop.chat.status.toolCount': '{count} 次',
   'desktop.chat.status.toolsTop': '常用工具',
+  'desktop.chat.status.toolsMore': '还有 {count} 个工具',
+  'desktop.chat.status.toolsCollapse': '收起',
   'desktop.chat.status.compactions': '上下文压缩',
   'desktop.chat.status.compactionsValue': '{count} 次，最近 {before} → {after}',
   'desktop.chat.status.timing': '耗时统计',

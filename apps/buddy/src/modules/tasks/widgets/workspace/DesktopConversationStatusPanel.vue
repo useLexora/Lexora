@@ -3,10 +3,11 @@ import type { LocalConversationStatus } from '@buddy-shared/runs/conversationSta
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ArrowSync20Regular } from '@vicons/fluent'
 import { NButton } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopConversationStatusSection from './DesktopConversationStatusSection.vue'
+import { computeVisibleItemCount } from './statusToolList'
 
 const props = defineProps<{
   currentModelId: string | null
@@ -60,6 +61,82 @@ const cacheHitRate = computed(() => {
   const reads = totals.cacheReadTokens + totals.inputTokens
   return reads > 0 ? `${Math.round((totals.cacheReadTokens / reads) * 100)}%` : null
 })
+const TOOL_ROWS = 2
+
+const toolsTop = computed(() => props.status?.activity.tools.top ?? [])
+const toolsValues = ref<HTMLElement | null>(null)
+const toolsCollapsedCount = ref<number | null>(null)
+const toolsExpanded = ref(false)
+// True once a measurement found more than TOOL_ROWS rows, so an expanded list can offer "collapse".
+const toolsOverflowing = ref(false)
+
+const visibleTools = computed(() => toolsCollapsedCount.value === null || toolsExpanded.value
+  ? toolsTop.value
+  : toolsTop.value.slice(0, toolsCollapsedCount.value))
+const hiddenToolCount = computed(() => toolsTop.value.length - visibleTools.value.length)
+
+// Rows are inferred from offsetTop, so the container must keep using flex-wrap.
+async function measureTools(): Promise<void> {
+  if (toolsExpanded.value)
+    return
+
+  toolsCollapsedCount.value = null
+  await nextTick()
+  const container = toolsValues.value
+  if (!container)
+    return
+
+  const items = [...container.querySelectorAll<HTMLElement>('[data-status-tool]')]
+  if (items.length < 2) {
+    toolsOverflowing.value = false
+    return
+  }
+
+  const count = computeVisibleItemCount(items.map(item => item.offsetTop), TOOL_ROWS)
+  toolsOverflowing.value = count < items.length
+  if (toolsOverflowing.value)
+    toolsCollapsedCount.value = count
+}
+
+function expandTools(): void {
+  toolsExpanded.value = true
+}
+
+function collapseTools(): void {
+  toolsExpanded.value = false
+  void measureTools()
+}
+
+let toolsObserver: ResizeObserver | null = null
+let observedWidth = -1
+watch(toolsValues, (element) => {
+  toolsObserver?.disconnect()
+  toolsObserver = null
+  if (!element || typeof ResizeObserver === 'undefined')
+    return
+
+  observedWidth = element.clientWidth
+  toolsObserver = new ResizeObserver(() => {
+    if (!element.clientWidth || element.clientWidth === observedWidth)
+      return
+    observedWidth = element.clientWidth
+    void measureTools()
+  })
+  toolsObserver.observe(element)
+  void measureTools()
+})
+onBeforeUnmount(() => {
+  toolsObserver?.disconnect()
+  toolsObserver = null
+})
+
+// Status polling returns fresh arrays; only re-measure when the names or counts actually change.
+const toolsKey = computed(() => toolsTop.value.map(entry => `${entry.name}:${entry.count}`).join('|'))
+watch(toolsKey, () => {
+  toolsExpanded.value = false
+  void measureTools()
+})
+
 const runRows = computed(() => {
   const runs = props.status?.activity.runs
   if (!runs)
@@ -93,7 +170,7 @@ const runRows = computed(() => {
       </NButton>
     </header>
 
-    <div class="conversation-status__body min-h-0 overflow-auto pt-[6px] pr-[8px] pb-[8px] pl-[8px]" :aria-busy="isLoading">
+    <div class="conversation-status__body min-h-0 overflow-x-hidden overflow-y-auto pt-[6px] pr-[8px] pb-[8px] pl-[8px]" :aria-busy="isLoading">
       <span v-if="loadFailed" class="block m-0 text-muted py-[4px] px-[2px]">{{ t('desktop.chat.status.loadFailed') }}</span>
       <span v-else-if="isLoading && !status" class="block m-0 text-muted py-[4px] px-[2px]">{{ t('desktop.chat.status.loading') }}</span>
       <span v-else-if="!status" class="block m-0 text-muted py-[4px] px-[2px]">{{ t('desktop.chat.status.empty') }}</span>
@@ -125,13 +202,30 @@ const runRows = computed(() => {
               <span v-if="status.activity.tools.running" class="conversation-status__badge is-active inline-block rounded-[3px] py-0 px-[4px] text-[12px] font-500">{{ t('desktop.chat.status.runningCount', { count: status.activity.tools.running }) }}</span>
             </span>
           </div>
-          <div v-if="status.activity.tools.top.length" class="conversation-status__row is-tools flex items-baseline justify-between gap-[10px] py-[3px] px-[2px]">
+          <div v-if="toolsTop.length" class="conversation-status__row is-tools flex items-baseline justify-between gap-[10px] py-[3px] px-[2px]">
             <span>{{ t('desktop.chat.status.toolsTop') }}</span>
-            <span class="flex flex-wrap justify-end items-baseline gap-x-[8px] gap-y-[4px]">
-              <span v-for="entry in status.activity.tools.top" :key="entry.name" class="inline-flex max-w-full min-w-0 items-baseline gap-[4px]">
+            <span ref="toolsValues" class="flex flex-wrap justify-end items-baseline gap-x-[8px] gap-y-[4px]">
+              <span v-for="entry in visibleTools" :key="entry.name" data-status-tool class="inline-flex max-w-full min-w-0 items-baseline gap-[4px]">
                 <span class="min-w-0 truncate">{{ entry.name }}</span>
                 <span class="flex-none whitespace-nowrap">× {{ entry.count }}</span>
               </span>
+              <button
+                v-if="hiddenToolCount > 0"
+                type="button"
+                class="conversation-status__tool-more"
+                :aria-label="t('desktop.chat.status.toolsMore', { count: hiddenToolCount })"
+                @click="expandTools"
+              >
+                +{{ hiddenToolCount }}
+              </button>
+              <button
+                v-else-if="toolsExpanded && toolsOverflowing"
+                type="button"
+                class="conversation-status__tool-more"
+                @click="collapseTools"
+              >
+                {{ t('desktop.chat.status.toolsCollapse') }}
+              </button>
             </span>
           </div>
           <div v-if="status.activity.compactions.count" class="conversation-status__row flex items-baseline justify-between gap-[10px] py-[3px] px-[2px] whitespace-nowrap">
@@ -235,6 +329,28 @@ const runRows = computed(() => {
   &.is-active {
     background: var(--buddy-accent-surface);
     color: var(--buddy-accent-on-surface);
+  }
+}
+
+.conversation-status__tool-more {
+  flex: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 4px;
+  background: var(--buddy-state-hover);
+  color: var(--buddy-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--buddy-text-strong);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--buddy-focus-ring);
+    outline-offset: 1px;
   }
 }
 

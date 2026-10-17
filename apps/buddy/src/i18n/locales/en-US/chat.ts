@@ -182,6 +182,8 @@ export default {
   'desktop.chat.status.tools': 'Tool calls',
   'desktop.chat.status.toolCount': '{count} calls',
   'desktop.chat.status.toolsTop': 'Top tools',
+  'desktop.chat.status.toolsMore': '{count} more tools',
+  'desktop.chat.status.toolsCollapse': 'Show less',
   'desktop.chat.status.compactions': 'Compactions',
   'desktop.chat.status.compactionsValue': '{count} times, last {before} → {after}',
   'desktop.chat.status.timing': 'Timing',
