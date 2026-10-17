@@ -29,7 +29,9 @@ const emit = defineEmits<{ select: [key: string] }>()
 const showRefreshing = useDelayedLoading(() => props.loadingKeys.has('') && props.nodes.length > 0)
 const { t } = useBuddyI18n(() => props.language)
 const expandedKeys = defineModel<string[]>('expandedKeys', { required: true })
-const menu = shallowRef<{ node: ExplorerNode | null, x: number, y: number } | null>(null)
+const menu = shallowRef<{ node: ExplorerNode | null } | null>(null)
+// Keep the anchor stable while the dropdown finishes its leave transition.
+const menuPosition = shallowRef({ x: 0, y: 0 })
 const recoveryOperations = shallowRef<SpaceFileOperation[]>([])
 const platform = shallowRef<string | null>(null)
 const commands = useExplorerCommands({
@@ -81,8 +83,10 @@ onScopeDispose(props.api.onFilesChanged((event) => {
 }))
 onScopeDispose(() => clearTimeout(timer))
 function contextmenu(node: ExplorerNode | null, event: MouseEvent) {
-  if (!busy.value)
-    menu.value = { node, x: event.clientX, y: event.clientY }
+  if (!busy.value) {
+    menuPosition.value = { x: event.clientX, y: event.clientY }
+    menu.value = { node }
+  }
 }
 function selectCommand(command: string) {
   const node = menu.value?.node ?? null
@@ -123,7 +127,7 @@ async function acknowledge(operation: SpaceFileOperation) {
       <ExplorerTree v-model:expanded-keys="expandedKeys" :loading-keys="loadingKeys" :aria-busy="loadingKeys.has('')" :nodes="nodes" :selected-key="target.path || null" :language="language" :load="load" @select="emit('select', $event)" @contextmenu="contextmenu" @command="commands.command" />
     </div>
     <ExplorerRecovery v-if="recoveryOperations.length" :operations="recoveryOperations" :language="language" :busy="!!busy" @acknowledge="acknowledge" />
-    <NDropdown :show="!!menu" :x="menu?.x ?? 0" :y="menu?.y ?? 0" :options="menuOptions" trigger="manual" placement="bottom-start" @select="selectCommand" @clickoutside="menu = null" />
+    <NDropdown :show="!!menu" :x="menuPosition.x" :y="menuPosition.y" :options="menuOptions" trigger="manual" placement="bottom-start" @select="selectCommand" @clickoutside="menu = null" />
     <ExplorerNameDialog :request="nameRequest" :language="language" :platform="platform" @finish="commands.finishName" />
   </div>
 </template>

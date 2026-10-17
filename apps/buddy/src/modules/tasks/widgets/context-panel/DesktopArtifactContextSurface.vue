@@ -39,6 +39,9 @@ const quoteSource = computed<BuddyArtifactQuote['source']>(() => ({
   format: markdown.value && viewMode.value === 'preview' ? 'markdown' : 'source',
 }))
 const quoteOwnerKey = computed(() => JSON.stringify([props.tabId, props.artifact, viewMode.value]))
+function captureMonacoQuote(quote: BuddyResourceQuote) {
+  return quoteMenu.value?.captureMonaco(quote) ?? null
+}
 function prepareQuote(quote: BuddyResourceQuote, x: number, y: number) {
   return quoteMenu.value?.prepare(quote, x, y) ?? null
 }
@@ -92,7 +95,7 @@ watch(textPreview, () => quoteMenu.value?.close(), { flush: 'sync' })
       <DesktopDocumentContent
         v-else-if="textPreview"
         ref="document" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :language="language" :write-clipboard-text="writeClipboardText"
-        :quote-source="references ? quoteSource : undefined" :prepare-quote="prepareQuote"
+        :quote-source="references ? quoteSource : undefined" :prepare-quote="prepareQuote" :capture-monaco-quote="captureMonacoQuote"
       />
       <div v-else class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">
         <FolderIcon

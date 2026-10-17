@@ -30,7 +30,7 @@ const cleanups: (() => void)[] = []
 afterEach(() => {
   cleanups.splice(0).forEach(cleanup => cleanup())
 })
-async function mount(kind: 'menu' | 'strip', removable = true) {
+async function mount(kind: 'menu' | 'strip', removable = true, multiple = false) {
   const root = document.createElement('div')
   document.body.append(root)
   let menu!: InstanceType<typeof ResourceSelectionQuoteMenu>
@@ -38,7 +38,8 @@ async function mount(kind: 'menu' | 'strip', removable = true) {
   const ownerKey = shallowRef('file:one')
   const locate = vi.fn(async () => false)
   const remove = vi.fn()
-  const host = new WorkbenchSelectionReferences({ targets: () => [{ id: 'a', label: 'Pane 1 · Task A', identity: 'a:draft:epoch', scope: 'task:a', read: () => content.value, write: value => content.value = value }], source: () => ({ identity: 'file:one', owner: 'task:a' }), locate })
+  const extraContent = shallowRef(createBuddyUserContent('Other input'))
+  const host = new WorkbenchSelectionReferences({ targets: () => [...(multiple ? [{ id: 'b', label: 'Pane 2 · Task B', identity: 'b:draft:epoch', scope: 'task:b', read: () => extraContent.value, write: (value: typeof extraContent.value) => extraContent.value = value }] : []), { id: 'a', label: 'Pane 1 · Task A', identity: 'a:draft:epoch', scope: 'task:a', read: () => content.value, write: value => content.value = value }], source: () => ({ identity: 'file:one', owner: 'task:a' }), locate })
   const app = createApp(defineComponent({ setup() {
     provide(workbenchSelectionReferencesKey, host)
     return () => kind === 'menu'
@@ -56,7 +57,7 @@ async function mount(kind: 'menu' | 'strip', removable = true) {
   }
   cleanups.push(unmount)
   await nextTick()
-  return { root, menu, host, content, ownerKey, locate, remove, unmount }
+  return { root, menu, host, content, extraContent, ownerKey, locate, remove, unmount }
 }
 
 describe('resource reference UI', () => {
@@ -67,6 +68,37 @@ describe('resource reference UI', () => {
     f.root.querySelector('button')!.click()
     await nextTick()
     expect(f.content.value.resourceQuotes).toEqual([quote])
+  })
+
+  it('adds a Monaco quote directly without displaying the dropdown', async () => {
+    const f = await mount('menu')
+    const native = f.menu.captureMonaco(quote)!
+    expect(native.actions).toHaveLength(1)
+    native.actions[0]!.run()
+    await nextTick()
+    expect(f.content.value.resourceQuotes).toEqual([quote])
+    expect(f.root.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('orders the associated target first and quotes to the chosen split pane only', async () => {
+    const f = await mount('menu', true, true)
+    const native = f.menu.captureMonaco(quote)!
+    expect(native.actions.map(action => action.label)).toEqual(['Pane 1 · Task A', 'Pane 2 · Task B'])
+    native.actions[1]!.run()
+    await nextTick()
+    expect(f.content.value.resourceQuotes).toBeUndefined()
+    expect(f.extraContent.value.resourceQuotes).toEqual([quote])
+    expect(f.root.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('rejects a captured native action after the source changes', async () => {
+    const f = await mount('menu')
+    const native = f.menu.captureMonaco(quote)!
+    f.ownerKey.value = 'file:two'
+    await nextTick()
+    native.actions[0]!.run()
+    expect(f.content.value.resourceQuotes).toBeUndefined()
+    expect(feedback.warning).toHaveBeenCalled()
   })
 
   it('closes the component menu when its source switches or unmounts', async () => {

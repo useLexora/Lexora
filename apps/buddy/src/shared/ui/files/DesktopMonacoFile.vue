@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import type { BuddyResourceQuote, BuddyTextQuote } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyTextQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type * as Monaco from 'monaco-editor/editor/editor.api.js'
+import type { CaptureMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
 import { computed, shallowRef, useTemplateRef, watch } from 'vue'
-import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { loadDesktopMonaco, observeDesktopMonacoTheme } from '@/shared/ui/monaco/desktopMonaco'
 import { revealMonacoQuote } from '@/shared/ui/selection/revealMonacoQuote'
 import { registerMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
 
-const props = defineProps<{ text: string, path: string, wrap: boolean, language: 'zh-CN' | 'en-US', quoteSource?: BuddyTextQuote['source'], prepareQuote?: (quote: BuddyResourceQuote, x: number, y: number) => (() => void) | null }>()
-const { t } = useBuddyI18n(() => props.language)
+const props = defineProps<{ text: string, path: string, wrap: boolean, language: 'zh-CN' | 'en-US', quoteSource?: BuddyTextQuote['source'], captureMonacoQuote?: CaptureMonacoResourceQuote }>()
 const activeEditor = shallowRef<Monaco.editor.IStandaloneCodeEditor>()
 defineExpose({ ready: computed(() => !!activeEditor.value), reveal: (quote: BuddyTextQuote) => !!activeEditor.value && revealMonacoQuote(activeEditor.value, quote) })
 const container = useTemplateRef<HTMLElement>('container')
@@ -79,8 +78,8 @@ watch(container, async (element, _previous, onCleanup) => {
       renderLineHighlight: 'none',
       padding: { top: 8, bottom: 8 },
     })
-    if (props.quoteSource && props.prepareQuote) {
-      registerMonacoResourceQuote(editor, { label: t('desktop.chat.quoteSelection'), source: () => props.quoteSource!, prepare: (quote, x, y) => props.prepareQuote?.(quote, x, y) ?? null })
+    if (props.quoteSource && props.captureMonacoQuote) {
+      registerMonacoResourceQuote(editor, { source: () => props.quoteSource!, capture: quote => props.captureMonacoQuote?.(quote) ?? null })
     }
     activeEditor.value = editor
     stopTheme = observeDesktopMonacoTheme(monaco, editor)

@@ -2,13 +2,14 @@
 import type { BuddyResourceQuote, BuddyTextQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import type { CaptureMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
 import { computed, useTemplateRef } from 'vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import { readResourceTextSelection } from '@/shared/ui/selection/resourceQuoteSelection'
 import { useQuoteHighlight } from '@/shared/ui/selection/useQuoteHighlight'
 import DesktopMonacoFile from './DesktopMonacoFile.vue'
 
-const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: (quote: BuddyResourceQuote, x: number, y: number) => (() => void) | null }>(), { wrap: true })
+const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: (quote: BuddyResourceQuote, x: number, y: number) => (() => void) | null, captureMonacoQuote?: CaptureMonacoResourceQuote }>(), { wrap: true })
 defineSlots<{ source?: () => unknown }>()
 const markdown = useTemplateRef<HTMLElement>('markdown')
 const monaco = useTemplateRef<InstanceType<typeof DesktopMonacoFile>>('monaco')
@@ -44,7 +45,7 @@ function quoteText(event: MouseEvent) {
     </div>
     <template v-else-if="(mode === 'source' || mode === 'edit') && text != null">
       <slot name="source">
-        <DesktopMonacoFile ref="monaco" :language="language" :text="text" :path="name" :wrap="wrap" :quote-source="quoteSource" :prepare-quote="prepareQuote" />
+        <DesktopMonacoFile ref="monaco" :language="language" :text="text" :path="name" :wrap="wrap" :quote-source="quoteSource" :capture-monaco-quote="captureMonacoQuote" />
       </slot>
     </template>
     <div v-else class="desktop-document-content__empty grid flex-1 min-h-0 p-[24px] [overflow-wrap:anywhere] text-muted text-[13px]">

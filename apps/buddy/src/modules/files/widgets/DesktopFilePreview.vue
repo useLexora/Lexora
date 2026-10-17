@@ -20,6 +20,9 @@ const { labels, controller } = useWorkbench()
 const preview = shallowRef<LocalSpaceFilePreview | null>(null)
 const quoteMenu = useTemplateRef<InstanceType<typeof ResourceSelectionQuoteMenu>>('quoteMenu')
 const references = useSelectionReferences()
+function captureMonacoQuote(quote: BuddyResourceQuote) {
+  return quoteMenu.value?.captureMonaco(quote) ?? null
+}
 function prepareQuote(quote: BuddyResourceQuote, x: number, y: number) {
   return quoteMenu.value?.prepare(quote, x, y) ?? null
 }
@@ -88,7 +91,7 @@ function captureResource() {
     <DesktopDocumentContent
       v-else
       ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"
-      :quote-source="references ? quoteSource : undefined" :prepare-quote="prepareQuote" @scroll.capture="quoteMenu?.close()"
+      :quote-source="references ? quoteSource : undefined" :prepare-quote="prepareQuote" :capture-monaco-quote="captureMonacoQuote" @scroll.capture="quoteMenu?.close()"
     />
     <ResourceSelectionQuoteMenu v-if="references" ref="quoteMenu" :view-id="view.id" :owner-key="`${view.id}:${identity}:${mode}`" :language="language" :visible="visible" />
   </div>

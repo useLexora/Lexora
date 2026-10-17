@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { BuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { DropdownOption } from 'naive-ui'
+import type { MonacoResourceQuoteMenu } from './useMonacoResourceQuote'
 import type { SelectionReferenceRequest } from './workbenchSelectionReferences'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { buddyResourceQuoteSchema } from '@buddy-shared/conversation/buddyUserContent'
@@ -106,7 +107,30 @@ function openRequest(request: SelectionReferenceRequest, x: number, y: number) {
   position.value = { x, y }
   pending.value = request
 }
-defineExpose({ open, prepare, close, openRequest })
+function captureMonaco(quote: BuddyResourceQuote): MonacoResourceQuoteMenu | null {
+  if (!mounted || !props.visible || !references)
+    return null
+  const request = references.capture(props.viewId, quote)
+  if (!request)
+    return { label: t(buddyResourceQuoteSchema.safeParse(quote).success ? 'desktop.chat.quoteTargetChanged' : 'desktop.chat.quoteLimit'), actions: [] }
+  const ownerKey = props.ownerKey
+  const preferred = request.targets.find(target => target.id === request.defaultId)
+  const targets = [...(preferred ? [preferred] : []), ...request.targets.filter(target => target !== preferred)]
+  return {
+    label: t(targets.length ? 'desktop.chat.quoteToCurrent' : 'desktop.chat.quoteNoTarget'),
+    actions: targets.map(target => ({
+      label: target.label,
+      run: () => {
+        if (!mounted || !props.visible || ownerKey !== props.ownerKey) {
+          message.warning(t('desktop.chat.quoteTargetChanged'))
+          return
+        }
+        showSelectionReferenceResult(message, t, references.add(request, target.id), target.label)
+      },
+    })),
+  }
+}
+defineExpose({ open, prepare, close, openRequest, captureMonaco })
 </script>
 
 <template>

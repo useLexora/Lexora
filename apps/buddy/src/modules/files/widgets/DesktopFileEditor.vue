@@ -29,6 +29,9 @@ const { t } = useBuddyI18n(() => props.language)
 function quoteSource(format: 'source' | 'markdown' = 'source'): BuddyFileQuote['source'] {
   return { kind: 'file', title: props.view.title, file: spaceFileTargetSchema.strip().parse(props.view.resource.data), format }
 }
+function captureMonacoQuote(quote: BuddyResourceQuote) {
+  return quoteMenu.value?.captureMonaco(quote) ?? null
+}
 function prepareQuote(quote: BuddyResourceQuote, x: number, y: number) {
   return quoteMenu.value?.prepare(quote, x, y) ?? null
 }
@@ -129,7 +132,7 @@ watch([container, attempt, viewId, identity], async ([element, , viewId, key], _
     })
     editor = ownedEditor
     if (references)
-      registerMonacoResourceQuote(ownedEditor, { source: () => quoteSource(), prepare: prepareQuote, label: t('desktop.chat.quoteSelection') })
+      registerMonacoResourceQuote(ownedEditor, { source: () => quoteSource(), capture: captureMonacoQuote })
     stopTheme = observeDesktopMonacoTheme(lease.monaco, ownedEditor)
     if (props.view.state.editor)
       ownedEditor.restoreViewState(JSON.parse(JSON.stringify(props.view.state.editor)) as Monaco.editor.ICodeEditorViewState)
