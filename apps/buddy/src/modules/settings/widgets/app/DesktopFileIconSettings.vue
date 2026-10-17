@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { BUILTIN_FILE_ICON_THEME } from '@buddy-shared/icons/fileIconTheme'
-import { useMessage } from 'naive-ui'
+import { NSelect, useMessage } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
-import DesktopSelect from '@/shared/ui/select/DesktopSelect.vue'
 import { desktopFileIconSnapshot as snapshot } from '@/theme/desktopFileIconState'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
@@ -38,7 +37,7 @@ async function update(id: string) {
 <template>
   <DesktopSettingsGroup>
     <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.fileIcons')" :description="t('desktop.settings.fileIconsDescription')">
-      <DesktopSelect v-bind="controlAttrs" data-testid="desktop-file-icon-select" filterable :options="options" :value="snapshot.preference.id" :disabled="pending" @update:value="update" />
+      <NSelect v-bind="controlAttrs" data-testid="desktop-file-icon-select" :options="options" :value="snapshot.preference.id" :disabled="pending" @update:value="update" />
     </DesktopSettingRow>
     <p v-if="snapshot.unavailable" class="m-0 text-xs text-muted">
       {{ t('desktop.settings.fileIconsFallback') }}
