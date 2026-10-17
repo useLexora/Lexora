@@ -13,8 +13,6 @@ import {
   CodeCircle20Regular,
   Cube20Filled,
   Cube20Regular,
-  Edit20Filled,
-  Edit20Regular,
   Folder20Filled,
   Folder20Regular,
   Globe20Filled,
@@ -38,12 +36,14 @@ import {
   WindowConsole20Filled,
   WindowConsole20Regular,
 } from '@vicons/fluent'
+import { h } from 'vue'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 export const spaceIconComponents = {
   'folder': Folder20Regular,
   'code': CodeCircle20Regular,
   'book': Book20Regular,
-  'pen': Edit20Regular,
+  'pen': () => h(DesktopIcon, { name: 'edit' }),
   'terminal': WindowConsole20Regular,
   'briefcase': Briefcase20Regular,
   'home': Home20Regular,
@@ -61,7 +61,7 @@ export const spaceIconComponents = {
   'folder-filled': Folder20Filled,
   'code-filled': CodeCircle20Filled,
   'book-filled': Book20Filled,
-  'pen-filled': Edit20Filled,
+  'pen-filled': () => h(DesktopIcon, { name: 'editFilled' }),
   'terminal-filled': WindowConsole20Filled,
   'briefcase-filled': Briefcase20Filled,
   'home-filled': Home20Filled,

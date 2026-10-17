@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Node } from '@antv/x6'
 import type { ConversationCanvasData } from './conversationCanvasContext'
-import { Add20Regular, ArrowSync20Regular, Document20Regular, Edit20Regular, Keyboard20Regular, Wand20Regular } from '@vicons/fluent'
+import { Add20Regular, ArrowSync20Regular, Document20Regular, Keyboard20Regular, Wand20Regular } from '@vicons/fluent'
 import { useIntervalFn } from '@vueuse/core'
 import { computed, inject, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -81,7 +81,7 @@ function open(event: MouseEvent) {
           <span v-if="message.status && message.status !== 'completed'" class="conversation-node__status" :class="message.status">{{ t(`desktop.canvas.${message.status}`) }}</span>
           <div v-if="!simplified && message.kind !== 'draft' && !busy" class="conversation-node__actions" role="toolbar" :aria-label="t('desktop.canvas.nodeActions')" @pointerdown.stop @mousedown.stop>
             <button v-if="message.kind === 'question'" type="button" :disabled="!data.canMutate" :aria-label="t('desktop.chat.editMessage')" :title="t('desktop.chat.editMessage')" data-testid="canvas-node-edit" @click.stop="actions.edit(message.id)">
-              <DesktopIcon :component="Edit20Regular" />
+              <DesktopIcon name="edit" />
             </button>
             <template v-else>
               <button type="button" :disabled="!data.canMutate" :aria-label="t('desktop.canvas.retry')" :title="t('desktop.canvas.retry')" data-testid="canvas-node-retry" @click.stop="actions.retry(message.id)">

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { Code16Regular, Edit16Regular, Eye16Regular } from '@vicons/fluent'
+import { Code16Regular, Eye16Regular } from '@vicons/fluent'
 import { NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{ modes: readonly FileDocumentMode[], language: BuddyLocale }>()
 const mode = defineModel<FileDocumentMode | null>({ required: true })
-const icons = { preview: Eye16Regular, source: Code16Regular, edit: Edit16Regular }
+const icons = { preview: { component: Eye16Regular }, source: { component: Code16Regular }, edit: { name: 'edit' as const } }
 const labels = computed(() => props.language === 'en-US'
   ? { preview: 'Preview', source: 'Source', edit: 'Edit' }
   : { preview: '预览', source: '源码', edit: '编辑' })
@@ -34,7 +34,7 @@ function navigate(event: KeyboardEvent, index: number) {
     <NTooltip v-for="(item, index) in modes" :key="item" trigger="hover" :delay="350">
       <template #trigger>
         <button type="button" role="tab" :data-testid="`document-mode-${item}`" :aria-label="labels[item]" :aria-selected="mode === item" :tabindex="mode === item ? 0 : -1" :class="{ 'is-active': mode === item }" @click="mode = item" @keydown="navigate($event, index)">
-          <DesktopIcon :component="icons[item]" :size="14" aria-hidden="true" />
+          <DesktopIcon v-bind="icons[item]" :size="14" aria-hidden="true" />
         </button>
       </template>
       {{ labels[item] }}

@@ -3,11 +3,12 @@ import browserPickElementUrl from './assets/browser-pick-element.svg'
 import contextPanelActiveUrl from './assets/context-panel-active.svg'
 import contextPanelUrl from './assets/context-panel.svg'
 import deleteUrl from './assets/delete.svg'
+import editFilledUrl from './assets/edit-filled.svg'
+import editUrl from './assets/edit.svg'
 import messageBranchNextUrl from './assets/message-branch-next.svg'
 import messageBranchPreviousUrl from './assets/message-branch-previous.svg'
 import messageCopiedUrl from './assets/message-copied.svg'
 import messageCopyUrl from './assets/message-copy.svg'
-import messageEditUrl from './assets/message-edit.svg'
 import messageQueueUrl from './assets/message-queue.svg'
 import messageRetryUrl from './assets/message-retry.svg'
 import navigationAutomationUrl from './assets/navigation-automation.svg'
@@ -33,11 +34,12 @@ export const DESKTOP_ICON_URLS = {
   contextPanel: contextPanelUrl,
   contextPanelActive: contextPanelActiveUrl,
   delete: deleteUrl,
+  edit: editUrl,
+  editFilled: editFilledUrl,
   messageBranchNext: messageBranchNextUrl,
   messageBranchPrevious: messageBranchPreviousUrl,
   messageCopied: messageCopiedUrl,
   messageCopy: messageCopyUrl,
-  messageEdit: messageEditUrl,
   messageQueue: messageQueueUrl,
   messageRetry: messageRetryUrl,
   navigationAutomation: navigationAutomationUrl,

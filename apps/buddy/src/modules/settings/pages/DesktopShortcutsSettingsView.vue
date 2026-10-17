@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ShortcutEntry } from '@buddy-shared/shortcuts/keybinding'
 import { conflictingShortcuts, formatKeybinding, keybindingFromInput } from '@buddy-shared/shortcuts/keybinding'
-import { ArrowCounterclockwise20Regular, Edit20Regular } from '@vicons/fluent'
+import { ArrowCounterclockwise20Regular } from '@vicons/fluent'
 import { NButton, NInput, NModal, NTag, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -147,7 +147,7 @@ function confirmReset() {
                     <template #trigger>
                       <NButton class="buddy-icon-button" size="small" quaternary :disabled="saving" :aria-label="t('desktop.shortcuts.edit')" @click="edit(entry)">
                         <template #icon>
-                          <DesktopIcon :component="Edit20Regular" :size="16" />
+                          <DesktopIcon name="edit" :size="16" />
                         </template>
                       </NButton>
                     </template>

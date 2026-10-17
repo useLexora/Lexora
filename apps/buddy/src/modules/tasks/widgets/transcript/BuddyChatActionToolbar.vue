@@ -93,7 +93,7 @@ async function copyContent() {
           @click="emit('startEdit')"
         >
           <template #icon>
-            <DesktopIcon name="messageEdit" />
+            <DesktopIcon name="edit" />
           </template>
         </NButton>
       </template>

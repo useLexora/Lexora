@@ -4,7 +4,6 @@ import type { DropdownOption } from 'naive-ui'
 import {
   ArrowReset20Regular,
   ChevronDown16Regular,
-  Edit16Regular,
   Star16Regular,
 } from '@vicons/fluent'
 import { NButton, NDropdown, NTag } from 'naive-ui'
@@ -94,7 +93,7 @@ function handleSelect(key: string) {
         @click="emit('edit')"
       >
         <template #icon>
-          <DesktopIcon :component="Edit16Regular" :size="16" />
+          <DesktopIcon name="edit" :size="16" />
         </template>
         {{ labels.edit }}
       </NButton>
