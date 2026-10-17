@@ -4,6 +4,7 @@ import { inject } from 'vue'
 
 export interface FileOperations {
   clipboard: ShallowRef<{ target: SpaceFileTarget, move: boolean } | null>
+  copyPath: (target: SpaceFileTarget) => Promise<void>
   execute: (input: SpaceFileMutation) => Promise<SpaceFileOperation | null>
 }
 export const fileOperationsKey: InjectionKey<FileOperations> = Symbol('fileOperations')

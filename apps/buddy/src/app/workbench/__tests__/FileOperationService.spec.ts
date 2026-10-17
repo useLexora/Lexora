@@ -1,7 +1,7 @@
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { SpaceFileMutation, SpaceFileOperation, SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { ResourceRef } from '@/workbench/common/workbench'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
 import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
@@ -20,8 +20,9 @@ function resource(spaceId: string, path: string): ResourceRef {
   const data = target(spaceId, path)
   return { scheme: 'file', id: JSON.stringify([data.directoryId, data.revision, path]), data }
 }
-function fixture(confirm: boolean) {
-  const spaces = [space('one', '/shared'), space('two', '/shared'), space('other', '/other')]
+function fixture(confirm: boolean, root = '/shared') {
+  const writeClipboardText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+  const spaces = [space('one', root), space('two', '/shared'), space('other', '/other')]
   const disk = new Map([['/shared/a.txt', 'original']])
   const physical = (value: SpaceFileTarget) => absolute(spaces.find(space => space.id === value.spaceId)!.primaryDirectory!.canonicalRoot, value.path)
   const copies = new WorkingCopyService({
@@ -53,6 +54,7 @@ function fixture(confirm: boolean) {
       return { operationId: input.operationId, kind: action.kind, path: input.path, destination, temporaryPath: null, status: 'applied', error: null, createdAt: 1, updatedAt: 1, restorable: false } satisfies SpaceFileOperation
     } },
     spaces: () => spaces,
+    writeClipboardText,
     copies,
     controller,
     flush: async () => {},
@@ -66,8 +68,41 @@ function fixture(confirm: boolean) {
     registry.dispose()
   })
   const rename = (): SpaceFileMutation => ({ ...target('one', 'a.txt'), operationId: crypto.randomUUID(), action: { kind: 'rename', destination: 'renamed.txt' } })
-  return { disk, copies, controller, operations, rename }
+  return { disk, copies, controller, operations, rename, writeClipboardText }
 }
+
+describe('copy file paths to the system clipboard', () => {
+  it.each([
+    ['D:\\项目\\工作区', '资料/合同 草稿.docx', 'D:\\项目\\工作区\\资料\\合同 草稿.docx'],
+    ['D:/workspace/', 'notes.txt', 'D:\\workspace\\notes.txt'],
+    ['\\\\server\\share', '资料/notes.txt', '\\\\server\\share\\资料\\notes.txt'],
+    ['/home/user/workspace/', '资料/notes.txt', '/home/user/workspace/资料/notes.txt'],
+  ])('copies the absolute path under %s', async (root, path, expected) => {
+    const { operations, writeClipboardText, disk } = fixture(true, root)
+    await operations.copyPath(target('one', path))
+    expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(expected)
+    expect([...disk]).toEqual([['/shared/a.txt', 'original']])
+  })
+
+  it('does not copy a path from a stale directory binding', async () => {
+    const { operations, writeClipboardText } = fixture(true)
+    await expect(operations.copyPath({ ...target('one', 'a.txt'), revision: 2 })).rejects.toThrow('FILE_PERMISSION_REVOKED')
+    expect(writeClipboardText).not.toHaveBeenCalled()
+  })
+
+  it('propagates clipboard write failures', async () => {
+    const { operations, writeClipboardText } = fixture(true)
+    writeClipboardText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    await expect(operations.copyPath(target('one', 'a.txt'))).rejects.toThrow('clipboard unavailable')
+  })
+
+  it('does not write after disposal', async () => {
+    const { operations, writeClipboardText } = fixture(true)
+    await operations.dispose()
+    await expect(operations.copyPath(target('one', 'a.txt'))).rejects.toThrow('FILE_OPERATIONS_STOPPED')
+    expect(writeClipboardText).not.toHaveBeenCalled()
+  })
+})
 
 describe('file operations protect all physical aliases before disk mutation', () => {
   it('retains dirty copies in every Space when saving is declined', async () => {

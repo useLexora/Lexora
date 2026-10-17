@@ -95,6 +95,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   const fileOperations = new FileOperationService({
     api: api.localChat.spaces,
     spaces: () => options.resources().fileSpaces.value,
+    writeClipboardText: text => api.clipboard.writeText(text),
     copies,
     controller,
     flush: () => persistence.flush(),

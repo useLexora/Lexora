@@ -79,8 +79,20 @@ export function useExplorerCommands(options: {
     const parent = node?.kind === 'directory' ? node.key : node?.key.split('/').slice(0, -1).join('/') ?? ''
     const path = node?.key ?? ''
     if (command === 'copy' || command === 'cut') {
-      if (node)
-        operations.clipboard.value = { target: { ...target, path }, move: command === 'cut' }
+      if (node) {
+        const source = { ...target, path }
+        operations.clipboard.value = { target: source, move: command === 'cut' }
+        if (command === 'copy') {
+          error.value = ''
+          try {
+            await operations.copyPath(source)
+          }
+          catch (cause) {
+            if (!stopped)
+              error.value = failureMessage(cause instanceof Error ? parseLocalChatPublicError(cause.message)?.code ?? cause.message : '')
+          }
+        }
+      }
       return
     }
     if (command === 'reveal') {
