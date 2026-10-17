@@ -45,6 +45,10 @@ const target = computed<ExecutionTarget | null>((previous) => {
   return previous && Object.entries(previous).every(([key, field]) => value.data[key as keyof ExecutionTarget] === field) ? previous : value.data
 })
 useProvideChatContent({
+  openWebLink: (url) => {
+    if (target.value)
+      void resources.openWebLink(url, { conversationId: target.value.conversationId, runId: target.value.runId })
+  },
   writeClipboardText: clipboard.writeText,
   canPreviewFile: path => target.value?.conversationId === workbench.activeTaskId.value && resources.canPreviewFile(path),
   previewFile: (path) => {

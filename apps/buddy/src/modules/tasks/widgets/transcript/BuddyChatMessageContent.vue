@@ -255,6 +255,7 @@ function handleMarkdownLink(href: string) {
       :final="final"
       :language="language"
       :write-clipboard-text="writeClipboardText"
+      :open-web-link="chatContent?.openWebLink"
       @open-link="handleMarkdownLink"
     />
   </div>

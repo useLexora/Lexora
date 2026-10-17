@@ -137,6 +137,7 @@ const resources = useTaskResourcePanel({
   activeSpace: computed(() => selectedTask.value?.session.activeSpace.value ?? null),
   spaces: taskIndex.index.spaces,
   mode: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelMode ?? 'task'),
+  linkOpening: computed(() => stores.applicationSettings.config.value?.browser.linkOpening ?? 'in-app'),
   autoCollapse: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelAutoCollapse ?? false),
   taskVisible: computed(() => pages.current.value === 'lexora.tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
   control: api.contextPanel,

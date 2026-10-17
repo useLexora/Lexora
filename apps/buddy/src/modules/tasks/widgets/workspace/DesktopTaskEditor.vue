@@ -60,6 +60,7 @@ watch(notificationTargetMessageId, (messageId) => {
     viewMode.value = 'chat'
 }, { flush: 'sync' })
 useProvideChatContent({
+  openWebLink: contextActions.openWebLink,
   canPreviewFile: contextActions.canPreviewFile,
   previewFile: contextActions.previewFile,
   writeClipboardText: text => clipboard.writeText(text),

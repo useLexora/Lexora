@@ -162,6 +162,7 @@ const lexoraConfigFileSchema = z.object({
     model_retry_limit: runtimePreferencesSchema.shape.modelRetryLimit.default(DEFAULT_RUNTIME_PREFERENCES.modelRetryLimit),
   }).passthrough().prefault({}),
   browser: z.object({
+    link_opening: browserPreferencesSchema.shape.linkOpening.default(DEFAULT_BROWSER_PREFERENCES.linkOpening),
     screenshot_destination: browserPreferencesSchema.shape.screenshotDestination.default(DEFAULT_BROWSER_PREFERENCES.screenshotDestination),
     default_zoom_factor: browserPreferencesSchema.shape.defaultZoomFactor.default(DEFAULT_BROWSER_PREFERENCES.defaultZoomFactor),
     freeze_background: browserPreferencesSchema.shape.freezeBackground.default(DEFAULT_BROWSER_PREFERENCES.freezeBackground),
@@ -334,6 +335,7 @@ function decodeConfig(value: unknown): LexoraConfig {
   return {
     runtime: { cacheWarming: config.runtime.cache_warming, codemode: config.runtime.codemode, modelRetryLimit: config.runtime.model_retry_limit },
     browser: {
+      linkOpening: config.browser.link_opening,
       screenshotDestination: config.browser.screenshot_destination,
       defaultZoomFactor: config.browser.default_zoom_factor,
       freezeBackground: config.browser.freeze_background,
@@ -401,6 +403,7 @@ function encodeConfig(config: LexoraConfig) {
   return {
     runtime: { cache_warming: config.runtime.cacheWarming, codemode: config.runtime.codemode, model_retry_limit: config.runtime.modelRetryLimit },
     browser: {
+      link_opening: config.browser.linkOpening,
       screenshot_destination: config.browser.screenshotDestination,
       default_zoom_factor: config.browser.defaultZoomFactor,
       freeze_background: config.browser.freezeBackground,

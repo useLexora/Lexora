@@ -22,6 +22,7 @@ function handleMarkdownLink(href: string) {
     :content="text"
     :language="language"
     :write-clipboard-text="actions.writeClipboardText"
+    :open-web-link="actions.openWebLink"
     @open-link="handleMarkdownLink"
   />
 </template>

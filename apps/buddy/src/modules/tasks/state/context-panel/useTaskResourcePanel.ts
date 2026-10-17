@@ -1,5 +1,6 @@
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
+import type { BrowserPreferences } from '@buddy-shared/browser/browserPreferences'
 import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
 import type { Ref } from 'vue'
 import type { UseTaskContextPanelOptions } from './typing'
@@ -10,9 +11,10 @@ import { useTaskContextPanel } from './useTaskContextPanel'
 
 interface TaskResourcePanelOptions extends UseTaskContextPanelOptions {
   autoCollapse: Readonly<Ref<boolean>>
+  linkOpening: Readonly<Ref<BrowserPreferences['linkOpening']>>
   closeView?: (id: string) => Promise<boolean>
   closeFiles?: (tabId: string) => Promise<boolean>
-  browser: Pick<DesktopBrowserApi, 'ensureSession' | 'close' | 'openArtifact' | 'onStateChanged'>
+  browser: Pick<DesktopBrowserApi, 'ensureSession' | 'close' | 'openArtifact' | 'onStateChanged' | 'navigate'>
 }
 
 export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
@@ -186,6 +188,30 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     }
   }
 
+  async function openWebLink(url: string, source?: ContextPanelSource): Promise<void> {
+    if (!/^https?:\/\//i.test(url))
+      return
+    if (options.linkOpening.value === 'system') {
+      window.open(url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    const conversationId = source?.conversationId ?? options.activeConversationId.value
+    if (!conversationId)
+      return
+    act(() => taskContext.openBrowser(source))
+    const isCurrent = currentOperation()
+    try {
+      const state = await ensureBrowserSession(conversationId)
+      retainBrowserSession(state)
+      if (isCurrent())
+        updateBrowserState(await options.browser.navigate(state.sessionId, url))
+    }
+    catch {
+      if (isCurrent())
+        options.onError()
+    }
+  }
+
   function fileArtifact(path: string, source?: ContextPanelSource) {
     const conversationId = source?.conversationId ?? options.activeConversationId.value
     return resolveChatArtifactTarget(options.runOutputs.value.flatMap(output => output.artifacts)
@@ -213,6 +239,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     ensureBrowserSession,
     addBrowser: () => act(taskContext.addBrowser),
     openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
+    openWebLink,
     canPreviewFile,
     previewFile,
     closeTab,

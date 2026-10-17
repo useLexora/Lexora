@@ -13,6 +13,7 @@ import 'markstream-vue/index.css'
 
 const props = withDefaults(defineProps<{
   content: string
+  openWebLink?: (url: string) => void
   allowImages?: boolean
   codeOverflow?: 'wrap' | 'scroll'
   final?: boolean
@@ -70,7 +71,10 @@ function handleLinkClick(event: MouseEvent) {
     return
 
   if (/^https?:\/\//i.test(href)) {
-    window.open(href, '_blank', 'noopener,noreferrer')
+    if (props.openWebLink)
+      props.openWebLink(href)
+    else
+      window.open(href, '_blank', 'noopener,noreferrer')
     return
   }
 

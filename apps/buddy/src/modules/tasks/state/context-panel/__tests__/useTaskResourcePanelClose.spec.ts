@@ -13,7 +13,9 @@ function fixture(overrides: Partial<PanelOptions> = {}) {
   const options: PanelOptions = {
     ...f.options,
     autoCollapse: shallowRef(true),
+    linkOpening: shallowRef('in-app'),
     browser: {
+      navigate: async () => state('session', 'task-a'),
       onStateChanged: () => () => {},
       ensureSession: async conversationId => state('session', conversationId),
       close: async () => {},

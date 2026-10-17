@@ -41,7 +41,7 @@ describe('lexoraConfigStore', () => {
     const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
     const preferences = {
       runtime: { cacheWarming: 'streaming' },
-      browser: { screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
+      browser: { linkOpening: 'system', screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
       proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
       desktop: {
         localBackupLimit: 1,
@@ -197,6 +197,7 @@ text = "保留我的内容"
       ...[0, 11, 1.5].map(localBackupLimit => ({ desktop: { localBackupLimit } })),
       { runtime: { modelRetryLimit: -1 } },
       { runtime: { cacheWarming: 'idle' } },
+      { browser: { linkOpening: 'external' } },
       { browser: { defaultZoomFactor: 0 } },
       { browser: { freezeDelaySeconds: 1.5 } },
       { desktop: { chat: { permissionMode: 'invalid' } } },

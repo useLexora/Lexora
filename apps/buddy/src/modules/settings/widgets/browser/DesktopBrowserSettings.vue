@@ -19,6 +19,10 @@ const { pending: pendingFields, save } = useSettingMutation<'browser'>(
   () => message.error(t('desktop.settings.saveFailed')),
 )
 const pending = computed(() => pendingFields.value.has('browser'))
+const linkOpeningOptions = computed(() => [
+  { label: t('desktop.browser.linkOpeningInApp'), value: 'in-app' },
+  { label: t('desktop.browser.linkOpeningSystem'), value: 'system' },
+])
 const screenshotOptions = computed(() => [
   { label: t('desktop.browser.screenshotFile'), value: 'file' },
   { label: t('desktop.browser.screenshotClipboard'), value: 'clipboard' },
@@ -37,6 +41,9 @@ function update(patch: LexoraConfigPatch) {
         {{ t('desktop.browser.preferences') }}
       </h2>
       <DesktopSettingsGroup>
+        <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.browser.linkOpening')" :description="t('desktop.browser.linkOpeningDescription')">
+          <NSelect v-bind="controlAttrs" :value="config.browser.linkOpening" :options="linkOpeningOptions" :disabled="pending" @update:value="update({ browser: { linkOpening: $event } })" />
+        </DesktopSettingRow>
         <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.browser.screenshotDestination')" :description="t('desktop.browser.screenshotDescription')">
           <NSelect v-bind="controlAttrs" :value="config.browser.screenshotDestination" :options="screenshotOptions" :disabled="pending" @update:value="update({ browser: { screenshotDestination: $event } })" />
         </DesktopSettingRow>

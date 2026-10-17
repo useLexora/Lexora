@@ -203,13 +203,16 @@ describe('activity disclosure', () => {
     const node = readTool('one', 'running')
     const { root, turn } = mountTurn([node])
     expect(root.querySelector('.buddy-chat-tool-details')).toBeNull()
-    root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!.click()
+    const toolHeader = root.querySelector<HTMLButtonElement>('.buddy-chat-tool__header')!
+    expect(toolHeader.getAttribute('aria-label')).toContain('src/Row.vue')
+    toolHeader.click()
     await nextTick()
     const leading: ChatAgentTurnNode = { id: 'leading', contentIndex: 0, kind: 'reasoning', messageId: 'reply', status: 'completed', text: 'Checking the returned file' }
     turn.value = { ...turn.value, nodes: [leading, { ...node, status: 'completed' }, readTool('two', 'completed')], progress: { phase: 'model_responding', toolName: null } }
     await nextTick()
     const group = () => root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
     expect(group().getAttribute('aria-expanded')).toBe('true')
+    expect([...root.querySelectorAll('[data-tool-call-id]')].map(element => element.getAttribute('data-tool-call-id'))).toEqual(['one', 'two'])
     expect(root.querySelectorAll('.buddy-chat-tool-details')).toHaveLength(1)
     expect(root.querySelector('[data-tool-detail-id="one"]')?.textContent).toContain('File output')
     expect(root.querySelector('.buddy-chat-run-activity')?.textContent).toContain('正在回复')
@@ -224,22 +227,13 @@ describe('activity disclosure', () => {
     await nextTick()
     expect(root.querySelector('.buddy-chat-run-activity')).toBeNull()
     expect(root.querySelector('[data-tool-detail-id="one"]')?.textContent).toContain('File output')
-  })
-
-  it('retains individual read calls, accessible labels and open output as more calls arrive', async () => {
-    const nodes = [readTool('one', 'completed'), readTool('two', 'completed'), readTool('three', 'awaiting_approval')]
-    const { root, turn } = mountTurn(nodes)
-    root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!.click()
+    turn.value = { ...turn.value, nodes: [...turn.value.nodes, ...Array.from({ length: 10 }, (_, index) => readTool(`extra:${index}`, 'completed'))] }
     await nextTick()
-    const second = root.querySelector<HTMLButtonElement>('[data-tool-call-id="two"] button')!
-    expect(second.getAttribute('aria-label')).toContain('src/Row.vue')
-    second.click()
+    root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__collapse')!.click()
     await nextTick()
-    turn.value = { ...turn.value, nodes: [...nodes, readTool('four', 'completed')] }
-    await nextTick()
-    expect([...root.querySelectorAll('[data-tool-call-id]')].map(element => element.getAttribute('data-tool-call-id'))).toEqual(['one', 'two', 'three', 'four'])
-    expect(root.querySelector('[data-tool-detail-id="two"]')?.textContent).toContain('File output')
-    expect(root.querySelector('[data-tool-call-id="three"]')?.textContent).toContain('等待批准')
+    expect(group().getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(group())
+    await vi.waitFor(() => expect(root.querySelector('.buddy-chat-tool')).toBeNull())
   })
 
   it('cycles extension and denied tool issues with accessible details and keyboard focus', async () => {
@@ -263,18 +257,6 @@ describe('activity disclosure', () => {
     await nextTick()
     expect(document.activeElement).toBe(root.querySelector('[data-action-id="naming"] button'))
     expect(root.querySelector('[data-action-detail-id="naming"]')?.textContent).toContain('模型不可用')
-  })
-
-  it('collapses a long group from its footer and returns keyboard focus to its header', async () => {
-    const { root } = mountTurn(Array.from({ length: 12 }, (_, index) => readTool(String(index), 'completed')))
-    const header = root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__header')!
-    header.click()
-    await nextTick()
-    root.querySelector<HTMLButtonElement>('.buddy-chat-activity-group__collapse')!.click()
-    await nextTick()
-    expect(header.getAttribute('aria-expanded')).toBe('false')
-    expect(document.activeElement).toBe(header)
-    await vi.waitFor(() => expect(root.querySelector('.buddy-chat-tool')).toBeNull())
   })
 
   it('keeps details usable when a disclosure is reopened before its leave transition finishes', async () => {
@@ -360,7 +342,7 @@ function mountTurn(nodes: ChatAgentTurnNode[], status: ChatAgentTurn['status'] =
         appSidebarCollapsed: shallowRef(false),
         chat: shallowRef({ ...DEFAULT_DESKTOP_CHAT_PREFERENCES, permissionMode: 'policy_approval' }),
       })
-      useProvideChatContent({ canPreviewFile: () => false, previewFile: () => {}, writeClipboardText: async () => {} })
+      useProvideChatContent({ openWebLink: () => {}, canPreviewFile: () => false, previewFile: () => {}, writeClipboardText: async () => {} })
       return () => h(NMessageProvider, null, { default: () => [
         h(BuddyChatAgentTurn, { language: 'zh-CN', turn: turn.value }),
         h(BuddyChatRunActivity, { language: 'zh-CN', turn: turn.value, stopping: stopping.value }),

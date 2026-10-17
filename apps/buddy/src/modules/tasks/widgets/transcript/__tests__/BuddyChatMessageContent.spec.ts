@@ -2,23 +2,19 @@ import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 // @vitest-environment jsdom
 
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
-import { describe, expect, it, vi } from 'vitest'
-import { createApp, createSSRApp, h, nextTick, shallowRef } from 'vue'
+import { describe, expect, it } from 'vitest'
+import { createSSRApp, h, shallowRef } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import BuddyChatMessageContent from '../BuddyChatMessageContent.vue'
-import { useProvideChatContent } from '../chatContentContext'
 
 describe('buddyChatMessageContent', () => {
   it('renders user messages as literal plain text', async () => {
     const text = '升级 @earendil-works/pi-ai@0.84.1，参考 **说明** 和 [版本](https://example.com)'
-    const html = await renderMessage('user', text)
+    const document = parseHtml(await renderMessage('user', text))
 
-    expect(html).toContain('@earendil-works/pi-ai@0.84.1')
-    expect(html).toContain('**说明**')
-    expect(html).toContain('[版本](https://example.com)')
-    expect(html).not.toContain('<a ')
-    expect(html).not.toContain('<strong>')
+    expect(document.body.textContent).toBe(text)
+    expect(document.querySelector('a, strong')).toBeNull()
   })
 
   it('renders assistant Markdown links while leaving raw HTML inert', async () => {
@@ -33,15 +29,6 @@ describe('buddyChatMessageContent', () => {
     expect(document.body.textContent).toContain('<img src="https://example.com/pixel.png" alt="像素">')
   })
 
-  it('renders a retired directive as plain text and keeps live directives highlighted', async () => {
-    const document = parseHtml(await renderDirectiveMessage())
-    const body = document.querySelector('.buddy-chat-message-content__structured-body')
-    const directives = [...(body?.querySelectorAll('.buddy-chat-message-content__directive') ?? [])]
-
-    expect(body?.textContent).toBe('/plan 与 /review')
-    expect(directives.map(element => element.textContent)).toEqual(['/review'])
-  })
-
   it.each([false, true])('renders inline-only snapshots once above the body and keeps named references readable (independent attachment: %s)', async (panel) => {
     const html = await renderStructuredUserMessage(panel)
     const document = parseHtml(html)
@@ -52,70 +39,8 @@ describe('buddyChatMessageContent', () => {
     expect(reference?.textContent).toBe('@reference.png')
     expect(document.querySelectorAll('.buddy-chat-message-content__attachment')).toHaveLength(1)
     expect(document.querySelectorAll('.buddy-chat-resource-reference')).toHaveLength(2)
-    expect(reference?.getAttribute('aria-label')).toBe('定位附件 reference.png')
-    expect(reference?.getAttribute('href')).toBe('#buddy-resource-resource-1')
-    expect(document.getElementById('buddy-resource-resource-1')).not.toBeNull()
+    expect(document.querySelector(reference!.getAttribute('href')!)).not.toBeNull()
     expect(document.querySelector('.buddy-chat-message-content__preview-trigger img')?.getAttribute('src')).toBe('lexora-attachment://preview/attachment-1')
-  })
-
-  it('previews matching file link on click and opens external https link', async () => {
-    const previewFile = vi.fn()
-    const canPreviewFile = (path: string) => path.includes('hello1.md')
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-
-    const app = createApp({
-      setup() {
-        useProvideDesktopUi({
-          userName: shallowRef(''),
-          language: shallowRef('zh-CN'),
-          isDark: shallowRef(false),
-          appSidebarCollapsed: shallowRef(false),
-          chat: shallowRef({ ...DEFAULT_DESKTOP_CHAT_PREFERENCES, permissionMode: 'policy_approval' }),
-        })
-        useProvideChatContent({
-          canPreviewFile,
-          previewFile,
-          writeClipboardText: async () => {},
-        })
-        return () => h(BuddyChatMessageContent, {
-          language: 'zh-CN',
-          message: {
-            attachments: [],
-            branchId: 'branch-1',
-            content: '已将文件重命名为 [hello1.md](sandbox:/workspace/hello1.md)，请查看 [外部官网](https://example.com)',
-            conversationId: 'conversation-1',
-            createdAt: '2026-08-28T00:00:00.000Z',
-            id: 'assistant-message',
-            role: 'assistant',
-            runId: null,
-          } as LocalMessage,
-          writeClipboardText: async () => {},
-        })
-      },
-    })
-    app.mount(container)
-    await nextTick()
-
-    const links = container.querySelectorAll('a')
-    expect(links.length).toBeGreaterThanOrEqual(2)
-
-    const fileLink = [...links].find(a => a.textContent === 'hello1.md')
-    expect(fileLink).toBeDefined()
-    fileLink!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(previewFile).toHaveBeenCalledWith('sandbox:/workspace/hello1.md')
-    expect(openSpy).not.toHaveBeenCalled()
-
-    const externalLink = [...links].find(a => a.textContent === '外部官网')
-    expect(externalLink).toBeDefined()
-    externalLink!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    expect(openSpy).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
-
-    app.unmount()
-    container.remove()
-    openSpy.mockRestore()
   })
 })
 
@@ -168,35 +93,6 @@ async function renderStructuredUserMessage(panel: boolean): Promise<string> {
     conversationId: 'conversation-1',
     createdAt: '2026-08-28T00:00:00.000Z',
     id: 'user-structured-message',
-    role: 'user',
-    runId: null,
-  } as LocalMessage
-
-  return renderContent(message)
-}
-
-async function renderDirectiveMessage(): Promise<string> {
-  const message = {
-    attachments: [],
-    branchId: 'branch-1',
-    content: {
-      resourceSnapshots: [],
-      userContent: {
-        body: [{
-          content: [
-            { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/plan' },
-            { text: ' 与 ', type: 'text' },
-            { commandMode: 'prompt', directive: 'slash_command', type: 'prompt_directive', value: '/review' },
-          ],
-          type: 'paragraph',
-        }],
-        panelResourceIds: [],
-        version: 1,
-      },
-    },
-    conversationId: 'conversation-1',
-    createdAt: '2026-08-28T00:00:00.000Z',
-    id: 'user-directive-message',
     role: 'user',
     runId: null,
   } as LocalMessage

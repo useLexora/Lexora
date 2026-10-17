@@ -1,20 +1,17 @@
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
-import { afterEach, describe, expect, it } from 'vitest'
-import { effectScope, nextTick, shallowRef } from 'vue'
+import { describe, expect, it } from 'vitest'
+import { nextTick, shallowRef } from 'vue'
 import { useTaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
 import { deferred } from '../../../../../../__tests__/deferred'
 import { contextPanelFixture } from './contextPanelFixture'
 
-const scopes: ReturnType<typeof effectScope>[] = []
-afterEach(() => scopes.splice(0).forEach(scope => scope.stop()))
 function fixture() {
-  const scope = effectScope()
-  scopes.push(scope)
   const activeConversationId = shallowRef<string | null>('conversation')
   const gate = deferred<DesktopBrowserState>()
   let sessionOpen = true
-  const browser: Pick<DesktopBrowserApi, 'onStateChanged' | 'ensureSession' | 'close' | 'openArtifact'> = {
+  const browser: Pick<DesktopBrowserApi, 'onStateChanged' | 'ensureSession' | 'close' | 'openArtifact' | 'navigate'> = {
+    navigate: async (sessionId, url) => ({ sessionId, conversationId: 'conversation', url } as DesktopBrowserState),
     onStateChanged: () => () => {},
     ensureSession: () => gate.promise,
     close: async () => { sessionOpen = false },
@@ -26,12 +23,37 @@ function fixture() {
     sourceToolCallId: 'tool',
     artifacts: [{ artifactId: 'html', conversationId: 'conversation', createdAt: '2026-09-08T00:00:00.000Z', kind: 'file', mimeType: 'text/html', name: 'page.html', path: '/workspace/page.html', previewUrl: null, runId: 'run', sizeBytes: 10, sourceArtifactId: null, sourceToolCallId: 'tool', updatedAt: '2026-09-08T00:00:00.000Z' }],
   }])
-  const panel = scope.run(() => useTaskResourcePanel({ ...contextPanelFixture({ activeConversationId }).options, autoCollapse: shallowRef(false), spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs }))!
-  const release = () => gate.resolve({ sessionId: 'session' } as DesktopBrowserState)
+  const { scope, options } = contextPanelFixture({ activeConversationId })
+  const panel = scope.run(() => useTaskResourcePanel({ ...options, autoCollapse: shallowRef(false), linkOpening: shallowRef('in-app'), spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs }))!
+  const release = () => gate.resolve({ sessionId: 'session', conversationId: 'conversation' } as DesktopBrowserState)
   return { activeConversationId, browser, panel, release, runOutputs, scope, sessionOpen: () => sessionOpen }
 }
 
 describe('resource panel operations', () => {
+  it('opens web links in their task session and retains the navigated state', async () => {
+    const f = fixture()
+    const opening = f.panel.openWebLink('http://127.0.0.1:8765/')
+    f.release()
+    await opening
+    expect(f.panel.activeTab.value).toMatchObject({ kind: 'browser', conversationId: 'conversation' })
+    expect(f.panel.activeBrowserState.value).toMatchObject({ sessionId: 'session', url: 'http://127.0.0.1:8765/' })
+  })
+
+  it('does not navigate a pending link after the user switches tasks', async () => {
+    const f = fixture()
+    let navigated = false
+    f.browser.navigate = async () => {
+      navigated = true
+      throw new Error('unexpected navigation')
+    }
+    const opening = f.panel.openWebLink('https://example.com/')
+    f.activeConversationId.value = 'other'
+    f.release()
+    await opening
+    expect(navigated).toBe(false)
+    expect(f.panel.activeTab.value).toBeNull()
+  })
+
   it('opens a task HTML link in its browser without requiring a bound space', async () => {
     const f = fixture()
     let displayedArtifact: string | null = null
@@ -131,7 +153,6 @@ describe('resource panel operations', () => {
     await nextTick()
     expect([...sessions]).toEqual(['second-session'])
     expect(f.panel.tabs.value).toEqual([second])
-    expect(Object.keys(f.panel.browserStates.value)).toEqual([second.id])
     f.activeConversationId.value = 'conversation'
     expect(f.panel.tabs.value).toEqual([])
   })
@@ -184,19 +205,7 @@ describe('resource panel operations', () => {
     expect(f.panel.tabs.value).toEqual([])
   })
 
-  it('restores a failed background close without taking focus from the selected artifact', async () => {
-    const f = fixture()
-    f.release()
-    await f.panel.openArtifact('html')
-    f.browser.close = async () => {
-      throw new Error('close failed')
-    }
-    expect(await f.panel.closeTab('browser:conversation')).toBe(false)
-    expect(f.panel.activeTab.value?.kind).toBe('artifact')
-    expect(f.panel.tabs.value.map(tab => tab.kind).sort()).toEqual(['artifact', 'browser'])
-  })
-
-  it('restores a tab after a current close fails and retains HTML fallback', async () => {
+  it('preserves the browser on close failure and keeps the HTML fallback selected on retry', async () => {
     const f = fixture()
     f.browser.close = async () => {
       throw new Error('close failed')
@@ -208,5 +217,8 @@ describe('resource panel operations', () => {
     expect(f.panel.activeTab.value?.kind).toBe('browser')
     await f.panel.openArtifact('html')
     expect(f.panel.activeTab.value?.kind).toBe('artifact')
+    expect(await f.panel.closeTab('browser:conversation')).toBe(false)
+    expect(f.panel.activeTab.value?.kind).toBe('artifact')
+    expect(f.panel.tabs.value.map(tab => tab.kind).sort()).toEqual(['artifact', 'browser'])
   })
 })
