@@ -7,6 +7,7 @@ export const DESKTOP_COMMAND_IDS = [
   'window.close',
   'window.toggleDeveloperTools',
   'help.openDocumentation',
+  'help.openRepository',
   'help.openLogsDirectory',
   'help.feedback',
 ] as const
@@ -44,6 +45,7 @@ export const DESKTOP_COMMAND_REGISTRY = [
     alternateKeybindings: ['F12'],
   }, false),
   command('help.openDocumentation', 'help', 0, 'main', 'application'),
+  command('help.openRepository', 'help', 0, 'main', 'application'),
   command('help.openLogsDirectory', 'help', 0, 'main', 'application'),
   command('help.feedback', 'help', 1, 'renderer', 'application'),
 ] as const satisfies ReadonlyArray<DesktopCommandDefinition>

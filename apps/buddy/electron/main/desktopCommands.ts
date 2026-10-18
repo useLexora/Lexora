@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron'
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import { mkdir } from 'node:fs/promises'
 import { getDesktopCommand } from '../shared/desktopCommands'
-import { DOCUMENTATION_URL } from '../shared/productLinks'
+import { DOCUMENTATION_URL, REPOSITORY_URL } from '../shared/productLinks'
 
 export interface DesktopCommandExecutorOptions {
   getWindow: () => BrowserWindow | null
@@ -22,6 +22,9 @@ export function createDesktopCommandExecutor(
     'app.quit': async () => options.requestQuit(),
     'help.openDocumentation': async () => {
       await options.openExternal(DOCUMENTATION_URL)
+    },
+    'help.openRepository': async () => {
+      await options.openExternal(REPOSITORY_URL)
     },
     'help.openLogsDirectory': async () => {
       await mkdir(options.logDirectory, { mode: 0o700, recursive: true })

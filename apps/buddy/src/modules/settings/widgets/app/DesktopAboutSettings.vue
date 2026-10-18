@@ -61,6 +61,9 @@ async function openLink(action: () => Promise<unknown>) {
       <NButton secondary @click="openLink(() => api.commands.execute('help.openDocumentation'))">
         {{ t('desktop.command.help.openDocumentation') }}
       </NButton>
+      <NButton secondary @click="openLink(() => api.commands.execute('help.openRepository'))">
+        {{ t('desktop.command.help.openRepository') }}
+      </NButton>
       <NButton secondary @click="openLink(() => api.app.openFeedbackIssue(''))">
         {{ t('desktop.feedback.githubIssue') }}
       </NButton>

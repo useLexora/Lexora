@@ -52,6 +52,7 @@ const commandLabelKeys = {
   'app.quit': 'desktop.command.app.quit',
   'help.feedback': 'desktop.command.help.feedback',
   'help.openDocumentation': 'desktop.command.help.openDocumentation',
+  'help.openRepository': 'desktop.command.help.openRepository',
   'help.openLogsDirectory': 'desktop.command.help.openLogsDirectory',
   'window.close': 'desktop.command.window.close',
   'window.toggleDeveloperTools': 'desktop.command.window.toggleDeveloperTools',
