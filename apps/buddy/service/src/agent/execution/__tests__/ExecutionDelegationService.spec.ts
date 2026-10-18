@@ -77,7 +77,7 @@ describe('execution delegation boundary', () => {
     const child = { ...f.caller, run: { ...f.caller.run, runId: 'child' } }
     const report = { operation: 'report', text: 'Validated the first boundary; continuing the task' }
     await expect(f.service.execute(child, 'progress', report, f.controller.signal)).resolves.toEqual({ runId: 'root', status: 'queued' })
-    expect(f.send.mock.calls[0]).toEqual(['child', expect.objectContaining({ kind: 'supplement', targetRunId: 'root', text: report.text })])
+    expect(f.send.mock.calls[0]).toEqual(['child', expect.objectContaining({ kind: 'supplement', purpose: 'progress', targetRunId: 'root', text: report.text })])
     await expect(f.service.execute(child, 'legacy', { operation: 'send', runId: 'root', text: 'More progress' }, f.controller.signal)).resolves.toMatchObject({ status: 'queued' })
     await expect(f.service.execute(child, 'inspect-parent', { operation: 'status', runId: 'root' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
     await expect(f.service.execute(child, 'override', { ...report, runId: 'root' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })

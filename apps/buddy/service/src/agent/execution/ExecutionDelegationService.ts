@@ -81,7 +81,7 @@ export class ExecutionDelegationService {
       if (!source.run.parentRunId || !input.text || (input.operation === 'report' && (input.runId || input.targetId)))
         throw new ExecutionAdmissionError('unauthorized')
       const parent = this.#require(source.run.parentRunId)
-      await this.#options.coordinator.send(source.run.id, { messageId: createHash('sha256').update(JSON.stringify([source.run.id, requestKey])).digest('hex'), kind: 'supplement', targetRunId: parent.run.id, targetGeneration: parent.run.generation, text: input.text })
+      await this.#options.coordinator.send(source.run.id, { messageId: createHash('sha256').update(JSON.stringify([source.run.id, requestKey])).digest('hex'), kind: 'supplement', targetRunId: parent.run.id, targetGeneration: parent.run.generation, text: input.text, ...(input.operation === 'report' ? { purpose: 'progress' as const } : {}) })
       return { runId: parent.run.id, status: 'queued' }
     }
     if (input.operation === 'question') {

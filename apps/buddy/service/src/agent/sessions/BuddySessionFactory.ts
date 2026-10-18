@@ -148,6 +148,7 @@ export class BuddySessionFactory {
           : settings.executionProfile,
       })
       reusable = createReusableBuddySession({
+        getPendingExecutionMessages: (runId, entries) => this.#options.services.delegation?.pending(runId, entries) ?? [],
         getModelSelection: async () => {
           while (true) {
             const activeRun = this.#options.runs.findById(extensions.runContext.current?.runId ?? run.id)

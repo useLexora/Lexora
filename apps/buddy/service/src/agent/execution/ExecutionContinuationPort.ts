@@ -6,6 +6,7 @@ export type { ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../../../
 
 export interface ExecutionMailboxSnapshot {
   readonly revision: number
+  readonly shouldResume: boolean
   readonly messages: readonly ExecutionMailboxMessage[]
 }
 

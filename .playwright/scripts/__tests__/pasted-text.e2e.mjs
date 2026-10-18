@@ -49,7 +49,7 @@ test('long pasted text survives restart, reaches the model in full and remains r
     await editor.press('ControlOrMeta+End')
     await paste(application, text)
     await expect(editor.locator('[data-type="chat-resource-reference"]')).toHaveCount(1)
-    const stored = readDatabase(instance.home, db => db.prepare('SELECT id, stored_path FROM attachments WHERE name_source = ? LIMIT 1').get('clipboard'))
+    const stored = readDatabase(instance.home, db => db.prepare('SELECT id, name, stored_path FROM attachments WHERE name_source = ? LIMIT 1').get('clipboard'))
     expect(await fs.readFile(stored.stored_path, 'utf8')).toBe(text)
 
     await instance.stop()
@@ -57,7 +57,7 @@ test('long pasted text survives restart, reaches the model in full and remains r
     await useSyntheticCredentialStorage(application)
     await application.page.reload()
     editor = application.page.locator('.desktop-chat-composer__prosemirror:visible')
-    const previewButton = application.page.getByRole('button', { name: /^查看粘贴文本：/ })
+    const material = application.page.locator('.desktop-chat-composer-wrap:visible [data-resource-card]')
     await expect(editor.locator('[data-type="chat-resource-reference"]')).toHaveCount(1)
     await application.page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect.poll(() => readDatabase(instance.home, db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(1)
@@ -69,7 +69,9 @@ test('long pasted text survives restart, reaches the model in full and remains r
     expect(await fs.readFile(sent.stored_path, 'utf8')).toBe(text)
     await application.page.locator('.buddy-chat-message.is-user').hover()
     await application.page.getByRole('button', { name: '编辑输入', exact: true }).click()
-    await previewButton.click()
+    await expect(editor.locator('[data-type="chat-resource-reference"]')).toHaveCount(1)
+    await expect(material).toHaveCount(1)
+    await material.getByRole('button', { name: stored.name }).click()
     await expect(application.page.locator('.composer-text-preview')).toContainText('原始文本：保留缩进、空行与末尾换行')
     expect(application.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   }

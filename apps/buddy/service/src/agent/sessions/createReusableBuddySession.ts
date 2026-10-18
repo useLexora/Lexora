@@ -40,6 +40,7 @@ import { getBuddyCacheWarmingStatus } from './getBuddyCacheWarmingStatus'
 import { syncBuddySessionJournal } from './tree/syncBuddySessionJournal'
 
 export interface CreateReusableBuddySessionOptions {
+  getPendingExecutionMessages?: (runId: string, entries: readonly SessionEntry[]) => readonly ExecutionMailboxMessage[]
   getModelSelection?: () => Promise<BuddySessionModelSelection | null>
   getPermissionSettings?: (runId: string) => BuddyPermissionSettings
   updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
@@ -90,7 +91,27 @@ export function createReusableBuddySession(
         run.serviceTier = selected.serviceTier ?? null
       }
     }
-    return await prepareRequest?.(request, signal) ?? undefined
+    const prepared = await prepareRequest?.(request, signal)
+    if (!run || options.runContext.current !== run || run.signal.aborted)
+      return prepared ?? undefined
+    signal?.throwIfAborted()
+    const messages = options.getPendingExecutionMessages?.(run.runId, session.sessionManager.getBranch()) ?? []
+    if (!messages.length)
+      return prepared ?? undefined
+    return withPiSessionStorageBoundary(session, async () => {
+      for (const value of messages) {
+        const message = executionMailboxMessageSchema.parse(value)
+        if (message.targetRunId !== run.runId || message.targetGeneration !== generation)
+          throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+        session.sessionManager.appendCustomMessageEntry(EXECUTION_MAILBOX_ENTRY_TYPE, renderMailboxMessage(message), false, message)
+      }
+      syncBuddySessionJournal(session.sessionManager)
+      assertCurrentRun(run)
+      return {
+        ...prepared,
+        context: { ...(prepared?.context ?? request.context), messages: session.sessionManager.buildSessionProjection().messages },
+      }
+    })
   }
   function applySessionSettings(mode: RuntimePreferences['cacheWarming']) {
     if (session.settingsManager.getCacheWarmingMode() !== mode)

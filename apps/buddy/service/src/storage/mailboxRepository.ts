@@ -24,6 +24,7 @@ export function hashExecutionMailboxMessage(message: Omit<ExecutionMailboxMessag
     ...('questionId' in message ? { questionId: message.questionId } : {}),
     ...('audience' in message ? { audience: message.audience } : {}),
     ...('origin' in message ? { origin: message.origin } : {}),
+    ...('purpose' in message ? { purpose: message.purpose } : {}),
   })).digest('hex')
 }
 

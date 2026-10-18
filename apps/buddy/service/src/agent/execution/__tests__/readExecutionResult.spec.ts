@@ -1,6 +1,6 @@
 import type { BuddyRunEvent } from '../../../events/BuddyRunEvent'
 import { describe, expect, it } from 'vitest'
-import { readExecutionResult } from '../readExecutionResult'
+import { previewExecutionResult, readExecutionResult } from '../readExecutionResult'
 
 function read(payloads: unknown[]) {
   const events: BuddyRunEvent[] = payloads.map((payload, index) => ({ runId: 'child', sequence: index + 1, createdAt: '2026-10-12T00:00:00.000Z', type: 'message.completed', payload }))
@@ -8,6 +8,19 @@ function read(payloads: unknown[]) {
 }
 
 describe('completed execution report', () => {
+  it('bounds automatic handoff while pointing to the complete retrievable output', () => {
+    expect(previewExecutionResult('Small complete result', 'child')).toBe('Small complete result')
+    const report = `Latest conclusion\n${'詳細🙂'.repeat(5000)}\nLast finding`
+    const preview = previewExecutionResult(report, 'child')
+    expect(preview.length).toBeLessThanOrEqual(8000)
+    expect(preview).toContain('Latest conclusion')
+    expect(preview).toContain('operation="result", runId="child"')
+    expect(preview).toContain('nextOffset')
+    expect(preview).not.toContain('Last finding')
+    expect(preview.isWellFormed()).toBe(true)
+    expect(previewExecutionResult('x'.repeat(8000), 'child')).toHaveLength(8000)
+  })
+
   it('retains full findings when a later continuation only adds a correction', async () => {
     const report = await read([
       { role: 'assistant', content: { text: 'Inspecting files' }, phase: 'commentary' },

@@ -64,6 +64,36 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it('retains progress receipts without waking a parent until an actionable message arrives', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    const parent = await f.coordinator.begin('root', signal)
+    await f.coordinator.admitChild(f.child('child'))
+    await f.coordinator.begin('child', signal)
+    const progress = { messageId: 'progress', targetRunId: 'root', targetGeneration: 0, kind: 'supplement' as const, purpose: 'progress' as const, text: 'Partial finding' }
+    await f.coordinator.send('child', progress)
+    await expect(f.coordinator.send('child', { ...progress, purpose: undefined })).rejects.toMatchObject({ code: 'conflict' })
+    await parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
+    const pending = await parent.readPending()
+    expect(pending.shouldResume).toBe(false)
+    expect(pending.messages).toHaveLength(1)
+    expect(f.executions.find('root')?.phase).toBe('waiting')
+    const receipt = { sourceRunId: 'child', messageId: 'progress', payloadHash: pending.messages[0]!.payloadHash, contextEntryId: 'durable-entry' }
+    await parent.acceptInContext([receipt])
+    expect(f.mailbox.find('progress')?.receipt).toEqual(receipt)
+    let resumed = false
+    const waiting = f.coordinator.wait('root', ['child'], 10000, signal).then(() => {
+      resumed = true
+    })
+    await vi.waitFor(() => expect(f.executions.find('root')?.phase).toBe('waiting'))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(resumed).toBe(false)
+    await f.coordinator.send('child', { messageId: 'question', targetRunId: 'root', targetGeneration: 0, kind: 'question', questionId: 'blocking-question', audience: 'caller', text: 'Which scope?' })
+    await waiting
+    expect((await parent.readPending()).shouldResume).toBe(true)
+    expect((await parent.readPending()).messages.map(message => message.messageId)).toEqual(['progress', 'question'])
+  })
+
   it('admits the sixth accepted NPC when a working sibling waits and rechecks the resumed permit', async () => {
     const f = await fixture()
     const signal = new AbortController().signal

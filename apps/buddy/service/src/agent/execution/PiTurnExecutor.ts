@@ -386,7 +386,7 @@ async function continueExecution(input: {
         outcome = { errorCode: null, status: 'cancelled' }
         continue
       }
-      if (snapshot.messages.length) {
+      if (snapshot.shouldResume && snapshot.messages.length) {
         let receipts: readonly ExecutionMailboxReceipt[] = []
         outcome = await input.runSegment(async () => {
           receipts = await session.appendInternalMessages(snapshot.messages)

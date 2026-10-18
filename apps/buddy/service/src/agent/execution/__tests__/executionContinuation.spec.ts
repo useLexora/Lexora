@@ -24,6 +24,7 @@ import { createUsageRepository } from '../../../storage/usageRepository'
 import { UsageService } from '../../../usage/UsageService'
 import { createBuddyInputReference } from '../../context/BuddyInputReference'
 import { PiEventBridge } from '../../events/PiEventBridge'
+import { createCompactionTimingExtension } from '../../extensions/compactionTimingExtension'
 import { createInputReferenceExtension } from '../../extensions/inputReferenceExtension'
 import { toBuddySessionIdentity } from '../../sessions/BuddySessionBlueprint'
 import { BuddySessionRegistry } from '../../sessions/BuddySessionRegistry'
@@ -41,6 +42,59 @@ afterEach(async () => {
 })
 
 describe('execution continuation through real Pi sessions', () => {
+  it('delivers a result committed during compaction before the first subsequent request', async () => {
+    const pending: ExecutionMailboxMessage[] = []
+    let compacted = 0
+    const f: Awaited<ReturnType<typeof fixture>> = await fixture({
+      delegationReply: () => ({ details: {}, content: [{ type: 'text', text: 'Independent tool finished' }] }),
+      pending: () => pending,
+      compact: () => {
+        compacted++
+        pending.push(f.message('during-compaction', 'CHILD_COMPLETED_DURING_COMPACTION'))
+      },
+    })
+    const release = await f.reusable.activateTurn(f.turnContext)
+    try {
+      await f.reusable.prompt('Initial input')
+      expect(compacted).toBe(1)
+      expect(f.requests).toHaveLength(2)
+      expect(JSON.stringify(f.requests[1])).toContain('CHILD_COMPLETED_DURING_COMPACTION')
+      const entries = SessionManager.open(f.file).getBranch()
+      expect(entries.filter(entry => entry.type === 'compaction')).toHaveLength(1)
+      const deliveries = readExecutionMailboxEntries(entries, { runId: f.run.id, generation: f.run.generation })
+      expect(deliveries).toHaveLength(1)
+      expect(await f.reusable.readInternalMessageReceipts(pending)).toHaveLength(1)
+    }
+    finally {
+      await f.reusable.finishTurn()
+      release()
+    }
+  })
+
+  it.each(['next-request', 'manual'] as const)('defers final-answer compaction until %s without losing the context', async (trigger) => {
+    let compacted = 0
+    const f = await fixture({ compact: () => {
+      compacted++
+    } })
+    const release = await f.reusable.activateTurn(f.turnContext)
+    try {
+      await f.reusable.prompt('Initial input to retain')
+      expect(compacted).toBe(0)
+      expect(SessionManager.open(f.file).getBranch().filter(entry => entry.type === 'compaction')).toHaveLength(0)
+      if (trigger === 'manual')
+        await f.session.compact()
+      await f.reusable.prompt('Continue with preserved context')
+      expect(compacted).toBe(1)
+      expect(f.requests).toHaveLength(2)
+      expect(JSON.stringify(f.requests[1])).toContain('Preserved task context')
+      expect(SessionManager.open(f.file).getBranch().filter(entry => entry.type === 'compaction')).toHaveLength(1)
+    }
+    finally {
+      await f.reusable.finishTurn()
+      release()
+    }
+  })
+
   it('consumes results delivered by repeated native waits once and resumes only for a later child', async () => {
     let delivered: ExecutionMailboxMessage
     const f = await fixture({ toolRounds: 2, delegationReply: () => {
@@ -200,7 +254,7 @@ describe('execution continuation through real Pi sessions', () => {
         f.controller.abort()
         mailbox.finishChildren()
         f.controller.signal.throwIfAborted()
-        return { revision: 0, messages: [] }
+        return { revision: 0, messages: [], shouldResume: false }
       },
     }
     await expect(f.execute(port)).resolves.toMatchObject({ status: 'cancelled', closingGeneration: 7 })
@@ -321,7 +375,7 @@ describe('execution continuation through real Pi sessions', () => {
   })
 })
 
-async function fixture(options: { failRequest?: number, toolRounds?: number, delegationReply?: () => { details: unknown, content: { type: 'text', text: string }[] } } = {}) {
+async function fixture(options: { compact?: () => void, pending?: () => ExecutionMailboxMessage[], failRequest?: number, toolRounds?: number, delegationReply?: () => { details: unknown, content: { type: 'text', text: string }[] } } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-execution-continuation-'))
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   const conversations = createConversationRepository(database)
@@ -333,7 +387,7 @@ async function fixture(options: { failRequest?: number, toolRounds?: number, del
   const requests: Context[] = []
   vi.spyOn(runtime, 'streamSimple').mockImplementation((target, context) => {
     requests.push(structuredClone(context))
-    return response(target, requests.length, requests.length === options.failRequest, !!options.delegationReply && requests.length <= (options.toolRounds ?? 1))
+    return response(target, requests.length, requests.length === options.failRequest, !!options.delegationReply && requests.length <= (options.toolRounds ?? 1), options.compact && requests.length === 1 ? 120000 : 10)
   })
   const now = () => new Date().toISOString()
   conversations.create({ id: 'conversation', branchId: 'branch', spaceId: null, title: null, approvalPolicy: 'policy', executionProfile: 'read_only', createdAt: now() })
@@ -354,9 +408,25 @@ async function fixture(options: { failRequest?: number, toolRounds?: number, del
         },
       }
     : undefined
-  const created = await createBuddySession({ agentDir: join(root, 'agent'), branchId: 'branch', canonicalRoot: root, conversationId: 'conversation', conversationsDirectory: join(root, 'conversations'), cwd: root, approvalPolicy: 'policy', executionProfile: 'read_only', inProcessExtensions: [createInputReferenceExtension(inputReferences), ...delegation ? [delegation] : []], model, modelRuntime: runtime, resources, sessionManager: cursor.manager })
-  created.session.settingsManager.setCompactionEnabled(false)
-  const reusable = createReusableBuddySession({ session: created.session, shutdown: created.shutdown, assertModelAccess: async () => model, runContext, inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], tree: cursor })
+  const compaction: BuddyInProcessExtension | undefined = options.compact
+    ? {
+        name: 'lexora-compaction-fixture',
+        factory(pi) {
+          pi.on('session_before_compact', (event) => {
+            options.compact!()
+            return { compaction: { summary: 'Preserved task context', firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore } }
+          })
+        },
+      }
+    : undefined
+  const created = await createBuddySession({ agentDir: join(root, 'agent'), branchId: 'branch', canonicalRoot: root, conversationId: 'conversation', conversationsDirectory: join(root, 'conversations'), cwd: root, approvalPolicy: 'policy', executionProfile: 'read_only', inProcessExtensions: [createCompactionTimingExtension(), createInputReferenceExtension(inputReferences), ...compaction ? [compaction] : [], ...delegation ? [delegation] : []], model, modelRuntime: runtime, resources, sessionManager: cursor.manager })
+  created.session.settingsManager.applyOverrides({ compaction: { enabled: !!options.compact, keepRecentTokens: 1 } })
+  const reusable = createReusableBuddySession({ session: created.session, shutdown: created.shutdown, getPendingExecutionMessages: options.pending
+    ? (runId, entries) => {
+        const delivered = readExecutionMailboxEntries(entries, { runId, generation: run.generation })
+        return options.pending!().filter(message => !delivered.some(entry => entry.message.messageId === message.messageId))
+      }
+    : undefined, assertModelAccess: async () => model, runContext, inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], tree: cursor })
   reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
   const sessions = new BuddySessionRegistry<typeof reusable>()
   const piEvents = new PiEventBridge({ eventLog, usage: new UsageService({ eventLog, repository: createUsageRepository(database) }) })
@@ -422,7 +492,7 @@ function createMailbox(f: Awaited<ReturnType<typeof fixture>>, onSeal?: () => vo
     changed()
   })
   const port: ExecutionContinuationPort = {
-    readPending: async () => ({ revision, messages: remaining() }),
+    readPending: async () => ({ revision, messages: remaining(), shouldResume: remaining().length > 0 }),
     acceptInContext: async (receipts) => {
       const journal = SessionManager.open(f.file).getBranch()
       for (const receipt of receipts) {
@@ -489,7 +559,7 @@ function createMailbox(f: Awaited<ReturnType<typeof fixture>>, onSeal?: () => vo
   }
 }
 
-function response(model: Model<Api>, index: number, failed: boolean, toolCall = false) {
+function response(model: Model<Api>, index: number, failed: boolean, toolCall = false, inputTokens = 10) {
   const message: AssistantMessage = {
     role: 'assistant',
     api: model.api,
@@ -499,7 +569,7 @@ function response(model: Model<Api>, index: number, failed: boolean, toolCall = 
     content: failed ? [] : toolCall ? [{ type: 'toolCall', id: `wait-${index}`, name: 'lexora_agents', arguments: { operation: 'wait' } }] : [{ type: 'text', text: `Response ${index}` }],
     stopReason: failed ? 'error' : toolCall ? 'toolUse' : 'stop',
     ...(failed ? { errorMessage: '403 forbidden' } : {}),
-    usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    usage: { input: inputTokens, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: inputTokens + 5, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   }
   const stream = createAssistantMessageEventStream()
   queueMicrotask(() => {

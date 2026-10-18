@@ -10,9 +10,11 @@ import type { ExecutionLifecyclePort } from './ExecutionLifecyclePort'
 import type { RunExecutionOutcome } from './RunExecutionBackend'
 import type { BuddyTurnHandle } from './turnTypes'
 import { Emitter } from '../../../../shared/events/Emitter'
+import { isExecutionProgress } from '../../../../shared/executions/executionApi'
 import { MutationCoordinatorError } from '../../changes/MutationCoordinator'
 import { readStableRunErrorCode } from '../../runs/runError'
 import { ExecutionAdmissionError, executionFence } from '../../storage/executionRepository'
+import { previewExecutionResult } from './readExecutionResult'
 
 interface Preparation {
   controller: AbortController
@@ -104,9 +106,11 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
           throw new DOMException('Execution has been cancelled', 'AbortError')
         this.#options.executions.assertCurrent(this.#fence(current))
         const messages = this.#options.mailbox.listUnconsumed(runId)
-        if (messages.length && current.phase === 'waiting')
+        const shouldResume = messages.length > 0 && !(messages.every(isExecutionProgress)
+          && this.#options.executions.listTree(current.run.rootRunId).some(child => child.run.parentRunId === runId && child.phase !== 'closed'))
+        if (shouldResume && current.phase === 'waiting')
           await this.#claimWorking(runId, signal)
-        return { revision: this.#revision(current.run.rootRunId), messages }
+        return { revision: this.#revision(current.run.rootRunId), messages, shouldResume }
       },
       acceptInContext: receipts => this.#serialize(accepted.run.rootRunId, async () => {
         const current = this.#require(runId)
@@ -176,7 +180,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
           || expected.kind !== message.kind || expected.text !== message.text
           || ('questionId' in expected ? expected.questionId : null) !== ('questionId' in message ? message.questionId : null)
           || ('audience' in expected ? expected.audience : null) !== ('audience' in message ? message.audience : null)
-          || ('origin' in expected ? expected.origin : null) !== ('origin' in message ? message.origin : null)) {
+          || ('origin' in expected ? expected.origin : null) !== ('origin' in message ? message.origin : null)
+          || ('purpose' in expected ? expected.purpose : null) !== ('purpose' in message ? message.purpose : null)) {
           throw new ExecutionAdmissionError('conflict')
         }
         return
@@ -234,6 +239,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         const revision = this.#revision(caller.run.rootRunId)
         const pending = this.#options.mailbox.listUnconsumed(runId).some(message =>
           !deliveredMessageIds.includes(message.messageId)
+          && !isExecutionProgress(message)
           && (!targetRunIds.length || message.kind !== 'result' || targetRunIds.includes(message.sourceRunId)),
         )
         if (pending || targetRunIds.some(id => this.#require(id).phase === 'closed') || deadline.aborted)
@@ -321,7 +327,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
             targetRunId: current.run.parentRunId,
             targetGeneration: current.admittedParentGeneration,
             kind: 'result' as const,
-            text: resultText.slice(0, 2 * 1024 * 1024),
+            text: previewExecutionResult(resultText, input.runId),
           } }]
         : []
       const result = await this.#options.lifecycle.finalize({

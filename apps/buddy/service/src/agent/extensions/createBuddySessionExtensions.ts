@@ -32,6 +32,7 @@ import { resolveShellExecution } from '../../sandbox/shellExecution'
 import { createMutationToolWrapper } from './changeCaptureExtension'
 import { createChatQueueExtension } from './chatQueueExtension'
 import { createCodemodeCapability } from './codemodeExtension'
+import { createCompactionTimingExtension } from './compactionTimingExtension'
 import { createDelegationCapability } from './delegationCapability'
 import { observeSessionTools } from './discovery/observeSessionTools'
 import { SessionToolCapabilities } from './discovery/SessionToolCapabilities'
@@ -224,6 +225,7 @@ export async function createBuddySessionExtensions(
       workspaceMutationTools: capabilities.flatMap(capability => capability.workspaceMutationTools ?? []),
     })
     const inProcessExtensions: BuddyInProcessExtension[] = [
+      createCompactionTimingExtension(),
       createModelSwitchExtension(runContext),
       createInputReferenceExtension(inputReferences),
       ...options.sessionMode === 'interactive' && services.followUp

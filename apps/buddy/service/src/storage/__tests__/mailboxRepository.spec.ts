@@ -43,6 +43,18 @@ async function send(f: Awaited<ReturnType<typeof fixture>>, messageId = 'result-
 }
 
 describe('durable execution mailbox projection', () => {
+  it('preserves legacy hashes and the progress purpose across durable replay', async () => {
+    const legacy = { messageId: 'legacy-progress', sourceRunId: 'child', sourceSequence: 1, targetRunId: 'root', targetGeneration: 0, kind: 'supplement' as const, text: 'Progress' }
+    expect(hashExecutionMailboxMessage(legacy)).toBe('db90786754e201eb8e54e20117d71d2ea2a28989310ef5ccd149ababc4bc8055')
+    const f = await fixture()
+    const event = await f.log.append({ runId: 'child', type: 'execution.mailbox.sent', payload: { kind: 'supplement', purpose: 'progress', messageId: 'progress', targetRunId: 'root', targetGeneration: 0, text: 'Still working' } })
+    const message = executionMailboxMessageSchema.parse(event.payload)
+    expect(message).toMatchObject({ purpose: 'progress' })
+    expect(message.payloadHash).not.toBe(hashExecutionMailboxMessage(executionMailboxMessageSchema.parse({ ...message, purpose: undefined })))
+    await f.log.replay('child')
+    expect(f.mailbox.listUnconsumed('root')).toEqual([message])
+  })
+
   it('allocates the real source sequence inside serialized batches and keeps child messages out of ordinary answers', async () => {
     const f = await fixture()
     await f.log.append({ runId: 'child', type: 'audit.recorded', payload: {} })
