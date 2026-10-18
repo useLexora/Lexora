@@ -16,6 +16,7 @@ export default {
   'desktop.loading.pane': '正在加载…',
   'desktop.loading.failed': '暂时无法加载，请重试。',
   'desktop.loading.retry': '重试',
+  'desktop.loading.openStorage': '数据与备份',
   'desktop.account.dialogTitle': '个人资料',
   'desktop.account.userName': '用户昵称',
   'desktop.account.userNamePlaceholder': '例如：你的名字',

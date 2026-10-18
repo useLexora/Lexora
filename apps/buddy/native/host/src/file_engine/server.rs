@@ -325,6 +325,33 @@ impl Engine {
                 self.journal.acquire(lease_id, &claims, *external)?;
                 Value::Null
             }
+            Command::Protect { lease_id, claims } => {
+                if uuid::Uuid::parse_str(lease_id).is_err() || claims.len() > 128 {
+                    return Err(Error::Invalid);
+                }
+                let claims = claims
+                    .iter()
+                    .map(|claim| {
+                        let path = Path::new(&claim.path);
+                        if claim.path != "*"
+                            && (!path.is_absolute()
+                                || claim.path.contains('\0')
+                                || path
+                                    .components()
+                                    .any(|part| matches!(part, std::path::Component::ParentDir)))
+                        {
+                            return Err(Error::Invalid);
+                        }
+                        Ok(Claim {
+                            path: path_key(path),
+                            subtree: claim.subtree,
+                            object: None,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                self.journal.protect(lease_id, &claims)?;
+                Value::Null
+            }
             Command::Release { lease_id, hazard } => {
                 let mut retained = VecDeque::new();
                 while let Some(request) = self.pending.pop_front() {
@@ -403,13 +430,32 @@ impl Engine {
                 let root = self.roots.get(root)?;
                 serde_json::to_value(self.journal.history(&path_key(&root.path))?)?
             }
-            Command::Acknowledge { operation_id } => {
-                let (_, mut record) = self.journal.find(operation_id)?.ok_or(Error::Invalid)?;
-                if record.status != Status::NeedsRecovery {
+            Command::Acknowledge { root, operation_id } => {
+                if uuid::Uuid::parse_str(operation_id).is_err() {
                     return Err(Error::Invalid);
                 }
-                record.status = Status::Acknowledged;
-                self.journal.update(&mut record)?;
+                let root = self.roots.get(root)?;
+                let (_, mut record) = self.journal.find(operation_id)?.ok_or(Error::Invalid)?;
+                if !matches!(record.status, Status::NeedsRecovery | Status::Acknowledged) {
+                    return Err(Error::Invalid);
+                }
+                let staging = record
+                    .receipt
+                    .as_ref()
+                    .and_then(|receipt| receipt.get("staging"))
+                    .map(|value| value.as_str().ok_or(Error::Invalid))
+                    .transpose()?;
+                for path in std::iter::once(record.source.as_str())
+                    .chain(record.destination.as_deref())
+                    .chain(staging)
+                {
+                    root.check_recorded_path(path)?;
+                }
+                root.check()?;
+                if record.status == Status::NeedsRecovery {
+                    record.status = Status::Acknowledged;
+                    self.journal.update(&mut record)?;
+                }
                 serde_json::to_value(record)?
             }
             Command::Cancel { operation_id } => {

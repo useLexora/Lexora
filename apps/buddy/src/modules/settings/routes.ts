@@ -15,7 +15,7 @@ export const settingsRoutes: ReadonlyArray<RouteRecordRaw> = [
         name: `desktop.settings.${module.category}`,
         component: () => import('./pages/DesktopSettingsModuleView.vue'),
         props: { moduleId: module.id },
-        meta: { settingsCategory: module.category, settingsModule: module.id },
+        meta: { settingsCategory: module.category, settingsModule: module.id, requiresRuntime: module.requiresRuntime },
       })),
       {
         path: 'plugins/:moduleId',

@@ -19,7 +19,8 @@ const router = useRouter()
 const { appSidebarCollapsed, language } = useDesktopUi()
 const windowElement = useTemplateRef<HTMLElement>('windowElement')
 useWorkbenchAnchor('window', () => windowElement.value)
-const startupVisible = computed(() => !bindings.lifecycle.state.value.hasBeenReady && route.meta.settingsCategory !== 'logs')
+const hasBeenReady = computed(() => bindings.lifecycle.state.value.hasBeenReady)
+const startupVisible = computed(() => !hasBeenReady.value && route.meta.requiresRuntime !== false)
 const activeView = computed(() => bindings.pages.current.value)
 const navigation = computed(() => bindings.pages.navigation.value)
 function navigate(id: string) {
@@ -36,13 +37,13 @@ function navigate(id: string) {
       :shortcut-bindings="bindings.shortcuts.bindings.value"
       :app-sidebar-collapsed="appSidebarCollapsed"
       :language="language"
-      :context-available="bindings.contextPanelGlobal.value || activeView === 'lexora.tasks'"
+      :context-available="hasBeenReady && (bindings.contextPanelGlobal.value || activeView === 'lexora.tasks')"
       :context-open="bindings.resources.isOpen.value"
       @toggle-context="bindings.resources.toggle"
       @toggle-app-sidebar="bindings.toggleAppSidebar"
     />
     <div class="desktop-shell__body relative">
-      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
+      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
         <div class="desktop-shell__content" :class="{ 'is-starting': startupVisible }" :inert="startupVisible" :aria-hidden="startupVisible">
           <Transition name="desktop-app-sidebar">
             <DesktopAppSidebar
@@ -71,7 +72,14 @@ function navigate(id: string) {
         </template>
       </WorkbenchHost>
       <Transition name="desktop-startup-reveal">
-        <DesktopStartupScreen v-if="startupVisible" :failed="bindings.lifecycle.failed.value" :language="language" @retry="bindings.lifecycle.retry()" @open-logs="router.push(desktopRouteLocations.settings('logs'))" />
+        <DesktopStartupScreen
+          v-if="startupVisible"
+          :failed="bindings.lifecycle.failed.value"
+          :language="language"
+          @retry="bindings.lifecycle.retry()"
+          @open-logs="router.push(desktopRouteLocations.settings('logs'))"
+          @open-storage="router.push(desktopRouteLocations.settings('storage'))"
+        />
       </Transition>
     </div>
   </div>

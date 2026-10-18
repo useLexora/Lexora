@@ -11,7 +11,7 @@ import type {
   StartBuddyCompactionInput,
   StartBuddyTurnInput,
 } from './turnTypes'
-import { RunEventLogFatalError } from '../../events/RunEventFailure'
+import { RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from '../../runs/runError'
 import { toBuddySessionIdentity } from '../sessions/BuddySessionBlueprint'
 import { ActiveRunRegistry } from './ActiveRunRegistry'
@@ -159,7 +159,7 @@ export class BuddyAgentRunner {
     let outcome: RunExecutionOutcome | null = null
     let fatal = false
     const handleError = async (error: unknown) => {
-      if (error instanceof RunEventLogFatalError) {
+      if (error instanceof RunEventLogUnavailableError) {
         fatal = true
         return
       }
@@ -206,7 +206,7 @@ export class BuddyAgentRunner {
       return await this.#executions.finalize({ runId: execution.runId, outcome: withCancellationCode(result, execution.getCancellationCode()), cleanup: execution.getCleanupState() })
     }
     catch (error) {
-      if (!(error instanceof RunEventLogFatalError))
+      if (!(error instanceof RunEventLogUnavailableError))
         throw error
       const run = this.#lifecycle.find(execution.runId)
       if (!run)

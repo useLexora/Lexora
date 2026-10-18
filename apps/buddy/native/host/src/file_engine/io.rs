@@ -105,27 +105,47 @@ pub fn sync_dir(_dir: &Dir) -> Result<()> {
 pub fn create_text(root: &Root, path: &str, text: &str, id: &str) -> Result<()> {
     let path = relative(path)?;
     #[cfg(windows)]
-    let _parents = crate::windows_fs::ParentGuard::new(&root.path.join(&path))?;
-    let parent_path = path.parent().ok_or(Error::Invalid)?;
-    let parent = root.dir.open_dir(if parent_path.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        parent_path
-    })?;
-    let name = path.file_name().ok_or(Error::Invalid)?;
+    let _parents = crate::windows_fs::ParentGuard::new(&root.path.join(&path))
+        .map_err(|error| Error::NotApplied(Box::new(error.into())))?;
     let temporary = format!(".lexora-{id}.stage");
-    let mut file = parent.open_with(&temporary, OpenOptions::new().write(true).create_new(true))?;
-    let result = (|| {
+    let parent = (|| -> Result<_> {
+        let parent_path = path.parent().ok_or(Error::Invalid)?;
+        Ok(root.dir.open_dir(if parent_path.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent_path
+        })?)
+    })()
+    .map_err(|error| Error::NotApplied(Box::new(error)))?;
+    let mut file = parent
+        .open_with(&temporary, OpenOptions::new().write(true).create_new(true))
+        .map_err(creation_error)?;
+    (|| {
+        let name = path.file_name().ok_or(Error::Invalid)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         root.check()?;
         rename_new(&parent, Path::new(&temporary), &parent, Path::new(name))?;
         sync_dir(&parent)
-    })();
-    if result.is_err() {
-        let _ = parent.remove_file(&temporary);
+    })()
+    .map_err(|_: Error| Error::Recovery)
+}
+
+pub fn creation_error(error: std::io::Error) -> Error {
+    use std::io::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::PermissionDenied
+            | ErrorKind::AlreadyExists
+            | ErrorKind::NotFound
+            | ErrorKind::NotADirectory
+            | ErrorKind::ReadOnlyFilesystem
+            | ErrorKind::InvalidInput
+    ) {
+        Error::NotApplied(Box::new(error.into()))
+    } else {
+        Error::Io(error)
     }
-    result
 }
 
 pub fn rename_new(from: &Dir, source: &Path, to: &Dir, destination: &Path) -> Result<()> {

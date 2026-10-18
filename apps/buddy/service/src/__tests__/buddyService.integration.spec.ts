@@ -36,6 +36,7 @@ import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspect
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { RunContinuityService } from '../runs/RunContinuityService'
 import { RunLifecycleService } from '../runs/RunLifecycleService'
 import { RunRecoveryService } from '../runs/RunRecoveryService'
@@ -43,7 +44,9 @@ import {
   prepareTestCommandRequest,
   prepareTestTurnRequest,
 } from '../storage/__tests__/composerDraftTestFixture'
+import { createArtifactRepository } from '../storage/artifactRepository'
 import { createAttachmentRepository } from '../storage/attachmentRepository'
+import { createConversationDeletionRepository } from '../storage/conversationDeletionRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { openBuddyDatabase } from '../storage/database'
 import { createRunRepository } from '../storage/runRepository'
@@ -63,6 +66,143 @@ afterEach(async () => {
 })
 
 describe('buddy runtime cross-subsystem contract', () => {
+  it.each(['empty legacy directory', 'legacy outputs', 'pending deletion'] as const)('starts past a quarantined conversation with %s and continues healthy work', async (maintenance) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-startup-quarantine-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const conversationsDirectory = join(buddyHome, 'conversations')
+    const seedLog = createRunEventLog({ conversationsDirectory, database })
+    for (const id of ['damaged', 'healthy']) {
+      prepareTestTurnRequest(database, {
+        attachmentBindings: [],
+        branchId: `branch-${id}`,
+        conversationId: id,
+        createdAt: '2026-10-12T00:00:00.000Z',
+        approvalPolicy: 'policy',
+        executionProfile: 'workspace_write',
+        model: 'offline-model',
+        spaceId: null,
+        provider: 'offline-provider',
+        requestFingerprint: `fingerprint-${id}`,
+        requestId: `request-${id}`,
+        runInput: { attachmentIds: [], contextItems: [], prompt: 'Interrupted maintenance fixture', reasoning: null, serviceTier: null },
+        runId: `run-${id}`,
+        title: null,
+        userMessageContent: { text: 'Interrupted maintenance fixture' },
+        userMessageId: `message-${id}`,
+      })
+      await seedLog.append({ runId: `run-${id}`, type: 'audit.before', payload: { preserved: true } })
+      if (maintenance === 'pending deletion') {
+        createConversationDeletionRepository(database).commit(id, '2026-10-12T00:00:01.000Z')
+      }
+      else {
+        const artifactsDirectory = join(conversationsDirectory, id, 'artifacts')
+        await mkdir(artifactsDirectory, { recursive: true })
+        if (maintenance === 'legacy outputs') {
+          await writeFile(join(artifactsDirectory, 'output.txt'), `Preserved ${id} output`)
+          await seedLog.append({
+            runId: `run-${id}`,
+            type: 'output.produced',
+            payload: { artifactIds: [`artifact-${id}`], sourceToolCallId: `tool-${id}`, sourceToolName: 'lexora_artifact_present' },
+          })
+        }
+      }
+    }
+    await seedLog.close()
+    const damagedFile = join(conversationsDirectory, 'damaged', 'events', 'run-damaged.jsonl')
+    const damaged = `${await readFile(damagedFile, 'utf8')}{broken}\n`
+    await writeFile(damagedFile, damaged)
+    const projection = database.prepare('SELECT * FROM run_events WHERE run_id = ?').all('run-damaged')
+    const eventLog = createRunEventLog({ conversationsDirectory, database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+    const provider = await startLocalModelProvider(async () => ({ text: 'HEALTHY_AFTER_STARTUP' }))
+    let runtime: Awaited<ReturnType<typeof startBuddyService>> | undefined
+    try {
+      expect(await eventLog.recoverAll()).toMatchObject({ failed: 1, failures: [{ conversationId: 'damaged', runId: 'run-damaged' }] })
+      runtime = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
+      const runs = createRunRepository(database)
+      expect(eventLog.state).toBe('open')
+      expect(runs.findById('run-damaged')?.status).toBe('queued')
+      expect(database.prepare('SELECT * FROM run_events WHERE run_id = ?').all('run-damaged')).toEqual(projection)
+      expect(runs.findById('run-healthy')).toMatchObject(maintenance === 'pending deletion'
+        ? { status: 'cancelled', errorCode: 'RUN_CANCELLED' }
+        : { status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
+      if (maintenance === 'pending deletion') {
+        expect(createConversationRepository(database).isDeleted('damaged')).toBe(true)
+        expect(createConversationDeletionRepository(database).pending()).toEqual(['damaged'])
+      }
+      if (maintenance === 'legacy outputs') {
+        const artifacts = createArtifactRepository(database)
+        expect(artifacts.findById('artifact-damaged')).toBeNull()
+        expect(artifacts.findById('artifact-healthy')).toMatchObject({ currentPath: join(conversationsDirectory, 'healthy', 'artifacts', 'output.txt') })
+        expect(await readFile(join(conversationsDirectory, 'damaged', 'artifacts', 'output.txt'), 'utf8')).toBe('Preserved damaged output')
+      }
+      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      const healthy = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'Healthy work after startup', requestId: 'healthy-after-startup' })) as LocalTurnStart
+      expect(await waitForTerminalRun(harness, healthy.runId)).toMatchObject({ status: 'completed' })
+      expect(JSON.stringify(await eventLog.read(healthy.runId))).toContain('HEALTHY_AFTER_STARTUP')
+      expect(provider.requests).toHaveLength(1)
+      expect(await readFile(damagedFile, 'utf8')).toBe(damaged)
+      expect(() => eventLog.assertConversationWritable('damaged')).toThrow(RunEventCorruptionError)
+    }
+    finally {
+      await runtime?.dispose()
+      await eventLog.close()
+    }
+    expect(await readFile(damagedFile, 'utf8')).toBe(damaged)
+  }, 20_000)
+
+  it('stops a quarantined executor without rewriting its evidence or interrupting a healthy conversation', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-live-quarantine-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+    const diagnostics: ApplicationDiagnostic[] = []
+    const requested = { damaged: Promise.withResolvers<void>(), healthy: Promise.withResolvers<void>() }
+    const responses = { damaged: Promise.withResolvers<void>(), healthy: Promise.withResolvers<void>() }
+    const provider = await startLocalModelProvider(async (payload) => {
+      const key = JSON.stringify(payload.messages).includes('DAMAGED_TASK') ? 'damaged' : 'healthy'
+      requested[key].resolve()
+      await responses[key].promise
+      return { text: key === 'damaged' ? 'MUST_NOT_COMMIT' : 'HEALTHY_RESULT' }
+    })
+    const runtime = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [], record: event => diagnostics.push(event) })
+    try {
+      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      const damaged = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'DAMAGED_TASK', requestId: 'damaged-task' })) as LocalTurnStart
+      await requested.damaged.promise
+      const healthy = await harness.invoke('chat.startTurn', await turnRequest(harness, { content: 'HEALTHY_TASK', requestId: 'healthy-task' })) as LocalTurnStart
+      await requested.healthy.promise
+      const file = join(buddyHome, 'conversations', damaged.conversationId, 'events', `${damaged.runId}.jsonl`)
+      const original = await readFile(file, 'utf8')
+      const corrupted = `${original}{broken}\n`
+      await writeFile(file, corrupted)
+      await expect(eventLog.read(damaged.runId)).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+      await expect.poll(() => diagnostics.some(event => event.event === 'execution.settled' && event.runId === damaged.runId)).toBe(true)
+      expect(await readFile(file, 'utf8')).toBe(corrupted)
+      expect(eventLog.state).toBe('open')
+      expect(eventLog.getRecoveryFailures()).toMatchObject([{ runId: damaged.runId }])
+      await expect(eventLog.read(damaged.runId)).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+      const runs = createRunRepository(database)
+      expect(runs.findById(healthy.runId)?.status).toBe('running')
+
+      responses.damaged.resolve()
+      responses.healthy.resolve()
+      expect(await waitForTerminalRun(harness, healthy.runId)).toMatchObject({ status: 'completed' })
+      expect(await readFile(file, 'utf8')).toBe(corrupted)
+      expect(JSON.stringify(await eventLog.read(healthy.runId))).toContain('HEALTHY_RESULT')
+    }
+    finally {
+      responses.damaged.resolve()
+      responses.healthy.resolve()
+      await runtime.dispose()
+      await eventLog.close()
+    }
+  }, 20_000)
+
   it('delegates through real Pi tools and child sessions with request-bound models, independent Web scope and durable result continuation', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-delegation-')))
     directories.push(root)

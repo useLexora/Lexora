@@ -83,7 +83,8 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     instances.push(instance)
     return instance
 
-    async function launch({ maintenance = false, expectedRoot = home } = {}) {
+    async function launch({ maintenance = false, expectedRoot = home, startupStatus = 'ready' } = {}) {
+      assert(['ready', 'failed'].includes(startupStatus), 'Unsupported startup expectation')
       assert(contains(instancesRoot, await canonicalPath(expectedRoot)), 'Expected root must stay in this isolated test run')
       const { _electron: electron } = await import('@playwright/test')
       const environment = createTestEnvironment(home)
@@ -116,7 +117,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
           return { app: application, page, diagnostics: launchRecord.diagnostics }
         }
         assert.equal(rendererUrl ? new URL(page.url()).origin : new URL(page.url()).protocol, rendererUrl ? new URL(rendererUrl).origin : 'lexora-app:', `Application failed to start: ${await page.locator('body').textContent()}`)
-        await page.waitForFunction(async () => (await window.lexoraDesktop?.app.startup.getState())?.status === 'ready', undefined, { timeout: 45000 })
+        await page.waitForFunction(async status => (await window.lexoraDesktop?.app.startup.getState())?.status === status, startupStatus, { timeout: 45000 })
         const info = await page.evaluate(() => window.lexoraDesktop.app.getInfo())
         assert.equal(info.runtimeProfile, 'test')
         if (executablePath)

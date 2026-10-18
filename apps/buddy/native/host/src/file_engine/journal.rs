@@ -23,10 +23,10 @@ impl Journal {
             "PRAGMA locking_mode=EXCLUSIVE; PRAGMA synchronous=FULL; BEGIN EXCLUSIVE; COMMIT;",
         )?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(Error::Invalid);
         }
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, record TEXT NOT NULL, claims TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, destination TEXT); CREATE INDEX IF NOT EXISTS operations_source ON operations(source); CREATE INDEX IF NOT EXISTS operations_destination ON operations(destination); CREATE INDEX IF NOT EXISTS operations_status ON operations(status); CREATE TABLE IF NOT EXISTS leases (id TEXT PRIMARY KEY, claims TEXT NOT NULL, hazard INTEGER NOT NULL DEFAULT 0, external INTEGER NOT NULL); PRAGMA user_version=1;")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, record TEXT NOT NULL, claims TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, destination TEXT); CREATE INDEX IF NOT EXISTS operations_source ON operations(source); CREATE INDEX IF NOT EXISTS operations_destination ON operations(destination); CREATE INDEX IF NOT EXISTS operations_status ON operations(status); CREATE TABLE IF NOT EXISTS leases (id TEXT PRIMARY KEY, claims TEXT NOT NULL, hazard INTEGER NOT NULL DEFAULT 0, external INTEGER NOT NULL); PRAGMA user_version=2;")?;
         let mut journal = Self(connection);
         for mut record in journal.records(
             "SELECT record FROM operations WHERE status IN ('\"prepared\"','\"executing\"')",
@@ -140,6 +140,29 @@ impl Journal {
         self.0.execute(
             "INSERT INTO leases(id,claims,external) VALUES (?,?,?)",
             params![id, serde_json::to_string(claims)?, external],
+        )?;
+        Ok(())
+    }
+
+    pub fn protect(&self, id: &str, claims: &[Claim]) -> Result<()> {
+        let existing: Option<String> = self
+            .0
+            .query_row("SELECT claims FROM leases WHERE id=?", [id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let mut merged: Vec<Claim> = existing
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?
+            .unwrap_or_default();
+        for claim in claims {
+            if !merged.contains(claim) {
+                merged.push(claim.clone());
+            }
+        }
+        self.0.execute(
+            "INSERT INTO leases(id,claims,external,hazard) VALUES (?,?,1,1) ON CONFLICT(id) DO UPDATE SET claims=excluded.claims,external=1,hazard=1",
+            params![id, serde_json::to_string(&merged)?],
         )?;
         Ok(())
     }

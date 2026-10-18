@@ -1,6 +1,6 @@
 import type { ExecutionMailboxDraft, ExecutionMailboxReceipt } from '../../../../shared/executions/executionApi'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
-import type { RunEventObservation, RunEventWriter } from '../../events/RunEventPorts'
+import type { RunEventAvailability, RunEventObservation, RunEventWriter } from '../../events/RunEventPorts'
 import type { RunLifecycleService } from '../../runs/RunLifecycleService'
 import type { AdmitChildExecutionInput, ExecutionRepository, ExecutionStateRecord } from '../../storage/executionRepository'
 import type { MailboxRepository } from '../../storage/mailboxRepository'
@@ -12,6 +12,7 @@ import type { BuddyTurnHandle } from './turnTypes'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { isExecutionProgress } from '../../../../shared/executions/executionApi'
 import { MutationCoordinatorError } from '../../changes/MutationCoordinator'
+import { RunEventCorruptionError, RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { readStableRunErrorCode } from '../../runs/runError'
 import { ExecutionAdmissionError, executionFence } from '../../storage/executionRepository'
 import { previewExecutionResult } from './readExecutionResult'
@@ -23,6 +24,7 @@ interface Preparation {
 }
 
 export interface ExecutionCoordinatorOptions {
+  availability?: Pick<RunEventAvailability, 'assertRunExecutable'>
   executions: ExecutionRepository
   mailbox: MailboxRepository
   events: RunEventWriter & RunEventObservation
@@ -126,6 +128,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   assertShellExecutionAllowed(runId: string): void {
+    this.#options.availability?.assertRunExecutable(runId)
     if (this.#options.hostShellSupervision !== false)
       return
     const current = this.#require(runId)
@@ -150,6 +153,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         throw new MutationCoordinatorError('MUTATION_RESOURCE_UNSAFE')
       if (currentEffects.active || currentEffects.pending)
         throw new ExecutionAdmissionError('busy')
+      this.#options.availability?.assertRunExecutable(input.callerId)
       const accepted = this.#options.executions.admitChild(input)
       if (accepted.created) {
         this.#changed(rootRunId)
@@ -265,6 +269,23 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     const source = this.#options.executions.find(runId)
     if (!source || source.phase === 'closed')
       return false
+    try {
+      this.#options.availability?.assertRunExecutable(runId)
+    }
+    catch (error) {
+      if (!(error instanceof RunEventLogUnavailableError))
+        throw error
+      const records = this.#options.executions.listTree(source.run.rootRunId)
+      for (const record of records)
+        this.#preparations.get(record.run.id)?.controller.abort(error)
+      const stopped = await Promise.allSettled(records.map(record => stop(record.run.id)))
+      const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+      if (!(error instanceof RunEventCorruptionError))
+        failures.unshift(error)
+      if (failures.length)
+        throw new AggregateError(failures, 'Execution cleanup could not settle an unavailable tree')
+      return true
+    }
     const affected = await this.#serialize(source.run.rootRunId, async () => {
       const records = this.#options.executions.requestCancel(runId, new Date().toISOString())
       for (const record of records)
@@ -286,6 +307,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   async failBeforeStart(runId: string, error: unknown): Promise<RunRecord> {
+    if (error instanceof RunEventLogUnavailableError)
+      throw error
     const current = this.#require(runId)
     if (current.phase === 'closed')
       return current.run
@@ -445,6 +468,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   #require(runId: string): ExecutionStateRecord {
+    this.#options.availability?.assertRunExecutable(runId)
     const record = this.#options.executions.find(runId)
     if (!record)
       throw new ExecutionAdmissionError('stale')
@@ -477,21 +501,28 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
 
   async dispose(): Promise<void> {
     this.#stopped = true
-    await this.cancelAll({}, id => this.#options.stopExecution(id))
-    for (const preparation of this.#preparations.values())
-      preparation.controller.abort()
-    for (const rootRunId of this.#revisions.keys())
-      this.#changed(rootRunId)
-    await Promise.allSettled([...this.#children.values(), ...this.#tails.values()])
-    this.#subscription.dispose()
-    this.#changes.dispose()
+    try {
+      await this.cancelAll({}, id => this.#options.stopExecution(id))
+    }
+    finally {
+      for (const preparation of this.#preparations.values())
+        preparation.controller.abort()
+      for (const rootRunId of this.#revisions.keys())
+        this.#changed(rootRunId)
+      await Promise.allSettled([...this.#children.values(), ...this.#tails.values()])
+      this.#subscription.dispose()
+      this.#changes.dispose()
+    }
   }
 
   async cancelAll(filter: { conversationId?: string, runIds?: readonly string[] }, stop: (runId: string) => Promise<boolean>): Promise<number> {
     const requested = filter.runIds ? new Set(filter.runIds.map(id => this.#options.executions.find(id)?.run.rootRunId).filter((id): id is string => Boolean(id))) : null
     const pending = this.#options.listIncomplete()
     const roots = new Set(pending.filter(run => (!filter.conversationId || run.conversationId === filter.conversationId) && (!requested || requested.has(run.rootRunId))).map(run => run.rootRunId))
-    await Promise.all([...roots].map(id => this.cancel(id, 'RUN_CANCELLED', stop)))
+    const settled = await Promise.allSettled([...roots].map(id => this.cancel(id, 'RUN_CANCELLED', stop)))
+    const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length)
+      throw new AggregateError(failures, 'Execution cleanup could not settle every root')
     return roots.size
   }
 }

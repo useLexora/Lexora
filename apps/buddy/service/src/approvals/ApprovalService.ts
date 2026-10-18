@@ -20,6 +20,7 @@ import { readDiagnosticErrorCode } from '../../../shared/diagnostics/application
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { createApprovalReviewPayload } from '../../../shared/permissions/approvalReviewPayload'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { approvalReuseScopes, createApprovalAuthorizationKeys } from './approvalAuthorization'
 
 export const APPROVAL_WAIT_TIMEOUT_MS = 30 * 60 * 1_000
@@ -304,9 +305,11 @@ export class ApprovalService {
     return approval
   }
 
-  async cancelPendingApprovals(reason: 'recovery' | 'shutdown' = 'recovery'): Promise<number> {
+  async cancelPendingApprovals(reason: 'recovery' | 'shutdown' = 'recovery', canCancel: (runId: string) => boolean = () => true): Promise<number> {
     let cancelled = 0
     for (const approval of this.#repository.listPending()) {
+      if (!canCancel(approval.runId))
+        continue
       await this.#cancel(approval, reason)
       cancelled += 1
     }
@@ -370,12 +373,22 @@ export class ApprovalService {
   async #dispose(): Promise<void> {
     const failures: unknown[] = []
     try {
-      const cancelled = await Promise.allSettled(this.#repository.listPending().map(approval => this.#cancel(approval, 'shutdown')))
-      failures.push(...cancelled.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+      const pending = this.#repository.listPending()
+      const cancelled = await Promise.allSettled(pending.map(approval => this.#cancel(approval, 'shutdown')))
+      for (const [index, result] of cancelled.entries()) {
+        if (result.status !== 'rejected')
+          continue
+        if (!isIsolatedRecoveryFailure(result.reason)) {
+          failures.push(result.reason)
+          continue
+        }
+        const approval = pending[index]!
+        this.#lifecycle.fire(copyEventSnapshot({ kind: 'cancellation.failed', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId, reason: 'shutdown', errorCode: readDiagnosticErrorCode(result.reason) }))
+      }
       await Promise.allSettled(this.#queues.values())
       await Promise.allSettled(this.#resolving.values())
       const cancellations = await Promise.allSettled(this.#cancellations)
-      failures.push(...cancellations.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+      failures.push(...cancellations.flatMap(result => result.status === 'rejected' && !isIsolatedRecoveryFailure(result.reason) ? [result.reason] : []))
     }
     finally {
       const runIds = new Set([...this.#authorizations.values()].flatMap(authorizations => [...authorizations.keys()]))
@@ -462,6 +475,10 @@ export class ApprovalService {
     runAuthorizations.set(key, sourceApprovalId)
     authorizations.set(runId, runAuthorizations)
   }
+}
+
+function isIsolatedRecoveryFailure(error: unknown): boolean {
+  return error instanceof RunEventCorruptionError
 }
 
 function readApprovedScope(decision: ApprovalResolutionDecision): ApprovalReuseScope | null {

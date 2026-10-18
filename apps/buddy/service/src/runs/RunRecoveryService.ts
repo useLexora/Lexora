@@ -1,6 +1,6 @@
 import type { CommittedPiCompactionEvidence } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
-import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
-import type { RunEventReader, RunEventWriter } from '../events/RunEventPorts'
+import type { AppendBuddyRunEventInput, BuddyRunEvent } from '../events/BuddyRunEvent'
+import type { RunEventAvailability, RunEventReader, RunEventWriter } from '../events/RunEventPorts'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
@@ -8,14 +8,15 @@ import type { UsageService } from '../usage/UsageService'
 import type { RunLifecycleService } from './RunLifecycleService'
 import { createBuddyInterruptedMessageContent } from '../../../shared/conversation/buddyMessageContent'
 import { createInterruptedMessageEvents } from '../events/createInterruptedMessageEvents'
-import { RunEventLogFatalError } from '../events/RunEventFailure'
+import { RunEventCorruptionError, RunEventLogUnavailableError } from '../events/RunEventFailure'
 import { readStableRunErrorCode } from './runError'
 
 export interface RunRecoveryServiceOptions {
-  cancelPendingApprovals?: () => Promise<number>
+  cancelPendingApprovals?: (canRecoverRun: (runId: string) => boolean) => Promise<number>
   captureInterruptedChanges?: (runId: string) => Promise<void>
   conversations: Pick<ConversationHistoryRepository, 'findMessageById'>
   eventLog: Pick<RunEventReader, 'read'> & Pick<RunEventWriter, 'append'>
+    & Partial<Pick<RunEventAvailability, 'assertRunWritable'>>
   inspectCommittedCompaction?: (
     run: RunRecord,
   ) => Promise<CommittedPiCompactionEvidence | null>
@@ -33,45 +34,83 @@ export class RunRecoveryService {
   }
 
   async recoverInterruptedRuns(): Promise<number> {
-    await this.#options.cancelPendingApprovals?.()
     const interrupted = this.#options.repository.listIncomplete()
+    const runs = new Map(interrupted.map(run => [run.id, run]))
+    const histories = new Map<string, BuddyRunEvent[]>()
+    const blockedConversations = new Set<string>()
     for (const run of interrupted) {
-      await this.#options.captureInterruptedChanges?.(run.id)
-      if (await this.#recoverInterruptedCompaction(run))
-        continue
-      const events = await this.#options.eventLog.read(run.id)
-      const recoveredMessages: AppendBuddyRunEventInput[] = createInterruptedMessageEvents(events)
-        .filter(snapshot => !this.#options.conversations.findMessageById(snapshot.messageId))
-        .map(snapshot => ({
-          createdAt: this.#timestamp(),
-          payload: {
-            content: createBuddyInterruptedMessageContent(
-              snapshot.text,
-              snapshot.truncated,
-            ),
-            messageId: snapshot.messageId,
-            reason: 'runtime_restarted',
-            role: 'assistant',
-          },
-          runId: run.id,
-          type: 'message.interrupted' as const,
-        }))
-      await this.#options.lifecycle.finalize({
-        completedAt: this.#timestamp(),
-        errorCode: 'RUNTIME_RESTARTED',
-        precedingEvents: recoveredMessages,
-        runId: run.id,
-        status: 'failed',
-      })
+      try {
+        this.#options.eventLog.assertRunWritable?.(run.id)
+        histories.set(run.id, await this.#options.eventLog.read(run.id))
+      }
+      catch (error) {
+        if (!(error instanceof RunEventCorruptionError))
+          throw error
+        blockedConversations.add(run.conversationId)
+      }
     }
-    return interrupted.length
+    const canRecoverRun = (runId: string): boolean => {
+      const run = runs.get(runId)
+      try {
+        this.#options.eventLog.assertRunWritable?.(runId)
+        return !run || !blockedConversations.has(run.conversationId)
+      }
+      catch (error) {
+        if (!(error instanceof RunEventCorruptionError))
+          throw error
+        return false
+      }
+    }
+    await this.#options.cancelPendingApprovals?.(canRecoverRun)
+    let recovered = 0
+    for (const run of interrupted) {
+      if (!canRecoverRun(run.id))
+        continue
+      try {
+        const events = histories.get(run.id)!
+        await this.#options.captureInterruptedChanges?.(run.id)
+        if (await this.#recoverInterruptedCompaction(run, events)) {
+          recovered++
+          continue
+        }
+        const recoveredMessages: AppendBuddyRunEventInput[] = createInterruptedMessageEvents(events)
+          .filter(snapshot => !this.#options.conversations.findMessageById(snapshot.messageId))
+          .map(snapshot => ({
+            createdAt: this.#timestamp(),
+            payload: {
+              content: createBuddyInterruptedMessageContent(
+                snapshot.text,
+                snapshot.truncated,
+              ),
+              messageId: snapshot.messageId,
+              reason: 'runtime_restarted',
+              role: 'assistant',
+            },
+            runId: run.id,
+            type: 'message.interrupted' as const,
+          }))
+        await this.#options.lifecycle.finalize({
+          completedAt: this.#timestamp(),
+          errorCode: 'RUNTIME_RESTARTED',
+          precedingEvents: recoveredMessages,
+          runId: run.id,
+          status: 'failed',
+        })
+        recovered++
+      }
+      catch (error) {
+        if (!(error instanceof RunEventCorruptionError))
+          throw error
+        blockedConversations.add(run.conversationId)
+      }
+    }
+    return recovered
   }
 
-  async #recoverInterruptedCompaction(run: RunRecord): Promise<boolean> {
+  async #recoverInterruptedCompaction(run: RunRecord, events: readonly BuddyRunEvent[]): Promise<boolean> {
     if (run.purpose !== 'conversation.compaction')
       return false
 
-    const events = await this.#options.eventLog.read(run.id)
     const completionRecorded = events.some(
       event => event.type === 'context.compaction.completed',
     )
@@ -116,7 +155,7 @@ export class RunRecoveryService {
         })
       }
       catch (error) {
-        if (error instanceof RunEventLogFatalError)
+        if (error instanceof RunEventLogUnavailableError)
           throw error
       }
     }

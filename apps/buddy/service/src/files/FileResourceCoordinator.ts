@@ -21,9 +21,11 @@ export class FileResourceCoordinator {
         await this.#engine.release(id)
     }
     for (const hazard of hazards) {
-      if (!existing.has(hazard.invocationId))
-        await this.acquire(hazard.invocationId, hazard.claims, 'external')
-      await this.#engine.release(hazard.invocationId, true)
+      await this.#engine.protect(hazard.invocationId, hazard.claims.map(claim => ({
+        path: claim.kind === 'host' ? '*' : claim.canonicalPath,
+        subtree: claim.kind !== 'file',
+      })))
+      this.#resources.delete(hazard.invocationId)
     }
   }
 

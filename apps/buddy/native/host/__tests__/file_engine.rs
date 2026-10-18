@@ -58,7 +58,7 @@ impl Engine {
             .output
             .recv_timeout(Duration::from_secs(10))
             .expect("File engine did not become ready");
-        assert_eq!(ready, json!({"event":"ready", "version":1}));
+        assert_eq!(ready, json!({"event":"ready", "version":2}));
         engine
     }
     fn send(&mut self, command: Value) -> u64 {
@@ -269,7 +269,8 @@ fn restart_preserves_unknown_outcomes_and_blocks_replay_until_reviewed() {
     assert!(root.join("a").exists());
     assert!(!root.join("b").exists());
     assert_eq!(
-        engine.call(json!({"type":"acknowledge","operationId":operation}))["result"]["status"],
+        engine.call(json!({"type":"acknowledge","root":"root","operationId":operation}))["result"]
+            ["status"],
         "acknowledged"
     );
     assert_eq!(
@@ -428,6 +429,9 @@ fn queued_mutation_can_be_cancelled_without_modifying_the_file() {
     assert_eq!(engine.response(cancel)["result"], Value::Null);
     assert_eq!(std::fs::read(root.join("a")).unwrap(), b"retained");
 }
+
+#[path = "file_engine_recovery.rs"]
+mod recovery;
 
 #[cfg(windows)]
 #[path = "file_engine_windows_protocol.rs"]

@@ -26,6 +26,7 @@ export type FileAction
     | { kind: 'copy' | 'move', destinationRoot: string, destination: string }
     | { kind: 'restore', originalOperationId: string }
 export interface NativeFileClaim { root: string, path: string, subtree: boolean }
+export interface NativeFileProtection { path: string, subtree: boolean }
 export interface NativeFileMutation { operationId: string, root: string, path: string, leaseId?: string, action: FileAction }
 const nativeDocumentSchema = z.object({ text: z.string(), etag: z.string().length(64), identity: z.string() })
 const notificationSchema = z.discriminatedUnion('event', [
@@ -84,7 +85,8 @@ export class NativeFileEngine {
   mutate(request: NativeFileMutation) { return this.#request({ type: 'mutate', request }, nativeOperationSchema) }
   query(operationId: string) { return this.#request({ type: 'query', operationId }, nativeOperationSchema.nullable()) }
   history(root: string) { return this.#request({ type: 'history', root }, z.array(nativeOperationSchema)) }
-  acknowledge(operationId: string) { return this.#request({ type: 'acknowledge', operationId }, nativeOperationSchema) }
+  protect(leaseId: string, claims: NativeFileProtection[]) { return this.#request({ type: 'protect', leaseId, claims }, z.null()) }
+  acknowledge(root: string, operationId: string) { return this.#request({ type: 'acknowledge', root, operationId }, nativeOperationSchema) }
   cancel(operationId: string) { return this.#request({ type: 'cancel', operationId }, z.null()) }
   leases() { return this.#request({ type: 'leases' }, z.array(z.string())) }
   release(leaseId: string, hazard = false) { return this.#request({ type: 'release', leaseId, hazard }, z.null()) }
@@ -151,7 +153,7 @@ export class NativeFileEngine {
       this.#buffer = this.#buffer.subarray(end + 1)
       try {
         const value: unknown = JSON.parse(frame.toString('utf8'))
-        const ready = z.object({ event: z.literal('ready'), version: z.literal(1) }).safeParse(value)
+        const ready = z.object({ event: z.literal('ready'), version: z.literal(2) }).safeParse(value)
         if (ready.success) {
           this.#ready.resolve()
           continue

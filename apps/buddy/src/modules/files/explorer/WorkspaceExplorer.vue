@@ -94,7 +94,7 @@ function selectCommand(command: string) {
   void commands.command(command, node)
 }
 async function acknowledge(operation: SpaceFileOperation) {
-  await props.api.acknowledgeFileOperation({ ...props.target, operationId: operation.operationId }).catch(() => error.value = labels.value.failure)
+  await props.api.acknowledgeFileOperation({ ...props.target, operationId: operation.operationId }).catch(() => error.value = labels.value.recoveryFailure)
   await refreshRecovery()
 }
 </script>

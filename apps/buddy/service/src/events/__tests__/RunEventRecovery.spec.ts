@@ -297,14 +297,15 @@ describe('startup run event recovery', () => {
     expect(checkpoint(f.database)).toBeUndefined()
   })
 
-  it('invalidates missing logs without erasing projections or inventing unknown runs', async () => {
+  it('quarantines missing logs with existing projections without erasing data or inventing unknown runs', async () => {
     const f = await fixture()
     await seedHistory(f.log)
     await f.log.recoverAll()
     const before = projection(f.database)
     await rm(f.eventFile)
     await writeFile(join(f.conversationsDirectory, 'conversation-1', 'events', 'unknown-run.jsonl'), '{broken}\n')
-    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, skipped: 0, rebuilt: 0 })
+    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, skipped: 0, rebuilt: 0, failed: 1 })
+    expect(() => f.log.assertConversationWritable('conversation-1')).toThrow(expect.objectContaining({ code: 'EVENT_LOG_CORRUPTED' }))
     expect(checkpoint(f.database)).toBeUndefined()
     expect(projection(f.database)).toEqual(before)
     expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-1' }])
@@ -328,9 +329,12 @@ describe('startup run event recovery', () => {
     await seedHistory(f.log)
     await f.log.recoverAll()
     await appendFile(f.eventFile, '{broken}\n')
-    await expect(f.log.recoverAll()).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+    await expect(f.log.recoverAll()).resolves.toMatchObject({
+      failed: 1,
+      failures: [{ code: 'EVENT_LOG_CORRUPTED', conversationId: 'conversation-1', runId: 'run-1' }],
+    })
     expect(onRecovery).toHaveBeenLastCalledWith(expect.objectContaining({ failed: 1, skipped: 0 }))
-    expect(f.log.state).toBe('failed')
+    expect(f.log.state).toBe('open')
     expect(checkpoint(f.database)).toBeUndefined()
   })
 

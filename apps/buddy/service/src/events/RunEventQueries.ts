@@ -150,6 +150,10 @@ export class RunEventQueries {
     return rows.map(row => row.id)
   }
 
+  hasProjectedEvents(runId: string): boolean {
+    return this.#database.prepare('SELECT 1 FROM run_events WHERE run_id = ? LIMIT 1').get(runId) !== undefined
+  }
+
   findConversationId(runId: string): string | null {
     const row = this.#database.prepare(`
       SELECT conversation_id FROM runs WHERE id = ?

@@ -70,6 +70,25 @@ impl Root {
         }
     }
 
+    pub fn check_recorded_path(&self, path: &str) -> Result<()> {
+        let path = Path::new(path);
+        let local = path.strip_prefix(&self.path).map_err(|_| Error::Revoked)?;
+        let local = local.to_str().ok_or(Error::Invalid)?.replace('\\', "/");
+        let resolved = self.resolve(&local)?;
+        if path_key(&resolved) != path_key(path) {
+            return Err(Error::Revoked);
+        }
+        match self
+            .dir
+            .symlink_metadata(if local.is_empty() { "." } else { &local })
+        {
+            Ok(metadata) if metadata.is_file() || metadata.is_dir() => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+            _ => Err(Error::Unsupported),
+        }
+    }
+
     pub fn claim(&self, path: &str, subtree: bool) -> Result<Claim> {
         let resolved = self.resolve(path)?;
         let object = match self
@@ -147,11 +166,19 @@ impl Roots {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claim {
+    #[serde(deserialize_with = "deserialize_claim_path")]
     pub path: String,
     pub subtree: bool,
     pub object: Option<String>,
+}
+
+fn deserialize_claim_path<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    Ok(path_key(Path::new(&value)))
 }
 
 pub fn overlap(left: &[Claim], right: &[Claim]) -> bool {
@@ -175,7 +202,11 @@ pub fn contains(parent: &str, child: &str) -> bool {
 }
 
 pub fn path_key(path: &Path) -> String {
-    let value = path.to_string_lossy().replace('\\', "/");
+    let value = path
+        .components()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .replace('\\', "/");
     if cfg!(windows) {
         value.to_lowercase()
     } else {

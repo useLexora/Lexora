@@ -6,7 +6,9 @@ import { resolveLocalChatErrorMessage } from '../localChatError'
 
 describe('desktopChatError', () => {
   it.each([
+    ['EVENT_LOG_CORRUPTED', 'desktop.error.taskRecoveryRequired'],
     ['MUTATION_RESOURCE_UNSAFE', 'desktop.error.resourceRecoveryRequired'],
+    ['FILE_RECOVERY_REQUIRED', 'desktop.error.fileRecoveryRequired'],
   ] as const)('shows a localized scoped failure for %s instead of internal recovery details', (code, key) => {
     const error = new Error(`${formatLocalChatPublicError({ code, retryable: false })}:private-recovery-details`)
     for (const language of ['zh-CN', 'en-US'] as const) {

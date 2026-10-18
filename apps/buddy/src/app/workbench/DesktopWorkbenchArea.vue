@@ -20,7 +20,7 @@ const taskWorkspace = useTemplateRef<HTMLElement>('taskWorkspace')
 useWorkbenchAnchor('workbench.workspace', () => taskWorkspace.value)
 const { controller, layout, revision, labels, panels } = useWorkbench()
 const route = useRoute()
-const contextVisible = computed(() => (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
+const contextVisible = computed(() => props.bindings.lifecycle.state.value.hasBeenReady && (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
 watch([contextVisible, () => route.path], panels.restore)
 const pendingTaskIds = computed(() => {
   void revision.value

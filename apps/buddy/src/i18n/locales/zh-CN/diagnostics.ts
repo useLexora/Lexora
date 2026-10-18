@@ -77,6 +77,8 @@ export default {
   'desktop.error.credentialStore': '系统凭据加密服务不可用',
   'desktop.error.credentialStoreFailure': '系统凭据读取或保存失败',
   'desktop.error.directoryNotAuthorized': '请先授权这个目录',
+  'desktop.error.taskRecoveryRequired': '此任务的记录无法读取，已暂停使用，其他任务不受影响。如需协助，可在日志中导出诊断信息。',
+  'desktop.error.fileRecoveryRequired': '上次文件操作的结果尚未确认，相关写入已暂停。如需协助，可在日志中导出诊断信息。',
   'desktop.error.resourceRecoveryRequired': '上次操作的结果尚未确认，相关写入已暂停。可在日志中查看详情。',
   'desktop.error.modelSyncFailed': '模型同步失败，请检查 API 地址和认证信息后重试',
   'desktop.error.modelSyncUnsupported': '当前 API 协议不支持模型同步',

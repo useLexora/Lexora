@@ -1,12 +1,12 @@
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
-import type { RunEventMaintenance, RunEventWriter } from '../events/RunEventPorts'
+import type { RunEventAvailability, RunEventMaintenance, RunEventWriter } from '../events/RunEventPorts'
 import type { RunPurpose, RunRecord, RunStatus } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { RunEventLogFatalError } from '../events/RunEventFailure'
+import { RunEventLogUnavailableError } from '../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from './runError'
 
 type TerminalRunStatus = Extract<RunStatus, 'cancelled' | 'completed' | 'failed'>
@@ -40,6 +40,7 @@ export interface RunLifecycleServiceOptions {
   record?: ApplicationDiagnosticReporter
   eventLog: Pick<RunEventWriter, 'append' | 'appendBatch'>
     & Pick<RunEventMaintenance, 'compactTerminalRun'>
+    & Partial<Pick<RunEventAvailability, 'assertRunWritable' | 'assertRunExecutable'>>
   repository: Pick<
     RunRepository,
     'findById' | 'markRunning' | 'reconcileTerminal'
@@ -70,6 +71,8 @@ export class RunLifecycleService {
   }
 
   async #start(input: StartRunInput): Promise<RunRecord> {
+    this.#eventLog.assertRunExecutable?.(input.runId)
+    this.#eventLog.assertRunWritable?.(input.runId)
     const run = this.#requireRun(input.runId)
     if (
       run.status !== 'queued'
@@ -88,6 +91,8 @@ export class RunLifecycleService {
   }
 
   async failBeforeStart(runId: string, error: unknown): Promise<RunRecord | null> {
+    if (error instanceof RunEventLogUnavailableError)
+      throw error
     const run = this.#repository.findById(runId)
     if (!run || run.status !== 'queued')
       return null
@@ -104,6 +109,7 @@ export class RunLifecycleService {
   }
 
   async #finalize(input: FinalizeRunInput): Promise<RunRecord> {
+    this.#eventLog.assertRunWritable?.(input.runId)
     const existing = this.#requireRun(input.runId)
     if (isTerminal(existing.status)) {
       if (existing.status === input.status)
@@ -134,7 +140,7 @@ export class RunLifecycleService {
       }
     }
     catch (error) {
-      if (error instanceof RunEventLogFatalError)
+      if (error instanceof RunEventLogUnavailableError)
         throw error
       terminalEventPersisted = false
       status = 'failed'
@@ -164,7 +170,7 @@ export class RunLifecycleService {
         await this.#eventLog.compactTerminalRun(input.runId)
       }
       catch (error) {
-        if (error instanceof RunEventLogFatalError)
+        if (error instanceof RunEventLogUnavailableError)
           throw error
       }
     }

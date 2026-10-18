@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 128 * 1024 * 1024;
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 
@@ -42,6 +42,10 @@ pub enum Command {
         claims: Vec<ClaimInput>,
         external: bool,
     },
+    Protect {
+        lease_id: String,
+        claims: Vec<ProtectionClaim>,
+    },
     Release {
         lease_id: String,
         hazard: bool,
@@ -56,6 +60,7 @@ pub enum Command {
         root: String,
     },
     Acknowledge {
+        root: String,
         operation_id: String,
     },
     Cancel {
@@ -63,6 +68,13 @@ pub enum Command {
     },
     Leases,
     Shutdown,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProtectionClaim {
+    pub path: String,
+    pub subtree: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -157,6 +169,8 @@ pub enum Error {
     IdConflict,
     #[error("FILE_UNSUPPORTED")]
     Unsupported,
+    #[error(transparent)]
+    NotApplied(Box<Error>),
     #[error("FILE_IO_FAILED")]
     Io(#[from] std::io::Error),
     #[error("FILE_JOURNAL_FAILED")]

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { ChatCommandCommit } from '../ChatCommandService'
+import type { ChatCommandCommit, ChatCommandServiceOptions } from '../ChatCommandService'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { createCommandRequestRepository } from '../../storage/commandRequestRepository'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -13,6 +14,19 @@ const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
 
 describe('command acceptance facts', () => {
+  it('preserves a compaction draft and history when conversation recovery is required', async () => {
+    const failure = new RunEventCorruptionError('source-run')
+    const f = fixture({
+      assertConversationWritable: () => { throw failure },
+    })
+    const before = f.drafts.findById('draft-1')
+    await expect(f.service.execute(f.input)).rejects.toBe(failure)
+    expect(f.commands.findByRequestId(f.input.requestId)).toBeNull()
+    expect(f.drafts.findById('draft-1')).toEqual(before)
+    expect(f.runs.listRecent().map(run => run.id)).toEqual(['source-run'])
+    await f.service.dispose()
+  })
+
   it('publishes the complete transaction before launch and replays its receipt without another fact', async () => {
     const f = fixture()
     const commits: ChatCommandCommit[] = []
@@ -76,7 +90,7 @@ describe('command acceptance facts', () => {
   })
 })
 
-function fixture() {
+function fixture(availability?: ChatCommandServiceOptions['availability']) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const conversations = createConversationRepository(database)
@@ -96,6 +110,6 @@ function fixture() {
   })
   const commands = createCommandRequestRepository(database)
   const launch = vi.fn(async (runId: string, _signal?: AbortSignal) => ({ runId, completion: Promise.resolve(runs.findById(runId)!) }))
-  const service = new ChatCommandService({ commands, conversations, drafts, runs, spaces: createSpaceRepository(database), conversationLifecycle: { isDeleting: conversations.isDeleted }, turnLauncher: { launch } })
+  const service = new ChatCommandService({ availability, commands, conversations, drafts, runs, spaces: createSpaceRepository(database), conversationLifecycle: { isDeleting: conversations.isDeleted }, turnLauncher: { launch } })
   return { service, commands, drafts, runs, database, launch, input: { requestId: 'compact-1', draftId: 'draft-1', expectedRevision: 0 } }
 }

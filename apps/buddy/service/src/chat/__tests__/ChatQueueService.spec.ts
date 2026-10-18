@@ -15,6 +15,7 @@ import { createBuddyUserContent } from '../../../../shared/conversation/buddyUse
 import { Emitter } from '../../../../shared/events/Emitter'
 import { BUDDY_PERMISSION_MODES, resolveBuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
+import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { toPublicRun } from '../../runs/publicRun'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
 import { createBuddyRepository } from '../../storage/buddyRepository'
@@ -44,6 +45,25 @@ afterEach(async () => {
 })
 
 describe('persistent chat queue scheduling', () => {
+  it('keeps queued input undelivered in a quarantined conversation across steer, followup and dispatch', async () => {
+    const failure = new RunEventCorruptionError('historical-run')
+    const f = fixture(false, {
+      assertConversationWritable: () => { throw failure },
+      assertRunExecutable: () => { throw failure },
+    })
+    f.queue.enqueue(f.input('A'))
+    await expect(f.service.steer(f.target('A'))).rejects.toBe(failure)
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.releaseSlot()
+    expect(await f.service.reconcile(f.scope)).toBe(false)
+    expect(f.delivered).toEqual([])
+    expect(f.launched).toEqual([])
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-initial' }])
+  })
+
   it('dispatches ordinary queued input to the current actor with its latest member model without altering the running actor', async () => {
     const f = fixture()
     const other = f.buddies.create({ name: 'Other' })
@@ -625,7 +645,7 @@ describe('persistent chat queue scheduling', () => {
   })
 })
 
-function fixture(queuedOnStartup = false) {
+function fixture(queuedOnStartup = false, availability?: ChatQueueServiceOptions['availability']) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   const drafts = createComposerDraftRepository(database)
   drafts.open({ draftId: 'draft', scope: { kind: 'global' }, initialContent: createBuddyUserContent('initial'), initialModelSelection: null, initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, now: '2026-09-15T00:00:00.000Z' })
@@ -685,6 +705,7 @@ function fixture(queuedOnStartup = false) {
     refreshQueuedInput: async input => input,
   }
   const service = new ChatQueueService({
+    availability,
     getRunPermissionCeiling: (runId) => {
       const run = runs.findById(runId)
       return run?.triggeringMessageId && isReviewUserMessage(conversations.findMessageById(run.triggeringMessageId)?.content) ? 'read_only' : undefined

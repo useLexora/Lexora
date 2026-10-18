@@ -5,7 +5,7 @@ import type { LocalRun } from '../../../shared/runs/runApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type { BuddyStartTurnInput } from '../BuddyRuntime'
-import type { RunEventObservation } from '../events/RunEventPorts'
+import type { RunEventAvailability, RunEventObservation } from '../events/RunEventPorts'
 import type { ChatQueueRepository, QueuedTurnRequestInput } from '../storage/chatQueueRepository'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
@@ -19,9 +19,11 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
 import { getAttachmentLabels } from '../attachments/attachmentLabels'
 import { buddyExecutionFingerprint } from '../buddies/BuddyExecutionDefinition'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 
 export interface ChatQueueServiceOptions {
+  availability?: Pick<RunEventAvailability, 'assertConversationWritable' | 'assertRunExecutable'>
   getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
   queue: ChatQueueRepository
   turns: Pick<ChatTurnService, 'cancel' | 'prepareStart' | 'refreshQueuedInput' | 'validatePreparedInput'>
@@ -144,6 +146,7 @@ export class ChatQueueService {
         await stagedAttachments.rollback()
         return concurrent
       }
+      this.#options.availability?.assertConversationWritable(prepared.conversationId)
       stagedAttachments.validate()
       result = this.#options.queue.enqueue({ ...prepared, requestFingerprint: fingerprint })
     }
@@ -238,7 +241,9 @@ export class ChatQueueService {
   }
 
   #deliver(input: QueuedTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {
+    this.#options.availability?.assertRunExecutable(runId)
     return this.#options.runner[mode](runId, () => {
+      this.#options.availability?.assertRunExecutable(runId)
       const documents = input.attachmentBindings.flatMap(binding => isDocumentMimeType(binding.mimeType)
         ? [{ attachmentId: binding.id, mimeType: binding.mimeType }]
         : [])
@@ -295,6 +300,14 @@ export class ChatQueueService {
   }
 
   #canDispatch(scope: LocalChatQueueScope): boolean {
+    try {
+      this.#options.availability?.assertConversationWritable(scope.conversationId)
+    }
+    catch (error) {
+      if (!(error instanceof RunEventCorruptionError))
+        throw error
+      return false
+    }
     return !this.#disposed && !this.#isCancelling(scope) && !this.#options.runner.isStopping && this.#options.eventLog.state === 'open'
       && !this.#options.queue.activeRun(scope)
       && !this.#options.runner.hasActiveExecution(scope.conversationId)

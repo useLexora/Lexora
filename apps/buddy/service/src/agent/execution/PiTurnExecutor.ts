@@ -20,7 +20,7 @@ import type {
   StartBuddyTurnInput,
 } from './turnTypes'
 import { diagnosticContext } from '../../diagnostics/diagnosticContext'
-import { RunEventLogFatalError } from '../../events/RunEventFailure'
+import { RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { BuddyAgentRunError, readStableRunErrorCode } from '../../runs/runError'
 import { CodemodeCleanupIncompleteError } from '../extensions/codemodeExtension'
 
@@ -381,7 +381,7 @@ async function continueExecution(input: {
         snapshot = await continuation.readPending()
       }
       catch (error) {
-        if (error instanceof RunEventLogFatalError || (!signal.aborted && !isAbortError(error)))
+        if (error instanceof RunEventLogUnavailableError || (!signal.aborted && !isAbortError(error)))
           throw error
         outcome = { errorCode: null, status: 'cancelled' }
         continue
@@ -410,7 +410,7 @@ async function continueExecution(input: {
       })
     }
     catch (error) {
-      if (error instanceof RunEventLogFatalError || !signal.aborted)
+      if (error instanceof RunEventLogUnavailableError || !signal.aborted)
         throw error
       outcome = { errorCode: null, status: 'cancelled' }
     }
@@ -441,7 +441,7 @@ async function settlePiEventsAfterFailure(
     executionError,
     settlement.eventError,
     settlement.writerError,
-  ].find(candidate => candidate instanceof RunEventLogFatalError)
+  ].find(candidate => candidate instanceof RunEventLogUnavailableError)
   if (fatalError)
     throw fatalError
   return settlement

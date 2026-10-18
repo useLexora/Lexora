@@ -6,7 +6,7 @@ import type { UsageService } from '../../usage/UsageService'
 import type { BuddySessionEventSource } from '../sessions/ReusableBuddySession'
 import type { BuddyProjectedEvent } from './projectPiEvent'
 import { safeDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
-import { RunEventLogFatalError } from '../../events/RunEventFailure'
+import { RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { isPiShellToolName } from '../extensions/piBuiltinTools'
 import { BufferedRunEventWriter } from './BufferedRunEventWriter'
 import { PiApplicationObserver } from './PiApplicationObserver'
@@ -356,7 +356,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
       return await record()
     }
     catch (error) {
-      if (error instanceof RunEventLogFatalError)
+      if (error instanceof RunEventLogUnavailableError)
         throw error
       await this.#eventLog.append({
         payload: {

@@ -47,12 +47,13 @@ test('startup recovers history once and only rebuilds changed runs after restart
     const { page, diagnostics } = await instance.launch()
     expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
     expect((await page.evaluate(() => window.lexoraDesktop.app.startup.getState())).status).toBe('ready')
+    const records = await page.evaluate(async () => {
+      const pages = await Promise.all(['app.ready', 'run.recovery'].map(search => window.lexoraDesktop.app.logs.query({ launch: 'current', search })))
+      return pages.flatMap(result => result.records)
+    })
     await instance.stop()
-    const records = (await fs.readFile(path.join(instance.home, '.runtime/state/logs/application.jsonl'), 'utf8'))
-      .trim()
-      .split('\n')
-      .map(line => JSON.parse(line))
-    const ready = records.findLast(record => record.event === 'app.ready')
+    const ready = records.find(record => record.event === 'app.ready')
+    expect(ready).toBeDefined()
     const current = records.filter(record => record.launchId === ready.launchId)
     const measurement = {
       startupMs: ready.durationMs,

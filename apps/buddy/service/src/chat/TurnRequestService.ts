@@ -1,4 +1,5 @@
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { RunEventAvailability } from '../events/RunEventPorts'
 import type { EditTurnRequestInput, PrepareTurnRequestInput, RegenerateTurnRequestInput, RetryInterruptedTurnRequestInput, TurnCommitFact, TurnRequestRecord, TurnRequestRepository } from '../storage/turnRequestRepository'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -13,12 +14,18 @@ export type TurnRequestCommit = EventSnapshot<{
 }>
 
 export class TurnRequestService implements TurnRequestRepository {
+  readonly #availability?: Pick<RunEventAvailability, 'assertConversationWritable'>
   readonly #repository: TurnRequestRepository
   readonly #committed: Emitter<TurnRequestCommit>
   readonly onDidCommit: Emitter<TurnRequestCommit>['event']
   #disposed = false
 
-  constructor(repository: TurnRequestRepository, onObserverError: (error: unknown) => void = () => {}) {
+  constructor(
+    repository: TurnRequestRepository,
+    onObserverError: (error: unknown) => void = () => {},
+    availability?: Pick<RunEventAvailability, 'assertConversationWritable'>,
+  ) {
+    this.#availability = availability
     this.#repository = repository
     this.#committed = new Emitter(onObserverError)
     this.onDidCommit = this.#committed.event
@@ -29,18 +36,24 @@ export class TurnRequestService implements TurnRequestRepository {
   }
 
   prepare(input: PrepareTurnRequestInput) {
+    this.#availability?.assertConversationWritable(input.conversationId)
     return this.#commit(() => this.#repository.prepare(input))
   }
 
   edit(input: EditTurnRequestInput) {
+    this.#availability?.assertConversationWritable(input.conversationId)
     return this.#commit(() => this.#repository.edit(input))
   }
 
   regenerate(input: RegenerateTurnRequestInput) {
+    this.#availability?.assertConversationWritable(input.conversationId)
     return this.#commit(() => this.#repository.regenerate(input))
   }
 
   retryInterrupted(input: RetryInterruptedTurnRequestInput) {
+    const request = this.#repository.findByRequestId(input.requestId)
+    if (request)
+      this.#availability?.assertConversationWritable(request.conversationId)
     return this.#commit(() => this.#repository.retryInterrupted(input))
   }
 

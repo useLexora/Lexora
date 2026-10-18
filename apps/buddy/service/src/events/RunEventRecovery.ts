@@ -15,6 +15,12 @@ export interface RunEventRecoveryRun {
   status: string
 }
 
+export interface RunEventRecoveryFailure {
+  code: 'EVENT_LOG_CORRUPTED'
+  conversationId: string | null
+  runId: string
+}
+
 export interface RunEventRecoverySummary {
   durationMs: number
   enumerationMs: number
@@ -26,6 +32,7 @@ export interface RunEventRecoverySummary {
   rebuilt: number
   events: number
   failed: number
+  failures: readonly Readonly<RunEventRecoveryFailure>[]
 }
 
 export function canReuseRunEventCheckpoint(

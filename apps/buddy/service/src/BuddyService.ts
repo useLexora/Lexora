@@ -121,6 +121,7 @@ import { TaskMarkService } from './conversations/TaskMarkService'
 import { createBuddyCapabilityFactory } from './createBuddyCapabilityFactory'
 import { DirectoryGrantService } from './directories/DirectoryGrantService'
 import { observeRunDiagnostics } from './events/observeRunDiagnostics'
+import { RunEventCorruptionError } from './events/RunEventFailure'
 import { FileResourceCoordinator } from './files/FileResourceCoordinator'
 import { NativeFileEngine } from './files/NativeFileEngine'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
@@ -143,8 +144,8 @@ import { createExtensionModelCapabilities } from './providers/extensionModelCapa
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
-
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
+
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunContinuityService } from './runs/RunContinuityService'
 import { RunLifecycleService } from './runs/RunLifecycleService'
@@ -295,7 +296,7 @@ export async function startBuddyService(
     const usageRepository = createUsageRepository(options.database)
     const workspace = createWorkspaceRepository(options.database)
     const turnRequests = await host.start('runtime.turn_requests', ({ defer }) => {
-      const service = new TurnRequestService(createTurnRequestRepository(options.database), () => record({ event: 'observer.failed', component: 'runtime.turn_requests', level: 'warn' }))
+      const service = new TurnRequestService(createTurnRequestRepository(options.database), () => record({ event: 'observer.failed', component: 'runtime.turn_requests', level: 'warn' }), options.eventLog)
       const notifications = service.onDidCommit((event) => {
         const conversation = conversations.findById(event.conversationId)
         if (conversation)
@@ -443,7 +444,7 @@ export async function startBuddyService(
       return service
     })
     const runRecoveryService = new RunRecoveryService({
-      cancelPendingApprovals: () => approvalService.cancelPendingApprovals(),
+      cancelPendingApprovals: canRecoverRun => approvalService.cancelPendingApprovals('recovery', canRecoverRun),
       captureInterruptedChanges: async (runId) => {
         await changeCaptureService.markInterrupted(runId)
         const run = runs.findById(runId)
@@ -956,6 +957,7 @@ export async function startBuddyService(
     }
     const executionCoordinator = await host.start('runtime.execution_tree', ({ defer }) => {
       const service = new ExecutionCoordinator({
+        availability: options.eventLog,
         hostShellSupervision: currentPlatform.hostShellSupervision,
         executions: executionRecords,
         mailbox: createMailboxRepository(options.database),
@@ -1049,6 +1051,11 @@ export async function startBuddyService(
         onObserverError: () => record({ event: 'execution.observer_failed', level: 'error' }),
         sessions,
       })
+      const quarantine = options.eventLog.onDidQuarantine(async (failure) => {
+        if (failure.conversationId)
+          await service.cancelAndWaitForConversation(failure.conversationId)
+      })
+      defer(() => quarantine.dispose())
       const settledDiagnostics = service.onDidSettle(settled => record({
         event: 'execution.settled',
         level: settled.cleanup === 'degraded' ? 'warn' : 'info',
@@ -1085,9 +1092,15 @@ export async function startBuddyService(
         deletion: createConversationDeletionRepository(options.database),
         runner,
         cancelQueuedRuns: async (conversationId) => {
-          for (const run of runs.listIncomplete()) {
-            if (run.conversationId === conversationId && run.status === 'queued')
-              await runLifecycleService.finalize({ runId: run.id, status: 'cancelled', errorCode: 'RUN_CANCELLED', completedAt: new Date().toISOString() })
+          try {
+            for (const run of runs.listIncomplete()) {
+              if (run.conversationId === conversationId && run.status === 'queued')
+                await runLifecycleService.finalize({ runId: run.id, status: 'cancelled', errorCode: 'RUN_CANCELLED', completedAt: new Date().toISOString() })
+            }
+          }
+          catch (error) {
+            if (!(error instanceof RunEventCorruptionError))
+              throw error
           }
         },
         sessions: { invalidateConversation: id => sessions.invalidateConversationWithResult(id) },
@@ -1174,6 +1187,7 @@ export async function startBuddyService(
     })
     const chatCommandService = await host.start('runtime.chat_commands', ({ defer }) => {
       const service = new ChatCommandService({
+        availability: options.eventLog,
         commands: commandRequests,
         conversationLifecycle,
         conversations,
@@ -1245,7 +1259,7 @@ export async function startBuddyService(
       return service
     })
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
-      const service = new ChatQueueService({ queue: createChatQueueRepository(options.database), turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
+      const service = new ChatQueueService({ availability: options.eventLog, queue: createChatQueueRepository(options.database), turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
       const actionInputs = service.onDidChange((event) => {
         if (event.committed?.messageId && event.committed.runId)
           extensionActions.dispatch({ type: 'task:input:committed', data: { conversationId: event.scope.conversationId, branchId: event.scope.branchId, runId: event.committed.runId, messageId: event.committed.messageId, commitId: event.committed.commitId } })
@@ -1378,7 +1392,13 @@ export async function startBuddyService(
       )
       register(
         registerRunRpc({
-          isBusy: () => runner.hasActiveExecutions || runs.hasIncomplete() || approvalsRepository.list({ status: 'pending', limit: 1 }).length > 0,
+          isBusy: () => {
+            if (runner.hasActiveExecutions)
+              return true
+            const quarantined = new Set(options.eventLog.getRecoveryFailures().map(failure => failure.conversationId))
+            return runs.listIncomplete().some(run => !quarantined.has(run.conversationId))
+              || approvalsRepository.listPending().some(approval => !quarantined.has(runs.findById(approval.runId)?.conversationId ?? null))
+          },
           getCacheWarmingStatus: (conversationId) => {
             const conversation = conversations.findById(conversationId)
             const branchId = conversation?.activeBranchId

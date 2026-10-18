@@ -18,6 +18,7 @@ export default {
   'desktop.loading.pane': 'Loading…',
   'desktop.loading.failed': 'Unable to load. Please try again.',
   'desktop.loading.retry': 'Retry',
+  'desktop.loading.openStorage': 'Data and backups',
   'desktop.account.dialogTitle': 'Profile',
   'desktop.account.userName': 'Display Name',
   'desktop.account.userNamePlaceholder': 'e.g. Your Name',

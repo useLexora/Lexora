@@ -6,7 +6,7 @@ export interface RunEventFailureScope {
   runId: string
 }
 
-export abstract class RunEventLogFatalError extends Error {
+export abstract class RunEventLogUnavailableError extends Error {
   abstract readonly code: string
   abstract readonly commitState: 'committed' | 'not_applicable' | 'unknown'
   readonly firstSequence: number | null
@@ -21,7 +21,9 @@ export abstract class RunEventLogFatalError extends Error {
   }
 }
 
-export class RunEventCorruptionError extends RunEventLogFatalError {
+export abstract class RunEventLogFatalError extends RunEventLogUnavailableError {}
+
+export class RunEventCorruptionError extends RunEventLogUnavailableError {
   readonly code = 'EVENT_LOG_CORRUPTED'
   readonly commitState = 'not_applicable'
 

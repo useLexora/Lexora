@@ -7,6 +7,7 @@ import type { ArtifactService } from './ArtifactService'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { buddyRunOutputPayloadSchema } from '../../../shared/runs/runOutput'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { inferArtifactMimeType } from './ArtifactService'
 
 const legacyOutputTools = new Set([
@@ -63,7 +64,16 @@ async function recoverConversationArtifacts(options: {
   if (files === null)
     return 0
 
-  const outputs = listLegacyOutputs(options.eventLog.listForConversation(options.conversationId, { limit: 10_000 }))
+  let events: BuddyRunEvent[]
+  try {
+    events = options.eventLog.listForConversation(options.conversationId, { limit: 10_000 })
+  }
+  catch (error) {
+    if (error instanceof RunEventCorruptionError)
+      return 0
+    throw error
+  }
+  const outputs = listLegacyOutputs(events)
   if (
     outputs.length === 0
     || new Set(outputs.map(output => output.artifactId)).size !== outputs.length

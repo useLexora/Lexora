@@ -145,12 +145,11 @@ export class SpaceFileService {
   }
 
   async acknowledge(input: SpaceFileTarget & { operationId: string }): Promise<SpaceFileOperation> {
-    const record = await this.query(input)
-    if (!record || record.status !== 'needs-recovery')
-      throw new Error('FILE_INVALID_REQUEST')
-    const result = this.present(input, await this.#engine.acknowledge(input.operationId))
+    const root = await this.root(input)
+    const record = await this.#engine.acknowledge(root, input.operationId)
+    await this.root(input)
     this.publish(input, input.operationId, 'changed')
-    return result
+    return this.present(input, record)
   }
 
   async cancel(input: SpaceFileTarget & { operationId: string }): Promise<null> {

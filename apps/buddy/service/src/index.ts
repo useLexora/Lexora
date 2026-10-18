@@ -137,6 +137,7 @@ async function runBuddyService(): Promise<void> {
           record({ event: 'run.recovery.skipped', level: 'info', count: summary.skipped })
           record({ event: 'run.recovery.finished', level: summary.failed ? 'error' : 'info', durationMs: summary.durationMs, count: summary.failed })
         },
+        onRunQuarantined: failure => record({ event: 'run.recovery.quarantined', level: 'error', runId: failure.runId, ...(failure.conversationId ? { conversationId: failure.conversationId } : {}), errorCode: failure.code }),
         onFatalFailure: (error) => {
           record({ event: 'run.storage_failed', level: 'error', runId: error.runId, errorCode: error.code })
           notifyFailure(readBuddyServiceFailureCode(error))

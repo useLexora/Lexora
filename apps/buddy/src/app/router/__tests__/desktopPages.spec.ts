@@ -2,10 +2,13 @@
 import type { ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import type { DesktopPageContribution } from '@/shared/navigation/desktopPages'
 import { extensionManifestSchema } from '@buddy-shared/extensions/extensionManifest'
+import { builtinSettingsCatalog } from '@buddy-shared/settings/settingsCatalog'
 import { expect, it } from 'vitest'
 import { shallowRef } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { desktopPageRoutes } from '@/shared/navigation/desktopPages'
+import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
+import { createDesktopRouter } from '../index'
 import { useDesktopPages } from '../useDesktopPages'
 
 const page = (id: string, path: string): DesktopPageContribution => ({ id, title: () => id, order: 10, icon: { kind: 'named', name: 'navigationTask' }, location: path, routes: [{ path, component: { render: () => null } }] })
@@ -28,6 +31,25 @@ it('derives navigation and context from registered pages, including future modul
   expect(pages.navigation.value.filter(entry => entry.active).map(entry => entry.id)).toEqual(['future.canvas'])
   expect(JSON.stringify(pages.context.value)).not.toContain('private')
   expect(() => desktopPageRoutes([settings, settings])).toThrow('already registered')
+})
+
+it('allows cold-start access only for trusted runtime-independent settings routes', () => {
+  const router = createDesktopRouter(createMemoryHistory())
+  for (const [category, capability] of Object.entries(builtinSettingsCatalog)) {
+    const route = router.resolve(`/settings/${category}`)
+    expect(route.meta.requiresRuntime, category).toBe(capability.requiresRuntime)
+  }
+  for (const location of [
+    desktopRouteLocations.tasks(),
+    desktopRouteLocations.buddies(),
+    desktopRouteLocations.automations(),
+    desktopRouteLocations.extensions(),
+    desktopRouteLocations.extensionPage('test.navigation'),
+    desktopRouteLocations.provider('test.provider'),
+    '/settings/plugins/settings.storage',
+  ]) {
+    expect(router.resolve(location).meta.requiresRuntime).not.toBe(false)
+  }
 })
 
 it('updates conditional plugin navigation without changing its page identity or installed state', async () => {

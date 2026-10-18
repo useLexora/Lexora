@@ -77,5 +77,7 @@ declare module 'vue-router' {
     desktopPage?: string | ((route: RouteLocationNormalizedLoaded) => string)
     settingsCategory?: DesktopSettingsCategory
     settingsModule?: string
+    /** @description 仅可信且独立于 Runtime 的页面可显式取消启动阻挡；未声明时仍阻挡。 */
+    requiresRuntime?: boolean
   }
 }

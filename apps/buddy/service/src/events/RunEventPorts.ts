@@ -5,7 +5,7 @@ import type {
   BuddyRunEvent,
   ListBuddyRunEventsOptions,
 } from './BuddyRunEvent'
-import type { RunEventRecoverySummary } from './RunEventRecovery'
+import type { RunEventRecoveryFailure, RunEventRecoverySummary } from './RunEventRecovery'
 
 export interface RunEventWriter {
   append: (input: AppendBuddyRunEventInput) => Promise<BuddyRunEvent>
@@ -40,5 +40,14 @@ export interface RunEventObservation {
   readonly state: 'open' | 'failed' | 'closed'
 }
 
+export interface RunEventAvailability {
+  assertConversationWritable: (conversationId: string) => void
+  assertRunWritable: (runId: string) => void
+  assertRunExecutable: (runId: string) => void
+  getRecoveryFailures: () => readonly Readonly<RunEventRecoveryFailure>[]
+}
+
 export interface RunEventLogPort
-  extends RunEventMaintenance, RunEventReader, RunEventWriter, RunEventObservation {}
+  extends RunEventAvailability, RunEventMaintenance, RunEventReader, RunEventWriter, RunEventObservation {
+  readonly onDidQuarantine: Event<Readonly<RunEventRecoveryFailure>>
+}

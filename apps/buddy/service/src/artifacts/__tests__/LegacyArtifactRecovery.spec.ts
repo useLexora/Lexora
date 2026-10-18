@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { runEventFailureScope, RunEventProjectionError, RunEventStorageError } from '../../events/RunEventFailure'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -97,6 +98,37 @@ describe('legacy artifact output recovery', () => {
       eventLog,
       paths,
     })).resolves.toBe(0)
+  })
+
+  it.each([
+    new RunEventProjectionError('run-1', []),
+    new RunEventStorageError(runEventFailureScope('run-1'), 'append', 'sync', 'unknown'),
+    new Error('Shared SQLite unavailable'),
+  ])('propagates shared storage and unknown failures instead of treating them as isolated corruption: %s', async (failure) => {
+    const root = await mkdtemp(join(tmpdir(), 'lexora-buddy-legacy-artifacts-'))
+    directories.push(root)
+    const paths = new BuddyDataPaths(root)
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    databases.push(database)
+    const conversations = createConversationRepository(database)
+    conversations.create({
+      approvalPolicy: 'policy',
+      branchId: 'branch-1',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      executionProfile: 'workspace_write',
+      id: 'conversation-1',
+      spaceId: null,
+      title: 'Legacy output',
+    })
+    await mkdir(paths.conversationArtifactsDirectory('conversation-1'), { recursive: true })
+    const artifacts = createArtifactRepository(database)
+    await expect(reconcileLegacyArtifactOutputs({
+      artifacts,
+      catalogue: new ArtifactService({ repository: artifacts }),
+      conversations,
+      eventLog: { listForConversation: () => { throw failure } },
+      paths,
+    })).rejects.toBe(failure)
   })
 
   it('keeps ambiguous legacy output unindexed', async () => {

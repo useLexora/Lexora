@@ -168,6 +168,10 @@ pub fn execute(
         record.receipt = Some(json!({ "sourceIdentity": identity }));
     }
     let staging = match &request.action {
+        Action::CreateFile | Action::Write { .. } if existing.is_none() => Some(sibling(
+            &request.path,
+            &format!(".lexora-{}.stage", request.operation_id),
+        )?),
         Action::Copy { .. } | Action::Move { .. } => target
             .as_ref()
             .map(|(_, destination)| {
@@ -231,6 +235,7 @@ pub fn execute(
                         .parent()
                         .filter(|path| !path.as_os_str().is_empty())
                     {
+                        may_have_changes = true;
                         root.dir.create_dir_all(parent)?;
                         io::sync_dir(&root.dir)?;
                     }
@@ -243,7 +248,10 @@ pub fn execute(
                 Ok(json!({}))
             }
             Action::CreateDirectory => {
-                root.dir.create_dir(&request.path)?;
+                root.dir
+                    .create_dir(&request.path)
+                    .map_err(io::creation_error)?;
+                may_have_changes = true;
                 let path = relative(&request.path)?;
                 io::sync_dir(
                     &root.dir.open_dir(
@@ -314,7 +322,8 @@ pub fn execute(
                     destination,
                     &format!(".lexora-{}.copy", request.operation_id),
                 )?;
-                let source_fingerprint = io::tree_fingerprint(&root, &request.path, cancelled)?;
+                let source_fingerprint = io::tree_fingerprint(&root, &request.path, cancelled)
+                    .map_err(|error| Error::NotApplied(Box::new(error)))?;
                 may_have_changes = true;
                 io::copy_entry(
                     &root,
@@ -383,12 +392,15 @@ pub fn execute(
             }
         }
         Err(error) => {
-            record.status =
-                if matches!(error, Error::Conflict | Error::Unsupported) && !may_have_changes {
-                    Status::NotApplied
-                } else {
-                    Status::NeedsRecovery
-                };
+            record.status = if matches!(
+                error,
+                Error::Conflict | Error::Unsupported | Error::NotApplied(_)
+            ) && !may_have_changes
+            {
+                Status::NotApplied
+            } else {
+                Status::NeedsRecovery
+            };
             record.error = Some(error.to_string());
         }
     }

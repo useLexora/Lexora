@@ -102,7 +102,7 @@ describe('runEventLog', () => {
     await expect(fixture.log.read('run-1')).resolves.toHaveLength(2)
   })
 
-  it('enters the fatal channel when the durable log is corrupted', async () => {
+  it('quarantines a corrupt durable log without entering the global fatal channel', async () => {
     const failures: unknown[] = []
     const fixture = await createFixture({
       onFatalFailure: error => failures.push(error),
@@ -120,7 +120,9 @@ describe('runEventLog', () => {
       commitState: 'not_applicable',
       runId: 'run-1',
     })
-    expect(failures).toEqual([failure])
+    expect(failures).toEqual([])
+    expect(fixture.log.state).toBe('open')
+    expect(fixture.log.getRecoveryFailures()).toEqual([{ code: 'EVENT_LOG_CORRUPTED', conversationId: 'conversation-1', runId: 'run-1' }])
     await expect(fixture.log.append({ payload: {}, runId: 'run-1', type: 'audit.recorded' }))
       .rejects
       .toBe(failure)

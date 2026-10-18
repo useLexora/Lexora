@@ -3,6 +3,7 @@ import type { TurnRequestCommit } from '../../chat/TurnRequestService'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { TurnRequestService } from '../../chat/TurnRequestService'
+import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { createAttachmentRepository } from '../attachmentRepository'
 
 import { ComposerDraftCommitConflictError } from '../commitComposerDraft'
@@ -22,6 +23,26 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it('rejects new and retried acceptance without consuming drafts or changing requests while quarantined', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    const failure = new RunEventCorruptionError('historical-run')
+    const service = new TurnRequestService(repository, undefined, {
+      assertConversationWritable: () => { throw failure },
+    })
+    const original = createComposerDraftRepository(database).findById('draft-1')
+    expect(() => service.prepare(createInput())).toThrow(failure)
+    expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(original)
+    expect(repository.findByRequestId('request-1')).toBeNull()
+    repository.prepare(createInput())
+    database.exec('UPDATE runs SET status = \'failed\', error_code = \'RUNTIME_RESTARTED\'')
+    const request = repository.findByRequestId('request-1')
+    expect(() => service.retryInterrupted({ requestId: 'request-1', runId: 'new-run', createdAt: '2026-08-14T00:01:00.000Z' })).toThrow(failure)
+    expect(repository.findByRequestId('request-1')).toEqual(request)
+    expect(database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-1' }])
+    service.dispose()
+  })
+
   it('commits message attachment ownership in the same batch and exposes no staged paths', () => {
     const database = createDatabase()
     const attachments = createAttachmentRepository(database)

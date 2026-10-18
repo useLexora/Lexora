@@ -2,6 +2,7 @@ import type { BuddyComposerDraftSend } from '../../../shared/conversation/compos
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type { ConversationLifecycleService } from '../conversations/ConversationLifecycleService'
+import type { RunEventAvailability } from '../events/RunEventPorts'
 import type {
   CommandRequestRecord,
   CommandRequestRepository,
@@ -36,6 +37,7 @@ export type ChatCommandCommit = EventSnapshot<{
 }>
 
 export interface ChatCommandServiceOptions {
+  availability?: Pick<RunEventAvailability, 'assertConversationWritable'>
   commands: CommandRequestRepository
   conversationLifecycle: Pick<ConversationLifecycleService, 'isDeleting'>
   conversations: Pick<ConversationRepository, 'findById'>
@@ -120,6 +122,7 @@ export class ChatCommandService {
     }
     if (conversation.spaceId)
       requireActiveSpace(this.#options.spaces.findById(conversation.spaceId))
+    this.#options.availability?.assertConversationWritable(conversation.id)
     const runId = randomUUID()
     const prepared = this.#options.commands.prepare({
       approvalPolicy: conversation.approvalPolicy,
