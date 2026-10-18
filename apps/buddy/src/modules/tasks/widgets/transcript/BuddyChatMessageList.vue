@@ -236,7 +236,16 @@ onBeforeUnmount(clearOutlineHighlight)
           @open-changes="emit('openChanges', $event)"
           @regenerate="regenerateMessage(item.message)"
           @start-edit="emit('editUserMessage', item.message.id)"
-        />
+        >
+          <template #before-actions>
+            <BuddyExecutionGroup
+              v-if="executionAnchors.has(item.key)"
+              :key="`${conversationId}:${activeBranchId}:${executionAnchors.get(item.key)}`"
+              :root-run-id="executionAnchors.get(item.key)!"
+              :language="language"
+            />
+          </template>
+        </BuddyChatMessageRow>
 
         <BuddyChatAgentTurn
           v-else-if="item.kind === 'agent-turn'"
@@ -252,7 +261,17 @@ onBeforeUnmount(clearOutlineHighlight)
           :turn="item.turn"
           @activate-branch="emit('activateBranch', $event)"
           @regenerate="emit('regenerateAssistant', item.turn.runId)"
-        />
+        >
+          <template #before-actions>
+            <BuddyExecutionGroup
+              v-if="executionAnchors.has(item.key)"
+              :key="`${conversationId}:${activeBranchId}:${executionAnchors.get(item.key)}`"
+              class="mt-[var(--buddy-chat-gap-section)]"
+              :root-run-id="executionAnchors.get(item.key)!"
+              :language="language"
+            />
+          </template>
+        </BuddyChatAgentTurn>
 
         <BuddyChatRunActivity
           v-else-if="item.kind === 'activity'"
@@ -290,7 +309,7 @@ onBeforeUnmount(clearOutlineHighlight)
           :language="language"
         />
         <BuddyExecutionGroup
-          v-if="executionAnchors.has(item.key)"
+          v-if="item.kind === 'activity' && executionAnchors.has(item.key)"
           :key="`${conversationId}:${activeBranchId}:${executionAnchors.get(item.key)}`"
           class="buddy-chat-transcript-row"
           :data-chat-row-key="`executions:${executionAnchors.get(item.key)}`"

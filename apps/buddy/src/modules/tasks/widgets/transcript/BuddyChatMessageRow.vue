@@ -105,6 +105,7 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
       @open-artifact="emit('openArtifact', $event)" @open-changes="emit('openChanges', $event)"
     />
     <BuddyChatActorProcess v-if="processRunId" :run-id="processRunId" :language="language" @open-artifact="emit('openArtifact', $event)" @open-changes="emit('openChanges', $event)" />
+    <slot name="before-actions" />
     <BuddyChatActionToolbar
       v-if="hasActions"
       :actions="actions"
