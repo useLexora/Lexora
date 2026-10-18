@@ -195,6 +195,10 @@ export function useChatComposer(options: UseChatComposerOptions) {
   function applyCommand(name: BuddyChatCommandName, range: { from: number, to: number }, trailingSpace = false) {
     query.closeSuggestions()
     const definition = getBuddyChatCommandDefinition(name)
+    if (definition.kind === 'action' && definition.action === 'workbench') {
+      const current = editor.value
+      return current ? localCommands.executeAction(current, definition.commandId, range) : false
+    }
     if (definition.kind === 'action' && definition.action === 'view') {
       const panel = name === 'mcp' ? conversationMcpPanel : conversationStatusPanel
       if (!panel)

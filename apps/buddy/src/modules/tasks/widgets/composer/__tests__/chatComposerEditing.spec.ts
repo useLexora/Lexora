@@ -238,6 +238,47 @@ describe('chat composer editing', () => {
     expect(flow.sent).toEqual([])
   })
 
+  it.each(['select', 'submit'] as const)('starts a new task immediately through %s while preserving the remaining input', async (source) => {
+    const executions: string[] = []
+    const commands = localCommands(async (id) => {
+      executions.push(id)
+      return null
+    })
+    commands.entries.value = [{ id: 'task.newInSpace', name: 'new', title: 'New task in current space' }]
+    const flow = await mountComposer({ commands })
+    flow.canSend.value = false
+    const prefix = source === 'select' ? '/ne' : '/new'
+    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
+      { type: 'text', text: `${prefix} keep this text ` },
+      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
+    ] }] }))
+    if (source === 'select') {
+      flow.editor.commands.setTextSelection(prefix.length + 1)
+      flow.composer.activeTrigger.value = { kind: 'slash', query: 'ne' }
+      const suggestions = flow.composer.suggestions.value.filter(item => item.option.value === '/new')
+      expect(suggestions).toHaveLength(1)
+      flow.composer.selectSuggestion(suggestions[0]!.option)
+    }
+    else {
+      flow.composer.submit()
+    }
+    await nextTick()
+    expect(executions).toEqual(['task.newInSpace'])
+    expect(flow.sent).toEqual([])
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
+      body: [{ content: [{ type: 'text', text: ' keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
+      panelResourceIds: ['panel'],
+    })
+  })
+
+  it('keeps an unavailable new task action in the draft', async () => {
+    const flow = await mountComposer()
+    flow.editor.commands.setContent(createChatComposerContentFromText('/new keep this text'))
+    flow.composer.submit()
+    expect(flow.editor.getText()).toBe('/new keep this text')
+    expect(flow.sent).toEqual([])
+  })
+
   it.each(['select', 'submit'] as const)('preserves structured input when a review command is handled through %s', async (source) => {
     const flow = await mountComposer()
     const prefix = source === 'select' ? '/rev' : '/review'
@@ -744,6 +785,19 @@ it('does not clear edits or a different draft after an asynchronous local comman
   flow.editor.commands.setContent(createChatComposerContentFromText('New work'))
   flow.draftId.value = 'draft-2'
   result.resolve(null)
+  await nextTick()
+  expect(flow.editor.getText()).toBe('New work')
+  expect(flow.sent).toEqual([])
+})
+
+it('does not restore a failed command over newer input', async () => {
+  const result = deferred<null>()
+  const flow = await mountComposer({ commands: localCommands(() => result.promise) })
+  flow.editor.commands.setContent(createChatComposerContentFromText('/game:start'))
+  flow.keydown('Enter')
+  expect(flow.editor.getText()).toBe('')
+  flow.editor.commands.setContent(createChatComposerContentFromText('New work'))
+  result.reject(new Error('Unavailable'))
   await nextTick()
   expect(flow.editor.getText()).toBe('New work')
   expect(flow.sent).toEqual([])

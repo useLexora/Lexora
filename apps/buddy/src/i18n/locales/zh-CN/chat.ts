@@ -157,6 +157,7 @@ export default {
   'desktop.chat.blocker.runtime.action': '查看日志',
   'desktop.chat.blocker.runtime.description': '本地运行时当前不可用，请重试或查看日志。',
   'desktop.chat.blocker.runtime.title': '本地运行时离线',
+  'desktop.chat.command.new': '在当前空间新建任务。',
   'desktop.chat.command.compact': '压缩较早上下文，保留最近工作；可附加摘要重点。',
   'desktop.chat.command.review': '以只读方式审查当前工作，按严重程度给出风险与建议。',
   'desktop.chat.command.skills': '从当前任务可用的 Skills 中选择。',

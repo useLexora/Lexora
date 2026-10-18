@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import type { DropdownOption } from 'naive-ui'
 import type { TaskCapability } from '@/modules/tasks'
 import type { WorkbenchView } from '@/workbench/common/workbench'
+import { Add20Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
-import { computed, onScopeDispose, shallowRef, watch } from 'vue'
+import { computed, h, onScopeDispose, shallowRef, watch } from 'vue'
+import { translateBuddy } from '@/i18n/buddyI18n'
 import { useTaskEnvironment } from '@/modules/tasks'
 import { DesktopTaskEditor, DesktopTaskViewProvider } from '@/modules/tasks/ui'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import WorkbenchPaneActions from '@/workbench/browser/WorkbenchPaneActions.vue'
 import WorkbenchPaneTitle from '@/workbench/browser/WorkbenchPaneTitle.vue'
 import DesktopTaskLoading from './DesktopTaskLoading.vue'
@@ -19,6 +23,32 @@ const taskResource = computed(() => ['task', 'draft'].includes(props.view.resour
 const notificationTargetMessageId = computed(() => environment.notificationTarget.value?.conversationId === task.value?.session.activeTaskId.value ? environment.notificationTarget.value?.messageId ?? null : null)
 const context = computed(() => ({ ...environment, notificationTargetMessageId, tasks: task.value!, startTask: (spaceId: string | null = null) => task.value!.session.startTask(spaceId) }))
 const message = useMessage()
+const newTaskActions = computed<DropdownOption[]>(() => {
+  const command = workbench.controller.registry.commands.get('task.newInSpace')
+  return command
+    ? [{
+        key: command.id,
+        label: translateBuddy(workbench.language.value, 'desktop.tasks.newTask'),
+        icon: () => h(DesktopIcon, { component: Add20Regular }),
+        disabled: !task.value,
+      }]
+    : []
+})
+async function selectAction(key: string | number, fallback?: (key: string | number) => void) {
+  if (key !== 'task.newInSpace') {
+    fallback?.(key)
+    return
+  }
+  const paneId = workbench.controller.owner(props.view.id)?.id
+  if (!paneId)
+    return
+  try {
+    await workbench.controller.commands.execute(key, { source: 'menu', paneId })
+  }
+  catch {
+    message.error(translateBuddy(workbench.language.value, 'desktop.command.failed'))
+  }
+}
 watch(() => task.value?.workspace.status.errorMessage.value, (error) => {
   if (error) {
     message.error(error)
@@ -63,7 +93,7 @@ watch(() => task.value?.session.currentTitle.value, (title) => {
         <WorkbenchPaneTitle :view="view" />
       </template>
       <template #actions="{ options, select, label }">
-        <WorkbenchPaneActions :view-id="view.id" :actions="options" :label="label" @select="select" @split="workbench.newTask(task.session.spaceId.value, workbench.controller.owner(view.id)?.id, $event)" />
+        <WorkbenchPaneActions :view-id="view.id" :actions="[...options, ...newTaskActions]" :label="label" @select="selectAction($event, select)" @split="workbench.newTask({ spaceId: task.session.spaceId.value, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
       </template>
     </DesktopTaskEditor>
   </DesktopTaskViewProvider>
@@ -72,7 +102,7 @@ watch(() => task.value?.session.currentTitle.value, (title) => {
       <WorkbenchPaneTitle :view="view" />
     </template>
     <template #actions>
-      <WorkbenchPaneActions :view-id="view.id" @split="workbench.newTask(typeof view.resource.data.spaceId === 'string' ? view.resource.data.spaceId : null, workbench.controller.owner(view.id)?.id, $event)" />
+      <WorkbenchPaneActions :view-id="view.id" :actions="newTaskActions" @select="selectAction($event)" @split="workbench.newTask({ spaceId: typeof view.resource.data.spaceId === 'string' ? view.resource.data.spaceId : null, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
     </template>
   </DesktopTaskLoading>
 </template>

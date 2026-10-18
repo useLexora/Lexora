@@ -1,4 +1,4 @@
-export type BuddyChatCommandName = 'compact' | 'mcp' | 'review' | 'skills' | 'status'
+export type BuddyChatCommandName = 'compact' | 'mcp' | 'new' | 'review' | 'skills' | 'status'
 export type BuddyChatCommandDescriptionKey = `desktop.chat.command.${BuddyChatCommandName}`
 
 export type BuddyChatCommandDefinition = {
@@ -8,6 +8,7 @@ export type BuddyChatCommandDefinition = {
 } & (
   | { kind: 'prompt' }
   | { kind: 'action', action: 'run' | 'view' | 'input' }
+  | { kind: 'action', action: 'workbench', commandId: string }
 )
 
 export interface ParsedBuddyChatCommand {
@@ -16,6 +17,14 @@ export interface ParsedBuddyChatCommand {
 }
 
 const commandsByName: Readonly<Record<BuddyChatCommandName, BuddyChatCommandDefinition>> = {
+  new: {
+    kind: 'action',
+    action: 'workbench',
+    commandId: 'task.newInSpace',
+    argumentHint: null,
+    descriptionKey: 'desktop.chat.command.new',
+    name: 'new',
+  },
   compact: {
     kind: 'action',
     action: 'run',

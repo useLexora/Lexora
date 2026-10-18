@@ -1,5 +1,6 @@
 import type { UseChatComposerOptions } from './typing'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerTrigger, ChatPromptContextOption } from '@/modules/prompt-input'
+import { BUDDY_CHAT_COMMANDS } from '@buddy-shared/conversation/buddyChatCommands'
 import { buddyInputMaterialKey, getBuddyInputMaterials } from '@buddy-shared/conversation/buddyInputMaterial'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -59,7 +60,8 @@ export function useChatComposerSuggestions(
       quoteReference: { type: 'quote_ref', quoteKind: material.kind === 'message_quote' ? 'message' : 'resource', quoteId: material.id },
     }]
   }))
-  const commandOptions = computed<ChatPromptContextOption[]>(() => (commands?.entries.value ?? []).map((command) => {
+  const builtinCommandIds = new Set(BUDDY_CHAT_COMMANDS.flatMap(command => command.kind === 'action' && command.action === 'workbench' ? [command.commandId] : []))
+  const commandOptions = computed<ChatPromptContextOption[]>(() => (commands?.entries.value ?? []).filter(command => !builtinCommandIds.has(command.id)).map((command) => {
     const origin = command.origin
     const repeated = origin && commands?.entries.value.some(other => other.id !== command.id && other.name === command.name && other.origin?.name === origin.name && (other.origin.author || '') === (origin.author || ''))
     const identity = origin ? [origin.name, origin.author || (options.language.value === 'en-US' ? 'Unsigned' : '未署名'), origin.version, ...(repeated ? [origin.source ? new URL(origin.source).host : (options.language.value === 'en-US' ? 'Local' : '本地'), origin.id] : [])] : []

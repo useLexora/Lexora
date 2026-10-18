@@ -159,6 +159,7 @@ export default {
   'desktop.chat.blocker.runtime.action': 'View logs',
   'desktop.chat.blocker.runtime.description': 'The local runtime is unavailable. Retry or view logs.',
   'desktop.chat.blocker.runtime.title': 'Local runtime offline',
+  'desktop.chat.command.new': 'Start a new task in the current space.',
   'desktop.chat.command.compact': 'Compact older context and keep recent work; optional summary focus.',
   'desktop.chat.command.review': 'Review the current work read-only, ranked by severity.',
   'desktop.chat.command.skills': 'Pick from the Skills available for this task.',

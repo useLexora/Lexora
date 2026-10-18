@@ -9,7 +9,7 @@ import type { DesktopStores } from '../bootstrap/useDesktopAppState'
 import type { TaskIndexController } from '@/modules/tasks'
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { ChatReadingPositions } from '@/modules/tasks/ui'
-import type { DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
+import type { CommandContext, DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
@@ -156,8 +156,15 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   function openTask(id: string, destination: { signal?: AbortSignal, direction?: SplitDirection } = {}): Promise<void> {
     return activateTask({ scheme: 'task', id, data: {} }, options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, destination)
   }
-  function newTask(spaceId?: string | null, paneId = center(), direction?: SplitDirection): Promise<void> {
-    return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: spaceId ?? null } }, labels().newTask, { paneId, direction })
+  function newTask(destination: { spaceId?: string | null, paneId?: string, direction?: SplitDirection } = {}): Promise<void> {
+    const { spaceId = null, paneId = center(), direction } = destination
+    return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId } }, labels().newTask, { paneId, direction })
+  }
+  function taskDestination(context: CommandContext) {
+    const pane = context.pane ?? controller.pane(center())
+    const view = pane?.view ? controller.layout.views[pane.view] : undefined
+    const task = view ? pool.peek(view.resource) : undefined
+    return task && pane ? { spaceId: task.session.spaceId.value, paneId: pane.id } : null
   }
   async function startTaskWithSkill(name: string, prompt: string, spaceId: string | null = null): Promise<void> {
     const version = navigationVersion
@@ -406,8 +413,22 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
 
   controller.registry.register('lexora.navigation', (scope) => {
     scope.command({ id: 'task.new', label: () => labels().newTask, keybinding: 'Mod+N', execute: () => newTask() })
+    scope.command({
+      id: 'task.newInSpace',
+      label: () => labels().newTaskInSpace,
+      slash: { name: 'new' },
+      enabled: context => taskDestination(context) !== null,
+      execute: (context) => {
+        if (context.arguments?.trim())
+          throw new Error('COMMAND_ARGUMENTS_UNSUPPORTED')
+        const destination = taskDestination(context)
+        if (!destination)
+          throw new Error('TASK_UNAVAILABLE')
+        return newTask(destination)
+      },
+    })
     for (const direction of ['left', 'right', 'up', 'down'] as const) {
-      scope.command({ id: `view.split.${direction}`, label: () => labels()[direction === 'right' ? 'split' : direction === 'down' ? 'splitDown' : direction === 'left' ? 'splitLeft' : 'splitUp'], keybinding: direction === 'right' ? 'Mod+\\' : direction === 'down' ? 'Mod+Shift+\\' : undefined, execute: context => newTask(context.view ? pool.peek(context.view.resource)?.session.spaceId.value : null, context.pane?.id ?? center(), direction) })
+      scope.command({ id: `view.split.${direction}`, label: () => labels()[direction === 'right' ? 'split' : direction === 'down' ? 'splitDown' : direction === 'left' ? 'splitLeft' : 'splitUp'], keybinding: direction === 'right' ? 'Mod+\\' : direction === 'down' ? 'Mod+Shift+\\' : undefined, execute: context => newTask({ ...taskDestination(context), paneId: context.pane?.id ?? center(), direction }) })
     }
     scope.command({ id: 'context.close', label: () => labels().closeContext, keybinding: 'Mod+W', shortcutScope: 'context', enabled: context => context.values['focus.area'] === 'context' && !!options.resources().activeTab.value, execute: () => {
       const tab = options.resources().activeTab.value
@@ -451,7 +472,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       if (id)
         await openTask(id)
       else
-        await newTask(previous?.value.spaceId)
+        await newTask({ spaceId: previous?.value.spaceId })
     }
     initialized.value = true
     projections.reconcile()
