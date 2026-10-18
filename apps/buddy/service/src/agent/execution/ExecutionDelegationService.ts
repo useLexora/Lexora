@@ -175,7 +175,8 @@ export class ExecutionDelegationService {
     const snapshot = source.run.actorSnapshot
     if (!snapshot || snapshot.kind !== 'actor')
       return { actors: [], npcs: [] }
-    const ids = [...snapshot.settings.npcIds, ...this.#options.members.list(source.run.conversationId).map(member => member.actorId)]
+    const npcIds = this.#options.buddies.get(snapshot.id).settings.npcTeamEnabled ? snapshot.settings.npcIds : []
+    const ids = [...npcIds, ...this.#options.members.list(source.run.conversationId).map(member => member.actorId)]
     const targets = this.#options.actorTargets?.(source.run.rootRunId) ?? []
     const available = [...new Set(ids)].flatMap((id) => {
       const buddy = this.#options.buddies.get(id)

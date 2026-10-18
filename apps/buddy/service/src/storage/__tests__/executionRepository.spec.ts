@@ -17,6 +17,20 @@ function rehash<T extends Parameters<typeof hashChildAdmissionRequest>[0]>(input
 }
 
 describe('execution admission and fences', () => {
+  it('rechecks the team switch at admission and preserves accepted children when collaboration is disabled', () => {
+    const f = fixture()
+    const pending = f.child('rejected')
+    f.executions.admitChild(f.child('accepted'))
+    let actor = f.buddies.get('default')
+    actor = f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, npcTeamEnabled: false }) })
+    expect(() => f.executions.admitChild(pending)).toThrow(expect.objectContaining({ code: 'unauthorized' }))
+    expect(f.runs.findById('rejected')).toBeNull()
+    expect(f.executions.claimWorking(f.fence('accepted')).phase).toBe('working')
+    f.executions.admitChild(f.child('actor', f.actor.id))
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, npcTeamEnabled: true }) })
+    expect(f.executions.admitChild(pending).created).toBe(true)
+  })
+
   it('accepts one durable queued child per request and retains the accepted snapshot after definition changes', () => {
     const f = fixture()
     const request = f.child('npc-1')

@@ -206,6 +206,7 @@ function onSaveSkills(selectedIds: string[], requiredIds: string[]) {
 
       <div v-if="buddy.kind === 'actor'" class="grid min-w-0 gap-4">
         <BuddyNpcTeam
+          v-model:enabled="settings.npcTeamEnabled"
           v-model:npc-ids="settings.npcIds"
           v-model:concurrency="settings.npcConcurrency"
           :buddies="buddies"

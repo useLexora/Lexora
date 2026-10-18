@@ -58,7 +58,7 @@ export class BuddyDefinitionResolver {
       throw new BuddyServiceError('BUDDY_DISABLED')
     if (buddy.kind !== input.kind)
       throw new BuddyServiceError('BUDDY_NOT_ACTOR')
-    for (const id of buddy.settings.npcIds) {
+    for (const id of buddy.settings.npcTeamEnabled ? buddy.settings.npcIds : []) {
       const target = this.options.buddies.get(id)
       if (target.deletedAt || !target.enabled || target.kind !== 'npc')
         throw new BuddyServiceError('BUDDY_INVALID_NPC_BINDING')
@@ -108,7 +108,7 @@ export class BuddyDefinitionResolver {
     const current = this.options.buddies.get(definition.id)
     if (current.revision !== definition.revision)
       throw new BuddyServiceError('BUDDY_CONFLICT')
-    for (const id of definition.settings.npcIds) {
+    for (const id of definition.settings.npcTeamEnabled ? definition.settings.npcIds : []) {
       const npc = this.options.buddies.get(id)
       if (npc.deletedAt || !npc.enabled || npc.kind !== 'npc')
         throw new BuddyServiceError('BUDDY_INVALID_NPC_BINDING')

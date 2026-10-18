@@ -212,8 +212,13 @@ export function createExecutionRepository(database: DatabaseSync) {
         }
         if (snapshot.kind === 'actor' && !database.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND actor_id = ? AND removed_at IS NULL').get(caller.run.conversationId, snapshot.id))
           throw new ExecutionAdmissionError('unauthorized')
-        if (snapshot.kind === 'npc' && !caller.run.actorSnapshot.settings.npcIds.includes(snapshot.id))
-          throw new ExecutionAdmissionError('unauthorized')
+        if (snapshot.kind === 'npc') {
+          const currentCaller = database.prepare('SELECT settings_json FROM buddies WHERE id = ?').get(caller.run.buddyId)
+          if (!currentCaller || !buddySettingsSchema.parse(JSON.parse(currentCaller.settings_json as string)).npcTeamEnabled
+            || !caller.run.actorSnapshot.settings.npcIds.includes(snapshot.id)) {
+            throw new ExecutionAdmissionError('unauthorized')
+          }
+        }
         const ceiling = input.authorization.fileAccessCeiling === 'read_only' || chain.some(ancestor => ancestor.fileAccessCeiling === 'read_only' || ancestor.run.actorSnapshot?.settings.limits.fileAccess === 'read_only')
           || snapshot.settings.limits.fileAccess === 'read_only'
         if (!isExecutionProfileWithin(input.run.executionProfile, input.authorization.executionProfile)

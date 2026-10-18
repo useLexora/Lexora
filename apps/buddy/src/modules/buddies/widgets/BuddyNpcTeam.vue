@@ -2,7 +2,7 @@
 import type { LocalBuddy } from '@buddy-shared/buddies/buddyApi'
 import type { BuddySettings } from '@buddy-shared/buddies/buddySettings'
 import { Add20Regular, Dismiss20Regular, PeopleTeam20Regular } from '@vicons/fluent'
-import { NButton, NInputNumber, NScrollbar, NTooltip } from 'naive-ui'
+import { NButton, NInputNumber, NScrollbar, NSwitch, NTooltip } from 'naive-ui'
 import { computed, shallowRef, useId } from 'vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -13,11 +13,14 @@ import BuddyNpcRecruitDialog from './BuddyNpcRecruitDialog.vue'
 import BuddySettingsSection from './BuddySettingsSection.vue'
 
 const props = defineProps<{ buddies: readonly LocalBuddy[], disabled: boolean }>()
+const enabled = defineModel<boolean>('enabled', { required: true })
 const npcIds = defineModel<string[]>('npcIds', { required: true })
 const concurrency = defineModel<BuddySettings['npcConcurrency']>('concurrency', { required: true })
 const { language } = useDesktopUi()
 const labels = computed(() => buddyLabels(language.value))
 const showRecruitDialog = shallowRef(false)
+const teamLabelId = useId()
+const teamDescriptionId = useId()
 const concurrencyLabelId = useId()
 const concurrencyDescriptionId = useId()
 
@@ -51,6 +54,9 @@ function onSaveRecruited(selectedIds: string[]) {
       <span class="rounded-micro bg-subtle px-2 py-0.5 text-[11px] font-medium text-muted tabular-nums">
         {{ members.length }}
       </span>
+      <span v-if="!enabled" class="rounded-micro bg-subtle px-2 py-0.5 text-[11px] font-medium text-muted">
+        {{ labels.paused }}
+      </span>
     </template>
 
     <template #actions>
@@ -61,6 +67,16 @@ function onSaveRecruited(selectedIds: string[]) {
         {{ labels.recruitNpc }}
       </NButton>
     </template>
+
+    <div class="border-t border-t-solid border-t-border px-4 py-3">
+      <div class="flex items-center justify-between gap-3">
+        <span :id="teamLabelId" class="text-[13px] font-600 text-fg">{{ labels.npcTeamEnabled }}</span>
+        <NSwitch v-model:value="enabled" :round="false" :aria-labelledby="teamLabelId" :aria-describedby="teamDescriptionId" :disabled="disabled" />
+      </div>
+      <p :id="teamDescriptionId" class="m-0 mt-2 text-[12px] text-muted leading-relaxed">
+        {{ enabled ? labels.npcTeamEnabledHint : labels.npcTeamDisabledHint }}
+      </p>
+    </div>
 
     <div class="border-y border-y-solid border-y-border px-4 py-3" data-testid="buddy-npc-concurrency">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -88,8 +104,14 @@ function onSaveRecruited(selectedIds: string[]) {
 
     <NScrollbar v-if="members.length" class="max-h-[min(400px,50dvh)]" container-class="overscroll-y-contain" trigger="none" data-testid="buddy-npc-members">
       <ul class="m-0 list-none p-0" :aria-label="labels.npcTeam">
-        <li v-for="member in members" :key="member.id" class="flex min-h-17 box-border items-center gap-3 px-4 py-3 border-b border-b-solid border-b-border last:border-b-0" :data-npc-id="member.id">
-          <BuddyAvatar :buddy-id="member.id" :src="member.buddy?.avatar" class="size-9" />
+        <li v-for="(member, index) in members" :key="member.id" class="flex min-h-17 box-border items-center gap-3 px-4 py-3 border-b border-b-solid border-b-border last:border-b-0" :data-npc-id="member.id">
+          <BuddyAvatar
+            :buddy-id="member.id"
+            :src="member.buddy?.avatar"
+            class="buddy-npc-avatar size-9"
+            :class="{ 'is-inactive': !enabled || !member.buddy?.enabled }"
+            :style="{ '--npc-transition-delay': `${Math.min(index, 4) * 16}ms` }"
+          />
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <strong class="text-[13px] font-600 text-fg break-all">{{ member.buddy?.name ?? member.id }}</strong>
@@ -125,3 +147,23 @@ function onSaveRecruited(selectedIds: string[]) {
     />
   </BuddySettingsSection>
 </template>
+
+<style scoped lang="scss">
+.buddy-npc-avatar {
+  filter: grayscale(0);
+  opacity: 1;
+  transform: translateY(0);
+  transition: filter 180ms ease, opacity 180ms ease, transform 180ms ease;
+  transition-delay: var(--npc-transition-delay);
+
+  &.is-inactive {
+    filter: grayscale(1);
+    opacity: 0.6;
+    transform: translateY(1px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+</style>

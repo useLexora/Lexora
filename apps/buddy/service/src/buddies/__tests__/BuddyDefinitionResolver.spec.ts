@@ -74,6 +74,18 @@ function setup(beforeResolve?: () => Promise<void>) {
 }
 
 describe('buddy execution definitions', () => {
+  it('allows a disabled team to retain unavailable NPC bindings without blocking the actor', async () => {
+    const fixture = setup()
+    const actor = fixture.buddies.get('default')
+    const npcId = actor.settings.npcIds[0]!
+    const npc = fixture.buddies.get(npcId)
+    await fixture.buddies.update({ buddyId: npc.id, expectedRevision: npc.revision, enabled: false })
+    await fixture.updateSettings(actor.id, { npcTeamEnabled: false })
+    expect((await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition.settings)
+      .toEqual({ ...actor.settings, npcTeamEnabled: false })
+    await expect(fixture.updateSettings(actor.id, { npcTeamEnabled: true })).rejects.toMatchObject({ code: 'BUDDY_INVALID_NPC_BINDING' })
+  })
+
   it('resolves role defaults before the application default and applies an explicit request without changing either', async () => {
     const fixture = setup()
     const actor = await fixture.buddies.create({ name: 'Actor' })

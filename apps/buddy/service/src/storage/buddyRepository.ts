@@ -55,7 +55,7 @@ export function createBuddyRepository(database: DatabaseSync) {
     const npcIds = [...new Set(parsedSettings.npcIds)]
     if (current.kind === 'npc' && npcIds.length)
       throw new BuddyServiceError('BUDDY_INVALID_NPC_BINDING')
-    if (input.settings) {
+    if (input.settings && parsedSettings.npcTeamEnabled) {
       for (const id of npcIds) {
         const npc = get(id)
         if (id === current.id || npc.kind !== 'npc' || !npc.enabled || npc.deletedAt)

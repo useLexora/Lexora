@@ -1,6 +1,12 @@
 import { expect, it } from 'vitest'
 import { buddySettingsSchema, DEFAULT_BUDDY_SETTINGS } from '../buddySettings'
 
+it('keeps existing teams enabled when reading settings without the team switch', () => {
+  const { npcTeamEnabled: _, ...previous } = DEFAULT_BUDDY_SETTINGS
+  expect(buddySettingsSchema.parse(previous)).toEqual(DEFAULT_BUDDY_SETTINGS)
+  expect(buddySettingsSchema.parse({ ...previous, npcTeamEnabled: false }).npcTeamEnabled).toBe(false)
+})
+
 it('validates capability identity, required skill scope and finite concurrency', () => {
   const toolId = JSON.stringify(['mcp', `connection-${'x'.repeat(1024)}`, 'lookup'])
   expect(buddySettingsSchema.parse({ ...DEFAULT_BUDDY_SETTINGS, tools: { mode: 'selected', ids: [toolId] }, npcConcurrency: { mode: 'unlimited' } }).tools).toEqual({ mode: 'selected', ids: [toolId] })

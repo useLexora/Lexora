@@ -249,7 +249,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
     const expectedActor = mentioned.length === 1 ? mentioned[0] : fixedQueuedActor ?? current.buddy_id
     if (actorId !== expectedActor || (input.actorSnapshot && (input.actorSnapshot.id !== actorId || input.actorSnapshot.revision !== buddy.revision)))
       throw new BuddyServiceError('BUDDY_CONFLICT')
-    for (const id of input.actorSnapshot?.settings.npcIds ?? []) {
+    for (const id of input.actorSnapshot?.settings.npcTeamEnabled ? input.actorSnapshot.settings.npcIds : []) {
       const npc = database.prepare('SELECT kind, enabled, deleted_at FROM buddies WHERE id = ?').get(id)
       if (!npc || npc.kind !== 'npc' || !npc.enabled || npc.deleted_at)
         throw new BuddyServiceError('BUDDY_INVALID_NPC_BINDING')

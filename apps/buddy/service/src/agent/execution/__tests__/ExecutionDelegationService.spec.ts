@@ -50,6 +50,26 @@ function fixture() {
 }
 
 describe('execution delegation boundary', () => {
+  it('revokes and restores NPC targets for an already accepted caller without removing actor partners or bindings', async () => {
+    const f = fixture()
+    const before = f.buddies.get('default').settings
+    const setEnabled = (npcTeamEnabled: boolean) => {
+      const actor = f.buddies.get('default')
+      f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, npcTeamEnabled }) })
+    }
+    setEnabled(false)
+    await expect(f.service.execute(f.caller, 'off-list', { operation: 'list' }, f.controller.signal)).resolves.toMatchObject({ actors: [{ id: f.actor.id }], npcs: [] })
+    await expect(f.service.execute(f.caller, 'off-delegate', { operation: 'delegate', targetId: f.npc.id, text: 'Inspect' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(f.executions.listTree('root')).toHaveLength(1)
+    expect(f.buddies.get('default').settings).toEqual({ ...before, npcTeamEnabled: false })
+    setEnabled(true)
+    await expect(f.service.execute(f.caller, 'on-list', { operation: 'list' }, f.controller.signal)).resolves.toMatchObject({ npcs: [{ id: f.npc.id }] })
+    const accepted = await f.service.execute(f.caller, 'on-delegate', { operation: 'delegate', targetId: f.npc.id, text: 'Inspect' }, f.controller.signal) as { runId: string }
+    setEnabled(false)
+    expect(f.executions.find(accepted.runId)?.phase).toBe('queued')
+    expect(f.buddies.get('default').settings.npcIds).toEqual(before.npcIds)
+  })
+
   it('routes child progress only to its caller and preserves separate inspection permissions', async () => {
     const f = fixture()
     f.executions.admitChild(f.child('child'))
