@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto'
 import { buddySettingsSchema } from '../../../shared/buddies/buddySettings'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { buddyExecutionDefinitionSchema } from '../buddies/BuddyExecutionDefinition'
+import { freezeConversationMemberModel } from './conversationMemberRepository'
 import { withTransaction } from './database'
 import { createRunInputRepository } from './runInputRepository'
 import { createRunRepository } from './runRepository'
@@ -237,6 +238,7 @@ export function createExecutionRepository(database: DatabaseSync) {
         let threadId: string
         if (snapshot.kind === 'actor') {
           threadId = threads.ensureActor(caller.run.conversationId, snapshot.id, input.run.startedAt).id
+          freezeConversationMemberModel(database, caller.run.conversationId, snapshot.id, snapshot.model)
         }
         else {
           threadId = threads.createNpc(caller.run.conversationId, snapshot.id, input.run.startedAt).id

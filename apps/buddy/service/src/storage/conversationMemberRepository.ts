@@ -8,7 +8,7 @@ export interface ConversationMemberRecord {
   conversationId: string
   actorId: string
   modelSelection: ConversationModelSelection | null
-  modelSelectionSource: 'legacy' | 'explicit' | null
+  modelSelectionSource: 'legacy' | 'explicit' | 'snapshot' | null
   joinedAt: string
 }
 
@@ -89,6 +89,12 @@ export function createConversationMemberRepository(database: DatabaseSync) {
 }
 
 export type ConversationMemberRepository = ReturnType<typeof createConversationMemberRepository>
+
+export function freezeConversationMemberModel(database: DatabaseSync, conversationId: string, actorId: string, selection: ConversationModelSelection): boolean {
+  return Number(database.prepare(`UPDATE conversation_members SET model_selection_json = ?, model_selection_source = 'snapshot'
+    WHERE conversation_id = ? AND actor_id = ? AND removed_at IS NULL AND model_selection_json IS NULL`)
+    .run(JSON.stringify(selection), conversationId, actorId).changes) === 1
+}
 
 function toMember(row: Record<string, unknown>): ConversationMemberRecord {
   return {

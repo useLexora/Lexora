@@ -17,6 +17,17 @@ function rehash<T extends Parameters<typeof hashChildAdmissionRequest>[0]>(input
 }
 
 describe('execution admission and fences', () => {
+  it('freezes a delegated actor model only when admission succeeds and leaves other members unchanged', () => {
+    const f = fixture()
+    const request = f.child('actor-child', f.actor.id)
+    const rejected = rehash({ ...request, run: { ...request.run, branchId: 'wrong-branch' } })
+    expect(() => f.executions.admitChild(rejected)).toThrow()
+    expect(f.conversations.findMember('conversation', f.actor.id)?.modelSelection).toBeNull()
+    f.executions.admitChild(request)
+    expect(f.conversations.findMember('conversation', f.actor.id)).toMatchObject({ modelSelection: request.run.actorSnapshot.model, modelSelectionSource: 'snapshot' })
+    expect(f.conversations.findMember('conversation', 'default')?.modelSelection).toBeNull()
+  })
+
   it('rechecks the team switch at admission and preserves accepted children when collaboration is disabled', () => {
     const f = fixture()
     const pending = f.child('rejected')

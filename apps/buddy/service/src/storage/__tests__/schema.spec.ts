@@ -82,6 +82,60 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it.each(['override', 'snapshot', 'original'])('freezes missing task models from the latest %s and preserves explicit choices on upgrade', (source) => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-task-model-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 29))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    const selection = { providerId: 'fixture', modelId: 'chosen-model', reasoning: 'high', serviceTier: 'priority' }
+    previous.exec(`
+      INSERT INTO conversation_members (conversation_id, actor_id, joined_at) VALUES ('conversation-1', 'default', '2026-08-14T00:00:00.000Z');
+      INSERT INTO buddies (id, kind, name, settings_json, created_at, updated_at)
+        SELECT 'second', 'actor', 'Second', settings_json, created_at, updated_at FROM buddies WHERE id = 'default';
+      INSERT INTO buddies (id, kind, name, settings_json, created_at, updated_at)
+        SELECT 'unused', 'actor', 'Unused', settings_json, created_at, updated_at FROM buddies WHERE id = 'default';
+      INSERT INTO conversation_members (conversation_id, actor_id, joined_at) VALUES ('conversation-1', 'second', '2026-08-14T00:00:00.000Z'), ('conversation-1', 'unused', '2026-08-14T00:00:00.000Z');
+      INSERT INTO run_inputs (run_id, prompt, attachment_ids_json, context_items_json, reasoning, service_tier, created_at)
+        VALUES ('run-1', 'hello', '[]', '[]', 'high', 'priority', '2026-08-14T00:00:00.000Z');
+      INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at, buddy_id, execution_kind)
+        VALUES ('run-2', 'conversation-1', 'branch-1', 'message-1', 'fixture', 'second-model', 'chat', 'completed', '2026-08-15T00:00:00.000Z', 'second', 'actor_child'),
+        ('run-3', 'conversation-1', 'branch-1', 'message-1', 'fixture', 'latest-model', 'chat', 'running', '2026-08-16T00:00:00.000Z', 'default', 'root');
+    `)
+    if (source === 'override') {
+      previous.prepare('UPDATE runs SET model_override_json = ? WHERE id = ?').run(JSON.stringify(selection), 'run-3')
+    }
+    else if (source === 'snapshot') {
+      previous.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ?').run(JSON.stringify({ model: selection }), 'run-3')
+    }
+    else {
+      previous.prepare('UPDATE runs SET provider = ?, model = ? WHERE id = ?').run(selection.providerId, selection.modelId, 'run-3')
+      previous.prepare('INSERT INTO run_inputs (run_id, prompt, attachment_ids_json, context_items_json, reasoning, service_tier, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('run-3', 'latest', '[]', '[]', selection.reasoning, selection.serviceTier, '2026-08-16T00:00:00.000Z')
+    }
+    previous.prepare('UPDATE conversation_members SET model_selection_json = ?, model_selection_source = \'explicit\', removed_at = \'2026-08-16T00:00:00.000Z\' WHERE actor_id = \'second\'').run(JSON.stringify(selection))
+    const runs = previous.prepare('SELECT * FROM runs ORDER BY id').all()
+    const messages = previous.prepare('SELECT * FROM messages ORDER BY id').all()
+    previous.exec('PRAGMA user_version = 29')
+    previous.close()
+
+    const migrated = openBuddyDatabase({ databasePath })
+    const members = migrated.prepare('SELECT actor_id, model_selection_json, model_selection_source, removed_at FROM conversation_members ORDER BY actor_id').all()
+    expect(members).toEqual([
+      { actor_id: 'default', model_selection_json: JSON.stringify(selection), model_selection_source: 'snapshot', removed_at: null },
+      { actor_id: 'second', model_selection_json: JSON.stringify(selection), model_selection_source: 'explicit', removed_at: '2026-08-16T00:00:00.000Z' },
+      { actor_id: 'unused', model_selection_json: null, model_selection_source: null, removed_at: null },
+    ])
+    expect(migrated.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(runs)
+    expect(migrated.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(messages)
+    expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    migrated.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT actor_id, model_selection_json, model_selection_source, removed_at FROM conversation_members ORDER BY actor_id').all()).toEqual(members)
+  })
+
   it('upgrades reference authorization without rewriting existing messages and restores exclusions after reopening', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-reference-migration-'))
     directories.push(directory)

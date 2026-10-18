@@ -147,12 +147,13 @@ describe('persistent chat queue scheduling', () => {
   it('persists an explicit model choice that matches the active run when delivering a native continuation', async () => {
     const f = fixture()
     await f.enableDefinitions()
+    const originalSnapshot = f.runs.findById('run-initial')?.actorSnapshot
     const modelOverride = { providerId: 'provider', modelId: 'model', reasoning: null, serviceTier: null }
     f.queue.enqueue({ ...f.input('A'), modelOverride })
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
     expect(f.members.find('conversation', 'default')).toMatchObject({ modelSelection: modelOverride, modelSelectionSource: 'explicit' })
     expect(f.runs.findById('run-A')).toBeNull()
-    expect(f.runs.findById('run-initial')?.actorSnapshot?.modelSource).toBe('application')
+    expect(f.runs.findById('run-initial')?.actorSnapshot).toEqual(originalSnapshot)
   })
 
   it.each(['actor', 'member_model', 'definition'] as const)('retains queued input when %s changes during async dispatch validation', async (change) => {

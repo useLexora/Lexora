@@ -10,6 +10,7 @@ import { buddyDraftParticipantsSchema } from '../../../shared/conversation/compo
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { createComposerDraftCommitter } from './commitComposerDraft'
+import { freezeConversationMemberModel } from './conversationMemberRepository'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL } from './conversationRecord'
 import { withTransaction } from './database'
 import { actorThreadId } from './threadBindingRepository'
@@ -228,7 +229,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
   const activateBranch = database.prepare(`
     UPDATE conversations SET active_branch_id = ?, updated_at = ? WHERE id = ?
   `)
-  const persistActor = (input: { branchId: string, queuedMessageId?: string, expectedActorModelSelection?: ConversationModelSelection | null, conversationId: string, createdAt: string, buddyId?: string, actorSnapshot?: BuddyExecutionDefinition, modelOverride?: ConversationModelSelection | null, actorIds?: readonly string[] }) => {
+  const persistActor = (input: { branchId: string, queuedMessageId?: string, expectedActorModelSelection?: ConversationModelSelection | null, conversationId: string, createdAt: string, buddyId?: string, actorSnapshot?: BuddyExecutionDefinition, modelOverride?: ConversationModelSelection | null, actorIds?: readonly string[] }, selection: ConversationModelSelection) => {
     const current = findConversation.get(input.conversationId) as unknown as ConversationBindingRow
     const actorId = input.buddyId ?? current.buddy_id
     const buddy = database.prepare('SELECT kind, enabled, deleted_at, revision FROM buddies WHERE id = ?').get(actorId)
@@ -259,15 +260,21 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
       if (!sameModelSelection(member?.model_selection_json ?? null, input.expectedActorModelSelection ? JSON.stringify(input.expectedActorModelSelection) : null))
         throw new BuddyServiceError('BUDDY_CONFLICT')
     }
-    if (!database.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND actor_id = ? AND removed_at IS NULL').get(input.conversationId, actorId))
+    const member = database.prepare('SELECT model_selection_json FROM conversation_members WHERE conversation_id = ? AND actor_id = ? AND removed_at IS NULL').get(input.conversationId, actorId) as { model_selection_json: string | null } | undefined
+    if (!member)
       throw new BuddyServiceError('BUDDY_NOT_MEMBER')
+    let modelChanged: boolean
     if (input.modelOverride !== undefined) {
+      modelChanged = !sameModelSelection(member.model_selection_json, input.modelOverride ? JSON.stringify(input.modelOverride) : null)
       database.prepare('UPDATE conversation_members SET model_selection_json = ?, model_selection_source = ? WHERE conversation_id = ? AND actor_id = ?').run(
         input.modelOverride ? JSON.stringify(input.modelOverride) : null,
         input.modelOverride ? 'explicit' : null,
         input.conversationId,
         actorId,
       )
+    }
+    else {
+      modelChanged = freezeConversationMemberModel(database, input.conversationId, actorId, selection)
     }
     for (const id of input.actorIds ?? []) {
       const actor = database.prepare('SELECT kind, enabled, deleted_at FROM buddies WHERE id = ?').get(id)
@@ -277,6 +284,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         throw new BuddyServiceError('BUDDY_NOT_MEMBER')
     }
     database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(input.createdAt, input.conversationId)
+    return modelChanged
   }
   const bindDraftAttachment = database.prepare(`
     UPDATE attachments
@@ -452,7 +460,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.runInput.serviceTier,
           input.createdAt,
         )
-        persistActor(input)
+        const modelChanged = persistActor(input, { providerId: input.provider, modelId: input.model, reasoning: input.runInput.reasoning, serviceTier: input.runInput.serviceTier })
         const draftReceipt = commitDraft({
           approvalPolicy: input.approvalPolicy,
           branchId: input.branchId,
@@ -484,7 +492,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
-          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.forkedFromMessageId ? input.parentBranchId : null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt, modelChanged: input.modelOverride !== undefined && !sameModelSelection(conversation.model_selection_json, input.modelOverride ? JSON.stringify(input.modelOverride) : null) }),
+          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.forkedFromMessageId ? input.parentBranchId : null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt, modelChanged }),
         }
       })
     },
@@ -598,7 +606,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         )
         if (input.followup)
           insertTreeSource.run(input.runId, input.followup.sourceRunId, 'after')
-        persistActor(input)
+        const modelChanged = persistActor(input, { providerId: input.provider, modelId: input.model, reasoning: input.runInput.reasoning, serviceTier: input.runInput.serviceTier })
         const committedDraftRevision = input.draft.expectedRevision + 1
         insertDraftRequest.run(
           input.requestId,
@@ -639,7 +647,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
-          committedFacts: createTurnFacts({ taskCreated: !conversation, branchCreated: !conversation || !!input.followup, parentBranchId: input.followup?.parentBranchId ?? null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt: input.queuedMessageId ? null : draftReceipt, queueId: input.queuedMessageId, modelChanged: input.modelOverride !== undefined && !sameModelSelection(conversation?.model_selection_json ?? null, input.modelOverride ? JSON.stringify(input.modelOverride) : null) }),
+          committedFacts: createTurnFacts({ taskCreated: !conversation, branchCreated: !conversation || !!input.followup, parentBranchId: input.followup?.parentBranchId ?? null, messageId: input.userMessageId, attachmentIds: input.attachmentBindings.map(binding => binding.id), draftReceipt: input.queuedMessageId ? null : draftReceipt, queueId: input.queuedMessageId, modelChanged }),
         }
       })
     },
@@ -702,7 +710,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           | undefined
         if (!modelSelection)
           throw new TurnRequestConflictError()
-        persistActor(input)
+        const modelChanged = persistActor(input, { providerId: input.provider, modelId: input.model, reasoning: input.reasoning, serviceTier: input.serviceTier })
         insertRequest.run(
           input.requestId,
           input.requestFingerprint,
@@ -719,7 +727,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           requestFingerprint: input.requestFingerprint,
           requestId: input.requestId,
           runId: input.runId,
-          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.parentBranchId, modelChanged: false }),
+          committedFacts: createTurnFacts({ branchCreated: true, parentBranchId: input.parentBranchId, modelChanged }),
         }
       })
     },

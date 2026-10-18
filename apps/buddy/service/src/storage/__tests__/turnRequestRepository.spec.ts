@@ -98,6 +98,23 @@ describe('turnRequestRepository', () => {
     expect(createConversationRepository(database).findById('conversation-1')?.modelSelection).toEqual(selection)
   })
 
+  it('freezes the first accepted model for an inherited task and preserves it on later turns', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    const input = { ...createInput(), modelOverride: undefined }
+    const result = repository.prepare(input)
+    const conversations = createConversationRepository(database)
+    expect(conversations.findById(input.conversationId)?.modelSelection).toEqual(createInput().modelOverride)
+    expect(database.prepare('SELECT model_selection_source FROM conversation_members').get()).toEqual({ model_selection_source: 'snapshot' })
+    expect(result.committedFacts).toContainEqual({ kind: 'task.model_changed' })
+    expect(database.prepare('SELECT model, model_override_json FROM runs').get()).toEqual({ model: input.model, model_override_json: null })
+
+    database.prepare('UPDATE runs SET status = \'completed\' WHERE id = ?').run(input.runId)
+    const draft = createComposerDraftRepository(database).findById('draft-1')!
+    repository.prepare({ ...input, requestId: 'next', requestFingerprint: 'next', runId: 'next', userMessageId: 'next', draft: { draftId: draft.draftId, expectedRevision: draft.revision }, model: 'another-model' })
+    expect(conversations.findById(input.conversationId)?.modelSelection).toEqual(createInput().modelOverride)
+  })
+
   it('narrows only the run profile and rejects wider overrides without consuming the draft', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
