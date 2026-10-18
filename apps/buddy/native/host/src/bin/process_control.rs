@@ -7,6 +7,31 @@ fn main() -> ExitCode {
         return ipc_result(lexora_buddy_host::sandbox_ipc::launch(arguments));
     }
     if let Some(command) = arguments.next() {
+        #[cfg(any(windows, target_os = "linux"))]
+        if matches!(
+            command.to_str(),
+            Some("--reverify-owned-process" | "--process-recovery-checkpoint")
+        ) {
+            if arguments.next().is_some() {
+                eprintln!("PROCESS_RECOVERY_INVALID");
+                return ExitCode::FAILURE;
+            }
+            let result = if command == "--reverify-owned-process" {
+                lexora_buddy_host::supervised_shell::recovery::reverify(
+                    io::stdin().lock(),
+                    io::stdout().lock(),
+                )
+            } else {
+                lexora_buddy_host::supervised_shell::recovery::checkpoint(io::stdout().lock())
+            };
+            return match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => {
+                    eprintln!("PROCESS_RECOVERY_FAILED");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         #[cfg(target_os = "linux")]
         if matches!(
             command.to_str(),

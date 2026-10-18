@@ -13,6 +13,31 @@ function setup() {
 }
 
 describe('mutation ownership', () => {
+  it('keeps conflicting writers queued during native settlement but fences late process dispatch', async () => {
+    const released = Promise.withResolvers<void>()
+    const mutations = new MutationCoordinator({ resources: { acquire: async () => {}, reconcile: async () => {}, release: async () => released.promise } })
+    coordinators.push(mutations)
+    const input = { lifetime: 'external' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
+    const lease = await mutations.acquire({ ...input, runId: 'first', invocationId: 'first' })
+    lease.release()
+    expect(mutations.recordOwnedProcessSettlement({ invocationId: 'first', processId: 'late-process', settlement: 'pending' })).toBe(false)
+    const waiting = mutations.acquire({ ...input, runId: 'next', invocationId: 'next' })
+    expect(mutations.getRunState('next')).toMatchObject({ active: 0, pending: 1 })
+    released.resolve()
+    const next = await waiting
+    next.release()
+    await mutations.waitForSettlements()
+    expect(mutations.getRunState('first')).toMatchObject({ active: 0, hazards: [] })
+  })
+
+  it('never admits a new process through an already hazardous invocation', async () => {
+    const mutations = setup()
+    const lease = await mutations.acquire({ runId: 'first', invocationId: 'first', lifetime: 'external', claims: [{ kind: 'host' }], signal: new AbortController().signal })
+    lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    expect(mutations.recordOwnedProcessSettlement({ invocationId: 'first', processId: 'late-process', settlement: 'pending' })).toBe(false)
+    expect(mutations.getRunState('first').hazards).toHaveLength(1)
+  })
+
   it('takes all claims atomically while unrelated paths continue and cancelled waiters never start', async () => {
     const mutations = setup()
     const signal = new AbortController().signal

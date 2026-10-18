@@ -9,6 +9,8 @@ use std::{
 
 use serde::Deserialize;
 
+pub mod recovery;
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(windows)]
@@ -38,8 +40,8 @@ enum Transport {
 }
 
 pub fn run() -> io::Result<i32> {
-    backend::initialize()?;
-    let identity = backend::identity()?;
+    let supervision = backend::initialize()?;
+    let identity = backend::identity(&supervision)?;
     eprintln!(
         "{}",
         serde_json::json!({"type":"ready","protocol":1,"identity":identity})
@@ -84,7 +86,7 @@ pub fn run() -> io::Result<i32> {
         let _ = input.read(&mut byte);
         cancellation.store(true, Ordering::Release);
     });
-    backend::run(&request, &cancelled)
+    backend::run(&supervision, &request, &cancelled)
 }
 
 fn released() {

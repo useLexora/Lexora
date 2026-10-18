@@ -1,9 +1,11 @@
 import type { Buffer } from 'node:buffer'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
+import { supervisedProcessIdentitySchema } from './ownedProcessRecovery'
 
 export interface OwnedProcessSettlement {
   processId: string
@@ -11,7 +13,7 @@ export interface OwnedProcessSettlement {
 }
 
 const diagnosticSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('ready'), protocol: z.literal(1), identity: z.object({ pid: z.number().int().positive(), startTime: z.string().min(1), bootId: z.string().optional() }).strict() }).strict(),
+  z.object({ type: z.literal('ready'), protocol: z.literal(1), identity: supervisedProcessIdentitySchema }).strict(),
   z.object({ type: z.literal('released'), protocol: z.literal(1) }).strict(),
   z.object({ type: z.literal('failed'), code: z.literal('SHELL_SUPERVISION_FAILED'), nativeCode: z.number().nullable() }).strict(),
 ])
@@ -38,8 +40,18 @@ export async function runSupervisedShellProcess(input: {
   if (options.timeout !== undefined && (!Number.isFinite(options.timeout) || options.timeout <= 0 || options.timeout * 1000 > 2_147_483_647))
     throw new Error('Invalid shell timeout')
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['--supervise-shell'], { cwd: input.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     const nonce = randomUUID()
+    const dispatchId = JSON.stringify({ kind: 'native-shell-dispatch', platform: process.platform, nonce })
+    options.onSettlement({ processId: dispatchId, settlement: 'pending' })
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(executable, ['--supervise-shell'], { cwd: input.cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    }
+    catch (error) {
+      options.onSettlement({ processId: dispatchId, settlement: 'released' })
+      throw error
+    }
+    let commandDispatched = false
     let processId = JSON.stringify({ kind: 'native-shell', platform: process.platform, pid: child.pid, nonce, startTime: null })
     let ready = false
     let released = false
@@ -69,6 +81,7 @@ export async function runSupervisedShellProcess(input: {
           processId = JSON.stringify({ kind: 'native-shell', platform: process.platform, ...diagnostic.identity, nonce })
           options.onSettlement({ processId, settlement: 'pending' })
           if (!options.signal?.aborted && !timedOut) {
+            commandDispatched = true
             child.stdin.write(`${JSON.stringify({ ...input, commandTransport: input.commandTransport ?? 'argv', environment: Object.fromEntries(Object.entries(input.environment).filter((entry): entry is [string, string] => entry[1] !== undefined)) })}\n`)
           }
           else { cancel() }
@@ -102,7 +115,10 @@ export async function runSupervisedShellProcess(input: {
       clearTimeout(forceKill)
       lines.close()
       try {
-        options.onSettlement({ processId, settlement: released || !child.pid ? 'released' : 'unknown' })
+        const settlement = released || !commandDispatched ? 'released' : 'unknown'
+        if (ready)
+          options.onSettlement({ processId, settlement })
+        options.onSettlement({ processId: dispatchId, settlement })
         if (options.signal?.aborted)
           reject(options.signal.reason ?? new Error('aborted'))
         else if (timedOut)

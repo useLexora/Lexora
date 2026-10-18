@@ -29,6 +29,58 @@ fn assert_gone(pid: u32) {
     );
 }
 
+fn reverify(identity: serde_json::Value) -> serde_json::Value {
+    let mut query = Command::new(env!("CARGO_BIN_EXE_lexora-buddy-process-control"))
+        .arg("--reverify-owned-process")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = query.stdin.take().unwrap();
+    serde_json::to_writer(&mut input, &serde_json::json!({"identity":identity})).unwrap();
+    drop(input);
+    let output = query.wait_with_output().unwrap();
+    assert!(output.status.success());
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn read_only_reverification_does_not_cancel_a_live_supervisor_or_release_an_unobserved_tree() {
+    let mut child = launch("sleep 60");
+    let mut control = BufReader::new(child.stderr.take().unwrap());
+    let mut ready = String::new();
+    control.read_line(&mut ready).unwrap();
+    let ready: serde_json::Value = serde_json::from_str(&ready).unwrap();
+    let mut identity = ready["identity"].clone();
+    assert_eq!(identity["version"], 2);
+    identity["kind"] = serde_json::json!("native-shell");
+    identity["platform"] = serde_json::json!("linux");
+    identity["nonce"] = serde_json::json!("test-handshake");
+    assert_eq!(reverify(identity.clone())["reason"], "supervisor_active");
+    assert!(child.try_wait().unwrap().is_none());
+    drop(child.stdin.take());
+    child.wait().unwrap();
+    assert_eq!(reverify(identity)["reason"], "descendants_unverified");
+}
+
+#[test]
+fn fixed_checkpoint_command_reports_a_valid_local_boot() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lexora-buddy-process-control"))
+        .arg("--process-recovery-checkpoint")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let checkpoint: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(checkpoint["platform"], "linux");
+    assert_eq!(checkpoint["kind"], "recovery-boot");
+    assert_eq!(
+        checkpoint["bootId"],
+        std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .unwrap()
+            .trim()
+    );
+}
+
 #[test]
 fn shell_completion_reaps_a_background_grandchild_with_inherited_stdio() {
     let mut child = launch("/bin/sh -c 'sleep 60 & echo $!' & wait");

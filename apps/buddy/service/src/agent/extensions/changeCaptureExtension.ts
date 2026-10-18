@@ -108,7 +108,7 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             return result
           }
           finally {
-            const settlement = started && plan.ownedProcess && options.mutations.getInvocationSettlement(lease.invocationId) !== 'released' ? 'unknown' : 'released'
+            const settlement = started && plan.ownedProcess && options.mutations.getInvocationSettlement(lease.invocationId) === 'unknown' ? 'unknown' : 'released'
             try {
               if (handle) {
                 try {

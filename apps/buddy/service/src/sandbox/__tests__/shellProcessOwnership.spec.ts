@@ -46,7 +46,7 @@ async function fixture() {
   const invoke = (command: string) => mutations.withInvocation(lease, () => tools.get('bash')!.execute('shell-call', { command }, controller.signal, undefined, undefined!))
   const processes = () => database.prepare('SELECT process_id, settlement FROM run_mutation_processes').all() as { process_id: string, settlement: string }[]
   return { database, directory, repository, mutations, controller, lease, invoke, processes, async dispose() {
-    mutations.dispose()
+    await mutations.dispose()
     database.close()
     await rm(directory, { recursive: true, force: true })
   } }
@@ -57,9 +57,9 @@ describe.skipIf(process.platform !== 'linux')('real shell process ownership', ()
     const f = await fixture()
     try {
       await f.invoke('setsid /bin/sh -c \'sleep 60 >/dev/null 2>&1 & echo $!\' & wait')
-      expect(f.processes()).toHaveLength(1)
-      expect(f.processes()[0]?.settlement).toBe('released')
-      const identity = JSON.parse(f.processes()[0]!.process_id)
+      expect(f.processes()).toHaveLength(2)
+      expect(f.processes().every(record => record.settlement === 'released')).toBe(true)
+      const identity = f.processes().map(record => JSON.parse(record.process_id)).find(identity => identity.kind === 'native-shell')
       expect(identity).toMatchObject({ kind: 'native-shell', platform: 'linux', startTime: expect.any(String), bootId: expect.any(String) })
       await expect(access(`/proc/${identity.pid}`)).rejects.toThrow()
       expect(f.mutations.getInvocationSettlement('invocation')).toBe('released')
@@ -94,7 +94,7 @@ describe.skipIf(process.platform !== 'linux')('real shell process ownership', ()
         catch { await setTimeout(5) }
       }
       expect(pids).toHaveLength(2)
-      const identity = JSON.parse(f.processes()[0]!.process_id)
+      const identity = f.processes().map(record => JSON.parse(record.process_id)).find(identity => identity.kind === 'native-shell')
       process.kill(identity.pid, 'SIGKILL')
       await rejected
       expect(f.processes()[0]?.settlement).toBe('unknown')

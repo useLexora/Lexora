@@ -43,6 +43,7 @@ export function resolveLocalChatErrorMessage(error: unknown, language: BuddyLoca
     BUDDY_CONFLICT: 'desktop.error.buddyConflict',
     BUDDY_NOT_FOUND: 'desktop.error.buddyNotFound',
     DRAFT_CONFLICT: 'desktop.chat.draftChanged',
+    MUTATION_RESOURCE_UNSAFE: 'desktop.error.resourceRecoveryRequired',
     FILE_CONFLICT: 'desktop.chat.unknownError',
     FILE_RECOVERY_REQUIRED: 'desktop.chat.unknownError',
     FILE_OPERATION_CANCELLED: 'desktop.chat.unknownError',

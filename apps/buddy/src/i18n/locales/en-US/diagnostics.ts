@@ -79,6 +79,7 @@ export default {
   'desktop.error.credentialStore': 'Encrypted credential storage is unavailable',
   'desktop.error.credentialStoreFailure': 'Could not read or save encrypted credentials',
   'desktop.error.directoryNotAuthorized': 'Authorize this directory first',
+  'desktop.error.resourceRecoveryRequired': 'The outcome of an earlier operation is unconfirmed, so related writes are paused. See the logs for details.',
   'desktop.error.modelSyncFailed': 'Could not sync models. Check the API endpoint and authentication, then retry.',
   'desktop.error.modelSyncUnsupported': 'This API protocol does not support model synchronization.',
   'desktop.error.pathOutsideDirectory': 'The target is outside the authorized directory',

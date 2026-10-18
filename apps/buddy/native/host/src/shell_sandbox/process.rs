@@ -10,7 +10,9 @@ use std::{
 
 use serde::Deserialize;
 use windows_sys::Win32::{
-    Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, WAIT_OBJECT_0},
+    Foundation::{
+        DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, GetLastError, WAIT_OBJECT_0,
+    },
     Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES},
     Storage::FileSystem::FILE_GENERIC_READ,
     System::{
@@ -44,9 +46,10 @@ struct Request {
 
 pub(super) fn run() -> io::Result<i32> {
     require_host(current_process(), false)?;
+    let job = at("job", Job::new())?;
     eprintln!(
         "{}",
-        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity()?})
+        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity(&job)?})
     );
     if fs::canonicalize(std::env::current_exe()?)? != fs::canonicalize(setup::installed_path()?)? {
         return Err(io::ErrorKind::PermissionDenied.into());
@@ -94,7 +97,6 @@ pub(super) fn run() -> io::Result<i32> {
         Lease::connect(&profile.name, request.proxy_port, metadata::roots(&policy)),
     )?;
     cancellation.check()?;
-    let job = at("job", Job::new())?;
     let child = at(
         "launch",
         launch(
@@ -180,7 +182,7 @@ fn validate(request: &Request) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) struct Job(pub(crate) OwnedHandle);
+pub(crate) struct Job(pub(crate) OwnedHandle, String);
 impl Job {
     fn new() -> io::Result<Self> {
         Self::create(true)
@@ -190,11 +192,25 @@ impl Job {
         Self::create(false)
     }
 
+    pub(crate) fn name(&self) -> &str {
+        &self.1
+    }
+
     fn create(restrict_ui: bool) -> io::Result<Self> {
-        // SAFETY: A private, non-inheritable job handle never enters the sandbox's handle list.
-        let job = Self(owned(unsafe {
-            CreateJobObjectW(ptr::null(), ptr::null())
-        })?);
+        let name = format!(
+            "{}{}",
+            crate::supervised_shell::recovery::WINDOWS_JOB_PREFIX,
+            uuid::Uuid::new_v4()
+        );
+        // SAFETY: A non-inheritable job handle never enters the child's handle list.
+        let handle = unsafe { CreateJobObjectW(ptr::null(), wide(&name).as_ptr()) };
+        // SAFETY: Read the creation result before any other Windows API can replace it.
+        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let handle = owned(handle)?;
+        if existed {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        let job = Self(handle, name);
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         // SAFETY: The live job receives an initialized limits struct; breakaway is deliberately absent.

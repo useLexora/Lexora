@@ -50,7 +50,7 @@ export class MutationCoordinatorError extends Error {
   readonly code: 'MUTATION_RESOURCE_UNSAFE' | 'MUTATION_COORDINATOR_STOPPED' | 'MUTATION_INVOCATION_CONFLICT'
 
   constructor(code: MutationCoordinatorError['code']) {
-    super(code)
+    super(code === 'MUTATION_RESOURCE_UNSAFE' ? `${code}: An earlier operation has an unverified outcome. Conflicting writes remain blocked. Check application logs for details.` : code)
     this.code = code
     this.name = 'MutationCoordinatorError'
   }
@@ -58,12 +58,13 @@ export class MutationCoordinatorError extends Error {
 
 export class MutationCoordinator {
   readonly #active = new Map<string, MutationLease>()
+  readonly #closing = new Set<string>()
   readonly #hazards = new Map<string, MutationHazard>()
   readonly #pending: PendingMutation[] = []
   readonly #invocation = new AsyncLocalStorage<MutationLease>()
   readonly #processes = new Map<string, Map<string, OwnedProcessSettlement>>()
-  readonly #resources: FileResourceCoordinator | undefined
-  readonly #settlements = new Set<Promise<void>>()
+  readonly #resources: Pick<FileResourceCoordinator, 'acquire' | 'release' | 'reconcile'> | undefined
+  readonly #settlements = new Map<string, Promise<void>>()
   readonly #repository: MutationRepository | undefined
   readonly #changes = new Emitter<{ runId: string }>(() => console.error('MUTATION_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
@@ -71,7 +72,7 @@ export class MutationCoordinator {
   #sequence = 0
   #disposed = false
 
-  constructor(options: { repository?: MutationRepository, resources?: FileResourceCoordinator } = {}) {
+  constructor(options: { repository?: MutationRepository, resources?: Pick<FileResourceCoordinator, 'acquire' | 'release' | 'reconcile'> } = {}) {
     this.#resources = options.resources
     const repository = options.repository
     this.#repository = repository
@@ -136,6 +137,19 @@ export class MutationCoordinator {
     await this.#resources?.reconcile([...this.#hazards.values()], id => this.#repository?.isReleased(id) === true)
   }
 
+  getHazards(): readonly MutationHazard[] {
+    return copyEventSnapshot([...this.#hazards.values()])
+  }
+
+  getOwnedProcesses(invocationId: string): readonly { processId: string, settlement: OwnedProcessSettlement }[] {
+    return [...(this.#processes.get(invocationId) ?? [])].map(([processId, settlement]) => ({ processId, settlement }))
+  }
+
+  async waitForSettlements(): Promise<void> {
+    while (this.#settlements.size)
+      await Promise.allSettled(this.#settlements.values())
+  }
+
   getRunState(runId: string): MutationRunState {
     return copyEventSnapshot({
       pending: this.#pending.filter(pending => pending.runId === runId).length,
@@ -157,6 +171,19 @@ export class MutationCoordinator {
     const invocationId = input.invocationId ?? this.#invocation.getStore()?.invocationId
     if (!invocationId || (!this.#active.has(invocationId) && !this.#hazards.has(invocationId)))
       return false
+    if (input.settlement === 'pending' && (this.#disposed || this.#closing.has(invocationId) || !this.#active.has(invocationId)))
+      return false
+    return this.#recordProcess({ ...input, invocationId })
+  }
+
+  recordRecoveryCheckpoint(invocationId: string, processId: string): boolean {
+    if (this.#disposed || !this.#hazards.has(invocationId))
+      return false
+    return this.#recordProcess({ invocationId, processId, settlement: 'pending' })
+  }
+
+  #recordProcess(input: { invocationId: string, processId: string, settlement: OwnedProcessSettlement }): boolean {
+    const { invocationId } = input
     const processes = this.#processes.get(invocationId) ?? new Map<string, 'pending' | 'released' | 'unknown'>()
     if (processes.get(input.processId) === 'released')
       return true
@@ -164,7 +191,7 @@ export class MutationCoordinator {
     processes.set(input.processId, input.settlement)
     this.#processes.set(invocationId, processes)
     if (this.#hazards.has(invocationId) && [...processes.values()].every(value => value === 'released'))
-      this.confirmReleased(invocationId)
+      void this.confirmReleased(invocationId).catch(() => {})
     return true
   }
 
@@ -200,12 +227,13 @@ export class MutationCoordinator {
     this.#drain()
   }
 
-  confirmReleased(invocationId: string): void {
+  async confirmReleased(invocationId: string): Promise<void> {
     const hazard = this.#hazards.get(invocationId)
     if (!hazard)
       return
+    if (this.#resources)
+      await this.#settleResource(invocationId, false)
     this.#repository?.settle(invocationId, 'released', null)
-    this.#settleResource(invocationId, false)
     this.#hazards.delete(invocationId)
     this.#processes.delete(invocationId)
     this.#publish(hazard.runId)
@@ -219,7 +247,7 @@ export class MutationCoordinator {
       pending.reject(new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED'))
       this.#publish(pending.runId)
     }
-    await Promise.allSettled(this.#settlements)
+    await this.waitForSettlements()
   }
 
   #drain(): void {
@@ -266,38 +294,56 @@ export class MutationCoordinator {
   }
 
   #release(lease: MutationLease, hazard?: string): void {
-    if (this.#active.get(lease.invocationId) !== lease)
+    if (this.#active.get(lease.invocationId) !== lease || this.#closing.has(lease.invocationId))
       return
+    this.#closing.add(lease.invocationId)
+    if (hazard === 'OWNED_PROCESS_CLEANUP_UNCONFIRMED' && this.getInvocationSettlement(lease.invocationId) === 'released')
+      hazard = undefined
     try {
       this.#repository?.settle(lease.invocationId, hazard ? 'hazard' : 'released', hazard ?? null)
     }
     catch {
       hazard = 'MUTATION_SETTLEMENT_PERSISTENCE_FAILED'
     }
-    this.#settleResource(lease.invocationId, Boolean(hazard))
-    this.#active.delete(lease.invocationId)
-    if (hazard) {
-      this.#hazards.set(lease.invocationId, copyEventSnapshot({
-        runId: lease.runId,
-        invocationId: lease.invocationId,
-        claims: lease.claims,
-        reason: hazard,
-      }))
+    const finish = (reason?: string) => {
+      this.#closing.delete(lease.invocationId)
+      this.#active.delete(lease.invocationId)
+      if (reason) {
+        this.#hazards.set(lease.invocationId, copyEventSnapshot({
+          runId: lease.runId,
+          invocationId: lease.invocationId,
+          claims: lease.claims,
+          reason,
+        }))
+      }
+      else {
+        this.#processes.delete(lease.invocationId)
+      }
+      this.#publish(lease.runId)
+      this.#drain()
     }
-    else {
-      this.#processes.delete(lease.invocationId)
+    if (!this.#resources) {
+      finish(hazard)
+      return
     }
-    this.#publish(lease.runId)
-    this.#drain()
+    void this.#settleResource(lease.invocationId, Boolean(hazard)).then(() => finish(hazard), () => {
+      const reason = hazard ?? 'FILE_RESOURCE_SETTLEMENT_FAILED'
+      try {
+        this.#repository?.settle(lease.invocationId, 'hazard', reason)
+      }
+      catch {}
+      finish(reason)
+    })
   }
 
-  #settleResource(id: string, hazard: boolean): void {
-    if (!this.#resources)
-      return
-    const pending = this.#resources.release(id, hazard).catch(() => {
-      console.error('FILE_RESOURCE_SETTLEMENT_FAILED')
-    }).finally(() => this.#settlements.delete(pending))
-    this.#settlements.add(pending)
+  #settleResource(id: string, hazard: boolean): Promise<void> {
+    const previous = this.#settlements.get(id) ?? Promise.resolve()
+    const pending = previous.catch(() => {}).then(() => this.#resources?.release(id, hazard)).finally(() => {
+      if (this.#settlements.get(id) === pending)
+        this.#settlements.delete(id)
+    })
+    this.#settlements.set(id, pending)
+    return pending
   }
 
   #publish(runId: string): void {

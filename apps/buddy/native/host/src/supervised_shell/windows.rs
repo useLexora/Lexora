@@ -10,8 +10,8 @@ use super::{Request, Transport};
 use crate::shell_sandbox::process::{Attributes, Child, Job};
 use windows_sys::Win32::{
     Foundation::{
-        DUPLICATE_SAME_ACCESS, DuplicateHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT,
-        SetHandleInformation, WAIT_FAILED, WAIT_OBJECT_0,
+        DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
+        WAIT_FAILED, WAIT_OBJECT_0,
     },
     Security::SECURITY_ATTRIBUTES,
     Storage::FileSystem::{CreateFileW, FILE_GENERIC_READ, OPEN_EXISTING},
@@ -23,34 +23,23 @@ use windows_sys::Win32::{
     },
 };
 
-pub(super) fn initialize() -> io::Result<()> {
-    Ok(())
+pub(super) fn initialize() -> io::Result<Job> {
+    Job::host()
 }
 
-pub(crate) fn identity() -> io::Result<serde_json::Value> {
-    let mut creation = FILETIME::default();
-    let mut exit = FILETIME::default();
-    let mut kernel = FILETIME::default();
-    let mut user = FILETIME::default();
-    // SAFETY: This pseudo handle denotes this live supervisor; all four outputs are initialized and writable.
-    boolean(unsafe {
-        GetProcessTimes(
-            GetCurrentProcess(),
-            &mut creation,
-            &mut exit,
-            &mut kernel,
-            &mut user,
-        )
-    })?;
-    let start = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
-    Ok(serde_json::json!({"pid":std::process::id(),"startTime":start.to_string()}))
+pub(crate) fn identity(job: &Job) -> io::Result<serde_json::Value> {
+    use super::recovery::backend::{boot_id, start_time};
+    // SAFETY: This pseudo handle denotes the live supervisor.
+    let start = start_time(unsafe { GetCurrentProcess() })?;
+    Ok(serde_json::json!({
+        "version":2, "pid":std::process::id(), "startTime":start.to_string(),
+        "bootId":boot_id()?, "jobName":job.name()
+    }))
 }
 
-pub(super) fn run(request: &Request, cancelled: &AtomicBool) -> io::Result<i32> {
-    let job = Job::host()?;
-    let result = execute(request, cancelled, &job);
+pub(super) fn run(job: &Job, request: &Request, cancelled: &AtomicBool) -> io::Result<i32> {
+    let result = execute(request, cancelled, job);
     job.finish()?;
-    drop(job);
     super::released();
     result
 }
@@ -218,17 +207,17 @@ fn quote_argument(argument: &str) -> String {
     result
 }
 
-fn wide(value: &str) -> Vec<u16> {
+pub(crate) fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
-fn boolean(value: i32) -> io::Result<()> {
+pub(crate) fn boolean(value: i32) -> io::Result<()> {
     if value == 0 {
         Err(io::Error::last_os_error())
     } else {
         Ok(())
     }
 }
-fn owned(handle: HANDLE) -> io::Result<OwnedHandle> {
+pub(crate) fn owned(handle: HANDLE) -> io::Result<OwnedHandle> {
     use std::os::windows::io::FromRawHandle;
     if handle.is_null() || handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
         return Err(io::Error::last_os_error());

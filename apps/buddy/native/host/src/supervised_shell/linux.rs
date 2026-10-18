@@ -9,23 +9,29 @@ use std::{
 use super::{Request, Transport};
 use rustix::process::{Pid, Signal, WaitOptions, kill_process, set_child_subreaper, wait};
 
-pub(super) fn initialize() -> io::Result<()> {
+pub(super) struct Supervision;
+
+pub(super) fn initialize() -> io::Result<Supervision> {
     set_child_subreaper(Pid::from_raw(1))?;
-    Ok(())
+    Ok(Supervision)
 }
 
-pub(super) fn identity() -> io::Result<serde_json::Value> {
+pub(super) fn identity(_supervision: &Supervision) -> io::Result<serde_json::Value> {
     let stat = fs::read_to_string("/proc/self/stat")?;
     let start = stat
         .rsplit_once(')')
         .and_then(|(_, fields)| fields.split_whitespace().nth(19))
         .ok_or(io::ErrorKind::InvalidData)?;
     Ok(
-        serde_json::json!({"pid":std::process::id(),"startTime":start,"bootId":fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim()}),
+        serde_json::json!({"version":2,"pid":std::process::id(),"startTime":start,"bootId":fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim()}),
     )
 }
 
-pub(super) fn run(request: &Request, cancelled: &AtomicBool) -> io::Result<i32> {
+pub(super) fn run(
+    _supervision: &Supervision,
+    request: &Request,
+    cancelled: &AtomicBool,
+) -> io::Result<i32> {
     let result = execute(request, cancelled);
     cleanup()?;
     super::released();

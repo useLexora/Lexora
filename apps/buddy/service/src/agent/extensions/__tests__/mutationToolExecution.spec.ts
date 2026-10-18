@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
+import { runSupervisedShellProcess } from '../../../../../platform/process/supervisedShellProcess'
 import { ChangeCaptureService } from '../../../changes/ChangeCaptureService'
 import { createChangeSetRepository } from '../../../changes/changeSetRepository'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
@@ -24,6 +25,23 @@ afterEach(async () => {
 })
 
 describe('authorized mutation execution', () => {
+  it('releases a supervised invocation rejected before process dispatch without poisoning later writes', async () => {
+    const fixture = await setup()
+    const shell = fixture.actor('run-1', async () => {
+      await runSupervisedShellProcess({ shell: '/bin/bash', args: ['-c'], command: 'true', cwd: fixture.root, environment: {} }, {
+        executable: '/not-launched',
+        timeout: 0,
+        onData() {},
+        onSettlement: (settlement) => { fixture.mutations.recordOwnedProcessSettlement(settlement) },
+      })
+    }, 'bash')
+    await expect(shell.execute({ path: fixture.path, content: 'unused' })).rejects.toThrow('Invalid shell timeout')
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+    const writer = fixture.actor('run-2', (path, content) => writeFile(path, content), 'write')
+    await writer.execute({ path: fixture.path, content: 'after-validation-failure' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('after-validation-failure')
+  })
+
   it('serializes overlapping grants across different working directories and preserves root, child and resumed root diffs', async () => {
     const fixture = await setup()
     await symlink(fixture.path, join(fixture.root, 'alias.txt'))

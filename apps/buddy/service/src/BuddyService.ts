@@ -86,6 +86,7 @@ import { registerBuddiesRpc } from './buddies/registerBuddiesRpc'
 import { ChangeCaptureService } from './changes/ChangeCaptureService'
 import { createChangeSetRepository } from './changes/changeSetRepository'
 import { MutationCoordinator } from './changes/MutationCoordinator'
+import { MutationRecoveryService } from './changes/MutationRecoveryService'
 import { createMutationRepository } from './changes/mutationRepository'
 import { registerChangeRpc } from './changes/registerChangeRpc'
 import { isReviewUserMessage } from './chat/buddyReviewPrompt'
@@ -427,6 +428,10 @@ export async function startBuddyService(
       await service.initialize()
       return service
     }, ['runtime.file_engine'])
+    await host.step('runtime.mutation_recovery', async () => {
+      const recovery = new MutationRecoveryService({ mutations, record })
+      await recovery.recheck({ signal: AbortSignal.timeout(5_000) })
+    })
     const changeCaptureService = await host.start('runtime.change_capture', ({ defer }) => {
       const service = new ChangeCaptureService({ paths, repository: createChangeSetRepository(options.database), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.change_capture', level: 'warn' }) })
       service.onDidChange(event => record({ event: `changes.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, toolCallId: event.toolCallId, revision: event.revision, count: event.count, errorCode: event.errorCode }))

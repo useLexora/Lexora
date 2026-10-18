@@ -42,11 +42,14 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
     peer.onRequest('host.sandbox.exec', async (params) => {
       const input = sandboxCommandSchema.parse(params)
       if (!Object.values<string>(OPERATING_SYSTEM).includes(process.platform))
-        return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
-      if (disposed || active.has(input.requestId) || active.size >= 8)
+        return { ok: false, code: 'SANDBOX_UNAVAILABLE', notStarted: true }
+      if (active.has(input.requestId))
         return { ok: false, code: 'SANDBOX_BUSY' }
+      if (disposed || active.size >= 8)
+        return { ok: false, code: 'SANDBOX_BUSY', notStarted: true }
       const controller = new AbortController()
       active.set(input.requestId, controller)
+      let dispatched = false
       let directory: string | undefined
       let child: Electron.UtilityProcess | undefined
       let pid: number | undefined
@@ -86,9 +89,9 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         const windowsSandbox = isWindows(process.platform) ? await resolveWindowsSandbox(options.windowsSandbox) : undefined
         const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT
         if (isWindows(process.platform) && (!windowsSandbox || !options.windowsShell || !systemRoot))
-          return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
+          return { ok: false, code: 'SANDBOX_UNAVAILABLE', notStarted: true }
         if (isLinux(process.platform) && !options.sandboxDirectory)
-          return { ok: false, code: 'SANDBOX_UNAVAILABLE' }
+          return { ok: false, code: 'SANDBOX_UNAVAILABLE', notStarted: true }
         directory = await createSandboxDirectory()
         controller.signal.throwIfAborted()
         child = utilityProcess.fork(sandboxProcessPath, [], {
@@ -134,6 +137,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
             return { allowed: false }
           return peer.request('sandbox.network', target, 30 * 60 * 1_000)
         })
+        dispatched = true
         return await processPeer.request('sandbox.exec', {
           ...input,
           home: homedir(),
@@ -149,7 +153,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         }, SANDBOX_RPC_TIMEOUT_MS)
       }
       catch {
-        return { ok: false, code: controller.signal.aborted ? 'SANDBOX_CANCELLED' : 'SANDBOX_UNAVAILABLE' }
+        return { ok: false, code: controller.signal.aborted ? 'SANDBOX_CANCELLED' : 'SANDBOX_UNAVAILABLE', ...(!dispatched ? { notStarted: true } : {}) }
       }
       finally {
         controller.signal.removeEventListener('abort', cancel)

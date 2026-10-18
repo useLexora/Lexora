@@ -14,19 +14,26 @@ import { createSandboxPolicy } from './createPolicy'
 export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExecutionOptions): Promise<number | null> {
   let child: ChildProcess | undefined
   let supervised = false
-  let settlement: OwnedProcessSettlement | undefined
+  const settlements = new Map<string, OwnedProcessSettlement>()
   const kill = () => killProcessGroup(child?.pid)
   options.signal.addEventListener('abort', kill, { once: true })
   const release = async () => {
-    const pid = settlement ? JSON.parse(settlement.processId).pid as number | undefined : child?.pid
-    options.onProcess?.({ phase: 'cleanup_requested', pid, processId: settlement?.processId })
+    const records = [...settlements.values()]
+    const publish = (phase: 'cleanup_requested' | 'cleanup_failed' | 'resources_released', record?: OwnedProcessSettlement) => {
+      const pid = record ? JSON.parse(record.processId).pid as number | undefined : child?.pid
+      options.onProcess?.({ phase, pid, processId: record?.processId })
+    }
+    for (const record of records.length ? records : [undefined])
+      publish('cleanup_requested', record)
     try {
       kill()
       await SandboxManager.reset()
-      options.onProcess?.({ phase: supervised && settlement?.settlement === 'released' ? 'resources_released' : 'cleanup_failed', pid, processId: settlement?.processId })
+      for (const record of records.length ? records : [undefined])
+        publish(supervised && record?.settlement === 'released' ? 'resources_released' : 'cleanup_failed', record)
     }
     catch (error) {
-      options.onProcess?.({ phase: 'cleanup_failed', pid: child?.pid })
+      for (const record of records.length ? records : [undefined])
+        publish('cleanup_failed', record)
       throw error
     }
   }
@@ -62,10 +69,11 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
         onData: options.onData,
         onProcess: options.onProcess,
         onSettlement(next) {
-          settlement = next
+          settlements.set(next.processId, next)
           const pid = JSON.parse(next.processId).pid as number | undefined
-          if (!started && next.settlement === 'pending') {
+          if (next.settlement === 'pending')
             options.onProcess?.({ phase: 'spawned', pid, processId: next.processId })
+          if (!started && next.settlement === 'pending' && pid) {
             started = true
             options.onStarted()
           }

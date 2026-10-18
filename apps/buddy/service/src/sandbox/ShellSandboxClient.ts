@@ -87,9 +87,10 @@ export class ShellSandboxClient {
             const state = event.snapshot.process
             if (state?.processId) {
               const settlement = state.phase === 'resources_released' ? 'released' : state.phase === 'cleanup_failed' ? 'unknown' : 'pending'
-              if (processes.get(state.processId) !== 'released') {
-                processes.set(state.processId, settlement)
-                supervision?.onSettlement({ processId: state.processId, settlement })
+              const processId = associateRequest(state.processId, requestId)
+              if (processes.get(processId) !== 'released') {
+                processes.set(processId, settlement)
+                supervision?.onSettlement({ processId, settlement })
               }
               if (settlement === 'released')
                 proof = true
@@ -125,6 +126,8 @@ export class ShellSandboxClient {
       supervision?.onSettlement({ processId: dispatchId, settlement: 'pending' })
       const result = sandboxResultSchema.parse(await this.#peer.request('host.sandbox.exec', { ...input, requestId }, SANDBOX_RPC_TIMEOUT_MS))
       returned = true
+      if (!result.ok && result.notStarted)
+        noCommandStarted = true
       publish({ kind: 'returned', result })
       if (settlementError)
         throw settlementError
@@ -168,4 +171,14 @@ export class ShellSandboxClient {
     await Promise.all([...this.#pending.values()].map(pending => pending.settled))
     this.#changes.dispose()
   }
+}
+
+function associateRequest(processId: string, requestId: string): string {
+  try {
+    const identity: unknown = JSON.parse(processId)
+    if (identity && typeof identity === 'object' && !Array.isArray(identity))
+      return JSON.stringify({ ...identity, requestId })
+  }
+  catch {}
+  return processId
 }

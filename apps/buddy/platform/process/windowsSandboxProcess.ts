@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import { ShellSandboxError } from '../../shared/permissions/shellSandbox'
 import { createWindowsHostEnvironment } from '../windows/powerShell'
+import { windowsSupervisedProcessIdentitySchema } from './ownedProcessRecovery'
 
 export interface WindowsSandboxRequest {
   command: string
@@ -24,7 +25,7 @@ const diagnosticSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('diagnostic'), phase: z.string(), nativeCode: z.number().nullable() }).strict(),
   z.object({ type: z.literal('cleanupError'), code: z.string() }).strict(),
   z.object({ type: z.literal('processesReleased'), protocol: z.literal(1) }).strict(),
-  z.object({ type: z.literal('supervisor'), protocol: z.literal(1), identity: z.object({ pid: z.number().int().positive(), startTime: z.string().min(1) }).strict() }).strict(),
+  z.object({ type: z.literal('supervisor'), protocol: z.literal(1), identity: windowsSupervisedProcessIdentitySchema }).strict(),
 ])
 
 export async function runWindowsSandboxProcess(executable: string, request: WindowsSandboxRequest, options: {

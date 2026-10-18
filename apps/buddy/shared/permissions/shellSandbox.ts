@@ -89,6 +89,7 @@ export const sandboxResultSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(false),
     code: z.enum(['SANDBOX_UNAVAILABLE', 'SANDBOX_FAILED', 'SANDBOX_CANCELLED', 'SANDBOX_TIMEOUT', 'SANDBOX_BUSY', 'SANDBOX_DIRECTORY_CHANGED']),
+    notStarted: z.literal(true).optional(),
   }).strict(),
 ])
 export type SandboxResult = z.infer<typeof sandboxResultSchema>

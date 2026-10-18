@@ -38,6 +38,18 @@ function fixture() {
 }
 
 describe('sandbox client facts', () => {
+  it('releases only a trusted pre-dispatch rejection and retains unproven failures', async () => {
+    for (const notStarted of [true, false]) {
+      const f = fixture()
+      const states = new Map<string, string>()
+      const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
+      f.response.resolve({ ok: false, code: 'SANDBOX_UNAVAILABLE', ...(notStarted ? { notStarted: true } : {}) })
+      await expect(pending).rejects.toThrow('SANDBOX_UNAVAILABLE')
+      expect([...states.values()]).toEqual([notStarted ? 'released' : 'unknown'])
+      await f.client.dispose()
+    }
+  })
+
   it('requires a trusted tree release receipt even when the backend returns success', async () => {
     const f = fixture()
     const states = new Map<string, string>()
