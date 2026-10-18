@@ -76,7 +76,7 @@ onScopeDispose(() => {
     <NSpin :show="loading && !snapshot">
       <NEmpty v-if="!plugins.length" class="extension-catalog__empty" :description="en ? 'No plugins to display' : '暂无可展示的插件'" />
       <div v-else class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] gap-[12px]">
-        <DesktopExtensionCatalogCard v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card" :manifest="item.manifest" :icon-url="item.iconUrl" :language="language">
+        <DesktopExtensionCatalogCard v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card" :manifest="item.manifest" :icon-url="item.iconUrl" :repository="item.repository" :language="language">
           <template #actions>
             <NButton v-if="item.installed?.pending?.manifest.version === item.manifest.version && !item.available" size="small" type="primary" :disabled="busy || !item.compatible || !!item.installed.pending.incompatibility" data-testid="catalog-apply-update" @click="emit('applyUpdate', item.manifest.id)">
               {{ labels.applyUpdate }}
