@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
   contextMaximized?: boolean
   sidebarCollapsible?: boolean
   sidebarResizable?: boolean
+  sidebarToggleVisible?: boolean
   workspaceMinimumWidth?: number
 }>(), {
   contextVisible: true,
@@ -23,6 +24,7 @@ const props = withDefaults(defineProps<{
   contextMaximized: false,
   sidebarCollapsible: false,
   sidebarResizable: false,
+  sidebarToggleVisible: true,
   workspaceMinimumWidth: 288,
 })
 const slots = defineSlots<{
@@ -117,13 +119,13 @@ const {
       @pointermove="updateSidebarTogglePosition"
     />
     <div
-      v-else-if="sidebarResizable && sidebarCollapsible"
+      v-else-if="sidebarResizable && sidebarCollapsible && sidebarToggleVisible"
       class="desktop-workbench-layout__sidebar-collapsed-boundary relative z-12 w-[1px] h-full mr-[-1px]"
       @pointerenter="updateSidebarTogglePosition"
       @pointermove="updateSidebarTogglePosition"
     />
     <button
-      v-if="sidebarResizable && sidebarCollapsible"
+      v-if="sidebarResizable && sidebarCollapsible && sidebarToggleVisible"
       class="desktop-workbench-layout__sidebar-toggle absolute z-12 top-[50%] left-[calc(var(--buddy-workspace-sidebar-width)_+_0.25rem)] grid w-6 h-8 place-items-center border-0 bg-transparent text-accent cursor-pointer opacity-0 outline-0 p-0 pointer-events-none hover:text-accent-hover focus-visible:(text-accent-hover outline-solid outline-2 outline-focus outline-offset-1)"
       :class="{ 'is-collapsed': !sidebarVisible() }"
       :style="sidebarToggleStyle"

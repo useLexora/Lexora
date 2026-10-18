@@ -1,4 +1,5 @@
 import type { DesktopBrowserApi } from '../../shared/browser/browserDesktopApi'
+import type { DesktopNavigationLayout } from '../../shared/desktopNavigationLayout'
 import type { ApplicationLogApi } from '../../shared/diagnostics/applicationLog'
 import type { ApplicationStartupState } from '../../shared/diagnostics/applicationStartup'
 import type { PerformanceDiagnosticApi } from '../../shared/diagnostics/performanceDiagnostic'
@@ -16,6 +17,8 @@ import { BUDDY_DEFAULT_PERMISSION_MODE } from '../../shared/permissions/permissi
 import { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS } from './desktopChatWelcome'
 
 export { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from '../../shared/browser/browserDesktopApi'
+export type { DesktopBrowserApi, DesktopBrowserAttachGuestInput, DesktopBrowserEnsureSessionInput, DesktopBrowserError, DesktopBrowserErrorCode, DesktopBrowserGuestDescriptor, DesktopBrowserNavigateInput, DesktopBrowserOpenArtifactInput, DesktopBrowserProfileMode, DesktopBrowserSecurityKind, DesktopBrowserSecurityState, DesktopBrowserSessionInput, DesktopBrowserSetProfileModeInput, DesktopBrowserSetSurfaceInput, DesktopBrowserState, DesktopBrowserStatus } from '../../shared/browser/browserDesktopApi'
+export { DESKTOP_NAVIGATION_LAYOUTS } from '../../shared/desktopNavigationLayout'
 
 export const DESKTOP_IPC_CHANNELS = {
   workbenchRead: 'lexora:workbench:read',
@@ -143,7 +146,7 @@ export interface DesktopTaskSidebarPreferences {
   width: number | null
 }
 
-export type { DesktopBrowserApi, DesktopBrowserAttachGuestInput, DesktopBrowserEnsureSessionInput, DesktopBrowserError, DesktopBrowserErrorCode, DesktopBrowserGuestDescriptor, DesktopBrowserNavigateInput, DesktopBrowserOpenArtifactInput, DesktopBrowserProfileMode, DesktopBrowserSecurityKind, DesktopBrowserSecurityState, DesktopBrowserSessionInput, DesktopBrowserSetProfileModeInput, DesktopBrowserSetSurfaceInput, DesktopBrowserState, DesktopBrowserStatus } from '../../shared/browser/browserDesktopApi'
+export type { DesktopNavigationLayout } from '../../shared/desktopNavigationLayout'
 export { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, DESKTOP_CHAT_WELCOME_VARIANT_IDS } from './desktopChatWelcome'
 export type DesktopContextPanelMode = 'task' | 'space' | 'independent'
 
@@ -205,6 +208,7 @@ export interface LexoraConfig {
     profile: DesktopUserProfileConfig
     pluginAuthor: string
     sidebarCollapsed: boolean
+    navigationLayout: DesktopNavigationLayout
     fileIconTheme: { id: string }
     theme: ThemePreference
     typography: import('../../shared/typography/typographyPreferences').TypographyPreferences

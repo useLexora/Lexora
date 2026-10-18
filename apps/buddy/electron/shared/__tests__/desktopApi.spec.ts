@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH } from '../desktopApi'
+import { DESKTOP_NAVIGATION_LAYOUTS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH } from '../desktopApi'
 import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSchema } from '../desktopApiSchemas'
 
 describe('desktop Preload API contract', () => {
@@ -30,6 +30,17 @@ describe('desktop Preload API contract', () => {
     expect(lexoraConfigPatchSchema.parse({ desktop: { chat: { outlinePosition: 'bottom-left', permissionMode: 'full_access', welcome: 'none' } } }))
       .toEqual({ desktop: { chat: { outlinePosition: 'bottom-left', permissionMode: 'full_access', welcome: 'none' } } })
     expect(() => lexoraConfigPatchSchema.parse({ desktop: { chat: { permissionMode: 'invalid' } } })).toThrow()
+  })
+
+  it('accepts the three navigation layouts without changing legacy sidebar preferences and rejects unknown layouts', () => {
+    for (const navigationLayout of DESKTOP_NAVIGATION_LAYOUTS) {
+      const patch = { desktop: { navigationLayout } }
+      expect(lexoraConfigPatchSchema.parse(patch)).toEqual(patch)
+    }
+    expect(lexoraConfigPatchSchema.parse({ desktop: { sidebarCollapsed: true, taskSidebar: { collapsed: true } } }))
+      .toEqual({ desktop: { sidebarCollapsed: true, taskSidebar: { collapsed: true } } })
+    for (const navigationLayout of ['sidebar', 'FULL', '', null, true])
+      expect(() => lexoraConfigPatchSchema.parse({ desktop: { navigationLayout } })).toThrow()
   })
 
   it('accepts release pages from the canonical repository', () => {

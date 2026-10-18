@@ -8,6 +8,7 @@ import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopFileIconSettings from './DesktopFileIconSettings.vue'
+import DesktopNavigationLayoutSettings from './DesktopNavigationLayoutSettings.vue'
 import DesktopThemeSettings from './DesktopThemeSettings.vue'
 import DesktopTypographySettings from './DesktopTypographySettings.vue'
 import DesktopWelcomeSettings from './DesktopWelcomeSettings.vue'
@@ -31,6 +32,7 @@ const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map
       <h2 class="m-0 text-[0.92rem]">
         {{ t('desktop.settings.applicationAppearance') }}
       </h2>
+      <DesktopNavigationLayoutSettings v-bind="props" />
       <DesktopThemeSettings :language="language" />
       <DesktopFileIconSettings :language="language" />
     </section>

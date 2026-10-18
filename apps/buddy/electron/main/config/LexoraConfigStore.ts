@@ -8,6 +8,7 @@ import process from 'node:process'
 import { parse, stringify } from 'smol-toml'
 import { z } from 'zod'
 import { browserPreferencesSchema, DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
+import { DESKTOP_NAVIGATION_LAYOUTS } from '../../../shared/desktopNavigationLayout'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
@@ -106,6 +107,7 @@ const desktopConfigSchema = z.object({
   local_backup_limit: localBackupLimitSchema.default(DEFAULT_LOCAL_BACKUP_LIMIT),
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
+  navigation_layout: z.enum(DESKTOP_NAVIGATION_LAYOUTS).default('full'),
   file_icon_theme: fileIconPreferenceSchema.default({ id: BUILTIN_FILE_ICON_THEME }),
   theme: z.union([themePreferenceSchema, legacyThemePreferenceSchema, z.enum(['system', 'light', 'dark'])]).default('system'),
   accent_color: z.enum(DESKTOP_ACCENT_COLORS).default('default'),
@@ -140,6 +142,7 @@ const desktopConfigSchema = z.object({
   local_backup_limit: DEFAULT_LOCAL_BACKUP_LIMIT,
   notify_when_focused: false,
   sidebar_collapsed: false,
+  navigation_layout: 'full',
   file_icon_theme: { id: BUILTIN_FILE_ICON_THEME },
   theme: 'system',
   accent_color: 'default',
@@ -382,6 +385,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       localBackupLimit: config.desktop.local_backup_limit,
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
+      navigationLayout: config.desktop.navigation_layout,
       fileIconTheme: config.desktop.file_icon_theme,
       theme: migrateThemePreference(config.desktop.theme, config.desktop.accent_color),
       typography: {
@@ -450,6 +454,7 @@ function encodeConfig(config: LexoraConfig) {
       local_backup_limit: config.desktop.localBackupLimit,
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
+      navigation_layout: config.desktop.navigationLayout,
       file_icon_theme: config.desktop.fileIconTheme,
       theme: config.desktop.theme,
       typography: {
@@ -477,6 +482,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       ...current.desktop,
       ...patch.desktop,
       localBackupLimit: localBackupLimitSchema.parse(patch.desktop?.localBackupLimit ?? current.desktop.localBackupLimit),
+      navigationLayout: z.enum(DESKTOP_NAVIGATION_LAYOUTS).parse(patch.desktop?.navigationLayout ?? current.desktop.navigationLayout),
       fileIconTheme: fileIconPreferenceSchema.parse(patch.desktop?.fileIconTheme ?? current.desktop.fileIconTheme),
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
       typography: typographyPreferencesSchema.parse({ ...current.desktop.typography, ...patch.desktop?.typography }),

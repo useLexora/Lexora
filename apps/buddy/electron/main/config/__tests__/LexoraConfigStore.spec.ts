@@ -5,6 +5,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
+import { DESKTOP_NAVIGATION_LAYOUTS } from '../../../../shared/desktopNavigationLayout'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
@@ -26,6 +27,7 @@ describe('lexoraConfigStore', () => {
       runtime: { modelRetryLimit: 3 },
       desktop: {
         localBackupLimit: 3,
+        navigationLayout: 'full',
         notificationsEnabled: true,
         subtaskNotificationsEnabled: true,
         pluginAuthor: '',
@@ -96,6 +98,37 @@ describe('lexoraConfigStore', () => {
       browser: { future: true },
     })
     expect((await stat(configPath)).mode & 0o777).toBe(0o600)
+  })
+
+  it.each([false, true])('defaults missing navigation layout to full and preserves legacy sidebar preferences (collapsed: %s)', async (collapsed) => {
+    const { configPath, store } = await createConfigStore(`
+[desktop]
+sidebar_collapsed = ${collapsed}
+[[desktop.task_sidebar_pinned_items]]
+id = "space-a"
+kind = "space"
+[desktop.task_sidebar]
+collapsed = ${collapsed}
+collapsed_sections = ["tasks", "spaces"]
+collapsed_spaces = ["space-a"]
+width = 336
+future = true
+`)
+    const legacy = {
+      sidebarCollapsed: collapsed,
+      taskSidebarPinnedItems: [{ id: 'space-a', kind: 'space' }],
+      taskSidebar: { collapsed, collapsedSections: ['tasks', 'spaces'], collapsedSpaces: ['space-a'], width: 336 },
+    }
+    expect((await store.read()).desktop).toMatchObject({ ...legacy, navigationLayout: 'full' })
+    for (const navigationLayout of [...DESKTOP_NAVIGATION_LAYOUTS, 'full'] as const) {
+      await store.update({ desktop: { navigationLayout } })
+      await store.update({ desktop: { language: 'en-US' } })
+      expect((await new LexoraConfigStore({ configPath }).read()).desktop)
+        .toMatchObject({ ...legacy, navigationLayout })
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+        desktop: { navigation_layout: navigationLayout, sidebar_collapsed: collapsed, task_sidebar: { future: true } },
+      })
+    }
   })
 
   it('migrates paired and legacy themes without losing the selected appearance or custom themes', async () => {
@@ -202,6 +235,7 @@ text = "保留我的内容"
       { browser: { freezeDelaySeconds: 1.5 } },
       { desktop: { chat: { permissionMode: 'invalid' } } },
       { desktop: { typography: { bodySize: 100 } } },
+      { desktop: { navigationLayout: 'sidebar' } },
       { desktop: { keybindings: { 'task.new': 'not a shortcut' } } },
       { desktop: { pluginAuthor: '名'.repeat(81) } },
     ]
@@ -213,6 +247,7 @@ text = "保留我的内容"
     for (const content of [
       '[desktop\ntheme="dark"',
       '[desktop]\nsubtask_notifications_enabled="false"\n',
+      '[desktop]\nnavigation_layout="sidebar"\n',
       '[desktop.chat]\npaste_text_as_attachment="false"\n',
       '[desktop.chat]\npermission_mode="invalid"\n',
     ]) {

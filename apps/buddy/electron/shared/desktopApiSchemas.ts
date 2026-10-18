@@ -1,6 +1,7 @@
 import type { LexoraConfigPatch } from './desktopApi'
 import { z } from 'zod'
 import { browserPreferencesSchema } from '../../shared/browser/browserPreferences'
+import { DESKTOP_NAVIGATION_LAYOUTS } from '../../shared/desktopNavigationLayout'
 import { extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 import { fileIconPreferenceSchema } from '../../shared/icons/fileIconTheme'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
@@ -108,6 +109,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     localBackupLimit: localBackupLimitSchema.optional(),
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),
+    navigationLayout: z.enum(DESKTOP_NAVIGATION_LAYOUTS).optional(),
     fileIconTheme: fileIconPreferenceSchema.optional(),
     theme: themePreferenceSchema.optional(),
     typography: typographyPreferencesSchema.partial().optional(),

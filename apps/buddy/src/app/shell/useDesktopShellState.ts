@@ -10,7 +10,8 @@ export function useDesktopShellState(settings: ApplicationSettings, api: LexoraD
     disposed = true
   })
   const appInfo = shallowRef<DesktopAppInfo | null>(null)
-  const appSidebarCollapsed = computed(() => settings.config.value?.desktop.sidebarCollapsed ?? false)
+  const navigationLayout = computed(() => settings.config.value?.desktop.navigationLayout ?? 'full')
+  const appSidebarCollapsed = computed(() => navigationLayout.value !== 'full' || (settings.config.value?.desktop.sidebarCollapsed ?? false))
 
   async function initialize() {
     const info = await loadDesktopAppInfo(api)
@@ -19,7 +20,7 @@ export function useDesktopShellState(settings: ApplicationSettings, api: LexoraD
   }
 
   async function setAppSidebarCollapsed(value: boolean) {
-    if (appSidebarCollapsed.value === value)
+    if (settings.config.value?.desktop.sidebarCollapsed === value)
       return true
     return settings.updateSettings({ desktop: { sidebarCollapsed: value } })
   }
@@ -27,6 +28,7 @@ export function useDesktopShellState(settings: ApplicationSettings, api: LexoraD
   return {
     appInfo: readonly(appInfo),
     appSidebarCollapsed,
+    navigationLayout,
     platformCapabilities: computed(() => appInfo.value?.capabilities ?? null),
     initialize,
     setAppSidebarCollapsed,

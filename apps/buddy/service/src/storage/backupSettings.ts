@@ -1,6 +1,6 @@
 import { parse, stringify } from 'smol-toml'
 
-const desktopKeys = ['typography', 'plugin_author', 'chat', 'context_panel_mode', 'context_panel_global', 'context_panel_auto_collapse', 'keybindings', 'task_sidebar_pinned_items', 'task_sidebar', 'profile', 'developer_tools_enabled', 'language', 'notifications_enabled', 'update_notifications_enabled', 'auto_download_updates', 'notify_when_focused', 'sidebar_collapsed', 'theme', 'accent_color']
+const desktopKeys = ['typography', 'plugin_author', 'chat', 'context_panel_mode', 'context_panel_global', 'context_panel_auto_collapse', 'keybindings', 'task_sidebar_pinned_items', 'task_sidebar', 'profile', 'developer_tools_enabled', 'language', 'notifications_enabled', 'update_notifications_enabled', 'auto_download_updates', 'notify_when_focused', 'sidebar_collapsed', 'navigation_layout', 'theme', 'accent_color']
 const record = (value: unknown): ReturnType<typeof parse> => value && typeof value === 'object' && !Array.isArray(value) ? value as ReturnType<typeof parse> : {}
 export function portableSettings(text: string): string {
   const source = parse(text)

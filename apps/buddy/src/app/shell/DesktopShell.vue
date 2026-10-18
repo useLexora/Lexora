@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import type { DesktopShellBindings } from './desktopShellBindings'
-import { computed, useTemplateRef } from 'vue'
+import { NDrawer, useMessage } from 'naive-ui'
+import { computed, shallowRef, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DesktopStartupScreen from '@/app/bootstrap/DesktopStartupScreen.vue'
 import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
+import DesktopImmersiveNavigation from '@/app/shell/DesktopImmersiveNavigation.vue'
 import DesktopTitleBar from '@/app/shell/window/DesktopTitleBar.vue'
+import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import WorkbenchHost from '@/workbench/browser/WorkbenchHost.vue'
+import DesktopTaskHistory from '../workbench/DesktopTaskHistory.vue'
 import DesktopWorkbenchArea from '../workbench/DesktopWorkbenchArea.vue'
 import DesktopWorkbenchView from '../workbench/DesktopWorkbenchView.vue'
 
@@ -23,50 +27,83 @@ const hasBeenReady = computed(() => bindings.lifecycle.state.value.hasBeenReady)
 const startupVisible = computed(() => !hasBeenReady.value && route.meta.requiresRuntime !== false)
 const activeView = computed(() => bindings.pages.current.value)
 const navigation = computed(() => bindings.pages.navigation.value)
+const navigationLayout = bindings.navigationLayout
+const historyDrawerOpen = shallowRef(false)
+const tasksVisible = computed(() => activeView.value === 'lexora.tasks')
+const primarySidebarCollapsed = computed(() => navigationLayout.value === 'full'
+  ? appSidebarCollapsed.value
+  : tasksVisible.value ? bindings.taskIndex.sidebar.collapsed.value : !historyDrawerOpen.value)
+const historyDrawerWidth = computed(() => Math.max(232, bindings.taskIndex.sidebar.width.value ?? 248))
+const message = useMessage()
+const { t } = useBuddyI18n(language)
+watch([activeView, navigationLayout], () => historyDrawerOpen.value = false)
+
+async function togglePrimarySidebar() {
+  if (navigationLayout.value === 'full') {
+    bindings.toggleAppSidebar()
+  }
+  else if (tasksVisible.value) {
+    if (!await bindings.taskIndex.sidebar.setCollapsed(!bindings.taskIndex.sidebar.collapsed.value))
+      message.error(t('desktop.settings.saveFailed'))
+  }
+  else {
+    historyDrawerOpen.value = !historyDrawerOpen.value
+  }
+}
 function navigate(id: string) {
   const entry = navigation.value.find(entry => entry.id === id)
-  if (entry)
+  if (entry) {
+    historyDrawerOpen.value = false
     void bindings.navigation.navigate(entry.location)
+  }
+}
+function showTasks() {
+  historyDrawerOpen.value = false
+  void bindings.navigation.navigate(desktopRouteLocations.tasks())
 }
 </script>
 
 <template>
-  <div ref="windowElement" class="desktop-shell relative flex min-w-0 min-h-0 flex-col bg-canvas" data-theme-surface="layout" :data-lexora-page="activeView">
+  <div ref="windowElement" class="desktop-shell relative flex min-w-0 min-h-0 flex-col bg-canvas" data-theme-surface="layout" :data-lexora-page="activeView" :data-navigation-layout="navigationLayout">
     <DesktopTitleBar
       :app-info="bindings.appInfo.value"
       :shortcut-bindings="bindings.shortcuts.bindings.value"
-      :app-sidebar-collapsed="appSidebarCollapsed"
+      :sidebar-collapsed="primarySidebarCollapsed"
+      :sidebar-target="navigationLayout === 'full' ? 'app' : 'history'"
       :language="language"
       :context-available="hasBeenReady && (bindings.contextPanelGlobal.value || activeView === 'lexora.tasks')"
       :context-open="bindings.resources.isOpen.value"
       @toggle-context="bindings.resources.toggle"
-      @toggle-app-sidebar="bindings.toggleAppSidebar"
+      @toggle-sidebar="togglePrimarySidebar"
     />
     <div class="desktop-shell__body relative">
       <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
         <div class="desktop-shell__content" :class="{ 'is-starting': startupVisible }" :inert="startupVisible" :aria-hidden="startupVisible">
           <Transition name="desktop-app-sidebar">
             <DesktopAppSidebar
-              v-if="!appSidebarCollapsed"
-              :app-info="bindings.appInfo.value"
-              :app-version="bindings.appInfo.value?.version ?? null"
-              :profile-config="bindings.profileConfig.value"
-              :update-profile="bindings.updateProfile"
-              :language="language"
-              :navigation="navigation"
-              :notification-items="bindings.notifications.items.value"
-              :notification-loading="bindings.notifications.isLoading.value"
-              :notification-unseen-count="bindings.notifications.unseenCount.value"
-              @navigate="navigate"
-              @mark-all-notifications-seen="bindings.notifications.markAllSeen"
-              @open-notification="bindings.navigation.openNotification"
-              @refresh-notifications="bindings.notifications.load"
+              v-if="navigationLayout === 'compact' || (navigationLayout === 'full' && !appSidebarCollapsed)"
+              :bindings="bindings" :compact="navigationLayout === 'compact'" @navigate="navigate"
             />
           </Transition>
           <WorkbenchMountPoint target="workbench" class="desktop-shell__workbench" data-theme-surface="layout">
-            <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="activeView === 'lexora.tasks'" />
+            <DesktopWorkbenchArea :bindings="bindings" :tasks-visible="tasksVisible">
+              <template v-if="navigationLayout === 'immersive'" #sidebar-footer>
+                <DesktopImmersiveNavigation :bindings="bindings" :visible="!bindings.taskIndex.sidebar.collapsed.value" @navigate="navigate" />
+              </template>
+            </DesktopWorkbenchArea>
           </WorkbenchMountPoint>
         </div>
+        <NDrawer
+          v-if="navigationLayout !== 'full' && !tasksVisible"
+          v-model:show="historyDrawerOpen" class="desktop-history-drawer" placement="left" :width="historyDrawerWidth"
+          :style="{ '--buddy-workspace-sidebar-width': `${historyDrawerWidth}px` }" to=".desktop-shell__body"
+        >
+          <DesktopTaskHistory :bindings="bindings" @navigate="showTasks">
+            <template v-if="navigationLayout === 'immersive'" #footer>
+              <DesktopImmersiveNavigation :bindings="bindings" :visible="historyDrawerOpen" @navigate="navigate" />
+            </template>
+          </DesktopTaskHistory>
+        </NDrawer>
         <template #view="{ view, visible }">
           <DesktopWorkbenchView :view="view" :visible="visible" />
         </template>
@@ -99,10 +136,21 @@ function navigate(id: string) {
   min-height: 0;
   flex: 1;
 }
-.desktop-shell__content { transition: opacity 220ms ease; }
-.desktop-shell__content.is-starting { opacity: 0; }
-.desktop-startup-reveal-leave-active { transition: opacity 220ms ease; }
-.desktop-startup-reveal-leave-to { opacity: 0; }
+.desktop-shell__content {
+  transition: opacity 220ms ease;
+}
+
+.desktop-shell__content.is-starting {
+  opacity: 0;
+}
+
+.desktop-startup-reveal-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.desktop-startup-reveal-leave-to {
+  opacity: 0;
+}
 
 .desktop-shell__workbench {
   background: var(--buddy-surface-canvas);

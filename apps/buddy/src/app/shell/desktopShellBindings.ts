@@ -1,4 +1,4 @@
-import type { DesktopAppInfo, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
+import type { DesktopAppInfo, DesktopNavigationLayout, DesktopUserProfileConfig } from '@buddy-electron/shared/desktopApi'
 import type { Ref } from 'vue'
 import type { useDesktopLifecycle } from '../bootstrap/useDesktopLifecycle'
 import type { DesktopNavigation } from '../bootstrap/useDesktopNavigation'
@@ -9,6 +9,7 @@ import type { DesktopNavigationEntry } from '@/shared/navigation/desktopPages'
 
 export interface DesktopShellBindings {
   appInfo: Readonly<Ref<DesktopAppInfo | null>>
+  navigationLayout: Readonly<Ref<DesktopNavigationLayout>>
   contextPanelGlobal: Readonly<Ref<boolean>>
   pages: { current: Readonly<Ref<string>>, navigation: Readonly<Ref<DesktopNavigationEntry[]>> }
   lifecycle: ReturnType<typeof useDesktopLifecycle>

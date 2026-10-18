@@ -3,29 +3,26 @@ import type { ComponentPublicInstance } from 'vue'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import { computed, useTemplateRef, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
-import { DesktopTaskIndexView, DesktopTaskResourcePanel } from '@/modules/tasks/ui'
+import { DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import WorkbenchLayout from '@/workbench/browser/layout/WorkbenchLayout.vue'
-import WorkbenchMountPoint from '@/workbench/browser/mounts/WorkbenchMountPoint.vue'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import WorkbenchLayoutNode from '@/workbench/browser/WorkbenchLayoutNode.vue'
 import WorkbenchResourcePanelActions from '@/workbench/browser/WorkbenchResourcePanelActions.vue'
 import WorkbenchSurface from '@/workbench/browser/WorkbenchSurface.vue'
 import DesktopDirectoryFileSurface from './DesktopDirectoryFileSurface.vue'
+import DesktopTaskHistory from './DesktopTaskHistory.vue'
 
 const props = defineProps<{ bindings: DesktopShellBindings, tasksVisible: boolean }>()
+defineSlots<{ 'sidebar-footer'?: () => unknown }>()
 const taskWorkspace = useTemplateRef<HTMLElement>('taskWorkspace')
 useWorkbenchAnchor('workbench.workspace', () => taskWorkspace.value)
-const { controller, layout, revision, labels, panels } = useWorkbench()
+const { layout, revision, labels, panels } = useWorkbench()
 const route = useRoute()
 const contextVisible = computed(() => props.bindings.lifecycle.state.value.hasBeenReady && (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
 watch([contextVisible, () => route.path], panels.restore)
-const pendingTaskIds = computed(() => {
-  void revision.value
-  return [...controller.navigation.entries.values()].filter(entry => entry.status === 'loading' && entry.view.resource.scheme === 'task').map(entry => entry.view.resource.id)
-})
 const { language } = useDesktopUi()
 const sidebar = props.bindings.taskIndex.sidebar
 const collapsed = computed({ get: () => sidebar.collapsed.value, set: value => void sidebar.setCollapsed(value) })
@@ -56,11 +53,13 @@ function focusContext() {
 </script>
 
 <template>
-  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="contextVisible" :context-on-left="panels.contextOnLeft.value" :context-maximized="panels.contextMaximized.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible">
+  <WorkbenchLayout v-model:sidebar-collapsed="collapsed" v-model:sidebar-width="width" :language="language" :context-visible="contextVisible" :context-on-left="panels.contextOnLeft.value" :context-maximized="panels.contextMaximized.value" :sidebar-collapsible="tasksVisible" :sidebar-resizable="tasksVisible" :sidebar-toggle-visible="bindings.navigationLayout.value === 'full'">
     <template v-if="tasksVisible" #sidebar>
-      <WorkbenchMountPoint target="workbench.sidebar">
-        <DesktopTaskIndexView :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTaskId.value" @open-task="bindings.workbench.openTask" @new-task="spaceId => bindings.workbench.newTask({ spaceId })" />
-      </WorkbenchMountPoint>
+      <DesktopTaskHistory :bindings="bindings">
+        <template #footer>
+          <slot name="sidebar-footer" />
+        </template>
+      </DesktopTaskHistory>
     </template>
     <template #workspace>
       <div v-show="tasksVisible" ref="taskWorkspace" class="desktop-workbench-area__tasks relative flex flex-1 min-w-0 min-h-0" data-theme-surface="layout" data-workbench-workspace>

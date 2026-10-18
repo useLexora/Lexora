@@ -255,6 +255,7 @@ onScopeDispose(workbench.controller.subscribe(() => void nextTick(() => browserG
 const toggleAppSidebar = () => void shell.setAppSidebarCollapsed(!shell.appSidebarCollapsed.value)
 
 const shellBindings: DesktopShellBindings = {
+  navigationLayout: shell.navigationLayout,
   pages,
   shortcuts,
   contextPanelGlobal: computed(() => stores.applicationSettings.config.value?.desktop.contextPanelGlobal ?? false),

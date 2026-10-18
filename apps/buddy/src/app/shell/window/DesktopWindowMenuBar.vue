@@ -11,28 +11,30 @@ import {
   isDesktopCommandId,
 } from '@buddy-electron/shared/desktopCommands'
 import { formatKeybinding } from '@buddy-shared/shortcuts/keybinding'
-import {
-  PanelLeft20Regular,
-} from '@vicons/fluent'
-import { NDropdown } from 'naive-ui'
+import { PanelLeft20Filled, PanelLeft20Regular } from '@vicons/fluent'
+import { NDropdown, NTooltip } from 'naive-ui'
 import { computed, h, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { BRAND_ASSET_URLS } from '@/shared/branding/brandAssets'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
-  appSidebarCollapsed: boolean
+  sidebarCollapsed: boolean
+  sidebarTarget: 'app' | 'history'
   language: BuddyLocale
   platform: DesktopPlatform
   shortcutBindings: Readonly<Record<string, readonly string[]>>
 }>()
 const emit = defineEmits<{
   command: [commandId: DesktopCommandId]
-  toggleAppSidebar: []
+  toggleSidebar: []
 }>()
 
 const activeMenu = shallowRef<DesktopCommandMenu | null>(null)
 const { t } = useBuddyI18n(() => props.language)
+const sidebarLabel = computed(() => props.sidebarTarget === 'app'
+  ? t(props.sidebarCollapsed ? 'desktop.layout.expandAppSidebar' : 'desktop.layout.collapseAppSidebar')
+  : t(props.sidebarCollapsed ? 'desktop.layout.expandTaskSidebar' : 'desktop.layout.collapseTaskSidebar'))
 const menuTriggers = computed(() => [
   { id: 'application' as const, label: 'Lexora Buddy' },
   { id: 'window' as const, label: t('desktop.menu.window') },
@@ -111,16 +113,21 @@ const nodeProps: DropdownNodeProps = () => ({
     @mousedown.stop
     @pointerdown.stop
   >
-    <button
-      type="button"
-      class="desktop-window-menu__sidebar-trigger"
-      :aria-label="t(appSidebarCollapsed ? 'desktop.layout.expandAppSidebar' : 'desktop.layout.collapseAppSidebar')"
-      :aria-expanded="!appSidebarCollapsed"
-      aria-controls="desktop-app-sidebar"
-      @click="emit('toggleAppSidebar')"
-    >
-      <DesktopIcon :component="PanelLeft20Regular" />
-    </button>
+    <NTooltip placement="bottom">
+      <template #trigger>
+        <button
+          type="button"
+          class="desktop-window-menu__sidebar-trigger"
+          :aria-label="sidebarLabel"
+          :aria-expanded="!sidebarCollapsed"
+          :aria-controls="sidebarTarget === 'app' ? 'desktop-app-sidebar' : 'desktop-task-history'"
+          @click="emit('toggleSidebar')"
+        >
+          <DesktopIcon :component="sidebarCollapsed ? PanelLeft20Regular : PanelLeft20Filled" :size="18" />
+        </button>
+      </template>
+      {{ sidebarLabel }}
+    </NTooltip>
     <NDropdown
       v-for="menu in menuTriggers"
       :key="menu.id"
@@ -149,7 +156,7 @@ const nodeProps: DropdownNodeProps = () => ({
   </nav>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .desktop-window-menu {
   display: flex;
   height: 100%;
@@ -168,7 +175,7 @@ const nodeProps: DropdownNodeProps = () => ({
   border: 0;
   border-radius: var(--buddy-radius-micro);
   background: transparent;
-  color: var(--buddy-text-secondary);
+  color: color-mix(in srgb, var(--buddy-text-primary) 80%, var(--buddy-text-secondary));
   cursor: default;
   margin-right: 0.125rem;
   padding: 0;
@@ -182,11 +189,6 @@ const nodeProps: DropdownNodeProps = () => ({
   &:focus-visible {
     outline: 1px solid var(--buddy-focus-ring);
     outline-offset: -1px;
-  }
-
-  .desktop-icon {
-    width: 1rem;
-    height: 1rem;
   }
 }
 
