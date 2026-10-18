@@ -8,6 +8,7 @@ import DesktopAppSidebar from '@/app/shell/DesktopAppSidebar.vue'
 import DesktopImmersiveNavigation from '@/app/shell/DesktopImmersiveNavigation.vue'
 import DesktopTitleBar from '@/app/shell/window/DesktopTitleBar.vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { DesktopFeatureDiscovery, DesktopOnboardingScreen } from '@/modules/onboarding/ui'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
@@ -25,6 +26,9 @@ const windowElement = useTemplateRef<HTMLElement>('windowElement')
 useWorkbenchAnchor('window', () => windowElement.value)
 const hasBeenReady = computed(() => bindings.lifecycle.state.value.hasBeenReady)
 const startupVisible = computed(() => !hasBeenReady.value && route.meta.requiresRuntime !== false)
+const onboardingPending = bindings.onboarding.pending
+const onboardingVisible = computed(() => onboardingPending.value && hasBeenReady.value)
+const blocked = computed(() => startupVisible.value || onboardingVisible.value)
 const activeView = computed(() => bindings.pages.current.value)
 const navigation = computed(() => bindings.pages.navigation.value)
 const navigationLayout = bindings.navigationLayout
@@ -67,18 +71,19 @@ function showTasks() {
   <div ref="windowElement" class="desktop-shell relative flex min-w-0 min-h-0 flex-col bg-canvas" data-theme-surface="layout" :data-lexora-page="activeView" :data-navigation-layout="navigationLayout">
     <DesktopTitleBar
       :app-info="bindings.appInfo.value"
+      :minimal="onboardingVisible"
       :shortcut-bindings="bindings.shortcuts.bindings.value"
       :sidebar-collapsed="primarySidebarCollapsed"
       :sidebar-target="navigationLayout === 'full' ? 'app' : 'history'"
       :language="language"
-      :context-available="hasBeenReady && (bindings.contextPanelGlobal.value || activeView === 'lexora.tasks')"
+      :context-available="hasBeenReady && !onboardingPending && (bindings.contextPanelGlobal.value || activeView === 'lexora.tasks')"
       :context-open="bindings.resources.isOpen.value"
       @toggle-context="bindings.resources.toggle"
       @toggle-sidebar="togglePrimarySidebar"
     />
     <div class="desktop-shell__body relative">
-      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
-        <div class="desktop-shell__content" :class="{ 'is-starting': startupVisible }" :inert="startupVisible" :aria-hidden="startupVisible">
+      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && !onboardingPending && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
+        <div class="desktop-shell__content" :class="{ 'is-starting': blocked }" :inert="blocked" :aria-hidden="blocked">
           <Transition name="desktop-app-sidebar">
             <DesktopAppSidebar
               v-if="navigationLayout === 'compact' || (navigationLayout === 'full' && !appSidebarCollapsed)"
@@ -108,6 +113,7 @@ function showTasks() {
           <DesktopWorkbenchView :view="view" :visible="visible" />
         </template>
       </WorkbenchHost>
+      <DesktopOnboardingScreen v-if="onboardingVisible && !startupVisible" :controller="bindings.onboarding" :app-info="bindings.appInfo.value" />
       <Transition name="desktop-startup-reveal">
         <DesktopStartupScreen
           v-if="startupVisible"
@@ -119,6 +125,7 @@ function showTasks() {
         />
       </Transition>
     </div>
+    <DesktopFeatureDiscovery v-if="!blocked" :controller="bindings.featureDiscovery" :language="language" :can-remind="hasBeenReady && bindings.taskIndex.tasks.value.every(task => task.activity === 'idle')" />
   </div>
 </template>
 

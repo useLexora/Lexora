@@ -3,11 +3,14 @@ import type { Ref } from 'vue'
 import type { useDesktopLifecycle } from '../bootstrap/useDesktopLifecycle'
 import type { DesktopNavigation } from '../bootstrap/useDesktopNavigation'
 import type { NotificationCenterStore } from '@/modules/notifications'
+import type { DesktopOnboarding, FeatureDiscovery } from '@/modules/onboarding'
 import type { ShortcutSettings } from '@/modules/settings/contracts'
 import type { TaskChatWorkspace, TaskIndex, TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { DesktopNavigationEntry } from '@/shared/navigation/desktopPages'
 
 export interface DesktopShellBindings {
+  onboarding: DesktopOnboarding
+  featureDiscovery: FeatureDiscovery
   appInfo: Readonly<Ref<DesktopAppInfo | null>>
   navigationLayout: Readonly<Ref<DesktopNavigationLayout>>
   contextPanelGlobal: Readonly<Ref<boolean>>

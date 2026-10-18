@@ -95,6 +95,7 @@
     "@vueuse/core": "^15.0.0",
     "dayjs": "^1.11.23",
     "dompurify": "^3.4.16",
+    "driver.js": "1.10.1",
     "echarts": "^6.1.0",
     "electron": "44.7.0",
     "electron-builder": "^26.17.0",

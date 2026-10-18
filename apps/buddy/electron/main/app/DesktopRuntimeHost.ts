@@ -23,6 +23,7 @@ import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
+import { initializeDesktopConfig } from '../config/initializeDesktopConfig'
 import { LexoraConfigStore } from '../config/LexoraConfigStore'
 import { ContextPanelHost } from '../context-panel/ContextPanelHost'
 import { DesktopPerformanceMonitor } from '../diagnostics/DesktopPerformanceMonitor'
@@ -143,7 +144,11 @@ export class DesktopRuntimeHost {
     }
     const credentials = createCredentialVault({ buddyHome: environment.paths.buddyHome, reportDiagnostic: environment.events.publish })
     this.#credentials = credentials
-    const config = await this.configStore.read()
+    const config = await initializeDesktopConfig(this.configStore, {
+      configPath: environment.paths.configPath,
+      buddyHome: environment.paths.buddyHome,
+      languages: app.getPreferredSystemLanguages(),
+    })
     this.#config = config
     this.#network = new DesktopNetwork()
     const networkDiagnostics = this.#network.onDidChange(change => environment.events.publish({ event: `network.${change.kind}.${change.status}`, component: 'desktop.network', level: ['failed', 'degraded', 'unavailable'].includes(change.status) ? 'warn' : 'info', operationId: change.operationId, revision: change.revision, ...(change.failure ? { failure: change.failure, errorCode: 'NETWORK_START_FAILED' } : {}) }))
@@ -228,7 +233,8 @@ export class DesktopRuntimeHost {
     this.#config = config
     if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.codemode !== config.runtime.codemode || previous?.modelRetryLimit !== config.runtime.modelRetryLimit)
       this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
-    await Promise.all(this.#features.map(feature => feature.applyConfig(config)))
+    const featureConfig = config.desktop.onboardingCompleted ? config : { ...config, pet: { ...config.pet, enabled: false } }
+    await Promise.all(this.#features.map(feature => feature.applyConfig(featureConfig)))
     if (app.isPackaged && this.#environment.paths.profile === 'stable')
       await this.#environment.setAutostart(config.desktop.launchAtLogin)
   }

@@ -31,6 +31,8 @@ export interface SettingsContext {
   writeClipboardText: (text: string) => Promise<void>
   ready: Promise<void>
   openTask: (conversationId: string) => Promise<void>
+  openOnboarding: () => Promise<void>
+  featureDiscovery: { open: () => Promise<void>, unreadCount: Readonly<Ref<number>> }
   webSettings: WebSettingsCapability
   mcpSettings: McpSettingsCapability
 }

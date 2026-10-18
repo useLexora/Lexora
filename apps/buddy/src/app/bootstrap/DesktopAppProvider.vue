@@ -12,6 +12,7 @@ import { useProvideBuddiesContext } from '@/modules/buddies'
 import { ExtensionWindowStyleController, useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
 import { fileOperationsKey } from '@/modules/files/ui'
+import { useDesktopOnboarding, useFeatureDiscovery } from '@/modules/onboarding'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { DesktopSkillReviewHost } from '@/modules/skills/ui'
@@ -23,6 +24,7 @@ import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { createRendererDiagnostics } from '@/platform/runtime/RendererDiagnostics'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
+import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
@@ -254,7 +256,29 @@ const browserGuests = useBrowserGuestHost(browserGuestHost)
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(() => browserGuests.layout?.())))
 const toggleAppSidebar = () => void shell.setAppSidebarCollapsed(!shell.appSidebarCollapsed.value)
 
+const onboarding = useDesktopOnboarding({
+  settings: stores.applicationSettings,
+  providers: stores.modelProviders,
+  buddies: buddyDirectory,
+  onComplete: () => navigation.navigate(desktopRouteLocations.tasks()),
+})
+const featureDiscovery = useFeatureDiscovery({
+  settings: stores.applicationSettings,
+  appInfo: shell.appInfo,
+  visit: async (id) => {
+    const location = {
+      'navigation-layout': desktopRouteLocations.settings('appearance'),
+      'npc-team': desktopRouteLocations.buddies(buddyDirectory.catalog.value?.defaultBuddyId),
+    }[id]
+    await navigation.navigate(location)
+    return router.currentRoute.value.path === router.resolve(location).path
+  },
+  onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')),
+})
+watch(() => router.currentRoute.value.fullPath, () => featureDiscovery.routeChanged())
 const shellBindings: DesktopShellBindings = {
+  onboarding,
+  featureDiscovery,
   navigationLayout: shell.navigationLayout,
   pages,
   shortcuts,
@@ -302,6 +326,8 @@ useProvideTaskEnvironment({
   notificationTarget,
 })
 useProvideSettingsContext({
+  openOnboarding: onboarding.open,
+  featureDiscovery: { open: featureDiscovery.open, unreadCount: computed(() => featureDiscovery.unread.value.length) },
   registry: settingsRegistry,
   pluginSettings: usePluginSettings(extensions.installed, extensions.api),
   shortcuts,
@@ -355,6 +381,6 @@ watch(() => stores.applicationSettings.config.value?.desktop.language, (language
   <DesktopExtensionOverlays />
   <DesktopExtensionReviewHost />
   <DesktopSkillReviewHost />
-  <DesktopUpdateHost :language="stores.applicationSettings.language.value" />
+  <DesktopUpdateHost v-if="!onboarding.pending.value" :language="stores.applicationSettings.language.value" />
   <slot :shell="shellBindings" />
 </template>

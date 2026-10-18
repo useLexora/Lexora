@@ -5,6 +5,7 @@ import { DESKTOP_NAVIGATION_LAYOUTS } from '../../shared/desktopNavigationLayout
 import { extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 import { fileIconPreferenceSchema } from '../../shared/icons/fileIconTheme'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
+import { featureDiscoverySchema } from '../../shared/onboarding/featureDiscovery'
 import { BUDDY_PERMISSION_MODES } from '../../shared/permissions/permissionMode'
 import { runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../shared/shortcuts/keybindingSchema'
@@ -80,6 +81,9 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
   browser: browserPreferencesSchema.partial().optional(),
   proxy: proxySettingsSchema.optional(),
   desktop: z.object({
+    featureDiscovery: featureDiscoverySchema.optional(),
+    featureAnnouncementsEnabled: z.boolean().optional(),
+    onboardingCompleted: z.boolean().optional(),
     backgroundCloseNoticeShown: z.boolean().optional(),
     chat: z.object({
       outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),

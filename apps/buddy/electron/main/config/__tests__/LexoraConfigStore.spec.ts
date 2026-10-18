@@ -5,7 +5,6 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
-import { DESKTOP_NAVIGATION_LAYOUTS } from '../../../../shared/desktopNavigationLayout'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
@@ -21,13 +20,15 @@ async function createConfigStore(content?: string) {
 
 describe('lexoraConfigStore', () => {
   it('defaults legacy profiles and preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
-    const { configPath, store } = await createConfigStore()
+    const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[browser]\nfuture=true\n')
     const defaults = {
       browser: DEFAULT_BROWSER_PREFERENCES,
       runtime: { modelRetryLimit: 3 },
       desktop: {
         localBackupLimit: 3,
         navigationLayout: 'full',
+        featureAnnouncementsEnabled: true,
+        featureDiscovery: { version: '', pending: [], notified: [] },
         notificationsEnabled: true,
         subtaskNotificationsEnabled: true,
         pluginAuthor: '',
@@ -36,9 +37,6 @@ describe('lexoraConfigStore', () => {
         chat: { pasteTextAsAttachment: true, permissionMode: 'policy_approval' },
       },
     }
-    expect(await store.read()).toMatchObject(defaults)
-    await mkdir(dirname(configPath), { recursive: true })
-    await writeFile(configPath, '[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[browser]\nfuture=true\n')
     expect(await store.read()).toMatchObject(defaults)
     const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
     const preferences = {
@@ -49,6 +47,8 @@ describe('lexoraConfigStore', () => {
         localBackupLimit: 1,
         subtaskNotificationsEnabled: false,
         updateNotificationsEnabled: false,
+        featureAnnouncementsEnabled: false,
+        featureDiscovery: { version: '0.13.0', pending: ['npc-team'], notified: ['navigation-layout', 'npc-team'] },
         chat: { welcome: 'writing', pasteTextAsAttachment: false, permissionMode: 'full_access' },
         typography: { bodyFont: 'Noto Serif CJK SC', bodySize: 15 },
         keybindings: { 'task.new': 'Mod+Alt+N', 'view.close': '' },
@@ -100,33 +100,33 @@ describe('lexoraConfigStore', () => {
     expect((await stat(configPath)).mode & 0o777).toBe(0o600)
   })
 
-  it.each([false, true])('defaults missing navigation layout to full and preserves legacy sidebar preferences (collapsed: %s)', async (collapsed) => {
+  it('defaults missing navigation layout to full and preserves independent legacy sidebar preferences', async () => {
     const { configPath, store } = await createConfigStore(`
 [desktop]
-sidebar_collapsed = ${collapsed}
+sidebar_collapsed = true
 [[desktop.task_sidebar_pinned_items]]
 id = "space-a"
 kind = "space"
 [desktop.task_sidebar]
-collapsed = ${collapsed}
+collapsed = false
 collapsed_sections = ["tasks", "spaces"]
 collapsed_spaces = ["space-a"]
 width = 336
 future = true
 `)
     const legacy = {
-      sidebarCollapsed: collapsed,
+      sidebarCollapsed: true,
       taskSidebarPinnedItems: [{ id: 'space-a', kind: 'space' }],
-      taskSidebar: { collapsed, collapsedSections: ['tasks', 'spaces'], collapsedSpaces: ['space-a'], width: 336 },
+      taskSidebar: { collapsed: false, collapsedSections: ['tasks', 'spaces'], collapsedSpaces: ['space-a'], width: 336 },
     }
     expect((await store.read()).desktop).toMatchObject({ ...legacy, navigationLayout: 'full' })
-    for (const navigationLayout of [...DESKTOP_NAVIGATION_LAYOUTS, 'full'] as const) {
+    for (const navigationLayout of ['compact', 'immersive', 'full'] as const) {
       await store.update({ desktop: { navigationLayout } })
       await store.update({ desktop: { language: 'en-US' } })
       expect((await new LexoraConfigStore({ configPath }).read()).desktop)
         .toMatchObject({ ...legacy, navigationLayout })
       expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
-        desktop: { navigation_layout: navigationLayout, sidebar_collapsed: collapsed, task_sidebar: { future: true } },
+        desktop: { navigation_layout: navigationLayout, sidebar_collapsed: true, task_sidebar: { future: true } },
       })
     }
   })

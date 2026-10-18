@@ -19,6 +19,7 @@ import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
 const props = defineProps<{
+  minimal?: boolean
   appInfo: DesktopAppInfo | null
   sidebarCollapsed: boolean
   sidebarTarget: 'app' | 'history'
@@ -153,7 +154,9 @@ function applyWindowState(state: DesktopWindowState) {
 <template>
   <header class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none" data-theme-surface="header" @dblclick="toggleMaximize">
     <div class="absolute inset-0 flex items-center justify-between">
+      <span v-if="minimal" class="px-4 text-[12px] text-muted">{{ t('onboarding.welcome') }}</span>
       <DesktopWindowMenuBar
+        v-else
         :sidebar-collapsed="sidebarCollapsed"
         :sidebar-target="sidebarTarget"
         :language="language"

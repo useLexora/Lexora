@@ -2,6 +2,7 @@
 import { buddySettingsSchema } from '@buddy-shared/buddies/buddySettings'
 import { NAlert, NButton, NModal, NScrollbar, NSkeleton, NSwitch, NTooltip, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useBuddiesContext } from '../buddiesContext'
@@ -26,6 +27,15 @@ onScopeDispose(() => disposed = true)
 const { settings, busy: saving, error: settingsError, changed, save, reset } = useBuddySettings(buddy)
 const valid = computed(() => buddySettingsSchema.safeParse(settings.value).success)
 const disabled = computed(() => !ready.value || busy.value || saving.value || !buddy.value || !!buddy.value.deletedAt)
+
+function canLeave() {
+  if (!changed.value)
+    return true
+  message.warning(labels.value.saveOrDiscard)
+  return false
+}
+onBeforeRouteLeave(canLeave)
+onBeforeRouteUpdate((to, from) => to.params.buddyId === from.params.buddyId || canLeave())
 
 async function saveSettings() {
   const saved = await save()
@@ -106,7 +116,7 @@ async function profileSaved() {
           <NButton v-if="changed || settingsError" size="tiny" quaternary :disabled="disabled" @click="reset()">
             {{ labels.discard }}
           </NButton>
-          <NButton size="tiny" type="primary" :disabled="disabled || !changed || !valid" :loading="saving" @click="saveSettings">
+          <NButton class="buddy-settings-save" size="tiny" type="primary" :disabled="disabled || !changed || !valid" :loading="saving" @click="saveSettings">
             {{ labels.savePreferences }}
           </NButton>
         </div>

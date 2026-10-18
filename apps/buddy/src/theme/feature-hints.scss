@@ -1,0 +1,91 @@
+.buddy-feature-hint.driver-hint {
+  --driver-hint-color: var(--buddy-accent-solid);
+  --driver-hint-size: 20px;
+
+  z-index: 2000;
+
+  &:focus-visible {
+    outline: 2px solid var(--buddy-accent-solid);
+    outline-offset: 2px;
+    border-radius: var(--buddy-radius-micro);
+  }
+}
+
+.buddy-feature-popover.driver-popover {
+  z-index: 2001;
+  min-width: min(280px, calc(100vw - 32px));
+  max-width: min(340px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--buddy-border-subtle);
+  border-radius: 8px;
+  background: var(--buddy-surface-raised);
+  color: var(--buddy-text-primary);
+  font-family: var(--buddy-font-ui);
+  filter: none;
+  box-shadow: var(--buddy-shadow-overlay);
+
+  .driver-popover-title {
+    color: var(--buddy-text-strong);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .driver-popover-description {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .driver-popover-footer-btn {
+    padding: 5px 10px;
+    border: 1px solid var(--buddy-border-subtle);
+    border-radius: var(--buddy-radius-micro);
+    background: var(--buddy-surface-raised);
+    color: var(--buddy-text-primary);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .driver-popover-footer-btn:hover {
+    background: var(--buddy-state-hover);
+  }
+
+  .driver-popover-footer-btn:focus-visible {
+    outline: 2px solid var(--buddy-accent-solid);
+    outline-offset: 2px;
+  }
+
+  .driver-popover-progress-text {
+    align-items: center;
+    gap: 8px;
+    color: var(--buddy-text-secondary);
+    font-size: 12px;
+  }
+
+  .buddy-feature-exit {
+    border-color: transparent;
+    padding-inline: 4px;
+    color: var(--buddy-text-secondary);
+  }
+
+  .driver-popover-footer-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .driver-popover-arrow-side-top {
+    border-top-color: var(--buddy-surface-raised);
+  }
+
+  .driver-popover-arrow-side-bottom {
+    border-bottom-color: var(--buddy-surface-raised);
+  }
+
+  .driver-popover-arrow-side-left {
+    border-left-color: var(--buddy-surface-raised);
+  }
+
+  .driver-popover-arrow-side-right {
+    border-right-color: var(--buddy-surface-raised);
+  }
+}

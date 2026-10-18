@@ -4,8 +4,10 @@ import approvals from './approvals'
 import automations from './automations'
 import chat from './chat'
 import diagnostics from './diagnostics'
+import discovery from './discovery'
 import mcp from './mcp'
 import models from './models'
+import onboarding from './onboarding'
 import pet from './pet'
 import settings from './settings'
 import skills from './skills'
@@ -21,6 +23,8 @@ export default {
   ...diagnostics,
   ...mcp,
   ...models,
+  ...onboarding,
+  ...discovery,
   ...pet,
   ...settings,
   ...skills,

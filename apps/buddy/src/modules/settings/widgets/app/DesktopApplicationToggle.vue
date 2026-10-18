@@ -6,10 +6,9 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
-import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 
 const props = defineProps<ApplicationSettingsProps & {
-  field: 'launchAtLogin' | 'developerToolsEnabled' | 'updateNotificationsEnabled' | 'autoDownloadUpdates'
+  field: 'launchAtLogin' | 'developerToolsEnabled' | 'updateNotificationsEnabled' | 'autoDownloadUpdates' | 'featureAnnouncementsEnabled'
   label: string
   description: string
   disabledReason?: string
@@ -33,35 +32,33 @@ function update(value: boolean) {
 </script>
 
 <template>
-  <DesktopSettingsGroup v-if="config" class="desktop-application-toggle [container-type:inline-size] [--setting-row-py:0.9rem] [--setting-control-min:0px] [--setting-control-max:max-content]">
-    <DesktopSettingRow :label="label" :description="description" :disabled="!!disabledReason" toggle>
-      <template #labelExtra>
-        <slot name="labelExtra" />
-      </template>
-      <template #hint>
-        <slot name="hint" />
-      </template>
-      <template #default="{ controlAttrs }">
-        <NTooltip trigger="manual" :show="!!disabledReason && (hovered || focused)" style="max-width: min(20rem, calc(100vw - 3rem))">
-          <template #trigger>
-            <span
-              class="inline-flex rounded-[4px] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
-              :tabindex="disabledReason ? 0 : undefined"
-              :role="disabledReason ? 'group' : undefined"
-              :aria-labelledby="disabledReason ? controlAttrs['aria-labelledby'] : undefined"
-              :aria-description="disabledReason"
-              @mouseenter="hovered = true"
-              @mouseleave="hovered = false"
-              @focus="focused = true"
-              @blur="focused = false"
-              @keydown.esc="hovered = false; focused = false"
-            >
-              <NSwitch v-bind="controlAttrs" :round="false" :value="config.desktop[field]" :loading="pending" :disabled="pending || !!disabledReason" :aria-disabled="pending || !!disabledReason" @update:value="update" />
-            </span>
-          </template>
-          {{ disabledReason }}
-        </NTooltip>
-      </template>
-    </DesktopSettingRow>
-  </DesktopSettingsGroup>
+  <DesktopSettingRow v-if="config" class="desktop-application-toggle" :label="label" :description="description" :disabled="!!disabledReason" toggle>
+    <template #labelExtra>
+      <slot name="labelExtra" />
+    </template>
+    <template #hint>
+      <slot name="hint" />
+    </template>
+    <template #default="{ controlAttrs }">
+      <NTooltip trigger="manual" :show="!!disabledReason && (hovered || focused)" style="max-width: min(20rem, calc(100vw - 3rem))">
+        <template #trigger>
+          <span
+            class="inline-flex rounded-[4px] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+            :tabindex="disabledReason ? 0 : undefined"
+            :role="disabledReason ? 'group' : undefined"
+            :aria-labelledby="disabledReason ? controlAttrs['aria-labelledby'] : undefined"
+            :aria-description="disabledReason"
+            @mouseenter="hovered = true"
+            @mouseleave="hovered = false"
+            @focus="focused = true"
+            @blur="focused = false"
+            @keydown.esc="hovered = false; focused = false"
+          >
+            <NSwitch v-bind="controlAttrs" :round="false" :value="config.desktop[field]" :loading="pending" :disabled="pending || !!disabledReason" :aria-disabled="pending || !!disabledReason" @update:value="update" />
+          </span>
+        </template>
+        {{ disabledReason }}
+      </NTooltip>
+    </template>
+  </DesktopSettingRow>
 </template>

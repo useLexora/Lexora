@@ -58,44 +58,44 @@ async function retryCheck() {
     <h3 class="m-0 text-fg text-[0.85rem] font-600">
       {{ t('desktop.update.settings') }}
     </h3>
-    <DesktopApplicationToggle
-      field="updateNotificationsEnabled"
-      :label="t('desktop.update.autoCheck')"
-      :description="t('desktop.update.autoCheckDescription')"
-      :disabled-reason="capabilities?.automaticCheck ? undefined : t('desktop.update.autoCheckUnavailable')"
-      :config="config"
-      :error="error"
-      :language="language"
-      :update-settings="updateSettings"
-    >
-      <template #labelExtra>
-        <NTooltip>
-          <template #trigger>
-            <NTag size="small" :bordered="false" role="status" data-testid="update-check-status">
-              {{ checkedAt }}
-            </NTag>
-          </template>
-          {{ checkedAtDescription }}
-        </NTooltip>
-      </template>
-      <template v-if="updates.state.value?.checkFailed && !updates.state.value.checking" #hint>
-        <small class="text-muted text-[0.7rem] leading-[1.5]" role="status">
-          {{ t('desktop.update.cachedResultDescription') }}
-          <NButton text size="tiny" type="primary" @click="retryCheck">{{ t('desktop.update.retryCheck') }}</NButton>
-        </small>
-      </template>
-    </DesktopApplicationToggle>
-    <DesktopApplicationToggle
-      field="autoDownloadUpdates"
-      :label="t('desktop.update.autoDownload')"
-      :description="t(config?.desktop.updateNotificationsEnabled ? 'desktop.update.autoDownloadDescription' : 'desktop.update.autoDownloadPaused')"
-      :disabled-reason="capabilities?.download ? undefined : t('desktop.update.autoDownloadUnavailable')"
-      :config="config"
-      :error="error"
-      :language="language"
-      :update-settings="updateSettings"
-    />
-    <DesktopSettingsGroup v-if="ignoredVersion || downloadDirectory" class="[container-type:inline-size] [--setting-control-min:0px] [--setting-control-max:max-content]">
+    <DesktopSettingsGroup class="[container-type:inline-size] [--setting-row-py:0.9rem] [--setting-control-min:0px] [--setting-control-max:max-content]">
+      <DesktopApplicationToggle
+        field="updateNotificationsEnabled"
+        :label="t('desktop.update.autoCheck')"
+        :description="t('desktop.update.autoCheckDescription')"
+        :disabled-reason="capabilities?.automaticCheck ? undefined : t('desktop.update.autoCheckUnavailable')"
+        :config="config"
+        :error="error"
+        :language="language"
+        :update-settings="updateSettings"
+      >
+        <template #labelExtra>
+          <NTooltip>
+            <template #trigger>
+              <NTag size="small" :bordered="false" role="status" data-testid="update-check-status">
+                {{ checkedAt }}
+              </NTag>
+            </template>
+            {{ checkedAtDescription }}
+          </NTooltip>
+        </template>
+        <template v-if="updates.state.value?.checkFailed && !updates.state.value.checking" #hint>
+          <small class="text-muted text-[0.7rem] leading-[1.5]" role="status">
+            {{ t('desktop.update.cachedResultDescription') }}
+            <NButton text size="tiny" type="primary" @click="retryCheck">{{ t('desktop.update.retryCheck') }}</NButton>
+          </small>
+        </template>
+      </DesktopApplicationToggle>
+      <DesktopApplicationToggle
+        field="autoDownloadUpdates"
+        :label="t('desktop.update.autoDownload')"
+        :description="t(config?.desktop.updateNotificationsEnabled ? 'desktop.update.autoDownloadDescription' : 'desktop.update.autoDownloadPaused')"
+        :disabled-reason="capabilities?.download ? undefined : t('desktop.update.autoDownloadUnavailable')"
+        :config="config"
+        :error="error"
+        :language="language"
+        :update-settings="updateSettings"
+      />
       <DesktopSettingRow
         v-if="ignoredVersion"
         v-slot="{ controlAttrs }"

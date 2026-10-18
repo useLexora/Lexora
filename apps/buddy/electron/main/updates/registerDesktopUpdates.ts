@@ -72,7 +72,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   const updates = new DesktopUpdates({
     currentVersion: app.getVersion(),
     automatic: automaticCheck,
-    enabled: runtime.config?.desktop.updateNotificationsEnabled ?? true,
+    enabled: !!runtime.config?.desktop.onboardingCompleted && runtime.config.desktop.updateNotificationsEnabled,
     store: new DesktopUpdateStore(environment.paths.buddyHome),
     check: signal => checkForDesktopUpdate({
       currentVersion: app.getVersion(),
@@ -117,7 +117,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   const config = runtime.configStore.onDidChange((change) => {
     if (change.kind === 'committed') {
       automaticDownload = change.config.desktop.autoDownloadUpdates
-      updates.setEnabled(change.config.desktop.updateNotificationsEnabled)
+      updates.setEnabled(change.config.desktop.onboardingCompleted && change.config.desktop.updateNotificationsEnabled)
       reconcile()
     }
   })

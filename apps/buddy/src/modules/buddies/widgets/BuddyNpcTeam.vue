@@ -68,7 +68,7 @@ function onSaveRecruited(selectedIds: string[]) {
       </NButton>
     </template>
 
-    <div class="border-t border-t-solid border-t-border px-4 py-3">
+    <div class="buddy-npc-team-toggle border-t border-t-solid border-t-border px-4 py-3">
       <div class="flex items-center justify-between gap-3">
         <span :id="teamLabelId" class="text-[13px] font-600 text-fg">{{ labels.npcTeamEnabled }}</span>
         <NSwitch v-model:value="enabled" :round="false" :aria-labelledby="teamLabelId" :aria-describedby="teamDescriptionId" :disabled="disabled" />
