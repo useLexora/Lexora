@@ -10,6 +10,7 @@ import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
+import { resolveSensitivePathRoots } from '../../permissions/sensitivePaths'
 import { runSrtSandbox } from '../backends/srt/runSrtSandbox'
 import { runSandboxCommand } from '../runSandboxCommand'
 
@@ -45,6 +46,7 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
       path: environment.PATH ?? '',
       privateRoot,
       protectedRoots: [],
+      sensitiveRoots: resolveSensitivePathRoots({ home, environment }),
       roots: [workspace],
       workspaceRoots: [workspace],
       additionalDirectories: [],
@@ -72,7 +74,7 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
     return { result, output: Buffer.concat(output).toString('utf8') }
   }
 
-  it('keeps workspace writes while denying secrets, symlink escapes and Git changes', async () => {
+  it('allows ordinary reads while constraining writes and Git metadata', async () => {
     await mkdir(join(workspace, '.git'))
     await writeFile(join(workspace, '.git/config'), 'git-preserved')
     await writeFile(join(workspace, '.env'), 'synthetic-secret')
@@ -81,7 +83,7 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
     const exitCode = await runSrtSandbox({
       ...input,
       backend: { kind: 'macos-srt' },
-      command: `set -e; printf created > output; cat output; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${quote(join(outside, 'preserved'))}`)}`,
+      command: `set -e; printf created > output; cat output; cat .env; cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${quote(join(outside, 'preserved'))}`)}`,
     }, {
       signal: AbortSignal.timeout(10_000),
       onStarted: () => {},
@@ -91,8 +93,8 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
     const text = Buffer.concat(output).toString('utf8')
     expect(exitCode, text).toBe(0)
     expect(text).toContain('created')
-    expect(text).not.toContain('synthetic-secret')
-    expect(text).not.toContain('outside-preserved')
+    expect(text).toContain('synthetic-secret')
+    expect(text).toContain('outside-preserved')
     expect(await readFile(join(outside, 'preserved'), 'utf8')).toBe('outside-preserved')
     expect(await readFile(join(workspace, '.git/config'), 'utf8')).toBe('git-preserved')
   }, 15_000)

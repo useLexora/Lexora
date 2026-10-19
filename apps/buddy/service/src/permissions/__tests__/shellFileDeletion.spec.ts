@@ -101,8 +101,8 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     })
   })
 
-  it('denies sensitive names and canonical sensitive targets even in full access', async () => {
-    const fixture = await createFixture()
+  it('denies explicitly protected paths and their canonical targets even in full access', async () => {
+    const fixture = await createFixture(true)
     await writeFile(join(fixture.workspace, '.env'), 'SYNTHETIC=fixture')
     await symlink(join(fixture.workspace, '.env'), join(fixture.workspace, 'public.vue'))
     for (const profile of ['read_only', 'workspace_write', 'full_access'] as const) {
@@ -225,7 +225,7 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
   })
 })
 
-async function createFixture() {
+async function createFixture(protectEnvironment = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-delete-')))
   roots.push(root)
   const home = join(root, 'home')
@@ -241,7 +241,7 @@ async function createFixture() {
     { canonicalRoot: workspace, grantId: 'workspace-1', kind: 'workspace', root: workspace },
     { canonicalRoot: granted, grantId: 'granted-1', kind: 'granted', root: granted },
   ]
-  const engine = new PermissionEngine({ platform: 'linux', sensitive: createSensitivePathMatcher({ home }) })
+  const engine = new PermissionEngine({ platform: 'linux', sensitive: createSensitivePathMatcher({ home, additionalRoots: protectEnvironment ? [join(workspace, '.env')] : [] }) })
   return { engine, granted, grants, home, outside, workspace }
 }
 

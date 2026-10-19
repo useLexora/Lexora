@@ -1,6 +1,7 @@
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
-import { resolveShellExecution } from '../../sandbox/shellExecution'
+import { SHELL_SANDBOX_BACKEND } from '../../../../shared/platform/identifiers'
+import { resolveShellExecution, WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from '../../sandbox/shellExecution'
 
 export const LEXORA_BUDDY_BASE_SYSTEM_PROMPT = [
   'You are Lexora Buddy, the user\'s local personal AI companion.',
@@ -47,7 +48,10 @@ export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions)
 
 export function createBuddyExecutionPrompt(executionProfile: BuddyExecutionProfile, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
   const execution = resolveShellExecution(executionProfile, platform)
-  return createExecutionProfilePrompt(executionProfile, execution.dialect, execution.boundary === 'sandbox', activeToolNames)
+  const prompt = createExecutionProfilePrompt(executionProfile, execution.dialect, execution.boundary === 'sandbox', activeToolNames)
+  return execution.boundary === 'sandbox' && execution.backend === SHELL_SANDBOX_BACKEND.Windows && (activeToolNames?.includes(execution.dialect) ?? true)
+    ? `${prompt}\n${WINDOWS_SANDBOX_FILESYSTEM_LIMITS}`
+    : prompt
 }
 
 function createExecutionProfilePrompt(
@@ -76,10 +80,10 @@ function createExecutionProfilePrompt(
       'This conversation uses the local read-only execution profile.',
       'Pi built-in tools keep their native names; Lexora-owned tools use lexora_ prefixed names.',
       hasTool('read') ? 'Native file tools can read ordinary files outside the authorized directories; sensitive reads still require approval. This does not expand other tools\' boundaries.' : '',
-      'Writing and deleting are blocked in this profile, and no approval can lift that; say plainly that the profile has to change before you can modify anything, and do not retry the call.',
+      'File tools block writing and deleting in this profile, and no approval can lift that. Do not use commands or OS permission gaps to modify user files; the profile must change before making those changes.',
       hasShell
         ? isolatedShell
-          ? `${shellName} commands run in an OS sandbox: authorized directories are read-only, credentials and host IPC are hidden, and only private temporary files may be written. Arbitrary command syntax is available for inspection; host execution cannot be enabled in this profile.`
+          ? `${shellName} commands run with a read-only OS sandbox policy. Arbitrary command syntax is available for inspection; write only private temporary files. Do not access protected credential paths. Host execution cannot be enabled in this profile.`
           : `Only commands that are safe to run without confirmation are available through ${shellName}; use them for inspection and diagnosis.`
         : '',
       'Network access and external tools remain separate approval boundaries; local read-only mode does not auto-approve them.',
@@ -90,11 +94,11 @@ function createExecutionProfilePrompt(
     'Pi built-in tools keep their native names; Lexora-owned tools use lexora_ prefixed names.',
     hasShell
       ? isolatedShell
-        ? `${shellName} runs in an OS sandbox. It can read authorized directories and installed toolchains, and modify authorized directories except protected locations. Credentials, host IPC and root repository Git metadata writes are unavailable. The harness requests network authorization when the destination is not covered by the user's current turn grants. Isolated execution is never silently retried on the host.`
+        ? `${shellName} runs in an OS sandbox. Ordinary files are readable without directory approval. Modify only authorized directories and respect protected locations; do not access protected credential paths or write repository Git metadata. The harness requests network authorization when the destination is not covered by the user's current turn grants. Isolated execution is never silently retried on the host.`
         : 'Host tools run with the Lexora Buddy service user\'s operating-system permissions. Buddy policy may allow, block, or request product approval before execution.'
       : '',
     hasShell && isolatedShell && hasTool('lexora_authorize_directory')
-      ? 'Use lexora_authorize_directory with read or write access and a reason for another directory. This expands only isolated shell permissions for the current run, never saved grants or other tools. Prefer read when inspection suffices.'
+      ? 'Use lexora_authorize_directory with read or write access and a reason for another directory. Additional write authorization applies only to isolated shell commands in the current run, never saved grants or other tools. Windows may reuse read-access preparation across runs. Prefer read when inspection suffices.'
       : '',
     hasShell && isolatedShell && hasTool('lexora_host_shell')
       ? 'Only when the user task genuinely requires host access, use lexora_host_shell; its approval explicitly lifts sandbox restrictions for that command. Do not use host access to retry a declined request.'

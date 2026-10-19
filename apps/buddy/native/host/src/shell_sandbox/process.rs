@@ -8,27 +8,27 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use windows_sys::Win32::{
     Foundation::{
-        DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, GetLastError, WAIT_OBJECT_0,
+        DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE,
+        WAIT_OBJECT_0,
     },
-    Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES},
+    Security::SECURITY_ATTRIBUTES,
     Storage::FileSystem::FILE_GENERIC_READ,
     System::{
         Console::{GetStdHandle, STD_OUTPUT_HANDLE},
         JobObjects::*,
-        SystemServices::SE_GROUP_ENABLED,
         Threading::*,
     },
 };
 
 use super::{
+    acl_state::DenialUpdate,
     broker::Lease,
     cancellation::Cancellation,
     filesystem::{Access, Grant, Grants, inspect},
-    metadata,
-    security::{Profile, at, boolean, capability, current_process, owned, require_host, wide},
+    security::{at, boolean, current_process, owned, require_host, wide},
     setup,
 };
 
@@ -41,16 +41,13 @@ struct Request {
     private_root: String,
     environment: BTreeMap<String, String>,
     grants: Vec<Grant>,
+    #[serde(default)]
+    deny_read_scope: Option<String>,
     proxy_port: u16,
 }
 
 pub(super) fn run() -> io::Result<i32> {
     require_host(current_process(), false)?;
-    let job = at("job", Job::new())?;
-    eprintln!(
-        "{}",
-        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity(&job)?})
-    );
     if fs::canonicalize(std::env::current_exe()?)? != fs::canonicalize(setup::installed_path()?)? {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
@@ -63,19 +60,39 @@ pub(super) fn run() -> io::Result<i32> {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let request: Request = serde_json::from_slice(&bytes)?;
-    let cancellation = Cancellation::listen(input);
+    let cancellation = Cancellation::listen(input, Duration::from_secs(60));
     cancellation.check()?;
     validate(&request)?;
-    let profile = at("profile", Profile::create())?;
+    let (preparation, account, group, job) = at(
+        "job",
+        Lease::account(
+            request
+                .grants
+                .iter()
+                .filter(|grant| !super::policy::contains(&request.private_root, &grant.path))
+                .cloned()
+                .collect(),
+        ),
+    )?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity(&job)?})
+    );
     let mut policy = request.grants;
     policy.push(inspect(&request.private_root, Access::Write)?);
     eprintln!(
         "{}",
         serde_json::json!({"type":"diagnostic","phase":"filesystem_preparing","nativeCode":null})
     );
-    let mut grants = at(
+    let grants = at(
         "filesystem",
-        Grants::apply(&profile, &policy, &cancellation),
+        Grants::apply(
+            &account,
+            &group,
+            &policy,
+            &cancellation,
+            request.deny_read_scope.as_deref().map(DenialUpdate::Merge),
+        ),
     )?;
     cancellation.check()?;
     let script = Path::new(&request.private_root).join("command.ps1");
@@ -92,32 +109,26 @@ pub(super) fn run() -> io::Result<i32> {
     )?;
     drop(script_file);
     cancellation.check()?;
-    let lease = at(
-        "boundary",
-        Lease::connect(&profile.name, request.proxy_port, metadata::roots(&policy)),
-    )?;
-    cancellation.check()?;
-    let child = at(
+    let (lease, child) = at(
         "launch",
-        launch(
-            &profile,
-            &job,
-            &request.shell,
-            &script,
-            &request.cwd,
-            &request.environment,
-        ),
+        Lease::connect(LaunchRequest {
+            shell: request.shell,
+            script: script.to_string_lossy().into_owned(),
+            cwd: request.cwd,
+            environment: request.environment,
+            capabilities: grants.capabilities.clone(),
+            job: job.0.as_raw_handle() as usize,
+            // SAFETY: stdout belongs to the supervisor; the authenticated broker duplicates it without inheriting control input.
+            output: unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } as usize,
+        }),
     )?;
-    at(
-        "verify_boundary",
-        super::policy::verify_denials(child.process.as_raw_handle(), &policy, &cancellation),
-    )?;
+    preparation.finish()?;
     cancellation.check()?;
     eprintln!(
         "{}",
         serde_json::json!({"type":"ready","protocol":super::PROTOCOL_VERSION})
     );
-    // SAFETY: The process is still suspended, already confined to its AppContainer and kill-on-close job.
+    // SAFETY: The process is still suspended, already confined to its restricted token and kill-on-close job.
     if unsafe { ResumeThread(child.thread.as_raw_handle()) } == u32::MAX {
         return Err(io::Error::last_os_error());
     }
@@ -142,10 +153,78 @@ pub(super) fn run() -> io::Result<i32> {
     drop(child);
     drop(job);
     lease.finish()?;
-    grants.finish()?;
     drop(grants);
-    drop(profile);
     result
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Preparation {
+    grants: Vec<Grant>,
+    #[serde(default, rename = "denyReadScope")]
+    deny_read_scope: Option<String>,
+    #[serde(default, rename = "synchronizeDenials")]
+    synchronize_denials: bool,
+    #[serde(default)]
+    background: bool,
+}
+
+pub(super) fn prepare() -> io::Result<i32> {
+    require_host(current_process(), false)?;
+    if fs::canonicalize(std::env::current_exe()?)? != fs::canonicalize(setup::installed_path()?)? {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    let mut input = BufReader::new(io::stdin());
+    let mut bytes = Vec::new();
+    (&mut input)
+        .take(2 * 1024 * 1024 + 1)
+        .read_until(b'\n', &mut bytes)?;
+    if bytes.len() > 2 * 1024 * 1024 || bytes.last() != Some(&b'\n') {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let request: Preparation = serde_json::from_slice(&bytes)?;
+    if request.background {
+        use windows_sys::Win32::System::Threading::{
+            PROCESS_MODE_BACKGROUND_BEGIN, SetPriorityClass,
+        };
+        // SAFETY: Only this preparation process enters background mode; no task command runs here.
+        boolean(unsafe { SetPriorityClass(current_process(), PROCESS_MODE_BACKGROUND_BEGIN) })?;
+    }
+    let (preparation, account, group, job) = at("job", Lease::account(request.grants.clone()))?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"supervisor","protocol":1,"identity":crate::supervised_shell::windows::identity(&job)?})
+    );
+    let cancellation = Cancellation::listen(input, Duration::from_secs(900));
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"diagnostic","phase":"filesystem_preparing","nativeCode":null})
+    );
+    let _grants = at(
+        "filesystem",
+        Grants::apply(
+            &account,
+            &group,
+            &request.grants,
+            &cancellation,
+            request.deny_read_scope.as_deref().map(|scope| {
+                if request.synchronize_denials {
+                    DenialUpdate::Replace(scope)
+                } else {
+                    DenialUpdate::Merge(scope)
+                }
+            }),
+        ),
+    )?;
+    cancellation.check()?;
+    preparation.finish()?;
+    job.finish()?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"type":"processesReleased","protocol":1})
+    );
+    eprintln!("{}", serde_json::json!({"type":"ready","protocol":1}));
+    Ok(0)
 }
 
 fn validate(request: &Request) -> io::Result<()> {
@@ -182,10 +261,18 @@ fn validate(request: &Request) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) struct Job(pub(crate) OwnedHandle, String);
+pub(crate) struct Job(pub(crate) OwnedHandle, String, bool);
 impl Job {
-    fn new() -> io::Result<Self> {
+    pub(super) fn new() -> io::Result<Self> {
         Self::create(true)
+    }
+
+    pub(super) fn received(handle: OwnedHandle, name: String) -> Self {
+        Self(handle, name, true)
+    }
+
+    pub(super) fn handoff(mut self) {
+        self.2 = false;
     }
 
     pub(crate) fn host() -> io::Result<Self> {
@@ -210,7 +297,7 @@ impl Job {
         if existed {
             return Err(io::ErrorKind::AlreadyExists.into());
         }
-        let job = Self(handle, name);
+        let job = Self(handle, name, true);
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         // SAFETY: The live job receives an initialized limits struct; breakaway is deliberately absent.
@@ -276,7 +363,7 @@ impl Job {
 
 impl Drop for Job {
     fn drop(&mut self) {
-        if self.finish().is_err() {
+        if self.2 && self.finish().is_err() {
             // Preserve the recovery journal rather than remove grants while a descendant may still be exiting.
             std::process::exit(125);
         }
@@ -294,28 +381,91 @@ impl Drop for Child {
     }
 }
 
-fn launch(
-    profile: &Profile,
-    job: &Job,
-    shell: &str,
-    script: &Path,
-    cwd: &str,
-    environment: &BTreeMap<String, String>,
-) -> io::Result<Child> {
-    let mut inherited_output = ptr::null_mut();
-    // SAFETY: Only a duplicate of stdout is made inheritable; the control pipe and job handle remain private.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct LaunchRequest {
+    pub(super) shell: String,
+    pub(super) script: String,
+    pub(super) cwd: String,
+    pub(super) environment: BTreeMap<String, String>,
+    pub(super) capabilities: Vec<String>,
+    pub(super) job: usize,
+    pub(super) output: usize,
+}
+
+pub(super) fn duplicate(
+    source: HANDLE,
+    handle: HANDLE,
+    destination: HANDLE,
+    inherit: bool,
+) -> io::Result<HANDLE> {
+    let mut output = ptr::null_mut();
+    // SAFETY: The source/destination are authenticated live process handles; only explicitly supplied handles are copied.
     boolean(unsafe {
         DuplicateHandle(
-            current_process(),
-            GetStdHandle(STD_OUTPUT_HANDLE),
-            current_process(),
-            &mut inherited_output,
+            source,
+            handle,
+            destination,
+            &mut output,
             0,
-            1,
+            i32::from(inherit),
             DUPLICATE_SAME_ACCESS,
         )
     })?;
-    let output = owned(inherited_output)?;
+    Ok(output)
+}
+
+#[derive(Debug)]
+pub(super) struct LaunchError {
+    pub(super) phase: &'static str,
+    pub(super) source: io::Error,
+}
+impl std::fmt::Display for LaunchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.phase)
+    }
+}
+impl std::error::Error for LaunchError {}
+fn launch_phase<T>(phase: &'static str, result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|source| io::Error::new(source.kind(), LaunchError { phase, source }))
+}
+
+pub(super) fn launch(
+    request: &LaunchRequest,
+    client: HANDLE,
+    account: &super::account::Account,
+) -> io::Result<(Child, OwnedHandle)> {
+    if request.capabilities.is_empty()
+        || request.environment.len() > 128
+        || request.script.contains(['\0', '"'])
+        || request.shell.contains(['\0', '"'])
+        || request.cwd.contains('\0')
+    {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let base = launch_phase("account_logon", account.logon())?;
+    let owner = crate::windows_security::process_user_sid(client)?;
+    let token = launch_phase(
+        "restrict_token",
+        super::token::restrict(
+            base.as_raw_handle(),
+            &request.capabilities,
+            &owner,
+            &super::account::parse_sid(&account.sid)?,
+        ),
+    )?;
+    let job = owned(duplicate(
+        client,
+        request.job as HANDLE,
+        current_process(),
+        false,
+    )?)?;
+    let output = owned(duplicate(
+        client,
+        request.output as HANDLE,
+        current_process(),
+        true,
+    )?)?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: ptr::null_mut(),
@@ -334,38 +484,7 @@ fn launch(
         )
     })?;
     let handles = [input.as_raw_handle(), output.as_raw_handle()];
-    let registry = capability("registryRead")?;
-    let com = capability("lpacCom")?;
-    let instrumentation = capability("lpacInstrumentation")?;
-    let internet = capability("internetClientServer")?;
-    let volume_metadata = metadata::capability(&profile.name)?;
-    let mut entries = [
-        &registry,
-        &com,
-        &instrumentation,
-        &internet,
-        &volume_metadata,
-    ]
-    .map(|sid| SID_AND_ATTRIBUTES {
-        Sid: sid.as_ptr(),
-        Attributes: SE_GROUP_ENABLED as u32,
-    });
-    let capabilities = SECURITY_CAPABILITIES {
-        AppContainerSid: profile.sid.as_ptr(),
-        Capabilities: entries.as_mut_ptr(),
-        CapabilityCount: entries.len() as u32,
-        Reserved: 0,
-    };
-    let mut attribute_list = Attributes::new(3)?;
-    let application_packages_policy = 1u32;
-    attribute_list.set(
-        PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize,
-        &application_packages_policy,
-    )?;
-    attribute_list.set(
-        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
-        &capabilities,
-    )?;
+    let mut attribute_list = Attributes::new(1)?;
     attribute_list.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize, &handles)?;
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
@@ -375,42 +494,50 @@ fn launch(
     startup.StartupInfo.hStdError = output.as_raw_handle();
     startup.lpAttributeList = attribute_list.pointer();
     let mut command = wide(&format!(
-        "\"{shell}\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\"",
-        script.display()
+        "\"{}\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\"",
+        request.shell, request.script
     ));
-    let mut environment: Vec<u16> = environment
+    let mut environment: Vec<u16> = request
+        .environment
         .iter()
         .flat_map(|(key, value)| wide(&format!("{key}={value}")))
         .chain([0])
         .collect();
     let mut information = PROCESS_INFORMATION::default();
-    // SAFETY: All startup/attribute/environment buffers stay live; the child starts suspended with an explicit two-handle inheritance list.
-    boolean(unsafe {
-        CreateProcessW(
-            wide(shell).as_ptr(),
-            command.as_mut_ptr(),
-            ptr::null(),
-            ptr::null(),
-            1,
-            EXTENDED_STARTUPINFO_PRESENT
-                | CREATE_UNICODE_ENVIRONMENT
-                | CREATE_NO_WINDOW
-                | CREATE_SUSPENDED,
-            environment.as_mut_ptr().cast(),
-            wide(cwd).as_ptr(),
-            &startup.StartupInfo,
-            &mut information,
-        )
-    })?;
+    launch_phase(
+        "create_process",
+        // SAFETY: All startup buffers stay live; the child starts suspended with an explicit handle inheritance list.
+        boolean(unsafe {
+            CreateProcessAsUserW(
+                token.as_raw_handle(),
+                wide(&request.shell).as_ptr(),
+                command.as_mut_ptr(),
+                ptr::null(),
+                ptr::null(),
+                1,
+                EXTENDED_STARTUPINFO_PRESENT
+                    | CREATE_UNICODE_ENVIRONMENT
+                    | CREATE_NO_WINDOW
+                    | CREATE_SUSPENDED,
+                environment.as_mut_ptr().cast(),
+                wide(&request.cwd).as_ptr(),
+                &startup.StartupInfo,
+                &mut information,
+            )
+        }),
+    )?;
     let child = Child {
         process: owned(information.hProcess)?,
         thread: owned(information.hThread)?,
     };
-    // SAFETY: The child is suspended and cannot create descendants before this job assignment completes.
-    boolean(unsafe {
-        AssignProcessToJobObject(job.0.as_raw_handle(), child.process.as_raw_handle())
-    })?;
-    Ok(child)
+    launch_phase(
+        "assign_job",
+        // SAFETY: The suspended child cannot create descendants before assignment to the job created in the same session.
+        boolean(unsafe {
+            AssignProcessToJobObject(job.as_raw_handle(), child.process.as_raw_handle())
+        }),
+    )?;
+    Ok((child, job))
 }
 
 pub(crate) struct Attributes {

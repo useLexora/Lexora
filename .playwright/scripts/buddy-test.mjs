@@ -116,7 +116,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
           assert.equal(new URL(page.url()).protocol, 'data:')
           return { app: application, page, diagnostics: launchRecord.diagnostics }
         }
-        assert.equal(rendererUrl ? new URL(page.url()).origin : new URL(page.url()).protocol, rendererUrl ? new URL(rendererUrl).origin : 'lexora-app:', `Application failed to start: ${await page.locator('body').textContent()}`)
+        assert.equal(rendererUrl ? new URL(page.url()).origin : new URL(page.url()).protocol, rendererUrl ? new URL(rendererUrl).origin : 'lexora-app:')
         await page.waitForFunction(async status => (await window.lexoraDesktop?.app.startup.getState())?.status === status, startupStatus, { timeout: 45000 })
         const info = await page.evaluate(() => window.lexoraDesktop.app.getInfo())
         assert.equal(info.runtimeProfile, 'test')

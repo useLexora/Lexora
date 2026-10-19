@@ -56,6 +56,8 @@ export class DesktopRuntimeHost {
   #network: DesktopNetwork | null = null
   #windowsPowerShell: string | undefined
   readonly #subscriptions: Array<() => void> = []
+  #prepareSandbox: (() => void) | undefined
+  readonly #sandboxCleanup = new Set<Promise<void>>()
   #sandboxCheck: ReturnType<typeof checkSandboxEnvironment> | null = null
   #sandboxSetup: ReturnType<typeof setupWindowsSandbox> | null = null
 
@@ -106,7 +108,11 @@ export class DesktopRuntimeHost {
   }
 
   setupSandbox(): ReturnType<typeof setupWindowsSandbox> {
-    this.#sandboxSetup ??= setupWindowsSandbox(this.#sandboxExecutable()).finally(() => {
+    this.#sandboxSetup ??= setupWindowsSandbox(this.#sandboxExecutable()).then((result) => {
+      if (result === 'ready')
+        this.#prepareSandbox?.()
+      return result
+    }).finally(() => {
       this.#sandboxSetup = null
       this.#sandboxCheck = null
     })
@@ -173,9 +179,15 @@ export class DesktopRuntimeHost {
         const sandbox = registerSandboxHostRpc(peer, {
           buddyHome: environment.paths.buddyHome,
           protectedRoots: environment.storage.protection.sandboxRoots,
+          protectionScope: environment.storage.bootstrapRoot,
           proxyUrl: this.#network!.sandboxProxyUrl,
           ...this.#sandboxOptions(),
         })
+        const prepareSandbox = () => {
+          sandbox.prepare()
+          peer.notify('host.sandbox.ready', {})
+        }
+        this.#prepareSandbox = prepareSandbox
         sandbox.onDidChange(event => environment.events.publish({
           event: `sandbox.supervisor.${event.kind}`,
           level: event.kind === 'cleanup_failed' ? 'warn' : 'info',
@@ -200,7 +212,6 @@ export class DesktopRuntimeHost {
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
           }),
           registerWebHostRpc(peer, this.#network!.authenticateProxy, this.#network!.assertAvailable),
-          sandbox.dispose,
           registerBrowserHostRpc(peer, {
             createAdapterLease: input => this.#browser.adapter.issueLease(input),
             getHost: () => this.#browser.host,
@@ -208,7 +219,13 @@ export class DesktopRuntimeHost {
           registerCredentialHostRpc(peer, credentials),
           ...this.#features.map(feature => feature.bindPeer(peer)),
         ]
-        return () => disposers.forEach(dispose => dispose())
+        return () => {
+          if (this.#prepareSandbox === prepareSandbox)
+            this.#prepareSandbox = undefined
+          const cleanup = sandbox.dispose().finally(() => this.#sandboxCleanup.delete(cleanup))
+          this.#sandboxCleanup.add(cleanup)
+          disposers.forEach(dispose => dispose())
+        }
       },
       diagnosticOutput: environment.diagnostics.createWritable('local-service', { event: 'runtime.supervisor', level: 'error' }),
       spawnService: (onFatalError, sourceId) => forkBuddyServiceProcess({
@@ -277,6 +294,7 @@ export class DesktopRuntimeHost {
       () => this.contextPanel.dispose(),
       () => this.configStore.dispose(),
       () => this.#service?.stop(),
+      () => Promise.all(this.#sandboxCleanup),
       () => this.#network?.stop(),
       ...this.#features.map(feature => () => feature.stop()),
       ...this.#subscriptions.splice(0),

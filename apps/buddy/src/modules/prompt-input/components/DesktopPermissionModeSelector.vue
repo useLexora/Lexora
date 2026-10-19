@@ -208,7 +208,7 @@ async function confirmSetup() {
     :show="setupOpen"
     preset="dialog"
     type="info"
-    :title="t('desktop.chat.shellSandboxSetup.title')"
+    :title="t(availability.action === 'repair' ? 'desktop.chat.shellSandboxSetup.updateTitle' : 'desktop.chat.shellSandboxSetup.title')"
     :closable="!isSettingUp"
     :mask-closable="!isSettingUp"
     :close-on-esc="!isSettingUp"

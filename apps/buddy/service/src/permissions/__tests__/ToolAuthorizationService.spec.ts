@@ -68,6 +68,7 @@ describe('harness tool authorization', () => {
       cwd: workspace,
       owner: { id: 'conversation', kind: 'conversation' as const },
       getGrants: () => grants,
+      getSandboxDirectories: (context: BuddyExtensionRunContext) => directories.get(context),
       executionPermissions,
       applySandboxDirectory: (context: BuddyExtensionRunContext, grant: Parameters<SandboxDirectoryPermissions['grant']>[1]) => directories.grant(context, grant),
     }

@@ -54,6 +54,7 @@ describe('run-scoped shell directory permissions', () => {
       authorization: new ToolAuthorizationService({
         applyGrant: (grant) => { persisted.push(grant) },
         applySandboxDirectory: (context, grant) => permissions.grant(context, grant),
+        getSandboxDirectories: context => permissions.get(context),
         approvalAvailable: options.approvalAvailable ?? true,
         approvalPolicy: 'policy',
         approvalService: {
@@ -108,13 +109,10 @@ describe('run-scoped shell directory permissions', () => {
     expect(JSON.stringify(events)).not.toContain(outside)
   })
 
-  it('grants read access only to the reviewed directory and keeps saved grants unchanged', async () => {
+  it('makes ordinary reads available without approval and keeps saved grants unchanged', async () => {
     const harness = createHarness()
     await expect(harness.invoke()).resolves.toBeUndefined()
-    expect(harness.reviews).toMatchObject([{
-      kind: 'read',
-      sandboxDirectory: { path: outside, access: 'read', reason: 'Inspect the reference files' },
-    }])
+    expect(harness.reviews).toEqual([])
     expect(harness.permissions.get(harness.run)).toEqual([{
       path: outside,
       access: 'read',
@@ -130,9 +128,32 @@ describe('run-scoped shell directory permissions', () => {
     const harness = createHarness()
     await harness.invoke()
     await harness.invoke({ path: outside, access: 'write', reason: 'Update the requested output' } satisfies SandboxDirectoryRequest)
-    expect(harness.reviews.map(review => review.kind)).toEqual(['read', 'write'])
+    expect(harness.reviews.map(review => review.kind)).toEqual(['write'])
     expect(harness.permissions.get(harness.run)).toMatchObject([{ path: outside, access: 'write' }])
     expect(harness.permissions.getWriteGrants(harness.run)).toMatchObject([{ canonicalRoot: outside, kind: 'granted' }])
+    expect(harness.persisted).toEqual([])
+  })
+
+  it('reuses covered directory access without expanding its scope or prompting again', async () => {
+    const harness = createHarness()
+    const nested = join(outside, 'nested')
+    await mkdir(nested)
+    await harness.invoke({ path: workspace, access: 'write', reason: 'Use the existing workspace' })
+    expect(harness.reviews).toEqual([])
+    expect(harness.permissions.get(harness.run)).toEqual([])
+    await harness.invoke()
+    await harness.invoke({ path: nested, access: 'read', reason: 'Inspect a child' })
+    await harness.invoke()
+    expect(harness.reviews).toHaveLength(0)
+    expect(harness.permissions.get(harness.run)).toMatchObject([{ path: outside, access: 'read' }])
+    await harness.invoke({ path: outside, access: 'write', reason: 'Update output' })
+    await harness.invoke({ path: nested, access: 'write', reason: 'Update nested output' })
+    expect(harness.reviews).toHaveLength(1)
+    expect(harness.permissions.get(harness.run)).toMatchObject([{ path: outside, access: 'write' }])
+    harness.permissions.clear(harness.run)
+    await harness.invoke({ path: nested, access: 'write', reason: 'Request after revocation' })
+    expect(harness.reviews).toHaveLength(2)
+    expect(harness.permissions.get(harness.run)).toMatchObject([{ path: nested, access: 'write' }])
     expect(harness.persisted).toEqual([])
   })
 
@@ -141,12 +162,12 @@ describe('run-scoped shell directory permissions', () => {
     await expect(harness.invoke()).resolves.toBeUndefined()
     await expect(harness.invoke({ path: outside, access: 'write', reason: 'Write output' })).resolves.toMatchObject({ block: true, reason: 'READ_ONLY_PROFILE' })
     expect(harness.permissions.get(harness.run)).toMatchObject([{ access: 'read' }])
-    expect(harness.reviews).toHaveLength(1)
+    expect(harness.reviews).toHaveLength(0)
   })
 
   it('does not grant access when denied', async () => {
     const harness = createHarness({ approve: async () => 'denied' })
-    await expect(harness.invoke()).resolves.toMatchObject({ block: true })
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toMatchObject({ block: true })
     expect(harness.permissions.get(harness.run)).toEqual([])
     expect(harness.authorized).toEqual([])
     expect(harness.persisted).toEqual([])
@@ -154,14 +175,14 @@ describe('run-scoped shell directory permissions', () => {
 
   it('applies a turn approval to the reviewed directory without persisting it', async () => {
     const harness = createHarness({ approve: async () => 'approved_for_turn' })
-    await expect(harness.invoke()).resolves.toBeUndefined()
-    expect(harness.permissions.get(harness.run)).toMatchObject([{ path: outside, access: 'read' }])
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toBeUndefined()
+    expect(harness.permissions.get(harness.run)).toMatchObject([{ path: outside, access: 'write' }])
     expect(harness.persisted).toEqual([])
   })
 
   it('rejects expansion without an interactive approval surface', async () => {
     const harness = createHarness({ approvalAvailable: false })
-    await expect(harness.invoke()).resolves.toMatchObject({ block: true, reason: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' })
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toMatchObject({ block: true, reason: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' })
     expect(harness.permissions.get(harness.run)).toEqual([])
     expect(harness.reviews).toEqual([])
   })
@@ -193,7 +214,7 @@ describe('run-scoped shell directory permissions', () => {
     const harness = createHarness({ approve: async () => {
       throw new ApprovalCancelledError()
     } })
-    await expect(harness.invoke()).resolves.toMatchObject({ block: true, reason: 'APPROVAL_CANCELLED' })
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toMatchObject({ block: true, reason: 'APPROVAL_CANCELLED' })
     expect(harness.permissions.get(harness.run)).toEqual([])
     expect(harness.authorized).toEqual([])
   })
@@ -203,7 +224,7 @@ describe('run-scoped shell directory permissions', () => {
       harness.controller.abort()
       return 'approved_once'
     } })
-    await expect(harness.invoke()).resolves.toMatchObject({ block: true })
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toMatchObject({ block: true })
     expect(harness.permissions.get(harness.run)).toEqual([])
     expect(harness.authorized).toEqual([])
   })
@@ -216,7 +237,7 @@ describe('run-scoped shell directory permissions', () => {
         return 'approved_once'
       },
     })
-    await expect(harness.invoke()).resolves.toMatchObject({ block: true, reason: 'SANDBOX_DIRECTORY_CHANGED' })
+    await expect(harness.invoke({ path: outside, access: 'write', reason: 'Update requested files' })).resolves.toMatchObject({ block: true, reason: 'SANDBOX_DIRECTORY_CHANGED' })
     expect(harness.permissions.get(harness.run)).toEqual([])
     expect(harness.authorized).toEqual([])
 

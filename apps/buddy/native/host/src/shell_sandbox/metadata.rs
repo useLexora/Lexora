@@ -1,39 +1,31 @@
 use std::{
-    collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
-    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
+    io::{self, Read},
+    os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     ptr,
 };
 
 use serde::{Deserialize, Serialize};
 use windows_sys::Win32::{
-    Foundation::HANDLE,
     Security::{
-        ACCESS_ALLOWED_ACE, ACE_HEADER,
-        Authorization::{GRANT_ACCESS, REVOKE_ACCESS},
-        GetAce, GetSecurityDescriptorDacl, ImpersonateLoggedOnUser, RevertToSelf, TOKEN_DUPLICATE,
-        TOKEN_QUERY,
+        ACCESS_ALLOWED_ACE, ACE_HEADER, Authorization::REVOKE_ACCESS, GetAce,
+        GetSecurityDescriptorDacl,
     },
     Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-        FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
-        WRITE_DAC,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
     },
-    System::{
-        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
-        Threading::OpenProcessToken,
-    },
+    System::SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
 };
 
 use super::{
-    filesystem::{self, Access, AclLock, Grant},
+    filesystem::{self, AclLock},
     network::valid_profile,
-    security::{boolean, derive_sid, owned, sid_text},
+    security::{boolean, derive_sid},
     setup,
 };
-use crate::windows_security::{Sid, process_user_sid};
+use crate::windows_security::Sid;
 
 const RECORD_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -43,18 +35,6 @@ pub(super) struct Directory {
     path: String,
     device: String,
     inode: String,
-}
-
-pub(super) fn roots(grants: &[Grant]) -> Vec<Directory> {
-    grants
-        .iter()
-        .filter(|grant| matches!(grant.access, Access::Read | Access::Write))
-        .map(|grant| Directory {
-            path: grant.path.clone(),
-            device: grant.device.clone(),
-            inode: grant.inode.clone(),
-        })
-        .collect()
 }
 
 pub(super) fn capability(profile: &str) -> io::Result<Sid> {
@@ -72,151 +52,6 @@ struct Record {
     directories: Vec<Directory>,
     #[serde(default)]
     null_device: bool,
-}
-
-pub(super) struct Lease {
-    sid: Sid,
-    user: String,
-    handles: Vec<File>,
-    null_device: File,
-    profile_sid: Sid,
-    _roots: Vec<File>,
-    journal: Option<PathBuf>,
-}
-
-impl Lease {
-    pub(super) fn apply(profile: &str, roots: &[Directory], owner: HANDLE) -> io::Result<Self> {
-        if roots.is_empty() || roots.len() > 1024 {
-            return Err(io::ErrorKind::InvalidInput.into());
-        }
-        let sid = capability(profile)?;
-        let profile_sid = derive_sid(profile)?;
-        let null_device = open_null()?;
-        let user = sid_text(&process_user_sid(owner)?)?;
-        let _lock = AclLock::for_user(&user)?;
-        let pinned_roots = {
-            let mut token = ptr::null_mut();
-            // SAFETY: The broker pins the authenticated host process; root validation uses only its original user rights.
-            boolean(unsafe { OpenProcessToken(owner, TOKEN_QUERY | TOKEN_DUPLICATE, &mut token) })?;
-            let token = owned(token)?;
-            // SAFETY: No ACL is changed while impersonating, and the guard always reverts on this service thread.
-            boolean(unsafe { ImpersonateLoggedOnUser(token.as_raw_handle()) })?;
-            let _impersonation = Impersonation;
-            roots
-                .iter()
-                .map(Directory::open)
-                .collect::<io::Result<Vec<_>>>()?
-        };
-        let mut directories = BTreeMap::new();
-        for root in roots {
-            for path in Path::new(&root.path).ancestors().skip(1) {
-                let path = path.to_str().ok_or(io::ErrorKind::InvalidInput)?;
-                let key = path.to_uppercase();
-                if directories.contains_key(&key) {
-                    continue;
-                }
-                if directories.len() >= 4096 {
-                    return Err(io::ErrorKind::InvalidInput.into());
-                }
-                let file = open(path)?;
-                let (device, inode) = filesystem::identity(&file, path)?;
-                if !file.metadata()?.is_dir() {
-                    return Err(io::ErrorKind::InvalidInput.into());
-                }
-                if has_capability(&file, &sid)? {
-                    return Err(io::ErrorKind::AlreadyExists.into());
-                }
-                directories.insert(
-                    key,
-                    (
-                        Directory {
-                            path: path.to_owned(),
-                            device,
-                            inode,
-                        },
-                        file,
-                    ),
-                );
-            }
-        }
-        let (directories, handles) = directories.into_values().unzip();
-        let journal = publish(
-            &journal_directory()?,
-            &Record {
-                profile: profile.to_owned(),
-                user: user.clone(),
-                directories,
-                null_device: true,
-            },
-        )?;
-        let mut lease = Self {
-            sid,
-            user,
-            handles,
-            null_device,
-            profile_sid,
-            _roots: pinned_roots,
-            journal: Some(journal),
-        };
-        let result = lease.handles.iter().try_for_each(|file| {
-            filesystem::change_acl(file, &lease.sid, FILE_READ_ATTRIBUTES, GRANT_ACCESS, false)
-        });
-        let result = result.and_then(|()| {
-            filesystem::change_acl(
-                &lease.null_device,
-                &lease.profile_sid,
-                FILE_GENERIC_READ | FILE_GENERIC_WRITE,
-                GRANT_ACCESS,
-                false,
-            )
-        });
-        if let Err(error) = result {
-            lease.finish()?;
-            return Err(error);
-        }
-        Ok(lease)
-    }
-
-    pub(super) fn finish(&mut self) -> io::Result<()> {
-        if self.journal.is_none() {
-            return Ok(());
-        }
-        let _lock = AclLock::for_user(&self.user)?;
-        let mut failure = None;
-        for file in &self.handles {
-            if let Err(error) = revoke(file, &self.sid) {
-                failure.get_or_insert(error);
-            }
-        }
-        if let Err(error) = filesystem::change_acl(
-            &self.null_device,
-            &self.profile_sid,
-            0,
-            REVOKE_ACCESS,
-            false,
-        ) {
-            failure.get_or_insert(error);
-        }
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        if let Some(path) = &self.journal {
-            fs::remove_file(path)?;
-        }
-        self.journal = None;
-        Ok(())
-    }
-}
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        if self.finish().is_err() {
-            eprintln!(
-                "{}",
-                serde_json::json!({"type":"cleanupError","code":"SANDBOX_METADATA_CLEANUP_FAILED"})
-            );
-        }
-    }
 }
 
 impl Directory {
@@ -320,7 +155,9 @@ fn journal_directory() -> io::Result<PathBuf> {
     Ok(directory)
 }
 
+#[cfg(test)]
 fn publish(directory: &Path, record: &Record) -> io::Result<PathBuf> {
+    use std::io::Write;
     let bytes = serde_json::to_vec(record)?;
     if bytes.len() > RECORD_LIMIT {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -407,13 +244,3 @@ fn recover_record(path: &Path, profile: &str) -> io::Result<()> {
 #[cfg(test)]
 #[path = "../../__tests__/shell_sandbox_metadata.rs"]
 mod tests;
-
-struct Impersonation;
-impl Drop for Impersonation {
-    fn drop(&mut self) {
-        // SAFETY: Reverts this thread's authenticated-client impersonation; failure must never continue as another user.
-        if unsafe { RevertToSelf() } == 0 {
-            std::process::abort();
-        }
-    }
-}

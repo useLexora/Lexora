@@ -45,6 +45,12 @@ export class ShellSandboxClient {
     })
   }
 
+  async prepare(roots: readonly string[]): Promise<void> {
+    if (this.#disposed)
+      throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+    await this.#peer.request('host.sandbox.prepare', { roots }, 70_000)
+  }
+
   async exec(
     input: Omit<SandboxCommand, 'requestId'>,
     options: ExecOptions,

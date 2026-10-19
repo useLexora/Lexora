@@ -13,6 +13,8 @@ import { estimateTokens, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createOutputPresentationExtension } from '../../../artifacts/outputPresentationExtension'
+import { PermissionEngine } from '../../../permissions/PermissionEngine'
+import { createSensitivePathMatcher } from '../../../permissions/sensitivePaths'
 import { ToolAuthorizationService } from '../../../permissions/ToolAuthorizationService'
 import { createInputReferenceExtension } from '../../extensions/inputReferenceExtension'
 import { createToolPolicyExtension } from '../../extensions/toolPolicyExtension'
@@ -683,6 +685,7 @@ async function createFixture(options: {
       ...options.approvalDecision
         ? [createToolPolicyExtension({
             authorization: new ToolAuthorizationService({
+              engine: new PermissionEngine({ sensitive: createSensitivePathMatcher({ additionalRoots: [join(root, '.env.media')] }) }),
               approvalAvailable: true,
               approvalPolicy: 'policy',
               approvalService: { request: async () => ({ approvalId: 'offline-approval', decision: options.approvalDecision! }) },

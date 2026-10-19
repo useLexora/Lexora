@@ -3,13 +3,62 @@ fn main() -> std::io::Result<()> {
     let argument = std::env::args()
         .nth(1)
         .ok_or(std::io::ErrorKind::InvalidInput)?;
-    if argument == "--volume-metadata" {
+    if argument == "--watch-process" {
+        watch_process()
+    } else if argument == "--volume-metadata" {
         let directory = std::env::args().nth(2).unwrap_or_else(|| r"C:\".into());
         probe_directory_access(&directory);
         Ok(())
+    } else if argument == "--rewrite-dacl-write" {
+        rewrite_dacl_write()
     } else {
         probe_token(&argument)
     }
+}
+
+#[cfg(windows)]
+fn rewrite_dacl_write() -> std::io::Result<()> {
+    use std::{io, ptr};
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::{
+            Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW,
+            DACL_SECURITY_INFORMATION, SetFileSecurityW,
+        },
+    };
+    let path = std::env::args().nth(2).ok_or(io::ErrorKind::InvalidInput)?;
+    let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let sddl: Vec<u16> = "D:(A;;FA;;;WD)".encode_utf16().chain([0]).collect();
+    let mut descriptor = ptr::null_mut();
+    // SAFETY: Both strings are terminated; this test mutates only its synthetic fixture.
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: The descriptor is live and valid for the synchronous file-security update.
+    let rewrite =
+        if unsafe { SetFileSecurityW(wide.as_ptr(), DACL_SECURITY_INFORMATION, descriptor) } == 0 {
+            io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+        } else {
+            0
+        };
+    // SAFETY: The conversion allocated this descriptor with LocalAlloc.
+    unsafe { LocalFree(descriptor) };
+    let write = std::fs::write(path, "ESCAPED")
+        .err()
+        .map_or(0, |error| error.raw_os_error().unwrap_or(-1));
+    println!(
+        "{}",
+        serde_json::json!({"rewriteDacl": rewrite, "write": write})
+    );
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -151,3 +200,53 @@ fn probe_token(path: &str) -> std::io::Result<()> {
 
 #[cfg(not(windows))]
 fn main() {}
+
+#[cfg(windows)]
+fn watch_process() -> std::io::Result<()> {
+    use std::{
+        io,
+        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        time::Duration,
+    };
+    use windows_sys::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::*};
+    let pid = std::env::args()
+        .nth(2)
+        .ok_or(io::ErrorKind::InvalidInput)?
+        .parse::<u32>()
+        .map_err(|_| io::ErrorKind::InvalidInput)?;
+    // SAFETY: The fixture observes only a caller-owned process; no mutation rights are requested.
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: The successful OpenProcess returned one owned handle.
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+    let mut peak = 0;
+    let mut samples = 0;
+    loop {
+        let mut count = 0;
+        // SAFETY: The process handle is live and the count output is writable.
+        if unsafe { GetProcessHandleCount(handle.as_raw_handle(), &mut count) } != 0 {
+            peak = peak.max(count);
+            samples += 1;
+        }
+        // SAFETY: A bounded wait observes process exit without changing its state.
+        if unsafe { WaitForSingleObject(handle.as_raw_handle(), 10) } == WAIT_OBJECT_0 {
+            break;
+        }
+        if samples > Duration::from_secs(120).as_millis() / 10 {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+    }
+    println!(
+        "{}",
+        serde_json::json!({"peakHandles": peak, "samples": samples})
+    );
+    Ok(())
+}

@@ -986,7 +986,7 @@ describe('composer resource import', () => {
     expect(service.list('partial')).toContainEqual(retained)
     expect(facts.flatMap(fact => fact.resources).filter(resource => resource.resourceId === retained.resourceId)).toHaveLength(1)
     await writeFile(join(directory, '.env'), 'synthetic=value')
-    await expect(service.selectSpaceFile({ ...input, resourceId: 'sensitive', source: { ...input.source, relativePath: '.env' } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    await expect(service.selectSpaceFile({ ...input, resourceId: 'environment', source: { ...input.source, relativePath: '.env' } })).resolves.toMatchObject({ localReference: { name: '.env', path: join(directory, '.env') } })
     await writeFile(join(directory, 'note.txt'), Uint8Array.of(255))
     await expect(resolveInputs(service, 'draft-1', content, { branchId: null, conversationId: null, spaceId: 'space-1' })).resolves.toMatchObject([{ localReference: { sizeBytes: 1 } }])
     await rm(join(directory, 'note.txt'))

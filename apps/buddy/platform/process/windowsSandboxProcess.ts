@@ -14,10 +14,13 @@ export interface WindowsSandboxRequest {
   cwd: string
   shell: string
   privateRoot: string
-  grants: readonly { path: string, access: 'read' | 'write' | 'denyRead' | 'denyWrite', device: string, inode: string, exceptions?: string[] }[]
+  grants: readonly { path: string, access: 'read' | 'write' | 'denyRead' | 'denyWrite', device: string, inode: string, inherit?: boolean, exceptions?: string[] }[]
+  denyReadScope?: string
   proxyPort: number
   environment: Record<string, string>
 }
+
+type WindowsSandboxPreparationRequest = Pick<WindowsSandboxRequest, 'grants' | 'denyReadScope'> & { synchronizeDenials?: boolean, background?: boolean }
 
 const diagnosticSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), protocol: z.literal(1) }).strict(),
@@ -34,6 +37,21 @@ export async function runWindowsSandboxProcess(executable: string, request: Wind
   onStarted: () => void
   onProcess?: (process: SandboxProcessState) => void
 }): Promise<number | null> {
+  return runProcess(executable, 'run', request, options)
+}
+
+export async function prepareWindowsSandboxFilesystem(executable: string, grants: WindowsSandboxRequest['grants'], signal: AbortSignal, options: Omit<WindowsSandboxPreparationRequest, 'grants'> = {}): Promise<void> {
+  const code = await runProcess(executable, 'prepare', { grants, ...options }, { signal, onData: () => {}, onStarted: () => {} })
+  if (code !== 0)
+    throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+}
+
+async function runProcess(executable: string, mode: 'run' | 'prepare', request: WindowsSandboxRequest | WindowsSandboxPreparationRequest, options: {
+  signal: AbortSignal
+  onData: (data: Buffer) => void
+  onStarted: () => void
+  onProcess?: (process: SandboxProcessState) => void
+}): Promise<number | null> {
   options.signal.throwIfAborted()
   return new Promise<number | null>((resolve, reject) => {
     let ready = false
@@ -43,7 +61,7 @@ export async function runWindowsSandboxProcess(executable: string, request: Wind
     let exited = false
     let launchError: Error | undefined
     let forceKill: ReturnType<typeof setTimeout> | undefined
-    const child = spawn(executable, ['run'], { cwd: request.privateRoot, env: createWindowsHostEnvironment(executable, process.env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    const child = spawn(executable, [mode], { cwd: 'privateRoot' in request ? request.privateRoot : undefined, env: createWindowsHostEnvironment(executable, process.env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     child.once('spawn', () => options.onProcess?.({ phase: 'spawned', pid: child.pid }))
     const closeUnknownOutput = () => {
       if (exited && child.stderr.readableEnded && !processesReleased)

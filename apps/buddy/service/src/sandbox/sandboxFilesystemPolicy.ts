@@ -1,17 +1,10 @@
 import type { SandboxProcessInput } from '../../../shared/permissions/shellSandbox'
-import { execFile } from 'node:child_process'
 import { realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { containsCanonicalPath, filePaths } from '../../../platform/filesystem/filePaths'
 import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
-import { createSensitivePathMatcher, resolveSensitivePathRoots } from '../permissions/sensitivePaths'
 import { validateSandboxDirectory } from './SandboxDirectoryPermissions'
-
-const execute = promisify(execFile)
-const SECRET_GLOBS = ['.env', '.env.*', '.netrc', '_netrc', '.pgpass', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '*.pem', '*.p12', '*.pfx']
-export const SANDBOX_TOOLCHAIN_PATHS = ['.local/share/fnm/node-versions', '.nvm/versions', '.volta/tools', '.asdf/installs', '.rustup/toolchains', '.cargo/bin']
 
 export interface SandboxFilesystemGrant {
   path: string
@@ -43,15 +36,20 @@ export async function existingSandboxPaths(paths: readonly string[]): Promise<st
   return [...new Set(result)]
 }
 
-export async function createSandboxFilesystemPolicy(input: SandboxProcessInput, rg: string, signal: AbortSignal): Promise<SandboxFilesystemGrant[]> {
+export type SandboxFilesystemPolicyInput = Pick<SandboxProcessInput, 'additionalDirectories' | 'resourceReadRoots' | 'roots' | 'workspaceRoots' | 'home' | 'backend' | 'readOnly' | 'protectedRoots' | 'sensitiveRoots' | 'cwd'>
+
+export function existingSandboxSensitivePaths(input: Pick<SandboxFilesystemPolicyInput, 'backend' | 'sensitiveRoots'>): Promise<string[]> {
+  const systemCredentials = input.backend.kind === SHELL_SANDBOX_BACKEND.Windows ? filePaths.sensitiveKey(join(input.backend.systemRoot, 'System32', 'config')) : undefined
+  return existingSandboxPaths(input.sensitiveRoots.filter(path => filePaths.sensitiveKey(path) !== systemCredentials))
+}
+
+export async function createSandboxFilesystemPolicy(input: SandboxFilesystemPolicyInput, signal: AbortSignal): Promise<SandboxFilesystemGrant[]> {
   signal.throwIfAborted()
   await Promise.all(input.additionalDirectories.map(validateSandboxDirectory))
   const resources = (input.resourceReadRoots ?? []).filter(root => !input.roots.some(parent => containsCanonicalPath(parent, root)))
   const roots = [...new Set([...input.roots, ...input.additionalDirectories.map(grant => grant.path), ...resources])]
   const workspaces = input.workspaceRoots.filter(root => input.roots.includes(root))
-  const sensitiveOptions = { home: input.home, environment: input.backend.kind === SHELL_SANDBOX_BACKEND.Windows ? { SystemRoot: input.backend.systemRoot } : {} }
-  const sensitiveRoots = resolveSensitivePathRoots(sensitiveOptions)
-  const sensitive = createSensitivePathMatcher(sensitiveOptions)
+  const sensitiveRoots = input.sensitiveRoots
   const grants: SandboxFilesystemGrant[] = []
   for (const root of roots) {
     signal.throwIfAborted()
@@ -66,18 +64,7 @@ export async function createSandboxFilesystemPolicy(input: SandboxProcessInput, 
   if (!roots.some(root => containsCanonicalPath(root, input.cwd)))
     throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
 
-  const secrets: string[] = []
-  for (const root of roots.filter(root => !roots.some(parent => parent !== root && containsCanonicalPath(parent, root)))) {
-    try {
-      const result = await execute(rg, ['--files', '--hidden', '--no-ignore', '--null', ...SECRET_GLOBS.flatMap(glob => ['--iglob', glob]), '--', root], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, signal, timeout: 15_000, windowsHide: true })
-      secrets.push(...result.stdout.split('\0').filter(path => path && sensitive.matches(path)))
-    }
-    catch (error) {
-      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 1)
-        throw error
-    }
-  }
-  for (const path of await existingSandboxPaths([...secrets, ...sensitiveRoots.filter(path => roots.some(root => containsCanonicalPath(root, path)))]))
+  for (const path of await existingSandboxSensitivePaths(input))
     grants.push(await inspectSandboxPath(path, 'denyRead'))
   for (const path of await existingSandboxPaths(input.protectedRoots)) {
     const grant = await inspectSandboxPath(path, 'denyRead')

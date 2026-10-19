@@ -12,8 +12,10 @@ import type {
 import type { SensitivePathMatcher } from './sensitivePaths'
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
+import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { sandboxDirectoryRequestSchema } from '../../../shared/permissions/shellSandbox'
 import { ShellPolicy } from '../approvals/ShellPolicy'
+import { validateSandboxDirectory } from '../sandbox/SandboxDirectoryPermissions'
 import { classifyPath, PathClassificationError, toGrantRoot } from './classifyPath'
 import { lookupPermissionOutcome } from './decisionTable'
 import { allow, ask, deny } from './permissionContract'
@@ -148,9 +150,22 @@ export class PermissionEngine {
     if (!path.isDirectory)
       return deny('INVALID_PATH', 'invalid')
     const metadata = await stat(path.canonicalPath, { bigint: true })
+    const directory = { access: input.access, path: path.canonicalPath, device: String(metadata.dev), inode: String(metadata.ino) }
+    if (!request.forceAsk) {
+      if (path.zone === 'workspace' || path.zone === 'granted')
+        return allow()
+      for (const grant of request.sandboxDirectories ?? []) {
+        if ((grant.access === 'write' || grant.access === input.access) && containsCanonicalPath(grant.path, path.canonicalPath)) {
+          await validateSandboxDirectory(grant)
+          return allow()
+        }
+      }
+    }
+    if (!request.forceAsk && input.access === 'read')
+      return { type: 'allow', sandboxDirectory: directory }
     return finalizeDecision(request, ask({
       kind: input.access,
-      sandboxDirectory: { access: input.access, path: path.canonicalPath, reason: input.reason, device: String(metadata.dev), inode: String(metadata.ino) },
+      sandboxDirectory: { ...directory, reason: input.reason },
       summary: 'Expand isolated shell directory access for this run only',
     }))
   }

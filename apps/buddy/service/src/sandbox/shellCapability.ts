@@ -19,6 +19,7 @@ import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../approvals/ApprovalService'
+import { WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from './shellExecution'
 
 export const SHELL_SANDBOX_EXTENSION = 'lexora-shell-sandbox'
 
@@ -96,10 +97,10 @@ export function createShellCapability(options: {
         })
         pi.registerTool({
           ...native,
-          description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Sandbox reads and writes require the corresponding directory authorization. ${networkBoundary} No automatic host fallback.`,
+          description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Ordinary files are readable without directory approval. Sandbox policy permits writes only in authorized directories and denies reads of known credential and application-private paths. ${currentPlatform.id === OPERATING_SYSTEM.Windows ? `${WINDOWS_SANDBOX_FILESYSTEM_LIMITS} ` : ''}${networkBoundary} No automatic host fallback.`,
           promptGuidelines: [
-            `Use ${shellName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. In isolated modes, read failures outside granted directories require a directory authorization; do not disguise paths or use another interpreter to evade a denial.`,
-            'In isolated modes, the sandbox has a private temporary HOME and TMPDIR. Host credentials, desktop sockets and repository Git metadata writes are not available. Use lexora_authorize_directory with the least access needed for additional directories; its permissions expire with the current run and do not apply to other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
+            `Use ${shellName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. Ordinary reads need no approval. If the OS denies an ordinary directory, lexora_authorize_directory can prepare read access without a prompt. Do not retry protected credential paths through another interpreter or execution boundary.`,
+            'In isolated modes, the sandbox has a private temporary HOME and TMPDIR. Host credential variables and desktop IPC variables are not inherited. Do not access protected credential paths or write repository Git metadata. Use lexora_authorize_directory with the least access needed for additional directories; additional write authorization expires with the current run. Windows may reuse read-access preparation and ACL material across runs; this does not authorize writes or other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
           ],
           async execute(toolCallId, parameters, signal, onUpdate, context) {
             const run = options.getRunContext()
@@ -194,7 +195,7 @@ export function createShellCapability(options: {
         pi.registerTool(defineTool({
           name: 'lexora_authorize_directory',
           label: 'Authorize a directory',
-          description: 'Request access to one existing directory for isolated shell commands in the CURRENT RUN only. Choose read for inspection, write only when the task requires creating, editing or deleting files. Explain why access is needed. Write includes read. Permissions expire at run completion, cancellation or restart; they do not grant other tools access or change saved conversation/Space permissions. Credential restrictions remain. Read-only mode cannot grant write access.',
+          description: 'Request access to one existing directory for isolated shell commands. Ordinary reads do not require approval. Request write only when the task requires creating, editing or deleting files outside existing writable directories. Explain why access is needed. Write includes read. Additional write authorization expires at run completion, cancellation or restart. Windows may retain read-access preparation and ACL material; the native filesystem limits still apply. This tool does not authorize other tools or change saved conversation/Space permissions. Do not bypass credential restrictions. Read-only mode cannot grant write access.',
           parameters: directoryParameters,
           async execute() {
             const directories = options.directoryPermissions.get(options.getRunContext()).map(({ path, access }) => ({ path, access }))

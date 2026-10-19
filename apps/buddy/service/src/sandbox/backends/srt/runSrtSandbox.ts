@@ -3,10 +3,8 @@ import type { OwnedProcessSettlement } from '../../../../../platform/process/sup
 import type { SrtSandboxInput } from '../../../../../shared/permissions/shellSandbox'
 import type { SandboxExecutionOptions } from '../../sandboxExecutionLifecycle'
 import { spawn } from 'node:child_process'
-import { join } from 'node:path'
 import process from 'node:process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
-import { containsCanonicalPath } from '../../../../../platform/filesystem/filePaths'
 import { SANDBOX_LOOPBACK_NO_PROXY } from '../../../../../platform/process/sandboxEnvironment'
 import { runSupervisedShellProcess } from '../../../../../platform/process/supervisedShellProcess'
 import { createSandboxPolicy } from './createPolicy'
@@ -62,7 +60,7 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
           ...launch.env,
           PATH: path,
           LEXORA_BUDDY_SANDBOX_BWRAP: config.bwrapPath,
-          LEXORA_BUDDY_SANDBOX_TMP: [...input.roots, ...input.additionalDirectories.map(grant => grant.path), ...input.resourceReadRoots].some(root => containsCanonicalPath(root, '/tmp')) ? '/tmp' : join(input.privateRoot, 'tmp'),
+          LEXORA_BUDDY_SANDBOX_TMP: '/tmp',
         },
       }, {
         signal: options.signal,

@@ -8,16 +8,19 @@ import { createProxyEnvironment } from '../../../platform/process/proxyEnvironme
 import { createSandboxDirectory } from '../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvironment'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
+import { resolveSensitivePathRoots } from '../../../service/src/permissions/sensitivePaths'
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
 import { Emitter } from '../../../shared/events/Emitter'
 import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
-import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema } from '../../../shared/permissions/shellSandbox'
+import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxPreparationSchema } from '../../../shared/permissions/shellSandbox'
 import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
+import { WindowsSandboxPreparation } from './WindowsSandboxPreparation'
 
 export interface SandboxHostOptions {
   buddyHome: string
   protectedRoots?: string[]
+  protectionScope?: string
   proxyUrl?: string
   searchDirectory: string
   sandboxDirectory?: string
@@ -29,9 +32,17 @@ export interface SandboxHostOptions {
 export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: SandboxHostOptions) {
   const changes = new Emitter<Readonly<{ requestId: string, kind: 'spawned' | 'exited' | 'cleanup_requested' | 'resources_released' | 'cleanup_failed', pid?: number, exitCode?: number }>>(() => console.error('SANDBOX_HOST_OBSERVER_FAILED'))
   const publish = (event: Parameters<typeof changes.fire>[0]) => changes.fire(Object.freeze(event))
+  const preparation = isWindows(process.platform) ? new WindowsSandboxPreparation({ ...options, protectedRoots: options.protectedRoots ?? [dirname(options.buddyHome)] }) : undefined
   const active = new Map<string, AbortController>()
   let disposed = false
   const disposers = [
+    peer.onRequest('host.sandbox.prepare', async (params) => {
+      const { roots } = sandboxPreparationSchema.parse(params)
+      if (disposed)
+        throw new Error('SANDBOX_UNAVAILABLE')
+      await preparation?.prepare(roots)
+      return { ok: true }
+    }),
     peer.onNotification((method, params) => {
       if (method !== 'host.sandbox.cancel')
         return
@@ -47,6 +58,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         return { ok: false, code: 'SANDBOX_BUSY' }
       if (disposed || active.size >= 8)
         return { ok: false, code: 'SANDBOX_BUSY', notStarted: true }
+      preparation?.start()
       const controller = new AbortController()
       active.set(input.requestId, controller)
       let dispatched = false
@@ -141,12 +153,13 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         return await processPeer.request('sandbox.exec', {
           ...input,
           home: homedir(),
+          sensitiveRoots: resolveSensitivePathRoots(),
           path: process.env.PATH ?? '',
           privateRoot: directory,
           protectedRoots: options.protectedRoots ?? [dirname(options.buddyHome)],
           searchDirectory: options.searchDirectory,
           backend: windowsSandbox
-            ? { kind: SHELL_SANDBOX_BACKEND.Windows, executable: windowsSandbox, shell: options.windowsShell, systemRoot }
+            ? { kind: SHELL_SANDBOX_BACKEND.Windows, executable: windowsSandbox, shell: options.windowsShell, systemRoot, protectionScope: options.protectionScope ?? options.buddyHome }
             : isLinux(process.platform)
               ? { kind: SHELL_SANDBOX_BACKEND.Linux, sandboxDirectory: options.sandboxDirectory }
               : { kind: SHELL_SANDBOX_BACKEND.MacOS },
@@ -163,13 +176,14 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
       }
     }),
   ]
-  const dispose = () => {
+  const dispose = async () => {
     disposed = true
     disposers.forEach(dispose => dispose())
     for (const controller of active.values())
       controller.abort()
     if (!active.size)
       changes.dispose()
+    await preparation?.dispose()
   }
-  return { dispose, onDidChange: changes.event }
+  return { dispose, prepare: () => preparation?.start(), onDidChange: changes.event }
 }

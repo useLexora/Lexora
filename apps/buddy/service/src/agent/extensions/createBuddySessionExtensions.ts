@@ -137,6 +137,7 @@ export async function createBuddySessionExtensions(
     creationSignal.throwIfAborted()
     const authorization = new ToolAuthorizationService({
       applySandboxDirectory: (run, grant) => sandboxDirectories.grant(run, grant),
+      getSandboxDirectories: run => sandboxDirectories.get(run),
       applyGrant: async (proposal) => {
         const mutation = await services.directoryGrants.grant(proposal)
         services.directoryGrants.assertCurrent(proposal.owner, mutation.grant.id)

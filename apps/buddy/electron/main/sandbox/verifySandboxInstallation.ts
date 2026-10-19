@@ -16,7 +16,7 @@ import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { isWindows } from '../../../shared/platform'
 import { registerSandboxHostRpc } from './registerSandboxHostRpc'
 
-export async function verifySandboxInstallation(options: SandboxHostOptions): Promise<void> {
+export async function verifySandboxInstallation(options: SandboxHostOptions, scale = false): Promise<{ preparationMs: number, firstCommandMs: number, repeatedRpcMs: number[] } | undefined> {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-installed-sandbox-')))
   const workspace = join(directory, '工作区 Space')
   const channel = new MessageChannel()
@@ -33,11 +33,38 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
   const runtime = createPeer(channel.port2)
   const disposeHost = registerSandboxHostRpc(host, options)
   const client = new ShellSandboxClient(runtime)
+  const measurements: number[] = []
+  let preparationMs = 0
+  let firstCommandMs = 0
+  const events: { elapsed: number, phase: string, started: boolean, process?: string }[] = []
+  let commandNumber = 0
+  let startedAt = performance.now()
+  const hostObservation = disposeHost.onDidChange((event) => {
+    events.push({ elapsed: performance.now() - startedAt, phase: `host.${event.kind}`, started: false })
+  })
+  const observation = client.onDidChange((change) => {
+    if (change.kind !== 'backend')
+      return
+    const state = change.event.snapshot
+    events.push({ elapsed: performance.now() - startedAt, phase: state.phase, started: state.started, process: state.process?.phase })
+    if (events.length > 16)
+      events.shift()
+  })
+  const quote = (path: string) => `'${path.replaceAll('\'', '\'\'')}'`
+  const originalPath = process.env.PATH
   const powershell = currentPlatform.shell === 'powershell'
-  const execute = async (command: string, readOnly = false, approve = false, timeout = 10) => {
+  const execute = async (command: string, readOnly = false, approve = false, timeout = 10, cancellation?: AbortController) => {
+    commandNumber++
+    startedAt = performance.now()
+    events.length = 0
     const output: Buffer[] = []
     const result = await client.exec({ command, cwd: workspace, roots: [workspace], workspaceRoots: [workspace], resourceReadRoots: [], additionalDirectories: [], readOnly, timeout }, {
-      onData: data => output.push(data),
+      signal: cancellation?.signal,
+      onData: (data) => {
+        output.push(data)
+        if (cancellation && Buffer.concat(output).includes('CANCEL_READY'))
+          cancellation.abort()
+      },
     }, async () => approve)
     return { ...result, output: Buffer.concat(output).toString('utf8') }
   }
@@ -62,13 +89,39 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
     }
     if (status !== 'available')
       throw new Error(`Installed sandbox is unavailable: ${status}`)
+    if (scale) {
+      const toolchain = join(directory, 'toolchain')
+      await mkdir(toolchain)
+      for (const [root, count] of [[toolchain, 50_000], [workspace, 5_000]] as const) {
+        for (let offset = 0; offset < count; offset += 100)
+          await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(join(root, `fixture-${offset + index}`), 'fixture')))
+      }
+      process.env.PATH = `${toolchain}${powershell ? ';' : ':'}${originalPath ?? ''}`
+    }
+    const preparationStarted = performance.now()
+    await client.prepare([workspace])
+    preparationMs = performance.now() - preparationStarted
+    if (scale && preparationMs > 30_000)
+      throw new Error(`Installed sandbox exceeded its workspace preparation budget: ${preparationMs} ms`)
     await writeFile(join(workspace, '.env'), 'synthetic-secret')
+    const firstCommandStarted = performance.now()
     const write = await execute(powershell ? 'Set-Content -LiteralPath result -Value ready -NoNewline' : 'printf ready > result')
+    firstCommandMs = performance.now() - firstCommandStarted
+    if (scale && firstCommandMs > 5_000)
+      throw new Error(`Installed sandbox exceeded its first prepared command budget: ${firstCommandMs} ms`)
     if (write.exitCode !== 0 || await readFile(join(workspace, 'result'), 'utf8') !== 'ready')
       throw new Error('Installed sandbox could not write its authorized workspace')
     const secret = await execute(powershell ? 'Get-Content -LiteralPath .env -ErrorAction Stop' : 'cat .env')
-    if (secret.exitCode === 0 || secret.output.includes('synthetic-secret'))
-      throw new Error('Installed sandbox exposed a protected file')
+    if (secret.exitCode !== 0 || !secret.output.includes('synthetic-secret'))
+      throw new Error('Installed sandbox could not read ordinary workspace content')
+    const protectedFile = join(options.buddyHome, 'sandbox-protected-fixture')
+    await writeFile(protectedFile, 'PRIVATE_FIXTURE')
+    try {
+      const protectedRead = await execute(powershell ? `Get-Content -LiteralPath ${quote(protectedFile)} -ErrorAction Stop` : `cat ${quote(protectedFile)}`)
+      if (protectedRead.exitCode === 0 || protectedRead.output.includes('PRIVATE_FIXTURE'))
+        throw new Error('Installed sandbox exposed application-private data')
+    }
+    finally { await rm(protectedFile, { force: true }) }
     const readOnly = await execute(powershell ? 'Set-Content -LiteralPath forbidden -Value changed -ErrorAction Stop' : 'touch forbidden', true)
     if (readOnly.exitCode === 0)
       throw new Error('Installed sandbox allowed a read-only write')
@@ -110,12 +163,41 @@ export async function verifySandboxInstallation(options: SandboxHostOptions): Pr
       if (!(error instanceof ShellSandboxError) || error.code !== 'SANDBOX_TIMEOUT')
         throw error
     }
+    const cancellation = new AbortController()
+    try {
+      await execute(powershell ? '[Console]::Out.Write("CANCEL_READY"); Start-Sleep -Seconds 2; Set-Content -LiteralPath cancelled -Value changed' : 'printf CANCEL_READY; (sleep 2; touch cancelled) & wait', false, false, 10, cancellation)
+      throw new Error('Installed sandbox ignored its cancellation')
+    }
+    catch (error) {
+      if (error !== cancellation.signal.reason && (!(error instanceof ShellSandboxError) || error.code !== 'SANDBOX_CANCELLED'))
+        throw error
+    }
     await setTimeout(2_100)
     await absent(join(workspace, 'late'))
+    await absent(join(workspace, 'cancelled'))
+    if (scale) {
+      for (let iteration = 0; iteration < 3; iteration++) {
+        const start = performance.now()
+        const result = await execute(powershell ? '[Console]::Out.Write(\'SCALE_OK\')' : 'printf SCALE_OK')
+        const elapsed = performance.now() - start
+        if (result.exitCode !== 0 || result.output !== 'SCALE_OK' || elapsed > 5_000)
+          throw new Error(`Installed sandbox exceeded its repeated command budget: ${elapsed} ms; ${JSON.stringify(result)}`)
+        measurements.push(elapsed)
+      }
+    }
+    return { preparationMs, firstCommandMs, repeatedRpcMs: measurements }
+  }
+  catch (error) {
+    throw new Error(`Installed sandbox verification failed at command ${commandNumber}: ${error instanceof Error ? error.message : String(error)}; ${JSON.stringify(events)}`, { cause: error })
   }
   finally {
+    observation.dispose()
+    hostObservation.dispose()
+    if (originalPath === undefined)
+      delete process.env.PATH
+    else process.env.PATH = originalPath
     await client.dispose()
-    disposeHost.dispose()
+    await disposeHost.dispose()
     host.close(new Error('Installation verification completed'))
     runtime.close(new Error('Installation verification completed'))
     channel.port1.close()

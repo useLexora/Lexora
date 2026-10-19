@@ -3,7 +3,7 @@ const SYSTEM_READ_PATHS = ['/usr', '/bin', '/sbin', '/System/Library', '/System/
 export function createMacosSystemPolicy() {
   return {
     readPaths: SYSTEM_READ_PATHS,
-    denyRead: ['/'],
+    denyRead: [] as string[],
     denyWrite: [] as string[],
     pathRoots: ['/usr', '/bin', '/opt/homebrew'],
     pathEntries: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'],

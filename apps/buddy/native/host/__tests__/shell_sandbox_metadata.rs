@@ -1,5 +1,8 @@
+use super::super::security::sid_text;
 use super::super::security::{Profile, current_process};
 use super::*;
+use crate::windows_security::process_user_sid;
+use windows_sys::Win32::Security::Authorization::GRANT_ACCESS;
 
 fn record(path: &Path, profile: &str) -> Record {
     let canonical = fs::canonicalize(path).unwrap();

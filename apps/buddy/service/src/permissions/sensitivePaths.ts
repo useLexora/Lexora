@@ -5,23 +5,19 @@ import { resolveSensitiveLocations } from '../../../platform/filesystem/sensitiv
 
 const HOME_RELATIVE_ROOTS = [
   '.aws',
-  '.claude',
-  '.codex',
-  '.docker',
+  '.claude/.credentials.json',
+  '.codex/auth.json',
+  '.docker/config.json',
   '.gnupg',
   '.kube',
   '.mozilla',
+  '.netrc',
   '.npmrc',
   '.pgpass',
-  '.pi',
+  '.pi/agent/auth.json',
   '.ssh',
+  '_netrc',
 ]
-
-const SENSITIVE_BASENAME_PATTERN
-  = /^(?:\.env(?:\..+)?|\.netrc|_netrc|\.pgpass|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.pem|.*\.p12|.*\.pfx)$/i
-
-const SECRET_TEMPLATE_BASENAME_PATTERN
-  = /^\.env(?:\..+)?\.(?:example|sample|template|defaults?|dist|schema)$/i
 
 export interface SensitivePathMatcher {
   matches: (canonicalPath: string) => boolean
@@ -47,9 +43,6 @@ export function createSensitivePathMatcher(
       catch {
         return false
       }
-      const name = filePaths.path.basename(path)
-      if (SENSITIVE_BASENAME_PATTERN.test(name) && !SECRET_TEMPLATE_BASENAME_PATTERN.test(name))
-        return true
       return sensitiveRoots.some(root => containsCanonicalPath(root, filePaths.sensitiveKey(path)))
     },
   }

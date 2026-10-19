@@ -53,15 +53,20 @@ export const sandboxCommandSchema = z.object({
 
 export type SandboxCommand = z.infer<typeof sandboxCommandSchema>
 
+export const sandboxPreparationSchema = z.object({
+  roots: z.array(pathSchema).max(128),
+}).strict()
+
 export const sandboxProcessInputSchema = sandboxCommandSchema.extend({
   home: pathSchema,
   privateRoot: pathSchema,
   protectedRoots: z.array(pathSchema).max(32),
+  sensitiveRoots: z.array(pathSchema).max(128),
   searchDirectory: pathSchema,
   backend: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.Linux), sandboxDirectory: pathSchema }).strict(),
     z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.MacOS) }).strict(),
-    z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.Windows), executable: pathSchema, shell: pathSchema, systemRoot: pathSchema }).strict(),
+    z.object({ kind: z.literal(SHELL_SANDBOX_BACKEND.Windows), executable: pathSchema, shell: pathSchema, systemRoot: pathSchema, protectionScope: pathSchema }).strict(),
   ]),
   path: z.string().max(32_768),
 })
@@ -101,7 +106,7 @@ export class ShellSandboxError extends Error {
 
   constructor(code: ShellSandboxError['code']) {
     const hints: Record<ShellSandboxError['code'], string> = {
-      SANDBOX_UNAVAILABLE: 'The sandbox is unavailable. Enable or repair it in the permission menu. Related commands remain blocked until the sandbox is available.',
+      SANDBOX_UNAVAILABLE: 'The sandbox is unavailable. Check its status in the permission menu before retrying. Related commands remain blocked until the sandbox is available.',
       SANDBOX_FAILED: 'The sandboxed command could not complete. Do not assume it made no changes.',
       SANDBOX_CANCELLED: 'Command cancelled.',
       SANDBOX_TIMEOUT: 'Command timed out.',

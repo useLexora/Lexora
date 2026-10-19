@@ -22,6 +22,7 @@ export interface ToolAuthorizationOptions {
   cwd: string
   owner: GrantOwner
   getGrants: () => readonly DirectoryGrant[]
+  getSandboxDirectories?: (run: BuddyExtensionRunContext) => readonly SandboxDirectoryGrant[]
   applyGrant?: (grant: GrantProposal) => Promise<void> | void
   applySandboxDirectory?: (run: BuddyExtensionRunContext, grant: SandboxDirectoryGrant) => Promise<void>
   executionPermissions?: ToolExecutionPermissions
@@ -139,6 +140,7 @@ export class ToolAuthorizationService {
         requireApproval: declared.requireApproval,
         shellBoundary: declared.shellBoundary,
         grants: options.getGrants(),
+        sandboxDirectories: options.getSandboxDirectories?.(run),
         owner: options.owner,
         paths: declared.paths,
         profile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
@@ -196,18 +198,19 @@ export class ToolAuthorizationService {
           throw error
         }
       }
+      if (decision.sandboxDirectory) {
+        if (!options.applySandboxDirectory)
+          return 'DIRECTORY_GRANT_FAILED'
+        try {
+          await options.applySandboxDirectory(run, decision.sandboxDirectory)
+        }
+        catch {
+          signal.throwIfAborted()
+          return 'SANDBOX_DIRECTORY_CHANGED'
+        }
+      }
       if (decision.type === 'ask') {
         signal.throwIfAborted()
-        if (decision.sandboxDirectory) {
-          if (!options.applySandboxDirectory)
-            return 'DIRECTORY_GRANT_FAILED'
-          try {
-            await options.applySandboxDirectory(run, decision.sandboxDirectory)
-          }
-          catch {
-            return 'SANDBOX_DIRECTORY_CHANGED'
-          }
-        }
         if (decision.grant && approvedOnce) {
           try {
             if (!options.applyGrant)

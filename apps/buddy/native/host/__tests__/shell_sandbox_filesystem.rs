@@ -111,3 +111,238 @@ fn temporary_grants_preserve_inheritance_control_without_propagating_to_children
     assert_eq!(snapshot(&root), before);
     assert_eq!(snapshot(&child), child_before);
 }
+
+#[test]
+fn noninheriting_probe_grants_do_not_propagate_existing_parent_entries() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().to_str().unwrap();
+    let root = open_path(path).unwrap();
+    let child_path = directory.path().join("child");
+    fs::create_dir(&child_path).unwrap();
+    let child = open_path(child_path.to_str().unwrap()).unwrap();
+    let before = snapshot(&child);
+    let pending = Profile::create().unwrap();
+    change_acl(&root, &pending.sid, FILE_GENERIC_READ, GRANT_ACCESS, true).unwrap();
+    let profile = Profile::create().unwrap();
+    let mut grant = inspect(path, Access::Read).unwrap();
+    grant.inherit = false;
+    let (_input, cancellation) = pending_cancellation(std::time::Duration::from_secs(30));
+    ensure_acl(
+        &grant,
+        &root,
+        &profile.sid,
+        FILE_GENERIC_READ,
+        GRANT_ACCESS,
+        &cancellation,
+    )
+    .unwrap();
+    assert_eq!(snapshot(&child), before);
+}
+
+fn pending_cancellation(
+    budget: std::time::Duration,
+) -> (std::sync::mpsc::Sender<()>, Cancellation) {
+    struct Input(std::sync::mpsc::Receiver<()>);
+    impl Read for Input {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            let _ = self.0.recv();
+            Ok(0)
+        }
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    (sender, Cancellation::listen(Input(receiver), budget))
+}
+
+#[test]
+fn root_preparation_waits_remain_cancellable_and_do_not_lock_other_roots() {
+    use std::time::{Duration, Instant};
+    let directory = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let grant = inspect(directory.path().to_str().unwrap(), Access::Read).unwrap();
+    let other_grant = inspect(other.path().to_str().unwrap(), Access::Read).unwrap();
+    let (_input, cancellation) = pending_cancellation(Duration::from_secs(10));
+    let _lock = AclLock::for_root(&grant, &cancellation).unwrap();
+    for interrupted in [false, true] {
+        let grant = grant.clone();
+        let other_grant = other_grant.clone();
+        std::thread::spawn(move || {
+            let (input, cancellation) = pending_cancellation(Duration::from_millis(300));
+            drop(AclLock::for_root(&other_grant, &cancellation).unwrap());
+            if interrupted {
+                drop(input);
+            }
+            let started = Instant::now();
+            let error = AclLock::for_root(&grant, &cancellation).err().unwrap();
+            assert_eq!(
+                error.kind(),
+                if interrupted {
+                    io::ErrorKind::Interrupted
+                } else {
+                    io::ErrorKind::TimedOut
+                }
+            );
+            assert!(started.elapsed() < Duration::from_secs(2));
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[test]
+fn read_grants_without_write_dacl_skip_root_updates_and_preserve_strict_grants() {
+    use std::time::Duration;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().to_str().unwrap();
+    let root = open_path(path).unwrap();
+    let original = SecurityDescriptor::new(&snapshot(&root)).unwrap();
+    let grant = inspect(path, Access::Read).unwrap();
+    let restricted = SecurityDescriptor::new("D:P(A;OICI;FRFX;;;OW)").unwrap();
+    // SAFETY: This fixture-owned handle retains WRITE_DAC so the original DACL can be restored.
+    boolean(unsafe {
+        SetKernelObjectSecurity(
+            root.as_raw_handle(),
+            DACL_SECURITY_INFORMATION,
+            restricted.as_ptr(),
+        )
+    })
+    .unwrap();
+    let result = std::panic::catch_unwind(|| {
+        assert!(!open_grant_handle(&grant).unwrap().can_write_dacl);
+        let before = snapshot(&root);
+        let (_input, cancellation) = pending_cancellation(Duration::from_secs(30));
+        let _lock = AclLock::for_root(&grant, &cancellation).unwrap();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let profile = Profile::create().unwrap();
+                    let (_input, cancellation) = pending_cancellation(Duration::from_secs(2));
+                    let grants = Grants::apply(
+                        &profile.sid,
+                        &profile.sid,
+                        std::slice::from_ref(&grant),
+                        &cancellation,
+                        None,
+                    )
+                    .unwrap();
+                    assert!(grants.capabilities.is_empty());
+                })
+                .join()
+                .unwrap();
+        });
+        assert_eq!(snapshot(&root), before);
+        for access in [Access::Write, Access::DenyRead, Access::DenyWrite] {
+            let strict = Grant {
+                access,
+                ..grant.clone()
+            };
+            assert_eq!(
+                open_grant(&strict).unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+        let replaced = Grant {
+            inode: "0".to_owned(),
+            ..grant.clone()
+        };
+        assert_eq!(
+            open_grant(&replaced).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    });
+    // SAFETY: The original descriptor and fixture's retained writable handle are still live.
+    boolean(unsafe {
+        SetKernelObjectSecurity(
+            root.as_raw_handle(),
+            DACL_SECURITY_INFORMATION,
+            original.as_ptr(),
+        )
+    })
+    .unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+#[test]
+fn interrupted_acl_propagation_retries_then_restores_lock_free_reuse() {
+    use sha2::{Digest, Sha256};
+    use std::time::Duration;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().to_str().unwrap();
+    let root = open_path(path).unwrap();
+    let user = sid_text(&process_user_sid(current_process()).unwrap()).unwrap();
+    let descriptor = SecurityDescriptor::new(&format!("D:PAI(A;OICI;FA;;;{user})")).unwrap();
+    // SAFETY: Only the synthetic root receives a deterministic inheritable DACL before children exist.
+    unsafe {
+        boolean(SetSecurityDescriptorControl(
+            descriptor.as_ptr(),
+            SE_DACL_AUTO_INHERIT_REQ,
+            SE_DACL_AUTO_INHERIT_REQ,
+        ))
+        .unwrap();
+        boolean(SetKernelObjectSecurity(
+            root.as_raw_handle(),
+            DACL_SECURITY_INFORMATION,
+            descriptor.as_ptr(),
+        ))
+        .unwrap();
+    }
+    let child_path = directory.path().join("existing-child");
+    fs::create_dir(&child_path).unwrap();
+    let child = open_path(child_path.to_str().unwrap()).unwrap();
+    let profile = Profile::create().unwrap();
+    let grant = inspect(path, Access::Read).unwrap();
+    let mask = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+    let sid = sid_text(&profile.sid).unwrap();
+    let before = snapshot(&child);
+    assert!(before.starts_with("D:AI"), "{before}");
+    change_acl(&root, &profile.sid, mask, GRANT_ACCESS, true).unwrap();
+    assert_eq!(snapshot(&child), before);
+    let key = Sha256::digest(format!(
+        "{}:{}:{}:{sid}:{mask}:{GRANT_ACCESS}:true",
+        grant.path, grant.device, grant.inode,
+    ));
+    let journal = journal_directory().unwrap();
+    let pending = journal.join(format!("acl-{key:x}.pending"));
+    File::create_new(&pending).unwrap().sync_all().unwrap();
+    let (_input, cancellation) = pending_cancellation(Duration::from_secs(30));
+    {
+        let _lock = AclLock::acquire().unwrap();
+        recover(&journal).unwrap();
+    }
+    assert!(pending.exists());
+    ensure_acl(
+        &grant,
+        &root,
+        &profile.sid,
+        mask,
+        GRANT_ACCESS,
+        &cancellation,
+    )
+    .unwrap();
+    assert!(!pending.exists());
+    assert!(
+        snapshot(&child).contains(&sid),
+        "root: {}; child before: {before}; child after: {}; expected: {sid}",
+        snapshot(&root),
+        snapshot(&child),
+    );
+    let _lock = AclLock::for_root(&grant, &cancellation).unwrap();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let (_input, cancellation) = pending_cancellation(Duration::from_secs(2));
+                ensure_acl(
+                    &grant,
+                    &root,
+                    &profile.sid,
+                    mask,
+                    GRANT_ACCESS,
+                    &cancellation,
+                )
+                .unwrap();
+            })
+            .join()
+            .unwrap();
+    });
+}

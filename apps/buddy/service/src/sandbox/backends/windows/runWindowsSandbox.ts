@@ -41,6 +41,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_
       shell: input.backend.shell,
       privateRoot: input.privateRoot,
       grants,
+      denyReadScope: input.backend.protectionScope,
       proxyPort: address.port,
       environment: createWindowsSandboxEnvironment({
         ...input.backend,

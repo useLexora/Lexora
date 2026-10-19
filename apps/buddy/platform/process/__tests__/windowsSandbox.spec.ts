@@ -50,7 +50,7 @@ describe('windows sandbox component compatibility', () => {
     { protocol: 2, version: 1 },
     { protocol: 1 },
     { protocol: 1, version: 0 },
-    new Error('Legacy component does not support version'),
+    Object.assign(new Error('Legacy component does not support version'), { code: 125 }),
   ])('requires repair and blocks execution for incompatible or unidentified components: %j', async (version) => {
     installedVersion = version
     await expect(checkWindowsSandbox(bundled)).resolves.toBe('needs_repair')
@@ -70,17 +70,44 @@ describe('windows sandbox component compatibility', () => {
     expect(execute.mock.calls.every(([path]) => path === bundled)).toBe(true)
   })
 
-  it('requires a healthy network service even when versions match', async () => {
+  it('keeps a service failure unavailable without requesting a component update', async () => {
     healthError = new Error('Service unavailable')
+    await expect(checkWindowsSandbox(bundled)).resolves.toBe('unavailable')
+    await expect(resolveWindowsSandbox(bundled)).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' })
+    healthError = undefined
+    await expect(checkWindowsSandbox(bundled)).resolves.toBe('available')
+  })
+
+  it('preserves the update action for a confirmed sandbox account identity mismatch', async () => {
+    healthError = Object.assign(new Error('Identity mismatch'), {
+      code: 125,
+      stderr: JSON.stringify({ type: 'error', code: 'SANDBOX_NEEDS_UPDATE', nativeCode: null }),
+    })
     await expect(checkWindowsSandbox(bundled)).resolves.toBe('needs_repair')
     await expect(resolveWindowsSandbox(bundled)).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' })
   })
 
-  it('blocks commands when the installed component fails the real-command probe', async () => {
+  it.each(['version', 'health'])('keeps a %s timeout distinct from a component requiring an update', async (phase) => {
+    const timeout = Object.assign(new Error('Timed out'), { killed: true, signal: 'SIGTERM', code: null })
+    if (phase === 'version')
+      installedVersion = timeout
+    else
+      healthError = timeout
+    await expect(checkWindowsSandbox(bundled)).resolves.toBe('unavailable')
+    await expect(setupWindowsSandbox(bundled)).resolves.toBe('failed')
+  })
+
+  it('reports a failed health probe without repeating the probe for each command', async () => {
     probe.mockResolvedValue(false)
     await expect(checkWindowsSandbox(bundled)).resolves.toBe('incompatible')
-    await expect(resolveWindowsSandbox(bundled)).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' })
+    await expect(resolveWindowsSandbox(bundled)).resolves.toBe(installed)
     await expect(setupWindowsSandbox(bundled)).resolves.toBe('incompatible')
+  })
+
+  it('keeps transient probe failures distinct from platform incompatibility', async () => {
+    probe.mockRejectedValue(new Error('Sandbox preparation interrupted'))
+    await expect(checkWindowsSandbox(bundled)).resolves.toBe('unavailable')
+    await expect(setupWindowsSandbox(bundled)).resolves.toBe('failed')
   })
 
   it('returns ready only after installation health and command verification succeed', async () => {

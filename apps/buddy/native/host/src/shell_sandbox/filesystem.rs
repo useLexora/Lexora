@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read},
     os::windows::{
         fs::OpenOptionsExt,
         io::{AsRawHandle, OwnedHandle},
@@ -11,7 +11,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use windows_sys::Win32::{
-    Foundation::{ERROR_INSUFFICIENT_BUFFER, WAIT_ABANDONED, WAIT_OBJECT_0},
+    Foundation::{ERROR_INSUFFICIENT_BUFFER, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Security::{
         Authorization::{
             EXPLICIT_ACCESS_W, GRANT_ACCESS, REVOKE_ACCESS, SetEntriesInAclW, TRUSTEE_IS_SID,
@@ -40,7 +40,7 @@ use super::security::{
 };
 use crate::windows_security::{Sid, process_user_sid};
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Grant {
     pub(super) path: String,
@@ -57,7 +57,7 @@ fn inherited() -> bool {
     true
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum Access {
     Read,
@@ -66,106 +66,363 @@ pub(super) enum Access {
     DenyWrite,
 }
 
-pub(super) struct Grants<'a> {
-    sid: &'a Sid,
-    handles: Vec<File>,
-    validation_handles: Vec<File>,
-    journal: Option<Journal>,
-    roots: Vec<Grant>,
+pub(super) struct Grants {
+    _handles: Vec<OpenedGrant>,
+    pub(super) capabilities: Vec<String>,
 }
 
-impl<'a> Grants<'a> {
+struct OpenedGrant {
+    file: File,
+    can_write_dacl: bool,
+}
+
+pub(super) fn capability(owner: &str, grant: &Grant) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!(
+        "v4:{owner}:{}:{}:{}",
+        grant.path.to_uppercase(),
+        grant.device,
+        grant.inode
+    ));
+    let parts: Vec<_> = hash[..16]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|part| u32::from_le_bytes(*part).to_string())
+        .collect();
+    format!("S-1-5-21-{}", parts.join("-"))
+}
+
+pub(super) fn denial_mask(access: Access) -> io::Result<u32> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_APPEND_DATA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, WRITE_OWNER,
+    };
+    match access {
+        Access::DenyRead => {
+            Ok(FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE)
+        }
+        Access::DenyWrite => Ok(FILE_WRITE_DATA
+            | FILE_APPEND_DATA
+            | FILE_WRITE_ATTRIBUTES
+            | FILE_WRITE_EA
+            | DELETE
+            | WRITE_DAC
+            | WRITE_OWNER),
+        _ => Err(io::ErrorKind::InvalidInput.into()),
+    }
+}
+
+pub(super) fn revoke_owned(
+    file: &File,
+    sid: &Sid,
+    deny_only: bool,
+    inherit: bool,
+) -> io::Result<()> {
+    use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetSecurityInfo};
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACE_HEADER, DeleteAce, EqualSid, GetAce, INHERITED_ACE,
+    };
+    use windows_sys::Win32::System::SystemServices::{
+        ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE,
+    };
+    let mut descriptor = read_dacl_descriptor(file)?;
+    let mut dacl = ptr::null_mut();
+    let mut present = 0;
+    let mut defaulted = 0;
+    // SAFETY: The descriptor owns the ACL throughout inspection and mutation.
+    boolean(unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.as_mut_ptr().cast(),
+            &mut present,
+            &mut dacl,
+            &mut defaulted,
+        )
+    })?;
+    if present == 0 || dacl.is_null() {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    // SAFETY: The live descriptor contains this complete ACL. Reverse traversal preserves remaining indexes.
+    for index in (0..unsafe { (*dacl).AceCount }).rev() {
+        let mut entry = ptr::null_mut();
+        // SAFETY: The index remains within the current ACL after deleting only higher indexes.
+        boolean(unsafe { GetAce(dacl, u32::from(index), &mut entry) })?;
+        // SAFETY: Every ACE has this header; only simple allow/deny entries are cast below.
+        let header = unsafe { &*entry.cast::<ACE_HEADER>() };
+        if u32::from(header.AceFlags) & INHERITED_ACE != 0
+            || (header.AceType != ACCESS_DENIED_ACE_TYPE as u8
+                && (deny_only || header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8))
+        {
+            continue;
+        }
+        // SAFETY: Both simple ACE types contain a valid variable-sized SID at SidStart.
+        let ace = unsafe { &*entry.cast::<ACCESS_ALLOWED_ACE>() };
+        // SAFETY: Both SIDs have live backing storage.
+        if unsafe { EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), sid.as_ptr()) } != 0 {
+            // SAFETY: This removes only the matched explicit entry, preserving every other principal and inherited ACE.
+            boolean(unsafe { DeleteAce(dacl, u32::from(index)) })?;
+        }
+    }
+    if inherit {
+        // SAFETY: Reapplying the current DACL also completes an interrupted inheritance removal without restoring an old snapshot.
+        check(unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                dacl,
+                ptr::null_mut(),
+            )
+        })
+    } else {
+        // SAFETY: This descriptor preserves the original controls and updates only the root object.
+        boolean(unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle(),
+                DACL_SECURITY_INFORMATION,
+                descriptor.as_mut_ptr().cast(),
+            )
+        })
+    }
+}
+
+impl Grants {
     pub(super) fn apply(
-        profile: &'a Profile,
+        user: &Sid,
+        group: &Sid,
         grants: &[Grant],
         cancellation: &Cancellation,
+        denials: Option<super::acl_state::DenialUpdate<'_>>,
     ) -> io::Result<Self> {
+        use windows_sys::Win32::Security::Authorization::DENY_ACCESS;
         cancellation.check()?;
-        if grants.is_empty() || grants.len() > 1024 {
+        if grants.is_empty()
+            || grants.len() > 1024
+            || (denials.is_none()
+                && grants
+                    .iter()
+                    .any(|grant| matches!(grant.access, Access::DenyRead)))
+        {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         let directory = journal_directory()?;
-        let _lock = AclLock::acquire()?;
-        recover(&directory)?;
-        let mut result = Self {
-            sid: &profile.sid,
-            handles: Vec::new(),
-            validation_handles: Vec::new(),
-            journal: None,
-            roots: grants
-                .iter()
-                .filter(|grant| matches!(grant.access, Access::Read | Access::Write))
-                .cloned()
-                .collect(),
-        };
+        {
+            let _lock = AclLock::acquire()?;
+            recover(&directory)?;
+        }
+        let owner = sid_text(&process_user_sid(current_process())?)?;
+        let mut handles = Vec::new();
         for grant in grants {
             cancellation.check()?;
             if super::policy::contains(&directory.to_string_lossy(), &grant.path) {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
-            result.validation_handles.push(open_grant(grant)?);
+            handles.push(open_grant_handle(grant)?);
         }
-        let grants = super::policy::compile(grants, cancellation)?;
-        let pinned = grants
+        let mut caps = Vec::new();
+        for (grant, handle) in grants
             .iter()
-            .map(|grant| {
-                cancellation.check()?;
-                open_grant(grant)
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        result.journal = Some(Journal::create(directory, profile, &grants, &result.roots)?);
-        profile.register()?;
-        for (grant, file) in grants.iter().zip(pinned) {
+            .zip(&handles)
+            .filter(|(grant, _)| matches!(grant.access, Access::Write))
+        {
+            let name = capability(&owner, grant);
+            let cap = super::account::parse_sid(&name)?;
+            let mask = FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE;
+            ensure_acl(grant, &handle.file, group, mask, GRANT_ACCESS, cancellation)?;
+            ensure_acl(grant, &handle.file, &cap, mask, GRANT_ACCESS, cancellation)?;
+            caps.push((grant, name, cap));
+        }
+        if let Some(update) = denials {
+            let denials: Vec<_> = grants
+                .iter()
+                .filter(|grant| matches!(grant.access, Access::DenyRead))
+                .cloned()
+                .collect();
+            super::acl_state::update_denials(update, user, &denials, cancellation)?;
+        }
+        for (grant, handle) in grants.iter().zip(&handles) {
             cancellation.check()?;
-            let mask = match grant.access {
-                Access::Read => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
-                Access::Write => {
-                    FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE
+            let file = &handle.file;
+            match grant.access {
+                Access::Read => {
+                    if !handle.can_write_dacl {
+                        continue;
+                    }
+                    if let Err(error) = ensure_acl(
+                        grant,
+                        file,
+                        user,
+                        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+                        GRANT_ACCESS,
+                        cancellation,
+                    ) && error.kind() != io::ErrorKind::PermissionDenied
+                    {
+                        return Err(error);
+                    }
                 }
-                _ => return Err(io::ErrorKind::InvalidData.into()),
-            };
-            result.handles.push(file);
-            let file = result.handles.last().ok_or(io::ErrorKind::InvalidData)?;
-            change_acl(file, result.sid, mask, GRANT_ACCESS, grant.inherit)?;
-        }
-        Ok(result)
-    }
-
-    pub(super) fn finish(&mut self) -> io::Result<()> {
-        if self.journal.is_none() {
-            return Ok(());
-        }
-        let _lock = AclLock::acquire()?;
-        let mut failure = None;
-        for root in &self.roots {
-            if let Err(error) = revoke_tree(root, self.sid) {
-                failure.get_or_insert(error);
+                Access::DenyWrite => {
+                    for (root, _, cap) in &caps {
+                        if super::policy::contains(&root.path, &grant.path) {
+                            ensure_acl(
+                                grant,
+                                file,
+                                cap,
+                                denial_mask(grant.access)?,
+                                DENY_ACCESS,
+                                cancellation,
+                            )?;
+                        }
+                    }
+                }
+                Access::Write | Access::DenyRead => {}
             }
         }
-        for file in &self.handles {
-            if let Err(error) = change_acl(file, self.sid, 0, REVOKE_ACCESS, false) {
-                failure.get_or_insert(error);
-            }
-        }
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        if let Some(journal) = self.journal.take() {
-            journal.remove()?;
-        }
-        Ok(())
+        Ok(Self {
+            _handles: handles,
+            capabilities: caps.into_iter().map(|(_, name, _)| name).collect(),
+        })
     }
 }
 
-impl Drop for Grants<'_> {
-    fn drop(&mut self) {
-        if self.finish().is_err() {
-            eprintln!(
-                "{}",
-                serde_json::json!({"type":"cleanupError","code":"SANDBOX_ACL_CLEANUP_FAILED"})
-            );
+pub(super) fn ensure_acl(
+    grant: &Grant,
+    file: &File,
+    sid: &Sid,
+    mask: u32,
+    mode: i32,
+    cancellation: &Cancellation,
+) -> io::Result<()> {
+    ensure_acl_inner(grant, file, sid, mask, mode, cancellation, false)
+}
+
+fn ensure_acl_inner(
+    grant: &Grant,
+    file: &File,
+    sid: &Sid,
+    mask: u32,
+    mode: i32,
+    cancellation: &Cancellation,
+    locked: bool,
+) -> io::Result<()> {
+    use sha2::{Digest, Sha256};
+    use windows_sys::Win32::Security::Authorization::{
+        DENY_ACCESS, SE_FILE_OBJECT, SetSecurityInfo,
+    };
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACE_HEADER, EqualSid, GetAce, INHERITED_ACE,
+    };
+    use windows_sys::Win32::System::SystemServices::{
+        ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE,
+    };
+    let key = Sha256::digest(format!(
+        "{}:{}:{}:{}:{mask}:{mode}:{}",
+        grant.path,
+        grant.device,
+        grant.inode,
+        sid_text(sid)?,
+        grant.inherit
+    ));
+    let pending = journal_directory()?.join(format!("acl-{key:x}.pending"));
+    let interrupted = pending.exists();
+    let inheritance = if grant.inherit {
+        OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+    } else {
+        0
+    };
+    let mut descriptor = read_dacl_descriptor(file)?;
+    let mut dacl = ptr::null_mut();
+    let mut present = 0;
+    let mut defaulted = 0;
+    // SAFETY: The aligned buffer owns the complete self-relative descriptor.
+    boolean(unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.as_mut_ptr().cast(),
+            &mut present,
+            &mut dacl,
+            &mut defaulted,
+        )
+    })?;
+    if present == 0 || dacl.is_null() {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    // SAFETY: GetSecurityDescriptorDacl returned a valid ACL in the live descriptor.
+    for index in 0..unsafe { (*dacl).AceCount } {
+        let mut entry = ptr::null_mut();
+        // SAFETY: The index is bounded by AceCount; output receives a pointer into the live ACL.
+        boolean(unsafe { GetAce(dacl, u32::from(index), &mut entry) })?;
+        // SAFETY: Every ACL entry starts with an ACE header; these two simple ACE types share the same layout.
+        let header = unsafe { &*entry.cast::<ACE_HEADER>() };
+        let kind = if mode == DENY_ACCESS {
+            ACCESS_DENIED_ACE_TYPE
+        } else {
+            ACCESS_ALLOWED_ACE_TYPE
+        };
+        if header.AceType != kind as u8 {
+            continue;
+        }
+        // SAFETY: This is a simple allow/deny ACE, whose mask and SID immediately follow its header.
+        let ace = unsafe { &*entry.cast::<ACCESS_ALLOWED_ACE>() };
+        if !interrupted
+            && u32::from(ace.Header.AceFlags) & INHERITED_ACE == 0
+            && (!grant.inherit || u32::from(ace.Header.AceFlags) & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) == inheritance)
+            && ace.Mask & mask == mask
+            // SAFETY: Only simple allow/deny ACEs reach this comparison; their SidStart is a complete variable-sized SID.
+            && unsafe { EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), sid.as_ptr()) } != 0
+        {
+            return Ok(());
         }
     }
+    if !locked {
+        let _lock = AclLock::for_root(grant, cancellation)?;
+        return ensure_acl_inner(grant, file, sid, mask, mode, cancellation, true);
+    }
+    if !grant.inherit {
+        let result = change_acl(file, sid, mask, mode, false);
+        if interrupted && result.is_ok() {
+            fs::remove_file(pending)?;
+        }
+        return result;
+    }
+    let entry = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: mask,
+        grfAccessMode: mode,
+        grfInheritance: inheritance,
+        Trustee: TRUSTEE_W {
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.as_ptr().cast(),
+            ..Default::default()
+        },
+    };
+    let mut updated = ptr::null_mut();
+    // SAFETY: SID and ACL remain live; this adds only the dedicated identity's ACE.
+    check(unsafe { SetEntriesInAclW(1, &entry, dacl, &mut updated) })?;
+    let _updated = LocalMemory(updated.cast());
+    if !interrupted {
+        File::create_new(&pending)?.sync_all()?;
+    }
+    // SAFETY: The pinned root is unchanged; Windows propagates inheritance once without retaining a handle per descendant.
+    let result = check(unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            updated,
+            ptr::null_mut(),
+        )
+    });
+    if result.is_ok()
+        || (matches!(grant.access, Access::Read)
+            && result
+                .as_ref()
+                .is_err_and(|error| error.kind() == io::ErrorKind::PermissionDenied))
+    {
+        fs::remove_file(pending)?;
+    }
+    result
 }
 
 pub(super) struct AclLock(OwnedHandle);
@@ -183,21 +440,52 @@ impl AclLock {
         {
             return Err(io::ErrorKind::InvalidInput.into());
         }
+        Self::named(user, &format!("Global\\LexoraBuddySandboxAcl-{user}"), None)
+    }
+
+    pub(super) fn for_root(grant: &Grant, cancellation: &Cancellation) -> io::Result<Self> {
+        use sha2::{Digest, Sha256};
+        let user = sid_text(&process_user_sid(current_process())?)?;
+        let key = Sha256::digest(format!(
+            "{}:{}:{}",
+            grant.path.to_uppercase(),
+            grant.device,
+            grant.inode
+        ));
+        Self::named(
+            &user,
+            &format!("Global\\LexoraBuddySandboxRoot-{user}-{key:x}"),
+            Some(cancellation),
+        )
+    }
+
+    pub(super) fn for_denials(cancellation: &Cancellation) -> io::Result<Self> {
+        let user = sid_text(&process_user_sid(current_process())?)?;
+        Self::named(
+            &user,
+            &format!("Global\\LexoraBuddySandboxDenials-{user}"),
+            Some(cancellation),
+        )
+    }
+
+    fn named(user: &str, name: &str, cancellation: Option<&Cancellation>) -> io::Result<Self> {
         let descriptor =
             SecurityDescriptor::new(&format!("D:P(A;;GA;;;{user})(A;;GA;;;SY)(A;;GA;;;BA)"))?;
         let attributes = descriptor.attributes(false);
         // SAFETY: The mutex is scoped to the host user, with no AppContainer access or inherited handle.
-        let handle = owned(unsafe {
-            CreateMutexW(
-                &attributes,
-                0,
-                wide(&format!("Global\\LexoraBuddySandboxAcl-{user}")).as_ptr(),
-            )
-        })?;
-        // SAFETY: The owned mutex remains live through the bounded wait and matching ReleaseMutex.
-        match unsafe { WaitForSingleObject(handle.as_raw_handle(), 10000) } {
-            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
-            _ => Err(io::ErrorKind::TimedOut.into()),
+        let handle = owned(unsafe { CreateMutexW(&attributes, 0, wide(name).as_ptr()) })?;
+        loop {
+            if let Some(cancellation) = cancellation {
+                cancellation.check()?;
+            }
+            let interval = if cancellation.is_some() { 100 } else { 10_000 };
+            // SAFETY: The owned mutex remains live through each bounded wait and matching ReleaseMutex.
+            match unsafe { WaitForSingleObject(handle.as_raw_handle(), interval) } {
+                WAIT_OBJECT_0 | WAIT_ABANDONED => return Ok(Self(handle)),
+                WAIT_TIMEOUT if cancellation.is_some() => continue,
+                WAIT_TIMEOUT => return Err(io::ErrorKind::TimedOut.into()),
+                _ => return Err(io::Error::last_os_error()),
+            }
         }
     }
 }
@@ -215,12 +503,12 @@ pub(super) fn inspect(path: &str, access: Access) -> io::Result<Grant> {
     })
 }
 
-fn open_path(path: &str) -> io::Result<File> {
+fn open_path_with_access(path: &str, access: u32) -> io::Result<File> {
     if !crate::windows_path::valid(path) || path.starts_with(r"\\") {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     OpenOptions::new()
-        .access_mode(READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)
+        .access_mode(access | FILE_READ_ATTRIBUTES)
         .share_mode(
             FILE_SHARE_READ
                 | FILE_SHARE_WRITE
@@ -265,13 +553,32 @@ pub(super) fn identity(file: &File, path: &str) -> io::Result<(String, String)> 
     ))
 }
 
-fn open_grant(grant: &Grant) -> io::Result<File> {
-    let file = open_path(&grant.path)?;
+fn open_path(path: &str) -> io::Result<File> {
+    open_path_with_access(path, READ_CONTROL | WRITE_DAC)
+}
+
+pub(super) fn open_grant(grant: &Grant) -> io::Result<File> {
+    Ok(open_grant_handle(grant)?.file)
+}
+
+fn open_grant_handle(grant: &Grant) -> io::Result<OpenedGrant> {
+    let (file, can_write_dacl) = match open_path(&grant.path) {
+        Err(error)
+            if matches!(grant.access, Access::Read)
+                && error.kind() == io::ErrorKind::PermissionDenied =>
+        {
+            (open_path_with_access(&grant.path, READ_CONTROL)?, false)
+        }
+        result => (result?, true),
+    };
     let (device, inode) = identity(&file, &grant.path)?;
     if device != grant.device || inode != grant.inode {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    Ok(file)
+    Ok(OpenedGrant {
+        file,
+        can_write_dacl,
+    })
 }
 
 #[derive(Deserialize, Serialize)]
@@ -282,60 +589,7 @@ struct Record {
     #[serde(default)]
     roots: Vec<Grant>,
 }
-struct Journal {
-    path: PathBuf,
-    file: File,
-}
-impl Journal {
-    fn create(
-        directory: PathBuf,
-        profile: &Profile,
-        grants: &[Grant],
-        roots: &[Grant],
-    ) -> io::Result<Self> {
-        let pending_path = directory.join(format!("{}.pending", profile.name));
-        let pending = PendingJournal(pending_path);
-        let path = directory.join(format!("{}.json", profile.name));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .share_mode(FILE_SHARE_READ)
-            .open(&pending.0)?;
-        serde_json::to_writer(
-            &mut file,
-            &Record {
-                profile: profile.name.clone(),
-                grants: grants.to_vec(),
-                roots: roots.to_vec(),
-            },
-        )?;
-        file.flush()?;
-        if file.metadata()?.len() > 64 * 1024 * 1024 {
-            return Err(io::ErrorKind::InvalidData.into());
-        }
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&pending.0, &path)?;
-        let file = OpenOptions::new()
-            .write(true)
-            .share_mode(FILE_SHARE_READ)
-            .open(&path)?;
-        Ok(Self { path, file })
-    }
-    fn remove(self) -> io::Result<()> {
-        drop(self.file);
-        fs::remove_file(self.path)
-    }
-}
-
-struct PendingJournal(PathBuf);
-impl Drop for PendingJournal {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-fn journal_directory() -> io::Result<PathBuf> {
+pub(super) fn journal_directory() -> io::Result<PathBuf> {
     let directory =
         super::setup::known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData)?
             .join("Lexora Buddy Sandbox")

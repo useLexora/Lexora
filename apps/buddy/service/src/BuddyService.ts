@@ -861,7 +861,30 @@ export async function startBuddyService(
       shellSandbox: await host.start('runtime.shell_sandbox', ({ defer }) => {
         const sandbox = new ShellSandboxClient(options.rpc)
         const diagnostics = observeSandboxClient(sandbox, record)
+        const prepareSpaces = (spaceId?: string) => {
+          if (currentPlatform.shell !== 'powershell')
+            return
+          for (const space of spaceService.list()) {
+            if (space.revokedAt || (spaceId && space.id !== spaceId))
+              continue
+            const roots = [...(space.primaryDirectory ? [space.primaryDirectory] : []), ...space.additionalDirectories]
+              .filter(directory => !directory.revokedAt)
+              .map(directory => directory.canonicalRoot)
+            void sandbox.prepare(roots).catch(() => record({ event: 'sandbox.workspace_preparation.failed', level: 'warn', spaceId: space.id }))
+          }
+        }
+        const preparedSpaces = spaceService.onDidCommit((event) => {
+          if (event.facets.includes('directories') && event.kind !== 'deleted')
+            prepareSpaces(event.spaceId)
+        })
+        const installed = options.rpc.onNotification((method) => {
+          if (method === 'host.sandbox.ready')
+            prepareSpaces()
+        })
+        prepareSpaces()
         defer(async () => {
+          preparedSpaces.dispose()
+          installed()
           await sandbox.dispose()
           diagnostics.dispose()
         })

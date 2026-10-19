@@ -62,7 +62,7 @@ export type PermissionDecision
     summary: string
     type: 'ask'
   }
-  | { type: 'allow' }
+  | { type: 'allow', sandboxDirectory?: SandboxDirectoryGrant }
   | {
     code: PermissionDenialCode
     source: PermissionDenialSource
@@ -80,6 +80,7 @@ export interface PermissionRequest {
   requireApproval?: boolean
   shellBoundary?: 'sandbox'
   grants: readonly PermissionGrant[]
+  sandboxDirectories?: readonly SandboxDirectoryGrant[]
   owner: GrantOwner
   paths?: readonly PermissionPath[]
   profile: BuddyExecutionProfile

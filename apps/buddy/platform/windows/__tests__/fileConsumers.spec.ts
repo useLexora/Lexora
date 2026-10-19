@@ -87,7 +87,7 @@ describe('windows file consumers with simulated filesystem', () => {
     expect(sensitive.matches('C:\\workspace\\.env.example')).toBe(false)
     expect(sensitive.matches('C:\\workspace\\.env.dev.example')).toBe(false)
     expect(sensitive.matches('C:\\workspace\\.env.production.template')).toBe(false)
-    expect(sensitive.matches('C:\\workspace\\.env.dev')).toBe(true)
+    expect(sensitive.matches('C:\\workspace\\.env.dev')).toBe(false)
   })
 
   it.each(['D:\\outside\\index.html', 'C:\\Workspace\\index.html'])('rejects browser targets outside the canonical root: %s', async (entry) => {

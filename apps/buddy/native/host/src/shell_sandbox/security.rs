@@ -15,10 +15,7 @@ use windows_sys::{
                 SDDL_REVISION_1,
             },
             DeriveCapabilitySidsFromName, FreeSid, GetTokenInformation,
-            Isolation::{
-                CreateAppContainerProfile, DeleteAppContainerProfile,
-                DeriveAppContainerSidFromAppContainerName,
-            },
+            Isolation::{DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName},
             PSID, SECURITY_ATTRIBUTES, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TokenElevation,
             TokenIsAppContainer,
         },
@@ -134,7 +131,9 @@ pub(super) fn token_flag(process: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io:
 }
 
 pub(super) fn require_host(process: HANDLE, elevated: bool) -> io::Result<()> {
-    if token_flag(process, TokenIsAppContainer)? || token_flag(process, TokenElevation)? != elevated
+    if token_flag(process, windows_sys::Win32::Security::TokenIsRestricted)?
+        || token_flag(process, TokenIsAppContainer)?
+        || token_flag(process, TokenElevation)? != elevated
     {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
@@ -248,6 +247,7 @@ pub(super) struct Profile {
 }
 
 impl Profile {
+    #[cfg(test)]
     pub(super) fn create() -> io::Result<Self> {
         let id = unique_id()?;
         let name = format!("{}{}", super::PROFILE_PREFIX, id);
@@ -262,30 +262,6 @@ impl Profile {
             sid: derive_sid(&name)?,
             name,
         })
-    }
-
-    pub(super) fn register(&self) -> io::Result<()> {
-        let text = wide(&self.name);
-        let mut sid = ptr::null_mut();
-        // SAFETY: This is a new random profile with no network or broad resource capabilities.
-        check(unsafe {
-            CreateAppContainerProfile(
-                text.as_ptr(),
-                text.as_ptr(),
-                text.as_ptr(),
-                ptr::null(),
-                0,
-                &mut sid,
-            )
-        } as u32)?;
-        // SAFETY: CreateAppContainerProfile returned a valid allocated SID.
-        let copied = unsafe { Sid::copy(sid) };
-        // SAFETY: The SID is copied before its matching release.
-        unsafe { FreeSid(sid) };
-        if copied? != self.sid {
-            return Err(io::ErrorKind::InvalidData.into());
-        }
-        Ok(())
     }
 }
 

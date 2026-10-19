@@ -73,7 +73,7 @@ describe('permissionEngine', () => {
 
   it('uses canonical sensitive-path checks for shell reads and explicit Git content diffs', async () => {
     const fixture = await createGitFixture()
-    const engine = createEngine(fixture.home)
+    const engine = new PermissionEngine({ sensitive: createSensitivePathMatcher({ home: fixture.home, additionalRoots: [join(fixture.workspace, '.env')] }) })
     await writeFile(join(fixture.workspace, 'package.json'), '{}')
     await writeFile(join(fixture.workspace, '.env'), 'TEST_SECRET=not-a-real-secret')
     await executeFile('git', ['add', '--', '.env', 'package.json'], { cwd: fixture.workspace })
@@ -109,7 +109,7 @@ describe('permissionEngine', () => {
       arguments: { command: 'git diff --cached -- package.json' },
       toolName: 'bash',
     }))).resolves.toEqual({ type: 'allow' })
-    const powershell = new PermissionEngine({ platform: 'win32', sensitive: createSensitivePathMatcher({ home: fixture.home }) })
+    const powershell = new PermissionEngine({ platform: 'win32', sensitive: createSensitivePathMatcher({ home: fixture.home, additionalRoots: [join(fixture.workspace, '.env')] }) })
     for (const toolName of ['powershell', 'lexora_host_shell']) {
       await expect(powershell.decide(request(fixture, {
         arguments: { command: 'git diff -- .env' },
@@ -149,7 +149,7 @@ describe('permissionEngine', () => {
 
   it('resolves historical and renamed diff targets before permitting their contents', async () => {
     const fixture = await createGitFixture()
-    const engine = createEngine(fixture.home)
+    const engine = new PermissionEngine({ sensitive: createSensitivePathMatcher({ home: fixture.home, additionalRoots: [join(fixture.workspace, '.env')] }) })
     await writeFile(join(fixture.workspace, '.env'), 'TEST_SECRET=placeholder\n')
     await writeFile(join(fixture.workspace, 'notes.md'), 'before\n')
     await executeFile('git', ['add', '.'], { cwd: fixture.workspace })

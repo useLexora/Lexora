@@ -52,13 +52,13 @@ describe('directory browsing and explicit deep search', () => {
     expect((await search('node_modules/')).entries.map(entry => entry.name)).toEqual(['asset.avif'])
   })
 
-  it('rejects traversal, hides sensitive files and excludes escaping symlinks', async () => {
+  it('rejects traversal and escaping symlinks while exposing ordinary dotfiles', async () => {
     const { root, workspace, search } = await fixture()
     await writeFile(join(root, 'outside.txt'), 'outside')
     await writeFile(join(workspace, '.env'), 'synthetic')
     await writeFile(join(workspace, '.env.example'), 'synthetic')
     await symlink(join(root, 'outside.txt'), join(workspace, 'escape.txt'))
-    expect((await search('')).entries.map(entry => entry.name)).toEqual(['.env.example'])
+    expect((await search('')).entries.map(entry => entry.name)).toEqual(['.env', '.env.example'])
     await expect(search('../')).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
   })
 })

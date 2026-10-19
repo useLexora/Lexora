@@ -1,17 +1,24 @@
 /* eslint test/no-import-node-test: off */
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { access, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { access, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { networkInterfaces, tmpdir } from 'node:os'
+import { homedir, networkInterfaces, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import * as nativeTest from 'node:test'
+import { promisify } from 'node:util'
 
 const executable = join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Lexora Buddy Sandbox', 'lexora-buddy-sandbox.exe')
 const quote = value => `'${value.replaceAll('\'', '\'\'')}'`
+const execFileAsync = promisify(execFile)
+
+async function setFixtureAcl(path, sddl) {
+  const command = `$acl=Get-Acl -LiteralPath ${quote(path)}; $acl.SetSecurityDescriptorSddlForm(${quote(sddl)},[Security.AccessControl.AccessControlSections]::Access); Set-Acl -LiteralPath ${quote(path)} -AclObject $acl`
+  await execFileAsync(join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference='Stop'; ${command}`], { windowsHide: true, timeout: 15_000 })
+}
 
 async function listener(host = '127.0.0.1') {
   const server = createServer((socket) => {
@@ -22,16 +29,29 @@ async function listener(host = '127.0.0.1') {
   return { server, port: server.address().port }
 }
 
-async function execute({ command, workspace, grants, port, onReady, onPreparing }) {
+async function execute({ command, workspace, grants, port, onReady, onPreparing, measure = false, prepareOnly = false, denyReadScope = dirname(workspace), synchronizeDenials = false }) {
   const privateRoot = await mkdtemp(join(dirname(workspace), 'private-'))
   const home = join(privateRoot, 'home')
   const temporary = join(privateRoot, 'tmp')
   await Promise.all([home, temporary].map(path => mkdir(path)))
   const shell = process.env.BUDDY_SANDBOX_TEST_SHELL ?? join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe')
-  const child = spawn(executable, ['run'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
-  const identities = await Promise.all(grants.map(async (grant) => {
+  const startedAt = performance.now()
+  let readyAt
+  let preparingAt
+  let releasedAt
+  const child = spawn(executable, [prepareOnly ? 'prepare' : 'run'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  const observer = measure ? spawn(process.env.BUDDY_SANDBOX_TEST_ADVERSARY, ['--watch-process', String(child.pid)], { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] }) : undefined
+  let observation = ''
+  observer?.stdout.on('data', data => observation += data)
+  const observed = observer
+    ? new Promise((resolve, reject) => {
+        observer.once('error', reject)
+        observer.once('close', code => code === 0 ? resolve() : reject(new Error(`Handle observer failed: ${code}`)))
+      })
+    : Promise.resolve()
+  const identities = await Promise.all([{ path: homedir(), access: 'read' }, ...grants].map(async (grant) => {
     const metadata = await stat(grant.path, { bigint: true })
-    return { ...grant, device: String(metadata.dev), inode: String(metadata.ino) }
+    return { ...grant, device: grant.device ?? String(metadata.dev), inode: grant.inode ?? String(metadata.ino) }
   }))
   const chunks = []
   let diagnostics = ''
@@ -40,17 +60,21 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing 
   child.stdout.on('data', data => chunks.push(data))
   child.stderr.on('data', (data) => {
     diagnostics += data
+    if (releasedAt === undefined && diagnostics.includes('"type":"processesReleased"'))
+      releasedAt = performance.now()
     if (!preparing && diagnostics.includes('"phase":"filesystem_preparing"')) {
       preparing = true
+      preparingAt = performance.now()
       onPreparing?.(child)
     }
     if (!ready && diagnostics.includes('"type":"ready"')) {
       ready = true
+      readyAt = performance.now()
       onReady?.(child)
     }
   })
   child.stdin.on('error', () => {})
-  child.stdin.write(`${JSON.stringify({ command, cwd: workspace, shell, privateRoot, proxyPort: port, grants: identities, environment: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, ComSpec: join(process.env.SystemRoot, 'System32', 'cmd.exe'), PATHEXT: '.COM;.EXE;.BAT;.CMD', PSModulePath: join(dirname(shell), 'Modules'), PATH: `${dirname(shell)};${join(process.env.SystemRoot, 'System32')}`, HOME: home, USERPROFILE: home, TEMP: temporary, TMP: temporary, APPDATA: home, LOCALAPPDATA: home, POWERSHELL_TELEMETRY_OPTOUT: '1' } })}\n`)
+  child.stdin.write(`${JSON.stringify(prepareOnly ? { grants: identities, denyReadScope, synchronizeDenials } : { command, cwd: workspace, shell, privateRoot, proxyPort: port, grants: identities, denyReadScope, environment: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, ComSpec: join(process.env.SystemRoot, 'System32', 'cmd.exe'), PATHEXT: '.COM;.EXE;.BAT;.CMD', PSModulePath: join(dirname(shell), 'Modules'), PATH: `${dirname(shell)};${join(process.env.SystemRoot, 'System32')}`, HOME: home, USERPROFILE: home, TEMP: temporary, TMP: temporary, APPDATA: home, LOCALAPPDATA: home, POWERSHELL_TELEMETRY_OPTOUT: '1' } })}\n`)
   const timer = setTimeout(() => child.stdin.end(), 60_000)
   const killTimer = setTimeout(() => child.kill(), 75_000)
   try {
@@ -60,7 +84,8 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing 
     })
     const buffer = Buffer.concat(chunks)
     const output = buffer.subarray(0, 128).includes(0) ? buffer.toString('utf16le') : buffer.toString('utf8')
-    return { exitCode, output, diagnostics }
+    await observed
+    return { exitCode, output, diagnostics, ...(measure ? { measurements: { ...JSON.parse(observation), startupMs: readyAt - startedAt, prepareMs: readyAt - preparingAt, releaseMs: performance.now() - releasedAt, totalMs: performance.now() - startedAt } } : {}) }
   }
   finally {
     clearTimeout(timer)
@@ -69,7 +94,7 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing 
   }
 }
 
-nativeTest.test('Windows LPAC enforcement', { skip: process.platform !== 'win32', timeout: 300_000 }, async (t) => {
+nativeTest.test('Windows restricted-token behavior and known limits', { skip: process.platform !== 'win32', timeout: 300_000 }, async (t) => {
   const adversaryExecutable = process.env.BUDDY_SANDBOX_TEST_ADVERSARY
   assert.ok(adversaryExecutable, 'Windows acceptance requires its target-specific adversary executable')
   const state = process.env.BUDDY_SANDBOX_TEST_DIRECTORY ?? tmpdir()
@@ -95,6 +120,97 @@ nativeTest.test('Windows LPAC enforcement', { skip: process.platform !== 'win32'
   const remote = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address
   try {
     assert.ok(remote, 'Windows acceptance requires a non-loopback network interface')
+    await t.test('reconciles late command and workspace denials without releasing another configuration', async () => {
+      const readGrant = { path: workspace, access: 'read' }
+      const base = { workspace, port: proxy.port, grants: [readGrant] }
+      const initialized = await execute({ ...base, prepareOnly: true, synchronizeDenials: true })
+      assert.equal(initialized.exitCode, 0, JSON.stringify(initialized))
+      const late = join(root, 'late-credentials')
+      await mkdir(late)
+      const file = join(late, 'token')
+      await writeFile(file, 'LATE_CREDENTIAL_FIXTURE')
+      const command = `try {[Console]::Out.Write([IO.File]::ReadAllText(${quote(file)}))} catch {[Console]::Out.Write('DENIED')}`
+      const denied = await execute({ ...base, command, grants: [readGrant, { path: late, access: 'denyRead' }] })
+      assert.equal(denied.exitCode, 0, JSON.stringify(denied))
+      assert.equal(denied.output, 'DENIED')
+      const merged = await execute({ ...base, prepareOnly: true })
+      assert.equal(merged.exitCode, 0, JSON.stringify(merged))
+      const kept = await execute({ ...base, command })
+      assert.equal(kept.exitCode, 0, JSON.stringify(kept))
+      assert.equal(kept.output, 'DENIED')
+      const otherScope = join(root, 'other-profile')
+      const shared = await execute({ ...base, prepareOnly: true, denyReadScope: otherScope, grants: [readGrant, { path: late, access: 'denyRead' }] })
+      assert.equal(shared.exitCode, 0, JSON.stringify(shared))
+      const reconciled = await execute({ ...base, prepareOnly: true, synchronizeDenials: true })
+      assert.equal(reconciled.exitCode, 0, JSON.stringify(reconciled))
+      const sharedRead = await execute({ ...base, command })
+      assert.equal(sharedRead.exitCode, 0, JSON.stringify(sharedRead))
+      assert.equal(sharedRead.output, 'DENIED')
+      const released = await execute({ ...base, prepareOnly: true, denyReadScope: otherScope, synchronizeDenials: true })
+      assert.equal(released.exitCode, 0, JSON.stringify(released))
+      const readable = await execute({ ...base, command })
+      assert.equal(readable.exitCode, 0, JSON.stringify(readable))
+      assert.equal(readable.output, 'LATE_CREDENTIAL_FIXTURE')
+    })
+    await t.test('records the known ACL limit for host-owned Everyone-writable files outside current capabilities', async () => {
+      const file = join(root, 'host-owned-public.txt')
+      await writeFile(file, 'HOST_OWNED')
+      await setFixtureAcl(file, 'D:P(A;;FA;;;OW)(A;;FRFW;;;WD)')
+      const observations = []
+      for (const access of ['read', 'write']) {
+        const command = `$r=@{}; foreach($target in @(@{key='public';path=${quote(file)}},@{key='private';path=${quote(outside)}})){try{[IO.File]::WriteAllText($target.path,'CHANGED');$r[$target.key]='allowed'}catch{$r[$target.key]='denied'}}; [Console]::Out.Write(($r|ConvertTo-Json -Compress))`
+        const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access }] })
+        assert.equal(result.exitCode, 0, JSON.stringify(result))
+        observations.push({ access, ...JSON.parse(result.output) })
+      }
+      t.diagnostic(`Known native ACL write limit, not strict confinement: ${JSON.stringify(observations)}`)
+      assert.deepEqual(observations, [{ access: 'read', public: 'allowed', private: 'denied' }, { access: 'write', public: 'allowed', private: 'denied' }])
+      assert.equal(await readFile(file, 'utf8'), 'CHANGED')
+      assert.equal(await readFile(outside, 'utf8'), 'OUTSIDE_PRIVATE_FIXTURE')
+    })
+    await t.test('records the known inherited-deny limit while enforcing ordinary and explicit credential denies', async () => {
+      const credentials = join(root, 'credentials')
+      await mkdir(credentials)
+      const entries = ['inherited', 'explicit-public', 'protected-public', 'protected-private', 'direct-public']
+      for (const entry of entries)
+        await writeFile(join(credentials, entry), 'SYNTHETIC_CREDENTIAL')
+      await setFixtureAcl(join(credentials, 'explicit-public'), 'D:(A;;FA;;;OW)(A;;FR;;;WD)')
+      await setFixtureAcl(join(credentials, 'protected-public'), 'D:P(A;;FA;;;OW)(A;;FR;;;WD)')
+      await setFixtureAcl(join(credentials, 'protected-private'), 'D:P(A;;FA;;;OW)')
+      await setFixtureAcl(join(credentials, 'direct-public'), 'D:P(A;;FA;;;OW)(A;;FR;;;WD)')
+      const command = `$r=@{}; ${entries.map(entry => `try{$r[${quote(entry)}]=[IO.File]::ReadAllText(${quote(join(credentials, entry))})}catch{$r[${quote(entry)}]='denied'}`).join('; ')}; [Console]::Out.Write(($r|ConvertTo-Json -Compress))`
+      const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access: 'read' }, { path: credentials, access: 'denyRead' }, { path: join(credentials, 'direct-public'), access: 'denyRead' }] })
+      assert.equal(result.exitCode, 0, JSON.stringify(result))
+      const observations = JSON.parse(result.output)
+      t.diagnostic(`Known native ACL read limit, not complete credential isolation: ${JSON.stringify(observations)}`)
+      assert.deepEqual(observations, { 'inherited': 'denied', 'explicit-public': 'SYNTHETIC_CREDENTIAL', 'protected-public': 'SYNTHETIC_CREDENTIAL', 'protected-private': 'denied', 'direct-public': 'denied' })
+    })
+    await t.test('bounds preparation handles and reuses ACLs for large workspaces and toolchains', async () => {
+      const tools = join(root, 'toolchain')
+      const large = join(root, 'large-workspace')
+      await Promise.all([tools, large].map(path => mkdir(path)))
+      for (const [path, files] of [[tools, 50_000], [large, 5_000]]) {
+        for (let offset = 0; offset < files; offset += 100)
+          await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(join(path, `fixture-${offset + index}`), 'fixture')))
+      }
+      const command = `[IO.File]::WriteAllText(${quote(join(large, 'result'))},'SCALE_OK'); [Console]::Out.Write([IO.File]::ReadAllText(${quote(join(tools, 'fixture-49999'))}))`
+      const prepared = await execute({ command, workspace: large, port: proxy.port, grants: [{ path: large, access: 'write' }], measure: true, prepareOnly: true })
+      assert.equal(prepared.exitCode, 0, JSON.stringify(prepared))
+      assert.equal(prepared.output, '')
+      assert(prepared.measurements.peakHandles < 300, JSON.stringify(prepared.measurements))
+      assert(prepared.measurements.startupMs < 30_000, JSON.stringify(prepared.measurements))
+      const results = []
+      for (let iteration = 0; iteration < 3; iteration++) {
+        const result = await execute({ command, workspace: large, port: proxy.port, grants: [{ path: large, access: 'write' }], measure: true })
+        assert.equal(result.exitCode, 0, JSON.stringify(result))
+        assert.equal(result.output, 'fixture')
+        assert(result.measurements.peakHandles < 300, JSON.stringify(result.measurements))
+        assert(result.measurements.samples > 0, JSON.stringify(result.measurements))
+        assert(result.measurements.startupMs < 5_000, JSON.stringify(result.measurements))
+        results.push(result.measurements)
+      }
+      t.diagnostic(`50000 toolchain files and 5000 workspace files: ${JSON.stringify({ initialization: prepared.measurements, commands: results })}`)
+    })
     await t.test('protects files and permits loopback TCP while denying direct non-loopback access', async () => {
       const command = `
 $r=@{}
@@ -110,8 +226,54 @@ foreach($target in @(@{key='proxy';host='127.0.0.1';port=${proxy.port}},@{key='o
       const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
       await writeFile(join(root, 'report.json'), JSON.stringify(result, null, 2))
       assert.equal(result.exitCode, 0, JSON.stringify(result))
-      assert.deepEqual(JSON.parse(result.output), { outside: 'denied', secret: 'denied', proxy: 'connected', otherPort: 'connected', ipv6: 'connected', nonLoopback: 'denied' })
+      assert.deepEqual(JSON.parse(result.output), { outside: 'OUTSIDE_PRIVATE_FIXTURE', secret: 'denied', proxy: 'connected', otherPort: 'connected', ipv6: 'connected', nonLoopback: 'denied' })
       assert.equal(await readFile(join(workspace, 'result.txt'), 'utf8'), 'WORKSPACE_WRITE_FIXTURE')
+    })
+    await t.test('enforces ordinary write roots and records the shared-owner revocation limit', async () => {
+      const permissionsProbe = join(workspace, 'permissions-probe.exe')
+      await copyFile(adversaryExecutable, permissionsProbe)
+      const previous = join(root, 'previous-workspace')
+      await mkdir(previous)
+      const hostFile = join(previous, 'host.txt')
+      await writeFile(hostFile, 'HOST')
+      const variants = [[workspace, [{ path: workspace, access: 'write' }]], [previous, [{ path: previous, access: 'read' }]]]
+      for (const [index, [cwd, grants]] of variants.entries()) {
+        const childFile = join(previous, `child-${index}.txt`)
+        const first = await execute({ command: `[IO.File]::WriteAllText(${quote(childFile)},'CHILD')`, workspace: previous, port: proxy.port, grants: [{ path: previous, access: 'write' }] })
+        assert.equal(first.exitCode, 0, JSON.stringify(first))
+        const command = `$r=@{}; foreach($path in @(${quote(hostFile)},${quote(childFile)},${quote(join(previous, 'new.txt'))})){try{[IO.File]::WriteAllText($path,'ESCAPED');$r[$path]='written'}catch{$r[$path]='denied'}}; $r.read=[IO.File]::ReadAllText(${quote(childFile)}); $r.writeDacl=(& ${quote(permissionsProbe)} --volume-metadata ${quote(childFile)} | ConvertFrom-Json).writeDacl; $r.aclWrite=(& ${quote(permissionsProbe)} --rewrite-dacl-write ${quote(childFile)} | ConvertFrom-Json); [Console]::Out.Write(($r|ConvertTo-Json -Compress))`
+        const next = await execute({ command, workspace: cwd, port: proxy.port, grants })
+        assert.equal(next.exitCode, 0, JSON.stringify(next))
+        const { writeDacl, aclWrite, ...ordinary } = JSON.parse(next.output)
+        assert.deepEqual(ordinary, { [hostFile]: 'denied', [childFile]: 'denied', [join(previous, 'new.txt')]: 'denied', read: 'CHILD' })
+        t.diagnostic(`Shared-owner ACL revocation limit: ${JSON.stringify({ readOnly: index === 1, writeDacl, aclWrite })}`)
+        assert.deepEqual({ writeDacl, aclWrite }, { writeDacl: 0, aclWrite: { rewriteDacl: 0, write: 0 } })
+        assert.equal(await readFile(childFile, 'utf8'), 'ESCAPED')
+      }
+    })
+    await t.test('preserves explicit workspace and resource exceptions beneath application-private data', async () => {
+      const parent = join(root, 'application-private')
+      const current = join(parent, 'workspace')
+      const resource = join(parent, 'skill')
+      await Promise.all([current, resource].map(path => mkdir(path, { recursive: true })))
+      await writeFile(join(parent, 'private.txt'), 'PRIVATE')
+      await writeFile(join(resource, 'resource.txt'), 'RESOURCE')
+      const command = `$r=@{}; [IO.File]::WriteAllText('workspace.txt','WRITABLE'); $r.resource=[IO.File]::ReadAllText(${quote(join(resource, 'resource.txt'))}); try{$r.private=[IO.File]::ReadAllText(${quote(join(parent, 'private.txt'))})}catch{$r.private='denied'}; try{[IO.File]::WriteAllText(${quote(join(resource, 'resource.txt'))},'changed');$r.write='allowed'}catch{$r.write='denied'}; [Console]::Out.Write(($r|ConvertTo-Json -Compress))`
+      const result = await execute({ command, workspace: current, port: proxy.port, grants: [{ path: current, access: 'write' }, { path: resource, access: 'read' }, { path: parent, access: 'denyRead', exceptions: [current, resource] }] })
+      assert.equal(result.exitCode, 0, JSON.stringify(result))
+      assert.deepEqual(JSON.parse(result.output), { resource: 'RESOURCE', private: 'denied', write: 'denied' })
+      assert.equal(await readFile(join(current, 'workspace.txt'), 'utf8'), 'WRITABLE')
+    })
+    await t.test('rejects a directory identity replaced after authorization', async () => {
+      const current = join(root, 'replaceable')
+      await mkdir(current)
+      const metadata = await stat(current, { bigint: true })
+      await rename(current, `${current}-retired`)
+      await mkdir(current)
+      const result = await execute({ command: '[IO.File]::WriteAllText(\'must-not-run\',\'changed\')', workspace: current, port: proxy.port, grants: [{ path: current, access: 'write', device: String(metadata.dev), inode: String(metadata.ino) }] })
+      assert.notEqual(result.exitCode, 0, JSON.stringify(result))
+      assert(!result.diagnostics.includes('"type":"ready"'), result.diagnostics)
+      await assert.rejects(access(join(current, 'must-not-run')))
     })
     await t.test('supports PowerShell paths, file operations and native children', async () => {
       await writeFile(join(workspace, 'result.txt'), 'delete-fixture')
@@ -228,7 +390,7 @@ if (process.argv[2] === 'child') {
       assert.equal(await readFile(changed, 'utf8'), 'OVERLAP_WRITE')
       assert.equal(await readFile(outside, 'utf8'), 'OUTSIDE_PRIVATE_FIXTURE')
     })
-    await t.test('does not expose ancestor contents or mutation rights to native children', async () => {
+    await t.test('allows ordinary ancestor reads without granting mutation rights', async () => {
       const adversary = join(workspace, 'volume-probe.exe')
       await copyFile(adversaryExecutable, adversary)
       const ancestors = []
@@ -247,10 +409,11 @@ if (process.argv[2] === 'child') {
       const probes = JSON.parse(result.output)
       await writeFile(join(root, 'ancestor-access.json'), JSON.stringify(probes, null, 2))
       for (const path of ancestors) {
-        const { queryAttributes, readAttributes, ...denied } = probes[path]
+        const { queryAttributes, readAttributes, listDirectory, ...denied } = probes[path]
         t.diagnostic(`Ancestor attributes ${path}: query=${queryAttributes}, handle=${readAttributes}`)
         assert.equal(queryAttributes, 0, path)
-        assert.deepEqual(denied, { listDirectory: 5, addFile: 5, addDirectory: 5, deleteChild: 5, writeAttributes: 5, writeExtendedAttributes: 5, writeDacl: 5, writeOwner: 5, delete: 5 }, path)
+        assert.equal(listDirectory, 0, path)
+        assert.deepEqual(denied, { addFile: 5, addDirectory: 5, deleteChild: 5, writeAttributes: 5, writeExtendedAttributes: 5, writeDacl: 5, writeOwner: 5, delete: 5 }, path)
       }
     })
     await t.test('keeps concurrent command leases independent until both finish', async () => {
@@ -268,14 +431,21 @@ if (process.argv[2] === 'child') {
       }
     })
     await t.test('recovers after a supervisor exits without releasing its lease', async () => {
+      const journalDirectory = join(process.env.LOCALAPPDATA, 'Lexora Buddy Sandbox', 'leases')
+      const denials = await readFile(join(journalDirectory, 'denials-v1.json'))
       const result = await execute({ command: 'Start-Sleep -Seconds 30', workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }], onReady: child => child.kill() })
       assert.notEqual(result.exitCode, 0)
       const recovered = await execute({ command: '[Console]::Out.Write(\'RECOVERED_AFTER_EXIT\')', workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
       assert.equal(recovered.exitCode, 0, JSON.stringify(recovered))
       assert.equal(recovered.output, 'RECOVERED_AFTER_EXIT')
       const metadataDirectory = join(dirname(executable), 'metadata-leases')
-      assert.deepEqual(await readdir(metadataDirectory), [])
-      assert.deepEqual(await readdir(join(process.env.LOCALAPPDATA, 'Lexora Buddy Sandbox', 'leases')), [])
+      assert.deepEqual(await readdir(metadataDirectory).catch((error) => {
+        if (error.code === 'ENOENT')
+          return []
+        throw error
+      }), [])
+      assert.deepEqual(await readdir(journalDirectory), ['denials-v1.json'])
+      assert.deepEqual(await readFile(join(journalDirectory, 'denials-v1.json')), denials)
     })
     await t.test('cancels preparation before resuming any task command', async () => {
       const large = join(root, 'preparation')
@@ -319,6 +489,8 @@ if (process.argv[2] === 'child') {
     proxy.server.close()
     other.server.close()
     ipv6.server.close()
+    const reconciled = await execute({ workspace, grants: [], prepareOnly: true, synchronizeDenials: true })
+    assert.equal(reconciled.exitCode, 0, JSON.stringify(reconciled))
     if (process.env.BUDDY_SANDBOX_TEST_KEEP_FILES !== '1')
       await rm(root, { recursive: true, force: true })
   }

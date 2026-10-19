@@ -3,6 +3,7 @@ use crate::shell_sandbox::process::Job;
 use std::{
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 use windows_sys::Win32::{
     Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle},
@@ -152,7 +153,15 @@ fn windows_reverification_observes_a_remaining_child_without_terminating_it() {
     assert!(child.try_wait().unwrap().is_none());
     drop(child.stdin.take());
     child.wait().unwrap();
-    assert_eq!(inspect(identity, None)["reason"], "job_empty");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let result = inspect(identity.clone(), None);
+        if result["reason"] != "job_active" || Instant::now() >= deadline {
+            assert_eq!(result["reason"], "job_empty");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

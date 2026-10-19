@@ -25,3 +25,12 @@ it('protects retained credentials without restricting entire historical director
   }
   expect(sensitive.matches(join(activeRoot, 'buddy', 'conversations', 'task', 'workspace', 'output.txt'))).toBe(false)
 })
+
+it('protects agent credentials without classifying all configuration and skills as secrets', () => {
+  const home = join(tmpdir(), 'credential-matcher')
+  const matcher = createSensitivePathMatcher({ home, environment: {} })
+  for (const path of ['.codex/auth.json', '.claude/.credentials.json', '.pi/agent/auth.json', '.docker/config.json', '.ssh/id_ed25519', '.netrc', '_netrc'])
+    expect(matcher.matches(join(home, path)), path).toBe(true)
+  for (const path of ['.codex/config.toml', '.codex/skills/example/SKILL.md', '.claude/settings.json', '.pi/agent/settings.json', 'project/.env', 'project/test.pem', 'project/.netrc', 'project/_netrc'])
+    expect(matcher.matches(join(home, path)), path).toBe(false)
+})

@@ -9,6 +9,8 @@ import { createBuddyUserContent } from '../../../../shared/conversation/buddyUse
 import { createBuddyInputReference, createBuddyInputReferenceMessage } from '../../agent/context/BuddyInputReference'
 import { ArtifactService } from '../../artifacts/ArtifactService'
 import { RunEventProjector } from '../../events/RunEventProjector'
+import { PermissionEngine } from '../../permissions/PermissionEngine'
+import { createSensitivePathMatcher } from '../../permissions/sensitivePaths'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
@@ -90,6 +92,7 @@ async function fixture() {
   const controller = new AbortController()
   const run = { runId: 'run-current', signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
   const authorization = new ToolAuthorizationService({
+    engine: new PermissionEngine({ sensitive: createSensitivePathMatcher({ additionalRoots: [join(root, '.env')] }) }),
     approvalService: { request: async () => ({ approvalId: 'denied', decision: 'denied' }) },
     approvalAvailable: true,
     approvalPolicy: 'policy',

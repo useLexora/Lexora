@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveSandboxDependencies } from '../../../../platform/process/sandboxDependencies'
 import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
+import { resolveSensitivePathRoots } from '../../permissions/sensitivePaths'
 import { runSandboxCommand } from '../runSandboxCommand'
 
 const buddyRoot = process.cwd()
@@ -47,6 +48,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
       path: originalEnvironment.PATH ?? '',
       privateRoot,
       protectedRoots: [],
+      sensitiveRoots: resolveSensitivePathRoots({ home: originalHome, environment: originalEnvironment }),
       readOnly: false,
       requestId: randomUUID(),
       roots: [workspace],
@@ -81,12 +83,12 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     await writeFile(join(workspace, '.env'), 'synthetic-secret')
     await writeFile(join(workspace, '.env.example'), 'example-allowed')
     await symlink(outside, join(workspace, 'escape'))
-    const { result, output } = await execute(`set -e; printf created > file; cat file; rm file; cat .env.example; ! cat .env; ! cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${join(outside, 'preserved')}`)}`, { onLifecycle: event => events.push(event) })
-    expect(result).toEqual({ ok: true, exitCode: 0 })
+    const { result, output } = await execute(`set -e; printf created > file; cat file; rm file; cat .env.example; cat .env; cat escape/preserved; ! sh -c 'echo changed > .git/config'; ! sh -c ${quote(`echo changed > ${join(outside, 'preserved')}`)}`, { onLifecycle: event => events.push(event) })
+    expect(result, output).toEqual({ ok: true, exitCode: 0 })
     expect(output).toContain('created')
     expect(output).toContain('example-allowed')
-    expect(output).not.toContain('synthetic-secret')
-    expect(output).not.toContain('outside-preserved')
+    expect(output).toContain('synthetic-secret')
+    expect(output).toContain('outside-preserved')
     expect(await readFile(join(outside, 'preserved'), 'utf8')).toBe('outside-preserved')
     expect(await readFile(join(workspace, '.git/config'), 'utf8')).toBe('git-preserved')
     await expect(access(join(workspace, 'file'))).rejects.toThrow()
@@ -107,10 +109,34 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
 
   it('enforces read-only writes in the kernel while retaining private scratch space', async () => {
     await writeFile(join(workspace, 'preserved'), 'workspace-preserved')
-    const { result } = await execute('set -e; ! rm preserved; ! touch new-file; printf scratch > "$TMPDIR/scratch"; test "$(cat "$TMPDIR/scratch")" = scratch; if test -w /tmp; then scratch=$(mktemp /tmp/standard-XXXXXX); printf private > "$scratch"; test "$(cat "$scratch")" = private; rm "$scratch"; fi', {}, { readOnly: true })
-    expect(result).toEqual({ ok: true, exitCode: 0 })
+    const { result, output } = await execute('set -e; ! rm preserved; ! touch new-file; printf scratch > "$TMPDIR/scratch"; test "$(cat "$TMPDIR/scratch")" = scratch; if test -w /tmp; then scratch=$(mktemp /tmp/standard-XXXXXX); printf private > "$scratch"; test "$(cat "$scratch")" = private; rm "$scratch"; fi', {}, { readOnly: true })
+    expect(result, output).toEqual({ ok: true, exitCode: 0 })
     expect(await readFile(join(workspace, 'preserved'), 'utf8')).toBe('workspace-preserved')
     await expect(access(join(workspace, 'new-file'))).rejects.toThrow()
+  }, 15_000)
+
+  it('protects host-resolved credentials after HOME and XDG variables are isolated', async () => {
+    const home = join(directory, 'host-home')
+    const configuration = join(directory, 'relocated-config')
+    const data = join(directory, 'relocated-data')
+    const environment = { XDG_CONFIG_HOME: configuration, XDG_DATA_HOME: data }
+    const credentials = [join(home, '.netrc'), join(home, '_netrc'), join(home, '.ssh', 'id_ed25519'), join(configuration, 'gcloud', 'credentials.db'), join(data, 'keyrings', 'login.keyring')]
+    for (const path of credentials) {
+      await mkdir(resolve(path, '..'), { recursive: true })
+      await writeFile(path, 'SYNTHETIC_CREDENTIAL')
+    }
+    await writeFile(join(workspace, '.netrc'), 'PROJECT_FIXTURE')
+    await writeFile(join(configuration, 'ordinary.txt'), 'ORDINARY_CONFIGURATION')
+    const sensitiveRoots = resolveSensitivePathRoots({ home, environment })
+    const command = `set -e; ${credentials.map(path => `! cat ${quote(path)}`).join('; ')}; cat .netrc; cat ${quote(join(configuration, 'ordinary.txt'))}; test "$HOME" != ${quote(home)}; test "${'$'}{XDG_CONFIG_HOME:-}" != ${quote(configuration)}`
+    const result = await execute(command, {}, { home, sensitiveRoots, readOnly: true })
+    expect(result.result, result.output).toEqual({ ok: true, exitCode: 0 })
+    expect(result.output).not.toContain('SYNTHETIC_CREDENTIAL')
+    expect(result.output).toContain('PROJECT_FIXTURE')
+    expect(result.output).toContain('ORDINARY_CONFIGURATION')
+    const forbidden = await execute('printf must-not-run', {}, { home, sensitiveRoots, cwd: join(configuration, 'gcloud'), roots: [join(configuration, 'gcloud')], workspaceRoots: [join(configuration, 'gcloud')] })
+    expect(forbidden.result).toMatchObject({ ok: false, code: 'SANDBOX_UNAVAILABLE' })
+    expect(forbidden.output).not.toContain('must-not-run')
   }, 15_000)
 
   it('limits additional read permission across interpreters and descendants without silently granting write access', async () => {
@@ -119,15 +145,16 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     const target = join(outside, 'preserved')
     const command = `set -e; node -e ${quote(`const fs=require('node:fs'); console.log(fs.readFileSync(${JSON.stringify(target)},'utf8')); try { fs.writeFileSync(${JSON.stringify(target)},'changed'); process.exit(1) } catch(e) { if(!['EACCES','EROFS'].includes(e.code)) throw e }`)}; ! sh -c ${quote(`rm ${quote(target)}`)}`
     const read = await execute(command, {}, { additionalDirectories: [grant] })
-    expect(read.result).toEqual({ ok: true, exitCode: 0 })
+    expect(read.result, read.output).toEqual({ ok: true, exitCode: 0 })
     expect(read.output).toContain('outside-preserved')
     expect(await readFile(target, 'utf8')).toBe('outside-preserved')
     const write = await execute(`printf updated > ${quote(target)}`, {}, { additionalDirectories: [{ ...grant, access: 'write' }] })
     expect(write.result).toEqual({ ok: true, exitCode: 0 })
     expect(await readFile(target, 'utf8')).toBe('updated')
-    const expired = await execute(`cat ${quote(target)}`)
-    expect(expired.result).not.toMatchObject({ exitCode: 0 })
-    expect(expired.output).not.toContain('updated')
+    const expired = await execute(`cat ${quote(target)}; ! sh -c ${quote(`echo forbidden > ${quote(target)}`)}`)
+    expect(expired.result).toMatchObject({ exitCode: 0 })
+    expect(expired.output).toContain('updated')
+    expect(await readFile(target, 'utf8')).toBe('updated')
   }, 30_000)
 
   it('reads an installed skill package while keeping it immutable and sibling product data private', async () => {
@@ -165,7 +192,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
       const host = net.createConnection(${JSON.stringify(hostSocket)});
       host.on('connect', () => { throw new Error('Host socket accessible') });
       host.on('error', async error => {
-        assert.equal(error.code, ${JSON.stringify(dependencies.privateUnixSockets ? 'EACCES' : 'EPERM')});
+        assert.ok(['ENOENT', ${JSON.stringify(dependencies.privateUnixSockets ? 'EACCES' : 'EPERM')}].includes(error.code));
         const path = process.env.TMPDIR + '/private.sock';
         const server = net.createServer(socket => socket.end('private-reply'));
         ${dependencies.privateUnixSockets
@@ -179,7 +206,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
           : `server.on('error', error => assert.equal(error.code, 'EPERM')); server.listen(path);`}
       });`
     try {
-      const command = `set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; test "$HOME" = ${quote(join(input.privateRoot, 'home'))}; ${dependencies.privateUnixSockets ? 'test -w /tmp;' : ''} node -e ${quote(script)}`
+      const command = `set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; test "$HOME" = ${quote(join(input.privateRoot, 'home'))}; node -e ${quote(script)}`
       for (const readOnly of [false, true]) {
         const { result, output } = await execute(command, {}, { readOnly })
         expect(result, output).toEqual({ ok: true, exitCode: 0 })
@@ -195,10 +222,10 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     const helper = join(privateRoot, 'legacy-helper')
     await writeFile(helper, `#!/bin/sh\nif [ "$1" = --probe-sandbox-ipc ]; then\n  printf '{"protocol":1,"privateUnixSockets":false}\\n'\nelse\n  exec ${quote(originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL!)} "$@"\nfi\n`, { mode: 0o700 })
     vi.stubEnv('LEXORA_BUDDY_PROCESS_CONTROL', helper)
-    const command = `set -e; printf legacy > owned; ! cat ${quote(join(outside, 'preserved'))}; node -e ${quote(`require('node:net').createServer().on('error', error => { if(error.code !== 'EPERM') throw error }).listen(process.env.TMPDIR + '/denied.sock')`)}`
+    const command = `set -e; printf legacy > owned; cat ${quote(join(outside, 'preserved'))}; node -e ${quote(`require('node:net').createServer().on('error', error => { if(error.code !== 'EPERM') throw error }).listen(process.env.TMPDIR + '/denied.sock')`)}`
     const { result, output } = await execute(command)
     expect(result, output).toEqual({ ok: true, exitCode: 0 })
-    expect(output).not.toContain('outside-preserved')
+    expect(output).toContain('outside-preserved')
     expect(await readFile(join(workspace, 'owned'), 'utf8')).toBe('legacy')
   })
 

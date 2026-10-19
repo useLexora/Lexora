@@ -84,6 +84,7 @@ catch {
   Set-Content -LiteralPath $scriptPath -Value $script -Encoding UTF8
   $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
   $child = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`"" -WorkingDirectory $directory -Credential $credential -LoadUserProfile -WindowStyle Hidden -PassThru
+  $null = $child.Handle
   if (-not $child.WaitForExit($(if ($InstallerExecutable) { 540000 } else { 360000 }))) { throw 'Windows sandbox acceptance timed out.' }
   if ($child.ExitCode -ne 0) { throw "Windows sandbox acceptance failed: $($child.ExitCode). Report: $log" }
   if (-not (Test-Path -LiteralPath $log)) { throw 'Windows sandbox acceptance did not produce a report.' }

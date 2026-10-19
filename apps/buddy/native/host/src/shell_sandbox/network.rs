@@ -15,7 +15,7 @@ use windows_sys::{
     core::GUID,
 };
 
-use super::security::{check, derive_sid, wide};
+use super::security::{SecurityDescriptor, check, derive_sid, wide};
 use crate::windows_security::Sid;
 
 const PROVIDER: GUID = GUID::from_u128(0x56b83290_4c62_4a13_9920_248a5301ec0d);
@@ -93,7 +93,11 @@ impl Network {
     }
 
     pub(super) fn grant(&self, profile: &str) -> io::Result<Vec<u64>> {
-        let sid = derive_sid(profile)?;
+        let sid = if valid_profile(profile) {
+            derive_sid(profile)?
+        } else {
+            super::account::parse_sid(profile)?
+        };
         // SAFETY: The engine is live; the transaction is closed on every path below.
         check(unsafe { FwpmTransactionBegin0(self.0, 0) })?;
         let result: io::Result<Vec<u64>> = (|| {
@@ -111,7 +115,9 @@ impl Network {
             unsafe { FwpmTransactionAbort0(self.0) };
         }
         let filters = result?;
-        if let Err(error) = loopback(&sid, true) {
+        if valid_profile(profile)
+            && let Err(error) = loopback(&sid, true)
+        {
             self.revoke(profile, &filters)?;
             return Err(error);
         }
@@ -122,16 +128,22 @@ impl Network {
         &self,
         index: usize,
         profile: &str,
-        sid: &Sid,
+        _sid: &Sid,
         allow_loopback: bool,
     ) -> io::Result<u64> {
         let layer = LAYERS[index];
-        let mut conditions = vec![condition(
-            FWPM_CONDITION_ALE_PACKAGE_ID,
-            FWP_SID,
-            FWP_CONDITION_VALUE0_0 {
-                sid: sid.as_ptr().cast(),
+        let descriptor = SecurityDescriptor::new(&format!("D:(A;;CC;;;{profile})"))?;
+        let mut blob = FWP_BYTE_BLOB {
+            // SAFETY: SecurityDescriptor owns a valid self-relative security descriptor.
+            size: unsafe {
+                windows_sys::Win32::Security::GetSecurityDescriptorLength(descriptor.as_ptr())
             },
+            data: descriptor.as_ptr().cast(),
+        };
+        let mut conditions = vec![condition(
+            FWPM_CONDITION_ALE_USER_ID,
+            FWP_SECURITY_DESCRIPTOR_TYPE,
+            FWP_CONDITION_VALUE0_0 { sd: &mut blob },
         )];
         let mut v4 = FWP_V4_ADDR_AND_MASK {
             addr: 0x7f000000,
@@ -215,7 +227,9 @@ impl Network {
     }
 
     pub(super) fn revoke(&self, profile: &str, filters: &[u64]) -> io::Result<()> {
-        loopback(&derive_sid(profile)?, false)?;
+        if valid_profile(profile) {
+            loopback(&derive_sid(profile)?, false)?;
+        }
         for id in filters {
             // SAFETY: These IDs were returned for this product's own per-command filters.
             check(unsafe { FwpmFilterDeleteById0(self.0, *id) })?;
@@ -223,7 +237,7 @@ impl Network {
         Ok(())
     }
 
-    pub(super) fn recover(&self) -> io::Result<()> {
+    fn filters(&self) -> io::Result<BTreeMap<String, Vec<u64>>> {
         let mut profiles: BTreeMap<String, Vec<u64>> = BTreeMap::new();
         for layer in LAYERS {
             let mut provider = PROVIDER;
@@ -268,7 +282,7 @@ impl Network {
                         };
                         let profile =
                             std::str::from_utf8(data).map_err(|_| io::ErrorKind::InvalidData)?;
-                        if !valid_profile(profile) {
+                        if !valid_profile(profile) && super::account::parse_sid(profile).is_err() {
                             return Err(io::ErrorKind::InvalidData.into());
                         }
                         profiles
@@ -284,7 +298,29 @@ impl Network {
             unsafe { FwpmFilterDestroyEnumHandle0(self.0, enumeration) };
             result?;
         }
-        for (profile, filters) in profiles {
+        Ok(profiles)
+    }
+
+    pub(super) fn ensure_account(&self, sid: &str) -> io::Result<()> {
+        if !self.filters()?.contains_key(sid) {
+            self.grant(sid)?;
+        }
+        self.verify_account(sid)
+    }
+
+    pub(super) fn verify_account(&self, sid: &str) -> io::Result<()> {
+        let filters = self.filters()?;
+        if filters
+            .get(sid)
+            .is_none_or(|ids| ids.len() != LAYERS.len() * 2)
+        {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn recover(&self) -> io::Result<()> {
+        for (profile, filters) in self.filters()? {
             self.revoke(&profile, &filters)?;
         }
         Ok(())

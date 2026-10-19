@@ -13,7 +13,7 @@ pub(super) struct Cancellation {
 }
 
 impl Cancellation {
-    pub(super) fn listen(mut input: impl Read + Send + 'static) -> Self {
+    pub(super) fn listen(mut input: impl Read + Send + 'static, budget: Duration) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&cancelled);
         std::thread::spawn(move || {
@@ -23,7 +23,7 @@ impl Cancellation {
         });
         Self {
             cancelled,
-            preparation_deadline: Instant::now() + Duration::from_secs(60),
+            preparation_deadline: Instant::now() + budget,
         }
     }
 
