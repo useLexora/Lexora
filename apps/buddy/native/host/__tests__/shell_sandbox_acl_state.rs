@@ -14,7 +14,6 @@ fn temporary_directory() -> tempfile::TempDir {
 }
 
 fn cancellation() -> (mpsc::Sender<()>, Cancellation) {
-    super::super::security::require_host(super::super::security::current_process(), false).unwrap();
     struct Input(mpsc::Receiver<()>);
     impl Read for Input {
         fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
