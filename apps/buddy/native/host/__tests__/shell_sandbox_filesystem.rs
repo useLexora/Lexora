@@ -5,6 +5,12 @@ use windows_sys::Win32::Security::GetKernelObjectSecurity;
 
 use super::*;
 
+fn temporary_directory() -> tempfile::TempDir {
+    let canonical = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let path = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    tempfile::tempdir_in(path).unwrap()
+}
+
 fn snapshot(file: &File) -> String {
     let mut storage = vec![0usize; 16384];
     let mut needed = 0;
@@ -41,7 +47,7 @@ fn snapshot(file: &File) -> String {
 
 #[test]
 fn temporary_grants_preserve_legacy_explicit_entries_matching_the_parent() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let parent = open_path(directory.path().to_str().unwrap()).unwrap();
     let user = sid_text(&process_user_sid(current_process()).unwrap()).unwrap();
     let legacy = format!("D:(A;OICI;FA;;;{user})");
@@ -78,7 +84,7 @@ fn temporary_grants_preserve_legacy_explicit_entries_matching_the_parent() {
 
 #[test]
 fn temporary_grants_preserve_inheritance_control_without_propagating_to_children() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let root = open_path(directory.path().to_str().unwrap()).unwrap();
     let user = sid_text(&process_user_sid(current_process()).unwrap()).unwrap();
     let descriptor = SecurityDescriptor::new(&format!("D:PAI(A;OICI;FA;;;{user})")).unwrap();
@@ -114,7 +120,7 @@ fn temporary_grants_preserve_inheritance_control_without_propagating_to_children
 
 #[test]
 fn noninheriting_probe_grants_do_not_propagate_existing_parent_entries() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().to_str().unwrap();
     let root = open_path(path).unwrap();
     let child_path = directory.path().join("child");
@@ -156,8 +162,8 @@ fn pending_cancellation(
 #[test]
 fn root_preparation_waits_remain_cancellable_and_do_not_lock_other_roots() {
     use std::time::{Duration, Instant};
-    let directory = tempfile::tempdir().unwrap();
-    let other = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
+    let other = temporary_directory();
     let grant = inspect(directory.path().to_str().unwrap(), Access::Read).unwrap();
     let other_grant = inspect(other.path().to_str().unwrap(), Access::Read).unwrap();
     let (_input, cancellation) = pending_cancellation(Duration::from_secs(10));
@@ -191,7 +197,7 @@ fn root_preparation_waits_remain_cancellable_and_do_not_lock_other_roots() {
 #[test]
 fn read_grants_without_write_dacl_skip_root_updates_and_preserve_strict_grants() {
     use std::time::Duration;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().to_str().unwrap();
     let root = open_path(path).unwrap();
     let original = SecurityDescriptor::new(&snapshot(&root)).unwrap();
@@ -267,7 +273,7 @@ fn read_grants_without_write_dacl_skip_root_updates_and_preserve_strict_grants()
 fn interrupted_acl_propagation_retries_then_restores_lock_free_reuse() {
     use sha2::{Digest, Sha256};
     use std::time::Duration;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().to_str().unwrap();
     let root = open_path(path).unwrap();
     let user = sid_text(&process_user_sid(current_process()).unwrap()).unwrap();

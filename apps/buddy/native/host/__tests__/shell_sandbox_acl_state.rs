@@ -7,6 +7,12 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 use windows_sys::Win32::System::SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE};
 
+fn temporary_directory() -> tempfile::TempDir {
+    let canonical = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let path = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    tempfile::tempdir_in(path).unwrap()
+}
+
 fn cancellation() -> (mpsc::Sender<()>, Cancellation) {
     super::super::security::require_host(super::super::security::current_process(), false).unwrap();
     struct Input(mpsc::Receiver<()>);
@@ -68,7 +74,7 @@ fn entries(path: &Path, sid: &Sid, deny: bool) -> usize {
 
 #[test]
 fn obsolete_denials_preserve_allows_and_other_profiles_until_the_last_owner_releases() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = temporary_directory();
     let protected = temporary.path().join("protected");
     fs::create_dir(&protected).unwrap();
     let child = protected.join("existing.txt");
@@ -140,7 +146,7 @@ fn obsolete_denials_preserve_allows_and_other_profiles_until_the_last_owner_rele
 
 #[test]
 fn merged_denials_preserve_previous_roots_and_are_reconciled_by_their_owner() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = temporary_directory();
     let old = temporary.path().join("old");
     let late = temporary.path().join("late");
     fs::create_dir(&old).unwrap();
@@ -213,7 +219,7 @@ fn merged_denials_preserve_previous_roots_and_are_reconciled_by_their_owner() {
 
 #[test]
 fn failed_updates_keep_recovery_intent_and_previous_protection() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = temporary_directory();
     let old = temporary.path().join("old");
     let new = temporary.path().join("new");
     fs::create_dir(&old).unwrap();
@@ -271,7 +277,7 @@ fn failed_updates_keep_recovery_intent_and_previous_protection() {
 
 #[test]
 fn reconciliation_never_changes_a_replacement_object() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = temporary_directory();
     let path = temporary.path().join("protected");
     fs::create_dir(&path).unwrap();
     let grant = filesystem::inspect(path.to_str().unwrap(), Access::DenyRead).unwrap();
@@ -312,7 +318,7 @@ fn reconciliation_never_changes_a_replacement_object() {
 
 #[test]
 fn owned_acl_cleanup_propagates_without_removing_other_principals() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = temporary_directory();
     let child = temporary.path().join("existing.txt");
     fs::write(&child, "fixture").unwrap();
     let root = filesystem::inspect(temporary.path().to_str().unwrap(), Access::Write).unwrap();
