@@ -231,6 +231,45 @@ describe('skill installation lifecycle', () => {
     expect((await f.service.get(null, app.id)).body).toBe('Version one')
   })
 
+  it('lets a global installation override an application skill only while developer tools are enabled', async () => {
+    const f = await fixture()
+    let developerTools = true
+    const service = new SkillService({ ...f.options, developerToolsEnabled: async () => developerTools })
+    cleanup.push(() => service.dispose())
+    const source = await f.source('app-workflow')
+    await mkdir(join(f.builtin, 'app-workflow'))
+    await writeFile(join(f.builtin, 'app-workflow', 'SKILL.md'), await readFile(join(source, 'SKILL.md')))
+    const app = (await service.list(null)).skills[0]!
+    await f.source('app-workflow', 'Override instructions')
+
+    const preview = await service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
+    expect(preview.candidates[0]?.blocked).toBe(false)
+    const installed = (await service.install({ previewId: preview.id, candidateIds: [preview.candidates[0]!.id] })).skills.find(skill => skill.spaceId === null && skill.managedBy === 'user')!
+    expect((await service.list(null)).skills.find(skill => skill.id === app.id)).toMatchObject({ status: 'shadowed', shadowedBy: installed.id })
+    expect((await service.loadForSpace(null)).skills.map(skill => skill.id)).toEqual([installed.id])
+    expect((await service.materializeForSpace(null, [{ id: installed.id, name: installed.name, revision: installed.revision }]))[0]?.body).toBe('Override instructions')
+
+    developerTools = false
+    expect((await service.loadForSpace(null)).skills.map(skill => skill.id)).toEqual([installed.id])
+    const blocked = await service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
+    expect(blocked.candidates[0]?.blocked).toBe(true)
+    await service.discard(blocked.id)
+
+    await service.remove({ spaceId: null, id: installed.id, revision: installed.revision })
+    expect((await service.loadForSpace(null)).skills.map(skill => skill.id)).toEqual([app.id])
+  })
+
+  it('keeps the application skill reserved when the developer tools state cannot be read', async () => {
+    const f = await fixture()
+    const service = new SkillService({ ...f.options, developerToolsEnabled: async () => { throw new Error('host unavailable') } })
+    cleanup.push(() => service.dispose())
+    const source = await f.source('app-workflow')
+    await mkdir(join(f.builtin, 'app-workflow'))
+    await writeFile(join(f.builtin, 'app-workflow', 'SKILL.md'), await readFile(join(source, 'SKILL.md')))
+    const preview = await service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
+    expect(preview.candidates[0]?.blocked).toBe(true)
+  })
+
   it('uses a same-name directory skill ahead of space and application versions', async () => {
     const f = await fixture()
     const source = await f.source('app-workflow')
