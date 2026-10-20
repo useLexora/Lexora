@@ -12,10 +12,14 @@ const MAX_ENGINE_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
+    /// The destination was not changed by this attempt.
     #[error("BOUNDED_FILE_WRITE_FAILED")]
     Failed,
     #[error("BOUNDED_FILE_CONFLICT")]
     Conflict,
+    /// Replacement may have happened, including a failure to sync its directory.
+    #[error("BOUNDED_FILE_WRITE_FAILED")]
+    OutcomeUnknown,
 }
 
 #[derive(Deserialize)]

@@ -58,17 +58,21 @@ async function review(root: Element) {
 }
 
 describe('change recovery confirmation', () => {
-  it('keeps a fixed user-reviewed selection when additional blockers arrive', async () => {
+  it('keeps a fixed reviewed selection when additional historical warnings arrive', async () => {
     const f = mount([item('first'), item('running', 'active')])
     const dialog = await review(f.root)
-    expect(dialog.textContent).toContain('仅对以下 1 项恢复修改')
+    expect(f.root.textContent).toContain('这些历史记录不会阻止新操作')
+    expect(f.root.textContent).toContain('重新读取文件并核对外部状态')
+    expect(dialog.textContent).toContain('仅标记以下 1 项为已核对')
     expect(dialog.textContent).toContain('Task first')
     expect(dialog.textContent).not.toContain('Task running')
-    expect(dialog.textContent).toContain('接受风险不代表已确认此前的操作结束')
+    expect(dialog.textContent).toContain('标记已核对不代表已确认此前的操作结束')
+    expect(dialog.textContent).toContain('不会重新运行旧操作')
+    expect(dialog.textContent).toContain('历史记录会保留')
     f.items.value = [...f.items.value, item('new')]
     await nextTick()
     expect(dialog.textContent).not.toContain('Task new')
-    button(dialog, '接受风险并恢复修改').click()
+    button(dialog, '标记已核对并接受风险').click()
     await nextTick()
     expect(f.decisions).toEqual([{ conversationId: 'current', decision: 'waived', items: [{ invocationId: 'first', revision: 'revision-1' }] }])
     expect(f.items.value.map(item => item.invocationId)).toEqual(['running', 'new'])
@@ -80,9 +84,9 @@ describe('change recovery confirmation', () => {
     const dialog = await review(f.root)
     f.items.value = [{ ...item('first'), revision: 'revision-2', status: 'active' }]
     await nextTick()
-    expect(button(dialog, '接受风险并恢复修改').disabled).toBe(true)
+    expect(button(dialog, '标记已核对并接受风险').disabled).toBe(true)
     expect(dialog.textContent).toContain('待处理事项已变化')
-    button(dialog, '接受风险并恢复修改').click()
+    button(dialog, '标记已核对并接受风险').click()
     await nextTick()
     expect(f.decisions).toEqual([])
     expect(f.items.value[0]?.status).toBe('active')

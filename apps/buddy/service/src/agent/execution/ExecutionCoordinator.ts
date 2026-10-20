@@ -11,7 +11,6 @@ import type { RunExecutionOutcome } from './RunExecutionBackend'
 import type { BuddyTurnHandle } from './turnTypes'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { isExecutionProgress } from '../../../../shared/executions/executionApi'
-import { MutationCoordinatorError } from '../../changes/MutationCoordinator'
 import { RunEventCorruptionError, RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { readStableRunErrorCode } from '../../runs/runError'
 import { ExecutionAdmissionError, executionFence } from '../../storage/executionRepository'
@@ -37,6 +36,7 @@ export interface ExecutionCoordinatorOptions {
   getFileAccessCeiling?: (runId: string) => 'read_only' | undefined
   onObserverError?: (error: unknown) => void
   hostShellSupervision?: boolean
+  recoverQuarantinedRun?: (runId: string) => boolean
 }
 
 class ShellSupervisionUnavailableError extends Error {
@@ -139,9 +139,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   async admitChild(input: AdmitChildExecutionInput): Promise<ExecutionStateRecord> {
-    const effects = await this.#options.mutations.waitForRun(input.callerId)
-    if (effects.hazards.length)
-      throw new MutationCoordinatorError('MUTATION_RESOURCE_UNSAFE')
+    await this.#options.mutations.waitForRun(input.callerId)
     const rootRunId = this.#require(input.callerId).run.rootRunId
     return this.#serialize(rootRunId, async () => {
       if (this.#stopped)
@@ -149,8 +147,6 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       if (this.#uncontainedShellRoots.has(rootRunId))
         throw new ShellSupervisionUnavailableError()
       const currentEffects = this.#options.mutations.getRunState(input.callerId)
-      if (currentEffects.hazards.length)
-        throw new MutationCoordinatorError('MUTATION_RESOURCE_UNSAFE')
       if (currentEffects.active || currentEffects.pending)
         throw new ExecutionAdmissionError('busy')
       this.#options.availability?.assertRunExecutable(input.callerId)
@@ -232,10 +228,11 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     })
   }
 
-  async wait(runId: string, targetRunIds: readonly string[], timeoutMs: number, signal: AbortSignal, deliveredMessageIds: readonly string[] = []): Promise<void> {
-    await this.#options.mutations.waitForRun(runId)
+  async wait(runId: string, targetRunIds: readonly string[], timeoutMs: number, signal: AbortSignal, deliveredMessageIds: readonly string[] = []): Promise<'changed' | 'timedout'> {
     const deadline = AbortSignal.timeout(timeoutMs)
+    const waitingSignal = AbortSignal.any([signal, deadline])
     try {
+      await this.#options.mutations.waitForRun(runId, waitingSignal)
       for (;;) {
         signal.throwIfAborted()
         const caller = this.#require(runId)
@@ -246,18 +243,21 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
           && !isExecutionProgress(message)
           && (!targetRunIds.length || message.kind !== 'result' || targetRunIds.includes(message.sourceRunId)),
         )
-        if (pending || targetRunIds.some(id => this.#require(id).phase === 'closed') || deadline.aborted)
-          return
+        if (pending || targetRunIds.some(id => this.#require(id).phase === 'closed'))
+          return 'changed'
+        if (deadline.aborted)
+          return 'timedout'
         if (caller.phase === 'working') {
           this.#options.executions.markWaiting(this.#fence(caller))
           this.#changed(caller.run.rootRunId)
         }
-        await this.#wait(caller.run.rootRunId, revision, AbortSignal.any([signal, deadline]))
+        await this.#wait(caller.run.rootRunId, revision, waitingSignal)
       }
     }
     catch (error) {
       if (!deadline.aborted || signal.aborted)
         throw error
+      return 'timedout'
     }
     finally {
       if (!signal.aborted)
@@ -273,18 +273,16 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       this.#options.availability?.assertRunExecutable(runId)
     }
     catch (error) {
-      if (!(error instanceof RunEventLogUnavailableError))
-        throw error
-      const records = this.#options.executions.listTree(source.run.rootRunId)
-      for (const record of records)
-        this.#preparations.get(record.run.id)?.controller.abort(error)
-      const stopped = await Promise.allSettled(records.map(record => stop(record.run.id)))
-      const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
-      if (!(error instanceof RunEventCorruptionError))
-        failures.unshift(error)
-      if (failures.length)
-        throw new AggregateError(failures, 'Execution cleanup could not settle an unavailable tree')
-      return true
+      if (!(error instanceof RunEventCorruptionError)) {
+        if (!(error instanceof RunEventLogUnavailableError))
+          throw error
+        const records = this.#options.executions.listTree(source.run.rootRunId)
+        for (const record of records)
+          this.#preparations.get(record.run.id)?.controller.abort(error)
+        const stopped = await Promise.allSettled(records.map(record => stop(record.run.id)))
+        const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+        throw new AggregateError([error, ...failures], 'Execution cleanup could not settle an unavailable tree')
+      }
     }
     const affected = await this.#serialize(source.run.rootRunId, async () => {
       const records = this.#options.executions.requestCancel(runId, new Date().toISOString())
@@ -293,23 +291,33 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       this.#changed(source.run.rootRunId)
       return records.filter(record => record.phase !== 'closed')
     })
-    await Promise.all(affected.map(async (record) => {
+    const stopped = await Promise.allSettled(affected.map(async (record) => {
       const preparation = this.#preparations.get(record.run.id)
-      if (await stop(record.run.id))
-        return
+      const owned = await stop(record.run.id)
       if (preparation)
         await preparation.settled
-      const current = this.#require(record.run.id)
-      if (current.phase !== 'closed' && current.run.status === 'queued' && !this.#children.has(record.run.id))
-        await this.finalize({ runId: record.run.id, cleanup: 'completed', outcome: { status: 'cancelled', errorCode } })
+      if (!owned)
+        await this.#children.get(record.run.id)
     }))
+    const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length)
+      throw new AggregateError(failures, 'Execution cleanup could not stop all owners')
+    for (const record of affected.toReversed()) {
+      if (await this.#recoverQuarantined(record.run.id))
+        continue
+      const current = this.#require(record.run.id)
+      if (current.phase !== 'closed' && !this.#children.has(record.run.id))
+        await this.finalize({ runId: record.run.id, cleanup: current.cleanupState === 'degraded' ? 'degraded' : 'completed', outcome: { status: 'cancelled', errorCode } })
+    }
     return true
   }
 
   async failBeforeStart(runId: string, error: unknown): Promise<RunRecord> {
-    if (error instanceof RunEventLogUnavailableError)
+    if (error instanceof RunEventLogUnavailableError && (!(error instanceof RunEventCorruptionError) || error.runId !== runId))
       throw error
-    const current = this.#require(runId)
+    const current = this.#options.executions.find(runId)
+    if (!current)
+      throw new ExecutionAdmissionError('stale')
     if (current.phase === 'closed')
       return current.run
     const cancelled = current.cancelRequestedAt || (error instanceof Error && error.name === 'AbortError')
@@ -321,6 +329,54 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   async finalize(input: Parameters<ExecutionLifecyclePort['finalize']>[0]): Promise<RunRecord> {
+    try {
+      return await this.#finalize(input)
+    }
+    catch (error) {
+      if (!(error instanceof RunEventCorruptionError) || error.runId !== input.runId)
+        throw error
+      return this.#finalizeQuarantined(input.runId, error)
+    }
+  }
+
+  async #finalizeQuarantined(runId: string, error: RunEventCorruptionError): Promise<RunRecord> {
+    const source = this.#options.executions.find(runId)
+    if (!source || !this.#options.recoverQuarantinedRun)
+      throw error
+    if (source.phase === 'closed')
+      return source.run
+    const affected = this.#options.executions.requestCancel(runId, new Date().toISOString())
+    for (const record of affected)
+      this.#preparations.get(record.run.id)?.controller.abort(error)
+    const children = affected.filter(record => record.run.parentRunId === runId && record.phase !== 'closed')
+    await Promise.all(children.map(child => this.cancel(child.run.id, 'RUN_CANCELLED', id => this.#options.stopExecution(id))))
+    const result = await this.#recoverQuarantined(runId)
+    if (!result)
+      throw error
+    return result
+  }
+
+  async #recoverQuarantined(runId: string): Promise<RunRecord | null> {
+    try {
+      this.#options.availability?.assertRunExecutable(runId)
+      return null
+    }
+    catch (error) {
+      if (!(error instanceof RunEventCorruptionError) || error.runId !== runId || !this.#options.recoverQuarantinedRun)
+        throw error
+      await this.#options.mutations.waitForRun(runId)
+      this.#options.recoverQuarantinedRun(runId)
+      const current = this.#options.executions.find(runId)
+      if (!current || current.phase !== 'closed')
+        throw error
+      this.#changed(current.run.rootRunId)
+      if (current.run.parentRunId === null)
+        this.#uncontainedShellRoots.delete(current.run.rootRunId)
+      return current.run
+    }
+  }
+
+  async #finalize(input: Parameters<ExecutionLifecyclePort['finalize']>[0]): Promise<RunRecord> {
     const initial = this.#require(input.runId)
     if (initial.phase === 'closed')
       return initial.run
@@ -386,7 +442,10 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       record = this.#require(runId)
       const mode = record.cancelRequestedAt || outcome.status === 'cancelled' ? 'cancel' : outcome.status === 'failed' ? 'failure' : 'success'
       try {
-        const closing = this.#options.executions.beginClosing(this.#fence(record), mode)
+        const root = this.#options.executions.find(record.run.rootRunId)
+        if (!root)
+          throw new ExecutionAdmissionError('stale')
+        const closing = this.#options.executions.beginClosing(executionFence(record, root), mode)
         this.#changed(record.run.rootRunId)
         return { result: { kind: 'sealed' as const, closingGeneration: closing.run.generation }, stopChildren }
       }

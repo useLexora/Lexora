@@ -20,8 +20,8 @@ export interface MutationEvidenceRepository {
   append: (evidence: MutationEvidence) => void
   latest: (invocationId: string) => StoredMutationEvidence | null
   decision: (invocationId: string) => StoredMutationEvidence | null
-  recordBlocker: (invocationId: string, runId: string) => void
-  blockedRuns: (invocationId: string) => string[]
+  recordOverlap: (invocationId: string, runId: string) => void
+  relatedRuns: (invocationId: string) => string[]
   applyResolution: (invocationId: string, kind: 'quiesced' | 'waived') => void
   createdAt: (invocationId: string) => string | null
 }
@@ -52,7 +52,7 @@ export function createMutationEvidenceRepository(database: DatabaseSync): Mutati
     SELECT * FROM run_mutation_evidence WHERE invocation_id = ? AND outcome IN ('requested', 'applied') AND process_id IS NULL AND related_run_id IS NULL
     ORDER BY sequence DESC LIMIT 1
   `)
-  const blockedRuns = database.prepare('SELECT related_run_id FROM run_mutation_evidence WHERE invocation_id = ? AND related_run_id IS NOT NULL')
+  const relatedRuns = database.prepare('SELECT related_run_id FROM run_mutation_evidence WHERE invocation_id = ? AND related_run_id IS NOT NULL')
   const createdAt = database.prepare('SELECT created_at FROM run_mutation_leases WHERE invocation_id = ?')
   const settle = database.prepare('UPDATE run_mutation_leases SET status = \'released\', reason = ?, updated_at = ? WHERE invocation_id = ?')
   const append = (evidence: MutationEvidence) => {
@@ -62,8 +62,8 @@ export function createMutationEvidenceRepository(database: DatabaseSync): Mutati
     append,
     latest: invocationId => toEvidence(latest.get(invocationId) as EvidenceRow | undefined),
     decision: invocationId => toEvidence(decision.get(invocationId) as EvidenceRow | undefined),
-    recordBlocker: (invocationId, runId) => append({ invocationId, kind: 'observed', outcome: 'unknown', actor: 'system', reason: 'WRITE_BLOCKED', relatedRunId: runId }),
-    blockedRuns: invocationId => (blockedRuns.all(invocationId) as { related_run_id: string }[]).map(row => row.related_run_id),
+    recordOverlap: (invocationId, runId) => append({ invocationId, kind: 'observed', outcome: 'unknown', actor: 'system', reason: 'RESOURCE_OVERLAP', relatedRunId: runId }),
+    relatedRuns: invocationId => (relatedRuns.all(invocationId) as { related_run_id: string }[]).map(row => row.related_run_id),
     createdAt: invocationId => (createdAt.get(invocationId) as { created_at: string } | undefined)?.created_at ?? null,
     applyResolution(invocationId, kind) {
       withTransaction(database, () => {

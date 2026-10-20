@@ -1,4 +1,4 @@
-import type { RunEventReader } from '../events/RunEventPorts'
+import type { RunEventAvailability, RunEventReader } from '../events/RunEventPorts'
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
@@ -15,7 +15,7 @@ import { toPublicRun } from './publicRun'
 export interface RegisterRunRpcOptions {
   isBusy: () => boolean
   getCacheWarmingStatus?: ConversationStatusOptions['getCacheWarmingStatus']
-  eventLog: Pick<RunEventReader, 'list' | 'listForConversation'>
+  eventLog: Pick<RunEventReader, 'list' | 'listForConversation'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   inputs: Pick<RunInputRepository, 'findByRunId'>
   repository: Pick<
     RunRepository,
@@ -27,7 +27,9 @@ export interface RegisterRunRpcOptions {
 
 export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
   const publicRun = (run: RunRecord) => toPublicRun(
-    run,
+    options.eventLog.getRecoveryFailures?.().some(failure => failure.runId === run.id)
+      ? { ...run, errorCode: 'EVENT_LOG_CORRUPTED' }
+      : run,
     options.inputs.findByRunId(run.id)?.reasoning ?? null,
   )
   const status = new ConversationStatusService({

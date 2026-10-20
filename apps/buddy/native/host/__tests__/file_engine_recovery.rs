@@ -18,7 +18,7 @@ fn interrupt(journal: &std::path::Path, records: &mut [Value]) {
 }
 
 #[test]
-fn protection_overlays_interrupted_operations_without_granting_write_and_survives_restart() {
+fn legacy_unknown_records_and_protection_remain_diagnostic_after_restart() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
     let journal = directory.path().join("journal");
@@ -62,7 +62,6 @@ fn protection_overlays_interrupted_operations_without_granting_write_and_survive
         json!({"type":"protect", "leaseId":lease, "claims":[{"path":source,"subtree":false}]});
     let mut engine = Engine::new(&journal);
     engine.register("root", &root);
-    assert_eq!(engine.call(json!({"type":"acquire", "leaseId":lease, "external":true, "claims":[{"root":"root", "path":"note", "subtree":false}]}))["error"], "FILE_RECOVERY_REQUIRED");
     assert_eq!(engine.call(protection.clone())["result"], Value::Null);
     assert_eq!(engine.call(protection.clone())["result"], Value::Null);
     assert_eq!(
@@ -81,31 +80,9 @@ fn protection_overlays_interrupted_operations_without_granting_write_and_survive
     let mut engine = Engine::new(&journal);
     engine.register("root", &root);
     assert_eq!(engine.call(protection)["result"], Value::Null);
-    let acknowledged =
-        engine.call(json!({"type":"acknowledge", "root":"root", "operationId":operation}));
-    assert_eq!(acknowledged["result"]["status"], "acknowledged");
-    assert_eq!(
-        engine.call(json!({"type":"acknowledge", "root":"root", "operationId":operation}))["result"],
-        acknowledged["result"]
-    );
+    let unknown = engine.call(json!({"type":"query", "operationId":operation}))["result"].clone();
+    assert_eq!(unknown["status"], "needs-recovery");
     assert_eq!(engine.call(json!({"type":"mutate", "request":{"operationId":id(), "leaseId":lease, "root":"root", "path":"note", "action":{"kind":"write","text":"unsafe"}}}))["error"], "FILE_LEASE_INVALID");
-    assert_eq!(
-        engine.mutate(
-            &id(),
-            "root",
-            "note",
-            json!({"kind":"write","text":"unsafe"})
-        )["error"],
-        "FILE_RECOVERY_REQUIRED"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("note")).unwrap(),
-        "retained"
-    );
-    assert_eq!(
-        engine.call(json!({"type":"release", "leaseId":lease, "hazard":false}))["result"],
-        Value::Null
-    );
     assert_eq!(
         engine.mutate(
             &id(),
@@ -115,6 +92,107 @@ fn protection_overlays_interrupted_operations_without_granting_write_and_survive
         )["result"]["status"],
         "applied"
     );
+    assert_eq!(
+        std::fs::read_to_string(root.join("note")).unwrap(),
+        "allowed"
+    );
+    assert_eq!(
+        engine.mutate(
+            &operation,
+            "root",
+            "note",
+            json!({"kind":"write","text":"retained"})
+        )["result"],
+        unknown
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("note")).unwrap(),
+        "allowed"
+    );
+    assert_eq!(
+        engine.call(json!({"type":"leases"}))["result"],
+        json!([lease])
+    );
+}
+
+#[test]
+fn protection_does_not_release_or_expand_an_active_lease() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("note"), "original").unwrap();
+    let mut engine = Engine::new(&directory.path().join("journal"));
+    engine.register("root", &root);
+    let lease = id();
+    assert_eq!(engine.call(json!({"type":"acquire","leaseId":lease,"external":true,"claims":[{"root":"root","path":"note","subtree":false}]}))["result"], Value::Null);
+    assert_eq!(
+        engine.call(
+            json!({"type":"protect","leaseId":lease,"claims":[{"path":root,"subtree":true}]})
+        )["result"],
+        Value::Null
+    );
+    assert_eq!(engine.call(json!({"type":"mutate","request":{"operationId":id(),"leaseId":lease,"root":"root","path":"other","action":{"kind":"write","text":"invalid"}}}))["error"], "FILE_LEASE_INVALID");
+    let operation = id();
+    let queued = engine.send(json!({"type":"mutate","request":{"operationId":operation,"root":"root","path":"note","action":{"kind":"write","text":"continued"}}}));
+    let query = engine.send(json!({"type":"query","operationId":operation}));
+    assert_eq!(engine.response(query)["result"], Value::Null);
+    assert_eq!(
+        std::fs::read_to_string(root.join("note")).unwrap(),
+        "original"
+    );
+    let release = engine.send(json!({"type":"release","leaseId":lease,"hazard":true}));
+    assert_eq!(engine.response(release)["result"], Value::Null);
+    assert_eq!(engine.response(queued)["result"]["status"], "applied");
+    assert_eq!(
+        std::fs::read_to_string(root.join("note")).unwrap(),
+        "continued"
+    );
+    assert_eq!(
+        engine.call(json!({"type":"leases"}))["result"],
+        json!([lease])
+    );
+    assert_eq!(engine.call(json!({"type":"mutate","request":{"operationId":id(),"leaseId":lease,"root":"root","path":"note","action":{"kind":"write","text":"invalid"}}}))["error"], "FILE_LEASE_INVALID");
+    assert!(!root.join("other").exists());
+}
+
+#[test]
+fn restart_retains_external_lease_diagnostics_without_restoring_ownership() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let journal = directory.path().join("journal");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("note"), "original").unwrap();
+    let old = id();
+    let mut engine = Engine::new(&journal);
+    engine.register("root", &root);
+    assert_eq!(engine.call(json!({"type":"acquire","leaseId":old,"external":true,"claims":[{"root":"root","path":"note","subtree":false}]}))["result"], Value::Null);
+    drop(engine);
+    let mut engine = Engine::new(&journal);
+    engine.register("root", &root);
+    assert_eq!(
+        engine.call(json!({"type":"leases"}))["result"],
+        json!([old])
+    );
+    assert_eq!(engine.call(json!({"type":"mutate","request":{"operationId":id(),"leaseId":old,"root":"root","path":"note","action":{"kind":"write","text":"invalid"}}}))["error"], "FILE_LEASE_INVALID");
+    let fresh = id();
+    assert_eq!(engine.call(json!({"type":"acquire","leaseId":fresh,"external":true,"claims":[{"root":"root","path":"note","subtree":false}]}))["result"], Value::Null);
+    assert_eq!(engine.call(json!({"type":"mutate","request":{"operationId":id(),"leaseId":fresh,"root":"root","path":"note","action":{"kind":"write","text":"continued"}}}))["result"]["status"], "applied");
+    assert_eq!(
+        std::fs::read_to_string(root.join("note")).unwrap(),
+        "continued"
+    );
+    assert_eq!(
+        engine.call(json!({"type":"release","leaseId":fresh,"hazard":false}))["result"],
+        Value::Null
+    );
+    drop(engine);
+    let db = rusqlite::Connection::open(journal.join("operations.sqlite")).unwrap();
+    let hazard: bool = db
+        .query_row("SELECT hazard FROM leases WHERE id=?", [&old], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert!(hazard);
 }
 
 #[test]
@@ -159,7 +237,7 @@ fn protection_preserves_prior_claims_and_does_not_require_paths_to_exist() {
 
 #[cfg(unix)]
 #[test]
-fn first_acknowledgement_rejects_replaced_history_root_and_keeps_the_hazard() {
+fn acknowledgement_rejects_replaced_root_without_blocking_a_new_capability() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
     let journal = directory.path().join("journal");
@@ -200,13 +278,13 @@ fn first_acknowledgement_rejects_replaced_history_root_and_keeps_the_hazard() {
             &id(),
             "replacement-probe",
             "note",
-            json!({"kind":"write","text":"unsafe"})
-        )["error"],
-        "FILE_RECOVERY_REQUIRED"
+            json!({"kind":"write","text":"allowed"})
+        )["result"]["status"],
+        "applied"
     );
     assert_eq!(
         std::fs::read_to_string(root.join("note")).unwrap(),
-        "replacement"
+        "allowed"
     );
     assert_eq!(
         std::fs::read_to_string(retained.join("note")).unwrap(),
@@ -256,13 +334,13 @@ fn acknowledgement_requires_source_destination_and_staging_in_the_bound_root() {
                 &id(),
                 "root",
                 "note",
-                json!({"kind":"write","text":"unsafe"})
-            )["error"],
-            "FILE_RECOVERY_REQUIRED"
+                json!({"kind":"write","text":"allowed"})
+            )["result"]["status"],
+            "applied"
         );
         assert_eq!(
             std::fs::read_to_string(root.join("note")).unwrap(),
-            "retained"
+            "allowed"
         );
         assert_eq!(std::fs::read_to_string(outside).unwrap(), "outside");
     }
@@ -290,6 +368,38 @@ fn rejected_creation_has_no_recovery_hazard_or_temporary_file() {
         engine.mutate(&id(), "root", "file", json!({"kind":"createFile"}))["result"]["status"],
         "applied"
     );
+}
+
+#[test]
+fn rejected_hardlink_save_preserves_both_files_without_poisoning_later_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("note.txt");
+    let alias = root.join("alias.txt");
+    std::fs::write(&path, "original").unwrap();
+    std::fs::hard_link(&path, &alias).unwrap();
+    let mut engine = Engine::new(&directory.path().join("journal"));
+    engine.register("root", &root);
+    let rejected = engine.mutate(
+        &id(),
+        "root",
+        "note.txt",
+        json!({"kind":"write","text":"rejected"}),
+    );
+    assert_eq!(rejected["result"]["status"], "not-applied", "{rejected}");
+    assert_eq!(rejected["result"]["error"], "FILE_IO_FAILED", "{rejected}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+    assert_eq!(std::fs::read_to_string(&alias).unwrap(), "original");
+    std::fs::remove_file(alias).unwrap();
+    let continued = engine.mutate(
+        &id(),
+        "root",
+        "note.txt",
+        json!({"kind":"write","text":"continued"}),
+    );
+    assert_eq!(continued["result"]["status"], "applied", "{continued}");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "continued");
 }
 
 #[test]

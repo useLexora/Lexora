@@ -38,9 +38,10 @@ export class RunEventQueries {
 
   listForConversation(
     conversationId: string,
-    options: Pick<ListBuddyRunEventsOptions, 'limit'> = {},
+    options: Pick<ListBuddyRunEventsOptions, 'limit'> & { excludedRunIds?: readonly string[] } = {},
   ): BuddyRunEvent[] {
     const limit = options.limit ?? 1_000
+    const excluded = options.excludedRunIds ?? []
     const rows = this.#database.prepare(`
       SELECT * FROM (
         SELECT
@@ -52,11 +53,12 @@ export class RunEventQueries {
         FROM run_events AS events
         INNER JOIN runs ON runs.id = events.run_id
         WHERE runs.conversation_id = ? AND runs.execution_kind IN ('root', 'maintenance')
+          ${excluded.length ? `AND runs.id NOT IN (${excluded.map(() => '?').join(', ')})` : ''}
         ORDER BY events.created_at DESC, events.run_id DESC, events.sequence DESC
         LIMIT ?
       )
       ORDER BY created_at, run_id, sequence
-    `).all(conversationId, limit)
+    `).all(conversationId, ...excluded, limit)
     return (rows as unknown as RunEventRow[]).map(toRunEvent)
   }
 

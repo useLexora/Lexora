@@ -264,15 +264,16 @@ describe('startup run event recovery', () => {
     expect(f.database.prepare('SELECT content_json FROM messages WHERE id = \'answer-1\'').get()).toEqual({ content_json: '{"text":"edited"}' })
   })
 
-  it('repairs a torn tail but does not certify the changed file until a subsequent clean read', async () => {
+  it('quarantines a torn tail without changing evidence across repeated recovery', async () => {
     const f = await fixture()
     await seedHistory(f.log)
     await f.log.recoverAll()
     await appendFile(f.eventFile, '{"runId":"run-1"')
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, skipped: 0 })
+    const damaged = await readFile(f.eventFile, 'utf8')
+    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 0, skipped: 0, failed: 1 })
     expect(checkpoint(f.database)).toBeUndefined()
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1 })
-    expect(await f.log.recoverAll()).toMatchObject({ skipped: 1 })
+    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 0, failed: 1 })
+    expect(await readFile(f.eventFile, 'utf8')).toBe(damaged)
   })
 
   it.each([
@@ -305,7 +306,8 @@ describe('startup run event recovery', () => {
     await rm(f.eventFile)
     await writeFile(join(f.conversationsDirectory, 'conversation-1', 'events', 'unknown-run.jsonl'), '{broken}\n')
     expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, skipped: 0, rebuilt: 0, failed: 1 })
-    expect(() => f.log.assertConversationWritable('conversation-1')).toThrow(expect.objectContaining({ code: 'EVENT_LOG_CORRUPTED' }))
+    expect(() => f.log.assertConversationWritable('conversation-1')).not.toThrow()
+    expect(() => f.log.assertRunWritable('run-1')).toThrow(expect.objectContaining({ code: 'EVENT_LOG_CORRUPTED' }))
     expect(checkpoint(f.database)).toBeUndefined()
     expect(projection(f.database)).toEqual(before)
     expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-1' }])

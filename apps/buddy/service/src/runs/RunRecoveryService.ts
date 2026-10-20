@@ -16,12 +16,12 @@ export interface RunRecoveryServiceOptions {
   captureInterruptedChanges?: (runId: string) => Promise<void>
   conversations: Pick<ConversationHistoryRepository, 'findMessageById'>
   eventLog: Pick<RunEventReader, 'read'> & Pick<RunEventWriter, 'append'>
-    & Partial<Pick<RunEventAvailability, 'assertRunWritable'>>
+    & Partial<Pick<RunEventAvailability, 'assertRunWritable' | 'getRecoveryFailures'>>
   inspectCommittedCompaction?: (
     run: RunRecord,
   ) => Promise<CommittedPiCompactionEvidence | null>
   lifecycle: Pick<RunLifecycleService, 'finalize'>
-  repository: Pick<RunRepository, 'listIncomplete'>
+  repository: Pick<RunRepository, 'listIncomplete' | 'reconcileQuarantined'>
   usage: Pick<UsageService, 'record'>
 }
 
@@ -35,9 +35,8 @@ export class RunRecoveryService {
 
   async recoverInterruptedRuns(): Promise<number> {
     const interrupted = this.#options.repository.listIncomplete()
-    const runs = new Map(interrupted.map(run => [run.id, run]))
     const histories = new Map<string, BuddyRunEvent[]>()
-    const blockedConversations = new Set<string>()
+    const quarantined = new Set(this.#options.eventLog.getRecoveryFailures?.().map(failure => failure.runId))
     for (const run of interrupted) {
       try {
         this.#options.eventLog.assertRunWritable?.(run.id)
@@ -46,18 +45,20 @@ export class RunRecoveryService {
       catch (error) {
         if (!(error instanceof RunEventCorruptionError))
           throw error
-        blockedConversations.add(run.conversationId)
+        quarantined.add(run.id)
       }
     }
     const canRecoverRun = (runId: string): boolean => {
-      const run = runs.get(runId)
+      if (quarantined.has(runId))
+        return false
       try {
         this.#options.eventLog.assertRunWritable?.(runId)
-        return !run || !blockedConversations.has(run.conversationId)
+        return true
       }
       catch (error) {
         if (!(error instanceof RunEventCorruptionError))
           throw error
+        quarantined.add(runId)
         return false
       }
     }
@@ -101,10 +102,26 @@ export class RunRecoveryService {
       catch (error) {
         if (!(error instanceof RunEventCorruptionError))
           throw error
-        blockedConversations.add(run.conversationId)
+        quarantined.add(run.id)
       }
     }
+    for (const runId of quarantined) {
+      if (this.recoverQuarantinedRun(runId))
+        recovered++
+    }
     return recovered
+  }
+
+  recoverQuarantinedRun(runId: string): boolean {
+    try {
+      this.#options.eventLog.assertRunWritable?.(runId)
+      return false
+    }
+    catch (error) {
+      if (!(error instanceof RunEventCorruptionError))
+        throw error
+      return this.#options.repository.reconcileQuarantined(runId, this.#timestamp())
+    }
   }
 
   async #recoverInterruptedCompaction(run: RunRecord, events: readonly BuddyRunEvent[]): Promise<boolean> {

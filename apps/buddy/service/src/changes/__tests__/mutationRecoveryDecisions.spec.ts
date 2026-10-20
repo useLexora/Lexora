@@ -108,18 +108,22 @@ describe('durable mutation recovery decisions', () => {
     const restored = new MutationCoordinator({ repository: f.repository, evidence: f.evidence, resources })
     cleanups.push(() => restored.dispose())
     await restored.initialize()
+    await restored.waitForSettlements()
     expect(restored.getHazards()).toEqual([])
     expect(f.evidence.decision('old')).toMatchObject({ kind: 'waived', outcome: 'applied' })
     expect(f.database.prepare('SELECT settlement FROM run_mutation_processes').get()).toEqual({ settlement: 'unknown' })
   })
 
-  it('limits cross-task recovery to recorded blockers and rejects stale or active decisions', async () => {
+  it('shows admitted cross-task overlaps without blocking and rejects stale or active decisions', async () => {
     const f = await memoryFixture()
     const scope = context(f.database)
     await hazard(f.mutations)
     const recovery = new MutationRecoveryService({ mutations: f.mutations, evidence: f.evidence, context: scope, checkpoint: async () => null })
     expect(recovery.list({ conversationId: 'next' })).toEqual([])
-    await expect(f.mutations.acquire({ invocationId: 'next-attempt', runId: 'next-run', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+    const next = await f.mutations.acquire({ invocationId: 'next-attempt', runId: 'next-run', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    expect(f.mutations.getRunState('next-run').active).toBe(1)
+    next.release()
+    expect(f.database.prepare('SELECT reason, related_run_id FROM run_mutation_evidence WHERE related_run_id IS NOT NULL').all()).toEqual([{ reason: 'RESOURCE_OVERLAP', related_run_id: 'next-run' }])
     const item = recovery.list({ conversationId: 'next' })[0]!
     expect(item).toMatchObject({ invocationId: 'old', conversationId: 'old' })
     expect(recovery.list({ conversationId: 'unrelated' })).toEqual([])
@@ -132,6 +136,85 @@ describe('durable mutation recovery decisions', () => {
     await recovery.resolve({ conversationId: 'next', items: [current], decision: 'waived' })
     expect(recovery.list({ conversationId: 'next' })).toEqual([])
     expect(f.database.prepare('SELECT settlement FROM run_mutation_processes').get()).toEqual({ settlement: 'unknown' })
+  })
+
+  it('records only admitted overlapping requests and publishes the notice without weakening active ownership', async () => {
+    const f = await memoryFixture()
+    const scope = context(f.database)
+    const recovery = new MutationRecoveryService({ mutations: f.mutations, evidence: f.evidence, context: scope })
+    const root = join(tmpdir(), 'mutation-overlap', 'shared')
+    const old = await f.mutations.acquire({ invocationId: 'old', runId: 'old-run', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: root }], signal })
+    f.mutations.recordOwnedProcessSettlement({ invocationId: 'old', processId: 'unverified-owner', settlement: 'unknown' })
+    const observed: { active: number, invocationIds: string[] }[] = []
+    const subscription = f.mutations.onDidChange(({ runId }) => {
+      if (runId === 'next-run')
+        observed.push({ active: f.mutations.getRunState(runId).active, invocationIds: recovery.list({ conversationId: 'next' }).map(item => item.invocationId) })
+    })
+    cleanups.push(() => subscription.dispose())
+    const input = { runId: 'next-run', lifetime: 'runtime' as const, claims: [{ kind: 'file' as const, canonicalPath: join(root, 'note.txt') }], signal }
+    const pending = f.mutations.acquire({ ...input, invocationId: 'next' })
+    const controller = new AbortController()
+    const cancelled = f.mutations.acquire({ ...input, runId: 'unrelated-run', invocationId: 'cancelled', signal: controller.signal })
+    const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    const unrelated = await f.mutations.acquire({ ...input, runId: 'unrelated-run', invocationId: 'unrelated', claims: [{ kind: 'file', canonicalPath: join(`${root}-other`, 'note.txt') }] })
+    unrelated.release()
+    expect(f.mutations.getRunState('next-run')).toMatchObject({ active: 0, pending: 1 })
+    expect(f.evidence.relatedRuns('old')).toEqual([])
+    old.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    const next = await pending
+    expect(observed).toContainEqual({ active: 1, invocationIds: ['old'] })
+    next.release()
+    const repeated = await f.mutations.acquire({ ...input, invocationId: 'next-repeat' })
+    repeated.release()
+    expect(f.evidence.relatedRuns('old')).toEqual(['next-run'])
+    expect(f.evidence.latest('old')).toBeNull()
+    expect(recovery.list({ conversationId: 'unrelated' })).toEqual([])
+    expect(f.database.prepare('SELECT reason, related_run_id FROM run_mutation_evidence').all()).toEqual([{ reason: 'RESOURCE_OVERLAP', related_run_id: 'next-run' }])
+    expect(f.mutations.getOwnedProcesses('old')).toEqual([{ processId: 'unverified-owner', settlement: 'unknown' }])
+  })
+
+  it('preserves new overlap notices and legacy blocked associations after reopening without rewriting evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mutation-overlap-reopen-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const databasePath = join(root, 'buddy.sqlite3')
+    let database = openBuddyDatabase({ databasePath })
+    cleanups.push(() => database.close())
+    let f = setup(database)
+    context(database)
+    await hazard(f.mutations)
+    const next = await f.mutations.acquire({ invocationId: 'next', runId: 'next-run', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    next.release()
+    f.evidence.append({ invocationId: 'old', kind: 'observed', outcome: 'unknown', reason: 'WRITE_BLOCKED', actor: 'system', relatedRunId: 'unrelated-run' })
+    const before = database.prepare('SELECT * FROM run_mutation_evidence ORDER BY sequence').all()
+    expect(before.map(row => row.reason)).toEqual(['RESOURCE_OVERLAP', 'WRITE_BLOCKED'])
+    await f.mutations.dispose()
+    database.close()
+    database = openBuddyDatabase({ databasePath })
+    f = setup(database)
+    const recovery = new MutationRecoveryService({ mutations: f.mutations, evidence: f.evidence, context: {
+      conversations: createConversationRepository(database),
+      runs: createRunRepository(database),
+    } })
+    for (const conversationId of ['next', 'unrelated'])
+      expect(recovery.list({ conversationId })).toEqual([expect.objectContaining({ invocationId: 'old', status: 'unknown', conversationId: 'old' })])
+    expect(database.prepare('SELECT * FROM run_mutation_evidence ORDER BY sequence').all()).toEqual(before)
+    expect(f.mutations.getInvocationSettlement('old')).toBe('unknown')
+  })
+
+  it('does not turn a failed risk-notice write into an admission lock or a successful recovery', async () => {
+    const f = await memoryFixture()
+    await hazard(f.mutations)
+    f.database.exec(`CREATE TRIGGER reject_overlap BEFORE INSERT ON run_mutation_evidence
+      WHEN NEW.related_run_id IS NOT NULL BEGIN SELECT RAISE(ABORT, 'notice unavailable'); END`)
+    const next = await f.mutations.acquire({ invocationId: 'next', runId: 'next-run', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    expect(f.mutations.getRunState('next-run').active).toBe(1)
+    expect(f.evidence.relatedRuns('old')).toEqual([])
+    expect(f.evidence.decision('old')).toBeNull()
+    expect(f.mutations.getInvocationSettlement('old')).toBe('unknown')
+    next.release()
+    expect(f.repository.listUnreleased().map(item => item.invocationId)).toEqual(['old'])
   })
 
   it('atomically binds launch authorization and never rolls it back to prepared', async () => {
@@ -195,6 +278,7 @@ describe('durable mutation recovery decisions', () => {
     cleanups.push(() => restored.dispose())
     expect(restored.getHazards()).toHaveLength(1)
     await restored.initialize()
+    await restored.waitForSettlements()
     expect(restored.getHazards()).toEqual([])
     expect(f.evidence.decision('old')).toMatchObject({ kind: 'quiesced', outcome: 'applied' })
   })

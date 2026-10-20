@@ -127,27 +127,21 @@ export class RunEventStore {
         { cause: error },
       )
     }
-    let parsed: ReturnType<typeof parseEventLines>
+    let events: BuddyRunEvent[]
     try {
-      parsed = parseEventLines(content, runId)
+      events = parseEventLines(content, runId)
     }
     catch (cause) {
       throw new RunEventCorruptionError(runId, { cause })
     }
-    const scope = runEventFailureScope(runId, parsed.events)
-    const repairBytes = parsed.repairBytes
-    if (repairBytes !== null) {
-      await this.#repairEventFile(scope, 'truncate', file => (
-        file.truncate(repairBytes)
-      ))
-    }
-    else if (content.length > 0 && !content.endsWith('\n')) {
+    const scope = runEventFailureScope(runId, events)
+    if (content.length > 0 && !content.endsWith('\n')) {
       const appendPosition = Buffer.byteLength(content, 'utf8')
       await this.#repairEventFile(scope, 'write', file => (
         file.write('\n', appendPosition, 'utf8').then(() => undefined)
       ))
     }
-    return parsed.events
+    return events
   }
 
   async replace(
@@ -362,34 +356,20 @@ export class RunEventStore {
 function parseEventLines(
   content: string,
   runId: string,
-): { events: BuddyRunEvent[], repairBytes: number | null } {
-  const hasFinalNewline = content.endsWith('\n')
+): BuddyRunEvent[] {
   const lines = content.split('\n')
   if (lines.at(-1) === '')
     lines.pop()
   const events: BuddyRunEvent[] = []
-  for (const [index, line] of lines.entries()) {
+  for (const line of lines) {
     if (!line.trim())
       continue
-    let event: BuddyRunEvent
-    try {
-      event = buddyRunEventSchema.parse(JSON.parse(line))
-    }
-    catch (error) {
-      if (index === lines.length - 1 && !hasFinalNewline) {
-        const validPrefix = lines.slice(0, -1).join('\n')
-        return {
-          events,
-          repairBytes: Buffer.byteLength(validPrefix ? `${validPrefix}\n` : '', 'utf8'),
-        }
-      }
-      throw error
-    }
+    const event = buddyRunEventSchema.parse(JSON.parse(line))
     if (event.runId !== runId || event.sequence <= (events.at(-1)?.sequence ?? 0))
       throw new Error(`Lexora Buddy run event sequence is invalid: ${runId}`)
     events.push(event)
   }
-  return { events, repairBytes: null }
+  return events
 }
 
 async function writeDurableFile(

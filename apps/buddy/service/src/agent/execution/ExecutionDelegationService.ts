@@ -132,8 +132,11 @@ export class ExecutionDelegationService {
       const delivered = this.#options.mailbox.listUnconsumed(source.run.id).filter(message => !unseen.has(message.messageId)).map(message => message.messageId)
       const awaitingAnswer = this.#options.mailbox.listQuestions(source.run.id)
         .some(message => message.kind === 'question' && this.#options.mailbox.findQuestion(message.questionId)?.open)
-      if (targets.length || pending.length || awaitingAnswer)
-        await this.#options.coordinator.wait(source.run.id, targets, input.timeoutMs ?? 30000, signal, delivered)
+      if (targets.length || pending.length || awaitingAnswer) {
+        const waitStatus = await this.#options.coordinator.wait(source.run.id, targets, input.timeoutMs ?? 30000, signal, delivered)
+        if (waitStatus === 'timedout')
+          return { ...this.status(source.run.id, target.run.id, entries), waitStatus }
+      }
     }
     return this.status(source.run.id, target.run.id, entries)
   }

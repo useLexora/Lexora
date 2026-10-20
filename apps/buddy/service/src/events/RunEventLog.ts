@@ -113,9 +113,8 @@ export class RunEventLog implements RunEventLogPort {
     return Object.freeze([...this.#quarantined.values()].map(entry => entry.failure))
   }
 
-  assertConversationWritable(conversationId: string): void {
+  assertConversationWritable(_conversationId: string): void {
     this.#assertMutationAllowed()
-    this.#assertConversationAvailable(conversationId)
   }
 
   assertRunExecutable(runId: string): void {
@@ -189,21 +188,16 @@ export class RunEventLog implements RunEventLogPort {
     options: Pick<ListBuddyRunEventsOptions, 'limit'> = {},
   ): BuddyRunEvent[] {
     this.#assertOpen()
-    this.#assertConversationAvailable(conversationId)
-    return this.#queries.listForConversation(conversationId, options)
+    return this.#queries.listForConversation(conversationId, { ...options, excludedRunIds: [...this.#quarantined.keys()] })
   }
 
   listForRuns(runIds: readonly string[], options?: { latestActivityOnly?: boolean }): BuddyRunEvent[] {
     this.#assertOpen()
-    for (const runId of runIds)
-      this.#assertRunAvailable(runId)
-    return this.#queries.listForRuns(runIds, options)
+    return this.#queries.listForRuns(runIds.filter(runId => !this.#quarantined.has(runId)), options)
   }
 
   listToolCounts(runIds: readonly string[]): ReadonlyMap<string, number> {
     this.#assertOpen()
-    for (const runId of runIds)
-      this.#assertRunAvailable(runId)
     return this.#queries.listToolCounts(runIds)
   }
 
@@ -500,22 +494,10 @@ export class RunEventLog implements RunEventLogPort {
     throw entry.error
   }
 
-  #assertConversationAvailable(conversationId: string): void {
-    for (const entry of this.#quarantined.values()) {
-      if (entry.failure.conversationId === conversationId)
-        throw entry.error
-    }
-  }
-
   #assertRunAvailable(runId: string): void {
     const entry = this.#quarantined.get(runId)
     if (entry)
       throw entry.error
-    if (!this.#quarantined.size)
-      return
-    const conversationId = this.#queries.findConversationId(runId)
-    if (conversationId)
-      this.#assertConversationAvailable(conversationId)
   }
 
   #isTerminalRun(runId: string): boolean {

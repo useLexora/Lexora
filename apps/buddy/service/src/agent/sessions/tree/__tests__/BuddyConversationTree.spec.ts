@@ -41,6 +41,38 @@ afterEach(async () => {
 })
 
 describe('native conversation tree', () => {
+  it('skips quarantined native checkpoints and descendants without deleting private history', async () => {
+    const quarantined = new Set<string>()
+    const f = await createFixture(undefined, runId => !quarantined.has(runId))
+    const first = f.run('damaged', 'b0', 'q1')
+    const opened = await f.open(first)
+    await opened.cursor.begin(opened.session.session, first.id)
+    opened.cursor.manager.appendMessage(user('q1', 'PUBLIC_INPUT'))
+    opened.cursor.manager.appendMessage(assistant([{ type: 'text', text: 'UNVERIFIED_PRIVATE_NATIVE_CONTENT' }]))
+    f.publish(first, 'public-answer', 'PRESERVED_PUBLIC_RECORD')
+    opened.cursor.finish()
+    f.complete(first)
+    await opened.session.shutdown('quit')
+    const descendant = f.run('descendant', 'b0', 'q2')
+    const inherited = await f.open(descendant)
+    await inherited.cursor.begin(inherited.session.session, descendant.id)
+    inherited.cursor.finish()
+    f.complete(descendant)
+    await inherited.session.shutdown('quit')
+    const originalBytes = await readFile(inherited.session.piSessionFile)
+    quarantined.add(first.id)
+    const preview = await f.tree.preview('conversation', 'b0', f.root, first.threadId)
+    expect(JSON.stringify(preview.buildSessionContext().messages)).not.toContain('UNVERIFIED_PRIVATE_NATIVE_CONTENT')
+    const next = f.run('next', 'b0', 'q3')
+    f.source(next.id, first.id, 'after')
+    const fresh = await f.open(next)
+    await fresh.cursor.begin(fresh.session.session, next.id)
+    expect(JSON.stringify(fresh.cursor.manager.buildSessionContext().messages)).not.toContain('UNVERIFIED_PRIVATE_NATIVE_CONTENT')
+    expect(JSON.stringify(fresh.cursor.manager.buildSessionContext().messages)).toContain('PRESERVED_PUBLIC_RECORD')
+    expect((await readFile(inherited.session.piSessionFile)).subarray(0, originalBytes.length)).toEqual(originalBytes)
+    await fresh.session.shutdown('quit')
+  })
+
   it('includes new publications in later previews without changing earlier snapshots', async () => {
     const f = await createFixture()
     const first = f.run('preview-first', 'b0', 'q1')
@@ -611,7 +643,7 @@ describe('native conversation tree', () => {
   })
 })
 
-async function createFixture(recovery?: BuddySessionRecoveryService['create']) {
+async function createFixture(recovery?: BuddySessionRecoveryService['create'], isRunHistoryAvailable?: (runId: string) => boolean) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-native-tree-'))
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   cleanups.push(async () => {
@@ -643,6 +675,7 @@ async function createFixture(recovery?: BuddySessionRecoveryService['create']) {
     conversationsDirectory: join(root, 'conversations'),
     repository,
     threads,
+    isRunHistoryAvailable,
     recovery: {
       create: recovery ?? (async () => {
         throw new Error('Healthy native context must not be reconstructed')

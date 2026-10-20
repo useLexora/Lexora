@@ -3,6 +3,85 @@ use serde_json::json;
 use std::fs;
 
 #[test]
+fn shared_read_handle_does_not_leave_a_recovery_hazard_after_release() {
+    rejected_existing_write_can_continue(false);
+}
+
+#[test]
+fn readonly_attribute_does_not_leave_a_recovery_hazard_after_restoration() {
+    rejected_existing_write_can_continue(true);
+}
+
+fn rejected_existing_write_can_continue(readonly: bool) {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    let path = root.join("note.txt");
+    fs::write(&path, "original").unwrap();
+    let permissions = fs::metadata(&path).unwrap().permissions();
+    let occupied = if readonly {
+        let mut restricted = permissions.clone();
+        restricted.set_readonly(true);
+        fs::set_permissions(&path, restricted).unwrap();
+        None
+    } else {
+        Some(
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(&path)
+                .unwrap(),
+        )
+    };
+    let journal = temp.path().join("journal");
+    let mut engine = Engine::new(&journal);
+    engine.register("space", &root);
+    let operation = id();
+    let action = json!({"kind":"write","text":"must-not-be-replayed"});
+    let rejected = engine.mutate(&operation, "space", "note.txt", action.clone());
+    drop(occupied);
+    fs::set_permissions(&path, permissions).unwrap();
+    assert_eq!(rejected["result"]["status"], "not-applied", "{rejected}");
+    assert_eq!(rejected["result"]["error"], "FILE_IO_FAILED", "{rejected}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    let duplicate = engine.mutate(&operation, "space", "note.txt", action);
+    assert_eq!(duplicate["result"], rejected["result"]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    let continued = engine.mutate(
+        &id(),
+        "space",
+        "note.txt",
+        json!({"kind":"write","text":"after-release"}),
+    );
+    assert_eq!(continued["result"]["status"], "applied", "{continued}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "after-release");
+    drop(engine);
+    let mut engine = Engine::new(&journal);
+    engine.register("space", &root);
+    let history = engine.call(json!({"type":"history","root":"space"}));
+    assert!(
+        history["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|record| record["status"] != "needs-recovery")
+    );
+    let continued = engine.mutate(
+        &id(),
+        "space",
+        "note.txt",
+        json!({"kind":"write","text":"after-restart"}),
+    );
+    assert_eq!(continued["result"]["status"], "applied", "{continued}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "after-restart");
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[test]
 fn rejects_invalid_names_before_creating_an_operation() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("root");

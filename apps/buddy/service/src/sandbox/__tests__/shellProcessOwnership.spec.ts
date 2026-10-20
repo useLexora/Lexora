@@ -102,7 +102,11 @@ describe.skipIf(process.platform !== 'linux')('real shell process ownership', ()
       f.lease.markHazard('SHELL_PROCESS_TREE_UNKNOWN')
       const restored = new MutationCoordinator({ repository: f.repository })
       expect(restored.getRunState('owner').hazards).toMatchObject([{ invocationId: 'invocation', reason: 'SHELL_PROCESS_TREE_UNKNOWN' }])
-      await expect(restored.acquire({ lifetime: 'external' as const, runId: 'other', invocationId: 'other-call', claims: [{ kind: 'host' }], signal: new AbortController().signal })).rejects.toThrow('MUTATION_RESOURCE_UNSAFE')
+      const next = await restored.acquire({ lifetime: 'external' as const, runId: 'other', invocationId: 'other-call', claims: [{ kind: 'host' }], signal: new AbortController().signal })
+      next.release()
+      expect(restored.getRunState('owner').hazards).toHaveLength(1)
+      expect(f.processes()[0]?.settlement).toBe('unknown')
+      await restored.dispose()
     }
     finally {
       for (const pid of pids) {

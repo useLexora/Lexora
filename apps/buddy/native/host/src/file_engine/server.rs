@@ -111,6 +111,7 @@ pub fn serve(directory: &Path) -> Result<()> {
         subscriptions: HashSet::new(),
         watched: HashMap::new(),
         pending: VecDeque::new(),
+        active_leases: HashMap::new(),
     };
     send(
         &engine.output,
@@ -169,6 +170,7 @@ struct Engine {
     subscriptions: HashSet<String>,
     watched: HashMap<PathBuf, String>,
     pending: VecDeque<Request>,
+    active_leases: HashMap<String, Vec<Claim>>,
 }
 
 impl Engine {
@@ -238,17 +240,10 @@ impl Engine {
     }
 
     fn available(&self, claims: &[Claim], own: Option<&str>) -> Result<bool> {
-        if overlap(claims, &self.journal.hazards()?) {
-            return Err(Error::Recovery);
-        }
-        let leases = self.journal.leases()?;
         if let Some(id) = own {
-            let lease = leases
-                .iter()
-                .find(|(key, _, hazard)| key == id && !hazard)
-                .ok_or(Error::Lease)?;
+            let lease = self.active_leases.get(id).ok_or(Error::Lease)?;
             if !claims.iter().all(|claim| {
-                lease.1.iter().any(|held| {
+                lease.iter().any(|held| {
                     held.path == "*"
                         || held.path == claim.path
                         || (held.subtree && contains(&held.path, &claim.path))
@@ -257,11 +252,8 @@ impl Engine {
                 return Err(Error::Lease);
             }
         }
-        for (id, held, hazard) in leases {
-            if Some(id.as_str()) != own && overlap(claims, &held) {
-                if hazard {
-                    return Err(Error::Recovery);
-                }
+        for (id, held) in &self.active_leases {
+            if Some(id.as_str()) != own && overlap(claims, held) {
                 return Ok(false);
             }
         }
@@ -323,6 +315,7 @@ impl Engine {
                     return Ok(None);
                 }
                 self.journal.acquire(lease_id, &claims, *external)?;
+                self.active_leases.insert(lease_id.clone(), claims);
                 Value::Null
             }
             Command::Protect { lease_id, claims } => {
@@ -366,6 +359,7 @@ impl Engine {
                     }
                 }
                 self.pending = retained;
+                self.active_leases.remove(lease_id);
                 self.journal.release(lease_id, *hazard)?;
                 Value::Null
             }

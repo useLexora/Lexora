@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { RunEventLogCallbacks } from '../RunEventLog'
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -90,16 +90,17 @@ describe('runEventLog', () => {
     dispose()
   })
 
-  it('repairs an incomplete tail before assigning the next sequence', async () => {
+  it('preserves an incomplete tail and rejects further writes to that run', async () => {
     const fixture = await createFixture()
     await fixture.log.append({ payload: {}, runId: 'run-1', type: 'run.started' })
     await appendFile(fixture.eventFile, '{"runId":"run-1"')
 
-    await expect(fixture.log.read('run-1')).resolves.toHaveLength(1)
+    const damaged = await readFile(fixture.eventFile, 'utf8')
+    await expect(fixture.log.read('run-1')).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
     await expect(fixture.log.append({ payload: {}, runId: 'run-1', type: 'audit.recorded' }))
-      .resolves
-      .toMatchObject({ sequence: 2 })
-    await expect(fixture.log.read('run-1')).resolves.toHaveLength(2)
+      .rejects
+      .toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+    expect(await readFile(fixture.eventFile, 'utf8')).toBe(damaged)
   })
 
   it('quarantines a corrupt durable log without entering the global fatal channel', async () => {

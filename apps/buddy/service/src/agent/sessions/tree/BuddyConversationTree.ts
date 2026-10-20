@@ -21,6 +21,7 @@ export interface BuddyConversationTreeOptions {
   repository: ConversationTreeRepository
   threads: Pick<ThreadBindingRepository, 'find' | 'findBinding' | 'bind'>
   runs: Pick<RunRepository, 'findById'>
+  isRunHistoryAvailable?: (runId: string) => boolean
   recovery: Pick<BuddySessionRecoveryService, 'create'>
   onObserverError?: (error: unknown) => void
 }
@@ -100,7 +101,7 @@ export class BuddyConversationTree {
     const throughSequence = publicMessageId ? options.repository.getMessagePublicSequence(conversationId, publicMessageId) - (position === 'before' ? 1 : 0) : source ? options.repository.getRunPublicBoundary(source.id, position) : options.repository.getPublicSequence(conversationId)
     const materials = options.repository.listPublications(conversationId, branchId, throughSequence)
     const eligible = eligiblePublicRuns(options, conversationId, branchId, targetThread, throughSequence)
-    const candidates = source?.threadId === targetThread
+    const candidates = source?.threadId === targetThread && options.isRunHistoryAvailable?.(source.id) !== false
       ? [{ run: source, position }, ...eligible.map(run => ({ run, position: 'after' as const }))]
       : eligible.map(run => ({ run, position: 'after' as const }))
     const checkpoint = journal
@@ -213,7 +214,7 @@ export class BuddyConversationTreeCursor {
     const materials = this.#options.repository.listPublications(run.conversationId, run.branchId, throughSequence)
     const eligible = eligiblePublicRuns(this.#options, run.conversationId, run.branchId, run.threadId, throughSequence).filter(candidate => candidate.id !== run.id)
     const source = explicit ? this.#options.runs.findById(explicit.sourceRunId) : null
-    const candidates = source?.threadId === run.threadId
+    const candidates = source?.threadId === run.threadId && this.#options.isRunHistoryAvailable?.(source.id) !== false
       ? [{ run: source, position: explicit!.position }, ...eligible.map(run => ({ run, position: 'after' as const }))]
       : eligible.map(run => ({ run, position: 'after' as const }))
     for (const candidate of candidates) {
@@ -267,7 +268,7 @@ function eligiblePublicRuns(options: BuddyConversationTreeOptions, conversationI
   const branches = new Set(options.repository.listPublicBranchIds(conversationId, branchId))
   const sources = new Set(options.repository.listPublications(conversationId, branchId, throughSequence).map(material => material.sourceId))
   return options.repository.listRuns(conversationId).filter((run) => {
-    if (run.threadId !== threadId || !branches.has(run.branchId) || run.status === 'queued' || run.status === 'running')
+    if (options.isRunHistoryAvailable?.(run.id) === false || run.threadId !== threadId || !branches.has(run.branchId) || run.status === 'queued' || run.status === 'running')
       return false
     if (options.repository.getRunPublicBoundary(run.id, 'after') > throughSequence)
       return false
@@ -291,6 +292,8 @@ function isPublicCheckpoint(manager: SessionManager, entryId: string, materials:
     })
     for (const entry of branch) {
       const checkpoint = readCheckpoint(entry)
+      if (checkpoint && options.isRunHistoryAvailable?.(checkpoint.runId) === false)
+        return false
       const completed = checkpoint?.position === 'after' ? options.runs.findById(checkpoint.runId) : null
       if (completed && options.repository.listPublications(completed.conversationId, completed.branchId).some(material => material.runId === completed.id && !sources.has(material.sourceId)))
         return false

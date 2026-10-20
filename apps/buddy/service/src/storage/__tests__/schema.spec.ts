@@ -571,7 +571,10 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
       const signal = new AbortController().signal
       const lease = await coordinator.acquire({ runId: 'new', invocationId: 'new', lifetime: 'runtime' as const, claims: [{ kind: 'file', canonicalPath: '/fixture/file' }], signal })
       lease.release()
-      await expect(coordinator.acquire({ runId: 'new', invocationId: 'blocked', lifetime: 'runtime' as const, claims: [{ kind: 'host' }], signal })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+      const next = await coordinator.acquire({ runId: 'new', invocationId: 'next', lifetime: 'runtime' as const, claims: [{ kind: 'host' }], signal })
+      next.release()
+      expect(repository.listUnreleased().map(lease => lease.invocationId)).toEqual(['shell', 'unrecorded'])
+      await expect(coordinator.acquire({ runId: 'new', invocationId: 'shell', lifetime: 'external', claims: [{ kind: 'host' }], signal })).rejects.toMatchObject({ code: 'MUTATION_INVOCATION_CONFLICT' })
       expect(migrated.prepare('SELECT * FROM run_change_invocations').all()).toEqual(captures)
       expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
     }

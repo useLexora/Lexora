@@ -68,17 +68,29 @@ describe('space file acknowledgement', () => {
     await expect(f.files.acknowledge(f.input)).rejects.toMatchObject({ code: 'FILE_PERMISSION_REVOKED' })
     expect((await f.engine.query(f.record.operationId))?.status).toBe('needs-recovery')
     await f.engine.register('replacement-probe', f.workspace)
-    await expect(f.engine.acquire(randomUUID(), [{ root: 'replacement-probe', path: 'note.txt', subtree: false }])).rejects.toThrow('FILE_RECOVERY_REQUIRED')
-    expect(await readFile(join(f.workspace, 'note.txt'), 'utf8')).toBe('replacement')
+    await expect(f.files.mutate({ ...f.input, operationId: randomUUID(), path: 'note.txt', action: { kind: 'rename', destination: 'rejected.txt' } })).rejects.toMatchObject({ code: 'FILE_PERMISSION_REVOKED' })
+    const leaseId = randomUUID()
+    await f.engine.acquire(leaseId, [{ root: 'replacement-probe', path: 'note.txt', subtree: false }])
+    try {
+      const current = await f.engine.read('replacement-probe', 'note.txt')
+      expect(current.text).toBe('replacement')
+      expect((await f.engine.mutate({ operationId: randomUUID(), leaseId, root: 'replacement-probe', path: 'note.txt', action: { kind: 'write', text: 'newly authorized', expected: current.etag } })).status).toBe('applied')
+    }
+    finally { await f.engine.release(leaseId) }
+    expect((await f.engine.query(f.record.operationId))?.status).toBe('needs-recovery')
+    expect(await readFile(join(f.workspace, 'note.txt'), 'utf8')).toBe('newly authorized')
     expect(await readFile(join(f.root, 'retained', 'note.txt'), 'utf8')).toBe('original')
   })
 
-  it('keeps cross-directory operations protected when only the primary directory is authorized', async () => {
+  it('retains unreviewed cross-directory outcomes while allowing new operations in the authorized directory', async () => {
     const f = await fixture(true)
     expect(await f.files.history(f.input)).toContainEqual(expect.objectContaining({ path: 'note.txt', destination: null }))
     await expect(f.files.acknowledge(f.input)).rejects.toMatchObject({ code: 'FILE_PERMISSION_REVOKED' })
     expect((await f.engine.query(f.record.operationId))?.status).toBe('needs-recovery')
-    await expect(f.files.mutate({ ...f.input, operationId: randomUUID(), path: 'note.txt', action: { kind: 'rename', destination: 'moved.txt' } })).rejects.toThrow('FILE_RECOVERY_REQUIRED')
+    expect((await f.files.mutate({ ...f.input, operationId: randomUUID(), path: 'note.txt', action: { kind: 'rename', destination: 'moved.txt' } })).status).toBe('applied')
+    expect(await readFile(join(f.workspace, 'moved.txt'), 'utf8')).toBe('original')
+    expect(await readFile(join(f.outside, 'copied.txt'), 'utf8')).toBe('original')
+    expect((await f.engine.query(f.record.operationId))?.status).toBe('needs-recovery')
   })
 
   it('accepts current state idempotently without replaying effects or deleting staging evidence', async () => {
@@ -97,7 +109,7 @@ describe('space file acknowledgement', () => {
     expect((await f.files.mutate({ ...f.input, operationId: randomUUID(), path: 'note.txt', action: { kind: 'rename', destination: 'moved.txt' } })).status).toBe('applied')
   })
 
-  it.each(['source', 'destination', 'staging'] as const)('rejects a symlink redirect at the %s endpoint and retains protection', async (endpoint) => {
+  it.each(['source', 'destination', 'staging'] as const)('rejects a symlink redirect at the %s endpoint and retains the unknown outcome', async (endpoint) => {
     const f = await fixture()
     await f.files.history(f.input)
     const path = endpoint === 'staging' ? f.record.receipt!.staging as string : f.record[endpoint]!

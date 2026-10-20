@@ -11,7 +11,7 @@ import { executionPhaseLabel, executionStatus } from './executionPresentation'
 
 const props = defineProps<{ execution: LocalExecution, language: BuddyLocale, now: number, selected: boolean, stopping: boolean, failed: boolean, enabled: boolean }>()
 const emit = defineEmits<{ open: [], stop: [] }>()
-const labels = computed(() => executionLabels(props.language))
+const labels = computed(() => executionLabels(props.language, props.execution.errorCode))
 const identity = useBuddyIdentity(computed(() => props.execution.buddyId))
 const root = computed(() => props.execution.kind === 'root')
 const actor = computed(() => props.execution.kind !== 'npc_child')

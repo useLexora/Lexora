@@ -11,3 +11,7 @@ mod windows;
 mod windows_shell;
 
 pub use server::serve;
+
+#[cfg(test)]
+#[path = "../../__tests__/file_engine_interrupt.rs"]
+mod interruption;

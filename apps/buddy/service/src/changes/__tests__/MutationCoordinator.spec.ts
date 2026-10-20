@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { MutationCoordinator } from '../MutationCoordinator'
@@ -13,6 +16,105 @@ function setup() {
 }
 
 describe('mutation ownership', () => {
+  it('keeps historical shell and MCP facts across database reopen while admitting only new identities', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mutation-reopen-'))
+    const databasePath = join(root, 'buddy.sqlite3')
+    const input = { lifetime: 'external' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
+    let database = openBuddyDatabase({ databasePath })
+    try {
+      const first = new MutationCoordinator({ repository: createMutationRepository(database) })
+      for (const id of ['shell', 'mcp']) {
+        const lease = await first.acquire({ ...input, runId: id, invocationId: id })
+        first.recordOwnedProcessSettlement({ invocationId: id, processId: id, settlement: id === 'shell' ? 'pending' : 'unknown' })
+        first.recordOwnedProcessSettlement({ invocationId: id, processId: `${id}-released`, settlement: 'released' })
+        lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+      }
+      await first.dispose()
+      database.close()
+      database = openBuddyDatabase({ databasePath })
+      const repository = createMutationRepository(database)
+      const restored = new MutationCoordinator({ repository })
+      try {
+        const before = repository.listUnreleased()
+        const next = await restored.acquire({ ...input, runId: 'next', invocationId: 'next' })
+        next.release()
+        expect(repository.listUnreleased()).toEqual(before)
+        expect(restored.getOwnedProcesses('shell')).toEqual([
+          { processId: 'shell', settlement: 'pending' },
+          { processId: 'shell-released', settlement: 'released' },
+        ])
+        expect(restored.getOwnedProcesses('mcp')).toEqual([
+          { processId: 'mcp', settlement: 'unknown' },
+          { processId: 'mcp-released', settlement: 'released' },
+        ])
+        for (const invocationId of ['shell', 'mcp', 'next'])
+          await expect(restored.acquire({ ...input, runId: 'replay', invocationId })).rejects.toMatchObject({ code: 'MUTATION_INVOCATION_CONFLICT' })
+      }
+      finally { await restored.dispose() }
+    }
+    finally {
+      database.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps overlapping pending claims in FIFO order while an active lease settles', async () => {
+    const mutations = setup()
+    const input = { lifetime: 'runtime' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
+    const first = await mutations.acquire({ ...input, runId: 'first', invocationId: 'first' })
+    const admitted: string[] = []
+    const second = mutations.acquire({ ...input, runId: 'second', invocationId: 'second' }).then((lease) => {
+      admitted.push('second')
+      return lease
+    })
+    const third = mutations.acquire({ ...input, runId: 'third', invocationId: 'third' }).then((lease) => {
+      admitted.push('third')
+      return lease
+    })
+    expect(mutations.getRunState('second').pending).toBe(1)
+    expect(mutations.getRunState('third').pending).toBe(1)
+    first.markHazard('UNCONFIRMED')
+    const secondLease = await second
+    expect(admitted).toEqual(['second'])
+    expect(mutations.getRunState('third').pending).toBe(1)
+    secondLease.release()
+    const thirdLease = await third
+    expect(admitted).toEqual(['second', 'third'])
+    thirdLease.release()
+    expect(mutations.getHazards()).toHaveLength(1)
+  })
+
+  it('initializes and admits new work while a historical resource reconciliation is still settling', async () => {
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    const mutations = new MutationCoordinator({ resources: {
+      acquire: async () => {},
+      reconcile: async () => {},
+      release: async (id) => {
+        if (id === 'old') {
+          entered.resolve()
+          await released.promise
+        }
+      },
+    } })
+    coordinators.push(mutations)
+    const input = { lifetime: 'runtime' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
+    mutations.restoreHazard({ runId: 'old', invocationId: 'old', claims: input.claims, reason: 'FILE_RESOURCE_SETTLEMENT_FAILED' })
+    try {
+      await mutations.initialize()
+      await entered.promise
+      const next = await mutations.acquire({ ...input, runId: 'next', invocationId: 'next' })
+      expect(mutations.getHazards()).toHaveLength(1)
+      await expect(mutations.acquire({ ...input, runId: 'old', invocationId: 'old' })).rejects.toMatchObject({ code: 'MUTATION_INVOCATION_CONFLICT' })
+      next.release()
+    }
+    finally {
+      released.resolve()
+      await mutations.waitForSettlements()
+    }
+    expect(mutations.getHazards()).toEqual([])
+  })
+
   it('keeps conflicting writers queued during native settlement but fences late process dispatch', async () => {
     const released = Promise.withResolvers<void>()
     const mutations = new MutationCoordinator({ resources: { acquire: async () => {}, reconcile: async () => {}, release: async () => released.promise } })
@@ -74,7 +176,9 @@ describe('mutation ownership', () => {
       const recovered = new MutationCoordinator({ repository })
       coordinators.push(recovered)
       expect(recovered.getRunState(input.runId)).toMatchObject({ active: 0, pending: 0, hazards: [{ invocationId: input.invocationId, reason: 'MUTATION_INTERRUPTED' }] })
-      await expect(recovered.acquire({ ...input, invocationId: 'overlap' })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+      const overlap = await recovered.acquire({ ...input, invocationId: 'overlap' })
+      overlap.release()
+      await expect(recovered.acquire(input)).rejects.toMatchObject({ code: 'MUTATION_INVOCATION_CONFLICT' })
       recovered.recordOwnedProcessSettlement({ invocationId: input.invocationId, processId: 'parent', settlement: 'unknown' })
       expect(recovered.getRunState(input.runId).hazards).toHaveLength(1)
       recovered.recordOwnedProcessSettlement({ invocationId: input.invocationId, processId: 'child', settlement: 'released' })
@@ -113,7 +217,7 @@ describe('mutation ownership', () => {
     finally { database.close() }
   })
 
-  it('keeps a supervised lease unsafe when the process handshake was not durably recorded', async () => {
+  it('retains an unknown supervised outcome without fencing a new invocation', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     try {
       const repository = createMutationRepository(database)
@@ -124,7 +228,9 @@ describe('mutation ownership', () => {
       first.dispose()
       const recovered = new MutationCoordinator({ repository })
       coordinators.push(recovered)
-      await expect(recovered.acquire({ ...input, invocationId: 'next' })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+      const next = await recovered.acquire({ ...input, invocationId: 'next' })
+      next.release()
+      await expect(recovered.acquire(input)).rejects.toMatchObject({ code: 'MUTATION_INVOCATION_CONFLICT' })
       expect(repository.listUnreleased()).toHaveLength(1)
     }
     finally { database.close() }
@@ -148,22 +254,24 @@ describe('mutation ownership', () => {
     resumed.release()
   })
 
-  it('settles an unsafe execution without releasing its resource and restores that hazard independently', async () => {
+  it('retains an unknown outcome without turning it into a persistent admission fence', async () => {
     const mutations = setup()
     const input = { lifetime: 'external' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
     const lease = await mutations.acquire({ ...input, runId: 'failed', invocationId: 'host-1' })
     const settled = mutations.waitForRun('failed')
     const waiting = mutations.acquire({ ...input, runId: 'next', invocationId: 'next-1' })
-    const blocked = expect(waiting).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+    expect(mutations.getRunState('next')).toMatchObject({ pending: 1, active: 0 })
     lease.markHazard('PROCESS_CLEANUP_UNCONFIRMED')
-    await blocked
+    const next = await waiting
+    next.release()
     const state = await settled
     expect(state).toMatchObject({ pending: 0, active: 0, hazards: [{ invocationId: 'host-1', runId: 'failed' }] })
     lease.release()
     expect(mutations.getRunState('failed').hazards).toHaveLength(1)
     const restored = setup()
     restored.restoreHazard(state.hazards[0]!)
-    await expect(restored.acquire({ ...input, runId: 'other', invocationId: 'other-1' })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+    const other = await restored.acquire({ ...input, runId: 'other', invocationId: 'other-1' })
+    other.release()
     await expect(restored.confirmReleased('host-1')).rejects.toThrow('PROCESS_RELEASE_EVIDENCE_MISSING')
     restored.recordOwnedProcessSettlement({ invocationId: 'host-1', processId: 'verified-original', settlement: 'released' })
     await restored.confirmReleased('host-1')

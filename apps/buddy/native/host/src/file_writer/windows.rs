@@ -7,8 +7,14 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
-use windows_sys::Win32::Storage::FileSystem::{
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, MoveFileExW, ReplaceFileW,
+use windows_sys::Win32::{
+    Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION, ERROR_WRITE_PROTECT,
+        GetLastError,
+    },
+    Storage::FileSystem::{
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, MoveFileExW, ReplaceFileW,
+    },
 };
 
 pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
@@ -54,12 +60,12 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         ".lexora-save-{}-{nonce}.backup",
         std::process::id()
     ));
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|_| WriteError::Failed)?;
     let result = (|| {
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| WriteError::Failed)?;
         output
             .write_all(request.content.as_bytes())
             .map_err(|_| WriteError::Failed)?;
@@ -92,11 +98,17 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
             )
         };
         if replaced == 0 {
+            // SAFETY: GetLastError has no preconditions and immediately follows ReplaceFileW.
+            let error = unsafe { GetLastError() };
+            let outcome = replacement_failure(error);
+            if matches!(outcome, WriteError::Failed) {
+                return Err(outcome);
+            }
             if !path.exists() && backup.exists() {
                 // SAFETY: Both buffers are terminated; zero flags preserve any newly occupied destination.
                 unsafe { MoveFileExW(previous.as_ptr(), destination.as_ptr(), 0) };
             }
-            return Err(WriteError::Failed);
+            return Err(outcome);
         }
         let _ = fs::remove_file(&backup);
         Ok(())
@@ -104,3 +116,17 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
     let _ = fs::remove_file(&temporary);
     result
 }
+
+fn replacement_failure(error: u32) -> WriteError {
+    match error {
+        ERROR_ACCESS_DENIED
+        | ERROR_SHARING_VIOLATION
+        | ERROR_LOCK_VIOLATION
+        | ERROR_WRITE_PROTECT => WriteError::Failed,
+        _ => WriteError::OutcomeUnknown,
+    }
+}
+
+#[cfg(test)]
+#[path = "../../__tests__/file_writer_windows.rs"]
+mod tests;

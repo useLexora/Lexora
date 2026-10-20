@@ -227,7 +227,7 @@ fn shared_roots_and_hardlinks_share_the_same_resource_lease() {
 }
 
 #[test]
-fn restart_preserves_unknown_outcomes_and_blocks_replay_until_reviewed() {
+fn restart_preserves_unknown_outcomes_without_blocking_new_operations() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
     std::fs::create_dir(&root).unwrap();
@@ -263,25 +263,32 @@ fn restart_preserves_unknown_outcomes_and_blocks_replay_until_reviewed() {
             "root",
             "a",
             json!({"kind":"rename","destination":"b"})
-        )["error"],
-        "FILE_RECOVERY_REQUIRED"
+        )["result"]["status"],
+        "applied"
     );
-    assert!(root.join("a").exists());
-    assert!(!root.join("b").exists());
+    assert!(!root.join("a").exists());
+    assert!(root.join("b").exists());
+    assert_eq!(
+        engine.mutate(&operation, "root", "a", json!({"kind":"createFile"}))["result"]["status"],
+        "needs-recovery"
+    );
+    assert!(!root.join("a").exists());
+    assert_eq!(
+        engine.mutate(
+            &operation,
+            "root",
+            "a",
+            json!({"kind":"write","text":"replay"})
+        )["error"],
+        "FILE_OPERATION_ID_CONFLICT"
+    );
     assert_eq!(
         engine.call(json!({"type":"acknowledge","root":"root","operationId":operation}))["result"]
             ["status"],
         "acknowledged"
     );
-    assert_eq!(
-        engine.mutate(
-            &id(),
-            "root",
-            "a",
-            json!({"kind":"rename","destination":"b"})
-        )["result"]["status"],
-        "applied"
-    );
+    assert!(!root.join("a").exists());
+    assert!(root.join("b").exists());
 }
 
 #[cfg(unix)]
@@ -427,6 +434,15 @@ fn queued_mutation_can_be_cancelled_without_modifying_the_file() {
     let cancel = engine.send(json!({"type":"cancel","operationId":operation}));
     assert_eq!(engine.response(queued)["error"], "FILE_OPERATION_CANCELLED");
     assert_eq!(engine.response(cancel)["result"], Value::Null);
+    assert_eq!(std::fs::read(root.join("a")).unwrap(), b"retained");
+    assert_eq!(
+        engine.call(json!({"type":"release","leaseId":lease,"hazard":false}))["result"],
+        Value::Null
+    );
+    assert_eq!(
+        engine.call(json!({"type":"query","operationId":operation}))["result"],
+        Value::Null
+    );
     assert_eq!(std::fs::read(root.join("a")).unwrap(), b"retained");
 }
 

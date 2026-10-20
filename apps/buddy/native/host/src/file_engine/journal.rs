@@ -104,22 +104,6 @@ impl Journal {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
-    pub fn hazards(&self) -> Result<Vec<Claim>> {
-        let mut query = self.0.prepare("SELECT record, claims FROM operations WHERE status IN ('\"executing\"','\"needs-recovery\"')")?;
-        let rows = query.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        let mut hazards = Vec::new();
-        for row in rows {
-            let (record, claims) = row?;
-            let record: Operation = serde_json::from_str(&record)?;
-            if matches!(record.status, Status::Executing | Status::NeedsRecovery) {
-                hazards.extend(serde_json::from_str::<Vec<Claim>>(&claims)?);
-            }
-        }
-        Ok(hazards)
-    }
-
     pub fn leases(&self) -> Result<Vec<(String, Vec<Claim>, bool)>> {
         let mut query = self.0.prepare("SELECT id, claims, hazard FROM leases")?;
         let rows = query.query_map([], |row| {

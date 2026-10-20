@@ -16,7 +16,7 @@ import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicat
 import type { ReusableBuddySession } from '../agent/sessions/ReusableBuddySession'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,11 +44,14 @@ import {
   prepareTestCommandRequest,
   prepareTestTurnRequest,
 } from '../storage/__tests__/composerDraftTestFixture'
+import { createExecutionStorageFixture, executionNow } from '../storage/__tests__/executionFixture'
+import { createApprovalRepository } from '../storage/approvalRepository'
 import { createArtifactRepository } from '../storage/artifactRepository'
 import { createAttachmentRepository } from '../storage/attachmentRepository'
 import { createConversationDeletionRepository } from '../storage/conversationDeletionRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { openBuddyDatabase } from '../storage/database'
+import { createExecutionRepository } from '../storage/executionRepository'
 import { createRunRepository } from '../storage/runRepository'
 import { createSpaceRepository } from '../storage/spaceRepository'
 import { createUsageRepository } from '../storage/usageRepository'
@@ -66,6 +69,124 @@ afterEach(async () => {
 })
 
 describe('buddy runtime cross-subsystem contract', () => {
+  it.each(['root', 'child'] as const)('recovers a corrupt %s across database restarts and executes new turns in the same conversation', async (damagedId) => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-run-recovery-')))
+    directories.push(directory)
+    const buddyHome = join(directory, 'buddy')
+    const databasePath = join(buddyHome, 'buddy.sqlite3')
+    const conversationsDirectory = join(buddyHome, 'conversations')
+    const scope = { conversationId: 'conversation', branchId: 'branch' }
+    const seed = createExecutionStorageFixture(databasePath)
+    const seedLog = createRunEventLog({ database: seed.database, conversationsDirectory })
+    seed.conversations.createMessage({ id: 'goal', ...scope, runId: null, role: 'user', content: { text: 'Old interrupted goal' }, createdAt: executionNow })
+    seed.executions.admitChild(seed.child('child'))
+    for (const runId of ['root', 'child']) {
+      await seedLog.append({ runId, type: 'run.started', payload: {} })
+      await seedLog.append({ runId, type: 'tool.started', payload: { toolCallId: `old-tool-${runId}`, toolName: 'read', args: { path: 'evidence.txt' } } })
+    }
+    await seedLog.append({ runId: damagedId, type: 'approval.requested', payload: {
+      id: 'old-approval',
+      runId: damagedId,
+      toolCallId: 'old-read',
+      kind: 'read',
+      status: 'pending',
+      summary: 'Old read',
+      createdAt: executionNow,
+      resolvedAt: null,
+      payload: { card: 'paths', access: 'read', grant: null, toolName: 'read', targets: [{ path: '/fixture.txt', zone: 'workspace' }] },
+    } })
+    const originalProjection = seed.database.prepare('SELECT * FROM run_events WHERE run_id = ?').all(damagedId)
+    await seedLog.close()
+    seed.database.close()
+    const damagedFile = join(conversationsDirectory, scope.conversationId, 'events', `${damagedId}.jsonl`)
+    await appendFile(damagedFile, '{"torn":')
+    const damagedBytes = await readFile(damagedFile)
+    let response = Promise.withResolvers<void>()
+    const provider = await startLocalModelProvider(async () => {
+      const current = response
+      await current.promise
+      return { text: 'NEW_TURN_EXECUTED' }
+    })
+    let priorCompleted: string | undefined
+    let newlyDamagedFile: string | undefined
+    let newlyDamagedBytes: Buffer | undefined
+    let queuedId: string | undefined
+    for (let boot = 0; boot < 3; boot++) {
+      const database = openBuddyDatabase({ databasePath })
+      const eventLog = createRunEventLog({ database, conversationsDirectory })
+      const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+      let runtime: Awaited<ReturnType<typeof startBuddyService>> | undefined
+      const beforeRequests = provider.requests.length
+      try {
+        expect(await eventLog.recoverAll()).toMatchObject({ failed: boot === 2 ? 2 : 1 })
+        runtime = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
+        const runs = createRunRepository(database)
+        const executions = createExecutionRepository(database)
+        expect(runs.listIncomplete()).toEqual([])
+        expect(runs.findById(damagedId)).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED', piSessionFile: null })
+        expect(executions.find(damagedId)).toMatchObject({ phase: 'closed', cleanupState: 'degraded', cleanupErrorCode: 'EVENT_LOG_CORRUPTED' })
+        expect(executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded' })
+        expect(createApprovalRepository(database).findById('old-approval')?.status).toBe('cancelled')
+        expect(database.prepare('SELECT * FROM run_events WHERE run_id = ?').all(damagedId)).toEqual(originalProjection)
+        expect(await readFile(damagedFile)).toEqual(damagedBytes)
+        expect(provider.requests).toHaveLength(beforeRequests)
+        const healthyId = damagedId === 'root' ? 'child' : 'root'
+        expect(await eventLog.read(healthyId)).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'run.failed' })]))
+        const timeline = await harness.invoke('conversations.listTimeline', { ...scope, limit: 100 }) as { runs: Array<{ id: string, errorCode: string | null }>, runEvents: Array<{ runId: string }> }
+        expect(timeline.runEvents.some(event => event.runId === damagedId)).toBe(false)
+        if (damagedId === 'root')
+          expect(timeline.runs.find(run => run.id === 'root')?.errorCode).toBe('EVENT_LOG_CORRUPTED')
+        expect(await harness.invoke('executions.list', scope)).toEqual(expect.arrayContaining([
+          expect.objectContaining({ runId: damagedId, phase: 'closed', cleanup: 'degraded', errorCode: 'EVENT_LOG_CORRUPTED', toolCount: 1 }),
+        ]))
+        if (queuedId) {
+          expect(await harness.invoke('chat.queue.list', scope)).toEqual([expect.objectContaining({ id: queuedId, state: 'paused' })])
+          expect(await harness.invoke('chat.queue.cancel', { ...scope, id: queuedId })).toBe(true)
+        }
+        expect(await harness.invoke('runs.isBusy', {})).toBe(false)
+        await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+        response = Promise.withResolvers<void>()
+        const turn = await harness.invoke('chat.startTurn', await turnRequest(harness, { ...scope, content: `New explicit turn ${boot}`, requestId: `new-turn-${boot}` })) as LocalTurnStart
+        await expect.poll(() => provider.requests.length).toBe(beforeRequests + 1)
+        expect(await harness.invoke('runs.isBusy', {})).toBe(true)
+        expect(runs.findById(turn.runId)?.status).toBe('running')
+        if (boot === 1 && priorCompleted) {
+          newlyDamagedFile = join(conversationsDirectory, scope.conversationId, 'events', `${priorCompleted}.jsonl`)
+          await appendFile(newlyDamagedFile, '{broken}\n')
+          newlyDamagedBytes = await readFile(newlyDamagedFile)
+          await expect(eventLog.read(priorCompleted)).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+          expect(runs.findById(turn.runId)?.status).toBe('running')
+          expect(await harness.invoke('runs.isBusy', {})).toBe(true)
+        }
+        response.resolve()
+        expect(await waitForTerminalRun(harness, turn.runId)).toMatchObject({ status: 'completed' })
+        expect(JSON.stringify(await eventLog.read(turn.runId))).toContain('NEW_TURN_EXECUTED')
+        priorCompleted = turn.runId
+        if (boot === 1) {
+          response = Promise.withResolvers<void>()
+          const cancelled = await harness.invoke('chat.startTurn', await turnRequest(harness, { ...scope, content: 'Explicitly cancel this new turn', requestId: 'cancel-new-turn' })) as LocalTurnStart
+          await expect.poll(() => provider.requests.length).toBe(beforeRequests + 2)
+          const queued = await harness.invoke('chat.queue.enqueue', await turnRequest(harness, { ...scope, content: 'Do not replay this queued input', requestId: 'retained-queue' })) as { id: string }
+          queuedId = queued.id
+          expect(await harness.invoke('chat.cancel', { runId: cancelled.runId })).toMatchObject({ status: 'cancelled' })
+          response.resolve()
+          expect(await harness.invoke('chat.queue.list', scope)).toEqual([expect.objectContaining({ id: queuedId, state: 'paused' })])
+        }
+        await expect.poll(() => harness.invoke('runs.isBusy', {})).toBe(false)
+        expect(await readFile(damagedFile)).toEqual(damagedBytes)
+        if (newlyDamagedFile)
+          expect(await readFile(newlyDamagedFile)).toEqual(newlyDamagedBytes)
+      }
+      finally {
+        response.resolve()
+        await runtime?.dispose()
+        await eventLog.close()
+        database.close()
+      }
+    }
+    expect(provider.requests).toHaveLength(4)
+  }, 30_000)
+
   it.each(['empty legacy directory', 'legacy outputs', 'pending deletion'] as const)('starts past a quarantined conversation with %s and continues healthy work', async (maintenance) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-startup-quarantine-')))
     directories.push(root)
@@ -123,14 +244,14 @@ describe('buddy runtime cross-subsystem contract', () => {
       runtime = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
       const runs = createRunRepository(database)
       expect(eventLog.state).toBe('open')
-      expect(runs.findById('run-damaged')?.status).toBe('queued')
+      expect(runs.findById('run-damaged')).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' })
       expect(database.prepare('SELECT * FROM run_events WHERE run_id = ?').all('run-damaged')).toEqual(projection)
       expect(runs.findById('run-healthy')).toMatchObject(maintenance === 'pending deletion'
         ? { status: 'cancelled', errorCode: 'RUN_CANCELLED' }
         : { status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
       if (maintenance === 'pending deletion') {
         expect(createConversationRepository(database).isDeleted('damaged')).toBe(true)
-        expect(createConversationDeletionRepository(database).pending()).toEqual(['damaged'])
+        expect(createConversationDeletionRepository(database).pending()).toEqual([])
       }
       if (maintenance === 'legacy outputs') {
         const artifacts = createArtifactRepository(database)
@@ -144,7 +265,8 @@ describe('buddy runtime cross-subsystem contract', () => {
       expect(JSON.stringify(await eventLog.read(healthy.runId))).toContain('HEALTHY_AFTER_STARTUP')
       expect(provider.requests).toHaveLength(1)
       expect(await readFile(damagedFile, 'utf8')).toBe(damaged)
-      expect(() => eventLog.assertConversationWritable('damaged')).toThrow(RunEventCorruptionError)
+      expect(() => eventLog.assertConversationWritable('damaged')).not.toThrow()
+      expect(() => eventLog.assertRunWritable('run-damaged')).toThrow(RunEventCorruptionError)
     }
     finally {
       await runtime?.dispose()
@@ -164,6 +286,8 @@ describe('buddy runtime cross-subsystem contract', () => {
     const requested = { damaged: Promise.withResolvers<void>(), healthy: Promise.withResolvers<void>() }
     const responses = { damaged: Promise.withResolvers<void>(), healthy: Promise.withResolvers<void>() }
     const provider = await startLocalModelProvider(async (payload) => {
+      if (JSON.stringify(payload.messages).includes('AFTER_LIVE_QUARANTINE'))
+        return { text: 'NEW_AFTER_LIVE_QUARANTINE' }
       const key = JSON.stringify(payload.messages).includes('DAMAGED_TASK') ? 'damaged' : 'healthy'
       requested[key].resolve()
       await responses[key].promise
@@ -194,6 +318,17 @@ describe('buddy runtime cross-subsystem contract', () => {
       expect(await waitForTerminalRun(harness, healthy.runId)).toMatchObject({ status: 'completed' })
       expect(await readFile(file, 'utf8')).toBe(corrupted)
       expect(JSON.stringify(await eventLog.read(healthy.runId))).toContain('HEALTHY_RESULT')
+      await expect.poll(() => runs.findById(damaged.runId)?.status).toBe('failed')
+      const next = await harness.invoke('chat.startTurn', await turnRequest(harness, {
+        conversationId: damaged.conversationId,
+        branchId: damaged.branchId,
+        content: 'AFTER_LIVE_QUARANTINE',
+        requestId: 'after-live-quarantine',
+      })) as LocalTurnStart
+      const continued = await waitForTerminalRun(harness, next.runId)
+      expect(continued, JSON.stringify(await eventLog.read(next.runId))).toMatchObject({ status: 'completed', errorCode: null })
+      expect(JSON.stringify(await eventLog.read(next.runId))).toContain('NEW_AFTER_LIVE_QUARANTINE')
+      expect(await readFile(file, 'utf8')).toBe(corrupted)
     }
     finally {
       responses.damaged.resolve()
@@ -1768,6 +1903,8 @@ function createRuntimeRpcHarness(
         })
         return Promise.resolve({ ok: true, url: input.url, status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } })
       }
+      if (method === 'host.images.preferences')
+        return Promise.resolve({})
       if (method === 'host.runtimePreferences.get')
         return Promise.resolve({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
       if (method === 'host.credentials.list') {

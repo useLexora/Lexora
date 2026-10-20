@@ -205,6 +205,8 @@ pub fn execute(
     }
     record.status = Status::Executing;
     journal.update(&mut record)?;
+    #[cfg(test)]
+    super::interruption::checkpoint("executing");
     let mut may_have_changes = false;
     let result: Result<Value> = (|| {
         if let Some(metadata) = &existing
@@ -227,7 +229,10 @@ pub fn execute(
                     })
                     .map_err(|error| match error {
                         crate::file_writer::WriteError::Conflict => Error::Conflict,
-                        crate::file_writer::WriteError::Failed => Error::Recovery,
+                        crate::file_writer::WriteError::Failed => {
+                            Error::NotApplied(Box::new(Error::Io(std::io::Error::other(error))))
+                        }
+                        crate::file_writer::WriteError::OutcomeUnknown => Error::Recovery,
                     })?;
                 } else {
                     let relative = relative(&request.path)?;
@@ -383,6 +388,8 @@ pub fn execute(
             }
         }
     })();
+    #[cfg(test)]
+    super::interruption::checkpoint("completed");
     match result {
         Ok(receipt) => {
             record.status = Status::Applied;

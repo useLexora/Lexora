@@ -15,7 +15,10 @@ const english = {
   unfinishedCount: '{count} unfinished',
   needsYouCount: '{count} need you',
   issuesCount: '{count} issues',
-  cleanupBadge: 'Cleanup issue',
+  cleanupBadge: 'Needs review',
+  incompleteHistoryBadge: 'Incomplete history',
+  incompleteHistory: 'Some history could not be read. The original records are preserved, and new tasks can continue. Tool counts include only recorded activity.',
+  recordedToolCount: 'Recorded tools {count}',
   fit: 'Fit canvas',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
@@ -69,7 +72,7 @@ const english = {
   questionClosed: 'Question closed',
   actionFailed: 'The operation failed. The task may have changed.',
   loadFailed: 'Could not load the result.',
-  cleanup: 'Some operations have not fully stopped. Conflicting writes remain blocked.',
+  cleanup: 'Cleanup of some earlier operations could not be verified. New tasks can continue; check the current state before making further changes.',
   host: 'System commands',
 }
 const chinese: typeof english = {
@@ -87,7 +90,10 @@ const chinese: typeof english = {
   unfinishedCount: '{count} 个未结束',
   needsYouCount: '{count} 项需你处理',
   issuesCount: '{count} 项异常',
-  cleanupBadge: '清理异常',
+  cleanupBadge: '待核对',
+  incompleteHistoryBadge: '记录不完整',
+  incompleteHistory: '部分历史记录无法读取，原始记录已保留。可以继续新任务，工具次数仅包含已记录的活动。',
+  recordedToolCount: '已记录工具 {count} 次',
   fit: '适应画布',
   zoomIn: '放大',
   zoomOut: '缩小',
@@ -141,10 +147,13 @@ const chinese: typeof english = {
   questionClosed: '问题已关闭',
   actionFailed: '操作失败，任务状态可能已改变。',
   loadFailed: '无法读取结果。',
-  cleanup: '部分操作尚未完全停止，冲突的写操作仍被阻止。',
+  cleanup: '此前部分操作的收尾情况尚未确认。可以继续新任务，修改前请核对当前状态。',
   host: '系统命令',
 }
 
-export function executionLabels(language: BuddyLocale) {
-  return language === 'en-US' ? english : chinese
+export function executionLabels(language: BuddyLocale, errorCode?: string | null) {
+  const labels = language === 'en-US' ? english : chinese
+  return errorCode === 'EVENT_LOG_CORRUPTED'
+    ? { ...labels, cleanup: labels.incompleteHistory, cleanupBadge: labels.incompleteHistoryBadge, toolCount: labels.recordedToolCount }
+    : labels
 }

@@ -1,3 +1,4 @@
+import type { RunEventLogUnavailableError } from '../../../events/RunEventFailure'
 import type { RunRecord } from '../../../storage/runRecord'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,6 +10,7 @@ import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../../../shared/executions/e
 import { BuddyDefinitionResolver } from '../../../buddies/BuddyDefinitionResolver'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { createRunEventLog } from '../../../events/createRunEventLog'
+import { RunEventCorruptionError, RunEventStorageError } from '../../../events/RunEventFailure'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
 import { createExecutionStorageFixture, executionNow } from '../../../storage/__tests__/executionFixture'
 import { createConversationMemberRepository } from '../../../storage/conversationMemberRepository'
@@ -31,14 +33,32 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
   const lifecycle = new RunLifecycleService({ eventLog: events, repository: storage.runs })
   const mutations = new MutationCoordinator()
   const childDone = Promise.withResolvers<RunRecord>()
+  const unavailable = new Map<string, RunEventLogUnavailableError>()
+  const recovered: string[] = []
   const coordinator = new ExecutionCoordinator({
     hostShellSupervision,
+    availability: { assertRunExecutable: (id) => {
+      const error = unavailable.get(id)
+      if (error)
+        throw error
+    } },
+    recoverQuarantinedRun: (id) => {
+      if (!(unavailable.get(id) instanceof RunEventCorruptionError))
+        return false
+      recovered.push(id)
+      return storage.runs.reconcileQuarantined(id, executionNow)
+    },
     executions: storage.executions,
     mailbox,
     events,
     lifecycle,
     mutations,
-    readResult: id => `Result from ${id}`,
+    readResult: (id) => {
+      const error = unavailable.get(id)
+      if (error)
+        throw error
+      return `Result from ${id}`
+    },
     launchChild: async runId => ({ runId, completion: childDone.promise }),
     stopExecution,
     listIncomplete: () => storage.runs.listIncomplete(),
@@ -52,7 +72,7 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
     storage.database.close()
     await rm(directory, { recursive: true, force: true })
   })
-  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone }
+  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone, unavailable, recovered }
 }
 
 function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
@@ -64,6 +84,131 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it('closes a quarantined child only after its owner stops while healthy siblings and the root settle normally', async () => {
+    const stopped = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const f = await fixture(async (id) => {
+      if (id === 'broken') {
+        entered.resolve()
+        await stopped.promise
+        return true
+      }
+      if (id === 'root') {
+        await f.coordinator.finalize({ runId: id, cleanup: 'completed', outcome: { status: 'cancelled', errorCode: 'RUN_CANCELLED' } })
+        return true
+      }
+      return false
+    })
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('broken'))
+    f.executions.admitChild(f.child('healthy'))
+    await f.coordinator.begin('broken', signal)
+    const lease = await f.mutations.acquire({ runId: 'broken', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    f.unavailable.set('broken', new RunEventCorruptionError('broken'))
+    const cancelling = f.coordinator.cancel('root', 'RUN_CANCELLED', async (id) => {
+      if (id === 'broken') {
+        entered.resolve()
+        await stopped.promise
+        return true
+      }
+      return id === 'root'
+    })
+    try {
+      await entered.promise
+      expect(f.recovered).toEqual([])
+      expect(f.executions.find('broken')).toMatchObject({ phase: 'working', cleanupState: 'pending' })
+      expect(f.executions.find('root')?.phase).not.toBe('closed')
+      lease.markHazard('FILE_RESULT_UNKNOWN')
+      stopped.resolve()
+      await cancelling
+      expect(f.executions.find('broken')).toMatchObject({ phase: 'closed', cleanupState: 'degraded', run: { status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' } })
+      expect(f.executions.find('healthy')).toMatchObject({ phase: 'closed', run: { status: 'cancelled' } })
+      expect(f.executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded', run: { status: 'cancelled' } })
+      expect(await f.events.read('broken')).toEqual([])
+      expect(f.mailbox.listUnconsumed('root').some(message => message.sourceRunId === 'broken')).toBe(false)
+      expect(f.mutations.getRunState('broken').hazards).toHaveLength(1)
+      f.runs.create({ id: 'new-root', buddyId: 'default', actorSnapshot: f.snapshot('default'), branchId: 'branch', conversationId: 'conversation', triggeringMessageId: 'new-goal', provider: 'fixture', model: 'fixture', purpose: 'chat', status: 'running', piSessionFile: null, startedAt: executionNow, approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+      await f.coordinator.begin('new-root', signal)
+      expect(f.executions.find('new-root')?.phase).toBe('working')
+    }
+    finally {
+      lease.release()
+      stopped.resolve()
+      await cancelling
+    }
+  })
+
+  it('does not close a quarantined root before its child and its actual mutation settle', async () => {
+    const childStopped = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const f = await fixture(async (id) => {
+      if (id === 'child') {
+        entered.resolve()
+        await childStopped.promise
+      }
+      return false
+    })
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('child'))
+    const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    f.unavailable.set('root', new RunEventCorruptionError('root'))
+    const finalizing = f.coordinator.finalize({ runId: 'root', cleanup: 'completed', outcome: { status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' } })
+    try {
+      await entered.promise
+      expect(f.recovered).toEqual([])
+      childStopped.resolve()
+      await vi.waitFor(() => expect(f.executions.find('child')?.phase).toBe('closed'))
+      expect(f.recovered).toEqual([])
+      expect(f.executions.find('root')?.phase).not.toBe('closed')
+      lease.release()
+      expect(await finalizing).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' })
+      expect(f.executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded' })
+      expect(await f.events.read('root')).toEqual([])
+      expect(f.database.prepare('SELECT count(*) AS count FROM execution_mailbox_receipts WHERE kind = \'consumed\'').get()).toEqual({ count: 0 })
+    }
+    finally {
+      lease.release()
+      childStopped.resolve()
+      await finalizing
+    }
+  })
+
+  it('does not turn a shared storage failure into quarantined cleanup', async () => {
+    const f = await fixture()
+    const failure = new RunEventStorageError({ runId: 'root', firstSequence: null, lastSequence: null }, 'read', 'read', 'unknown')
+    f.unavailable.set('root', failure)
+    try {
+      await expect(f.coordinator.finalize({ runId: 'root', cleanup: 'completed', outcome: { status: 'failed', errorCode: 'EVENT_STORAGE_FAILED' } })).rejects.toBe(failure)
+      await expect(f.coordinator.cancel('root', 'RUN_CANCELLED', async () => false)).rejects.toMatchObject({ errors: [failure] })
+      expect(f.recovered).toEqual([])
+      expect(f.executions.find('root')?.phase).not.toBe('closed')
+    }
+    finally { f.unavailable.clear() }
+  })
+
+  it('reports a wait tool deadline while preserving real mutation and execution state', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('queued'))
+    const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
+    const service = delegationService(f)
+    const caller = { run: { runId: 'root', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
+    try {
+      expect(await service.execute(caller, 'deadline', { operation: 'wait', timeoutMs: 10 }, signal)).toMatchObject({
+        waitStatus: 'timedout',
+        phase: 'working',
+        status: 'running',
+        cleanup: 'pending',
+        children: [{ runId: 'queued', phase: 'queued' }],
+      })
+      expect(f.mutations.getRunState('root')).toEqual({ active: 1, pending: 0, hazards: [] })
+    }
+    finally { lease.release() }
+  })
+
   it('retains progress receipts without waking a parent until an actionable message arrives', async () => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -290,6 +435,51 @@ describe('execution coordination', () => {
     expect(f.executions.find('actor')?.phase).toBe('working')
   })
 
+  it.each(['timeout', 'cancel'] as const)('ends only the wait on %s while a real mutation and working permit remain owned', async (reason) => {
+    const f = await fixture()
+    const controller = new AbortController()
+    await f.coordinator.begin('root', controller.signal)
+    const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal: controller.signal })
+    let completed = false
+    const overlapping = f.mutations.acquire({ runId: 'later', invocationId: 'later', lifetime: 'runtime', claims: [{ kind: 'host' }], signal: new AbortController().signal }).then((next) => {
+      completed = true
+      next.release()
+    })
+    try {
+      const waiting = f.coordinator.wait('root', [], reason === 'timeout' ? 10 : 10000, controller.signal)
+      if (reason === 'cancel') {
+        const cancelled = expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
+        controller.abort()
+        await cancelled
+      }
+      else {
+        expect(await waiting).toBe('timedout')
+      }
+      expect(f.executions.find('root')).toMatchObject({ phase: 'working', cleanupState: 'pending' })
+      expect(f.mutations.getRunState('root')).toEqual({ pending: 0, active: 1, hazards: [] })
+      expect(f.mutations.getRunState('later')).toMatchObject({ pending: 1, active: 0 })
+      expect(completed).toBe(false)
+    }
+    finally {
+      lease.release()
+      await overlapping
+    }
+    expect(completed).toBe(true)
+  })
+
+  it('admits a child after a historical unknown without clearing its evidence', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'old', lifetime: 'external', claims: [{ kind: 'host' }], signal })
+    f.mutations.recordOwnedProcessSettlement({ invocationId: 'old', processId: 'unknown-process', settlement: 'unknown' })
+    lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    const child = await f.coordinator.admitChild(f.child('after-unknown'))
+    expect(child.run.id).toBe('after-unknown')
+    expect(f.mutations.getHazards()).toHaveLength(1)
+    expect(f.mutations.getOwnedProcesses('old')).toEqual([{ processId: 'unknown-process', settlement: 'unknown' }])
+  })
+
   it('reclaims the working permit when a wait reaches its deadline', async () => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -361,7 +551,7 @@ describe('execution coordination', () => {
     await expect(f.coordinator.begin('child', new AbortController().signal)).rejects.toMatchObject({ code: 'stale' })
   })
 
-  it('keeps owned process hazards as degraded cleanup without blocking unrelated resources', async () => {
+  it('keeps owned process hazards as degraded cleanup without blocking new mutations', async () => {
     const f = await fixture()
     const lease = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'root', invocationId: 'writer', claims: [{ kind: 'tree', canonicalPath: '/workspace/a' }], signal: new AbortController().signal })
     lease.markHazard('PROCESS_CLEANUP_UNKNOWN')
@@ -369,7 +559,9 @@ describe('execution coordination', () => {
     await port.prepareClose({ outcome: { status: 'failed', errorCode: 'TOOL_FAILED' }, consumedReceipts: [] })
     await f.coordinator.finalize({ runId: 'root', cleanup: 'completed', outcome: { status: 'failed', errorCode: 'TOOL_FAILED' } })
     expect(f.executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded' })
-    await expect(f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'unsafe', claims: [{ kind: 'file', canonicalPath: '/workspace/a/result' }], signal: new AbortController().signal })).rejects.toMatchObject({ code: 'MUTATION_RESOURCE_UNSAFE' })
+    const next = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'next', claims: [{ kind: 'file', canonicalPath: '/workspace/a/result' }], signal: new AbortController().signal })
+    next.release()
+    expect(f.mutations.getHazards()).toHaveLength(1)
     const safe = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'safe', claims: [{ kind: 'file', canonicalPath: '/workspace/b/result' }], signal: new AbortController().signal })
     safe.release()
   })

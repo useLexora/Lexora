@@ -1,6 +1,7 @@
 import type { AttachmentService } from '../attachments/AttachmentService'
 import type { ChangeCaptureService } from '../changes/ChangeCaptureService'
 import type { BuddyRunEvent } from '../events/BuddyRunEvent'
+import type { RunEventAvailability } from '../events/RunEventPorts'
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type {
   ArtifactRepository,
@@ -45,7 +46,7 @@ export interface RegisterConversationRpcOptions {
   conversations: ConversationRpcRepository
   metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'getModelControls' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'activateBranch'>
   deleteConversation: (conversationId: string) => Promise<boolean>
-  eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] }
+  eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] } & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   isDeleting: (conversationId: string) => boolean
   rpc: RuntimeRequestRegistrar
   runInputs: Pick<RunInputRepository, 'findByRunId'>
@@ -160,6 +161,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
     )
     const runEvents = options.eventLog.listForRuns(runs.map(run => run.id))
     const runIds = runs.map(run => run.id)
+    const quarantined = new Set(options.eventLog.getRecoveryFailures?.().map(failure => failure.runId))
     return {
       changeSets: options.changes.listSummariesForRuns(runIds),
       items,
@@ -176,7 +178,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       ),
       runEvents: runEvents.map(toPublicRunEvent),
       runs: runs.map(run => toPublicRun(
-        run,
+        quarantined.has(run.id) ? { ...run, errorCode: 'EVENT_LOG_CORRUPTED' } : run,
         options.runInputs.findByRunId(run.id)?.reasoning ?? null,
       )),
     }

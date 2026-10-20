@@ -1,8 +1,10 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { BuddyToolClassification } from '../../../approvals/toolClassification'
 import type { BuddyExtensionRunContext } from '../BuddyExtensionRunContext'
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +12,7 @@ import { runSupervisedShellProcess } from '../../../../../platform/process/super
 import { ChangeCaptureService } from '../../../changes/ChangeCaptureService'
 import { createChangeSetRepository } from '../../../changes/changeSetRepository'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
+import { MutationRecoveryService } from '../../../changes/MutationRecoveryService'
 import { createMutationRepository } from '../../../changes/mutationRepository'
 import { ToolAuthorizationService } from '../../../permissions/ToolAuthorizationService'
 import { ToolExecutionPermissions } from '../../../permissions/ToolExecutionPermissions'
@@ -25,6 +28,92 @@ afterEach(async () => {
 })
 
 describe('authorized mutation execution', () => {
+  it.skipIf(process.platform !== 'linux')('imports a lost native release receipt in the background without replaying the old command', async () => {
+    const fixture = await setup()
+    const recovery = new MutationRecoveryService({ mutations: fixture.mutations, receiptDirectory: join(fixture.root, 'receipts') })
+    cleanups.push(async () => {
+      fixture.mutations.stopAdmission()
+      await recovery.dispose()
+    })
+    await recovery.start()
+    const old = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'lost-release', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
+    await expect(fixture.mutations.withInvocation(old, () => runSupervisedShellProcess({
+      shell: '/bin/bash',
+      args: ['--noprofile', '--norc', '-c'],
+      command: 'printf "old\\n" >> effects.log',
+      cwd: fixture.root,
+      environment: { PATH: '/usr/bin:/bin' },
+    }, {
+      receiptDirectory: join(fixture.root, 'receipts'),
+      onData() {},
+      onSettlement(record) {
+        if (record.launchState === 'settled')
+          throw new Error('RELEASE_NOTIFICATION_LOST')
+        expect(fixture.mutations.recordOwnedProcessSettlement(record)).toBe(true)
+      },
+    }))).rejects.toThrow('RELEASE_NOTIFICATION_LOST')
+    old.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    expect(fixture.mutations.getHazards()).toHaveLength(1)
+    const writer = fixture.actor('run-2', async (path, content) => {
+      await appendFile(join(fixture.root, 'effects.log'), 'new\n')
+      await writeFile(path, content)
+    }, 'write')
+    await writer.execute({ path: fixture.path, content: 'RECOVERED' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('RECOVERED')
+    expect(await readFile(join(fixture.root, 'effects.log'), 'utf8')).toBe('old\nnew\n')
+    await expect.poll(() => fixture.mutations.getHazards()).toEqual([])
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+    expect(fixture.mutations.getHazards()).toEqual([])
+  })
+
+  it.each(['cancel', 'read_only'] as const)('does not start the waiting tool when %s occurs behind an active lease', async (change) => {
+    const fixture = await setup()
+    const controller = new AbortController()
+    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'file', canonicalPath: fixture.path }], signal: controller.signal })
+    const writer = fixture.actor('run-2', (path, content) => writeFile(path, content), 'write', { signal: controller.signal })
+    const waiting = writer.execute({ path: fixture.path, content: 'MUST_NOT_WRITE' })
+    const rejected = expect(waiting).rejects.toThrow()
+    try {
+      await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
+      if (change === 'cancel')
+        controller.abort()
+      else
+        writer.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
+    }
+    finally { active.markHazard('FILE_RESOURCE_SETTLEMENT_FAILED') }
+    await rejected
+    expect(await readFile(fixture.path, 'utf8')).toBe('A')
+    expect(fixture.repository.listCaptures('run-2')).toEqual([])
+    expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
+    expect(fixture.mutations.getHazards()).toHaveLength(1)
+  })
+
+  it.each(['write', 'bash', 'mcp__fixture__write'])('admits a new %s while a prior external outcome remains unknown', async (toolName) => {
+    const fixture = await setup()
+    const old = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'old', lifetime: 'external', claims: [{ kind: 'host' }], signal: new AbortController().signal })
+    fixture.mutations.recordOwnedProcessSettlement({ invocationId: 'old', processId: 'unverified-external', settlement: 'unknown' })
+    old.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    const writer = fixture.actor('run-2', (path, content) => writeFile(path, content), toolName)
+    await writer.execute({ path: fixture.path, content: 'NEW' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('NEW')
+    expect(fixture.mutations.getHazards()).toHaveLength(1)
+    expect(fixture.mutations.getOwnedProcesses('old')).toEqual([{ processId: 'unverified-external', settlement: 'unknown' }])
+    expect(fixture.mutationRepository.listUnreleased().map(item => item.invocationId)).toEqual(['old'])
+  })
+
+  it('revalidates tool availability after asynchronous change capture before executing', async () => {
+    let available = true
+    const fixture = await setup({ afterCapture: () => {
+      available = false
+    } })
+    const writer = fixture.actor('run-1', (path, content) => writeFile(path, content), 'mutate', {
+      validateBeforeExecution: async () => available ? null : { blocked: true, reason: 'TOOL_NO_LONGER_AVAILABLE' },
+    })
+    await expect(writer.execute({ path: fixture.path, content: 'MUST_NOT_WRITE' })).rejects.toThrow('TOOL_NO_LONGER_AVAILABLE')
+    expect(await readFile(fixture.path, 'utf8')).toBe('A')
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+  })
+
   it('releases a supervised invocation rejected before process dispatch without poisoning later writes', async () => {
     const fixture = await setup()
     const shell = fixture.actor('run-1', async () => {
@@ -139,7 +228,7 @@ describe('authorized mutation execution', () => {
   })
 })
 
-async function setup() {
+async function setup(options: { afterCapture?: () => void } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-tool-mutations-')))
   cleanups.push(() => rm(root, { force: true, recursive: true }))
   const path = join(root, 'shared.txt')
@@ -162,20 +251,39 @@ async function setup() {
   const mutations = new MutationCoordinator({ repository: mutationRepository })
   cleanups.push(() => mutations.dispose())
   const grants = [{ canonicalRoot: root, root, grantId: 'workspace', kind: 'workspace' as const }]
-  function actor(runId: string, mutate: (path: string, content: string) => Promise<void>, toolName = 'mutate') {
+  function actor(runId: string, mutate: (path: string, content: string) => Promise<void>, toolName = 'mutate', toolOptions: { signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
     const cwd = join(root, runId)
-    const run: BuddyExtensionRunContext = { runId, signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
+    const run: BuddyExtensionRunContext = { runId, signal: toolOptions.signal ?? new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
     const executionPermissions = new ToolExecutionPermissions()
     cleanups.push(() => executionPermissions.dispose())
     const authorization = new ToolAuthorizationService({ approvalService: { request: async () => {
       throw new Error('UNEXPECTED_APPROVAL')
     } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => grants, executionPermissions })
-    const classify = (input: { path: string }) => ({ access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }] })
+    const classify = (input: { path: string }) => ({ access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }], validateBeforeExecution: toolOptions.validateBeforeExecution })
     const tool = defineTool({ name: toolName, label: 'Mutate', description: 'Write controlled files', executionMode: 'parallel', parameters: Type.Object({ path: Type.String(), content: Type.String() }), async execute(_id, input) {
       await mutate(input.path, input.content)
       return { content: [{ type: 'text', text: 'updated' }], details: {} }
     } })
-    const wrapped = createMutationToolWrapper({ conversationId: 'conversation', cwd, authorization, changes, mutations, getRunContext: () => run, getGrants: () => grants, getWorkspaceGrants: () => grants, classify: async event => classify(event.input as { path: string }), workspaceMutationTools: [] })(tool)
+    const wrapped = createMutationToolWrapper({
+      conversationId: 'conversation',
+      cwd,
+      authorization,
+      mutations,
+      getRunContext: () => run,
+      getGrants: () => grants,
+      getWorkspaceGrants: () => grants,
+      classify: async event => classify(event.input as { path: string }),
+      workspaceMutationTools: [],
+      changes: {
+        beginInvocation: async (input) => {
+          const handle = await changes.beginInvocation(input)
+          options.afterCapture?.()
+          return handle
+        },
+        finishInvocation: (handle, input) => changes.finishInvocation(handle, input),
+        markPartial: runId => changes.markPartial(runId),
+      },
+    })(tool)
     return {
       authorization,
       authorize: (input: { path: string, content: string }) => authorization.authorize({ input, toolCallId: 'same-provider-id', toolName: tool.name }, run, classify(input)),

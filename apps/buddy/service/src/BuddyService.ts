@@ -441,10 +441,15 @@ export async function startBuddyService(
       await service.initialize()
       return service
     }, ['runtime.file_engine'])
-    const mutationRecovery = new MutationRecoveryService({ mutations, record, evidence: mutationEvidence, receiptDirectory: join(options.buddyHome, 'process-receipts'), context: { conversations, runs }, onChange: notifyRecovery })
-    await host.step('runtime.mutation_recovery', async () => {
-      await mutationRecovery.recheck({ signal: AbortSignal.timeout(5_000) })
-    })
+    const mutationRecovery = await host.start('runtime.mutation_recovery', async ({ defer }) => {
+      const service = new MutationRecoveryService({ mutations, record, evidence: mutationEvidence, receiptDirectory: join(options.buddyHome, 'process-receipts'), context: { conversations, runs }, onChange: notifyRecovery })
+      defer(async () => {
+        mutations.stopAdmission()
+        await service.dispose()
+      })
+      await service.start()
+      return service
+    }, ['runtime.mutations'])
     const changeCaptureService = await host.start('runtime.change_capture', ({ defer }) => {
       const service = new ChangeCaptureService({ paths, repository: createChangeSetRepository(options.database), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.change_capture', level: 'warn' }) })
       service.onDidChange(event => record({ event: `changes.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, toolCallId: event.toolCallId, revision: event.revision, count: event.count, errorCode: event.errorCode }))
@@ -961,6 +966,7 @@ export async function startBuddyService(
         repository: treeRepository,
         threads,
         runs,
+        isRunHistoryAvailable: runId => !options.eventLog.getRecoveryFailures().some(failure => failure.runId === runId),
         recovery: sessionRecovery,
         onObserverError: () => record({ event: 'tree.observer_failed', level: 'warn' }),
       })
@@ -1001,6 +1007,7 @@ export async function startBuddyService(
         lifecycle: runLifecycleService,
         mutations,
         listIncomplete: () => runs.listIncomplete(),
+        recoverQuarantinedRun: runId => runRecoveryService.recoverQuarantinedRun(runId),
         getFileAccessCeiling: runId => getRunPermissionCeiling(runId) === 'read_only' ? 'read_only' : undefined,
         onObserverError: () => record({ event: 'execution.tree_observer_failed', level: 'error' }),
         readResult: runId => readExecutionResult(options.eventLog, runId),
@@ -1088,8 +1095,17 @@ export async function startBuddyService(
         sessions,
       })
       const quarantine = options.eventLog.onDidQuarantine(async (failure) => {
-        if (failure.conversationId)
-          await service.cancelAndWaitForConversation(failure.conversationId)
+        const run = runs.findById(failure.runId)
+        if (!run)
+          return
+        await sessions.invalidateMatching(identity => identity.conversationId === run.conversationId
+          && identity.branchId === run.branchId && identity.threadId === run.threadId)
+        const root = runs.findById(run.rootRunId)
+        if (root?.status === 'queued' || root?.status === 'running') {
+          chatQueueService?.pause(root)
+          await service.cancel(root.id, 'EVENT_LOG_CORRUPTED')
+        }
+        runRecoveryService.recoverQuarantinedRun(run.id)
       })
       defer(() => quarantine.dispose())
       const settledDiagnostics = service.onDidSettle(settled => record({
@@ -1432,9 +1448,11 @@ export async function startBuddyService(
           isBusy: () => {
             if (runner.hasActiveExecutions)
               return true
-            const quarantined = new Set(options.eventLog.getRecoveryFailures().map(failure => failure.conversationId))
-            return runs.listIncomplete().some(run => !quarantined.has(run.conversationId))
-              || approvalsRepository.listPending().some(approval => !quarantined.has(runs.findById(approval.runId)?.conversationId ?? null))
+            return runs.hasIncomplete()
+              || approvalsRepository.listPending().some((approval) => {
+                const run = runs.findById(approval.runId)
+                return run?.status === 'queued' || run?.status === 'running'
+              })
           },
           getCacheWarmingStatus: (conversationId) => {
             const conversation = conversations.findById(conversationId)

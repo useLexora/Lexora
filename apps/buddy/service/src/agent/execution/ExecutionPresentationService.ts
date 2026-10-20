@@ -3,7 +3,7 @@ import type { BuddiesService } from '../../buddies/BuddiesService'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
-import type { RunEventObservation, RunEventReader } from '../../events/RunEventPorts'
+import type { RunEventAvailability, RunEventObservation, RunEventReader } from '../../events/RunEventPorts'
 import type { ApprovalRepository } from '../../storage/approvalRepository'
 import type { ArtifactRepository } from '../../storage/artifactRepository'
 import type { ConversationRepository } from '../../storage/conversationRepository'
@@ -31,7 +31,7 @@ export interface ExecutionPresentationOptions {
   buddies: Pick<BuddiesService, 'get'>
   coordinator: Pick<ExecutionCoordinator, 'onDidChange' | 'answerQuestion' | 'send' | 'cancel'>
   mutations: Pick<MutationCoordinator, 'onDidChange' | 'getRunState'>
-  events: Pick<RunEventReader, 'read' | 'list' | 'listForRuns' | 'listToolCounts'> & Pick<RunEventObservation, 'onDidCommit'>
+  events: Pick<RunEventReader, 'read' | 'list' | 'listForRuns' | 'listToolCounts'> & Pick<RunEventObservation, 'onDidCommit'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   artifacts: Pick<ArtifactRepository, 'listForConversation'>
   changes: Pick<ChangeCaptureService, 'listSummariesForRuns'>
   usage: Pick<UsageRepository, 'listForRun'>
@@ -221,6 +221,8 @@ export class ExecutionPresentationService {
 
   #present(scope: ExecutionScope, record: ExecutionStateRecord, tree: readonly ExecutionStateRecord[], events: readonly BuddyRunEvent[], toolCount: number): LocalExecution {
     const { run } = record
+    const quarantined = this.#options.events.getRecoveryFailures?.().some(failure => failure.runId === run.id
+      || (run.id === run.rootRunId && tree.some(child => child.run.id === failure.runId))) ?? false
     const progressEvent = events.findLast(event => event.type === 'run.progress')
     const parsedProgress = buddyRunProgressSchema.safeParse(progressEvent?.payload)
     const progress = parsedProgress.success ? parsedProgress.data : null
@@ -260,8 +262,8 @@ export class ExecutionPresentationService {
         && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.activeBranchId === scope.branchId,
       canSend: mutable && (run.executionKind === 'actor_child' || run.executionKind === 'npc_child'),
       canAnswer: mutable && questions.some(question => question.open && question.audience === 'user'),
-      cleanup: mutations.hazards.length ? 'degraded' : record.cleanupState,
-      errorCode: record.cleanupErrorCode ?? run.errorCode,
+      cleanup: quarantined || mutations.hazards.length ? 'degraded' : record.cleanupState,
+      errorCode: quarantined ? 'EVENT_LOG_CORRUPTED' : record.cleanupErrorCode ?? run.errorCode,
       affectedResources: [...new Map(affectedResources.map(resource => [resource.kind === 'host' ? 'host' : resource.path, resource])).values()],
       questions,
     }

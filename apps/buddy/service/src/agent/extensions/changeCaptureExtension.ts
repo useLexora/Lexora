@@ -75,6 +75,7 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
           let started = false
           let isError = true
           try {
+            executionSignal.throwIfAborted()
             if (!await stillCurrent(plan, permit, event, run, options)) {
               permit = null
               continue
@@ -97,6 +98,10 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
               })
             }
             catch { await markPartial(options, run.runId) }
+            executionSignal.throwIfAborted()
+            const finalValidation = await permit.classification.validateBeforeExecution?.()
+            if (finalValidation)
+              throw new Error(finalValidation.reason)
             if (!await stillCurrent(plan, permit, event, run, options)) {
               permit = null
               continue

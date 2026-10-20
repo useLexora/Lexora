@@ -73,8 +73,8 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         verify(&root, root_path)?;
         verify(&parent, path.parent().ok_or(WriteError::Failed)?)?;
         renameat(&parent, temporary.as_str(), &parent, Path::new(name))
-            .map_err(|_| WriteError::Failed)?;
-        parent.sync_all().map_err(|_| WriteError::Failed)
+            .map_err(|_| WriteError::OutcomeUnknown)?;
+        parent.sync_all().map_err(|_| WriteError::OutcomeUnknown)
     })();
     let _ = unlinkat(&parent, temporary.as_str(), AtFlags::empty());
     result

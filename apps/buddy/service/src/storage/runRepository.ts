@@ -50,6 +50,7 @@ export interface RunRepository {
   ) => RunRecord[]
   listIdsForConversation: (conversationId: string) => string[]
   markRunning: (id: string, startedAt: string) => boolean
+  reconcileQuarantined: (id: string, completedAt: string) => boolean
   reconcileTerminal: (
     id: string,
     status: Extract<RunStatus, 'cancelled' | 'completed' | 'failed'>,
@@ -216,6 +217,20 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     },
     markRunning(id, startedAt) {
       return Number(markRunning.run(startedAt, id).changes) === 1
+    },
+    reconcileQuarantined(id, completedAt) {
+      return withTransaction(database, () => {
+        const run = find.get(id) as RunRow | undefined
+        if (!run)
+          return false
+        database.prepare(`UPDATE execution_state SET cleanup_state = 'degraded', cleanup_error_code = 'EVENT_LOG_CORRUPTED'
+          WHERE run_id IN (?, ?)`).run(id, run.root_run_id)
+        database.prepare(`UPDATE approvals SET status = 'cancelled', resolved_at = ?
+          WHERE run_id = ? AND status = 'pending'`).run(completedAt, id)
+        database.prepare('UPDATE runs SET pi_session_file = NULL WHERE id = ?').run(id)
+        return Number(database.prepare(`UPDATE runs SET status = 'failed', completed_at = ?, error_code = 'EVENT_LOG_CORRUPTED'
+          WHERE id = ? AND status IN ('queued', 'running')`).run(completedAt, id).changes) === 1
+      })
     },
     reconcileTerminal(id, status, completedAt, errorCode) {
       return Number(reconcileTerminal.run(

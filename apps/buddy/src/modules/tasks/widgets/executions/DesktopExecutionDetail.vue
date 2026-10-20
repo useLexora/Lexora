@@ -27,7 +27,7 @@ const state = useExecutionDetail(target, computed(() => props.visible))
 const detail = state.detail
 const execution = computed(() => detail.value?.execution)
 const displayName = computed(() => execution.value ? executionDisplayName(execution.value) : null)
-const labels = computed(() => executionLabels(props.language))
+const labels = computed(() => executionLabels(props.language, execution.value?.errorCode))
 const supplementLabels = computed(() => execution.value?.kind === 'actor_child'
   ? { title: labels.value.actorSupplement, placeholder: labels.value.actorSupplementPlaceholder, send: labels.value.actorSend }
   : { title: labels.value.supplement, placeholder: labels.value.supplementPlaceholder, send: labels.value.send })
