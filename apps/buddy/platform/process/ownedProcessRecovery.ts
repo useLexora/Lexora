@@ -12,12 +12,31 @@ const supervisorIdentityFields = {
   startTime: z.string().regex(/^\d+$/).max(20).pipe(z.string().refine(value => BigInt(value) <= 0xFFFF_FFFF_FFFF_FFFFn)),
 }
 
+const windowsBootEvidenceSchema = z.object({
+  source: z.literal('windows-boot-sequence'),
+  version: z.literal(1),
+  architecture: z.literal('x64'),
+  build: z.number().int().positive(),
+  sequence: z.number().int().positive().max(0xFFFF_FFFF),
+  uptimeMillis: z.string().regex(/^\d+$/).max(20),
+}).strict()
+
 export const supervisedProcessIdentitySchema = z.union([
+  z.object({
+    ...supervisorIdentityFields,
+    version: z.literal(3),
+    bootEvidence: windowsBootEvidenceSchema.optional(),
+    bootId: kernelUuidSchema.optional(),
+    executionId: z.uuid(),
+    dispatchId: z.uuid(),
+    jobName: z.string().startsWith('Global\\Lexora.Buddy.Shell.v2.').optional(),
+  }).strict(),
   z.object({ ...supervisorIdentityFields, bootId: kernelUuidSchema.optional() }).strict(),
   z.object({
     ...supervisorIdentityFields,
     version: z.literal(2),
-    bootId: kernelUuidSchema,
+    bootEvidence: windowsBootEvidenceSchema.optional(),
+    bootId: kernelUuidSchema.optional(),
     jobName: z.string().startsWith('Global\\Lexora.Buddy.Shell.v2.').refine(value => kernelUuidSchema.safeParse(value.slice('Global\\Lexora.Buddy.Shell.v2.'.length)).success).optional(),
   }).strict(),
 ])
@@ -44,26 +63,35 @@ const unknownReasons = [
   'helper_unavailable',
   'helper_failed',
   'invalid_response',
+  'receipt_missing',
+  'receipt_invalid',
+  'receipt_root_unavailable',
 ] as const
 
 const verificationSchema = z.discriminatedUnion('status', [
-  z.object({ protocol: z.literal(1), status: z.literal('released'), reason: z.enum(['boot_changed', 'job_empty']) }).strict(),
+  z.object({ protocol: z.literal(1), status: z.literal('released'), reason: z.enum(['boot_changed', 'supervisor_receipt']) }).strict(),
   z.object({ protocol: z.literal(1), status: z.literal('active'), reason: z.enum(['supervisor_active', 'job_active']) }).strict(),
   z.object({ protocol: z.literal(1), status: z.literal('unknown'), reason: z.enum(unknownReasons) }).strict(),
 ])
 
-const checkpointSchema = z.object({
+const checkpointSchema = z.union([z.object({
   kind: z.literal('recovery-boot'),
   version: z.literal(1),
   platform: z.enum([OPERATING_SYSTEM.Linux, OPERATING_SYSTEM.Windows]),
   bootId: kernelUuidSchema,
-}).strict()
+}).strict(), z.object({
+  kind: z.literal('recovery-boot'),
+  version: z.literal(2),
+  platform: z.literal(OPERATING_SYSTEM.Windows),
+  bootEvidence: windowsBootEvidenceSchema,
+}).strict()])
 
 export type OwnedProcessVerification = Omit<z.infer<typeof verificationSchema>, 'protocol'>
 
 interface RecoveryOptions {
   signal?: AbortSignal
   executable?: string
+  receiptDirectory?: string
 }
 
 function supportedPlatform() {
@@ -105,7 +133,7 @@ export async function captureProcessRecoveryCheckpoint(options: RecoveryOptions 
   }
 }
 
-export async function reverifyOwnedProcess(
+export async function verifyOwnedProcessRelease(
   processId: string,
   options: RecoveryOptions & { checkpoint?: string } = {},
 ): Promise<OwnedProcessVerification> {
@@ -129,7 +157,7 @@ export async function reverifyOwnedProcess(
     }
   }
   try {
-    const result = await query('--reverify-owned-process', { identity, checkpoint }, options)
+    const result = await query('--reverify-owned-process', { identity, checkpoint, receiptDirectory: options.receiptDirectory }, options)
     if (!result)
       return { status: 'unknown', reason: 'helper_unavailable' }
     if (result.code !== 0)
@@ -144,3 +172,5 @@ export async function reverifyOwnedProcess(
     return { status: 'unknown', reason: 'helper_failed' }
   }
 }
+
+export const reverifyOwnedProcess = verifyOwnedProcessRelease

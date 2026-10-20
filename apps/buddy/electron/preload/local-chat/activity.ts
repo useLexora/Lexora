@@ -24,6 +24,18 @@ export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notificat
       ),
     }),
     changes: Object.freeze({
+      recovery: Object.freeze<LocalChatApi['changes']['recovery']>({
+        list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesRecoveryList, { conversationId: input.conversationId }),
+        recheck: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesRecoveryRecheck, {
+          conversationId: input.conversationId,
+          invocationIds: [...input.invocationIds],
+        }),
+        resolve: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesRecoveryResolve, {
+          conversationId: input.conversationId,
+          items: input.items.map(item => ({ invocationId: item.invocationId, revision: item.revision })),
+          decision: input.decision,
+        }),
+      }),
       onChanged: listener => subscribe<ChangeSetChangeNotice>(LOCAL_CHAT_IPC_CHANNELS.changesChanged, listener),
       overview: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesOverview, { ...input }),
       get: changeSetId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesGet, { changeSetId }),

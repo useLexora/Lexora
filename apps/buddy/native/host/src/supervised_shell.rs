@@ -9,6 +9,7 @@ use std::{
 
 use serde::Deserialize;
 
+pub(crate) mod receipt;
 pub mod recovery;
 
 #[cfg(target_os = "linux")]
@@ -30,6 +31,8 @@ struct Request {
     command_transport: Transport,
     cwd: String,
     environment: BTreeMap<String, String>,
+    execution_id: Option<String>,
+    dispatch_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -39,12 +42,26 @@ enum Transport {
     Stdin,
 }
 
-pub fn run() -> io::Result<i32> {
+pub fn run(configuration: Option<String>) -> io::Result<i32> {
+    let launch = configuration
+        .map(|value| serde_json::from_str::<receipt::Launch>(&value))
+        .transpose()?;
+    if let Some(launch) = &launch {
+        launch.validate()?;
+    }
     let supervision = backend::initialize()?;
-    let identity = backend::identity(&supervision)?;
+    let mut identity = backend::identity(&supervision)?;
+    let receipt = if let Some(launch) = &launch {
+        identity["version"] = serde_json::json!(3);
+        identity["executionId"] = serde_json::json!(launch.execution_id);
+        identity["dispatchId"] = serde_json::json!(launch.dispatch_id);
+        receipt::Receipt::prepare(launch, &identity)?
+    } else {
+        None
+    };
     eprintln!(
         "{}",
-        serde_json::json!({"type":"ready","protocol":1,"identity":identity})
+        serde_json::json!({"type":"ready","protocol":if launch.is_some() {2} else {1},"identity":identity})
     );
     let mut input = BufReader::new(io::stdin());
     let mut bytes = Vec::new();
@@ -52,6 +69,9 @@ pub fn run() -> io::Result<i32> {
         .take(2 * 1024 * 1024 + 1)
         .read_until(b'\n', &mut bytes)?;
     if bytes.len() > 2 * 1024 * 1024 || bytes.last() != Some(&b'\n') {
+        if let Some(receipt) = &receipt {
+            receipt.release()?;
+        }
         released();
         return Err(io::ErrorKind::InvalidInput.into());
     }
@@ -75,10 +95,23 @@ pub fn run() -> io::Result<i32> {
     let request = match request {
         Ok(request) => request,
         Err(error) => {
+            if let Some(receipt) = &receipt {
+                receipt.release()?;
+            }
             released();
             return Err(error.into());
         }
     };
+    if launch.as_ref().is_some_and(|launch| {
+        request.execution_id.as_ref() != Some(&launch.execution_id)
+            || request.dispatch_id.as_ref() != Some(&launch.dispatch_id)
+    }) {
+        if let Some(receipt) = &receipt {
+            receipt.release()?;
+        }
+        released();
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancellation = Arc::clone(&cancelled);
     std::thread::spawn(move || {
@@ -86,7 +119,7 @@ pub fn run() -> io::Result<i32> {
         let _ = input.read(&mut byte);
         cancellation.store(true, Ordering::Release);
     });
-    backend::run(&supervision, &request, &cancelled)
+    backend::run(&supervision, &request, &cancelled, receipt.as_ref())
 }
 
 fn released() {

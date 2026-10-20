@@ -21,7 +21,7 @@ describe.skipIf(!['linux', 'win32'].includes(process.platform))('owned process r
 
   it.each([
     { status: 'released', reason: 'boot_changed' },
-    { status: 'released', reason: 'job_empty' },
+    { status: 'released', reason: 'supervisor_receipt' },
     { status: 'active', reason: 'supervisor_active' },
     { status: 'active', reason: 'job_active' },
     { status: 'unknown', reason: 'access_denied' },

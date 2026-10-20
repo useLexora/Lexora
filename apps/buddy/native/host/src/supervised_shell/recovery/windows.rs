@@ -13,47 +13,6 @@ use crate::supervised_shell::windows::{boolean, owned, wide};
 
 pub(super) const PLATFORM: &str = "win32";
 
-#[repr(C)]
-#[derive(Default)]
-struct BootEnvironment {
-    identifier: windows_sys::core::GUID,
-    firmware_type: u32,
-    flags: u64,
-}
-
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtQuerySystemInformation(
-        class: u32,
-        information: *mut std::ffi::c_void,
-        length: u32,
-        returned: *mut u32,
-    ) -> i32;
-}
-
-pub(crate) fn boot_id() -> io::Result<String> {
-    let mut information = BootEnvironment::default();
-    let mut returned = 0;
-    // SAFETY: SystemBootEnvironmentInformation (90) writes this fixed, correctly aligned native structure.
-    let status = unsafe {
-        NtQuerySystemInformation(
-            90,
-            ptr::from_mut(&mut information).cast(),
-            size_of::<BootEnvironment>() as u32,
-            &mut returned,
-        )
-    };
-    if status < 0 || returned != size_of::<BootEnvironment>() as u32 {
-        return Err(io::ErrorKind::Unsupported.into());
-    }
-    let guid = information.identifier;
-    let id = uuid::Uuid::from_fields(guid.data1, guid.data2, guid.data3, &guid.data4);
-    if id.is_nil() {
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    Ok(id.hyphenated().to_string())
-}
-
 pub(crate) fn start_time(process: HANDLE) -> io::Result<u64> {
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
@@ -82,7 +41,7 @@ pub(super) fn verify(identity: &Identity) -> Verification {
     if supervisor_active {
         return Verification::new("active", "supervisor_active");
     }
-    if identity.version != Some(2) {
+    if !matches!(identity.version, Some(2 | 3)) {
         return Verification::unknown("legacy_identity");
     }
     let Some(name) = identity.job_name.as_deref().filter(|name| {
@@ -134,7 +93,7 @@ pub(super) fn verify(identity: &Identity) -> Verification {
         return query_error(&error);
     }
     if accounting.ActiveProcesses == 0 {
-        Verification::new("released", "job_empty")
+        Verification::unknown("job_boundary_unverified")
     } else {
         Verification::new("active", "job_active")
     }

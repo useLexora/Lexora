@@ -28,18 +28,30 @@ pub(super) fn initialize() -> io::Result<Job> {
 }
 
 pub(crate) fn identity(job: &Job) -> io::Result<serde_json::Value> {
-    use super::recovery::backend::{boot_id, start_time};
+    use super::recovery::backend::start_time;
     // SAFETY: This pseudo handle denotes the live supervisor.
     let start = start_time(unsafe { GetCurrentProcess() })?;
-    Ok(serde_json::json!({
+    let mut identity = serde_json::json!({
         "version":2, "pid":std::process::id(), "startTime":start.to_string(),
-        "bootId":boot_id()?, "jobName":job.name()
-    }))
+        "jobName":job.name()
+    });
+    if let Ok(boot) = super::recovery::windows_boot::capture() {
+        identity["bootEvidence"] = serde_json::to_value(boot)?;
+    }
+    Ok(identity)
 }
 
-pub(super) fn run(job: &Job, request: &Request, cancelled: &AtomicBool) -> io::Result<i32> {
+pub(super) fn run(
+    job: &Job,
+    request: &Request,
+    cancelled: &AtomicBool,
+    receipt: Option<&super::receipt::Receipt>,
+) -> io::Result<i32> {
     let result = execute(request, cancelled, job);
     job.finish()?;
+    if let Some(receipt) = receipt {
+        receipt.release()?;
+    }
     super::released();
     result
 }

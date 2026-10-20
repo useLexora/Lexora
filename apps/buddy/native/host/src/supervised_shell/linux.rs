@@ -31,9 +31,13 @@ pub(super) fn run(
     _supervision: &Supervision,
     request: &Request,
     cancelled: &AtomicBool,
+    receipt: Option<&super::receipt::Receipt>,
 ) -> io::Result<i32> {
     let result = execute(request, cancelled);
     cleanup()?;
+    if let Some(receipt) = receipt {
+        receipt.release()?;
+    }
     super::released();
     result
 }

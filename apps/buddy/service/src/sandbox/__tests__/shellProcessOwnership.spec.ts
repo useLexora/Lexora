@@ -43,9 +43,10 @@ async function fixture() {
   await capability.extension!.factory({ registerTool: (tool: ToolDefinition) => {
     tools.set(tool.name, tool)
   } } as unknown as Parameters<typeof capability.extension.factory>[0])
-  const invoke = (command: string) => mutations.withInvocation(lease, () => tools.get('bash')!.execute('shell-call', { command }, controller.signal, undefined, undefined!))
+  const invokeWithoutContext = (command: string) => tools.get('bash')!.execute('shell-call', { command }, controller.signal, undefined, undefined!)
+  const invoke = (command: string) => mutations.withInvocation(lease, () => invokeWithoutContext(command))
   const processes = () => database.prepare('SELECT process_id, settlement FROM run_mutation_processes').all() as { process_id: string, settlement: string }[]
-  return { database, directory, repository, mutations, controller, lease, invoke, processes, async dispose() {
+  return { database, directory, repository, mutations, controller, lease, invoke, invokeWithoutContext, processes, async dispose() {
     await mutations.dispose()
     database.close()
     await rm(directory, { recursive: true, force: true })
@@ -112,6 +113,16 @@ describe.skipIf(process.platform !== 'linux')('real shell process ownership', ()
       }
       await f.dispose()
     }
+  })
+
+  it('does not launch an untracked command when a production mutation coordinator is present', async () => {
+    const f = await fixture()
+    try {
+      await expect(f.invokeWithoutContext('touch untracked-start')).rejects.toThrow('SHELL_INVOCATION_REQUIRED')
+      await expect(access(join(f.directory, 'untracked-start'))).rejects.toThrow()
+      expect(f.processes()).toEqual([])
+    }
+    finally { await f.dispose() }
   })
 
   it('does not launch a command for an invocation whose lease has already ended', async () => {

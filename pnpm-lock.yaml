@@ -191,7 +191,7 @@ overrides:
   undici@>=8.0.0 <8.10.2: 8.10.2
 
 patchedDependencies:
-  '@anthropic-ai/sandbox-runtime@0.0.79': 68f02c0540a1fe81b064369ec00853fccfbced5247f897025885ee3f4b89c14b
+  '@anthropic-ai/sandbox-runtime@0.0.80': 402a6b5a7d0cad839dac6de9a056a175c61d9abbedde3ad232ba5c02eae62cd6
   '@earendil-works/pi-ai@1.3.0': 5bc5ab57945169d3844b84f1bc71e545ddc60e933c3c5cccf510f4549978cff9
   '@earendil-works/pi-codemode@1.3.0': 026969a3a0fadb3c88de5fcfca4609deebd341ac267cf4ff23e204f7c9ef3def
   '@earendil-works/pi-coding-agent@1.3.0': e6f84f48ff68b6c4bf42d17dd34cccb74c8913dccce94adc4f21890d6df3a30a
@@ -265,8 +265,8 @@ importers:
   apps/buddy:
     dependencies:
       '@anthropic-ai/sandbox-runtime':
-        specifier: 0.0.79
-        version: 0.0.79(patch_hash=68f02c0540a1fe81b064369ec00853fccfbced5247f897025885ee3f4b89c14b)
+        specifier: 0.0.80
+        version: 0.0.80(patch_hash=402a6b5a7d0cad839dac6de9a056a175c61d9abbedde3ad232ba5c02eae62cd6)
       '@aws-sdk/client-s3':
         specifier: 3.1151.0
         version: 3.1151.0
@@ -602,8 +602,8 @@ packages:
   '@antfu/install-pkg@2.1.0':
     resolution: {integrity: sha512-sdg9NxU3zR4Mnawfbc/x6GB5Wf17WYud5qOuEuxXjaKpYpMkISSJEjItGebXJ2bQ4DIcly4NYH23mtkGJjvKUw==}
 
-  '@anthropic-ai/sandbox-runtime@0.0.79':
-    resolution: {integrity: sha512-WjBmS9fbTpnQwQkM9SU+JjhM2CcXo9eWEELktY1100RMvTy/jPhP44yZ3NXhh+GHB350OgPbM3+FubE5WVRtSA==}
+  '@anthropic-ai/sandbox-runtime@0.0.80':
+    resolution: {integrity: sha512-WG4P8faU/JDH90I8NLUBPmg7e72zhanlW3AVCD0OF06JCtId9IDFewFgv4YRvHLcnn//h1r6a1AMosBsMLpxnA==}
     engines: {node: '>=22.12.0'}
     hasBin: true
 
@@ -7823,7 +7823,7 @@ snapshots:
       package-manager-detector: 1.9.0
       tinyexec: 1.3.1
 
-  '@anthropic-ai/sandbox-runtime@0.0.79(patch_hash=68f02c0540a1fe81b064369ec00853fccfbced5247f897025885ee3f4b89c14b)':
+  '@anthropic-ai/sandbox-runtime@0.0.80(patch_hash=402a6b5a7d0cad839dac6de9a056a175c61d9abbedde3ad232ba5c02eae62cd6)':
     dependencies:
       '@pondwader/socks5-server': 1.0.10
       commander: 12.1.0

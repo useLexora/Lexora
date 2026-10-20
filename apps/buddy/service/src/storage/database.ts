@@ -26,6 +26,8 @@ const BUDDY_CURRENT_SCHEMA_COLUMNS = {
   run_file_change_captures: ['invocation_id'],
   run_mutation_leases: ['lifetime', 'invocation_id', 'run_id', 'segment_id', 'claims_json', 'status', 'reason', 'created_at', 'updated_at'],
   run_mutation_processes: ['invocation_id', 'process_id', 'settlement', 'updated_at'],
+  run_mutation_evidence: ['sequence', 'invocation_id', 'kind', 'outcome', 'reason', 'actor', 'process_id', 'related_run_id', 'created_at'],
+  run_mutation_executions: ['execution_id', 'invocation_id', 'dispatch_id', 'launch_state', 'created_at', 'updated_at'],
   conversation_public_heads: ['conversation_id', 'sequence'],
   conversation_publications: ['source_id', 'conversation_id', 'branch_id', 'sequence', 'kind', 'message_id', 'run_id', 'source_sequence', 'author_actor_id'],
   run_public_snapshots: ['run_id', 'public_sequence'],

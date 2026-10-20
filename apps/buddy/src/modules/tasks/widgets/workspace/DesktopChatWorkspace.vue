@@ -253,6 +253,7 @@ function openDetailChanges(id: string) {
       <footer v-show="composerVisible" class="desktop-chat-page__composer-dock [grid-area:composer] relative z-2 flex-none pt-0 pr-[var(--buddy-chat-inline-gutter)] pb-4 pl-[var(--buddy-chat-inline-gutter)]" :data-composer-placement="composerVisible ? detailVisible ? 'detail' : 'bottom' : 'hidden'">
         <div class="grid grid-cols-[minmax(0,_1fr)] min-w-0 w-[min(100%,_var(--buddy-chat-reading-width))] gap-[0.55rem] my-0 mx-auto">
           <DesktopTaskNotices
+            :change-recovery="workspace.changeRecovery"
             :execution="workspace.execution"
             :language="language"
             :restoration="workspace.restoration"

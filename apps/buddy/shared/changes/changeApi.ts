@@ -72,6 +72,45 @@ export const changesRpc = {
   get: { method: 'changes.get', input: changesRequestSchemas.changeSet, response: changesResponseSchemas.changeSet },
 } as const satisfies Record<string, RuntimeRequestContract>
 
+export const changeRecoveryItemSchema = z.object({
+  invocationId: idSchema,
+  runId: idSchema,
+  conversationId: idSchema.nullable(),
+  taskTitle: z.string().max(512),
+  occurredAt: timestampSchema,
+  affectedResources: z.array(z.string().min(1).max(4096)),
+  reason: z.string().min(1).max(128),
+  status: z.enum(['active', 'unknown']),
+  revision: z.string().min(1).max(256),
+}).strict()
+
+export const changeRecoveryListRequestSchema = z.object({
+  conversationId: idSchema,
+}).strict()
+
+export const changeRecoveryRecheckRequestSchema = changeRecoveryListRequestSchema.extend({
+  invocationIds: z.array(idSchema).min(1).max(100).refine(ids => new Set(ids).size === ids.length),
+}).strict()
+
+export const changeRecoveryResolveRequestSchema = changeRecoveryListRequestSchema.extend({
+  items: z.array(z.object({
+    invocationId: idSchema,
+    revision: z.string().min(1).max(256),
+  }).strict()).min(1).max(100).refine(items => new Set(items.map(item => item.invocationId)).size === items.length),
+  decision: z.literal('waived'),
+}).strict()
+
+export type LocalChangeRecoveryItem = DeepReadonly<z.infer<typeof changeRecoveryItemSchema>>
+export type ChangeRecoveryListRequest = z.infer<typeof changeRecoveryListRequestSchema>
+export type ChangeRecoveryRecheckRequest = z.infer<typeof changeRecoveryRecheckRequestSchema>
+export type ChangeRecoveryResolveRequest = z.infer<typeof changeRecoveryResolveRequestSchema>
+
+export const changesRecoveryRpc = {
+  list: { method: 'changes.recovery.list', input: changeRecoveryListRequestSchema, response: z.array(changeRecoveryItemSchema) },
+  recheck: { method: 'changes.recovery.recheck', input: changeRecoveryRecheckRequestSchema, response: z.array(changeRecoveryItemSchema) },
+  resolve: { method: 'changes.recovery.resolve', input: changeRecoveryResolveRequestSchema, response: z.array(changeRecoveryItemSchema) },
+} as const satisfies Record<string, RuntimeRequestContract>
+
 export const changeSetChangeNoticeSchema = z.object({
   sourceId: z.uuid(),
   revision: z.number().int().positive(),

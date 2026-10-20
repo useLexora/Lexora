@@ -130,6 +130,7 @@ export class DesktopRuntimeHost {
         ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`)
         : undefined,
       windowsSandbox: this.#sandboxExecutable(),
+      receiptDirectory: join(this.#environment.paths.buddyHome, 'process-receipts'),
       windowsShell: this.#windowsPowerShell,
       processControl: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
     }

@@ -6,10 +6,11 @@ import type { SandboxCommand, SandboxNetworkTarget, SandboxResult } from '../../
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import process from 'node:process'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
-import { SANDBOX_RPC_TIMEOUT_MS, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxResultSchema, ShellSandboxError } from '../../../shared/permissions/shellSandbox'
+import { SANDBOX_RPC_TIMEOUT_MS, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxResultSchema, sandboxSettlementSchema, ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 
 type ExecOptions = Parameters<BashOperations['exec']>[2]
 
@@ -26,6 +27,7 @@ interface PendingCommand {
   approve: (target: SandboxNetworkTarget) => Promise<boolean>
   cancel: () => void
   settled: Promise<void>
+  record: (settlement: OwnedProcessSettlement) => Promise<void>
 }
 
 export class ShellSandboxClient {
@@ -39,10 +41,22 @@ export class ShellSandboxClient {
 
   constructor(peer: RuntimeRpcPeerContract) {
     this.#peer = peer
-    this.#dispose = peer.onRequest('sandbox.network', async (params) => {
+    const network = peer.onRequest('sandbox.network', async (params) => {
       const { requestId, ...target } = sandboxNetworkRequestSchema.parse(params)
       return { allowed: await this.#pending.get(requestId)?.approve(target) ?? false }
     })
+    const settlement = peer.onRequest('sandbox.settlement', async (params) => {
+      const { requestId, ...record } = sandboxSettlementSchema.parse(params)
+      const pending = this.#pending.get(requestId)
+      if (!pending || this.#disposed)
+        throw new ShellSandboxError('SANDBOX_CANCELLED')
+      await pending.record(record)
+      return { accepted: true }
+    })
+    this.#dispose = () => {
+      network()
+      settlement()
+    }
   }
 
   async prepare(roots: readonly string[]): Promise<void> {
@@ -52,20 +66,20 @@ export class ShellSandboxClient {
   }
 
   async exec(
-    input: Omit<SandboxCommand, 'requestId'>,
+    input: Omit<SandboxCommand, 'requestId' | 'executionId' | 'dispatchId'>,
     options: ExecOptions,
     approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>,
-    supervision?: { onSettlement: (settlement: OwnedProcessSettlement) => void },
+    supervision?: { onSettlement: (settlement: OwnedProcessSettlement) => void | Promise<void> },
   ): Promise<{ exitCode: number | null }> {
     if (this.#disposed)
       throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
     options.signal?.throwIfAborted()
     const requestId = randomUUID()
-    const dispatchId = JSON.stringify({ kind: 'sandbox-dispatch', requestId })
+    const executionId = randomUUID()
+    const dispatchId = randomUUID()
+    const dispatchProcessId = JSON.stringify({ kind: 'sandbox-dispatch', platform: process.platform, version: 3, requestId, executionId, dispatchId })
     const processes = new Map<string, OwnedProcessSettlement['settlement']>()
-    let proof = false
     let noCommandStarted = false
-    let settlementError: unknown
     let dispatched = false
     let returned = false
     let cancelled = false
@@ -89,25 +103,6 @@ export class ShellSandboxClient {
           backendRevision = parsed.data.revision
           const { requestId: _, ...event } = parsed.data
           publish({ kind: 'backend', event })
-          try {
-            const state = event.snapshot.process
-            if (state?.processId) {
-              const settlement = state.phase === 'resources_released' ? 'released' : state.phase === 'cleanup_failed' ? 'unknown' : 'pending'
-              const processId = associateRequest(state.processId, requestId)
-              if (processes.get(processId) !== 'released') {
-                processes.set(processId, settlement)
-                supervision?.onSettlement({ processId, settlement })
-              }
-              if (settlement === 'released')
-                proof = true
-            }
-            if (event.kind === 'settled' && !event.snapshot.started && !state?.pid)
-              noCommandStarted = true
-          }
-          catch (error) {
-            settlementError = error
-            cancel()
-          }
         }
         return
       }
@@ -121,22 +116,38 @@ export class ShellSandboxClient {
     const settled = new Promise<void>((resolve) => {
       settle = resolve
     })
-    this.#pending.set(requestId, { approve: approveNetwork, cancel, settled })
+    this.#pending.set(requestId, {
+      approve: approveNetwork,
+      cancel,
+      settled,
+      async record(record) {
+        if (record.executionId !== executionId || record.dispatchId !== dispatchId || returned
+          || (record.launchState === 'authorized' && (cancelled || options.signal?.aborted))) {
+          throw new ShellSandboxError('SANDBOX_CANCELLED')
+        }
+        const processId = associateRequest(record.processId, requestId)
+        await supervision?.onSettlement({ ...record, processId })
+        processes.set(processId, record.settlement)
+        if (record.launchState === 'authorized' && (cancelled || options.signal?.aborted))
+          throw new ShellSandboxError('SANDBOX_CANCELLED')
+      },
+    })
     options.signal?.addEventListener('abort', cancel, { once: true })
     try {
       publish({ kind: 'requested' })
       options.signal?.throwIfAborted()
       if (this.#disposed || cancelled)
         throw new ShellSandboxError('SANDBOX_CANCELLED')
+      await supervision?.onSettlement({ processId: dispatchProcessId, settlement: 'pending', executionId, dispatchId, launchState: 'prepared' })
+      options.signal?.throwIfAborted()
+      if (this.#disposed || cancelled)
+        throw new ShellSandboxError('SANDBOX_CANCELLED')
       dispatched = true
-      supervision?.onSettlement({ processId: dispatchId, settlement: 'pending' })
-      const result = sandboxResultSchema.parse(await this.#peer.request('host.sandbox.exec', { ...input, requestId }, SANDBOX_RPC_TIMEOUT_MS))
+      const result = sandboxResultSchema.parse(await this.#peer.request('host.sandbox.exec', { ...input, requestId, executionId, dispatchId }, SANDBOX_RPC_TIMEOUT_MS))
       returned = true
       if (!result.ok && result.notStarted)
         noCommandStarted = true
       publish({ kind: 'returned', result })
-      if (settlementError)
-        throw settlementError
       options.signal?.throwIfAborted()
       if (!result.ok)
         throw new ShellSandboxError(result.code)
@@ -154,9 +165,10 @@ export class ShellSandboxClient {
         if (dispatched) {
           for (const [processId, settlement] of processes) {
             if (settlement !== 'released')
-              supervision?.onSettlement({ processId, settlement: 'unknown' })
+              await supervision?.onSettlement({ processId, settlement: 'unknown', executionId, dispatchId, launchState: 'settled' })
           }
-          supervision?.onSettlement({ processId: dispatchId, settlement: proof || (returned && noCommandStarted) ? 'released' : 'unknown' })
+          const proof = processes.size > 0 && [...processes.values()].every(state => state === 'released')
+          await supervision?.onSettlement({ processId: dispatchProcessId, settlement: proof || (returned && noCommandStarted && processes.size === 0) ? 'released' : 'unknown', executionId, dispatchId, launchState: 'settled' })
         }
       }
       finally {

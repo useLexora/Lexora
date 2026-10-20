@@ -27,6 +27,7 @@ const HOST_TOOLS = toPiToolGroup({ name: 'lexora_host', description: 'Run author
 
 export function createShellCapability(options: {
   cwd: string
+  receiptDirectory?: string
   execution: ShellExecution
   getExecution?: () => ShellExecution
   getGrants: () => readonly DirectoryGrant[]
@@ -82,9 +83,12 @@ export function createShellCapability(options: {
                 operations: {
                   exec: async (command: string, cwd: string, execOptions: Parameters<BashOperations['exec']>[2]) => {
                     const invocation = options.mutations?.getCurrentInvocation()
+                    if (options.mutations && !invocation)
+                      throw new Error('SHELL_INVOCATION_REQUIRED')
                     const shell = shellName === 'powershell' ? getPowerShellConfig() : getShellConfig()
                     return runSupervisedShellProcess({ ...shell, command, cwd, environment: execOptions.env ?? process.env }, {
                       ...execOptions,
+                      receiptDirectory: options.receiptDirectory,
                       onSettlement(settlement) {
                         if (invocation && !options.mutations!.recordOwnedProcessSettlement({ ...settlement, invocationId: invocation.invocationId }))
                           throw new Error('SHELL_INVOCATION_EXPIRED')
@@ -156,6 +160,8 @@ export function createShellCapability(options: {
                     }, {
                       onSettlement: (() => {
                         const invocation = options.mutations?.getCurrentInvocation()
+                        if (options.mutations && !invocation)
+                          throw new Error('SHELL_INVOCATION_REQUIRED')
                         return (settlement: OwnedProcessSettlement) => {
                           if (invocation && !options.mutations!.recordOwnedProcessSettlement({ ...settlement, invocationId: invocation.invocationId }))
                             throw new Error('SHELL_INVOCATION_EXPIRED')

@@ -26,6 +26,7 @@ import { useActorInputTarget } from '@/modules/tasks/state/composer/useActorInpu
 import { useChatComposerInteractions } from '@/modules/tasks/state/composer/useChatComposerInteractions'
 import { useComposerContextOptions } from '@/modules/tasks/state/composer/useComposerContextOptions'
 import { useComposerResources } from '@/modules/tasks/state/composer/useComposerResources'
+import { useChangeRecovery } from '@/modules/tasks/state/runs/useChangeRecovery'
 import { useChatApprovals } from '@/modules/tasks/state/runs/useChatApprovals'
 import { useChatContextUsage } from '@/modules/tasks/state/runs/useChatContextUsage'
 import { useChatExecution } from '@/modules/tasks/state/runs/useChatExecution'
@@ -121,6 +122,11 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     timelineItems,
   } = runSync
 
+  const changeRecovery = useChangeRecovery({
+    conversationId: activeConversationId,
+    ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready'),
+    api: api.localChat,
+  })
   const executionTree = useChatExecutionTree({
     conversationId: activeConversationId,
     branchId: activeBranchId,
@@ -574,6 +580,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     runs,
   })
   const workspace = {
+    changeRecovery,
     executionTree,
     marks: taskMarks,
     tree,

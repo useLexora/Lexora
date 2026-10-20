@@ -1,6 +1,6 @@
 import type { DesktopChatWelcomeItem, DesktopChatWelcomePreference, DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
+import type { ChangeRecoveryResolveRequest, LocalChangeRecoveryItem, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
 import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/composerDraft'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
@@ -227,7 +227,19 @@ export interface TaskExecutionTree {
   api: LocalChatApi['executions']
 }
 
+export interface TaskChangeRecovery {
+  conversationId: State<string | null>
+  items: State<readonly LocalChangeRecoveryItem[]>
+  busy: State<boolean>
+  error: State<'loadFailed' | 'recheckFailed' | 'resolveFailed' | null>
+  waived: State<boolean>
+  recheck: () => Promise<void>
+  resolve: (input: ChangeRecoveryResolveRequest) => Promise<boolean>
+  dismissWaived: () => void
+}
+
 export interface TaskChatWorkspace {
+  changeRecovery: TaskChangeRecovery
   executionTree: TaskExecutionTree
   marks: TaskMarks
   tree: TaskConversationTree

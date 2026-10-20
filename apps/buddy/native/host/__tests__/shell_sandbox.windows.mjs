@@ -8,6 +8,7 @@ import { createServer } from 'node:net'
 import { homedir, networkInterfaces, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
+import { createInterface } from 'node:readline'
 import * as nativeTest from 'node:test'
 import { promisify } from 'node:util'
 
@@ -29,12 +30,13 @@ async function listener(host = '127.0.0.1') {
   return { server, port: server.address().port }
 }
 
-async function execute({ command, workspace, grants, port, onReady, onPreparing, measure = false, prepareOnly = false, denyReadScope = dirname(workspace), synchronizeDenials = false }) {
+async function execute({ command, workspace, grants, port, onReady, onPreparing, measure = false, prepareOnly = false, authorizeLaunch = true, denyReadScope = dirname(workspace), synchronizeDenials = false }) {
   const privateRoot = await mkdtemp(join(dirname(workspace), 'private-'))
   const home = join(privateRoot, 'home')
   const temporary = join(privateRoot, 'tmp')
   await Promise.all([home, temporary].map(path => mkdir(path)))
   const shell = process.env.BUDDY_SANDBOX_TEST_SHELL ?? join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe')
+  const launch = prepareOnly ? undefined : { executionId: randomUUID(), dispatchId: randomUUID(), receiptDirectory: await mkdtemp(join(dirname(workspace), 'receipts-')) }
   const startedAt = performance.now()
   let readyAt
   let preparingAt
@@ -57,24 +59,51 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing,
   let diagnostics = ''
   let ready = false
   let preparing = false
+  let supervisor
+  let protocol = Promise.resolve()
+  let protocolError
   child.stdout.on('data', data => chunks.push(data))
-  child.stderr.on('data', (data) => {
-    diagnostics += data
-    if (releasedAt === undefined && diagnostics.includes('"type":"processesReleased"'))
-      releasedAt = performance.now()
-    if (!preparing && diagnostics.includes('"phase":"filesystem_preparing"')) {
-      preparing = true
-      preparingAt = performance.now()
-      onPreparing?.(child)
-    }
-    if (!ready && diagnostics.includes('"type":"ready"')) {
-      ready = true
-      readyAt = performance.now()
-      onReady?.(child)
-    }
+  const lines = createInterface({ input: child.stderr })
+  lines.on('line', (line) => {
+    diagnostics += `${line}\n`
+    protocol = protocol.then(async () => {
+      const message = JSON.parse(line)
+      if (message.type === 'supervisor' && launch) {
+        assert.equal(supervisor, undefined, 'Duplicate sandbox supervisor')
+        assert.equal(message.protocol, 1)
+        assert.equal(message.identity.version, 3)
+        assert.equal(message.identity.pid, child.pid)
+        assert.equal(message.identity.executionId, launch.executionId)
+        assert.equal(message.identity.dispatchId, launch.dispatchId)
+        supervisor = message.identity
+        const prepared = JSON.parse(await readFile(join(launch.receiptDirectory, `${launch.executionId}.prepared.json`), 'utf8'))
+        assert.deepEqual(prepared, { version: 1, identity: supervisor, launchClosed: false })
+        if (authorizeLaunch)
+          child.stdin.write(`${JSON.stringify({ executionId: launch.executionId, dispatchId: launch.dispatchId })}\n`)
+        else
+          child.stdin.end()
+      }
+      if (releasedAt === undefined && message.type === 'processesReleased')
+        releasedAt = performance.now()
+      if (!preparing && message.type === 'diagnostic' && message.phase === 'filesystem_preparing') {
+        preparing = true
+        preparingAt = performance.now()
+        onPreparing?.(child)
+      }
+      if (!ready && message.type === 'ready') {
+        if (launch)
+          assert.ok(supervisor, 'Command became ready before its supervisor handshake')
+        ready = true
+        readyAt = performance.now()
+        onReady?.(child)
+      }
+    }).catch((error) => {
+      protocolError ??= error
+      child.stdin.end()
+    })
   })
   child.stdin.on('error', () => {})
-  child.stdin.write(`${JSON.stringify(prepareOnly ? { grants: identities, denyReadScope, synchronizeDenials } : { command, cwd: workspace, shell, privateRoot, proxyPort: port, grants: identities, denyReadScope, environment: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, ComSpec: join(process.env.SystemRoot, 'System32', 'cmd.exe'), PATHEXT: '.COM;.EXE;.BAT;.CMD', PSModulePath: join(dirname(shell), 'Modules'), PATH: `${dirname(shell)};${join(process.env.SystemRoot, 'System32')}`, HOME: home, USERPROFILE: home, TEMP: temporary, TMP: temporary, APPDATA: home, LOCALAPPDATA: home, POWERSHELL_TELEMETRY_OPTOUT: '1' } })}\n`)
+  child.stdin.write(`${JSON.stringify(prepareOnly ? { grants: identities, denyReadScope, synchronizeDenials } : { command, cwd: workspace, shell, privateRoot, proxyPort: port, grants: identities, denyReadScope, launch, environment: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, ComSpec: join(process.env.SystemRoot, 'System32', 'cmd.exe'), PATHEXT: '.COM;.EXE;.BAT;.CMD', PSModulePath: join(dirname(shell), 'Modules'), PATH: `${dirname(shell)};${join(process.env.SystemRoot, 'System32')}`, HOME: home, USERPROFILE: home, TEMP: temporary, TMP: temporary, APPDATA: home, LOCALAPPDATA: home, POWERSHELL_TELEMETRY_OPTOUT: '1' } })}\n`)
   const timer = setTimeout(() => child.stdin.end(), 60_000)
   const killTimer = setTimeout(() => child.kill(), 75_000)
   try {
@@ -82,6 +111,14 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing,
       child.once('error', reject)
       child.once('close', resolve)
     })
+    await protocol
+    if (protocolError)
+      throw protocolError
+    if (launch && releasedAt !== undefined) {
+      assert.ok(supervisor, 'Sandbox reported release without a supervisor identity')
+      const released = JSON.parse(await readFile(join(launch.receiptDirectory, `${launch.executionId}.released.json`), 'utf8'))
+      assert.deepEqual(released, { version: 1, identity: supervisor, launchClosed: true })
+    }
     const buffer = Buffer.concat(chunks)
     const output = buffer.subarray(0, 128).includes(0) ? buffer.toString('utf16le') : buffer.toString('utf8')
     await observed
@@ -90,7 +127,10 @@ async function execute({ command, workspace, grants, port, onReady, onPreparing,
   finally {
     clearTimeout(timer)
     clearTimeout(killTimer)
+    lines.close()
     await rm(privateRoot, { recursive: true, force: true, maxRetries: 40, retryDelay: 50 })
+    if (launch)
+      await rm(launch.receiptDirectory, { recursive: true, force: true })
   }
 }
 
@@ -120,6 +160,16 @@ nativeTest.test('Windows restricted-token behavior and known limits', { skip: pr
   const remote = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address
   try {
     assert.ok(remote, 'Windows acceptance requires a non-loopback network interface')
+    await t.test('does not execute without a launch acknowledgement and seals its release receipt', async () => {
+      const marker = join(workspace, 'unacknowledged-command')
+      const result = await execute({ command: `[IO.File]::WriteAllText(${quote(marker)},'EXECUTED')`, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }], authorizeLaunch: false })
+      assert.notEqual(result.exitCode, 0, JSON.stringify(result))
+      assert.match(result.diagnostics, /"type":"supervisor"/)
+      assert.match(result.diagnostics, /"type":"processesReleased"/)
+      assert(!result.diagnostics.includes('"phase":"filesystem_preparing"'), result.diagnostics)
+      assert(!result.diagnostics.includes('"type":"ready"'), result.diagnostics)
+      await assert.rejects(access(marker), { code: 'ENOENT' })
+    })
     await t.test('reconciles late command and workspace denials without releasing another configuration', async () => {
       const readGrant = { path: workspace, access: 'read' }
       const base = { workspace, port: proxy.port, grants: [readGrant] }
@@ -273,7 +323,9 @@ foreach($target in @(@{key='proxy';host='127.0.0.1';port=${proxy.port}},@{key='o
       const result = await execute({ command: '[IO.File]::WriteAllText(\'must-not-run\',\'changed\')', workspace: current, port: proxy.port, grants: [{ path: current, access: 'write', device: String(metadata.dev), inode: String(metadata.ino) }] })
       assert.notEqual(result.exitCode, 0, JSON.stringify(result))
       assert(!result.diagnostics.includes('"type":"ready"'), result.diagnostics)
-      await assert.rejects(access(join(current, 'must-not-run')))
+      const failure = result.diagnostics.trim().split('\n').map(line => JSON.parse(line)).find(message => message.type === 'diagnostic' && message.phase === 'filesystem')
+      assert.ok(failure, `Expected a directory identity failure after the launch handshake: ${result.diagnostics}`)
+      await assert.rejects(access(join(current, 'must-not-run')), { code: 'ENOENT' })
     })
     await t.test('supports PowerShell paths, file operations and native children', async () => {
       await writeFile(join(workspace, 'result.txt'), 'delete-fixture')

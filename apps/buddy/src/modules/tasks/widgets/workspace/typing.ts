@@ -1,6 +1,6 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
-import type { TaskChatWorkspace, TaskComposer, TaskDraftRestoration, TaskExecution, TaskStatus } from '../../contracts'
+import type { TaskChangeRecovery, TaskChatWorkspace, TaskComposer, TaskDraftRestoration, TaskExecution, TaskStatus } from '../../contracts'
 import type { ChatReadingPositions } from '../transcript/chatMessageViewport'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopSettingsCategory } from '@/shared/navigation/desktopRoutes'
@@ -32,6 +32,7 @@ export interface TaskComposerHostProps {
 }
 
 export interface TaskNoticesProps {
+  changeRecovery: TaskChangeRecovery
   execution: Pick<TaskExecution, 'approvalViews' | 'editingMessageId' | 'resolvingApprovalActions' | 'cancelEditUserMessage' | 'resolveApproval'>
   language: BuddyLocale
   restoration: TaskDraftRestoration

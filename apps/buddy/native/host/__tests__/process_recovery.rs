@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{Value, json};
 
+#[cfg(target_os = "linux")]
 fn boot() -> String {
     backend::boot_id().unwrap()
 }
@@ -24,6 +25,7 @@ fn prior_checkpoint() -> Value {
     json!({"kind":"recovery-boot","version":1,"platform":backend::PLATFORM,"bootId":uuid::Uuid::new_v4().to_string()})
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_complete_legacy_handshake_can_recover_after_a_checkpoint_boot_change() {
     assert_eq!(
@@ -93,13 +95,14 @@ fn malformed_boot_ids_and_unknown_identity_versions_do_not_release() {
         "identity_invalid"
     );
     let mut invalid_version = identity();
-    invalid_version["version"] = json!(3);
+    invalid_version["version"] = json!(4);
     assert_eq!(
         inspect(invalid_version, Some(prior_checkpoint()))["reason"],
         "identity_version_unsupported"
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn checkpoint_reports_a_kernel_boot_id_not_a_wall_clock() {
     let mut output = Vec::new();
@@ -126,6 +129,7 @@ fn input_is_bounded_and_never_accepts_a_process_action() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn same_boot_checkpoint_does_not_turn_pid_disappearance_into_release() {
     let checkpoint =

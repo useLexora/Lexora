@@ -175,6 +175,16 @@ function createOwner(name: string) {
       activateBranch: async () => true,
       loadOlderMessages: async () => false,
     },
+    changeRecovery: {
+      conversationId: shallowRef<string | null>(null),
+      items: shallowRef([]),
+      busy: shallowRef(false),
+      error: shallowRef(null),
+      waived: shallowRef(false),
+      recheck: async () => {},
+      resolve: async () => true,
+      dismissWaived: () => {},
+    },
     restoration: {
       state: shallowRef('ready' as const),
       conflict: shallowRef(null),

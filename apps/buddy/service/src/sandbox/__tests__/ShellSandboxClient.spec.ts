@@ -12,6 +12,10 @@ function fixture() {
   const notifications: Array<{ method: string, params: unknown }> = []
   const listeners = new Set<(method: string, params: unknown) => void>()
   let requestId = ''
+  let executionId = ''
+  let dispatchId = ''
+  const requested = deferred<void>()
+  const handlers = new Map<string, (params: unknown) => unknown>()
   const peer: RuntimeRpcPeerContract = {
     notify: (method, params) => { notifications.push({ method, params }) },
     onNotification: (listener) => {
@@ -20,9 +24,17 @@ function fixture() {
         listeners.delete(listener)
       }
     },
-    onRequest: () => () => {},
+    onRequest: (method, handler) => {
+      handlers.set(method, handler)
+      return () => {
+        handlers.delete(method)
+      }
+    },
     request: async (_method, params) => {
       requestId = (params as SandboxCommand).requestId
+      executionId = (params as SandboxCommand).executionId!
+      dispatchId = (params as SandboxCommand).dispatchId!
+      requested.resolve()
       return response.promise
     },
     close: () => {},
@@ -32,17 +44,70 @@ function fixture() {
   const events: SandboxClientEvent[] = []
   client.onDidChange(event => events.push(event))
   const execute = (supervision?: Parameters<ShellSandboxClient['exec']>[3]) => client.exec({ command: 'private command text', cwd: '/workspace', roots: ['/workspace'], workspaceRoots: [], resourceReadRoots: [], additionalDirectories: [], readOnly: true }, { onData: () => {}, signal: controller.signal }, async () => false, supervision)
-  return { client, controller, events, execute, notifications, response, backend(revision: number, kind: string, result?: unknown, process?: unknown) {
+  return { client, controller, events, execute, notifications, response, requested: requested.promise, record(processId: string, settlement: 'pending' | 'released' | 'unknown') {
+    return handlers.get('sandbox.settlement')!({ requestId, executionId, dispatchId, processId, settlement, launchState: settlement === 'pending' ? 'authorized' : 'settled' })
+  }, backend(revision: number, kind: string, result?: unknown, process?: unknown) {
     for (const listener of listeners) listener('host.sandbox.lifecycle', { requestId, revision, kind, snapshot: { phase: kind === 'settled' ? 'finished' : 'running', started: true, waiting: 0, cancellation: 'none', ...result ? { result } : {}, ...process ? { process } : {} } })
   } }
 }
 
 describe('sandbox client facts', () => {
+  it('acknowledges startup only after the service persistence callback resolves', async () => {
+    const f = fixture()
+    const persisted = deferred<void>()
+    const entered = deferred<void>()
+    const pending = f.execute({ async onSettlement(record) {
+      if (record.launchState === 'authorized') {
+        entered.resolve()
+        await persisted.promise
+      }
+    } })
+    await f.requested
+    let acknowledged = false
+    const acknowledgement = Promise.resolve(f.record('native-identity', 'pending')).then((value) => {
+      acknowledged = true
+      return value
+    })
+    await entered.promise
+    expect(acknowledged).toBe(false)
+    persisted.resolve()
+    await expect(acknowledgement).resolves.toEqual({ accepted: true })
+    await f.record('native-identity', 'released')
+    f.response.resolve({ ok: true, exitCode: 0 })
+    await pending
+    await f.client.dispose()
+  })
+
+  it('rejects a late startup acknowledgement after cancellation', async () => {
+    const f = fixture()
+    const persisted = deferred<void>()
+    const entered = deferred<void>()
+    const pending = f.execute({ async onSettlement(record) {
+      if (record.launchState === 'authorized') {
+        entered.resolve()
+        await persisted.promise
+      }
+    } })
+    const rejected = expect(pending).rejects.toThrow()
+    await f.requested
+    const acknowledgement = Promise.resolve(f.record('native-identity', 'pending'))
+    const denied = expect(acknowledgement).rejects.toThrow('SANDBOX_CANCELLED')
+    await entered.promise
+    f.controller.abort()
+    persisted.resolve()
+    await denied
+    f.response.resolve({ ok: false, code: 'SANDBOX_CANCELLED' })
+    await rejected
+    await f.client.dispose()
+  })
+
   it('releases only a trusted pre-dispatch rejection and retains unproven failures', async () => {
     for (const notStarted of [true, false]) {
       const f = fixture()
       const states = new Map<string, string>()
-      const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
+      const pending = f.execute({ onSettlement: ({ processId, settlement }) => {
+        states.set(processId, settlement)
+      } })
       f.response.resolve({ ok: false, code: 'SANDBOX_UNAVAILABLE', ...(notStarted ? { notStarted: true } : {}) })
       await expect(pending).rejects.toThrow('SANDBOX_UNAVAILABLE')
       expect([...states.values()]).toEqual([notStarted ? 'released' : 'unknown'])
@@ -53,8 +118,11 @@ describe('sandbox client facts', () => {
   it('requires a trusted tree release receipt even when the backend returns success', async () => {
     const f = fixture()
     const states = new Map<string, string>()
-    const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
-    f.backend(1, 'started')
+    const pending = f.execute({ onSettlement: ({ processId, settlement }) => {
+      states.set(processId, settlement)
+    } })
+    await f.requested
+    f.backend(1, 'process', undefined, { phase: 'resources_released', pid: 1234, processId: JSON.stringify({ kind: 'native-shell', pid: 1234 }) })
     f.backend(2, 'settled', { ok: true, exitCode: 0 })
     f.response.resolve({ ok: true, exitCode: 0 })
     await pending
@@ -66,11 +134,16 @@ describe('sandbox client facts', () => {
     const f = fixture()
     const states = new Map<string, string>()
     const identity = JSON.stringify({ kind: 'native-shell', pid: 1234, startTime: '12345', bootId: 'fixture' })
-    const pending = f.execute({ onSettlement: ({ processId, settlement }) => states.set(processId, settlement) })
+    const pending = f.execute({ onSettlement: ({ processId, settlement }) => {
+      states.set(processId, settlement)
+    } })
     const rejected = expect(pending).rejects.toThrow()
+    await f.requested
+    await f.record(identity, 'pending')
     f.backend(1, 'process', undefined, { phase: 'spawned', pid: 1234, processId: identity })
     f.controller.abort()
     expect([...states.values()]).toEqual(['pending', 'pending'])
+    await f.record(identity, 'released')
     f.backend(2, 'process', undefined, { phase: 'resources_released', pid: 1234, processId: identity })
     f.response.resolve({ ok: false, code: 'SANDBOX_CANCELLED' })
     await rejected
@@ -82,6 +155,7 @@ describe('sandbox client facts', () => {
     const records: import('../../../../shared/diagnostics/applicationDiagnostic').ApplicationDiagnostic[] = []
     const subscription = observeSandboxClient(f.client, event => records.push(event))
     const pending = diagnosticContext.run({ runId: 'run-fixture', toolCallId: 'tool-fixture' }, f.execute)
+    await f.requested
     f.backend(1, 'started')
     f.response.resolve({ ok: true, exitCode: 0 })
     await pending
@@ -94,6 +168,7 @@ describe('sandbox client facts', () => {
   it('keeps successful settlement distinct from cleanup and ignores stale backend messages', async () => {
     const f = fixture()
     const pending = f.execute()
+    await f.requested
     f.backend(2, 'started')
     f.backend(1, 'started')
     f.backend(3, 'settled', { ok: true, exitCode: 0 })
@@ -112,6 +187,7 @@ describe('sandbox client facts', () => {
     const f = fixture()
     const pending = f.execute()
     const rejected = expect(pending).rejects.toThrow()
+    await f.requested
     f.controller.abort()
     expect(f.events.map(event => event.kind)).toEqual(['requested', 'cancel-requested'])
     f.backend(1, 'settled', { ok: true, exitCode: 0 })

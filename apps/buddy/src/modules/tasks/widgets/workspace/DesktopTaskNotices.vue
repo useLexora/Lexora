@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopApprovalCard from './DesktopApprovalCard.vue'
+import DesktopChangeRecoveryNotice from './DesktopChangeRecoveryNotice.vue'
 import DesktopChatStatus from './DesktopChatStatus.vue'
 import DesktopDraftRestorationNotice from './DesktopDraftRestorationNotice.vue'
 
@@ -28,6 +29,7 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
 </script>
 
 <template>
+  <DesktopChangeRecoveryNotice :recovery="changeRecovery" :language="language" />
   <DesktopDraftRestorationNotice
     :conflict="restorationConflict"
     :language="language"

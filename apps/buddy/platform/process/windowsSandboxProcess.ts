@@ -1,5 +1,6 @@
 import type { Buffer } from 'node:buffer'
 import type { SandboxProcessState } from '../../shared/permissions/sandboxLifecycle'
+import type { OwnedProcessSupervision } from './supervisedShellProcess'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
@@ -36,7 +37,7 @@ export async function runWindowsSandboxProcess(executable: string, request: Wind
   onData: (data: Buffer) => void
   onStarted: () => void
   onProcess?: (process: SandboxProcessState) => void
-}): Promise<number | null> {
+} & Partial<OwnedProcessSupervision>): Promise<number | null> {
   return runProcess(executable, 'run', request, options)
 }
 
@@ -51,10 +52,23 @@ async function runProcess(executable: string, mode: 'run' | 'prepare', request: 
   onData: (data: Buffer) => void
   onStarted: () => void
   onProcess?: (process: SandboxProcessState) => void
-}): Promise<number | null> {
+} & Partial<OwnedProcessSupervision>): Promise<number | null> {
+  options.signal.throwIfAborted()
+  const executionId = options.executionId ?? randomUUID()
+  const dispatchId = options.dispatchId ?? randomUUID()
+  const dispatchProcessId = JSON.stringify({ kind: 'native-shell-dispatch', platform: 'win32', version: 3, executionId, dispatchId })
+  const settle = async (processId: string, settlement: 'pending' | 'released' | 'unknown', launchState: 'prepared' | 'authorized' | 'settled') => {
+    await options.onSettlement?.({ processId, settlement, launchState, executionId, dispatchId })
+  }
+  if (mode === 'run')
+    await settle(dispatchProcessId, 'pending', 'prepared')
   options.signal.throwIfAborted()
   return new Promise<number | null>((resolve, reject) => {
     let ready = false
+    let closed = false
+    let cancelled = false
+    let authorized = false
+    let protocol = Promise.resolve()
     let failed = false
     let processesReleased = false
     let processId: string | undefined
@@ -74,20 +88,34 @@ async function runProcess(executable: string, mode: 'run' | 'prepare', request: 
       closeUnknownOutput()
     })
     const cancel = () => {
+      cancelled = true
       options.onProcess?.({ phase: 'cleanup_requested', pid: child.pid })
       child.stdin.end()
-      forceKill ??= setTimeout(() => child.kill(), 10_000)
-      forceKill.unref()
+      if (!closed) {
+        forceKill ??= setTimeout(() => child.kill(), 10_000)
+        forceKill.unref()
+      }
     }
     const lines = createInterface({ input: child.stderr })
     lines.on('line', (line) => {
-      try {
+      protocol = protocol.then(async () => {
         const diagnostic = diagnosticSchema.parse(JSON.parse(line))
         if (diagnostic.type === 'supervisor') {
           if (processId || diagnostic.identity.pid !== child.pid)
             throw new Error('Invalid sandbox supervisor identity')
-          processId = JSON.stringify({ kind: 'sandbox-job', platform: 'win32', ...diagnostic.identity, nonce: randomUUID() })
+          processId = JSON.stringify({ kind: 'sandbox-job', platform: 'win32', ...diagnostic.identity, ...mode === 'prepare' ? { nonce: randomUUID() } : {} })
           options.onProcess?.({ phase: 'spawned', pid: child.pid, processId })
+          if (mode === 'run') {
+            if (!('executionId' in diagnostic.identity) || diagnostic.identity.executionId !== executionId || diagnostic.identity.dispatchId !== dispatchId)
+              throw new Error('Invalid sandbox launch identity')
+            if (closed || cancelled || options.signal.aborted)
+              return cancel()
+            await settle(processId, 'pending', 'authorized')
+            if (closed || cancelled || options.signal.aborted)
+              return cancel()
+            authorized = true
+            child.stdin.write(`${JSON.stringify({ executionId, dispatchId })}\n`)
+          }
         }
         if (diagnostic.type === 'ready' && !ready) {
           ready = true
@@ -100,11 +128,10 @@ async function runProcess(executable: string, mode: 'run' | 'prepare', request: 
           failed = true
         if (diagnostic.type === 'processesReleased')
           processesReleased = true
-      }
-      catch {
+      }).catch(() => {
         failed = true
         cancel()
-      }
+      })
     })
     child.stdout.on('data', options.onData)
     child.stdin.on('error', () => {})
@@ -112,19 +139,29 @@ async function runProcess(executable: string, mode: 'run' | 'prepare', request: 
       launchError = error
     })
     child.once('close', (code) => {
-      options.onProcess?.({ phase: 'closed', pid: child.pid, exitCode: code })
-      options.onProcess?.({ phase: processesReleased ? 'resources_released' : 'cleanup_failed', pid: child.pid, processId })
-      options.signal.removeEventListener('abort', cancel)
-      clearTimeout(forceKill)
-      lines.close()
-      if (launchError)
-        reject(launchError)
-      else if (!ready || failed)
-        reject(new ShellSandboxError(ready ? 'SANDBOX_FAILED' : 'SANDBOX_UNAVAILABLE'))
-      else resolve(code)
+      closed = true
+      void (async () => {
+        await protocol
+        options.onProcess?.({ phase: 'closed', pid: child.pid, exitCode: code })
+        options.onProcess?.({ phase: processesReleased ? 'resources_released' : 'cleanup_failed', pid: child.pid, processId })
+        options.signal.removeEventListener('abort', cancel)
+        clearTimeout(forceKill)
+        lines.close()
+        if (mode === 'run') {
+          const state = processesReleased || !authorized ? 'released' : 'unknown'
+          if (processId)
+            await settle(processId, state, 'settled')
+          await settle(dispatchProcessId, state, 'settled')
+        }
+        if (launchError)
+          throw launchError
+        if (!ready || failed)
+          throw new ShellSandboxError(ready ? 'SANDBOX_FAILED' : 'SANDBOX_UNAVAILABLE')
+        return code
+      })().then(resolve, reject)
     })
     options.signal.addEventListener('abort', cancel, { once: true })
-    child.stdin.write(`${JSON.stringify(request)}\n`)
+    child.stdin.write(`${JSON.stringify(mode === 'run' ? { ...request, launch: { executionId, dispatchId, receiptDirectory: options.receiptDirectory } } : request)}\n`)
     if (options.signal.aborted)
       cancel()
   })

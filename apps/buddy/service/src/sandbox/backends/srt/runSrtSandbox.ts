@@ -64,9 +64,13 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
         },
       }, {
         signal: options.signal,
+        executionId: input.executionId,
+        dispatchId: input.dispatchId,
+        receiptDirectory: input.receiptDirectory,
         onData: options.onData,
         onProcess: options.onProcess,
-        onSettlement(next) {
+        async onSettlement(next) {
+          await options.onSettlement?.(next)
           settlements.set(next.processId, next)
           const pid = JSON.parse(next.processId).pid as number | undefined
           if (next.settlement === 'pending')

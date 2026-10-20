@@ -12,13 +12,14 @@ import { resolveSensitivePathRoots } from '../../../service/src/permissions/sens
 import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
 import { Emitter } from '../../../shared/events/Emitter'
 import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
-import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxPreparationSchema } from '../../../shared/permissions/shellSandbox'
+import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxPreparationSchema, sandboxSettlementAckSchema, sandboxSettlementSchema } from '../../../shared/permissions/shellSandbox'
 import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
 import { WindowsSandboxPreparation } from './WindowsSandboxPreparation'
 
 export interface SandboxHostOptions {
   buddyHome: string
+  receiptDirectory?: string
   protectedRoots?: string[]
   protectionScope?: string
   proxyUrl?: string
@@ -34,6 +35,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
   const publish = (event: Parameters<typeof changes.fire>[0]) => changes.fire(Object.freeze(event))
   const preparation = isWindows(process.platform) ? new WindowsSandboxPreparation({ ...options, protectedRoots: options.protectedRoots ?? [dirname(options.buddyHome)] }) : undefined
   const active = new Map<string, AbortController>()
+  const accepted = new Set<string>()
   let disposed = false
   const disposers = [
     peer.onRequest('host.sandbox.prepare', async (params) => {
@@ -54,10 +56,11 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
       const input = sandboxCommandSchema.parse(params)
       if (!Object.values<string>(OPERATING_SYSTEM).includes(process.platform))
         return { ok: false, code: 'SANDBOX_UNAVAILABLE', notStarted: true }
-      if (active.has(input.requestId))
+      if (accepted.has(input.requestId))
         return { ok: false, code: 'SANDBOX_BUSY' }
       if (disposed || active.size >= 8)
         return { ok: false, code: 'SANDBOX_BUSY', notStarted: true }
+      accepted.add(input.requestId)
       preparation?.start()
       const controller = new AbortController()
       active.set(input.requestId, controller)
@@ -143,6 +146,17 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           if (output.requestId === input.requestId)
             peer.notify('host.sandbox.output', output)
         })
+        processPeer.onRequest('sandbox.settlement', async (params) => {
+          const record = sandboxSettlementSchema.parse(params)
+          if (disposed || record.requestId !== input.requestId || record.executionId !== input.executionId || record.dispatchId !== input.dispatchId
+            || (record.launchState === 'authorized' && controller.signal.aborted)) {
+            throw new Error('SANDBOX_CANCELLED')
+          }
+          const result = sandboxSettlementAckSchema.parse(await peer.request('sandbox.settlement', record, 60_000))
+          if (record.launchState === 'authorized' && (disposed || controller.signal.aborted))
+            throw new Error('SANDBOX_CANCELLED')
+          return result
+        })
         processPeer.onRequest('sandbox.network', async (params) => {
           const target = sandboxNetworkRequestSchema.parse(params)
           if (disposed || controller.signal.aborted || target.requestId !== input.requestId)
@@ -156,6 +170,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           sensitiveRoots: resolveSensitivePathRoots(),
           path: process.env.PATH ?? '',
           privateRoot: directory,
+          receiptDirectory: options.receiptDirectory,
           protectedRoots: options.protectedRoots ?? [dirname(options.buddyHome)],
           searchDirectory: options.searchDirectory,
           backend: windowsSandbox

@@ -35,13 +35,13 @@ fn windows_live_supervisor_keeps_an_empty_job_active() {
 }
 
 #[test]
-fn windows_reused_pid_and_an_empty_held_job_prove_release_without_killing_the_reused_pid() {
+fn windows_reused_pid_and_an_empty_held_job_cannot_prove_a_sealed_launch_domain() {
     let job = Job::host().unwrap();
     let mut identity = job_identity(&job);
     identity["startTime"] = json!("0");
     assert_eq!(
         inspect(identity, None),
-        json!({"protocol":1,"status":"released","reason":"job_empty"})
+        json!({"protocol":1,"status":"unknown","reason":"job_boundary_unverified"})
     );
 }
 
@@ -157,7 +157,7 @@ fn windows_reverification_observes_a_remaining_child_without_terminating_it() {
     loop {
         let result = inspect(identity.clone(), None);
         if result["reason"] != "job_active" || Instant::now() >= deadline {
-            assert_eq!(result["reason"], "job_empty");
+            assert_eq!(result["reason"], "job_boundary_unverified");
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -188,6 +188,6 @@ fn windows_non_inheritable_observer_can_hold_the_job_after_supervisor_release() 
     // SAFETY: DuplicateHandle returned a valid unique owned handle.
     let observer = unsafe { OwnedHandle::from_raw_handle(duplicate) };
     drop(job);
-    assert_eq!(inspect(identity, None)["reason"], "job_empty");
+    assert_eq!(inspect(identity, None)["reason"], "job_boundary_unverified");
     drop(observer);
 }

@@ -71,8 +71,12 @@ fn main() -> ExitCode {
             };
         }
         #[cfg(any(windows, target_os = "linux"))]
-        if command == "--supervise-shell" && arguments.next().is_none() {
-            return match lexora_buddy_host::supervised_shell::run() {
+        if command == "--supervise-shell" {
+            let configuration = arguments.next().and_then(|value| value.into_string().ok());
+            if arguments.next().is_some() {
+                return ExitCode::FAILURE;
+            }
+            return match lexora_buddy_host::supervised_shell::run(configuration) {
                 Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
                 Err(error) => {
                     eprintln!(

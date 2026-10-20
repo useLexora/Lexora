@@ -1,6 +1,6 @@
 import process from 'node:process'
 import { z } from 'zod'
-import { sandboxProcessInputSchema } from '../../../shared/permissions/shellSandbox'
+import { sandboxProcessInputSchema, sandboxSettlementAckSchema } from '../../../shared/permissions/shellSandbox'
 import { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { runSandboxCommand } from './runSandboxCommand'
 
@@ -21,6 +21,9 @@ peer.onRequest('sandbox.exec', async (params) => {
   const input = sandboxProcessInputSchema.parse(params)
   return runSandboxCommand(input, {
     signal: controller.signal,
+    async onSettlement(settlement) {
+      sandboxSettlementAckSchema.parse(await peer.request('sandbox.settlement', { ...settlement, requestId: input.requestId }, 60_000))
+    },
     onLifecycle: event => peer.notify('sandbox.lifecycle', { ...event, requestId: input.requestId }),
     onData(data) {
       for (let offset = 0; offset < data.length; offset += 64 * 1024)

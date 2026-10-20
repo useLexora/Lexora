@@ -2,12 +2,14 @@ import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { RunRepository } from '../storage/runRepository'
 import type { ChangeCaptureService } from './ChangeCaptureService'
-import { changesRpc } from '../../../shared/changes/changeApi'
+import type { MutationRecoveryService } from './MutationRecoveryService'
+import { changesRecoveryRpc, changesRpc } from '../../../shared/changes/changeApi'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { ChangeCaptureError } from './ChangeCaptureService'
 
 export function registerChangeRpc(options: {
   rpc: RuntimeRequestRegistrar
+  recovery: MutationRecoveryService
   service: Pick<ChangeCaptureService, 'getVisibleDetail' | 'getForRuns'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranchMessages'>
   runs: Pick<RunRepository, 'listForTimeline' | 'listTree'>
@@ -38,8 +40,14 @@ export function registerChangeRpc(options: {
       throw new BuddyServiceError('VALIDATION_FAILED')
     return result
   })
+  const listRecovery = registerRuntimeRequest(options.rpc, changesRecoveryRpc.list, input => options.recovery.list(input))
+  const recheckRecovery = registerRuntimeRequest(options.rpc, changesRecoveryRpc.recheck, (input, signal) => options.recovery.recheckVisible(input, signal))
+  const resolveRecovery = registerRuntimeRequest(options.rpc, changesRecoveryRpc.resolve, (input, signal) => options.recovery.resolve(input, signal))
   return () => {
     get()
     overview()
+    listRecovery()
+    recheckRecovery()
+    resolveRecovery()
   }
 }

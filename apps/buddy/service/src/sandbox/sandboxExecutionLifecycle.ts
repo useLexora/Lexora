@@ -1,4 +1,5 @@
 import type { Buffer } from 'node:buffer'
+import type { OwnedProcessSettlement } from '../../../platform/process/supervisedShellProcess'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { SandboxLifecycleEvent, SandboxLifecycleSnapshot, SandboxProcessState } from '../../../shared/permissions/sandboxLifecycle'
 import type { SandboxNetworkTarget, SandboxResult } from '../../../shared/permissions/shellSandbox'
@@ -10,6 +11,7 @@ export interface SandboxExecutionOptions {
   approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>
   onData: (data: Buffer) => void
   onStarted: () => void
+  onSettlement?: (settlement: OwnedProcessSettlement) => void | Promise<void>
   onProcess?: (process: SandboxProcessState) => void
 }
 

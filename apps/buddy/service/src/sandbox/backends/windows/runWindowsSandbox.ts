@@ -49,7 +49,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_
         path,
         proxyUrl: `http://srt:${token}@127.0.0.1:${address.port}`,
       }),
-    }, options)
+    }, { ...options, executionId: input.executionId, dispatchId: input.dispatchId, receiptDirectory: input.receiptDirectory })
   }
   finally {
     for (const socket of connections)

@@ -28,6 +28,25 @@ async function fixture(processIds: string[]) {
 }
 
 describe('mutation recovery evidence', () => {
+  it('retains malformed dispatch identities instead of associating absent request identifiers', async () => {
+    const f = await fixture([JSON.stringify({ kind: 'sandbox-dispatch' }), native('old')])
+    f.mutations.recordOwnedProcessSettlement({ invocationId: 'invocation', processId: native('old'), settlement: 'released' })
+    const recovery = new MutationRecoveryService({ mutations: f.mutations, checkpoint: async () => null })
+    await recovery.recheck()
+    expect(f.repository.listUnreleased()).toHaveLength(1)
+  })
+
+  it('retains a child reported while verification was awaiting its original snapshot', async () => {
+    const f = await fixture([native('old')])
+    const recovery = new MutationRecoveryService({ mutations: f.mutations, verify: async () => {
+      f.mutations.recordOwnedProcessSettlement({ invocationId: 'invocation', processId: 'late-child', settlement: 'unknown' })
+      return { status: 'released', reason: 'supervisor_receipt' }
+    } })
+    await recovery.recheck()
+    expect(f.repository.listUnreleased()[0]?.processes).toContainEqual({ processId: 'late-child', settlement: 'unknown' })
+    expect(f.mutations.getHazards()).toHaveLength(1)
+  })
+
   it('releases dispatch and job together only after every associated process is proven released', async () => {
     const f = await fixture([dispatch('request'), JSON.stringify({ kind: 'native-shell-dispatch', nonce: 'nonce', requestId: 'request' }), native('nonce', 'request')])
     const recovery = new MutationRecoveryService({ mutations: f.mutations, verify: async () => ({ status: 'released', reason: 'boot_changed' }) })

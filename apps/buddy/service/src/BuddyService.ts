@@ -9,6 +9,7 @@ import type { BuddyRuntime } from './BuddyRuntime'
 import type { RunEventLogPort } from './events/RunEventPorts'
 import type { BuddyServiceRpcServer } from './rpc/BuddyServiceRpcServer'
 import type { BuddyServiceErrorCode } from './rpc/runtimeRequest'
+import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -86,6 +87,7 @@ import { registerBuddiesRpc } from './buddies/registerBuddiesRpc'
 import { ChangeCaptureService } from './changes/ChangeCaptureService'
 import { createChangeSetRepository } from './changes/changeSetRepository'
 import { MutationCoordinator } from './changes/MutationCoordinator'
+import { createMutationEvidenceRepository } from './changes/mutationEvidenceRepository'
 import { MutationRecoveryService } from './changes/MutationRecoveryService'
 import { createMutationRepository } from './changes/mutationRepository'
 import { registerChangeRpc } from './changes/registerChangeRpc'
@@ -423,15 +425,25 @@ export async function startBuddyService(
       })
       return service
     })
+    const mutationEvidence = createMutationEvidenceRepository(options.database)
+    const recoverySourceId = randomUUID()
+    let recoveryRevision = 0
+    const notifyRecovery = (runId: string) => {
+      const run = runs.findById(runId)
+      if (run)
+        options.rpc.notify(changesChanged.method, { sourceId: recoverySourceId, revision: ++recoveryRevision, conversationId: run.conversationId, runId })
+    }
     const mutations = await host.start('runtime.mutations', async ({ defer }) => {
-      const service = new MutationCoordinator({ repository: createMutationRepository(options.database), resources: fileResources })
+      const service = new MutationCoordinator({ repository: createMutationRepository(options.database), evidence: mutationEvidence, resources: fileResources })
+      const notices = service.onDidChange(event => notifyRecovery(event.runId))
+      defer(() => notices.dispose())
       defer(() => service.dispose())
       await service.initialize()
       return service
     }, ['runtime.file_engine'])
+    const mutationRecovery = new MutationRecoveryService({ mutations, record, evidence: mutationEvidence, receiptDirectory: join(options.buddyHome, 'process-receipts'), context: { conversations, runs }, onChange: notifyRecovery })
     await host.step('runtime.mutation_recovery', async () => {
-      const recovery = new MutationRecoveryService({ mutations, record })
-      await recovery.recheck({ signal: AbortSignal.timeout(5_000) })
+      await mutationRecovery.recheck({ signal: AbortSignal.timeout(5_000) })
     })
     const changeCaptureService = await host.start('runtime.change_capture', ({ defer }) => {
       const service = new ChangeCaptureService({ paths, repository: createChangeSetRepository(options.database), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.change_capture', level: 'warn' }) })
@@ -894,6 +906,7 @@ export async function startBuddyService(
       attachmentService,
       changeCaptureService,
       mutations,
+      receiptDirectory: join(options.buddyHome, 'process-receipts'),
       directoryGrants,
       recordPermissions: record,
       createCapabilities: createBuddyCapabilityFactory(currentPlatform, {
@@ -1411,6 +1424,7 @@ export async function startBuddyService(
           runs,
           rpc: options.rpc,
           service: changeCaptureService,
+          recovery: mutationRecovery,
         }),
       )
       register(

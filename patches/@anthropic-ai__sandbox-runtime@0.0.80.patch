@@ -1,7 +1,7 @@
 diff --git a/dist/sandbox/linux-sandbox-utils.js b/dist/sandbox/linux-sandbox-utils.js
 --- a/dist/sandbox/linux-sandbox-utils.js
 +++ b/dist/sandbox/linux-sandbox-utils.js
-@@ -1454,25 +1454,22 @@
+@@ -1641,25 +1641,22 @@
          }
          return { source, dest };
      };
@@ -29,7 +29,7 @@ diff --git a/dist/sandbox/linux-sandbox-utils.js b/dist/sandbox/linux-sandbox-ut
          // allowPath. A write path that's an ancestor of the deny dir isn't
          // re-bound (it wasn't wiped), so allowPath under it still needs
          // its own ro-bind here.
-@@ -1483,6 +1480,9 @@
+@@ -1670,6 +1667,9 @@
          restoredReads.push(placement);
          logForDebugging(`[Sandbox Linux] Re-allowed read access within denied region: ${allowPath}`);
      }

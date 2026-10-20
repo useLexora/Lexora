@@ -10,6 +10,8 @@ import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
 import { ChangeCaptureService } from '../ChangeCaptureService'
 import { createChangeSetRepository } from '../changeSetRepository'
+import { MutationCoordinator } from '../MutationCoordinator'
+import { MutationRecoveryService } from '../MutationRecoveryService'
 import { registerChangeRpc } from '../registerChangeRpc'
 
 describe('branch changes overview', () => {
@@ -39,7 +41,7 @@ describe('branch changes overview', () => {
       conversations.createBranch({ id: 'child', conversationId: 'conversation', parentBranchId: 'root', forkedFromMessageId: 'answer-first', createdAt: now, activate: true })
       turn('child-only', 'child', '2026-09-09T00:02:00.000Z')
       const handlers = new Map<string, RuntimeRequestHandler>()
-      const dispose = registerChangeRpc({ conversations, runs, service, rpc: { onRequest: (method, handler) => {
+      const dispose = registerChangeRpc({ conversations, runs, service, recovery: new MutationRecoveryService({ mutations: new MutationCoordinator() }), rpc: { onRequest: (method, handler) => {
         handlers.set(method, handler)
         return () => handlers.delete(method)
       } } })

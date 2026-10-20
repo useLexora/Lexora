@@ -2,7 +2,7 @@ import type { LocalConversationStatus } from '@buddy-shared/runs/conversationSta
 import type { ArtifactChangeNotice, LocalArtifactText } from '../../shared/artifacts/artifactApi'
 import type { LocalAutomation, LocalAutomationCreateRequest, LocalAutomationListRequest, LocalAutomationMutationRequest, LocalAutomationOccurrenceListRequest, LocalAutomationOccurrencePage, LocalAutomationPage, LocalAutomationPreviewRequest, LocalAutomationPreviewResult, LocalAutomationRunNowResult, LocalAutomationUpdateRequest } from '../../shared/automation/automationApi'
 import type { BuddyCatalog, BuddyCreate, BuddyDefaultUpdate, BuddyMutation, BuddyToolOption, BuddyUpdate, LocalBuddy } from '../../shared/buddies/buddyApi'
-import type { ChangeOverviewRequest, ChangeSetChangeNotice, LocalChangeOverview, LocalChangeSetDetail } from '../../shared/changes/changeApi'
+import type { ChangeOverviewRequest, ChangeRecoveryListRequest, ChangeRecoveryRecheckRequest, ChangeRecoveryResolveRequest, ChangeSetChangeNotice, LocalChangeOverview, LocalChangeRecoveryItem, LocalChangeSetDetail } from '../../shared/changes/changeApi'
 import type { ConnectorChangeNotice, LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
 import type { LocalChatCommandRequest, LocalStartTurnRequest, LocalTurnStart } from '../../shared/conversation/chatApi'
@@ -75,6 +75,9 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   taskMarksSetRead: 'lexora:buddy:task-marks:set-read',
   taskMarksClear: 'lexora:buddy:task-marks:clear',
   changesOverview: 'lexora:buddy:changes:overview',
+  changesRecoveryList: 'lexora:buddy:changes:recovery:list',
+  changesRecoveryRecheck: 'lexora:buddy:changes:recovery:recheck',
+  changesRecoveryResolve: 'lexora:buddy:changes:recovery:resolve',
   spaceFilesMutate: 'lexora:buddy:space-files:mutate',
   spaceFilesHistory: 'lexora:buddy:space-files:history',
   spaceFilesQuery: 'lexora:buddy:space-files:query',
@@ -493,6 +496,11 @@ export interface LocalChatApi {
     }) => Promise<LocalConversationTimelinePage>
   }
   changes: {
+    recovery: {
+      list: (input: ChangeRecoveryListRequest) => Promise<readonly LocalChangeRecoveryItem[]>
+      recheck: (input: ChangeRecoveryRecheckRequest) => Promise<readonly LocalChangeRecoveryItem[]>
+      resolve: (input: ChangeRecoveryResolveRequest) => Promise<readonly LocalChangeRecoveryItem[]>
+    }
     onChanged: (listener: (event: ChangeSetChangeNotice) => void) => () => void
     overview: (input: ChangeOverviewRequest) => Promise<LocalChangeOverview>
     get: (changeSetId: string) => Promise<LocalChangeSetDetail>

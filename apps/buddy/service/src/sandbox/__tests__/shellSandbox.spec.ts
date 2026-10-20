@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { verifyOwnedProcessRelease } from '../../../../platform/process/ownedProcessRecovery'
 import { resolveSandboxDependencies } from '../../../../platform/process/sandboxDependencies'
 import { createSandboxDirectory } from '../../../../platform/process/sandboxDirectory'
 import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
@@ -102,10 +103,31 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     expect(new Set(supervised.map(process => process.pid)).size).toBe(1)
     const dispatch = JSON.parse(dispatched[0]!.processId!)
     const identity = JSON.parse(supervised[0]!.processId!)
-    expect(dispatch).toMatchObject({ kind: 'native-shell-dispatch', nonce: identity.nonce })
+    expect(dispatch).toMatchObject({ kind: 'native-shell-dispatch', executionId: identity.executionId, dispatchId: identity.dispatchId })
     expect(processes.find(process => process.phase === 'exited')?.exitCode).toBe(0)
     expect(JSON.stringify(events)).not.toMatch(/synthetic-secret|example-allowed|printf/)
   }, 15_000)
+
+  it('recovers the native SRT command domain when final service persistence is lost', async () => {
+    const identities: string[] = []
+    const receiptDirectory = join(directory, 'receipts')
+    const { result } = await execute('printf committed > recovered-output', {
+      onSettlement(record) {
+        if (record.settlement === 'pending')
+          identities.push(record.processId)
+        else
+          throw new Error('final persistence disconnected')
+      },
+    }, { receiptDirectory })
+    expect(result.ok).toBe(false)
+    expect(await readFile(join(workspace, 'recovered-output'), 'utf8')).toBe('committed')
+    expect(identities).toHaveLength(2)
+    for (const identity of identities) {
+      await expect(verifyOwnedProcessRelease(identity, { receiptDirectory }))
+        .resolves
+        .toEqual({ status: 'released', reason: 'supervisor_receipt' })
+    }
+  })
 
   it('enforces read-only writes in the kernel while retaining private scratch space', async () => {
     await writeFile(join(workspace, 'preserved'), 'workspace-preserved')

@@ -1,8 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { MutationClaim, MutationIdentity, MutationLifetime } from './MutationCoordinator'
 import { z } from 'zod'
+import { withTransaction } from '../storage/database'
 
 export type OwnedProcessSettlement = 'pending' | 'released' | 'unknown'
+
+export interface MutationExecutionUpdate {
+  executionId?: string
+  dispatchId?: string
+  launchState?: 'prepared' | 'authorized' | 'settled'
+}
 
 export interface StoredMutation extends MutationIdentity {
   segmentId: string
@@ -16,7 +23,7 @@ export interface StoredMutation extends MutationIdentity {
 export interface MutationRepository {
   createLease: (lease: MutationIdentity & { segmentId: string, claims: readonly MutationClaim[], lifetime: MutationLifetime }) => void
   settle: (invocationId: string, status: 'released' | 'hazard', reason: string | null) => void
-  recordProcess: (invocationId: string, processId: string, settlement: OwnedProcessSettlement) => void
+  recordProcess: (invocationId: string, processId: string, settlement: OwnedProcessSettlement, execution?: MutationExecutionUpdate) => void
   listUnreleased: () => StoredMutation[]
   isReleased: (invocationId: string) => boolean
 }
@@ -50,6 +57,18 @@ export function createMutationRepository(database: DatabaseSync): MutationReposi
     ON CONFLICT (invocation_id, process_id) DO UPDATE SET settlement = excluded.settlement, updated_at = excluded.updated_at
     WHERE run_mutation_processes.settlement <> 'released'
   `)
+  const executionSchema = z.object({ executionId: z.uuid(), dispatchId: z.uuid(), launchState: z.enum(['prepared', 'authorized', 'settled']) })
+  const updateExecution = database.prepare(`
+    INSERT INTO run_mutation_executions (execution_id, invocation_id, dispatch_id, launch_state, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (execution_id) DO UPDATE SET
+      launch_state = CASE WHEN excluded.launch_state = 'prepared' THEN run_mutation_executions.launch_state ELSE excluded.launch_state END,
+      updated_at = excluded.updated_at
+    WHERE run_mutation_executions.invocation_id = excluded.invocation_id
+      AND run_mutation_executions.dispatch_id = excluded.dispatch_id
+      AND (run_mutation_executions.launch_state <> 'settled' OR excluded.launch_state = 'settled')
+      AND (excluded.launch_state <> 'authorized' OR run_mutation_executions.launch_state = 'prepared')
+  `)
   const listUnreleased = database.prepare('SELECT * FROM run_mutation_leases WHERE status <> \'released\' ORDER BY created_at, invocation_id')
   const findStatus = database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?')
   const listProcesses = database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id')
@@ -65,8 +84,16 @@ export function createMutationRepository(database: DatabaseSync): MutationReposi
       if (Number(settle.run(status, reason, new Date().toISOString(), invocationId).changes) !== 1)
         throw new Error('MUTATION_LEASE_NOT_FOUND')
     },
-    recordProcess(invocationId, processId, settlement) {
-      recordProcess.run(invocationId, processId, settlement, new Date().toISOString())
+    recordProcess(invocationId, processId, settlement, execution) {
+      withTransaction(database, () => {
+        const now = new Date().toISOString()
+        if (execution?.launchState) {
+          const value = executionSchema.parse(execution)
+          if (Number(updateExecution.run(value.executionId, invocationId, value.dispatchId, value.launchState, now, now).changes) !== 1)
+            throw new Error('MUTATION_EXECUTION_CONFLICT')
+        }
+        recordProcess.run(invocationId, processId, settlement, now)
+      })
     },
     listUnreleased() {
       return (listUnreleased.all() as unknown as MutationRow[]).map(row => ({
