@@ -16,7 +16,7 @@ import { useDesktopOnboarding, useFeatureDiscovery } from '@/modules/onboarding'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { DesktopSkillReviewHost } from '@/modules/skills/ui'
-import { provideExecutionEnvironment, sessionReferenceNavigationKey, useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
+import { createConversationExport, provideExecutionEnvironment, sessionReferenceNavigationKey, useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
 import { useProvideDesktopUpdates } from '@/modules/updates'
 import { DesktopUpdateHost } from '@/modules/updates/ui'
 import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.vue'
@@ -327,6 +327,7 @@ useProvideTaskEnvironment({
   browser: api.browser,
   browserGuests,
   clipboard: api.clipboard,
+  conversationExport: createConversationExport({ api: api.localChat.conversations, clipboard: api.clipboard }),
   notificationTarget,
 })
 useProvideSettingsContext({

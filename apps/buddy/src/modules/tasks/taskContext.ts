@@ -1,6 +1,7 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { Ref } from 'vue'
 import type { TaskCapability, TaskResourcePanel } from './contracts'
+import type { ConversationExport } from './state/conversations/conversationExport'
 import type { DesktopBrowserGuestSurfaceHost } from '@/platform/browser/browserGuestSurface'
 import { createInjectionState } from '@vueuse/core'
 
@@ -8,6 +9,7 @@ export interface TaskEnvironment {
   browser: LexoraDesktopApi['browser']
   browserGuests: DesktopBrowserGuestSurfaceHost
   clipboard: LexoraDesktopApi['clipboard']
+  conversationExport: ConversationExport
   notificationTarget: Readonly<Ref<{ conversationId: string, messageId: string } | null>>
   resources: TaskResourcePanel
 }

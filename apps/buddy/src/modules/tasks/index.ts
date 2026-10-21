@@ -1,6 +1,7 @@
 export type { TaskCapability, TaskChatWorkspace } from './contracts'
 export type { TaskContextTab } from './model/context-panel/taskContextPanel'
 export { useTaskResourcePanel } from './state/context-panel/useTaskResourcePanel'
+export { createConversationExport } from './state/conversations/conversationExport'
 export { provideExecutionEnvironment } from './state/runs/chatExecutionContext'
 export { useTaskIndex } from './state/task-index/useTaskIndex'
 export type { TaskIndexController } from './state/task-index/useTaskIndex'

@@ -6,6 +6,7 @@ import { useMessage } from 'naive-ui'
 import { computed, h } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { formatSessionReferenceClipboard } from '@/modules/tasks/model/sessionReferenceClipboard'
+import { ConversationExportSizeError } from '@/modules/tasks/model/transcript/conversationMarkdown'
 import { useTaskEnvironment } from '@/modules/tasks/taskContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskMarkOption from './DesktopTaskMarkOption.vue'
@@ -28,7 +29,7 @@ export function useTaskMenuActions(options: {
   manageMarks?: () => void
 }) {
   const { t } = useBuddyI18n(options.language)
-  const { clipboard } = useTaskEnvironment()
+  const { clipboard, conversationExport } = useTaskEnvironment()
   const notification = useMessage()
   const actions = computed<DropdownOption[]>(() => {
     const task = options.task()
@@ -61,17 +62,40 @@ export function useTaskMenuActions(options: {
         label: t('desktop.tasks.copy'),
         children: [
           { key: 'copy-task-reference', label: t('desktop.tasks.taskReference') },
+          { type: 'divider', key: 'copy-reference-divider' },
           { key: 'copy-task-id', label: t('desktop.tasks.taskId') },
           { key: 'copy-title', label: t('desktop.tasks.title') },
+          { key: 'copy-markdown', label: t('desktop.tasks.copyMarkdown'), disabled: conversationExport.busy.value },
         ],
       },
     ]
   })
 
+  async function copyMarkdown(taskId: string, title: string) {
+    if (conversationExport.busy.value)
+      return
+    const loading = notification.loading(t('desktop.tasks.copyMarkdownLoading'), { duration: 0 })
+    try {
+      const result = await conversationExport.copy(taskId, title, options.language())
+      if (result)
+        notification.success(t('desktop.tasks.copyMarkdownSuccess', { title: result.title }))
+    }
+    catch (error) {
+      notification.error(t(error instanceof ConversationExportSizeError ? 'desktop.tasks.copyMarkdownTooLarge' : 'desktop.tasks.copyMarkdownFailed'))
+    }
+    finally {
+      loading.destroy()
+    }
+  }
+
   function select(action: string | number) {
     const task = options.task()
     if (!task.taskId)
       return
+    if (action === 'copy-markdown') {
+      void copyMarkdown(task.taskId, task.title)
+      return
+    }
     if (action === 'read')
       options.setRead(task.taskId, task.markState?.unread === true)
     if (action === 'clear-marks')
