@@ -19,6 +19,7 @@ export function registerDesktopContributions(controller: WorkbenchController, re
     scope.view({ id: 'tasks.editor', renderer: 'tasks.editor', locations: ['main'], label: 'Task', supports: resource => ['task', 'draft'].includes(resource.scheme), multiple: false, prepareBeforeOpen: false })
   })
   controller.registry.register('lexora.files', (scope) => {
+    scope.configuration({ id: 'files.autoSave', defaultValue: 'afterDelay', validate: value => value === 'off' || value === 'afterDelay' })
     scope.cleanup(renderers.register('files.view', DesktopFileContribution))
     scope.view({ id: 'files.preview', renderer: 'files.view', label: 'Preview', locations: ['context'], supports: resource => resource.scheme === 'file-preview', multiple: true })
     scope.view({ id: 'files.editor', renderer: 'files.view', label: 'Text editor', locations: ['context'], supports: resource => resource.scheme === 'file', multiple: true, priority: 10 })

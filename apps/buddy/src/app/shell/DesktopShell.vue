@@ -82,7 +82,7 @@ function showTasks() {
       @toggle-sidebar="togglePrimarySidebar"
     />
     <div class="desktop-shell__body relative">
-      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && !onboardingPending && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
+      <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && !onboardingPending && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :auto-save="bindings.workbench.autoSave" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
         <div class="desktop-shell__content" :class="{ 'is-starting': blocked }" :inert="blocked" :aria-hidden="blocked">
           <Transition name="desktop-app-sidebar">
             <DesktopAppSidebar

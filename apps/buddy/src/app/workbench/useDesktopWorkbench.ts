@@ -35,6 +35,7 @@ import { TaskWorkspacePool } from './TaskWorkspacePool'
 import { useTaskInputLifecycle } from './useTaskInputLifecycle'
 import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
 import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
+import { WorkingCopyAutoSave } from './WorkingCopyAutoSave'
 
 export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
@@ -56,6 +57,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   const renderers = new ViewRendererRegistry()
   registerDesktopContributions(controller, renderers, copies, () => language.value)
   const persistence = new WorkbenchPersistence(api.workbench, controller, copies, error => backupError.value = error !== null)
+  const autoSave = new WorkingCopyAutoSave(copies, controller.configuration)
   const pool = new TaskWorkspacePool({
     buddyCatalog: options.buddyCatalog,
     api,
@@ -477,6 +479,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
     initialized.value = true
     projections.reconcile()
     await inputs.restore(restored)
+    autoSave.start()
   }
 
   async function prepareTaskDeletion(id: string): Promise<boolean> {
@@ -504,7 +507,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       }
     }
     try {
-      return ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await beforeFileClose(view, closing)
+      return ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await autoSave.prepareClose(view.resource, () => beforeFileClose(view, closing))
     }
     catch (error) {
       options.onError(error)
@@ -597,6 +600,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
   }).dispose)
   let disposal: Promise<void> | undefined
   function dispose(): Promise<void> {
+    autoSave.dispose()
     controller.stop()
     stopFileChanges()
     for (const timer of fileRefreshTimers.values()) clearTimeout(timer)
@@ -639,7 +643,7 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
     return saved
   }
   const selectionReferences = createDesktopSelectionReferences({ controller, pool, language, openFile: (target, current) => createFile(target, undefined, current), browser: api.browser, resources: options.resources, ready: () => initialized.value, independent: () => stores.applicationSettings.config.value?.desktop.contextPanelMode === 'independent', locateFile: target => api.localChat.spaces.readFile(target), navigationVersion: () => navigationVersion })
-  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  return { selectionReferences, api, renderers, autoSave, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
     return navigationVersion

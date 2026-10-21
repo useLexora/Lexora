@@ -1,5 +1,6 @@
 import type { WorkbenchMountTarget } from '@buddy-shared/workbench/workbenchUi'
 import type { InjectionKey, Ref } from 'vue'
+import type { FileAutoSaveController } from '../common/fileAutoSave'
 import type { DropPosition, WorkbenchLayout } from '../common/workbench'
 import type { workbenchLabels } from '../common/workbenchLabels'
 import type { WorkbenchController } from '../services/WorkbenchController'
@@ -13,6 +14,7 @@ export interface WorkbenchContext {
   resize: WorkbenchResize
   controller: WorkbenchController
   copies: WorkingCopyService
+  autoSave?: FileAutoSaveController
   layout: Readonly<Ref<WorkbenchLayout>>
   revision: Readonly<Ref<number>>
   mountPoints: Readonly<Ref<ReadonlyMap<string, HTMLElement>>>

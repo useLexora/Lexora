@@ -74,6 +74,7 @@ async function fixture() {
     }
   })
   registerDesktopContributions(controller, new ViewRendererRegistry(), {} as WorkingCopyService, () => 'en-US')
+  expect(controller.configuration.get('files.autoSave')).toBe('afterDelay')
   inputs = useTaskInputLifecycle({ api, controller, pool, persistence: {} as WorkbenchPersistence, resources: () => ({}) as TaskResourcePanel, onError: error => errors.push(error) })
   const projection = new ActiveTaskProjection(controller, pool)
   const loads = new Map<string, Promise<TaskCapability | null>>()

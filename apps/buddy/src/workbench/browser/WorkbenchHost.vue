@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { WorkbenchMountTarget } from '@buddy-shared/workbench/workbenchUi'
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/vue'
+import type { FileAutoSaveController } from '../common/fileAutoSave'
 import type { DropPosition, ResourceRef, WorkbenchView } from '../common/workbench'
 import type { WorkbenchController } from '../services/WorkbenchController'
 import type { WorkingCopyService } from '../services/WorkingCopyService'
@@ -21,7 +22,7 @@ import { createWorkbenchDragPlugins } from './workbenchDragPlugins'
 import WorkbenchInteractionControls from './WorkbenchInteractionControls.vue'
 import WorkbenchViewPortals from './WorkbenchViewPortals.vue'
 
-const props = defineProps<{ controller: WorkbenchController, copies: WorkingCopyService, language: string, backupError: boolean, active: boolean, keybindings: Readonly<Record<string, readonly string[]>>, platform: string }>()
+const props = defineProps<{ controller: WorkbenchController, copies: WorkingCopyService, autoSave?: FileAutoSaveController, language: string, backupError: boolean, active: boolean, keybindings: Readonly<Record<string, readonly string[]>>, platform: string }>()
 const emit = defineEmits<{ retryBackup: [], dropResource: [resource: ResourceRef, paneId: string, position: DropPosition] }>()
 defineSlots<{ default: () => unknown, view: (props: { view: WorkbenchView, visible: boolean }) => unknown }>()
 const ui = useOptionalWorkbenchUi()
@@ -146,7 +147,7 @@ onMounted(() => {
   window.addEventListener('keydown', keyboard)
 })
 onScopeDispose(() => window.removeEventListener('keydown', keyboard))
-provide(workbenchKey, { panels, resize, controller: props.controller, copies: props.copies, layout, revision, mountPoints, registerMountPoint, labels, viewVisible, viewTarget, mountView, dropPosition })
+provide(workbenchKey, { panels, resize, controller: props.controller, copies: props.copies, autoSave: props.autoSave, layout, revision, mountPoints, registerMountPoint, labels, viewVisible, viewTarget, mountView, dropPosition })
 </script>
 
 <template>
