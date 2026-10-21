@@ -14,6 +14,7 @@ import { publicWebUrl } from '../../../platform/network/publicWebTransport'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { WebError, webError } from '../../../shared/network/webProtocol'
+import { throwIfNetworkAuthorizationFailed } from '../network/networkAuthorizationContext'
 import { githubWebFetch } from './githubWebFetch'
 import { nativeSearchFamily, nativeWebSearch } from './NativeWebSearch'
 import { extractHtml, extractWebResource } from './webContent'
@@ -101,6 +102,7 @@ export class WebCapabilityService {
           last = result
         }
         catch (error) {
+          throwIfNetworkAuthorizationFailed(error)
           const errorCode = webError(error, attemptSignal).code
           attempts.push({ provider, code: errorCode, durationMs: Date.now() - started })
           publish({ phase: 'attempt-finished', provider: route.provider, attempt: attempts.length, errorCode, durationMs: Date.now() - started })
@@ -142,6 +144,7 @@ export class WebCapabilityService {
                 ?? await extractWebResource(await this.#options.host.get(url.href, attemptSignal), attemptSignal)
             }
             catch (error) {
+              throwIfNetworkAuthorizationFailed(error)
               const failure = webError(error, attemptSignal)
               if (failure.code !== 'WEB_RENDER_REQUIRED' || !this.#options.settings.get().fetch.render)
                 throw failure
@@ -179,6 +182,8 @@ export class WebCapabilityService {
               document.usage = { credits: result.data.usage.credits, cost: null }
           }
           attemptSignal.throwIfAborted()
+          if (mode === 'remote')
+            await this.#options.host.authorize(document.url, attemptSignal)
           publish({ phase: 'received', provider, mode, count: Buffer.byteLength(document.content) })
           const output = await this.#publish(document, input.conversationId, attemptSignal, publish)
           attempts.push({ provider, code: null, durationMs: Date.now() - started })
@@ -186,6 +191,7 @@ export class WebCapabilityService {
           return { ...output, ok: true as const, provider, mode, attempts }
         }
         catch (error) {
+          throwIfNetworkAuthorizationFailed(error)
           const failure = webError(error, attemptSignal)
           attempts.push({ provider, code: failure.code, durationMs: Date.now() - started })
           publish({ phase: 'attempt-finished', provider, attempt: attempts.length, errorCode: failure.code, durationMs: Date.now() - started })
@@ -260,6 +266,7 @@ export class WebCapabilityService {
       }
       catch (error) {
         outcome = 'failed'
+        throwIfNetworkAuthorizationFailed(error)
         return { ok: false, provider: attempts.at(-1)?.provider ?? null, code: webError(error, signal).code, attempts }
       }
       finally {

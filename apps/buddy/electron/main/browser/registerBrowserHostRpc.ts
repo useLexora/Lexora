@@ -37,6 +37,7 @@ import {
   browserAdapterIssueLeaseParamsSchema,
   browserAdapterLeaseSchema,
 } from '../../../shared/browser/browserAdapterProtocol'
+import { createHostNetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import { redactBrowserRuntimeUrl } from './browserPrivacy'
 import { browserRecovery, projectBrowserState } from './browserRuntimeProjection'
 
@@ -54,23 +55,25 @@ export function registerBrowserHostRpc(
   options: RegisterBrowserHostRpcOptions,
 ): () => void {
   const disposers = [
-    peer.onRequest('host.browser.open', async (params) => {
+    peer.onRequest('host.browser.open', async (params, signal, requestId) => {
       const input = browserOpenParamsSchema.parse(params)
       return runBrowserHostOperation(
         async () => {
           const host = requireBrowserHost(options.getHost())
           const session = host.ensureSession(input.conversationId)
-          const state = await (input.target.kind === 'url'
-            ? host.navigate(session.sessionId, input.target.url, 'document-ready')
-            : host.openLocalFile(session.sessionId, {
-                entryPath: input.target.entryPath,
-                rootPath: input.target.rootPath,
-              }, 'document-ready'))
-          const until = input.until ? await host.waitFor(session.sessionId, input.until) : undefined
-          return {
-            state: input.until ? host.getState(session.sessionId) : state,
-            ...(input.until ? { until } : {}),
-          }
+          return host.withNetworkAuthorization(session.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, async () => {
+            const state = await (input.target.kind === 'url'
+              ? host.navigate(session.sessionId, input.target.url, 'document-ready')
+              : host.openLocalFile(session.sessionId, {
+                  entryPath: input.target.entryPath,
+                  rootPath: input.target.rootPath,
+                }, 'document-ready'))
+            const until = input.until ? await host.waitFor(session.sessionId, input.until) : undefined
+            return {
+              state: input.until ? host.getState(session.sessionId) : state,
+              ...(input.until ? { until } : {}),
+            }
+          })
         },
         result => ({
           ok: true,
@@ -81,10 +84,13 @@ export function registerBrowserHostRpc(
         'open_again',
       )
     }),
-    peer.onRequest('host.browser.observe', async (params) => {
+    peer.onRequest('host.browser.observe', async (params, signal, requestId) => {
       const input = browserObserveParamsSchema.parse(params)
       return runBrowserHostOperation(
-        () => requireBrowserHost(options.getHost()).observe(input),
+        () => {
+          const host = requireBrowserHost(options.getHost())
+          return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.observe(input))
+        },
         observation => ({
           observation: projectBrowserObservation(observation),
           ok: true,
@@ -93,10 +99,13 @@ export function registerBrowserHostRpc(
         'read_again',
       )
     }),
-    peer.onRequest('host.browser.read', async (params) => {
+    peer.onRequest('host.browser.read', async (params, signal, requestId) => {
       const input = browserReadParamsSchema.parse(params)
       return runBrowserHostOperation(
-        () => requireBrowserHost(options.getHost()).read(input),
+        () => {
+          const host = requireBrowserHost(options.getHost())
+          return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.read(input))
+        },
         content => ({ content, ok: true }),
         browserReadResultSchema,
         'read_again',
@@ -111,10 +120,13 @@ export function registerBrowserHostRpc(
         'read_again',
       )
     }),
-    peer.onRequest('host.browser.act', async (params) => {
+    peer.onRequest('host.browser.act', async (params, signal, requestId) => {
       const input = browserActParamsSchema.parse(params)
       return runBrowserHostOperation(
-        () => requireBrowserHost(options.getHost()).act(input),
+        () => {
+          const host = requireBrowserHost(options.getHost())
+          return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.act(input))
+        },
         result => ({
           actionKind: result.actionKind,
           observation: projectBrowserObservation(result.observation),

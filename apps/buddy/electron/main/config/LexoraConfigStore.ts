@@ -1,5 +1,6 @@
 import type { ZodError } from 'zod'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { NetworkOperation } from '../../../shared/permissions/networkPermissions'
 import type { LexoraConfig, LexoraConfigPatch } from '../../shared/desktopApi'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
@@ -15,6 +16,7 @@ import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdent
 import { BUILTIN_FILE_ICON_THEME, fileIconPreferenceSchema } from '../../../shared/icons/fileIconTheme'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { EMPTY_FEATURE_DISCOVERY, featureDiscoverySchema } from '../../../shared/onboarding/featureDiscovery'
+import { upsertNetworkPermission } from '../../../shared/permissions/networkPermissions'
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
@@ -178,6 +180,7 @@ const lexoraConfigFileSchema = z.object({
     freeze_background: browserPreferencesSchema.shape.freezeBackground.default(DEFAULT_BROWSER_PREFERENCES.freezeBackground),
     freeze_foreground: browserPreferencesSchema.shape.freezeForeground.default(DEFAULT_BROWSER_PREFERENCES.freezeForeground),
     freeze_delay_seconds: browserPreferencesSchema.shape.freezeDelaySeconds.default(DEFAULT_BROWSER_PREFERENCES.freezeDelaySeconds),
+    network_permissions: browserPreferencesSchema.shape.networkPermissions,
   }).passthrough().prefault({}),
   proxy: proxySettingsSchema.default(DEFAULT_PROXY_SETTINGS),
   desktop: desktopConfigSchema,
@@ -223,14 +226,24 @@ export class LexoraConfigStore {
   get snapshot() { return copyEventSnapshot({ revision: this.#revision, persisted: this.#persisted, applied: this.#applied }) }
 
   update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void, assertCurrent: () => void = () => {}): Promise<LexoraConfig> {
+    const input = structuredClone(patch)
+    return this.#update(() => input, apply, assertCurrent)
+  }
+
+  allowNetworkPermission(host: string, operation: NetworkOperation, assertCurrent: () => void): Promise<LexoraConfig> {
+    return this.#update(current => ({
+      browser: { networkPermissions: upsertNetworkPermission(current.browser.networkPermissions, host, operation) },
+    }), undefined, assertCurrent)
+  }
+
+  #update(patch: (current: LexoraConfig) => LexoraConfigPatch, apply: ((config: LexoraConfig) => Promise<void> | void) | undefined, assertCurrent: () => void): Promise<LexoraConfig> {
     if (this.#disposing)
       return Promise.reject(new Error('CONFIG_STORE_STOPPED'))
-    const input = structuredClone(patch)
     const operation = this.#writeQueue.then(async () => {
       assertCurrent()
       const file = await this.#readFile()
       const current = decodeConfig(file)
-      const next = mergeConfig(current, input)
+      const next = mergeConfig(current, patch(current))
       const groups = (Object.keys(next) as (keyof LexoraConfig)[]).filter(group => JSON.stringify(current[group]) !== JSON.stringify(next[group]))
       const operationId = randomUUID()
       const publish = (kind: Exclude<LexoraConfigChange['kind'], 'committed'>) => this.#changes.fire(copyEventSnapshot({ kind, revision: ++this.#revision, operationId, groups }))
@@ -351,6 +364,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       freezeBackground: config.browser.freeze_background,
       freezeForeground: config.browser.freeze_foreground,
       freezeDelaySeconds: config.browser.freeze_delay_seconds,
+      networkPermissions: config.browser.network_permissions,
     },
     proxy: config.proxy,
     desktop: {
@@ -423,6 +437,7 @@ function encodeConfig(config: LexoraConfig) {
       freeze_background: config.browser.freezeBackground,
       freeze_foreground: config.browser.freezeForeground,
       freeze_delay_seconds: config.browser.freezeDelaySeconds,
+      network_permissions: config.browser.networkPermissions,
     },
     proxy: config.proxy,
     desktop: {

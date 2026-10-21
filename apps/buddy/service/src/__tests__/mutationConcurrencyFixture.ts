@@ -77,6 +77,7 @@ function rpcHarness() {
       switch (method) {
         case 'extensions.agent.list': return []
         case 'host.images.preferences': return {}
+        case 'host.networkPermissions.get': return { defaults: { access: 'ask', download: 'ask', upload: 'ask' }, rules: [] }
         case 'host.runtimePreferences.get': return { cacheWarming: 'off', codemode: false, modelRetryLimit: 0 }
         case 'host.credentials.list': return { ok: true, providers: [{ providerId: 'mutation-local', type: 'api_key' }] }
         case 'host.credentials.read': return { ok: true, value: { type: 'api_key', key: 'local-test-only' } }

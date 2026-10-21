@@ -132,6 +132,7 @@ import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationServ
 import { AttentionNotificationService } from './notifications/AttentionNotificationService'
 import { NotificationProjection } from './notifications/NotificationProjection'
 import { registerNotificationRpc } from './notifications/registerNotificationRpc'
+import { NetworkPermissionsClient } from './permissions/NetworkPermissionsClient'
 import { observePetActionDiagnostics } from './pet/observePetActionDiagnostics'
 import { PetActionService } from './pet/PetActionService'
 import { bindExtensionActions } from './plugins/bindExtensionActions'
@@ -871,6 +872,7 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
+      networkPermissions: new NetworkPermissionsClient(options.rpc),
       fileResources,
       delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },

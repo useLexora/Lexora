@@ -1,9 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SpaceCommit } from '../SpaceService'
-import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { BuddySessionRegistry } from '../../agent/sessions/BuddySessionRegistry'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
@@ -29,6 +29,59 @@ afterEach(async () => {
 })
 
 describe('spaceService', () => {
+  it('adds selected directories without trusting resources, and revokes only explicit bindings without deleting files', async () => {
+    const f = await createFixture()
+    const extra = join(f.root, 'extra')
+    await mkdir(extra)
+    await writeFile(join(extra, 'keep.txt'), 'keep')
+    const created = await f.service.create(spaceInput('Space', f.directory))
+    const input = { ...spaceInput('Space', f.directory), spaceId: created.id, primaryDirectory: { id: created.primaryDirectory!.id, root: f.directory }, additionalDirectoryChanges: { add: [extra], remove: [] } }
+    await expect(f.service.update(input)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    const added = await f.service.update({ ...input, additionalDirectorySelectionsVerified: true })
+    const directory = added.additionalDirectories[0]!
+    expect(added.primaryDirectory).toEqual(created.primaryDirectory)
+    expect(f.database.prepare('SELECT resources_trusted_at FROM space_directory_bindings WHERE id = ?').get(directory.id)).toEqual({ resources_trusted_at: null })
+    expect(await f.service.searchFiles(created.id, `${extra}/`)).toMatchObject([{ directoryId: directory.id, name: 'keep.txt' }])
+    const concurrent = f.service.grantAdditionalDirectory({ spaceId: created.id, root: join(f.root, 'concurrent') })
+    const removing = f.service.update({ ...input, additionalDirectoryChanges: { add: [], remove: [directory.id] } })
+    const [grant, removed] = await Promise.all([concurrent, removing])
+    expect(removed.additionalDirectories.map(directory => directory.id)).toEqual([grant.grant.id])
+    expect(f.service.isGrantCurrent(created.id, directory.id)).toBe(false)
+    expect(f.database.prepare('SELECT revoked_at, revision FROM space_directory_bindings WHERE id = ?').get(directory.id)).toMatchObject({ revoked_at: expect.any(String), revision: 2 })
+    expect(await readFile(join(extra, 'keep.txt'), 'utf8')).toBe('keep')
+    expect(await f.service.searchFiles(created.id, `${extra}/`)).toEqual([])
+    await expect(f.service.update({ ...input, additionalDirectoryChanges: { add: [], remove: [created.primaryDirectory!.id] } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+  })
+
+  it('rejects canonical duplicates and sensitive directory aliases while preserving the saved configuration', async () => {
+    const f = await createFixture()
+    const alias = join(f.root, 'alias')
+    await symlink(f.directory, alias, 'junction')
+    const input = { ...spaceInput('Space', f.directory), additionalDirectoryChanges: { add: [alias], remove: [] }, additionalDirectorySelectionsVerified: true }
+    await expect(f.service.create(input)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    const secret = join(f.root, 'secret')
+    await mkdir(secret)
+    vi.stubEnv('LEXORA_BUDDY_STORAGE_PROTECTION', JSON.stringify([secret]))
+    const secretAlias = join(f.root, 'secret-alias')
+    await symlink(secret, secretAlias, 'junction')
+    await expect(f.service.create({ ...input, additionalDirectoryChanges: { add: [secretAlias], remove: [] } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    expect(f.service.list()).toEqual([])
+  })
+
+  it('blocks addition and removal of additional directories while a run is queued', async () => {
+    const f = await createFixture()
+    const extra = join(f.root, 'extra')
+    await mkdir(extra)
+    const created = await f.service.create({ ...spaceInput('Space', f.directory), additionalDirectoryChanges: { add: [extra], remove: [] }, additionalDirectorySelectionsVerified: true })
+    seedTurn(f.database, created.id)
+    const input = { ...spaceInput('Space', f.directory), spaceId: created.id, primaryDirectory: { id: created.primaryDirectory!.id, root: f.directory } }
+    await expect(f.service.update({ ...input, additionalDirectoryChanges: { add: [], remove: [created.additionalDirectories[0]!.id] } })).rejects.toMatchObject({ code: 'SPACE_HAS_ACTIVE_RUNS' })
+    const another = join(f.root, 'another')
+    await mkdir(another)
+    await expect(f.service.update({ ...input, additionalDirectoryChanges: { add: [another], remove: [] }, additionalDirectorySelectionsVerified: true })).rejects.toMatchObject({ code: 'SPACE_HAS_ACTIVE_RUNS' })
+    expect(f.service.list()[0]!.additionalDirectories).toEqual(created.additionalDirectories)
+  })
+
   it('keeps consumers attached until an accepted asynchronous directory grant commits', async () => {
     const fixture = await createFixture()
     const space = await fixture.service.create(spaceInput('Space', fixture.directory))

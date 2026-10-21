@@ -4,6 +4,7 @@ import type { SandboxNetworkTarget } from '../../../../shared/permissions/shellS
 import { Buffer } from 'node:buffer'
 import process from 'node:process'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_NETWORK_PERMISSIONS, upsertNetworkPermission } from '../../../../shared/permissions/networkPermissions'
 import { createBuddyToolPresentation } from '../../agent/events/toolPresentation'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../../approvals/ApprovalService'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
@@ -19,6 +20,7 @@ async function fixture(options: {
   decision?: 'denied' | 'approved_once' | Error
   exitCode?: number
   background?: boolean
+  savedNetworkAccess?: 'allow' | 'deny'
   targets?: SandboxNetworkTarget[]
   stop?: boolean
 } = {}) {
@@ -29,6 +31,12 @@ async function fixture(options: {
   const targets = options.targets ?? [target]
   const run = { runId: 'run-1', signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
   const authorization = new ToolAuthorizationService({
+    networkPermissions: options.savedNetworkAccess
+      ? {
+          get: async () => upsertNetworkPermission(DEFAULT_NETWORK_PERMISSIONS, target.host, 'access', options.savedNetworkAccess),
+          allow: async () => { throw new Error('Unexpected mutation in background') },
+        }
+      : undefined,
     approvalAvailable: !options.background,
     approvalPolicy: 'policy',
     executionProfile: 'workspace_write',
@@ -114,6 +122,15 @@ describe.each(['bash', 'powershell'] as const)('%s network authorization feedbac
     const check = await fixture({ dialect, decision: 'approved_once', exitCode: 7 })
     await expect(check.invoke()).resolves.toMatchObject({ isError: true, content: [{ type: 'text', text: 'original-command-output\n\nCommand exited with code 7' }], structuredContent: { exit_code: 7 } })
     expect(check.decisions).toEqual([true])
+  })
+
+  it.each(['allow', 'deny'] as const)('applies saved %s domains through the real shell approval callback in background', async (savedNetworkAccess) => {
+    const check = await fixture({ dialect, background: true, savedNetworkAccess, exitCode: 0 })
+    const result = await check.invoke()
+    expect(check.decisions).toEqual([savedNetworkAccess === 'allow'])
+    expect(JSON.stringify(result)).not.toContain('APPROVAL_UNAVAILABLE_IN_BACKGROUND')
+    if (savedNetworkAccess === 'deny')
+      expect(JSON.stringify(result)).toContain('NETWORK_PERMISSION_DENIED')
   })
 
   it('keeps background unavailability distinct from user refusal', async () => {

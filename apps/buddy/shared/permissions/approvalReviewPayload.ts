@@ -49,7 +49,7 @@ export const APPROVAL_REVIEW_KINDS = [
 
 export const APPROVAL_REUSE_SCOPES = ['operation', 'source', 'turn'] as const
 export type ApprovalReuseScope = typeof APPROVAL_REUSE_SCOPES[number]
-export const APPROVAL_GRANT_SCOPES = ['once', ...APPROVAL_REUSE_SCOPES] as const
+export const APPROVAL_GRANT_SCOPES = ['once', ...APPROVAL_REUSE_SCOPES, 'persistent'] as const
 export type ApprovalGrantScope = typeof APPROVAL_GRANT_SCOPES[number]
 
 const approvalReuseScopesSchema = z.array(z.enum(APPROVAL_REUSE_SCOPES)).max(APPROVAL_REUSE_SCOPES.length)
@@ -100,10 +100,31 @@ const browserApprovalOriginSchema = z.union([
   }),
 ])
 
+const persistentDirectorySchema = z.object({
+  owner: z.enum(['conversation', 'space']),
+  root: z.string().trim().min(1).max(4_096),
+}).strict()
+
+const networkPermissionReviewSchema = z.object({
+  host: z.string().min(1).max(253),
+  operation: z.enum(['access', 'download', 'upload']),
+  port: z.number().int().min(1).max(65535).optional(),
+}).strict()
+export type NetworkPermissionReviewInput = z.infer<typeof networkPermissionReviewSchema>
+
 export const approvalReviewPayloadSchema = z.discriminatedUnion('card', [
+  networkPermissionReviewSchema.extend({
+    allowForTurn: z.boolean().default(false),
+    canPersist: z.boolean().default(false),
+    card: z.literal('network-permission'),
+    command: z.string().max(MAX_COMMAND_REVIEW_LENGTH).optional(),
+    reuseScopes: approvalReuseScopesSchema.optional(),
+    toolName: toolNameSchema,
+  }).strict(),
   sandboxDirectoryRequestSchema.extend({
     allowForTurn: z.boolean().default(false),
     card: z.literal('sandbox-directory'),
+    persistentDirectory: persistentDirectorySchema.optional(),
     reuseScopes: approvalReuseScopesSchema.optional(),
     scope: z.literal('run'),
     toolName: z.literal('lexora_authorize_directory'),
@@ -127,6 +148,7 @@ export const approvalReviewPayloadSchema = z.discriminatedUnion('card', [
     access: z.enum(['delete', 'read', 'render', 'write']),
     allowForTurn: z.boolean().default(true),
     card: z.literal('paths'),
+    canPersist: z.boolean().optional(),
     grant: z.object({
       owner: z.enum(['conversation', 'space']),
       root: z.string().trim().min(1).max(4_096),
@@ -267,6 +289,9 @@ export interface CreateApprovalReviewPayloadInput {
   automation?: AutomationApprovalReviewInput
   browser?: BrowserApprovalReviewInput
   kind: ApprovalReviewKind
+  canPersist?: boolean
+  persistentDirectory?: z.infer<typeof persistentDirectorySchema>
+  networkPermission?: NetworkPermissionReviewInput
   network?: z.infer<typeof sandboxNetworkTargetSchema>
   sandboxDirectory?: z.infer<typeof sandboxDirectoryRequestSchema>
   paths?: PathApprovalReviewInput
@@ -282,12 +307,24 @@ export function createApprovalReviewPayload(
   const reuseScopes = input.reuseScopes?.length
     ? { reuseScopes: [...new Set(input.reuseScopes)] }
     : {}
+  if (input.networkPermission && input.kind === 'network') {
+    return approvalReviewPayloadSchema.parse({
+      ...input.networkPermission,
+      allowForTurn: input.allowForTurn,
+      canPersist: input.canPersist ?? false,
+      card: 'network-permission',
+      ...(['bash', 'powershell'].includes(input.toolName) ? { command: redactShellCommand(readString(input.arguments, 'command')) } : {}),
+      ...reuseScopes,
+      toolName: input.toolName,
+    })
+  }
   if (input.sandboxDirectory && input.kind === input.sandboxDirectory.access) {
     return approvalReviewPayloadSchema.parse({
       ...withoutReuseScopes(input.sandboxDirectory),
       reason: redactSensitiveText(input.sandboxDirectory.reason),
       allowForTurn: input.allowForTurn,
       card: 'sandbox-directory',
+      ...(input.canPersist && input.persistentDirectory ? { persistentDirectory: input.persistentDirectory } : {}),
       ...reuseScopes,
       scope: 'run',
       toolName: input.toolName,
@@ -323,6 +360,7 @@ export function createApprovalReviewPayload(
       ...withoutReuseScopes(input.paths),
       allowForTurn: input.allowForTurn,
       card: 'paths',
+      ...(input.canPersist ? { canPersist: true } : {}),
       ...reuseScopes,
       toolName: input.toolName,
     })
@@ -403,7 +441,7 @@ export function approvalReviewPayloadMatchesKind(
   if (kind === 'browser')
     return payload.card === 'browser-action'
   return kind === 'network'
-    ? payload.card === 'arguments' || payload.card === 'network-target' || payload.card === 'web' || payload.card === 'sandbox-network'
+    ? payload.card === 'arguments' || payload.card === 'network-target' || payload.card === 'web' || payload.card === 'sandbox-network' || payload.card === 'network-permission'
     : payload.card === 'arguments'
 }
 

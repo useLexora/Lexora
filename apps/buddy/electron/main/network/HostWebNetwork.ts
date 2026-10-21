@@ -1,6 +1,8 @@
 import type { Session } from 'electron'
+import type { NetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import type { WebNetworkRequest } from '../../../shared/network/webProtocol'
 import { publicWebUrl } from '../../../platform/network/publicWebTransport'
+import { isFileDownload } from '../../../shared/network/networkAuthorization'
 import { WebError } from '../../../shared/network/webProtocol'
 import { requestThroughHost } from './requestThroughHost'
 
@@ -17,7 +19,7 @@ export class HostWebNetwork {
     return publicWebUrl(raw)
   }
 
-  async fetch(input: Pick<WebNetworkRequest, 'body' | 'headers' | 'method' | 'scope' | 'url'>, signal: AbortSignal, options?: { redirect: 'manual' }): Promise<{ response: Response, url: string }> {
+  async fetch(input: Pick<WebNetworkRequest, 'body' | 'headers' | 'method' | 'scope' | 'url'>, signal: AbortSignal, options: { redirect?: 'manual', authorize: NetworkAuthorizer }): Promise<{ response: Response, url: string }> {
     let url = new URL(input.url)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
       throw new WebError('WEB_URL_BLOCKED')
@@ -27,6 +29,8 @@ export class HostWebNetwork {
       signal.throwIfAborted()
       if (input.scope === 'public')
         url = await this.authorizePublicUrl(url.href)
+      await options.authorize(url.href, 'access', signal)
+      signal.throwIfAborted()
       const response = await this.#request(this.session, { ...input, url: url.href }, signal)
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         await response.body?.cancel()
@@ -41,7 +45,17 @@ export class HostWebNetwork {
         url = target
         continue
       }
-      return { response, url: url.href }
+      try {
+        signal.throwIfAborted()
+        if (isFileDownload(response.headers))
+          await options.authorize(url.href, 'download', signal)
+        signal.throwIfAborted()
+        return { response, url: url.href }
+      }
+      catch (error) {
+        await response.body?.cancel().catch(() => {})
+        throw error
+      }
     }
     throw new WebError('WEB_INVALID_RESPONSE')
   }

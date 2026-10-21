@@ -22,7 +22,7 @@ export function registerApprovalRpc(options: RegisterApprovalRpcOptions): () => 
   }))
   disposers.push(registerRuntimeRequest(options.rpc, approvalsRpc.approve, async (input) => {
     return toPublicApproval(await options.service.resolve({
-      decision: input.scope === 'once' ? 'approved' : `approved_for_${input.scope}`,
+      decision: input.scope === 'once' ? 'approved' : input.scope === 'persistent' ? 'approved_persistently' : `approved_for_${input.scope}`,
       id: input.approvalId,
     }))
   }))

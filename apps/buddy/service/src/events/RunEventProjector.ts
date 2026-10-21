@@ -32,7 +32,7 @@ const approvalRequestPayloadSchema = z.object({
 )
 const approvalResolutionPayloadSchema = z.object({
   id: z.string().min(1),
-  resolution: z.enum(['approved', 'approved_for_operation', 'approved_for_source', 'approved_for_turn', 'cancelled', 'denied']).optional(),
+  resolution: z.enum(['approved', 'approved_persistently', 'approved_for_operation', 'approved_for_source', 'approved_for_turn', 'cancelled', 'denied']).optional(),
   resolvedAt: z.iso.datetime(),
   status: z.enum(['approved', 'denied', 'cancelled']),
 }).strict()

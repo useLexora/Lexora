@@ -1,6 +1,7 @@
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { SpaceFileMutation, SpaceFileOperation, SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { ResourceRef } from '@/workbench/common/workbench'
+import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
 import { WorkbenchController } from '@/workbench/services/WorkbenchController'
@@ -23,7 +24,7 @@ function resource(spaceId: string, path: string): ResourceRef {
 function fixture(confirm: boolean) {
   const spaces = [space('one', '/shared'), space('two', '/shared'), space('other', '/other')]
   const disk = new Map([['/shared/a.txt', 'original']])
-  const physical = (value: SpaceFileTarget) => absolute(spaces.find(space => space.id === value.spaceId)!.primaryDirectory!.canonicalRoot, value.path)
+  const physical = (value: SpaceFileTarget) => absolute(getActiveSpaceDirectories(spaces.find(space => space.id === value.spaceId)).find(directory => directory.id === value.directoryId)!.canonicalRoot, value.path)
   const copies = new WorkingCopyService({
     read: async (value) => {
       const text = disk.get(physical(value.data as unknown as SpaceFileTarget))!
@@ -66,10 +67,28 @@ function fixture(confirm: boolean) {
     registry.dispose()
   })
   const rename = (): SpaceFileMutation => ({ ...target('one', 'a.txt'), operationId: crypto.randomUUID(), action: { kind: 'rename', destination: 'renamed.txt' } })
-  return { disk, copies, controller, operations, rename }
+  return { disk, copies, controller, operations, rename, spaces }
 }
 
 describe('file operations protect all physical aliases before disk mutation', () => {
+  it('moves an additional-directory working copy and rejects the binding after removal', async () => {
+    const f = fixture(true)
+    const base = f.spaces[0]!
+    const additional = { ...base.primaryDirectory!, id: 'extra', root: '/extra', canonicalRoot: '/extra' }
+    f.spaces[0] = { ...base, additionalDirectories: [additional] }
+    f.disk.set('/extra/a.txt', 'additional')
+    const source = { spaceId: base.id, directoryId: additional.id, revision: 1, path: 'a.txt' }
+    const value: ResourceRef = { scheme: 'file', id: 'additional-copy', data: source }
+    await f.copies.open(value)
+    const id = (await f.controller.open(value, 'a.txt'))!
+    await f.operations.execute({ ...source, operationId: crypto.randomUUID(), action: { kind: 'rename', destination: 'renamed.txt' } })
+    expect(f.disk.get('/extra/renamed.txt')).toBe('additional')
+    expect(f.controller.layout.views[id]!.resource.data).toMatchObject({ directoryId: 'extra', path: 'renamed.txt' })
+    f.spaces[0] = base
+    await expect(f.operations.execute({ ...source, operationId: crypto.randomUUID(), action: { kind: 'rename', destination: 'denied.txt' } })).rejects.toThrow('FILE_PERMISSION_REVOKED')
+    expect(f.disk.get('/extra/renamed.txt')).toBe('additional')
+  })
+
   it('retains dirty copies in every Space when saving is declined', async () => {
     const { disk, copies, operations, rename } = fixture(false)
     const first = resource('one', 'a.txt')

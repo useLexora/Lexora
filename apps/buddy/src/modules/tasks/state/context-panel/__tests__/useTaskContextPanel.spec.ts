@@ -8,6 +8,34 @@ import { nextTick, shallowRef } from 'vue'
 import { createTaskPanel } from './contextPanelFixture'
 
 describe('useTaskContextPanel', () => {
+  it('opens and previews additional roots without a primary, and drops only revoked file tabs', async () => {
+    const base = fileSpace()
+    const additional = { ...base.primaryDirectory!, id: 'extra', root: '/extra', canonicalRoot: '/extra' }
+    const space: LocalSpace = { ...base, additionalDirectories: [additional] }
+    const spaces = shallowRef<readonly LocalSpace[]>([space])
+    const activeSpace = shallowRef<LocalSpace | null>(space)
+    const panel = createTaskPanel({ spaces, activeSpace })
+    panel.openFiles(space.id)
+    const primaryTab = panel.activeTab.value!
+    panel.openFiles(space.id, additional.id)
+    expect(panel.activeTab.value).toMatchObject({ kind: 'files', rootName: 'extra', target: { directoryId: 'extra', path: '' } })
+    panel.previewFile('/extra/note.txt')
+    expect(panel.activeTab.value).toMatchObject({ target: { directoryId: 'extra', path: 'note.txt' } })
+    expect(panel.canPreviewFile('/extra-escape/note.txt')).toBe(false)
+    spaces.value = [base]
+    activeSpace.value = base
+    await nextTick()
+    expect(panel.allTabs.value).toEqual([primaryTab])
+    const extraOnly = { ...space, primaryDirectory: null }
+    spaces.value = [extraOnly]
+    activeSpace.value = extraOnly
+    await nextTick()
+    expect(panel.fileEntry.value).toEqual({ kind: 'directory', spaceId: space.id })
+    expect(panel.canPreviewFile('note.txt')).toBe(false)
+    panel.previewFile('/extra/note.txt')
+    expect(panel.activeTab.value).toMatchObject({ target: { directoryId: 'extra', path: 'note.txt' } })
+  })
+
   it('discards only context tabs owned by the closed new-task pane', async () => {
     const activeDraftId = shallowRef('first')
     const panel = createTaskPanel({ activeDraftId })

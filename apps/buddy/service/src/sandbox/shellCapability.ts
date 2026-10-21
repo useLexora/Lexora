@@ -148,7 +148,7 @@ export function createShellCapability(options: {
                           input: parameters,
                           toolCallId,
                           toolName: shellName,
-                        }, run, { access: 'network', requireApproval: true }, { network: target, signal: executionSignal })
+                        }, run, { access: 'network' }, { network: target, signal: executionSignal })
                         if (reason !== null)
                           recordFailure(target, reason)
                         return reason === null

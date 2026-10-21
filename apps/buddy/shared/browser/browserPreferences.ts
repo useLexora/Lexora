@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_NETWORK_PERMISSIONS, networkPermissionsSchema } from '../permissions/networkPermissions'
 
 export const BROWSER_ZOOM_FACTORS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const
 export const browserZoomFactorSchema = z.number().min(0.5).max(3)
@@ -10,7 +11,12 @@ export const browserPreferencesSchema = z.object({
   freezeBackground: z.boolean(),
   freezeForeground: z.boolean(),
   freezeDelaySeconds: browserFreezeDelaySchema,
+  networkPermissions: networkPermissionsSchema.default(DEFAULT_NETWORK_PERMISSIONS),
 }).strict()
+
+export const browserPreferencesPatchSchema = browserPreferencesSchema.partial().extend({
+  networkPermissions: networkPermissionsSchema.optional(),
+})
 
 export type BrowserPreferences = z.infer<typeof browserPreferencesSchema>
 export const DEFAULT_BROWSER_PREFERENCES: BrowserPreferences = {
@@ -20,6 +26,7 @@ export const DEFAULT_BROWSER_PREFERENCES: BrowserPreferences = {
   freezeBackground: true,
   freezeForeground: false,
   freezeDelaySeconds: 60,
+  networkPermissions: DEFAULT_NETWORK_PERMISSIONS,
 }
 
 export function stepBrowserZoom(current: number, direction: 'in' | 'out'): number {

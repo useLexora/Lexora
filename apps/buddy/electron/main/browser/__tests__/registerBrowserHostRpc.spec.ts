@@ -1,7 +1,14 @@
 import type { RuntimeRequestHandler, RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { BrowserHost } from '../BrowserHost'
 import { describe, expect, it, vi } from 'vitest'
-import { registerBrowserHostRpc } from '../registerBrowserHostRpc'
+import { registerBrowserHostRpc as registerHostRpc } from '../registerBrowserHostRpc'
+
+const registerBrowserHostRpc: typeof registerHostRpc = (peer, options) => {
+  const host = options.getHost()
+  if (host)
+    host.withNetworkAuthorization = async (_session, _authorize, _signal, operation) => operation()
+  return registerHostRpc(peer, options)
+}
 
 const SESSION_ID = '6f828cc1-6549-4245-b26e-43b2917c9281'
 const PAGE_ID = 'ed312709-baf9-44b3-a292-108055838477'

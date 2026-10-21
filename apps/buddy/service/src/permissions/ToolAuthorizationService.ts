@@ -2,20 +2,25 @@ import type { BuddySettings } from '../../../shared/buddies/buddySettings'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { PathApprovalReviewInput } from '../../../shared/permissions/approvalReviewPayload'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { NetworkOperation } from '../../../shared/permissions/networkPermissions'
 import type { BuddyPermissionSettings } from '../../../shared/permissions/permissionMode'
 import type { SandboxDirectoryGrant, SandboxNetworkTarget } from '../../../shared/permissions/shellSandbox'
 import type { BuddyExtensionRunContext } from '../agent/extensions/BuddyExtensionRunContext'
 import type { ApprovalService } from '../approvals/ApprovalService'
 import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
+import type { NetworkPermissionsStore } from './NetworkPermissionsClient'
 import type { GrantOwner, GrantProposal, PermissionDecision } from './permissionContract'
 import type { ToolExecutionPermissions } from './ToolExecutionPermissions'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { normalizeNetworkHost, resolveNetworkPermission } from '../../../shared/permissions/networkPermissions'
+import { validateSandboxDirectory } from '../sandbox/SandboxDirectoryPermissions'
 import { PathClassificationError } from './classifyPath'
 import { PermissionEngine } from './PermissionEngine'
 
 export interface ToolAuthorizationOptions {
-  approvalService: Pick<ApprovalService, 'request'>
+  networkPermissions?: NetworkPermissionsStore
+  approvalService: Pick<ApprovalService, 'request'> & Partial<Pick<ApprovalService, 'clearRunAuthorizations'>>
   approvalAvailable: boolean
   approvalPolicy: BuddyApprovalPolicy
   executionProfile: BuddyExecutionProfile
@@ -51,6 +56,8 @@ export class ToolAuthorizationService {
   #settings: BuddyPermissionSettings
   #settingsLifetime = new AbortController()
   readonly #permits = new WeakMap<BuddyExtensionRunContext, Map<string, ToolExecutionPermit>>()
+  readonly #networkSettings = new WeakMap<BuddyExtensionRunContext, string>()
+  readonly #networkPermits = new WeakMap<BuddyExtensionRunContext, Map<string, Map<string, { settings: string, lifetime: AbortSignal }>>>()
 
   constructor(options: ToolAuthorizationOptions) {
     this.#options = options
@@ -85,6 +92,7 @@ export class ToolAuthorizationService {
 
   releaseExecutionPermit(event: ToolAuthorizationCall, run: BuddyExtensionRunContext): void {
     this.#permits.get(run)?.delete(event.toolCallId)
+    this.#networkPermits.get(run)?.delete(event.toolCallId)
     this.#options.executionPermissions?.release(run, event.toolCallId)
   }
 
@@ -92,7 +100,7 @@ export class ToolAuthorizationService {
     event: ToolAuthorizationCall,
     run: BuddyExtensionRunContext,
     declared: BuddyToolClassification = {},
-    resource: { network?: SandboxNetworkTarget, signal?: AbortSignal } = {},
+    resource: { network?: SandboxNetworkTarget, networkOperation?: NetworkOperation, signal?: AbortSignal } = {},
   ): Promise<string | null> {
     while (true) {
       const lifetime = this.#settingsLifetime.signal
@@ -110,7 +118,7 @@ export class ToolAuthorizationService {
     event: ToolAuthorizationCall,
     run: BuddyExtensionRunContext,
     declared: BuddyToolClassification,
-    resource: { network?: SandboxNetworkTarget, signal?: AbortSignal },
+    resource: { network?: SandboxNetworkTarget, networkOperation?: NetworkOperation, signal?: AbortSignal },
     settings: BuddyPermissionSettings,
     lifetime: AbortSignal,
   ): Promise<string | null> {
@@ -128,11 +136,35 @@ export class ToolAuthorizationService {
         || (!declared.access && !['read', 'find', 'grep', 'ls', 'write', 'edit'].includes(event.toolName)))) {
         return 'ROLE_FILE_ACCESS_READ_ONLY'
       }
+      const networkSettings = await options.networkPermissions?.get(signal)
+      const networkOperation = resource.networkOperation ?? 'access'
+      const networkHost = resource.network && normalizeNetworkHost(resource.network.host)
+      if (resource.network && !networkHost)
+        return 'VALIDATION_FAILED'
+      const networkPermission = networkSettings && networkHost
+        ? resolveNetworkPermission(networkSettings, networkHost, networkOperation)
+        : declared.networkManaged && declared.access === 'network' ? 'allow' : undefined
+      const networkKey = resource.network ? JSON.stringify([networkHost, resource.network.port, networkOperation]) : ''
+      const networkRevision = JSON.stringify(networkSettings ?? null)
+      if (networkSettings) {
+        const previousSettings = this.#networkSettings.get(run)
+        if (previousSettings !== undefined && previousSettings !== networkRevision) {
+          this.#networkPermits.delete(run)
+          options.approvalService.clearRunAuthorizations?.(run.runId, 'permissions_changed')
+        }
+        this.#networkSettings.set(run, networkRevision)
+      }
+      if (networkPermission === 'deny')
+        return 'NETWORK_PERMISSION_DENIED'
+      const networkPermit = this.#networkPermits.get(run)?.get(event.toolCallId)?.get(networkKey)
+      if (resource.network && networkPermit?.settings === networkRevision && !networkPermit.lifetime.aborted)
+        return null
       await run.flushProjectedEvents()
       const decision = await this.#engine.decide({
         access: declared.access,
+        networkPermission,
         approvalAvailable: options.approvalAvailable,
-        approvalPolicy: settings.approvalPolicy,
+        approvalPolicy: declared.networkManaged && declared.access === 'network' ? 'policy' : settings.approvalPolicy,
         approval: declared.approval,
         arguments: event.input,
         cwd: options.cwd,
@@ -150,8 +182,24 @@ export class ToolAuthorizationService {
       if (decision.type === 'deny')
         return decision.code
 
-      let approvedOnce = false
       if (decision.type === 'ask') {
+        const persistentDirectory = decision.grant ?? (decision.sandboxDirectory?.access === 'write'
+          ? { owner: options.owner, root: decision.sandboxDirectory.path }
+          : undefined)
+        const persist = persistentDirectory && options.applyGrant
+          ? async () => {
+            signal.throwIfAborted()
+            if (decision.sandboxDirectory)
+              await validateSandboxDirectory(decision.sandboxDirectory)
+            signal.throwIfAborted()
+            await options.applyGrant!(persistentDirectory)
+          }
+          : networkHost && options.networkPermissions
+            ? () => {
+                signal.throwIfAborted()
+                return options.networkPermissions!.allow(networkHost, networkOperation)
+              }
+            : undefined
         const approval = await options.approvalService.request({
           arguments: event.input,
           automation: declared.approval?.automation,
@@ -159,8 +207,18 @@ export class ToolAuthorizationService {
           cwd: options.cwd,
           kind: decision.kind,
           network: resource.network,
+          networkPermission: networkHost && resource.network
+            ? { host: networkHost, port: resource.network.port, operation: networkOperation }
+            : undefined,
+          persist,
+          persistentDirectory: persistentDirectory ? { owner: persistentDirectory.owner.kind, root: persistentDirectory.root } : undefined,
           paths: declared.approval?.paths ?? toPathReview(decision),
-          reuse: declared.approval?.reuse,
+          reuse: networkHost && resource.network
+            ? {
+                operation: ['network', networkHost, resource.network.port, networkOperation, networkRevision, event.input],
+                source: ['network', networkHost, resource.network.port, networkOperation, networkRevision],
+              }
+            : declared.approval?.reuse,
           runId: run.runId,
           runSignal: AbortSignal.any([run.signal, lifetime]),
           signal,
@@ -176,19 +234,22 @@ export class ToolAuthorizationService {
         signal.throwIfAborted()
         if (approval.decision === 'denied')
           return 'APPROVAL_DENIED'
-        approvedOnce = approval.decision === 'approved_once'
       }
       signal.throwIfAborted()
       const validation = await declared.validateBeforeExecution?.()
       signal.throwIfAborted()
       if (validation)
         return validation.reason
-      if (!resource.network && declared.paths?.length) {
+      const executionPaths = declared.paths ?? (['write', 'edit', 'read'].includes(event.toolName)
+        && event.input && typeof event.input === 'object' && 'path' in event.input && typeof event.input.path === 'string'
+        ? [{ path: event.input.path, mode: event.toolName === 'write' ? 'create' as const : 'existing' as const }]
+        : undefined)
+      if (!resource.network && executionPaths?.length) {
         try {
           await options.executionPermissions?.authorize(run, event.toolCallId, {
             cwd: options.cwd,
             grants: options.getGrants(),
-            paths: declared.paths,
+            paths: executionPaths,
             reviewedPaths: decision.type === 'ask' ? decision.paths : undefined,
           })
         }
@@ -209,18 +270,18 @@ export class ToolAuthorizationService {
           return 'SANDBOX_DIRECTORY_CHANGED'
         }
       }
-      if (decision.type === 'ask') {
-        signal.throwIfAborted()
-        if (decision.grant && approvedOnce) {
-          try {
-            if (!options.applyGrant)
-              return 'DIRECTORY_GRANT_FAILED'
-            await options.applyGrant(decision.grant)
-          }
-          catch {
-            return 'DIRECTORY_GRANT_FAILED'
-          }
-        }
+      if (networkHost && resource.network) {
+        const current = await options.networkPermissions?.get(signal)
+        const currentPermission = current && resolveNetworkPermission(current, networkHost, networkOperation)
+        if (currentPermission === 'deny')
+          return 'NETWORK_PERMISSION_DENIED'
+        if (currentPermission === 'ask' && JSON.stringify(current) !== networkRevision)
+          return this.#authorize(event, run, declared, resource, settings, lifetime)
+        const calls = this.#networkPermits.get(run) ?? new Map()
+        const targets = calls.get(event.toolCallId) ?? new Map()
+        targets.set(networkKey, { settings: JSON.stringify(current ?? null), lifetime })
+        calls.set(event.toolCallId, targets)
+        this.#networkPermits.set(run, calls)
       }
       signal.throwIfAborted()
       authorized = true

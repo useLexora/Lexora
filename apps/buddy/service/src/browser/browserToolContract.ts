@@ -255,7 +255,7 @@ export function classifyBrowserTool(
   if (!isBrowserOpenToolInput(event.input))
     return createToolClassificationFailure('VALIDATION_FAILED')
   return event.input.kind === 'url'
-    ? { access: 'network' }
+    ? { access: 'network', networkManaged: true }
     : {
         access: 'render',
         paths: [{ mode: 'existing', path: event.input.entryPath }],

@@ -10,6 +10,7 @@ import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NSelect } from 'naiv
 import { computed, h, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceAppearancePicker from '../space/DesktopSpaceAppearancePicker.vue'
+import DesktopSpaceAdditionalDirectoriesField from './DesktopSpaceAdditionalDirectoriesField.vue'
 import DesktopSpacePrimaryDirectoryField from './DesktopSpacePrimaryDirectoryField.vue'
 import { useSpaceEditor } from './useSpaceEditor'
 
@@ -28,7 +29,7 @@ const appearanceOpen = shallowRef(false)
 watch(() => props.show, () => {
   appearanceOpen.value = false
 })
-const { canSave, directoryChangeBlocked, directoryEditingDisabled, failed, form, save: confirm, saving, selectingDirectory, selectPrimaryDirectory } = useSpaceEditor({
+const { canSave, directoryChangeBlocked, directoryEditingDisabled, failed, form, save: confirm, saving, selectingDirectory, selectPrimaryDirectory, selectAdditionalDirectory, removeAdditionalDirectory } = useSpaceEditor({
   show: () => props.show,
   space: () => props.space,
   selectDirectory: () => props.selectDirectory(),
@@ -106,6 +107,16 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
           :primary-directory="form.primaryDirectory"
           @remove-primary="form.primaryDirectory = null"
           @select-primary="selectPrimaryDirectory"
+        />
+      </NFormItem>
+      <NFormItem :show-label="false">
+        <DesktopSpaceAdditionalDirectoriesField
+          :directories="form.additionalDirectories"
+          :disabled="directoryEditingDisabled || saving || selectingDirectory"
+          :limit-reached="form.additionalDirectories.length + Number(Boolean(form.primaryDirectory)) >= 32"
+          :language="language"
+          @add="selectAdditionalDirectory"
+          @remove="removeAdditionalDirectory"
         />
       </NFormItem>
       <NAlert

@@ -238,7 +238,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     retainBrowserSession,
     ensureBrowserSession,
     addBrowser: () => act(taskContext.addBrowser),
-    openFiles: (spaceId: string) => act(() => taskContext.openFiles(spaceId)),
+    openFiles: (spaceId: string, directoryId?: string) => act(() => taskContext.openFiles(spaceId, directoryId)),
     openWebLink,
     canPreviewFile,
     previewFile,

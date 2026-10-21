@@ -1,6 +1,7 @@
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { ApprovalReviewKind, ShellApprovalContext } from '../../../shared/permissions/approvalReviewPayload'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { NetworkPermissionDecision } from '../../../shared/permissions/networkPermissions'
 import type { SandboxDirectoryGrant } from '../../../shared/permissions/shellSandbox'
 
 export type AccessKind
@@ -20,6 +21,7 @@ export type PermissionDenialSource = 'invalid' | 'profile' | 'sensitive'
 export type PermissionDenialCode
   = 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'
     | 'MULTIPLE_DIRECTORY_GRANTS_REQUIRED'
+    | 'NETWORK_PERMISSION_DENIED'
     | 'INVALID_PATH'
     | 'PATH_NOT_FOUND'
     | 'READ_ONLY_PROFILE'
@@ -70,6 +72,7 @@ export type PermissionDecision
   }
 
 export interface PermissionRequest {
+  networkPermission?: NetworkPermissionDecision
   access?: AccessKind
   approvalPolicy: BuddyApprovalPolicy
   approvalAvailable: boolean

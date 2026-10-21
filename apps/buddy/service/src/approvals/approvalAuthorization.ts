@@ -22,6 +22,10 @@ export function createApprovalAuthorizationKeys(input: ApprovalRequest, override
   if (override)
     return keys([input.kind, ...override.operation], override.source && [input.kind, ...override.source])
 
+  if (input.networkPermission) {
+    const target = ['network', input.networkPermission.host, input.networkPermission.port, input.networkPermission.operation]
+    return keys([...target, input.arguments], target)
+  }
   if (input.network) {
     const target = ['sandbox-network', input.network.host.toLowerCase().replace(/\.$/, ''), input.network.port]
     return keys([...target, input.cwd, command(input)], target)

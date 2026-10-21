@@ -1,5 +1,5 @@
 import type { SpaceRecord } from '../../../storage/spaceRepository'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,6 +18,11 @@ describe('buddySessionBlueprintService', () => {
     const spaceRoot = join(root, 'space')
     await mkdir(spaceRoot)
     const space = createSpace(spaceRoot)
+    const extraRoot = join(root, 'additional')
+    await mkdir(extraRoot)
+    await writeFile(join(spaceRoot, 'AGENTS.md'), 'Primary instructions')
+    await writeFile(join(extraRoot, 'AGENTS.md'), 'Additional instructions must not be preloaded')
+    space.additionalDirectories = [{ ...space.primaryDirectory!, id: 'additional-1', canonicalRoot: extraRoot, root: extraRoot }]
     const loadForSpace = async () => ({
       diagnostics: [],
       readRoots: [],
@@ -48,18 +53,20 @@ describe('buddySessionBlueprintService', () => {
       canonicalRoot: spaceRoot,
       grants: [
         { canonicalRoot: spaceRoot, grantId: 'directory-1', kind: 'workspace' as const, root: spaceRoot },
+        { canonicalRoot: extraRoot, grantId: 'additional-1', kind: 'granted' as const, root: extraRoot },
         { canonicalRoot: scratchRoot, grantId: 'space-1', kind: 'workspace' as const, root: scratchRoot },
       ],
       resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [] },
       scratchRoot,
       space: {
-        additionalDirectoryBindings: [],
+        additionalDirectoryBindings: [{ id: 'additional-1', revision: 1 }],
         id: 'space-1',
         memoryScope: 'space_only',
         primaryDirectoryBinding: { id: 'directory-1', revision: 1 },
       },
     })
     expect(blueprint.resources.directoryContext).toContain(`Working directory: ${spaceRoot}`)
+    expect(blueprint.resources.context.agentsFiles).toEqual([expect.objectContaining({ path: join(spaceRoot, 'AGENTS.md'), content: 'Primary instructions' })])
   })
 
   it('creates an owned conversation workspace and grant without a Space', async () => {

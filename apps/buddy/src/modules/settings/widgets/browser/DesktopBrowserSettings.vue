@@ -9,6 +9,7 @@ import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopBrowserClearDataDialog from './DesktopBrowserClearDataDialog.vue'
+import DesktopNetworkPermissions from './DesktopNetworkPermissions.vue'
 
 const props = defineProps<ApplicationSettingsProps & { browser: Pick<DesktopBrowserApi, 'getDataSummary' | 'clearData'> }>()
 const { t } = useBuddyI18n(() => props.language)
@@ -52,6 +53,7 @@ function update(patch: LexoraConfigPatch) {
         </DesktopSettingRow>
       </DesktopSettingsGroup>
     </section>
+    <DesktopNetworkPermissions :value="config.browser.networkPermissions" :language="language" :pending="pending" :save="networkPermissions => update({ browser: { networkPermissions } })" />
     <section class="grid gap-[0.8rem]">
       <h2 class="m-0 text-[0.92rem]">
         {{ t('desktop.browser.freezing') }}

@@ -20,6 +20,7 @@ import type {
   DesktopBrowserState,
 } from '../../../shared/browser/browserDesktopApi'
 import type { BrowserLocateElementInput, BrowserPickResult } from '../../../shared/browser/browserSelection'
+import type { NetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import type { BrowserHostChange, BrowserHostFact } from './BrowserHostEvents'
 import type { BrowserPage } from './BrowserPageSession'
 import type { BrowserSessionTeardownReason } from './BrowserSessionRegistry'
@@ -275,6 +276,20 @@ export class BrowserHost {
     return { ...this.#requireSession(sessionId).descriptor }
   }
 
+  async withNetworkAuthorization<T>(sessionId: string, authorize: NetworkAuthorizer, signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
+    const session = this.#requireSession(sessionId)
+    return session.networkAuthorization.run(authorize, signal, async () => {
+      const result = await operation()
+      const url = session.page?.getURL()
+      if (url && /^(?:https?|wss?):/.test(url))
+        await session.networkAuthorization.authorize(url)
+      return result
+    }, () => {
+      if (session.page && !session.page.isDestroyed())
+        session.page.stop()
+    })
+  }
+
   acquireControl(input: BrowserAcquireControlParams): BrowserControlLease {
     this.#operations.assertCanMutate()
     const session = this.#requireSession(input.sessionId)
@@ -282,6 +297,7 @@ export class BrowserHost {
       throw new BrowserHostError('BROWSER_CONTROL_REQUIRED', 'Standalone browser sessions remain under human control')
     this.#assertCurrentPage(session, input.pageId, 'before acquiring control')
     session.cancelElementPick()
+    session.networkAuthorization.requireAgentAuthorization()
     this.#advanceControlEpoch(session)
     session.state.controller = 'agent'
     this.#sessions.setProtected(input.sessionId, 'runtime', true)
@@ -303,7 +319,9 @@ export class BrowserHost {
   }
 
   takeControl(sessionId: string): DesktopBrowserState {
-    return this.#returnHumanControl(this.#requireSession(sessionId), true)
+    const session = this.#requireSession(sessionId)
+    session.networkAuthorization.useHumanControl()
+    return this.#returnHumanControl(session, true)
   }
 
   async observe(input: BrowserObserveParams): Promise<BrowserObservation> {
@@ -1208,6 +1226,7 @@ export class BrowserHost {
   #acceptHumanPageInput(session: BrowserPageSession): void {
     if (!session.state.visible)
       return
+    session.networkAuthorization.useHumanControl()
     this.#sessions.touch(session.state.sessionId)
     if (session.state.controller === 'agent') {
       this.#returnHumanControl(session, true)

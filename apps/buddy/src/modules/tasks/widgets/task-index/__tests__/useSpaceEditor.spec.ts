@@ -24,6 +24,40 @@ function fixture() {
 }
 
 describe('space editing session', () => {
+  it('shows existing additional directories and submits only explicit removals and selected additions', async () => {
+    const f = fixture()
+    const timestamp = '2026-09-08T00:00:00.000Z'
+    const directory = { id: 'extra', root: '/extra', canonicalRoot: '/extra', revision: 1, accessGrantedAt: timestamp, createdAt: timestamp, updatedAt: timestamp, revokedAt: null, spaceId: 'first' }
+    f.show.value = false
+    f.target.value = { ...space('first'), additionalDirectories: [directory] }
+    f.show.value = true
+    expect(f.editor.form.additionalDirectories).toEqual([{ id: 'extra', root: '/extra' }])
+    f.editor.removeAdditionalDirectory(0)
+    f.selectDirectory.mockResolvedValueOnce('/selected')
+    await f.editor.selectAdditionalDirectory()
+    f.target.value = { ...f.target.value, additionalDirectories: [directory, { ...directory, id: 'concurrent', root: '/concurrent' }] }
+    await f.editor.save()
+    expect(f.save.mock.calls[0]?.[0]).toMatchObject({ additionalDirectoryChanges: { add: ['/selected'], remove: ['extra'] }, primaryDirectory: null })
+    expect(f.target.value.additionalDirectories).toHaveLength(2)
+  })
+
+  it('does not add duplicate roots, late directory results, or change bindings during active runs', async () => {
+    const f = fixture()
+    f.selectDirectory.mockResolvedValue('/selected')
+    await f.editor.selectAdditionalDirectory()
+    await f.editor.selectAdditionalDirectory()
+    expect(f.editor.form.additionalDirectories).toEqual([{ id: null, root: '/selected' }])
+    const pending = deferred<string | null>()
+    f.selectDirectory.mockReturnValueOnce(pending.promise)
+    const selecting = f.editor.selectAdditionalDirectory()
+    f.target.value = { ...space('first'), activeRunCount: 1 }
+    pending.resolve('/late')
+    await selecting
+    f.editor.removeAdditionalDirectory(0)
+    expect(f.editor.form.additionalDirectories).toEqual([{ id: null, root: '/selected' }])
+    expect(f.editor.canSave.value).toBe(false)
+  })
+
   it('uses the selected folder name for a new space when the name is blank', async () => {
     const f = fixture()
     f.target.value = null

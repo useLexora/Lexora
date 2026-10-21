@@ -3,6 +3,7 @@ import type {
   ApprovalReviewKind,
   AutomationApprovalReviewInput,
   BrowserApprovalReviewInput,
+  NetworkPermissionReviewInput,
   PathApprovalReviewInput,
   ShellApprovalContext,
   SystemActionApprovalReviewInput,
@@ -26,12 +27,15 @@ import { approvalReuseScopes, createApprovalAuthorizationKeys } from './approval
 export const APPROVAL_WAIT_TIMEOUT_MS = 30 * 60 * 1_000
 
 export type ApprovalDecision = 'approved' | 'denied'
-export type ApprovalResolutionDecision = ApprovalDecision | `approved_for_${ApprovalReuseScope}`
+export type ApprovalResolutionDecision = ApprovalDecision | 'approved_persistently' | `approved_for_${ApprovalReuseScope}`
 export type ApprovalRequestResult
-  = { approvalId: string, decision: 'approved_once' | `approved_for_${ApprovalReuseScope}` | 'denied' }
+  = { approvalId: string, decision: 'approved_once' | 'approved_persistently' | `approved_for_${ApprovalReuseScope}` | 'denied' }
     | { decision: `approved_by_${ApprovalReuseScope}`, sourceApprovalId: string }
 
 export interface ApprovalRequest {
+  persist?: () => Promise<void>
+  persistentDirectory?: { owner: 'conversation' | 'space', root: string }
+  networkPermission?: NetworkPermissionReviewInput
   reuseScopes?: readonly ApprovalReuseScope[]
   arguments: unknown
   automation?: AutomationApprovalReviewInput
@@ -78,6 +82,8 @@ export type ApprovalLifecycleFact = Readonly<
 >
 
 interface ApprovalWaiter {
+  persisted?: boolean
+  persist?: () => Promise<void>
   startedAt: number
   authorizationSignal: AbortSignal
   authorizationKeys: ApprovalAuthorizationKeys
@@ -186,6 +192,9 @@ export class ApprovalService {
         browser: input.browser,
         kind: input.kind,
         network: input.network,
+        networkPermission: input.networkPermission,
+        canPersist: Boolean(input.persist),
+        persistentDirectory: input.persistentDirectory,
         sandboxDirectory: input.sandboxDirectory,
         paths: input.paths,
         reuseScopes,
@@ -204,6 +213,7 @@ export class ApprovalService {
     let timer: ReturnType<typeof setTimeout> | null = null
     const decision = new Promise<ApprovalRequestResult>((resolve, reject) => {
       this.#waiters.set(approval.id, {
+        persist: input.persist,
         startedAt: Date.now(),
         authorizationSignal: input.runSignal ?? input.signal,
         authorizationKeys,
@@ -268,6 +278,14 @@ export class ApprovalService {
     const approvedScope = readApprovedScope(input.decision)
     if (approvedScope && !waiter?.reuseScopes.has(approvedScope))
       throw new ApprovalResolutionError()
+    if (waiter?.persisted && input.decision !== 'approved_persistently')
+      throw new ApprovalResolutionError()
+    if (input.decision === 'approved_persistently' && !waiter?.persisted) {
+      if (!waiter?.persist || waiter.signal.aborted || waiter.authorizationSignal.aborted)
+        throw new ApprovalResolutionError()
+      await waiter.persist()
+      waiter.persisted = true
+    }
     const decision: ApprovalDecision = input.decision === 'denied' ? 'denied' : 'approved'
     const resolvedAt = new Date().toISOString()
     await this.#appendResolved({
@@ -297,9 +315,11 @@ export class ApprovalService {
       approvalId: pending.id,
       decision: approvedScope
         ? `approved_for_${approvedScope}`
-        : decision === 'approved'
-          ? 'approved_once'
-          : 'denied',
+        : input.decision === 'approved_persistently'
+          ? 'approved_persistently'
+          : decision === 'approved'
+            ? 'approved_once'
+            : 'denied',
     })
     this.#releaseWaiter(pending, decision, 'committed')
     return approval
@@ -325,6 +345,18 @@ export class ApprovalService {
     const pending = this.#repository.findById(approval.id)
     if (!pending || pending.status !== 'pending')
       return
+    const waiter = this.#waiters.get(approval.id)
+    if (waiter?.persisted) {
+      try {
+        await this.#trackResolution(approval.id, this.#resolvePending({ id: approval.id, decision: 'approved_persistently' }))
+      }
+      catch (error) {
+        waiter.reject(asError(error))
+        waiter.cleanup()
+        throw error
+      }
+      return
+    }
     await this.#trackResolution(approval.id, this.#cancelPending(pending, reason))
     if (reason === 'expired')
       await this.#onExpired(approval.runId)

@@ -9,7 +9,7 @@ import type {
   BrowserWaitOutcome,
 } from '../../../shared/browser'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
-import type { BuddyCapability } from '../agent/extensions/BuddyCapability'
+import type { BuddyCapability, BuddyCapabilityContext } from '../agent/extensions/BuddyCapability'
 import type { BuddyInProcessExtension } from '../agent/extensions/BuddyInProcessExtension'
 import type { BrowserCapabilityServiceOptions } from './BrowserCapabilityService'
 import type {
@@ -20,6 +20,7 @@ import type {
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { BROWSER_ERROR_CODES } from '../../../shared/browser'
 import { GrantedPathError } from '../directories/resolveGrantedPath'
+import { withNetworkAuthorization } from '../network/networkAuthorizationContext'
 import { BrowserCapabilityService } from './BrowserCapabilityService'
 import { BROWSER_ACT_TOOL_NAME, BROWSER_OPEN_TOOL_NAME, BROWSER_READ_TOOL_NAME, BROWSER_SNAPSHOT_TOOL_NAME, BROWSER_TOOLS, browserActToolParameters, browserOpenToolParameters, browserReadToolParameters, browserSnapshotToolParameters, classifyBrowserTool, isBrowserActToolInput, isBrowserOpenToolInput, isBrowserReadToolInput, isBrowserSnapshotToolInput } from './browserToolContract'
 import { observeBrowserCapabilityDiagnostics } from './observeBrowserCapabilityDiagnostics'
@@ -57,12 +58,13 @@ const browserFailureRecoveryGuideline = [
 ].join(' ')
 
 export interface CreateBrowserExtensionOptions {
+  authorizeNetwork?: BuddyCapabilityContext['authorizeNetwork']
   getExecutionGrants?: BrowserCapabilityServiceOptions['getExecutionGrants']
   service: BrowserExtensionService
   onOpening?: () => Promise<void>
 }
 
-export function createBrowserCapability(options: BrowserCapabilityServiceOptions & Pick<CreateBrowserExtensionOptions, 'onOpening'> & { report?: ApplicationDiagnosticReporter }): BuddyCapability {
+export function createBrowserCapability(options: BrowserCapabilityServiceOptions & Pick<CreateBrowserExtensionOptions, 'onOpening' | 'authorizeNetwork'> & { report?: ApplicationDiagnosticReporter }): BuddyCapability {
   const service = new BrowserCapabilityService(options)
   const diagnostics = options.report ? observeBrowserCapabilityDiagnostics(service, options.report) : undefined
   return {
@@ -72,7 +74,7 @@ export function createBrowserCapability(options: BrowserCapabilityServiceOptions
       }
       finally { diagnostics?.dispose() }
     },
-    extension: createBrowserExtension({ service, getExecutionGrants: options.getExecutionGrants, onOpening: options.onOpening }),
+    extension: createBrowserExtension({ authorizeNetwork: options.authorizeNetwork, service, getExecutionGrants: options.getExecutionGrants, onOpening: options.onOpening }),
     classify: event => classifyBrowserTool(event, service),
     disclosure: [{
       source: { kind: 'builtin', id: 'browser', title: 'Browser' },
@@ -89,10 +91,20 @@ export function createBrowserExtension(
   return {
     name: 'lexora-browser',
     factory(pi) {
-      pi.registerTool(createBrowserOpenTool(options))
-      pi.registerTool(createBrowserSnapshotTool(options.service))
-      pi.registerTool(createBrowserReadTool(options.service))
-      pi.registerTool(createBrowserActTool(options.service))
+      for (const tool of [
+        createBrowserOpenTool(options),
+        createBrowserSnapshotTool(options.service),
+        createBrowserReadTool(options.service),
+        createBrowserActTool(options.service),
+      ]) {
+        pi.registerTool({
+          ...tool,
+          execute: (toolCallId, input, signal, update, context) => withNetworkAuthorization(
+            { authorizeNetwork: options.authorizeNetwork, toolCallId, toolName: tool.name, signal },
+            () => tool.execute(toolCallId, input, signal, update, context),
+          ),
+        })
+      }
       pi.on('tool_result', normalizeBrowserToolResult)
     },
   }

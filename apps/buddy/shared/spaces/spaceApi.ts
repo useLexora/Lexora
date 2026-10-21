@@ -52,9 +52,23 @@ export const spaceDirectoryInputSchema = z.object({
 
 export const spacePrimaryDirectoryInputSchema = spaceDirectoryInputSchema
 
+export const spaceAdditionalDirectoryChangesSchema = z.object({
+  add: z.array(z.string().min(1)).max(32),
+  remove: z.array(idSchema).max(32),
+}).strict()
+
+export type SpaceAdditionalDirectoryChanges = z.infer<typeof spaceAdditionalDirectoryChangesSchema>
+
 export type LocalSpace = DeepReadonly<z.infer<typeof spaceSchema>>
 
 export type LocalSpaceAdditionalDirectory = DeepReadonly<z.infer<typeof spaceDirectorySchema>>
+
+export function getActiveSpaceDirectories(space: LocalSpace | null | undefined): readonly LocalSpaceAdditionalDirectory[] {
+  if (!space || space.revokedAt)
+    return []
+  return [space.primaryDirectory, ...space.additionalDirectories]
+    .filter((directory): directory is LocalSpaceAdditionalDirectory => Boolean(directory && !directory.revokedAt))
+}
 
 export type LocalSpaceCreateInput = z.infer<typeof spacesRequestSchemas.spaceCreate>
 
@@ -71,6 +85,7 @@ export const spacesRequestSchemas = {
     deepSearch: z.boolean().optional(),
   }).strict(),
   spaceCreate: z.object({
+    additionalDirectoryChanges: spaceAdditionalDirectoryChangesSchema.optional(),
     icon: spaceIconSchema.optional(),
     iconColor: spaceIconColorSchema.optional(),
     memoryScope: z.enum(['personal_and_space', 'space_only']),
@@ -79,6 +94,7 @@ export const spacesRequestSchemas = {
   }).strict(),
   spaceId: z.object({ spaceId: idSchema }).strict(),
   spaceUpdate: z.object({
+    additionalDirectoryChanges: spaceAdditionalDirectoryChangesSchema.optional(),
     icon: spaceIconSchema.optional(),
     iconColor: spaceIconColorSchema.optional(),
     memoryScope: z.enum(['personal_and_space', 'space_only']),
@@ -96,11 +112,11 @@ export const spacesResponseSchemas = {
 } as const
 
 export const spacesRpc = {
-  create: { method: 'spaces.create', input: spacesRequestSchemas.spaceCreate.extend({ primaryDirectorySelectionVerified: z.boolean() }).strict(), response: spacesResponseSchemas.space },
+  create: { method: 'spaces.create', input: spacesRequestSchemas.spaceCreate.extend({ primaryDirectorySelectionVerified: z.boolean(), additionalDirectorySelectionsVerified: z.boolean().optional() }).strict(), response: spacesResponseSchemas.space },
   delete: { method: 'spaces.delete', input: spacesRequestSchemas.spaceId, response: validationResponseSchemas.mutation },
   list: { method: 'spaces.list', input: validationRequestSchemas.limit, response: spacesResponseSchemas.spaces },
   searchFiles: { method: 'spaces.searchFiles', input: spacesRequestSchemas.spaceFileSearch, response: spacesResponseSchemas.spaceFiles },
-  update: { method: 'spaces.update', input: spacesRequestSchemas.spaceUpdate.extend({ primaryDirectorySelectionVerified: z.boolean() }).strict(), response: spacesResponseSchemas.space },
+  update: { method: 'spaces.update', input: spacesRequestSchemas.spaceUpdate.extend({ primaryDirectorySelectionVerified: z.boolean(), additionalDirectorySelectionsVerified: z.boolean().optional() }).strict(), response: spacesResponseSchemas.space },
 } as const satisfies Record<string, RuntimeRequestContract>
 
 export const spaceChangeNoticeSchema = z.object({

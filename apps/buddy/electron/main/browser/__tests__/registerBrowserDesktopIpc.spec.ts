@@ -61,7 +61,7 @@ function fixture(
   registerBrowserDesktopIpc({
     data: { getSummary: async () => ({ cacheBytes: 0, cookieSiteCount: 0 }), clear: async () => ({ ok: true }) },
     screenshots: { capture: async () => { throw new Error('unused') } },
-    getHost: () => host as BrowserHost,
+    getHost: () => Object.assign({ takeControl: vi.fn() }, host) as unknown as BrowserHost,
     getWindow: () => ({ webContents }) as unknown as BrowserWindow,
     resolveArtifactEntry,
   })

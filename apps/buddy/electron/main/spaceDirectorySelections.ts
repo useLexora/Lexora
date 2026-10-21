@@ -32,6 +32,16 @@ export class SpaceDirectorySelectionLedger {
     return true
   }
 
+  consumeAll(roots: readonly string[]): boolean {
+    this.#prune(this.#now())
+    const keys = roots.map(root => resolve(root))
+    if (new Set(keys).size !== keys.length || keys.some(key => !this.#expiresAt.has(key)))
+      return false
+    for (const key of keys)
+      this.#expiresAt.delete(key)
+    return true
+  }
+
   #prune(now: number): void {
     for (const [root, expiresAt] of this.#expiresAt) {
       if (expiresAt <= now)

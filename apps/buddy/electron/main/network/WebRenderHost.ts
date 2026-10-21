@@ -1,3 +1,4 @@
+import type { NetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import type { HostWebNetwork } from './HostWebNetwork'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, session } from 'electron'
@@ -19,7 +20,7 @@ const SNAPSHOT_SCRIPT = `new Promise(resolve => {
   timer = setTimeout(finish, 800);
 })`
 
-export async function renderWebDocument(network: HostWebNetwork, url: string, signal: AbortSignal): Promise<{ html: string, url: string }> {
+export async function renderWebDocument(network: HostWebNetwork, url: string, signal: AbortSignal, authorize: NetworkAuthorizer): Promise<{ html: string, url: string }> {
   await network.authorizePublicUrl(url)
   signal.throwIfAborted()
   const isolated = session.fromPartition(`buddy-web-render:${randomUUID()}`, { cache: false })
@@ -60,7 +61,7 @@ export async function renderWebDocument(network: HostWebNetwork, url: string, si
       try {
         if (request.method !== 'GET' || ++requests > 80)
           throw new WebError('WEB_URL_BLOCKED')
-        const result = await network.fetch({ url: request.url, method: 'GET', headers: {}, scope: 'public' }, signal, { redirect: 'manual' })
+        const result = await network.fetch({ url: request.url, method: 'GET', headers: {}, scope: 'public' }, signal, { redirect: 'manual', authorize })
         if ([301, 302, 303, 307, 308].includes(result.response.status))
           return result.response
         if (mainRequests.has(request.url)) {
@@ -104,7 +105,10 @@ export async function renderWebDocument(network: HostWebNetwork, url: string, si
       throw new WebError('WEB_INVALID_RESPONSE')
     if (html.length > 4 * 1024 * 1024)
       throw new WebError('WEB_RESPONSE_TOO_LARGE')
-    return { html, url: (await network.authorizePublicUrl(page.getURL())).href }
+    const finalUrl = (await network.authorizePublicUrl(page.getURL())).href
+    await authorize(finalUrl, 'access', signal)
+    signal.throwIfAborted()
+    return { html, url: finalUrl }
   }
   finally {
     signal.removeEventListener('abort', abort)

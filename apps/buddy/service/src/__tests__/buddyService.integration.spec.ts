@@ -26,6 +26,7 @@ import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
 import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../shared/executions/executionApi'
+import { DEFAULT_NETWORK_PERMISSIONS } from '../../../shared/permissions/networkPermissions'
 import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
 import { PiEventBridge } from '../agent/events/PiEventBridge'
 import { createTestExecutionCoordinator } from '../agent/execution/__tests__/executionCoordinatorFixture'
@@ -1880,7 +1881,7 @@ function createRuntimeRpcHarness(
       handlers.set(method, handler)
       return () => handlers.delete(method)
     },
-    request(method: string, params: unknown) {
+    async request(method: string, params: unknown, _timeout?: number | null, signal = new AbortController().signal, requestId?: string) {
       const input = params as {
         credential?: Credential
         id?: string
@@ -1892,6 +1893,16 @@ function createRuntimeRpcHarness(
       }
       if (method === 'extensions.agent.list')
         return Promise.resolve([])
+      if (method === 'host.networkPermissions.get')
+        return Promise.resolve(structuredClone(DEFAULT_NETWORK_PERMISSIONS))
+      if ((method === 'host.web.authorize' || method === 'host.web.request') && input.url && input.url in webPages) {
+        const authorize = handlers.get('runtime.network.authorize')
+        if (!authorize)
+          throw new Error('Network authorization handler is missing')
+        const result = await authorize({ requestId, url: input.url, operation: 'access' }, signal)
+        if (!(result as { ok: boolean }).ok)
+          return { ok: false, code: 'WEB_URL_BLOCKED' }
+      }
       if (method === 'host.web.authorize')
         return Promise.resolve(input.url && input.url in webPages ? { ok: true } : { ok: false, code: 'WEB_URL_BLOCKED' })
       if (method === 'host.web.request' && input.url && input.url in webPages) {

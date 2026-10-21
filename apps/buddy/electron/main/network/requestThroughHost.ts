@@ -55,7 +55,7 @@ export async function requestThroughHost(session: Session, input: { url: string,
           cleanup()
           request.abort()
         },
-      })
+      }, { highWaterMark: 0 })
       incoming.on('data', (chunk: Uint8Array) => {
         if (!ended) {
           stream!.enqueue(chunk)
@@ -72,7 +72,10 @@ export async function requestThroughHost(session: Session, input: { url: string,
           cleanup()
         }
       })
-      resolve(new Response([204, 205, 304].includes(incoming.statusCode) ? null : body, { status: incoming.statusCode, headers }))
+      const empty = input.method === 'HEAD' || [204, 205, 304].includes(incoming.statusCode)
+      if (empty)
+        void body.cancel().catch(() => {})
+      resolve(new Response(empty ? null : body, { status: incoming.statusCode, headers }))
     })
     try {
       for (const [key, value] of Object.entries(input.headers))

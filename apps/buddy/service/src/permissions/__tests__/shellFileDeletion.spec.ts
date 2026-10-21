@@ -166,7 +166,7 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     await expect(readFile(join(fixture.workspace, 'foldername.txt'), 'utf8')).resolves.toBe('keep')
   })
 
-  it.each(['denied', 'approved_once', 'approved_for_turn', 'grant_failure'] as const)('applies the %s approval outcome before a real deletion', async (outcome) => {
+  it.each(['denied', 'approved_once', 'approved_for_turn', 'approved_persistently'] as const)('applies the %s approval outcome before a real deletion', async (outcome) => {
     const fixture = await createFixture()
     const target = join(fixture.outside, 'obsolete.vue')
     const command = `rm "${target}"`
@@ -184,12 +184,12 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
               targets: [{ path: target, zone: 'outside' }],
             })
             await expect(readFile(target, 'utf8')).resolves.toBe('fixture')
-            return { approvalId: 'approval-1', decision: outcome === 'grant_failure' ? 'approved_once' : outcome }
+            if (outcome === 'approved_persistently')
+              await input.persist!()
+            return { approvalId: 'approval-1', decision: outcome }
           },
         },
         applyGrant: async (grant) => {
-          if (outcome === 'grant_failure')
-            throw new Error('fixture grant failure')
           fixture.grants.push({ canonicalRoot: grant.root, grantId: 'external-1', kind: 'granted', root: grant.root })
         },
         cwd: fixture.workspace,
@@ -211,8 +211,8 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
       },
     } as never)
     const result = await handler({ input: { command }, toolCallId: 'tool-1', toolName: 'bash', type: 'tool_call' })
-    if (outcome === 'denied' || outcome === 'grant_failure') {
-      expect(result).toMatchObject({ block: true, reason: outcome === 'denied' ? 'APPROVAL_DENIED' : 'DIRECTORY_GRANT_FAILED' })
+    if (outcome === 'denied') {
+      expect(result).toMatchObject({ block: true, reason: 'APPROVAL_DENIED' })
       await expect(readFile(target, 'utf8')).resolves.toBe('fixture')
     }
     else {
@@ -220,7 +220,7 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
       await executeFile('bash', ['--noprofile', '--norc', '-c', command], { cwd: fixture.workspace, env: { PATH: process.env.PATH, BASH_ENV: '' } })
       await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
       await writeFile(target, 'restored fixture')
-      await expect(fixture.engine.decide(request(fixture, command))).resolves.toMatchObject({ type: outcome === 'approved_once' ? 'allow' : 'ask' })
+      await expect(fixture.engine.decide(request(fixture, command))).resolves.toMatchObject({ type: outcome === 'approved_persistently' ? 'allow' : 'ask' })
     }
   })
 })

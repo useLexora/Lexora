@@ -70,8 +70,32 @@ describe('local chat IPC lifecycle and host authorization', () => {
     await expect(create(event, input)).rejects.toThrow('LOCAL_CHAT_OPERATION_FAILED')
     await expect(create(event, input)).rejects.toThrow('LOCAL_CHAT_OPERATION_FAILED')
     expect(requests).toEqual([
-      { ...input, primaryDirectorySelectionVerified: true },
-      { ...input, primaryDirectorySelectionVerified: false },
+      { ...input, primaryDirectorySelectionVerified: true, additionalDirectorySelectionsVerified: true },
+      { ...input, primaryDirectorySelectionVerified: false, additionalDirectorySelectionsVerified: true },
+    ])
+  })
+
+  it('requires a native selection for every additional root and consumes a batch only when all are selected', async () => {
+    const requests: unknown[] = []
+    const { event } = setup(async (_method, input) => {
+      requests.push(input)
+      throw new Error('fixture storage unavailable')
+    })
+    const update = electron.handlers.get(LOCAL_CHAT_IPC_CHANNELS.spacesUpdate)!
+    const input = { spaceId: 'space', memoryScope: 'space_only', name: 'Fixture', primaryDirectory: null, additionalDirectoryChanges: { add: ['/tmp/one', '/tmp/two'], remove: [] } }
+    await expect(update(event, { ...input, additionalDirectorySelectionsVerified: true })).rejects.toThrow('VALIDATION_FAILED')
+    expect(requests).toEqual([])
+    electron.select.mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/one'] })
+    await electron.handlers.get(LOCAL_CHAT_IPC_CHANNELS.spacesSelectDirectory)!(event)
+    await expect(update(event, input)).rejects.toThrow('LOCAL_CHAT_OPERATION_FAILED')
+    electron.select.mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/two'] })
+    await electron.handlers.get(LOCAL_CHAT_IPC_CHANNELS.spacesSelectDirectory)!(event)
+    await expect(update(event, input)).rejects.toThrow('LOCAL_CHAT_OPERATION_FAILED')
+    await expect(update(event, input)).rejects.toThrow('LOCAL_CHAT_OPERATION_FAILED')
+    expect(requests).toEqual([
+      { ...input, primaryDirectorySelectionVerified: false, additionalDirectorySelectionsVerified: false },
+      { ...input, primaryDirectorySelectionVerified: false, additionalDirectorySelectionsVerified: true },
+      { ...input, primaryDirectorySelectionVerified: false, additionalDirectorySelectionsVerified: false },
     ])
   })
 

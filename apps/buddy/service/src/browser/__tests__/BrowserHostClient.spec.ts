@@ -87,7 +87,7 @@ describe('browserHostClient', () => {
         kind: 'local-file',
         rootPath: canonicalRoot,
       },
-    })
+    }, null, expect.any(AbortSignal), expect.any(String))
   })
 
   it('rejects direct and symlink escapes without calling Main', async () => {

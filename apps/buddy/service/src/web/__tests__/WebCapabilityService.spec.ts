@@ -41,6 +41,24 @@ async function fixture() {
 }
 
 describe('web capability routing', () => {
+  it('preserves network permission denial without falling back to another search provider or remote extraction', async () => {
+    const { options, settings } = await fixture()
+    settings.fetch.remote = true
+    options.settings.getTavilyKey = async () => 'fixture-key'
+    const denial = Object.assign(new Error('denied'), { toolCallBlockReason: 'NETWORK_PERMISSION_DENIED' })
+    const targets: string[] = []
+    options.host.get = async (url) => {
+      targets.push(url)
+      throw denial
+    }
+    const service = new WebCapabilityService(options)
+    await expect(service.search({ query: 'query' })).rejects.toBe(denial)
+    expect(targets).toHaveLength(1)
+    await expect(service.fetch({ url: 'https://example.com/', conversationId: 'conversation' })).rejects.toBe(denial)
+    expect(targets).toHaveLength(2)
+    await service.dispose()
+  })
+
   it('uses the next enabled source and does not dispatch a source disabled during fallback', async () => {
     const { options, settings, requests } = await fixture()
     settings.search = [

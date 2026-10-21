@@ -45,10 +45,10 @@ export function specificToolDescription(value: string | null): string | null {
 }
 
 export function approvalPresentation(review: ApprovalReviewPayload): BuddyToolPresentation {
-  if (review.card === 'shell' || review.card === 'sandbox-network') {
+  if (review.card === 'shell' || review.card === 'sandbox-network' || (review.card === 'network-permission' && review.command !== undefined)) {
     return {
       card: 'terminal',
-      command: review.command,
+      command: review.command!,
       cwd: null,
       description: null,
       exitCode: null,
@@ -90,14 +90,14 @@ export function approvalPresentation(review: ApprovalReviewPayload): BuddyToolPr
       truncated: false,
     }
   }
-  if (review.card === 'web' || review.card === 'network-target') {
+  if (review.card === 'web' || review.card === 'network-target' || review.card === 'network-permission') {
     return {
       card: 'web',
       description: null,
       operation: review.card === 'web' ? review.operation : 'fetch',
       output: null,
       provider: review.card === 'web' ? review.provider : null,
-      target: review.target,
+      target: review.card === 'network-permission' ? review.host : review.target,
       truncated: false,
     }
   }

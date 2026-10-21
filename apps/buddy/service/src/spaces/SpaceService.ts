@@ -1,3 +1,5 @@
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { SpaceAdditionalDirectoryChanges } from '../../../shared/spaces/spaceApi'
 import type { SpaceIcon, SpaceIconColor } from '../../../shared/spaces/spaceAppearance'
 import type { DirectoryGrantMutation } from '../directories/DirectoryGrantService'
 import type {
@@ -15,6 +17,7 @@ import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { parseDirectorySearch, searchDirectoryEntries } from '../directories/searchDirectoryEntries'
+import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
 import { requireActiveSpace } from './requireActiveSpace'
 
 export interface SpaceAdditionalDirectoryInput {
@@ -34,6 +37,8 @@ export interface SpaceFileSearchResult {
 }
 
 export interface CreateSpaceInput {
+  additionalDirectoryChanges?: EventSnapshot<SpaceAdditionalDirectoryChanges>
+  additionalDirectorySelectionsVerified?: boolean
   icon?: SpaceIcon
   iconColor?: SpaceIconColor
   memoryScope: SpaceMemoryScope
@@ -98,7 +103,7 @@ export class SpaceService {
       throw new SpaceDirectoryError()
     const createdAt = new Date().toISOString()
     const directories = await this.#resolveDirectoryConfiguration({
-      additionalDirectories: [],
+      additionalDirectories: this.#additionalDirectories(input, null),
       primaryDirectory: input.primaryDirectory,
     }, null, createdAt)
     this.#requireOpen()
@@ -133,9 +138,7 @@ export class SpaceService {
     }
     const updatedAt = new Date().toISOString()
     const directories = await this.#resolveDirectoryConfiguration({
-      additionalDirectories: space.additionalDirectories
-        .filter(directory => directory.id !== input.primaryDirectory?.id)
-        .map(directory => ({ id: directory.id, root: directory.root })),
+      additionalDirectories: this.#additionalDirectories(input, space),
       primaryDirectory: input.primaryDirectory,
     }, space, updatedAt)
     if (
@@ -387,6 +390,21 @@ export class SpaceService {
     return result.entries.map(entry => ({ ...entry, directoryId: directory.id, relativePath: relative(directory.canonicalRoot, entry.path), root: directory.root }))
   }
 
+  #additionalDirectories(input: CreateSpaceInput, space: SpaceRecord | null): SpaceAdditionalDirectoryInput[] {
+    const changes = input.additionalDirectoryChanges ?? { add: [], remove: [] }
+    if (changes.add.length && !input.additionalDirectorySelectionsVerified)
+      throw new SpaceDirectoryError()
+    const existing = space?.additionalDirectories ?? []
+    if (changes.remove.some(id => !existing.some(directory => directory.id === id)))
+      throw new SpaceDirectoryError()
+    return [
+      ...existing
+        .filter(directory => directory.id !== input.primaryDirectory?.id && !changes.remove.includes(directory.id))
+        .map(directory => ({ id: directory.id, root: directory.root })),
+      ...changes.add.map(root => ({ id: null, root })),
+    ]
+  }
+
   async #resolveDirectoryConfiguration(
     input: {
       additionalDirectories: readonly SpaceAdditionalDirectoryInput[]
@@ -417,6 +435,9 @@ export class SpaceService {
         }
       }
       const resolved = await resolveSpaceDirectory(directory.root)
+      const sensitive = createSensitivePathMatcher()
+      if (sensitive.matches(resolved.root) || sensitive.matches(resolved.canonicalRoot))
+        throw new SpaceDirectoryError()
       return {
         accessGrantedAt: timestamp,
         canonicalRoot: resolved.canonicalRoot,

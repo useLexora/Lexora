@@ -50,6 +50,7 @@ import {
   browserAdapterLeaseSchema,
 } from '../../../shared/browser/browserAdapterProtocol'
 import { GrantedPathError, resolveGrantedPath } from '../directories/resolveGrantedPath'
+import { requestWithNetworkAuthorization } from '../network/networkAuthorizationContext'
 
 export interface OpenBrowserUrlInput {
   conversationId: string
@@ -65,9 +66,9 @@ export interface OpenBrowserLocalInput {
 }
 
 export class BrowserHostClient {
-  readonly #peer: Pick<RuntimeRpcPeerContract, 'request'>
+  readonly #peer: Pick<RuntimeRpcPeerContract, 'request'> & Partial<Pick<RuntimeRpcPeerContract, 'onRequest'>>
 
-  constructor(peer: Pick<RuntimeRpcPeerContract, 'request'>) {
+  constructor(peer: Pick<RuntimeRpcPeerContract, 'request'> & Partial<Pick<RuntimeRpcPeerContract, 'onRequest'>>) {
     this.#peer = peer
   }
 
@@ -87,10 +88,7 @@ export class BrowserHostClient {
       target: { kind: 'url', url: input.url },
       ...(input.until ? { until: input.until } : {}),
     })
-    return browserOpenResultSchema.parse(await this.#peer.request(
-      'host.browser.open',
-      request,
-    ))
+    return browserOpenResultSchema.parse(await requestWithNetworkAuthorization(this.#peer, 'host.browser.open', request))
   }
 
   async openLocal(input: OpenBrowserLocalInput): Promise<BrowserOpenResult> {
@@ -111,23 +109,17 @@ export class BrowserHostClient {
       },
       ...(input.until ? { until: input.until } : {}),
     })
-    return browserOpenResultSchema.parse(await this.#peer.request(
-      'host.browser.open',
-      request,
-    ))
+    return browserOpenResultSchema.parse(await requestWithNetworkAuthorization(this.#peer, 'host.browser.open', request))
   }
 
   async observe(input: BrowserObserveParams): Promise<BrowserObserveResult> {
     const request = browserObserveParamsSchema.parse(input)
-    return browserObserveResultSchema.parse(await this.#peer.request(
-      'host.browser.observe',
-      request,
-    ))
+    return browserObserveResultSchema.parse(await requestWithNetworkAuthorization(this.#peer, 'host.browser.observe', request))
   }
 
   async read(input: BrowserReadParams): Promise<BrowserReadResult> {
     const request = browserReadParamsSchema.parse(input)
-    return browserReadResultSchema.parse(await this.#peer.request('host.browser.read', request))
+    return browserReadResultSchema.parse(await requestWithNetworkAuthorization(this.#peer, 'host.browser.read', request))
   }
 
   async readScreenshot(input: BrowserScreenshotReadParams): Promise<BrowserScreenshotReadResult> {
@@ -137,10 +129,7 @@ export class BrowserHostClient {
 
   async act(input: BrowserActParams): Promise<BrowserActResult> {
     const request = browserActParamsSchema.parse(input)
-    return browserActResultSchema.parse(await this.#peer.request(
-      'host.browser.act',
-      request,
-    ))
+    return browserActResultSchema.parse(await requestWithNetworkAuthorization(this.#peer, 'host.browser.act', request))
   }
 
   async validateAction(

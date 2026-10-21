@@ -3,6 +3,7 @@ import type { ProxyAuthenticator } from './requestThroughHost'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { session } from 'electron'
+import { createHostNetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import { WebError, webError, webNetworkRequestSchema, webRenderCancelSchema, webRenderInputSchema } from '../../../shared/network/webProtocol'
 import { HostWebNetwork } from './HostWebNetwork'
 import { requestThroughHost } from './requestThroughHost'
@@ -36,21 +37,22 @@ export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticatePro
       if (result.success)
         active.get(result.data.requestId)?.abort()
     }),
-    peer.onRequest('host.web.authorize', async (params) => {
+    peer.onRequest('host.web.authorize', async (params, signal, requestId) => {
       const input = webRenderInputSchema.pick({ url: true }).parse(params)
       try {
         assertAvailable?.()
         await network.authorizePublicUrl(input.url)
+        await createHostNetworkAuthorizer(peer, requestId, signal)(input.url)
         return { ok: true }
       }
       catch (error) { return { ok: false, code: webError(error).code } }
     }),
-    peer.onRequest('host.web.request', async (params) => {
+    peer.onRequest('host.web.request', async (params, parent, requestId) => {
       const input = webNetworkRequestSchema.parse(params)
       let signal: AbortSignal | undefined
       try {
-        signal = begin(input.requestId, 60_000)
-        const { response, url } = await network.fetch(input, signal)
+        signal = AbortSignal.any([begin(input.requestId, 60_000), ...(parent ? [parent] : [])])
+        const { response, url } = await network.fetch(input, signal, { authorize: createHostNetworkAuthorizer(peer, requestId, signal) })
         const body = response.body
         const executionSignal = signal
         void (async () => {
@@ -89,15 +91,15 @@ export function registerWebHostRpc(peer: RuntimeRpcPeerContract, authenticatePro
         return { ok: false, code: webError(error, signal).code }
       }
     }),
-    peer.onRequest('host.web.render', async (params) => {
+    peer.onRequest('host.web.render', async (params, parent, requestId) => {
       const input = webRenderInputSchema.parse(params)
       if (renders >= 2)
         return { ok: false, code: 'WEB_BUSY' }
       let signal: AbortSignal | undefined
       renders++
       try {
-        signal = begin(input.requestId, 20_000)
-        return { ok: true, ...await renderWebDocument(network, input.url, signal) }
+        signal = AbortSignal.any([begin(input.requestId, 20_000), ...(parent ? [parent] : [])])
+        return { ok: true, ...await renderWebDocument(network, input.url, signal, createHostNetworkAuthorizer(peer, requestId, signal)) }
       }
       catch (error) { return { ok: false, code: webError(error, signal).code } }
       finally {

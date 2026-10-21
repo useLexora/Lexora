@@ -82,6 +82,8 @@ export class PermissionEngine {
 
   async #decide(request: PermissionRequest): Promise<PermissionDecision> {
     const access = request.access ?? BUILTIN_TOOL_ACCESS[request.toolName] ?? null
+    if (request.networkPermission === 'deny')
+      return deny('NETWORK_PERMISSION_DENIED', 'profile')
     if (request.shellBoundary === 'sandbox' && request.toolName === 'lexora_authorize_directory')
       return this.#decideSandboxDirectory(request)
     if (request.toolName === 'lexora_host_shell') {
@@ -133,7 +135,11 @@ export class PermissionEngine {
     )
     return finalizeDecision(
       request,
-      applyApprovalPolicy(request, access, classifications, decision),
+      applyApprovalPolicy(request, access, classifications, access === 'network' && request.networkPermission && decision.type !== 'deny'
+        ? request.networkPermission === 'allow' && !request.forceAsk
+          ? allow()
+          : ask({ kind: 'network', summary: request.approval?.summary ?? summaryFor('network') })
+        : decision),
     )
   }
 

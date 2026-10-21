@@ -4,6 +4,7 @@ import type { SpaceFileMutation, SpaceFileOperation, SpaceFileTarget } from '@bu
 import type { ResourceRef } from '@/workbench/common/workbench'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkingCopyService } from '@/workbench/services/WorkingCopyService'
+import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { shallowRef } from 'vue'
 import { resourceKey } from '@/workbench/common/workbench'
@@ -41,7 +42,8 @@ export class FileOperationService {
   }
 
   root(target: SpaceFileTarget): string {
-    const directory = this.#options.spaces().find(space => space.id === target.spaceId)?.primaryDirectory
+    const space = this.#options.spaces().find(space => space.id === target.spaceId)
+    const directory = getActiveSpaceDirectories(space).find(directory => directory.id === target.directoryId)
     if (!directory || directory.id !== target.directoryId || directory.revision !== target.revision || directory.revokedAt)
       throw new Error('FILE_PERMISSION_REVOKED')
     return directory.canonicalRoot

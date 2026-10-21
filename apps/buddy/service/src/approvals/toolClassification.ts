@@ -9,6 +9,7 @@ import type { AccessKind, PermissionPath } from '../permissions/permissionContra
 import type { ApprovalAuthorizationOverride } from './approvalAuthorization'
 
 export interface BuddyToolClassification {
+  networkManaged?: boolean
   access?: AccessKind
   approval?: {
     automation?: AutomationApprovalReviewInput

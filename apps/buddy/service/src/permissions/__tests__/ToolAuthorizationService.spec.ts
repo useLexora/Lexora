@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_NETWORK_PERMISSIONS, upsertNetworkPermission } from '../../../../shared/permissions/networkPermissions'
 import { SessionToolScope } from '../../agent/extensions/discovery/SessionToolScope'
 import { ApprovalService } from '../../approvals/ApprovalService'
 import { resolveGrantedPath } from '../../directories/resolveGrantedPath'
@@ -36,9 +37,14 @@ describe('harness tool authorization', () => {
       list: () => [...records.values()],
       listPending: runId => [...records.values()].filter(record => record.status === 'pending' && (!runId || runId === record.runId)),
     }
+    let failResolution = false
     const approvals = new ApprovalService({
       repository,
       eventLog: { append: async (event) => {
+        if (event.type === 'approval.resolved' && failResolution) {
+          failResolution = false
+          throw new Error('Audit storage temporarily unavailable')
+        }
         events.push(event)
         if (event.type === 'approval.requested') {
           const record = event.payload as ApprovalRecord
@@ -75,14 +81,163 @@ describe('harness tool authorization', () => {
     const authorization = new ToolAuthorizationService(options)
     let nextId = 0
     const call = (toolName: string, input: unknown) => ({ toolName, input, toolCallId: `call-${++nextId}` })
-    async function approve(scope: 'approved' | 'denied' | 'approved_for_operation' | 'approved_for_source' | 'approved_for_turn') {
+    async function approve(scope: 'approved' | 'denied' | 'approved_for_operation' | 'approved_for_source' | 'approved_for_turn' | 'approved_persistently') {
       await vi.waitFor(() => expect(repository.listPending()).toHaveLength(1))
       const pending = repository.listPending()[0]!
       await approvals.resolve({ id: pending.id, decision: scope })
       return pending
     }
-    return { approvals, approve, authorization, call, controller, directories, events, executionPermissions, grants, options, records, repository, run }
+    const failNextResolution = () => {
+      failResolution = true
+    }
+    return { failNextResolution, approvals, approve, authorization, call, controller, directories, events, executionPermissions, grants, options, records, repository, run }
   }
+
+  it.each([
+    ['ask', 'policy', 'workspace_write', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
+    ['ask', 'policy', 'full_access', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
+    ['allow', 'policy', 'workspace_write', null],
+    ['allow', 'policy', 'read_only', null],
+    ['allow', 'manual', 'workspace_write', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
+    ['deny', 'policy', 'full_access', 'NETWORK_PERMISSION_DENIED'],
+  ] as const)('applies %s network rules with %s / %s in unattended runs', async (access, approvalPolicy, executionProfile, expected) => {
+    const f = fixture()
+    const settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+    settings.defaults.access = access
+    const authorization = new ToolAuthorizationService({
+      ...f.options,
+      approvalPolicy,
+      executionProfile,
+      approvalAvailable: false,
+      networkPermissions: { get: async () => settings, allow: async () => { throw new Error('Unattended permissions must not mutate') } },
+    })
+    const result = await authorization.authorize(f.call('bash', { command: 'curl https://example.com' }), f.run, { access: 'network' }, { network: { host: 'example.com', port: 443 } })
+    expect(result).toBe(expected)
+    expect(f.repository.list()).toEqual([])
+  })
+
+  it('saves only the requested network action and reuses it in a later unattended run', async () => {
+    const f = fixture()
+    let settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+    const networkPermissions = {
+      get: async () => settings,
+      allow: async (host: string, operation: 'access' | 'download' | 'upload') => { settings = upsertNetworkPermission(settings, host, operation) },
+    }
+    const authorization = new ToolAuthorizationService({ ...f.options, networkPermissions })
+    const target = { host: 'files.example.com', port: 443 }
+    const pending = authorization.authorize(f.call('lexora_web_fetch', { url: 'https://files.example.com/report' }), f.run, { access: 'network' }, { network: target, networkOperation: 'download' })
+    const review = await f.approve('approved_persistently')
+    expect(review.payload).toMatchObject({ card: 'network-permission', host: target.host, operation: 'download', canPersist: true })
+    expect(await pending).toBeNull()
+    expect(settings.rules[0]).toMatchObject({ pattern: target.host, match: 'exact', access: 'ask', download: 'allow', upload: 'ask' })
+    const background = new ToolAuthorizationService({ ...f.options, networkPermissions, approvalAvailable: false })
+    const nextRun = { ...f.run, runId: 'later-run' }
+    expect(await background.authorize(f.call('lexora_web_fetch', {}), nextRun, { access: 'network' }, { network: target, networkOperation: 'download' })).toBeNull()
+    expect(await background.authorize(f.call('lexora_web_fetch', {}), nextRun, { access: 'network' }, { network: target, networkOperation: 'upload' })).toBe('APPROVAL_UNAVAILABLE_IN_BACKGROUND')
+  })
+
+  it('checks changed rules before reusing even a turn or same-call network permission', async () => {
+    const f = fixture()
+    let settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+    const authorization = new ToolAuthorizationService({
+      ...f.options,
+      networkPermissions: { get: async () => settings, allow: async () => {} },
+    })
+    const call = f.call('bash', { command: 'curl https://example.com' })
+    const resource = { network: { host: 'example.com', port: 443 } }
+    const pending = authorization.authorize(call, f.run, { access: 'network' }, resource)
+    await f.approve('approved_for_turn')
+    expect(await pending).toBeNull()
+    settings = upsertNetworkPermission(settings, 'example.com', 'access', 'deny')
+    expect(await authorization.authorize(call, f.run, { access: 'network' }, resource)).toBe('NETWORK_PERMISSION_DENIED')
+    expect(await authorization.authorize(f.call('bash', call.input), f.run, { access: 'network' }, resource)).toBe('NETWORK_PERMISSION_DENIED')
+  })
+
+  it.each([true, false])('revokes old turn grants when domain settings change, first request network=%s', async (networkFirst) => {
+    const f = fixture()
+    let settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+    const authorization = new ToolAuthorizationService({ ...f.options, networkPermissions: { get: async () => settings, allow: async () => {} } })
+    const resource = { network: { host: 'example.com', port: 443 } }
+    const first = networkFirst
+      ? authorization.authorize(f.call('bash', {}), f.run, { access: 'network' }, resource)
+      : authorization.authorize(f.call('lexora_host_shell', { command: 'fixture' }), f.run, { access: 'execute' })
+    await f.approve('approved_for_turn')
+    expect(await first).toBeNull()
+    settings = upsertNetworkPermission(settings, 'example.com', 'access', 'ask')
+    const next = authorization.authorize(f.call('bash', {}), f.run, { access: 'network' }, resource)
+    await f.approve('denied')
+    expect(await next).toBe('APPROVAL_DENIED')
+    expect(f.records.size).toBe(2)
+  })
+
+  it('rechecks allow changed to ask before releasing or caching the request', async () => {
+    const f = fixture()
+    let settings = upsertNetworkPermission(DEFAULT_NETWORK_PERMISSIONS, 'example.com', 'access', 'allow')
+    let changed = false
+    f.run.flushProjectedEvents = async () => {
+      if (!changed) {
+        changed = true
+        settings = upsertNetworkPermission(settings, 'example.com', 'access', 'ask')
+      }
+    }
+    const authorization = new ToolAuthorizationService({ ...f.options, networkPermissions: { get: async () => settings, allow: async () => {} } })
+    const call = f.call('bash', {})
+    const resource = { network: { host: 'example.com', port: 443 } }
+    const pending = authorization.authorize(call, f.run, { access: 'network' }, resource)
+    await f.approve('denied')
+    expect(await pending).toBe('APPROVAL_DENIED')
+    const retried = authorization.authorize(call, f.run, { access: 'network' }, resource)
+    await f.approve('denied')
+    expect(await retried).toBe('APPROVAL_DENIED')
+  })
+
+  it.each([false, true])('keeps successful directory persistence audited when cancellation races, audit retry=%s', async (failAudit) => {
+    const f = fixture()
+    const started = Promise.withResolvers<void>()
+    const commit = Promise.withResolvers<void>()
+    const authorization = new ToolAuthorizationService({
+      ...f.options,
+      applyGrant: async (grant) => {
+        started.resolve()
+        await commit.promise
+        f.grants.push({ canonicalRoot: grant.root, root: grant.root, grantId: 'saved', kind: 'workspace' })
+      },
+    })
+    const call = f.call('write', { path: join(outside, 'saved.txt'), content: 'fixture' })
+    const pending = authorization.authorize(call, f.run)
+    const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    if (failAudit)
+      f.failNextResolution()
+    const saving = f.approve('approved_persistently')
+    const resolution = failAudit ? expect(saving).rejects.toThrow('Audit storage temporarily unavailable') : saving
+    await started.promise
+    f.controller.abort()
+    commit.resolve()
+    await resolution
+    await cancelled
+    await vi.waitFor(() => expect(f.repository.listPending()).toHaveLength(0))
+    expect(f.repository.list()[0]).toMatchObject({ status: 'approved', resolution: 'approved_persistently' })
+    expect(f.grants.filter(grant => grant.root === outside)).toHaveLength(1)
+    expect(f.executionPermissions.get(f.run, call.toolCallId)).toEqual([])
+    expect(f.events.filter(event => event.type === 'approval.resolved')).toHaveLength(1)
+  })
+
+  it('does not turn a one-time path approval into a saved directory', async () => {
+    const f = fixture()
+    const authorization = new ToolAuthorizationService({
+      ...f.options,
+      applyGrant: (grant) => { f.grants.push({ canonicalRoot: grant.root, root: grant.root, grantId: 'saved', kind: 'workspace' }) },
+    })
+    const path = join(outside, 'one-time.txt')
+    const call = f.call('write', { path, content: 'fixture' })
+    const pending = authorization.authorize(call, f.run)
+    await f.approve('approved')
+    expect(await pending).toBeNull()
+    expect(f.grants.map(grant => grant.root)).toEqual([workspace])
+    expect(f.executionPermissions.get(f.run, call.toolCallId)).toHaveLength(1)
+    authorization.releaseExecutionPermit(call, f.run)
+    expect(f.executionPermissions.get(f.run, call.toolCallId)).toEqual([])
+  })
 
   it('keeps role tool and file access limits through permission updates', async () => {
     const f = fixture()
@@ -107,9 +262,11 @@ describe('harness tool authorization', () => {
     await writeFile(path, '<!doctype html><title>Preview</title>')
     const event = f.call('lexora_browser_open', { entryPath: path })
     const pending = authorization.authorize(event, f.run, { access: 'render', paths: [{ path, mode: 'existing' }] })
-    await f.approve('approved')
-    expect(await pending).toBe('DIRECTORY_GRANT_FAILED')
+    await expect(f.approve('approved_persistently')).rejects.toThrow('owner revoked')
+    expect(f.repository.listPending()).toHaveLength(1)
     expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+    await f.approve('denied')
+    expect(await pending).toBe('APPROVAL_DENIED')
   })
 
   it('queues concurrent network requests, reuses the destination across commands, and clears at run end', async () => {
@@ -119,7 +276,7 @@ describe('harness tool authorization', () => {
     const first = f.authorization.authorize(f.call('bash', { command: 'pnpm lint' }), f.run, { access: 'network', requireApproval: true }, resource)
     const second = f.authorization.authorize(f.call('bash', { command: 'pnpm test' }), f.run, { access: 'network', requireApproval: true }, { network: resource.network })
     const review = await f.approve('approved_for_source')
-    expect(review.payload).toMatchObject({ card: 'sandbox-network', reuseScopes: ['operation', 'source', 'turn'] })
+    expect(review.payload).toMatchObject({ card: 'network-permission', reuseScopes: ['operation', 'source', 'turn'] })
     await expect(Promise.all([first, second])).resolves.toEqual([null, null])
     command.abort()
     await expect(f.authorization.authorize(f.call('bash', { command: 'pnpm build' }), f.run, { access: 'network', requireApproval: true }, { network: resource.network })).resolves.toBeNull()

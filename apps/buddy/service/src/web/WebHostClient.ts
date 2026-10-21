@@ -2,12 +2,13 @@ import type { WebNetworkRequest, WebRenderResult } from '../../../shared/network
 import type { ProviderWebFetch, PublicWebGet } from '../../../shared/network/webTransport'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import { Buffer } from 'node:buffer'
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { readResponseBytes } from '../../../platform/network/publicWebTransport'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { WebError, webNetworkChunkSchema, webNetworkHeadSchema, webRenderResultSchema } from '../../../shared/network/webProtocol'
+
+import { beginNetworkRequest } from '../network/networkAuthorizationContext'
 
 type WebHostRequestKind = 'authorization' | 'network' | 'render'
 export interface WebHostChange {
@@ -21,16 +22,17 @@ export interface WebHostChange {
 }
 
 export class WebHostClient {
-  readonly peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify' | 'onNotification'>
+  readonly peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify' | 'onNotification'> & Partial<Pick<RuntimeRpcPeerContract, 'onRequest'>>
   readonly #changes = new Emitter<WebHostChange>(() => console.error('WEB_HOST_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   readonly #shutdown = new AbortController()
   readonly #active = new Map<string, WebHostRequestKind>()
+  readonly #authorizations = new Map<string, ReturnType<typeof beginNetworkRequest>>()
   readonly #pending = new Set<Promise<unknown>>()
   #revision = 0
   #disposing: Promise<void> | undefined
 
-  constructor(peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify' | 'onNotification'>) { this.peer = peer }
+  constructor(peer: WebHostClient['peer']) { this.peer = peer }
 
   get snapshot() {
     return copyEventSnapshot({ revision: this.#revision, stopping: this.#shutdown.signal.aborted, active: [...this.#active].map(([requestId, kind]) => ({ requestId, kind })) })
@@ -43,8 +45,9 @@ export class WebHostClient {
       const result = z.discriminatedUnion('ok', [
         z.object({ ok: z.literal(true) }),
         webRenderResultSchema.options[1],
-      ]).parse(await this.#track(this.peer.request('host.web.authorize', { url }, undefined, signal)))
+      ]).parse(await this.#track(this.peer.request('host.web.authorize', { url }, null, signal, requestId)))
       outcome = result.ok ? 'received' : 'rejected'
+      this.#authorizations.get(requestId)?.check()
       if (!result.ok)
         throw new WebError(result.code)
     }
@@ -67,8 +70,9 @@ export class WebHostClient {
     signal.addEventListener('abort', cancel, { once: true })
     let outcome: WebHostChange['outcome'] = 'unknown'
     try {
-      const result = webRenderResultSchema.parse(await this.#track(this.peer.request('host.web.render', { url, requestId }, 25_000, signal)))
+      const result = webRenderResultSchema.parse(await this.#track(this.peer.request('host.web.render', { url, requestId }, null, signal, requestId)))
       outcome = result.ok ? 'received' : 'rejected'
+      this.#authorizations.get(requestId)?.check()
       signal.throwIfAborted()
       return result
     }
@@ -153,7 +157,8 @@ export class WebHostClient {
     })
     signal.addEventListener('abort', cancel, { once: true })
     try {
-      const result = webNetworkHeadSchema.parse(await this.#track(this.peer.request('host.web.request', { ...input, requestId }, 60_000, signal)))
+      const result = webNetworkHeadSchema.parse(await this.#track(this.peer.request('host.web.request', { ...input, requestId }, null, signal, requestId)))
+      this.#authorizations.get(requestId)?.check()
       signal.throwIfAborted()
       headSettled = true
       if (!result.ok) {
@@ -186,10 +191,12 @@ export class WebHostClient {
   #begin(kind: WebHostRequestKind, parent?: AbortSignal) {
     const signal = AbortSignal.any([this.#shutdown.signal, ...(parent ? [parent] : [])])
     signal.throwIfAborted()
-    const requestId = randomUUID()
+    const request = beginNetworkRequest(this.peer, signal)
+    const { requestId } = request
+    this.#authorizations.set(requestId, request)
     this.#active.set(requestId, kind)
     this.#publish(requestId, kind, { phase: 'requested' })
-    return { requestId, signal }
+    return { requestId, signal: request.signal }
   }
 
   #track<T>(promise: Promise<T>): Promise<T> {
@@ -203,6 +210,8 @@ export class WebHostClient {
     if (!kind)
       return
     this.#active.delete(requestId)
+    this.#authorizations.get(requestId)?.dispose()
+    this.#authorizations.delete(requestId)
     this.#publish(requestId, kind, { phase: 'settled', outcome, cancelled, ...(count === undefined ? {} : { count }) })
   }
 

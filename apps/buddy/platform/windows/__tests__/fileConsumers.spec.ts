@@ -144,7 +144,7 @@ function createPolicy() {
     on: () => {},
     setPermissionCheckHandler: () => {},
     setPermissionRequestHandler: () => {},
-    webRequest: { onBeforeRequest: () => {} },
+    webRequest: { onBeforeRequest: () => {}, onHeadersReceived: () => {} },
   }
   return new BrowserSecurityPolicy({
     page: {

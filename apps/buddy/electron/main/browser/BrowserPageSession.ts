@@ -9,6 +9,7 @@ import { browserZoomFactorSchema, stepBrowserZoom } from '../../../shared/browse
 import { BrowserDebugger } from './BrowserDebugger'
 import { BrowserElementPicker } from './BrowserElementPicker'
 import { BrowserHostError } from './BrowserHostError'
+import { BrowserNetworkAuthorization } from './BrowserNetworkAuthorization'
 import { BrowserPageActivity } from './BrowserPageActivity'
 import { BrowserSecurityPolicy, isLoopbackBrowserUrl } from './BrowserSecurityPolicy'
 import { SemanticBrowserDriver } from './SemanticBrowserDriver'
@@ -88,6 +89,7 @@ interface BrowserPageSessionOptions {
 }
 
 export class BrowserPageSession {
+  readonly networkAuthorization = new BrowserNetworkAuthorization()
   actionTail = Promise.resolve()
   activeNavigationSequence: number | null = null
   agentActionDepth = 0
@@ -234,6 +236,7 @@ export class BrowserPageSession {
       page,
     })
     this.securityPolicy = new BrowserSecurityPolicy({
+      authorizeNetwork: this.networkAuthorization.authorize,
       connection: this.#connection,
       onCertificateError: ({ error, url }) => {
         this.state.error = {
@@ -544,6 +547,7 @@ export class BrowserPageSession {
   }
 
   releasePage(): void {
+    this.networkAuthorization.dispose()
     this.invalidateElementReferences()
     this.elementPicker?.dispose()
     this.elementPicker = null

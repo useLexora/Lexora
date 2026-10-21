@@ -14,6 +14,7 @@ import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
 import type { ExecutionDelegationService } from '../execution/ExecutionDelegationService'
@@ -44,6 +45,7 @@ import { createModelSwitchExtension } from './modelSwitchExtension'
 import { createToolPolicyExtension } from './toolPolicyExtension'
 
 export interface BuddySessionExtensionServices {
+  networkPermissions?: NetworkPermissionsStore
   delegation?: Pick<ExecutionDelegationService, 'execute' | 'pending' | 'assertShellExecutionAllowed'>
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
@@ -137,6 +139,7 @@ export async function createBuddySessionExtensions(
     creationSignal.addEventListener('abort', cancelCreation, { once: true })
     creationSignal.throwIfAborted()
     const authorization = new ToolAuthorizationService({
+      networkPermissions: services.networkPermissions,
       applySandboxDirectory: (run, grant) => sandboxDirectories.grant(run, grant),
       getSandboxDirectories: run => sandboxDirectories.get(run),
       applyGrant: async (proposal) => {
@@ -158,6 +161,25 @@ export async function createBuddySessionExtensions(
         : { id: options.conversationId, kind: 'conversation' },
     })
     capabilities.push(codemode, ...await services.createCapabilities({
+      authorizeNetwork: async (input) => {
+        const run = runContext.current
+        if (!run)
+          throw Object.assign(new Error('RUN_CONTEXT_UNAVAILABLE'), { toolCallBlockReason: 'RUN_CONTEXT_UNAVAILABLE' })
+        const url = new URL(input.url)
+        if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol))
+          throw Object.assign(new Error('NETWORK_TARGET_INVALID'), { toolCallBlockReason: 'NETWORK_TARGET_INVALID' })
+        const denial = await authorization.authorize({
+          toolCallId: input.toolCallId,
+          toolName: input.toolName,
+          input: { url: input.url },
+        }, run, { access: 'network', paths: [] }, {
+          network: { host: url.hostname, port: Number(url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? 443 : 80)) },
+          networkOperation: input.operation,
+          signal: input.signal,
+        })
+        if (denial)
+          throw Object.assign(new Error(denial), { toolCallBlockReason: denial })
+      },
       isCodemodeEnabled: () => codemodeEnabled,
       conversationId: options.conversationId,
       get executionProfile() { return getExecutionProfile() },

@@ -86,6 +86,7 @@ export function createBuddyCapabilityFactory(
     const capabilities = [
       createMcpCapability(mcp, context.isCodemodeEnabled ?? (() => false)),
       createBrowserCapability({
+        authorizeNetwork: context.authorizeNetwork,
         report: services.record,
         conversationId: context.conversationId,
         getGrants: () => context.grants,
@@ -99,7 +100,7 @@ export function createBuddyCapabilityFactory(
           }
           : undefined,
       }),
-      createWebCapability({ service: services.webService, conversationId: context.conversationId }),
+      createWebCapability({ authorizeNetwork: context.authorizeNetwork, service: services.webService, conversationId: context.conversationId }),
       createImageCapability(context, services),
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),

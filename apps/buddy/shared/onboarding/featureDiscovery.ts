@@ -4,6 +4,8 @@ import { z } from 'zod'
 export const FEATURE_GUIDES = [
   { id: 'navigation-layout', version: '0.14.0' },
   { id: 'npc-team', version: '0.14.0' },
+  { id: 'additional-directories', version: '0.15.0' },
+  { id: 'network-permissions', version: '0.15.0' },
 ] as const
 
 export type FeatureGuideId = typeof FEATURE_GUIDES[number]['id']
