@@ -1,7 +1,8 @@
 import type { SandboxHostOptions } from './registerSandboxHostRpc'
-import { homedir } from 'node:os'
+import { userInfo } from 'node:os'
 import process from 'node:process'
 import { filePaths } from '../../../platform/filesystem/filePaths'
+import { resolveUserHomePaths } from '../../../platform/filesystem/userHomePaths'
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import { prepareWindowsSandboxFilesystem } from '../../../platform/process/windowsSandboxProcess'
 import { resolveSensitivePathRoots } from '../../../service/src/permissions/sensitivePaths'
@@ -52,7 +53,7 @@ export class WindowsSandboxPreparation {
         additionalDirectories: [],
         readOnly: false,
         cwd: roots[0]!,
-        home: homedir(),
+        home: userInfo().homedir,
         sensitiveRoots: resolveSensitivePathRoots(),
         protectedRoots: this.#options.protectedRoots ?? [],
         searchDirectory: this.#options.searchDirectory,
@@ -75,7 +76,6 @@ export class WindowsSandboxPreparation {
 
   async #initialize(): Promise<void> {
     const executable = await resolveWindowsSandbox(this.#options.windowsSandbox)
-    const home = homedir()
     const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT
     if (!systemRoot || !this.#options.windowsShell)
       throw new Error('SANDBOX_UNAVAILABLE')
@@ -87,7 +87,8 @@ export class WindowsSandboxPreparation {
       ...await existingSandboxPaths(this.#options.protectedRoots ?? []),
     ]
     const grants = await Promise.all(protectedPaths.map(path => inspectSandboxPath(path, 'denyRead')))
-    grants.push(await inspectSandboxPath(home, 'read'))
+    for (const home of await existingSandboxPaths(resolveUserHomePaths()))
+      grants.push(await inspectSandboxPath(home, 'read'))
     await prepareWindowsSandboxFilesystem(executable, grants, AbortSignal.any([this.#controller.signal, AbortSignal.timeout(900_000)]), {
       denyReadScope: this.#options.protectionScope ?? this.#options.buddyHome,
       synchronizeDenials: true,

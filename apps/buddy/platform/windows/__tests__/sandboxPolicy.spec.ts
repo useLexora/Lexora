@@ -107,6 +107,38 @@ describe('windows sandbox policy assembly', () => {
     }
   })
 
+  it('protects credentials in every user home and relocated package-manager store', async () => {
+    const sensitiveRoots = resolveSensitivePathRoots({
+      home,
+      environment: {
+        Home: 'D:\\Git Home',
+        UserProfile: home,
+        HomeDrive: 'H:',
+        HomePath: '\\Home',
+        AppData: 'D:\\Roaming',
+        LocalAppData: 'D:\\Local',
+        CARGO_HOME: 'D:\\Cargo',
+        NPM_CONFIG_USERCONFIG: 'D:\\Config\\npmrc',
+      },
+    })
+    const policy = await createWindowsSandboxPolicy({ ...input, sensitiveRoots }, new AbortController().signal)
+    const denied = policy.grants.filter(grant => grant.access === 'denyRead').map(grant => grant.path)
+    expect(denied).toEqual(expect.arrayContaining([
+      'C:\\Users\\Fixture\\.ssh',
+      'D:\\Git Home\\.ssh',
+      'D:\\Git Home\\.npmrc',
+      'H:\\Home\\.netrc',
+      'D:\\Cargo\\credentials',
+      'D:\\Cargo\\credentials.toml',
+      'D:\\Config\\npmrc',
+      'D:\\Roaming\\gcloud',
+    ]))
+    expect(denied).not.toContain('D:\\Git Home\\.config\\mise')
+    await expect(createWindowsSandboxPolicy({ ...input, sensitiveRoots, roots: ['D:\\Git Home\\.ssh'], workspaceRoots: ['D:\\Git Home\\.ssh'], cwd: 'D:\\Git Home\\.ssh' }, new AbortController().signal))
+      .rejects
+      .toMatchObject({ code: 'SANDBOX_UNAVAILABLE' })
+  })
+
   it('requires host protection data without letting command callers supply it', () => {
     expect(sandboxProcessInputSchema.safeParse(input).success).toBe(true)
     expect(sandboxProcessInputSchema.safeParse({ ...input, sensitiveRoots: undefined }).success).toBe(false)

@@ -3,6 +3,7 @@ import type { SandboxBackendInput } from '../../../../../shared/permissions/shel
 import type { SHELL_SANDBOX_BACKEND } from '../../../../../shared/platform/identifiers'
 import type { SandboxExecutionOptions } from '../../sandboxExecutionLifecycle'
 import { randomBytes } from 'node:crypto'
+import process from 'node:process'
 import { createHttpProxyServer } from '@anthropic-ai/sandbox-runtime/dist/sandbox/http-proxy.js'
 import { resolveParentProxy } from '@anthropic-ai/sandbox-runtime/dist/sandbox/parent-proxy.js'
 import { createResolvedAddressGuard } from '@anthropic-ai/sandbox-runtime/dist/sandbox/resolved-address-guard.js'
@@ -43,7 +44,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_
       grants,
       denyReadScope: input.backend.protectionScope,
       proxyPort: address.port,
-      environment: createWindowsSandboxEnvironment({
+      environment: createWindowsSandboxEnvironment(process.env, {
         ...input.backend,
         privateRoot: input.privateRoot,
         path,

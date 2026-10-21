@@ -1,6 +1,6 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import { rm } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { utilityProcess } from 'electron'
@@ -166,7 +166,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
         dispatched = true
         return await processPeer.request('sandbox.exec', {
           ...input,
-          home: homedir(),
+          home: userInfo().homedir,
           sensitiveRoots: resolveSensitivePathRoots(),
           path: process.env.PATH ?? '',
           privateRoot: directory,

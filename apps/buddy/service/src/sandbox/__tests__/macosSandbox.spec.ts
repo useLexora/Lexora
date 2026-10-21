@@ -99,11 +99,11 @@ describe.skipIf(process.platform !== 'darwin' || process.arch !== 'arm64')('macO
     expect(await readFile(join(workspace, '.git/config'), 'utf8')).toBe('git-preserved')
   }, 15_000)
 
-  it('enforces read-only access while keeping isolated HOME and scratch space usable', async () => {
+  it('enforces read-only access while preserving the user home and private scratch space', async () => {
     const run = await execute('set -e; ! touch new-file; test -z "$SSH_AUTH_SOCK$ANTHROPIC_API_KEY"; printf scratch > "$TMPDIR/scratch"; cat "$TMPDIR/scratch"; printf "%s" "$HOME"', { readOnly: true })
     expect(run.result, run.output).toEqual({ ok: true, exitCode: 0 })
     expect(run.output).toContain('scratch')
-    expect(run.output).toContain(join(input.privateRoot, 'home'))
+    expect(run.output).toContain(environment.HOME || home)
     await expect(access(join(workspace, 'new-file'))).rejects.toThrow()
   }, 15_000)
 

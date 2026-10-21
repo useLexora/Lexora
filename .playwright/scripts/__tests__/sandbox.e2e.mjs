@@ -12,9 +12,7 @@ import { expect, test } from '../fixtures/electron.mjs'
 const buddyRoot = path.resolve('apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
 
-test('Sandbox preserves production RPC boundaries with large toolchains', async ({ buddy }, testInfo) => {
-  test.skip(!['win32', 'linux'].includes(process.platform), 'Requires Windows or Linux sandbox resources')
-  test.setTimeout(600_000)
+async function buildSandboxVerification(entry) {
   const { build } = await import(pathToFileURL(require.resolve('vite')).href)
   const mainDirectory = path.join(buddyRoot, '.output/build/electron/main')
   const processes = (await readdir(mainDirectory)).filter(file => /^sandboxProcess-.*\.js$/.test(file))
@@ -36,10 +34,23 @@ test('Sandbox preserves production RPC boundaries with large toolchains', async 
         outDir,
         target: 'node22',
         minify: false,
-        lib: { entry: path.join(buddyRoot, 'electron/main/sandbox/verifySandboxInstallation.ts'), formats: ['es'], fileName: () => 'verify.mjs' },
+        lib: { entry, formats: ['es'], fileName: () => 'verify.mjs' },
         rollupOptions: { external: ['electron', /^node:/] },
       },
     })
+    return outDir
+  }
+  catch (error) {
+    await rm(outDir, { recursive: true, force: true })
+    throw error
+  }
+}
+
+test('Sandbox preserves production RPC boundaries with large toolchains and empty HOME', async ({ buddy }, testInfo) => {
+  test.skip(!['win32', 'linux'].includes(process.platform), 'Requires Windows or Linux sandbox resources')
+  test.setTimeout(600_000)
+  const outDir = await buildSandboxVerification(path.join(buddyRoot, 'electron/main/sandbox/verifySandboxInstallation.ts'))
+  try {
     const instance = await buddy.createInstance('sandbox-scale')
     const { app, page } = await instance.launch()
     await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 120_000 }).toBe('ready')
@@ -51,6 +62,7 @@ test('Sandbox preserves production RPC boundaries with large toolchains', async 
       const execFile = childProcess.execFile
       let nativeDiagnostics = ''
       const inspections = []
+      const originalHome = process.env.HOME
       childProcess.execFile = (...args) => {
         const start = performance.now()
         const child = execFile(...args)
@@ -79,6 +91,7 @@ test('Sandbox preserves production RPC boundaries with large toolchains', async 
       }
       process.getBuiltinModule('node:module').syncBuiltinESMExports()
       try {
+        process.env.HOME = ''
         const { verifySandboxInstallation } = process.getBuiltinModule('node:module').createRequire(file)(file)
         const measurements = await verifySandboxInstallation({
           buddyHome: home,
@@ -100,6 +113,10 @@ test('Sandbox preserves production RPC boundaries with large toolchains', async 
         throw new Error(`${error.message}; ${nativeDiagnostics}; ${JSON.stringify(inspections)}`)
       }
       finally {
+        if (originalHome === undefined)
+          delete process.env.HOME
+        else
+          process.env.HOME = originalHome
         childProcess.spawn = spawn
         childProcess.execFile = execFile
         process.getBuiltinModule('node:module').syncBuiltinESMExports()
@@ -107,6 +124,53 @@ test('Sandbox preserves production RPC boundaries with large toolchains', async 
     }, { module: pathToFileURL(path.join(outDir, 'verify.mjs')).href, home: instance.home, root: buddyRoot, target: targets[`${process.platform}-${process.arch}`] })
     expect(measurements.repeatedRpcMs).toHaveLength(3)
     await testInfo.attach('sandbox-scale', { body: JSON.stringify({ toolchainFiles: 50_000, workspaceFiles: 5_000, ...measurements }), contentType: 'application/json' })
+  }
+  finally {
+    await rm(outDir, { recursive: true, force: true })
+  }
+})
+
+test('Windows runs real mise toolchains through production sandbox RPC', async ({ buddy }, testInfo) => {
+  test.skip(process.platform !== 'win32' || !process.env.LEXORA_TEST_MISE, 'Requires Windows and LEXORA_TEST_MISE pointing to a real mise.exe')
+  test.setTimeout(600_000)
+  expect(path.isAbsolute(process.env.LEXORA_TEST_MISE)).toBe(true)
+  const outDir = await buildSandboxVerification(path.resolve('.playwright/scripts/fixtures/sandbox-toolchain.ts'))
+  try {
+    const instance = await buddy.createInstance('sandbox-mise')
+    const { app, page } = await instance.launch()
+    await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 120_000 }).toBe('ready')
+    for (const scenario of ['xdg', 'explicit', 'empty-home']) {
+      await test.step(scenario, async () => {
+        const report = await app.evaluate(async (_electron, { module, home, root, target, mise, node, scenario }) => {
+          const file = process.getBuiltinModule('node:url').fileURLToPath(module)
+          const { join } = process.getBuiltinModule('node:path')
+          const { verifyWindowsMise } = process.getBuiltinModule('node:module').createRequire(file)(file)
+          return verifyWindowsMise({
+            buddyHome: home,
+            protectedRoots: [home],
+            protectionScope: join(home, `mise-${scenario}`),
+            windowsSandbox: join(root, `.output/build/native/${target.rustTarget}/release/lexora-buddy-sandbox.exe`),
+            windowsShell: join(process.env.ProgramFiles, 'PowerShell/7/pwsh.exe'),
+            searchDirectory: join(root, `.output/build/search-tools/${process.platform}-${process.arch}`),
+          }, { mise, node, scenario })
+        }, {
+          module: pathToFileURL(path.join(outDir, 'verify.mjs')).href,
+          home: instance.home,
+          root: buddyRoot,
+          target: targets[`${process.platform}-${process.arch}`],
+          mise: process.env.LEXORA_TEST_MISE,
+          node: process.execPath,
+          scenario,
+        })
+        await testInfo.attach(`sandbox-mise-${scenario}`, { body: JSON.stringify(report, null, 2), contentType: 'application/json' })
+        expect.soft(report.passed, report.error ?? JSON.stringify(report)).toBe(true)
+        if (!report.passed)
+          return
+        expect(report.identity.administrator).toBe(false)
+        expect(report.checks).toContain(scenario === 'empty-home' ? 'fallback-home-credentials-denied' : 'both-home-credentials-denied')
+        expect(report.checks).toContain('read-only-toolchain')
+      })
+    }
   }
   finally {
     await rm(outDir, { recursive: true, force: true })

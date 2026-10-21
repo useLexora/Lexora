@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { userInfo } from 'node:os'
 import { join, win32 } from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { createSandboxEnvironment } from '../../../../platform/process/sandboxEnvironment'
 import {
   createBuddyServiceEnvironment,
   resolveBuddySearchToolsDirectory,
@@ -14,6 +15,50 @@ import {
 const executeFile = promisify(execFile)
 
 describe('buddyServiceEnvironment', () => {
+  it.each(['linux', 'darwin', 'win32'] as const)('preserves safe tool locations through the runtime-to-command handoff on %s', (platform) => {
+    const home = platform === 'win32' ? 'C:\\Users\\Fixture' : '/fixture/home'
+    const locations = {
+      XDG_CONFIG_HOME: `${home}/config`,
+      XDG_DATA_HOME: `${home}/data`,
+      XDG_CACHE_HOME: `${home}/cache`,
+      XDG_STATE_HOME: `${home}/state`,
+      MISE_DATA_DIR: `${home}/mise`,
+      MISE_CONFIG_DIR: `${home}/mise-config`,
+      MISE_SHIMS_DIR: `${home}/mise-shims`,
+      MISE_ENV: 'development',
+      CARGO_HOME: `${home}/cargo`,
+      PNPM_HOME: `${home}/pnpm`,
+    }
+    const source = Object.freeze({
+      HOME: home,
+      SystemRoot: 'C:\\Windows',
+      UserProfile: 'C:\\Users\\Fixture',
+      ...Object.fromEntries(Object.entries(locations).map(([name, value]) => [platform === 'win32' ? name.toLowerCase() : name, value])),
+      MISE_API_TOKEN: 'synthetic-secret',
+      UNKNOWN_SECRET: 'synthetic-secret',
+      MISE_INSTALLS_DIR: '() { synthetic; }',
+      MISE_CONFIG_FILE: '/fixture/config\0suffix',
+      NODE_OPTIONS: '--require=/fixture/inject.js',
+      BASH_ENV: '/fixture/startup.sh',
+      SHELLOPTS: 'xtrace',
+      LD_PRELOAD: '/fixture/inject.so',
+      SSH_AUTH_SOCK: '/fixture/ssh.sock',
+      DISPLAY: ':1',
+      HTTP_PROXY: 'http://host.invalid:8080',
+      NO_PROXY: '*',
+    })
+    const runtime = createBuddyServiceEnvironment(source, `${home}/buddy`, platform)
+    const command = createSandboxEnvironment(runtime, platform === 'win32' ? 'D:\\private' : '/fixture/private', platform)
+
+    for (const environment of [runtime, command]) {
+      expect(environment).toMatchObject({ HOME: home, ...locations })
+      for (const name of ['MISE_API_TOKEN', 'UNKNOWN_SECRET', 'MISE_INSTALLS_DIR', 'MISE_CONFIG_FILE', 'NODE_OPTIONS', 'BASH_ENV', 'SHELLOPTS', 'LD_PRELOAD'])
+        expect(environment, name).not.toHaveProperty(name)
+    }
+    for (const name of ['SSH_AUTH_SOCK', 'DISPLAY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_USE_ENV_PROXY'])
+      expect(command, name).not.toHaveProperty(name)
+  })
+
   it.each(['linux', 'win32'] as const)('passes only the explicit full-recovery diagnostic switch on %s', (platform) => {
     const name = platform === 'win32' ? 'lexora_buddy_event_recovery' : 'LEXORA_BUDDY_EVENT_RECOVERY'
     const source = { [name]: 'full', UNRELATED_SECRET: 'secret' }
@@ -114,10 +159,17 @@ describe('buddyServiceEnvironment', () => {
     })
   })
 
-  it.each([undefined, ''])('uses the main process home when Linux HOME is %s', (userHome) => {
-    const environment = createBuddyServiceEnvironment({ HOME: userHome }, '/data/lexora/buddy', 'linux')
-
-    expect(environment.HOME).toBe(homedir())
+  it.each(['linux', 'darwin'] as const)('uses the main process home when HOME is missing or empty on %s', (platform) => {
+    vi.stubEnv('HOME', '')
+    try {
+      for (const userHome of [undefined, '']) {
+        const environment = createBuddyServiceEnvironment({ HOME: userHome }, '/data/lexora/buddy', platform)
+        expect(environment.HOME).toBe(userInfo().homedir)
+      }
+    }
+    finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it.skipIf(process.platform !== 'linux')('lets shell commands read the existing Git identity from user HOME', async () => {

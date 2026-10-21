@@ -74,7 +74,7 @@ describe('isolated shell permissions', () => {
     }
   })
 
-  it('builds a private shell environment without provider secrets, host sockets or proxy inheritance', () => {
+  it('preserves the user home without provider secrets, host sockets or proxy inheritance', () => {
     const environment = createSandboxEnvironment({
       PATH: '/untrusted/bin',
       HOME: '/real/home',
@@ -87,11 +87,8 @@ describe('isolated shell permissions', () => {
       DISPLAY: ':0',
     }, '/tmp/private')
     expect(environment).toEqual({
-      HOME: '/tmp/private/home',
+      HOME: '/real/home',
       TMPDIR: '/tmp/private/tmp',
-      XDG_CACHE_HOME: '/tmp/private/home/.cache',
-      XDG_CONFIG_HOME: '/tmp/private/home/.config',
-      XDG_DATA_HOME: '/tmp/private/home/.local/share',
       PATH: '/usr/local/bin:/usr/bin:/bin',
       LANG: 'C.UTF-8',
       TERM: 'dumb',

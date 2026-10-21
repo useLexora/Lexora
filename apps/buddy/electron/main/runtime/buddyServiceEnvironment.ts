@@ -1,10 +1,11 @@
 import type { StorageProtection } from '../../../platform/storage/ProfileLocations'
-import { homedir } from 'node:os'
+import { userInfo } from 'node:os'
 import process from 'node:process'
 import { filePathAdapters } from '../../../platform/filesystem/filePaths'
 import searchTools from '../../../platform/native/searchTools.json'
 import { createChildProcessEnvironment } from '../../../platform/process/childProcessEnvironment'
 import { createProxyEnvironment } from '../../../platform/process/proxyEnvironment'
+import { createToolchainEnvironment } from '../../../platform/process/toolchainEnvironment'
 import { resolveBuddyTarget } from '../../../platform/target'
 import { resolveBuddyPlatform } from '../../../shared/platform'
 import { isWindows } from '../../../shared/platform/identifiers'
@@ -35,7 +36,7 @@ export function createBuddyServiceEnvironment(
 ): NodeJS.ProcessEnv {
   const targetPlatform = resolveBuddyPlatform(platform)
   const environmentSource = !isWindows(targetPlatform.id) && !source.HOME
-    ? { ...source, HOME: homedir() }
+    ? { ...source, HOME: userInfo().homedir }
     : source
   const recoveryMode = Object.entries(environmentSource).find(([name]) => (
     (targetPlatform.environment.caseSensitive ? name : name.toUpperCase()) === 'LEXORA_BUDDY_EVENT_RECOVERY'
@@ -44,6 +45,7 @@ export function createBuddyServiceEnvironment(
     source: environmentSource,
     platform: targetPlatform,
     additions: {
+      ...createToolchainEnvironment(environmentSource, targetPlatform.id),
       LEXORA_BUDDY_HOME: buddyHome,
       LEXORA_BUDDY_STORAGE_PROTECTION: storageProtection ? JSON.stringify(storageProtection.sensitiveRoots) : undefined,
       LEXORA_BUDDY_EVENT_RECOVERY: recoveryMode === 'full' ? 'full' : undefined,

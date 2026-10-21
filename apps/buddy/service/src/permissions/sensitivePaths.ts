@@ -1,7 +1,7 @@
-import { homedir } from 'node:os'
 import process from 'node:process'
 import { containsCanonicalPath, filePaths } from '../../../platform/filesystem/filePaths'
 import { resolveSensitiveLocations } from '../../../platform/filesystem/sensitiveLocations'
+import { resolveUserHomePaths } from '../../../platform/filesystem/userHomePaths'
 
 const HOME_RELATIVE_ROOTS = [
   '.aws',
@@ -49,15 +49,16 @@ export function createSensitivePathMatcher(
 }
 
 export function resolveSensitivePathRoots(options: CreateSensitivePathMatcherOptions = {}): string[] {
-  const home = options.home ?? safeHomedir()
   const environment = options.environment ?? process.env
+  const homes = resolveUserHomePaths(environment, options.home)
   const roots = new Set<string>()
 
-  for (const relative of HOME_RELATIVE_ROOTS) {
-    if (home)
+  for (const home of homes) {
+    for (const relative of HOME_RELATIVE_ROOTS)
       roots.add(filePaths.resolveInput(relative, home))
   }
-  for (const root of [...resolveSensitiveLocations(home, environment), ...(options.additionalRoots ?? [])]) {
+  const locations = (homes.length ? homes : [null]).flatMap(home => resolveSensitiveLocations(home, environment))
+  for (const root of [...locations, ...(options.additionalRoots ?? [])]) {
     try {
       roots.add(filePaths.resolveInput(root))
     }
@@ -67,14 +68,4 @@ export function resolveSensitivePathRoots(options: CreateSensitivePathMatcherOpt
   }
 
   return [...roots]
-}
-
-function safeHomedir(): string | null {
-  try {
-    const home = homedir()
-    return home ? filePaths.resolveInput(home) : null
-  }
-  catch {
-    return null
-  }
 }

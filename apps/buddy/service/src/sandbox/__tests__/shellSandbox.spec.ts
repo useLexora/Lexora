@@ -1,5 +1,6 @@
 import type { SandboxProcessInput } from '../../../../shared/permissions/shellSandbox'
 import { Buffer } from 'node:buffer'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -8,6 +9,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { verifyOwnedProcessRelease } from '../../../../platform/process/ownedProcessRecovery'
 import { resolveSandboxDependencies } from '../../../../platform/process/sandboxDependencies'
@@ -19,6 +21,7 @@ import { runSandboxCommand } from '../runSandboxCommand'
 const buddyRoot = process.cwd()
 const originalEnvironment = { ...process.env }
 const originalHome = homedir()
+const miseExecutable = originalEnvironment.LEXORA_TEST_MISE
 const quote = (value: string) => `'${value.replaceAll('\'', '\'\\\'\'')}'`
 
 describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
@@ -36,7 +39,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     await Promise.all([workspace, outside].map(path => mkdir(path, { recursive: true })))
     await writeFile(join(outside, 'preserved'), 'outside-preserved')
     const environment = createSandboxEnvironment(originalEnvironment, privateRoot)
-    environment.LEXORA_BUDDY_PROCESS_CONTROL = originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL
+    environment.LEXORA_BUDDY_PROCESS_CONTROL = originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL!
     for (const key of new Set([...Object.keys(process.env), ...Object.keys(environment)]))
       vi.stubEnv(key, environment[key])
     process.chdir(privateRoot)
@@ -187,7 +190,77 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     await expect(access(join(workspace, 'new-file'))).rejects.toThrow()
   }, 15_000)
 
-  it('protects host-resolved credentials after HOME and XDG variables are isolated', async () => {
+  it('resolves existing toolchain configuration across fresh command environments without granting home writes', async () => {
+    const home = join(directory, 'user-home')
+    const config = join(directory, 'user-config')
+    const data = join(directory, 'toolchain-data')
+    const shims = join(data, 'shims')
+    await Promise.all([home, join(config, 'mise'), shims, join(data, 'installs')].map(path => mkdir(path, { recursive: true })))
+    await writeFile(join(config, 'mise', 'config.toml'), 'TOOLCHAIN_CONFIG\n')
+    await writeFile(join(data, 'installs', 'version'), 'TOOLCHAIN_VERSION\n')
+    await writeFile(join(shims, 'toolchain-probe'), '#!/bin/sh\nset -eu\ncat "$XDG_CONFIG_HOME/mise/config.toml"\ncat "$MISE_DATA_DIR/installs/version"\n')
+    await chmod(join(shims, 'toolchain-probe'), 0o755)
+    const source = { ...originalEnvironment, HOME: home, XDG_CONFIG_HOME: config, MISE_DATA_DIR: data, MISE_API_TOKEN: 'SYNTHETIC_TOKEN' }
+    for (let index = 0; index < 2; index++) {
+      const scratch = await createSandboxDirectory()
+      try {
+        const environment = createSandboxEnvironment(source, scratch)
+        environment.LEXORA_BUDDY_PROCESS_CONTROL = originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL!
+        for (const name of new Set([...Object.keys(process.env), ...Object.keys(environment)]))
+          vi.stubEnv(name, environment[name])
+        const command = `set -e; toolchain-probe; test "$HOME" = ${quote(home)}; test -z "${'$'}{MISE_API_TOKEN:-}"; printf scratch > "$TMPDIR/probe"; ! touch "$HOME/must-not-write"; ! touch "$MISE_DATA_DIR/must-not-write"`
+        const run = await execute(command, {}, { home, privateRoot: scratch, path: `${shims}:${input.path}`, readOnly: true })
+        expect(run.result, run.output).toEqual({ ok: true, exitCode: 0 })
+        expect(run.output).toContain('TOOLCHAIN_CONFIG\nTOOLCHAIN_VERSION')
+        await expect(access(join(home, 'must-not-write'))).rejects.toThrow()
+        await expect(access(join(data, 'must-not-write'))).rejects.toThrow()
+      }
+      finally {
+        await rm(scratch, { recursive: true, force: true })
+      }
+    }
+    expect(await readFile(join(data, 'installs', 'version'), 'utf8')).toBe('TOOLCHAIN_VERSION\n')
+  }, 20_000)
+
+  it.skipIf(!miseExecutable).each([false, true])('runs real mise exec and shims against existing installations (custom directories: %s)', async (customDirectories) => {
+    const home = join(directory, 'mise-home')
+    const data = customDirectories ? join(directory, 'mise-data') : join(home, '.local/share/mise')
+    const config = customDirectories ? join(directory, 'mise-config') : join(home, '.config/mise')
+    const runtime = join(directory, 'node-runtime')
+    const environment = {
+      HOME: home,
+      PATH: '/usr/bin:/bin',
+      ...(customDirectories ? { MISE_DATA_DIR: data, MISE_CONFIG_DIR: config, MISE_STATE_DIR: join(directory, 'mise-state') } : {}),
+    }
+    await Promise.all([home, config, join(runtime, 'bin')].map(path => mkdir(path, { recursive: true })))
+    await symlink(process.execPath, join(runtime, 'bin', 'node'))
+    await writeFile(join(config, 'config.toml'), '[settings]\nparanoid = true\nauto_install = false\n')
+    await writeFile(join(workspace, 'mise.toml'), '[tools]\nnode = "fixture"\n[env]\nLEXORA_TOOLCHAIN_FIXTURE = "MISE_ENV_OK"\n')
+    const setup = promisify(execFile)
+    for (const args of [['link', 'node@fixture', runtime], ['trust', join(workspace, 'mise.toml')], ['reshim']])
+      await setup(miseExecutable!, args, { cwd: home, env: environment, timeout: 15_000 })
+    for (const command of [
+      `${quote(miseExecutable!)} exec -- node -p 'process.env.LEXORA_TOOLCHAIN_FIXTURE'`,
+      'node -p \'process.env.LEXORA_TOOLCHAIN_FIXTURE\'',
+    ]) {
+      const scratch = await createSandboxDirectory()
+      try {
+        const inherited = createSandboxEnvironment(environment, scratch)
+        inherited.LEXORA_BUDDY_PROCESS_CONTROL = originalEnvironment.LEXORA_BUDDY_PROCESS_CONTROL!
+        for (const name of new Set([...Object.keys(process.env), ...Object.keys(inherited)]))
+          vi.stubEnv(name, inherited[name])
+        const run = await execute(command, {}, { home, privateRoot: scratch, path: `${join(data, 'shims')}:/usr/bin:/bin`, readOnly: true })
+        expect(run.result, run.output).toEqual({ ok: true, exitCode: 0 })
+        expect(run.output).toContain('MISE_ENV_OK')
+      }
+      finally {
+        await rm(scratch, { recursive: true, force: true })
+      }
+    }
+    expect(await readFile(join(workspace, 'mise.toml'), 'utf8')).toContain('node = "fixture"')
+  }, 45_000)
+
+  it('protects credentials while preserving host HOME and XDG locations', async () => {
     const home = join(directory, 'host-home')
     const configuration = join(directory, 'relocated-config')
     const data = join(directory, 'relocated-data')
@@ -200,7 +273,10 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
     await writeFile(join(workspace, '.netrc'), 'PROJECT_FIXTURE')
     await writeFile(join(configuration, 'ordinary.txt'), 'ORDINARY_CONFIGURATION')
     const sensitiveRoots = resolveSensitivePathRoots({ home, environment })
-    const command = `set -e; ${credentials.map(path => `! cat ${quote(path)}`).join('; ')}; cat .netrc; cat ${quote(join(configuration, 'ordinary.txt'))}; test "$HOME" != ${quote(home)}; test "${'$'}{XDG_CONFIG_HOME:-}" != ${quote(configuration)}`
+    vi.stubEnv('HOME', home)
+    for (const [name, value] of Object.entries(environment))
+      vi.stubEnv(name, value)
+    const command = `set -e; ${credentials.map(path => `! cat ${quote(path)}`).join('; ')}; cat .netrc; cat "$XDG_CONFIG_HOME/ordinary.txt"; test "$HOME" = ${quote(home)}; test "${'$'}{XDG_CONFIG_HOME:-}" = ${quote(configuration)}`
     const result = await execute(command, {}, { home, sensitiveRoots, readOnly: true })
     expect(result.result, result.output).toEqual({ ok: true, exitCode: 0 })
     expect(result.output).not.toContain('SYNTHETIC_CREDENTIAL')
@@ -278,7 +354,7 @@ describe.skipIf(process.platform !== 'linux')('linux shell enforcement', () => {
           : `server.on('error', error => assert.equal(error.code, 'EPERM')); server.listen(path);`}
       });`
     try {
-      const command = `set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; test "$HOME" = ${quote(join(input.privateRoot, 'home'))}; node -e ${quote(script)}`
+      const command = `set -e; test -z "$SSH_AUTH_SOCK$DBUS_SESSION_BUS_ADDRESS$ANTHROPIC_API_KEY"; test "$HOME" = ${quote(originalEnvironment.HOME || originalHome)}; node -e ${quote(script)}`
       for (const readOnly of [false, true]) {
         const { result, output } = await execute(command, {}, { readOnly })
         expect(result, output).toEqual({ ok: true, exitCode: 0 })

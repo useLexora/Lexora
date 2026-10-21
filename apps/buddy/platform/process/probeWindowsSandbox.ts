@@ -33,7 +33,7 @@ export async function probeWindowsSandbox(executable: string, shell: string): Pr
       privateRoot: directory,
       proxyPort: address.port,
       grants,
-      environment: createWindowsSandboxEnvironment({ shell, systemRoot, privateRoot: directory, path: [dirname(shell), join(systemRoot, 'System32')].join(';') }),
+      environment: createWindowsSandboxEnvironment({ SystemRoot: systemRoot, USERPROFILE: join(directory, 'home') }, { shell, systemRoot, privateRoot: directory, path: [dirname(shell), join(systemRoot, 'System32')].join(';') }),
     }, { signal: AbortSignal.timeout(15_000), onData: (data) => { output = `${output}${data}`.slice(-4_096) }, onStarted: () => {} })
     return exitCode === 0 && output === 'SANDBOX_PROBE_OK'
   }

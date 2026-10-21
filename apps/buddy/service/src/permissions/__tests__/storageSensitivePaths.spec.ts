@@ -1,9 +1,9 @@
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { createBuddyServiceEnvironment } from '../../../../electron/main/runtime/buddyServiceEnvironment'
 import { profileStorageProtection } from '../../../../platform/storage/ProfileLocations'
-import { createSensitivePathMatcher } from '../sensitivePaths'
+import { createSensitivePathMatcher, resolveSensitivePathRoots } from '../sensitivePaths'
 
 it('protects retained credentials without restricting entire historical directories or inspecting old volumes', () => {
   const root = join(tmpdir(), 'lexora-sensitive-fixture')
@@ -24,6 +24,24 @@ it('protects retained credentials without restricting entire historical director
     expect(sensitive.matches(join(path, 'buddy', 'conversations', 'task', 'workspace', 'output.txt'))).toBe(false)
   }
   expect(sensitive.matches(join(activeRoot, 'buddy', 'conversations', 'task', 'workspace', 'output.txt'))).toBe(false)
+})
+
+it('protects both the OS home and a separate tool home with an empty ambient HOME fallback', () => {
+  vi.stubEnv('HOME', '')
+  try {
+    expect(resolveSensitivePathRoots({ environment: { HOME: '' } })).toContain(join(userInfo().homedir, '.ssh'))
+    const home = join(tmpdir(), 'toolchain-home-fixture')
+    const other = join(tmpdir(), 'toolchain-alternate-home')
+    const cargo = join(tmpdir(), 'toolchain-cargo')
+    const npmrc = join(tmpdir(), 'toolchain-npm-config')
+    const matcher = createSensitivePathMatcher({ home, environment: { HOME: other, CARGO_HOME: cargo, NPM_CONFIG_USERCONFIG: npmrc } })
+    for (const path of [join(home, '.ssh', 'id_ed25519'), join(other, '.netrc'), join(cargo, 'credentials.toml'), npmrc])
+      expect(matcher.matches(path), path).toBe(true)
+    expect(matcher.matches(join(other, '.config', 'mise', 'config.toml'))).toBe(false)
+  }
+  finally {
+    vi.unstubAllEnvs()
+  }
 })
 
 it('protects agent credentials without classifying all configuration and skills as secrets', () => {
