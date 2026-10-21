@@ -136,8 +136,8 @@ function handleLinkClick(event: MouseEvent) {
   --ms-flow-paragraph-y: 0.375rem;
   --ms-flow-list-y: 0.375rem;
   --ms-flow-list-item-y: 0.1875rem;
-  --ms-flow-list-indent: 1.375rem;
-  --ms-flow-list-indent-mobile: 1.125rem;
+  --ms-flow-list-indent: 1.625em;
+  --ms-flow-list-indent-mobile: 1.375em;
   --ms-flow-table-y: 0.625rem;
   --ms-flow-table-cell: 0.375rem 0.5rem;
   --ms-flow-blockquote-y: 0.5rem;
@@ -177,6 +177,10 @@ function handleLinkClick(event: MouseEvent) {
   --markstream-code-fallback-fg: var(--code-fg) !important;
   background-color: var(--code-bg) !important;
   color: var(--code-fg) !important;
+}
+
+.buddy-chat-markdown-host :deep(ol.list-node) {
+  padding-inline-start: max(2.25em, 5ch);
 }
 
 .buddy-chat-markdown-host :deep(.blockquote) {
