@@ -8,7 +8,6 @@ export interface DesktopPageDefinition {
   id: string
   title: (language: BuddyLocale) => string
   location: RouteLocationRaw
-  rememberLastLocation?: boolean
   order: number
   icon: { kind: 'named', name: DesktopIconName } | { kind: 'component', component: Component } | { kind: 'plugin', url?: string }
   extensionId?: string
