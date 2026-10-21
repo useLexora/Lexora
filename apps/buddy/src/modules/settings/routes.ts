@@ -43,6 +43,7 @@ export const settingsPage: DesktopPageContribution = {
   icon: { kind: 'named', name: 'navigationSettings' },
   order: 50,
   location: desktopRouteLocations.settings(),
+  rememberLastLocation: true,
   routes: settingsRoutes,
   context: route => ({ 'page.section': route.meta.settingsCategory ?? '' }),
 }

@@ -6,6 +6,7 @@ import { builtinSettingsCatalog } from '@buddy-shared/settings/settingsCatalog'
 import { expect, it } from 'vitest'
 import { shallowRef } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { settingsPage } from '@/modules/settings/routes'
 import { desktopPageRoutes } from '@/shared/navigation/desktopPages'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { createDesktopRouter } from '../index'
@@ -31,6 +32,47 @@ it('derives navigation and context from registered pages, including future modul
   expect(pages.navigation.value.filter(entry => entry.active).map(entry => entry.id)).toEqual(['future.canvas'])
   expect(JSON.stringify(pages.context.value)).not.toContain('private')
   expect(() => desktopPageRoutes([settings, settings])).toThrow('already registered')
+})
+
+it('restores the last successful settings location without overriding explicit destinations', async () => {
+  const settings: DesktopPageContribution = {
+    ...settingsPage,
+    routes: [{
+      path: '/settings',
+      component: { render: () => null },
+      children: [
+        { path: 'general', name: 'desktop.settings.general', component: { render: () => null } },
+        { path: ':category', component: { render: () => null } },
+        { path: 'models/:providerId', component: { render: () => null } },
+        { path: 'plugins/:moduleId', component: { render: () => null } },
+      ],
+    }],
+  }
+  const router = createRouter({ history: createMemoryHistory(), routes: desktopPageRoutes([page('lexora.tasks', '/tasks'), settings]) })
+  const pages = useDesktopPages(router, shallowRef<ExtensionStatus[]>([]), shallowRef('en-US' as const))
+  const settingsLocation = () => pages.navigation.value.find(entry => entry.id === settings.id)!.location
+  expect(router.resolve(settingsLocation()).fullPath).toBe('/settings/general')
+  await router.push(settingsLocation())
+  expect(router.currentRoute.value.fullPath).toBe('/settings/general')
+
+  for (const location of ['/settings/appearance', '/settings/models/test.provider?group=details#credentials', '/settings/plugins/test.preferences?group=display']) {
+    await router.push(location)
+    await router.push('/tasks')
+    await router.push(settingsLocation())
+    expect(router.currentRoute.value.fullPath).toBe(location)
+  }
+
+  const removeGuard = router.beforeEach(to => to.path !== '/settings/notifications')
+  await router.push('/settings/notifications')
+  await router.push('/tasks')
+  expect(settingsLocation()).toBe('/settings/plugins/test.preferences?group=display')
+  removeGuard()
+
+  await router.push(desktopRouteLocations.settings())
+  expect(router.currentRoute.value.fullPath).toBe('/settings/general')
+  await router.push('/tasks')
+  await router.push(settingsLocation())
+  expect(router.currentRoute.value.fullPath).toBe('/settings/general')
 })
 
 it('allows cold-start access only for trusted runtime-independent settings routes', () => {

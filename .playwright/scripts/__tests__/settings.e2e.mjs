@@ -78,6 +78,28 @@ test('prompt loading can retry and late responses do not replace another setting
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
+test('settings navigation returns to the last page and still allows explicit page selection', async ({ buddy }) => {
+  const instance = await buddy.createInstance('settings-navigation')
+  const { page, diagnostics } = await instance.launch()
+  const navigation = page.locator('.desktop-app-sidebar')
+  const title = page.locator('.desktop-settings-page__title')
+  await navigation.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(title).toHaveText('常规')
+
+  for (const [name, category] of [['快捷键', 'shortcuts'], ['外观', 'appearance'], ['常规', 'general']]) {
+    await page.locator('.desktop-settings-sidebar').getByRole('link', { name, exact: true }).click()
+    await expect(title).toHaveText(name)
+    await navigation.getByRole('button', { name: '任务', exact: true }).click()
+    await expect(page).toHaveURL(/#\/tasks$/)
+    await navigation.getByRole('button', { name: '设置', exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`#/settings/${category}$`))
+    await expect(title).toHaveText(name)
+    await navigation.getByRole('button', { name: '设置', exact: true }).click()
+    await expect(title).toHaveText(name)
+  }
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
 test('builtin settings preserve legacy navigation, failed-save rollback and restart persistence', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings')
   let desktop = await instance.launch()

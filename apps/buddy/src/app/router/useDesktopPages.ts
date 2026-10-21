@@ -5,7 +5,7 @@ import type { Router } from 'vue-router'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopNavigationEntry, DesktopPageDefinition } from '@/shared/navigation/desktopPages'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
-import { computed } from 'vue'
+import { computed, shallowReactive, watch } from 'vue'
 import { extensionPageDefinitions } from '@/modules/extensions/routes'
 import { resolveDesktopPageId } from '@/shared/navigation/desktopPages'
 
@@ -22,6 +22,12 @@ export function useDesktopPages(router: Router, installed: Readonly<Ref<Extensio
     return [...registered.values()].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
   })
   const current = computed(() => resolveDesktopPageId(router.currentRoute.value))
+  const lastLocations = shallowReactive(new Map<string, string>())
+  watch(router.currentRoute, (route) => {
+    const page = definitions.value.find(page => page.id === resolveDesktopPageId(route))
+    if (page?.rememberLastLocation)
+      lastLocations.set(page.id, route.fullPath)
+  }, { immediate: true, flush: 'sync' })
   const context = computed<WorkbenchContextSnapshot>((previous) => {
     const next = {
       values: { ...definitions.value.find(page => page.id === current.value)?.context?.(router.currentRoute.value), 'page.id': current.value },
@@ -29,6 +35,6 @@ export function useDesktopPages(router: Router, installed: Readonly<Ref<Extensio
     }
     return previous && JSON.stringify(previous) === JSON.stringify(next) ? previous : next
   })
-  const navigation = computed<DesktopNavigationEntry[]>(() => definitions.value.filter(page => matchesWorkbenchContext(page.when, context.value.values)).map(page => ({ id: page.id, title: page.title(language.value), location: page.location, icon: page.icon, extensionId: page.extensionId, active: page.id === current.value })))
+  const navigation = computed<DesktopNavigationEntry[]>(() => definitions.value.filter(page => matchesWorkbenchContext(page.when, context.value.values)).map(page => ({ id: page.id, title: page.title(language.value), location: (page.rememberLastLocation && lastLocations.get(page.id)) || page.location, icon: page.icon, extensionId: page.extensionId, active: page.id === current.value })))
   return { current, context, navigation }
 }
