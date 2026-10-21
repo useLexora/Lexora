@@ -28,6 +28,7 @@ const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse())
     await cleanup()
+  vi.unstubAllEnvs()
 })
 
 describe('codemode runtime preference', () => {
@@ -200,27 +201,30 @@ describe('codemode runtime preference', () => {
     expect(fixture.session.messages.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Done' }] })
   })
 
-  it('preserves global admission across three sessions and frees it after cancellation', async () => {
+  it('queues across three sessions and admits the waiter after cancellation', async () => {
     const [first, second, third] = await Promise.all(Array.from({ length: 3 }, () => createFixture('read_only', { computeTimeoutMs: 200 })))
     for (const fixture of [first, second, third])
       fixture.apply(true)
     const code = 'text(await tools.lexora_gate({ value: 1 }));'
     const firstTurn = first.turn({ name: 'codemode', arguments: { code } })
     const secondTurn = second.turn({ name: 'codemode', arguments: { code } })
+    let thirdTurn: Promise<void> | undefined
     try {
       await vi.waitFor(() => expect(first.gates.length + second.gates.length).toBe(2))
+      let settled = false
+      thirdTurn = third.turn({ name: 'codemode', arguments: { code } }).then(() => {
+        settled = true
+      })
       await new Promise(resolve => setTimeout(resolve, 300))
-      await third.turn({ name: 'codemode', arguments: { code } })
-      expect(third.lastResult()).toContain('worker limit reached')
+      expect(settled).toBe(false)
       expect(third.gates).toHaveLength(0)
 
       await first.reusable.abort()
       await firstTurn
       expect(first.gates[0]!.signal.aborted).toBe(true)
-      const replacement = third.turn({ name: 'codemode', arguments: { code } })
       await vi.waitFor(() => expect(third.gates).toHaveLength(1))
       third.gates[0]!.release()
-      await replacement
+      await thirdTurn
       expect(third.lastResult()).toContain('Script completed')
       second.gates[0]!.release()
       await secondTurn
@@ -228,7 +232,103 @@ describe('codemode runtime preference', () => {
     }
     finally {
       await Promise.all([first.reusable.abort(), second.reusable.abort(), third.reusable.abort()])
-      await Promise.allSettled([firstTurn, secondTurn])
+      await Promise.allSettled([firstTurn, secondTurn, thirdTurn])
+    }
+  })
+
+  it.each([undefined, '3', '0'])('drains five sessions in FIFO order with worker limit %s', async (limit) => {
+    vi.stubEnv('PI_CODEMODE_MAX_WORKERS', limit)
+    const capacity = limit === '3' ? 3 : 2
+    const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture('read_only')))
+    const turns: Promise<void>[] = []
+    const code = 'text(await tools.lexora_gate({ value: 1 }));'
+    try {
+      for (const [index, fixture] of fixtures.entries()) {
+        fixture.apply(true)
+        turns.push(fixture.turn({ name: 'codemode', arguments: { code } }))
+        await vi.waitFor(() => expect(fixture.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
+        if (index < capacity)
+          await vi.waitFor(() => expect(fixture.gates).toHaveLength(1))
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(fixtures.map(fixture => fixture.gates.length)).toEqual(fixtures.map((_, index) => index < capacity ? 1 : 0))
+      for (let index = 0; index < fixtures.length; index++) {
+        fixtures[index]!.gates[0]!.release()
+        await turns[index]
+        if (index + capacity < fixtures.length) {
+          await vi.waitFor(() => expect(fixtures[index + capacity]!.gates).toHaveLength(1))
+          expect(fixtures.slice(index + capacity + 1).every(fixture => fixture.gates.length === 0)).toBe(true)
+        }
+      }
+      expect(fixtures.every(fixture => fixture.lastResult().includes('Script completed'))).toBe(true)
+    }
+    finally {
+      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
+      await Promise.allSettled(turns)
+    }
+  })
+
+  it('completes 125 scripts across five sessions without losing capacity between turns', async () => {
+    vi.stubEnv('PI_CODEMODE_MAX_WORKERS', undefined)
+    const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture('read_only')))
+    for (const fixture of fixtures)
+      fixture.apply(true)
+    try {
+      for (let round = 0; round < 25; round++) {
+        await Promise.all(fixtures.map(fixture => fixture.turn({
+          name: 'codemode',
+          arguments: { code: 'text(await tools.read({ path: "allowed.txt" }));' },
+        })))
+        for (const fixture of fixtures) {
+          expect(fixture.lastResult()).toContain('Script completed')
+          expect(fixture.lastResult()).toContain('allowed content')
+        }
+      }
+      for (const fixture of fixtures) {
+        const results = fixture.session.messages.filter(message => message.role === 'toolResult').filter(message => message.toolName === 'codemode')
+        expect(results).toHaveLength(25)
+        expect(results.every(result => !result.isError)).toBe(true)
+      }
+    }
+    finally {
+      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
+    }
+  }, 60_000)
+
+  it.each(['timeout', 'abort'])('removes a waiting script after %s without starting nested tools', async (outcome) => {
+    const [first, second, third, fourth] = await Promise.all(Array.from({ length: 4 }, () => createFixture('read_only')))
+    const fixtures = [first, second, third, fourth]
+    for (const fixture of fixtures)
+      fixture.apply(true)
+    const code = 'text(await tools.lexora_gate({ value: 1 }));'
+    const turns = [first.turn({ name: 'codemode', arguments: { code } }), second.turn({ name: 'codemode', arguments: { code } })]
+    try {
+      await vi.waitFor(() => expect(first.gates.length + second.gates.length).toBe(2))
+      const waiting = third.turn({ name: 'codemode', arguments: { code: outcome === 'timeout' ? `// @options: {"timeout_ms": 100}\n${code}` : code } })
+      turns.push(waiting)
+      await vi.waitFor(() => expect(third.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
+      const successor = fourth.turn({ name: 'codemode', arguments: { code } })
+      turns.push(successor)
+      if (outcome === 'abort')
+        await third.reusable.abort()
+      await waiting
+      const result = third.events.filter(event => event.type === 'tool_execution_end' && event.toolName === 'codemode').at(-1)
+      expect(result).toMatchObject({ isError: true, result: { details: { calls: [], cleanup: { toolCalls: 'completed', worker: 'exited' } } } })
+      expect(JSON.stringify(result)).toContain('The script did not start.')
+      expect(JSON.stringify(result)).toContain(outcome === 'timeout' ? '100 ms while waiting' : 'Script aborted:')
+      expect(third.gates).toHaveLength(0)
+      first.gates[0]!.release()
+      await turns[0]
+      await vi.waitFor(() => expect(fourth.gates).toHaveLength(1))
+      fourth.gates[0]!.release()
+      second.gates[0]!.release()
+      await Promise.all(turns)
+      expect(fourth.lastResult()).toContain('Script completed')
+      expect(third.gates).toHaveLength(0)
+    }
+    finally {
+      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
+      await Promise.allSettled(turns)
     }
   })
 
@@ -369,8 +469,9 @@ describe('codemode runtime preference', () => {
           details: { cleanup: { toolCalls: 'completed', worker: 'pending' } },
         })
       }
-      await third.turn({ name: 'codemode', arguments: { code: 'text("must not be admitted");' } })
-      expect(third.lastResult()).toContain('worker limit reached')
+      await third.turn({ name: 'codemode', arguments: { code: '// @options: {"timeout_ms": 100}\ntext("must not be admitted");' } })
+      expect(third.lastResult()).toContain('while waiting for a free codemode worker')
+      expect(third.lastResult()).toContain('The script did not start.')
       expect(third.lastResult()).not.toContain('must not be admitted')
     }
     finally {

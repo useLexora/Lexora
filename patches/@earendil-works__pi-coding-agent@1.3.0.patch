@@ -808,10 +808,56 @@ index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb8
 +    return Math.min(Math.max(1, value), maximum);
 +}
 diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/execute.js
-index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a457dd5efc 100644
+index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02591a0187 100644
 --- a/dist/extensions/codemode/execute.js
 +++ b/dist/extensions/codemode/execute.js
-@@ -384,6 +384,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -20,8 +20,44 @@ const MAX_CONCURRENT_MODEL_CALLS = 4;
+  */
+ const CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
+ // Shared across calls and sessions. Allow one replacement while a cancelled worker is still exiting.
+-const MAX_CONCURRENT_CODEMODE_WORKERS = 2;
++const DEFAULT_MAX_CODEMODE_WORKERS = 2;
++function maxCodemodeWorkers() {
++    const value = Number(process.env.PI_CODEMODE_MAX_WORKERS);
++    return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_CODEMODE_WORKERS;
++}
++const CODEMODE_WORKER_WAIT_MS = 60_000;
+ let activeCodemodeWorkers = 0;
++const codemodeWorkerWaiters = [];
++function reserveCodemodeWorker(signal, timeoutMs) {
++    if (signal?.aborted)
++        return Promise.resolve("aborted");
++    return new Promise((resolve) => {
++        const settle = (outcome) => {
++            clearTimeout(timer);
++            signal?.removeEventListener("abort", onAbort);
++            const index = codemodeWorkerWaiters.indexOf(grant);
++            if (index >= 0)
++                codemodeWorkerWaiters.splice(index, 1);
++            resolve(outcome);
++        };
++        const grant = () => settle("reserved");
++        const onAbort = () => settle("aborted");
++        const timer = setTimeout(() => settle("timeout"), timeoutMs);
++        codemodeWorkerWaiters.push(grant);
++        signal?.addEventListener("abort", onAbort, { once: true });
++        admitCodemodeWorkers();
++    });
++}
++function admitCodemodeWorkers() {
++    while (codemodeWorkerWaiters.length > 0 && activeCodemodeWorkers < maxCodemodeWorkers()) {
++        activeCodemodeWorkers++;
++        codemodeWorkerWaiters.shift()?.();
++    }
++}
++function releaseCodemodeWorker() {
++    activeCodemodeWorkers--;
++    admitCodemodeWorkers();
++}
+ const MODEL_TYPES = new Set(["chat", "image", "classifier"]);
+ function truncateText(text, maxChars) {
+     return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
+@@ -384,6 +420,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
      const startedAt = performance.now();
      const { code, options: sourceOptions } = parseCodemodeSource(input.code);
      const calls = [];
@@ -825,7 +871,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a4
      // Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
      let modelUsage;
      // Images returned by `models.generateImages()`, to notice a script that never shows them.
-@@ -395,7 +402,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -395,7 +438,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
          modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
      };
      const snapshot = () => ({ calls: calls.map((call) => ({ ...call })) });
@@ -834,7 +880,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a4
      // Show the script as running before its first nested call, so the row's timer starts.
      publish();
      const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
-@@ -418,22 +425,44 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -418,49 +461,115 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
              // Only tools from ctx.tools are callable, so ctx is set here.
              if (!ctx)
                  throw new Error("Tool calls need a session");
@@ -872,26 +918,95 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a4
 -            return toScriptValue(tool, outcome);
          },
      }));
-     const sandbox = new CodemodeSandbox({
-         tools: sandboxTools,
-+        computeTimeoutMs: options.runtime?.computeTimeoutMs,
-+        maxPendingToolCalls: options.runtime?.maxPendingToolCalls,
-+        maxQueuedToolCalls: options.runtime?.maxQueuedToolCalls,
-+        onCleanup: (settled) => {
-+            cleanupState.toolCalls = "pending";
-+            toolCleanup = settled.then(() => { cleanupState.toolCalls = "completed"; });
-+        },
-+        onWorkerStarted: (exited) => {
-+            cleanupState.worker = "pending";
-+            workerExit = exited.then(() => { cleanupState.worker = "exited"; });
-+        },
-         globals: [
-             ...createDiscoveryGlobals(callable, samples, options),
-             ...(options.models && ctx
-@@ -462,6 +491,25 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
-     finally {
-         await sandbox.close();
+-    const sandbox = new CodemodeSandbox({
+-        tools: sandboxTools,
+-        globals: [
+-            ...createDiscoveryGlobals(callable, samples, options),
+-            ...(options.models && ctx
+-                ? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
+-                : []),
+-        ],
+-        timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
+-        memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
+-        wasm: loadQuickJSWasm(getQuickJSWasmPath()),
+-        workerUrl: getCodemodeWorkerSpecifier(),
+-        acquireWorker: () => {
+-            if (activeCodemodeWorkers >= MAX_CONCURRENT_CODEMODE_WORKERS) {
+-                throw new Error(`Codemode worker limit reached (${MAX_CONCURRENT_CODEMODE_WORKERS} workers are still running or shutting down). Retry after they exit.`);
+-            }
+-            activeCodemodeWorkers++;
+-            return () => {
+-                activeCodemodeWorkers--;
+-            };
+-        },
+-    });
++    const deadline = sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY;
++    const waitStartedAt = performance.now();
++    const admission = await reserveCodemodeWorker(signal, Math.min(deadline, CODEMODE_WORKER_WAIT_MS));
++    const waitedMs = performance.now() - waitStartedAt;
++    if (admission !== "reserved") {
++        const waited = ((performance.now() - startedAt) / 1000).toFixed(1);
++        const reason = signal?.reason;
++        const error = admission === "aborted"
++            ? `Script aborted: ${reason instanceof Error ? reason.message : "Execution aborted"}`
++            : deadline <= CODEMODE_WORKER_WAIT_MS
++                ? `Script timed out: Execution timed out after ${deadline} ms while waiting for a free codemode worker`
++                : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
++        publishing = false;
++        return {
++            content: [
++                { type: "text", text: `Script failed\nWall time ${waited} seconds\nOutput:\n` },
++                { type: "text", text: `Script error:\n${error}\n\nThe script did not start.` },
++            ],
++            details: { ...snapshot(), cleanup: { ...cleanupState } },
++            isError: true,
++        };
++    }
++    let reserved = true;
++    let sandbox;
+     let result;
+     try {
++        sandbox = new CodemodeSandbox({
++            tools: sandboxTools,
++            computeTimeoutMs: options.runtime?.computeTimeoutMs,
++            maxPendingToolCalls: options.runtime?.maxPendingToolCalls,
++            maxQueuedToolCalls: options.runtime?.maxQueuedToolCalls,
++            onCleanup: (settled) => {
++                cleanupState.toolCalls = "pending";
++                toolCleanup = settled.then(() => { cleanupState.toolCalls = "completed"; });
++            },
++            onWorkerStarted: (exited) => {
++                cleanupState.worker = "pending";
++                workerExit = exited.then(() => { cleanupState.worker = "exited"; });
++            },
++            globals: [
++                ...createDiscoveryGlobals(callable, samples, options),
++                ...(options.models && ctx
++                    ? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
++                    : []),
++            ],
++            timeoutMs: Math.max(1, Math.round(deadline - waitedMs)),
++            memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
++            wasm: loadQuickJSWasm(getQuickJSWasmPath()),
++            workerUrl: getCodemodeWorkerSpecifier(),
++            acquireWorker: () => {
++                if (!reserved)
++                    throw new Error("The script already settled");
++                reserved = false;
++                return releaseCodemodeWorker;
++            },
++        });
+         const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
+         result = await sandbox.execute(code, { signal, store });
      }
+     finally {
+-        await sandbox.close();
++        await sandbox?.close();
++        if (reserved) {
++            reserved = false;
++            releaseCodemodeWorker();
++        }
++    }
 +    const cleanup = toolCleanup.then(() => workerExit);
 +    let cleanupTimer;
 +    try {
@@ -910,11 +1025,10 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a4
 +            output: result.output,
 +            calls: result.calls,
 +        };
-+    }
+     }
      // Calls still marked running were cut off by the script ending, a timeout, or an abort.
      for (const call of calls) {
-         if (call.status === "running")
-@@ -478,8 +526,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -478,8 +587,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
              scriptOutput.push({ type: "text", text: valueText(result.value) });
      }
      const items = formatOutput(scriptOutput);
@@ -929,7 +1043,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..9408952d2f263c40a51b2b2a3c8757a4
      if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
          items.push({
              type: "text",
-@@ -492,7 +545,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -492,7 +606,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
      const output = joinAdjacentText(await saveImages(truncated.items));
      const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
      const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
@@ -1072,6 +1186,33 @@ index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb7868
      // Check our tools directory first
      const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
      if (existsSync(localPath)) {
+diff --git a/docs/codemode.md b/docs/codemode.md
+index 12b41277d5f683fd44257ddaf56d3ab98b0feee4..6dd76cbad1f120fbf66ebbdea580b516cc51b08c 100644
+--- a/docs/codemode.md
++++ b/docs/codemode.md
+@@ -15,2 +15,2 @@
+ - `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
+-- `timeout_ms` is a hard deadline for the whole script. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
++- `timeout_ms` is a hard deadline for the whole script, including any wait for a free worker. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
+@@ -226,5 +226,5 @@ for (const block of result.output) {
+ - A script's VM has 256 MB of memory. Running out throws `InternalError: out of memory`; filter or aggregate large data instead of accumulating it.
+ - On Bun, stopping a script or reaching its deadline ends the call promptly, but a built-in that does not poll QuickJS's interrupt handler can keep computing in its worker until it returns.
+-- At most two codemode workers may be alive across all sessions in one pi process. A cancelled worker occupies its slot until it exits. At capacity, new scripts fail immediately without starting another worker; retry after an existing worker exits.
++- At most two codemode workers may be alive across all sessions in one pi process; `PI_CODEMODE_MAX_WORKERS` changes the limit. A cancelled worker occupies its slot until it exits. At capacity, new scripts wait for a free worker in arrival order. A script that gets no worker within 60 seconds, or before its `timeout_ms`, fails without running.
+ - A script that waits on a promise that can never settle (no tool call pending) fails immediately, since there are no timers.
+ - Scripts cannot start other `codemode` scripts.
+diff --git a/docs/environment-variables.md b/docs/environment-variables.md
+index 8a1975043c20c1b2295b90d71010d0f36d117379..828d617dd9bb5952cec6134629b730ffa3572362 100644
+--- a/docs/environment-variables.md
++++ b/docs/environment-variables.md
+@@ -84,6 +84,7 @@ These variables are read by Pi itself:
+ | `PI_OFFLINE` | Disable automatic network activity, including model catalog refreshes |
+ | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
+ | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
++| `PI_CODEMODE_MAX_WORKERS` | Maximum codemode workers alive at once across all sessions in the process; default `2`. Each worker's script may use up to 256 MB. Raise it when one process runs several sessions, such as in-process subagents. Further scripts wait for a free worker. See [Codemode](codemode.md) |
+ | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
+ | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
+ | `PI_RADIUS_GATEWAY` | Override the Radius gateway origin used by `/bug` uploads |
 diff --git a/examples/extensions/custom-provider-anthropic/package-lock.json b/examples/extensions/custom-provider-anthropic/package-lock.json
 deleted file mode 100644
 index 7a9cc69020074e9b3e2a5e0d3487c8927124fb82..0000000000000000000000000000000000000000
