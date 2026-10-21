@@ -9,6 +9,7 @@ mod policy;
 pub(crate) mod process;
 mod security;
 mod setup;
+mod shell_program;
 mod token;
 
 use std::io;
@@ -17,7 +18,7 @@ const SERVICE_NAME: &str = "LexoraBuddySandboxNetwork";
 const PIPE_NAME: &str = r"\\.\pipe\LexoraBuddySandboxNetwork-v1";
 const PROFILE_PREFIX: &str = "Lexora.Buddy.Sandbox.";
 const PROTOCOL_VERSION: u32 = 1;
-const COMPONENT_VERSION: u32 = 5;
+const COMPONENT_VERSION: u32 = 6;
 
 pub fn run() -> io::Result<i32> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();

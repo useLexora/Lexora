@@ -62,7 +62,7 @@ it('shows only the latest release and refuses older marketplace versions', async
 it('isolates future APIs and invalid entries while preserving exact supported downloads and offline metadata', async () => {
   const { service, catalog, value, bytes, offline } = await fixture()
   const raw = catalog.plugins as unknown[]
-  raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.future', apiVersion: 4, engines: { lexora: '*' }, contributes: { futureCapability: {} } } })
+  raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.future', apiVersion: 5, engines: { lexora: '*' }, contributes: { futureCapability: {} } } })
   raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.invalid', engines: { lexora: '*' }, futureField: true } })
   raw.push({ broken: true })
   const first = await service.list()

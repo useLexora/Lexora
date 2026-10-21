@@ -1,5 +1,7 @@
 import type { ExtensionSettingItem } from '@buddy-shared/extensions/extensionSettings'
+import type { ExtensionShellContribution } from '@buddy-shared/extensions/extensionShell'
 import type { BuiltinSettingsCategory } from '@buddy-shared/settings/settingsCatalog'
+import type { ShellCandidateId } from '@buddy-shared/shell/shellProgram'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { builtinSettingsModuleIds, publicSettingsGroups } from '@buddy-shared/settings/settingsCatalog'
 
@@ -25,12 +27,20 @@ export interface SettingsGroup {
   title?: SettingsText
   order: number
   unframed?: boolean
+  shells?: { extensionId: string, revision: string, candidates: ExtensionShellContribution['candidates'] }
 }
 
 export interface PluginSettingField {
   extensionId: string
   revision: string
   item: ExtensionSettingItem
+}
+
+export interface ShellSettingsRow {
+  id: ShellCandidateId
+  enabled: PluginSettingField
+  executable: PluginSettingField
+  priority: PluginSettingField
 }
 
 export type SettingsItem = { id: string, group: string, order: number } & (

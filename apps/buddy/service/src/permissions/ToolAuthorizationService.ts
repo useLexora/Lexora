@@ -171,6 +171,7 @@ export class ToolAuthorizationService {
         forceAsk: declared.forceAsk,
         requireApproval: declared.requireApproval,
         shellBoundary: declared.shellBoundary,
+        shellDialect: declared.shellDialect,
         grants: options.getGrants(),
         sandboxDirectories: options.getSandboxDirectories?.(run),
         owner: options.owner,

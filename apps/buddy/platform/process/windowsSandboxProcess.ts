@@ -1,5 +1,6 @@
 import type { Buffer } from 'node:buffer'
 import type { SandboxProcessState } from '../../shared/permissions/sandboxLifecycle'
+import type { ShellDialect } from '../../shared/shell/shellProgram'
 import type { OwnedProcessSupervision } from './supervisedShellProcess'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -14,6 +15,7 @@ export interface WindowsSandboxRequest {
   command: string
   cwd: string
   shell: string
+  dialect?: ShellDialect
   privateRoot: string
   grants: readonly { path: string, access: 'read' | 'write' | 'denyRead' | 'denyWrite', device: string, inode: string, inherit?: boolean, exceptions?: string[] }[]
   denyReadScope?: string

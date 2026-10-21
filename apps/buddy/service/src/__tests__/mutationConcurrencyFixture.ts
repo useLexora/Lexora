@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 import type { LocalTurnStart } from '../../../shared/conversation/chatApi'
+import type { ExtensionShellDescriptor } from '../../../shared/extensions/extensionShell'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
@@ -63,7 +64,7 @@ function requestRole(payload: Payload): Role {
   return task
 }
 
-function rpcHarness() {
+function rpcHarness(shells: readonly ExtensionShellDescriptor[]) {
   const handlers = new Map<string, Parameters<BuddyServiceRpcServer['onRequest']>[1]>()
   const rpc = {
     close() {},
@@ -76,6 +77,7 @@ function rpcHarness() {
     async request(method: string) {
       switch (method) {
         case 'extensions.agent.list': return []
+        case 'host.extensions.shells.list': return shells
         case 'host.images.preferences': return {}
         case 'host.networkPermissions.get': return { defaults: { access: 'ask', download: 'ask', upload: 'ask' }, rules: [] }
         case 'host.runtimePreferences.get': return { cacheWarming: 'off', codemode: false, modelRetryLimit: 0 }
@@ -100,6 +102,7 @@ export async function createConcurrencyRuntime(options: {
   steps: (role: Role) => ToolCall[]
   readOnly?: boolean
   fullAccess?: boolean
+  shells?: readonly ExtensionShellDescriptor[]
   prepare?: (database: DatabaseSync, buddyHome: string) => Promise<void>
 }) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-mutation-tree-')))
@@ -110,7 +113,7 @@ export async function createConcurrencyRuntime(options: {
   const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
   const events: Awaited<ReturnType<typeof eventLog.read>> = []
   const subscription = eventLog.onDidCommit(event => events.push(event))
-  const harness = rpcHarness()
+  const harness = rpcHarness(options.shells ?? [])
   const ready = deferred()
   const begin = deferred()
   const requests: { role: Role, payload: Payload }[] = []
@@ -212,6 +215,7 @@ export async function createConcurrencyRuntime(options: {
     const root = await harness.invoke('buddies.get', { buddyId: 'default' }) as LocalBuddy
     npcId = npc.id
     actorId = actor.id
+    const shellTool = options.shells?.length ? ['builtin', 'shell', 'lexora_shell'] : ['builtin', 'core', process.platform === 'win32' ? 'powershell' : 'bash']
     for (const [buddy, role] of [[npc, 'NPC'], [actor, 'ACTOR'], [root, 'ROOT']] as const) {
       await harness.invoke('buddies.update', {
         buddyId: buddy.id,
@@ -221,7 +225,7 @@ export async function createConcurrencyRuntime(options: {
           instructions: `MUTATION_ROLE_${role}`,
           model: role === 'ACTOR' ? { modelId: 'mutation-model', providerId: 'mutation-local', reasoning: null, serviceTier: null } : null,
           skills: { mode: 'none' },
-          tools: { mode: 'selected', ids: ['read', 'write', 'edit', ...(options.fullAccess ? [process.platform === 'win32' ? 'powershell' : 'bash'] : [])].map(name => JSON.stringify(['builtin', 'core', name])) },
+          tools: { mode: 'selected', ids: [...['read', 'write', 'edit'].map(name => JSON.stringify(['builtin', 'core', name])), ...options.fullAccess ? [JSON.stringify(shellTool)] : []] },
           limits: { fileAccess: options.readOnly && role === 'ROOT' ? 'read_only' : 'inherit' },
           npcIds: role === 'NPC' ? [] : [npcId],
         },

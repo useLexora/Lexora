@@ -3,6 +3,7 @@ import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolDisclosurePolicy } from '../toolDiscoveryContract'
 import { Type } from 'typebox'
 import { describe, expect, it } from 'vitest'
+import { SessionToolScope } from '../SessionToolScope'
 import { ToolDisclosure } from '../ToolDisclosure'
 import { TOOL_SEARCH_NAME } from '../toolDiscoveryContract'
 
@@ -19,6 +20,17 @@ function create() {
 }
 
 describe('toolDisclosure', () => {
+  it('exposes only the unified command tool while retaining roles pinned to legacy shell identities', () => {
+    const shellTools = ['bash', 'lexora_shell'].map(name => ({ ...tools[0]!, name }))
+    const policies: BuddyToolDisclosurePolicy[] = [{ source: { kind: 'builtin', id: 'shell', title: 'Shell' }, exposure: 'direct', keywords: '', tools: [{ name: 'lexora_shell' }] }]
+    const all = new ToolDisclosure(shellTools, ['bash'], policies)
+    expect(all.active({ model })).toEqual(['lexora_shell'])
+    expect(all.search({ toolNames: ['bash'] }, { model }).notFound).toEqual(['bash'])
+    const role = new SessionToolScope(policies, { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', 'bash'])] })
+    expect(new ToolDisclosure(shellTools, ['bash'], policies, undefined, role).active({ model })).toEqual(['bash'])
+    expect(new ToolDisclosure([shellTools[0]!], ['bash'], []).active({ model })).toEqual(['bash'])
+  })
+
   it('resolves historical MCP names without granting hidden or script-only tools direct exposure', () => {
     const name = 'mcp__calendar__events'
     const alias = 'mcp__old_hash__events_hash'

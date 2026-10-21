@@ -30,6 +30,10 @@ export function getActivePiBuiltinToolNames(
   return [...PI_FILE_TOOL_NAMES, getPiShellToolName(platform)]
 }
 
+export function isShellToolName(toolName: string): boolean {
+  return toolName === 'lexora_shell' || isPiShellToolName(toolName)
+}
+
 export function isPiShellToolName(toolName: string): toolName is PiShellToolName {
   return (PI_SHELL_TOOL_NAMES as readonly string[]).includes(toolName)
 }

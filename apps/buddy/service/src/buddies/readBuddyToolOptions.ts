@@ -1,11 +1,13 @@
 import type { BuddyToolOption } from '../../../shared/buddies/buddyApi'
 import type { BuddyCapabilityFactory } from '../agent/extensions/BuddyCapability'
+import type { ExtensionShellRegistry } from '../sandbox/ShellSelection'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { toolCatalogId, toolCatalogPolicies } from '../agent/extensions/discovery/toolCatalog'
 import { getActivePiBuiltinToolNames } from '../agent/extensions/piBuiltinTools'
+import { SHELL_COMMAND_DISCLOSURE } from '../sandbox/ShellSelection'
 
-export async function readBuddyToolOptions(createCapabilities: BuddyCapabilityFactory, cwd: string, signal?: AbortSignal): Promise<BuddyToolOption[]> {
+export async function readBuddyToolOptions(createCapabilities: BuddyCapabilityFactory, cwd: string, signal?: AbortSignal, shells?: Pick<ExtensionShellRegistry, 'snapshot'>): Promise<BuddyToolOption[]> {
   const lifetime = new AbortController()
   const capabilities = await createCapabilities({
     conversationId: `catalog-${randomUUID()}`,
@@ -21,7 +23,9 @@ export async function readBuddyToolOptions(createCapabilities: BuddyCapabilityFa
   const failures: unknown[] = []
   try {
     signal?.throwIfAborted()
-    const options = toolCatalogPolicies(getActivePiBuiltinToolNames(process.platform), capabilities.flatMap(capability => capability.disclosure ?? []))
+    const snapshot = await shells?.snapshot(signal)
+    const policies = [...capabilities.flatMap(capability => capability.disclosure ?? []), ...snapshot?.enabled ? [SHELL_COMMAND_DISCLOSURE] : []]
+    const options = toolCatalogPolicies(getActivePiBuiltinToolNames(process.platform), policies)
       .flatMap(policy => policy.tools.map(tool => ({
         id: toolCatalogId(policy.source, tool),
         name: tool.name,

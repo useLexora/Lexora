@@ -6,6 +6,8 @@ import type { ExtensionConditionState } from '../../shared/extensions/extensionC
 import type { ExtensionDiagnostic, ExtensionHostFailure } from '../../shared/extensions/extensionDiagnostic'
 import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
+import type { ExtensionShellDescriptor } from '../../shared/extensions/extensionShell'
+import type { ShellCandidate, ShellCandidateId } from '../../shared/shell/shellProgram'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
@@ -35,6 +37,7 @@ import { themeRequestSchema, themeTransportSchema } from '../../shared/theme/the
 import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
+import { detectShellPrograms } from '../process/shellPrograms'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
 import { ExtensionConditionInvalidatedError } from './ExtensionConditionEvaluator'
 import { ExtensionConditions } from './ExtensionConditions'
@@ -60,12 +63,14 @@ export interface ExtensionServicePorts {
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   changed?: () => void
   agentChanged?: () => void
+  shellsChanged?: () => void
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
   notify?: (id: string, notification: { title: string, body: string }) => boolean
   compile?: ExtensionCompiler
   selectResources?: (name: string, selection: ExtensionResourceSelection & { directory?: boolean }, signal: AbortSignal) => Promise<string[]>
   selectSavePath?: (name: string, suggestedName: string, signal: AbortSignal) => Promise<string | null>
+  selectShellExecutable?: (name: string) => Promise<string | null>
 }
 interface RunningExtension {
   package: ExtensionPackage
@@ -116,6 +121,8 @@ export class ExtensionService {
   readonly #viewRequests = new Set<Promise<JsonValue>>()
   readonly #viewCleanups = new Set<Promise<void>>()
   #viewCleanupError: Error | undefined
+  readonly #shellDetections = new Map<string, { fingerprint: string, abort: AbortController, promise: Promise<ShellCandidate[]>, settled: boolean, completedAt: number }>()
+  #shellFingerprint = '[]'
   #agentDescriptors: ExtensionAgentDescriptor[] = []
   #agentFingerprint = ''
   #agentRefreshing = Promise.resolve()
@@ -124,6 +131,7 @@ export class ExtensionService {
   #mutating = Promise.resolve()
   #compiling = Promise.resolve()
   #disposed = false
+  #maintenance = false
   #disposal: Promise<void> | undefined
   #epoch = 0
 
@@ -147,6 +155,12 @@ export class ExtensionService {
       workbench: () => this.#panes.map(({ id, active, visible }) => ({ id, active, visible })),
     })
     this.onDidChange((change) => {
+      if (change.kind === 'package' || change.kind === 'enabled' || (change.kind === 'configuration' && change.application.status === 'committed'))
+        this.#refreshShellFingerprint()
+      if (change.kind === 'resources-revoked') {
+        this.#shellDetections.get(change.extensionId)?.abort.abort()
+        this.#shellDetections.delete(change.extensionId)
+      }
       ports.changed?.()
       if (change.kind === 'contributions' && !change.initial)
         ports.agentChanged?.()
@@ -201,6 +215,7 @@ export class ExtensionService {
       await this.installations.load()
       await this.scheduler.load()
       await this.#refreshAgentContributions(false)
+      this.#refreshShellFingerprint(false)
     }))
   }
 
@@ -357,6 +372,160 @@ export class ExtensionService {
     })
     this.#agentRefreshing = refresh
     return refresh
+  }
+
+  #refreshShellFingerprint(notify = true): void {
+    const fingerprint = JSON.stringify(Object.values(this.store.installed).filter(record => record.current.manifest.contributes.shells).map(({ current, enabled }) => {
+      let dependencies: unknown = null
+      try {
+        dependencies = this.#order(current.manifest.id).map(id => this.store.installed[id]!.current.revision)
+      }
+      catch {}
+      return [current.manifest.id, current.revision, enabled, dependencies, this.#configurationApplications.get(current.manifest.id)?.configurationRevision ?? '']
+    }).sort())
+    if (fingerprint === this.#shellFingerprint)
+      return
+    this.#shellFingerprint = fingerprint
+    for (const detection of this.#shellDetections.values())
+      detection.abort.abort()
+    this.#shellDetections.clear()
+    if (notify)
+      this.#ports.shellsChanged?.()
+  }
+
+  #shellAccess(id: string) {
+    if (this.#disposed || this.#maintenance)
+      throw new Error('EXTENSION_HOST_STOPPED')
+    const dependencies = this.#order(id)
+    const pkg = this.store.installed[id]!.current
+    if (!pkg.manifest.permissions.shells || !pkg.manifest.contributes.shells)
+      throw new Error('EXTENSION_PERMISSION_DENIED')
+    const epoch = this.#epoch
+    let invalidated: string | undefined
+    const dispose = this.onDidChange((change) => {
+      if (!('extensionId' in change) || !dependencies.includes(change.extensionId))
+        return
+      if (change.kind === 'configuration' && change.application.status === 'committed')
+        invalidated = 'EXTENSION_CONFIGURATION_UPDATE_STALE'
+      else if (change.kind === 'resources-revoked' || (change.kind === 'enabled' && !change.enabled) || (change.kind === 'package' && change.action !== 'installed'))
+        invalidated = 'EXTENSION_HOST_STOPPED'
+    })
+    const assertCurrent = () => {
+      if (invalidated)
+        throw new Error(invalidated)
+      if (this.#disposed || this.#maintenance || epoch !== this.#epoch || this.store.installed[id]?.current.revision !== pkg.revision)
+        throw new Error('EXTENSION_HOST_STOPPED')
+      this.#order(id)
+      if (!this.store.installed[id]!.current.manifest.permissions.shells)
+        throw new Error('EXTENSION_PERMISSION_DENIED')
+    }
+    return { pkg, assertCurrent, dispose: () => dispose.dispose() }
+  }
+
+  async detectShells(id: string): Promise<ShellCandidate[]> {
+    await this.initialize()
+    await this.#mutating
+    return (await this.#detectShells(id, true)).candidates
+  }
+
+  async selectShellExecutable(id: string, candidate: ShellCandidateId): Promise<string | null> {
+    await this.initialize()
+    await this.#mutating
+    const access = this.#shellAccess(id)
+    try {
+      if (!access.pkg.manifest.contributes.shells!.candidates.some(item => item.id === candidate))
+        throw new Error('EXTENSION_INVALID_ARGUMENT')
+      if (!this.#ports.selectShellExecutable)
+        throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
+      const selected = await this.#ports.selectShellExecutable(access.pkg.manifest.name)
+      await this.#mutating
+      access.assertCurrent()
+      return selected
+    }
+    finally { access.dispose() }
+  }
+
+  async #detectShells(id: string, refresh = false): Promise<{ candidates: ShellCandidate[], configuration: ExtensionConfiguration, configurationRevision: string }> {
+    const access = this.#shellAccess(id)
+    try {
+      return await this.#readShellDetection(id, refresh, access)
+    }
+    finally { access.dispose() }
+  }
+
+  async #readShellDetection(id: string, refresh: boolean, access: { pkg: ExtensionPackage, assertCurrent: () => void }): Promise<{ candidates: ShellCandidate[], configuration: ExtensionConfiguration, configurationRevision: string }> {
+    const { manifest, revision } = access.pkg
+    const shells = manifest.contributes.shells!
+    const configuration = await this.store.configuration(id)
+    access.assertCurrent()
+    const configurationRevision = sha256(JSON.stringify(configuration))
+    const fingerprint = `${revision}:${configurationRevision}`
+    let detection = this.#shellDetections.get(id)
+    if (!detection || detection.fingerprint !== fingerprint || (refresh && detection.settled && Date.now() - detection.completedAt >= 1000)) {
+      const previous = detection
+      previous?.abort.abort()
+      const configured: Partial<Record<ShellCandidateId, string>> = {}
+      for (const candidate of shells.candidates) {
+        const executable = configuration[candidate.executable]
+        if (typeof executable === 'string' && executable.trim())
+          configured[candidate.id] = executable.trim()
+      }
+      const abort = new AbortController()
+      const next = { fingerprint, abort, settled: false, completedAt: 0, promise: Promise.resolve([] as ShellCandidate[]) }
+      next.promise = detectShellPrograms({ configured, signal: abort.signal }).then((candidates) => {
+        abort.signal.throwIfAborted()
+        const filtered = candidates.filter(candidate => shells.candidates.some(item => item.id === candidate.id))
+        if (refresh && previous) {
+          void previous.promise.then((value) => {
+            if (JSON.stringify(value) !== JSON.stringify(filtered))
+              this.#ports.shellsChanged?.()
+          }).catch(() => {})
+        }
+        return filtered
+      }).finally(() => {
+        next.settled = true
+        next.completedAt = Date.now()
+      })
+      this.#shellDetections.set(id, next)
+      detection = next
+    }
+    try {
+      const candidates = await detection.promise
+      detection.abort.signal.throwIfAborted()
+      if (this.store.installed[id]?.current.revision !== revision || !this.store.installed[id]?.enabled)
+        throw new Error('EXTENSION_HOST_STOPPED')
+      if (sha256(JSON.stringify(await this.store.configuration(id))) !== configurationRevision)
+        throw new Error('EXTENSION_CONFIGURATION_UPDATE_STALE')
+      access.assertCurrent()
+      return { candidates: structuredClone(candidates), configuration, configurationRevision }
+    }
+    catch (error) {
+      if (this.#shellDetections.get(id) === detection)
+        this.#shellDetections.delete(id)
+      throw error
+    }
+  }
+
+  async shellContributions(): Promise<ExtensionShellDescriptor[]> {
+    await this.initialize()
+    await this.#mutating
+    if (this.#disposed || this.#maintenance)
+      return []
+    const descriptors = await Promise.all(Object.values(this.store.installed).filter(record => record.enabled && record.current.manifest.contributes.shells).map(async ({ current }) => {
+      try {
+        const { candidates, configuration, configurationRevision } = await this.#detectShells(current.manifest.id)
+        const enabled = current.manifest.contributes.shells!.candidates.filter(candidate => configuration[candidate.enabled] === true)
+        return {
+          extensionId: current.manifest.id,
+          revision: current.revision,
+          configurationRevision,
+          candidates: candidates.filter(candidate => enabled.some(item => item.id === candidate.id)),
+          preferred: enabled.filter(candidate => Number(configuration[candidate.priority]) > 0).sort((a, b) => Number(configuration[a.priority]) - Number(configuration[b.priority])).map(candidate => candidate.id),
+        }
+      }
+      catch { return null }
+    }))
+    return descriptors.filter((descriptor): descriptor is ExtensionShellDescriptor => descriptor !== null)
   }
 
   async invokeAgent(input: ExtensionAgentInvocation, signal: AbortSignal): Promise<JsonValue> {
@@ -1003,13 +1172,17 @@ export class ExtensionService {
     if (this.#disposal)
       return this.#disposal
     this.#disposed = true
+    const detecting = [...this.#shellDetections.values()].map(detection => detection.promise)
+    for (const detection of this.#shellDetections.values())
+      detection.abort.abort()
+    this.#shellDetections.clear()
     this.#disposal = Promise.resolve().then(async () => {
       this.conditions.dispose()
       this.scheduler.dispose()
       this.catalog.dispose()
       const stopping = this.resetHosts()
       try {
-        const results = await Promise.allSettled([stopping, this.#mutating, this.#compiling, ...this.#viewRequests])
+        const results = await Promise.allSettled([stopping, this.#mutating, this.#compiling, ...this.#viewRequests, ...detecting])
         while (this.#stopping.size)
           await Promise.allSettled([...this.#stopping])
         await Promise.all([...this.#retired].map(running => running.inFlight ? new Promise<void>(resolve => running.drained.add(resolve)) : Promise.resolve()))
@@ -1033,11 +1206,46 @@ export class ExtensionService {
     await Promise.all([...this.#running.keys()].map(id => this.#stop(id)))
   }
 
+  async withStoppedStorage<T>(operation: () => Promise<T>): Promise<T> {
+    await this.initialize()
+    if (this.#disposed || this.#maintenance)
+      throw new Error('EXTENSION_STORAGE_BUSY')
+    this.#maintenance = true
+    const detecting = [...this.#shellDetections.values()].map(detection => detection.promise)
+    for (const detection of this.#shellDetections.values())
+      detection.abort.abort()
+    this.#shellDetections.clear()
+    await Promise.allSettled(detecting)
+    const active = [...this.#running.keys()]
+    this.scheduler.suspend()
+    try {
+      await this.installations.dispose()
+      await Promise.all([this.#mutating, this.#compiling])
+      await this.resetHosts()
+      while (this.#stopping.size)
+        await Promise.all([...this.#stopping])
+      await Promise.all([...this.#retired].map(running => running.inFlight ? new Promise<void>(resolve => running.drained.add(resolve)) : Promise.resolve()))
+      await Promise.allSettled([...this.#viewRequests])
+      await Promise.all([...this.#viewCleanups])
+      if (this.#viewCleanupError)
+        throw this.#viewCleanupError
+      await this.scheduler.drain()
+      return await operation()
+    }
+    finally {
+      this.#maintenance = false
+      if (!this.#disposed) {
+        await this.scheduler.resume()
+        await Promise.allSettled(active.map(id => this.#activate(id)))
+      }
+    }
+  }
+
   async #activate(id: string): Promise<RunningExtension> {
     const epoch = this.#epoch
     await this.initialize()
     await this.#mutating
-    if (this.#disposed || epoch !== this.#epoch)
+    if (this.#disposed || this.#maintenance || epoch !== this.#epoch)
       throw new Error('EXTENSION_HOST_STOPPED')
     for (const dependency of this.#order(id)) {
       if (this.#diagnostics.get(dependency)?.error)
@@ -1099,7 +1307,7 @@ export class ExtensionService {
   #assertCurrent(running: RunningExtension): void {
     const id = running.package.manifest.id
     const installed = this.store.installed[id]
-    if (this.#disposed || running.abort.signal.aborted || this.#running.get(id) !== running || !installed?.enabled || installed.current.revision !== running.package.revision)
+    if (this.#disposed || this.#maintenance || running.abort.signal.aborted || this.#running.get(id) !== running || !installed?.enabled || installed.current.revision !== running.package.revision)
       throw new Error('EXTENSION_HOST_STOPPED')
   }
 
@@ -1158,6 +1366,11 @@ export class ExtensionService {
       }
       else if (method === 'themes.request') {
         result = await this.#themeRequest(running, `${id}:${running.generation}`, params, () => this.#assertCurrent(running))
+      }
+      else if (method === 'shells.detect') {
+        z.null().parse(params)
+        const detected = await this.#detectShells(id, true)
+        result = detected.candidates.map(candidate => ({ ...candidate }))
       }
       else if (method === 'configuration.get') {
         result = await this.store.configuration(id)
@@ -1558,7 +1771,7 @@ export class ExtensionService {
   #mutate(operation: () => Promise<void>): Promise<void> {
     const task = this.#mutating.catch(() => {}).then(async () => {
       await this.initialize()
-      if (this.#disposed)
+      if (this.#disposed || this.#maintenance)
         throw new Error('EXTENSION_HOST_STOPPED')
       try {
         await operation()

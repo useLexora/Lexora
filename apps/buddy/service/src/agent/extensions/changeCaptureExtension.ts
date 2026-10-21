@@ -11,7 +11,7 @@ import { dirname } from 'node:path'
 import { containsCanonicalPath } from '../../../../platform/filesystem/filePaths'
 import { resolveFilePath } from '../../../../platform/filesystem/resolveFilePath'
 import { isToolClassificationFailure } from '../../approvals/toolClassification'
-import { isPiShellToolName } from './piBuiltinTools'
+import { isShellToolName } from './piBuiltinTools'
 
 export type BuddyToolWrapper = <Parameters extends TSchema, Details>(tool: ToolDefinition<Parameters, Details>) => ToolDefinition<Parameters, Details>
 
@@ -210,9 +210,9 @@ function defaultMutationEffect(event: ToolCallEvent, classification: BuddyToolCl
       throw new Error('VALIDATION_FAILED')
     return { kind: 'paths', paths: [{ path, mode: event.toolName === 'edit' ? 'existing' : 'create' }] }
   }
-  if (event.toolName === 'lexora_host_shell' || (isPiShellToolName(event.toolName) && permit.executionProfile === 'full_access'))
+  if (event.toolName === 'lexora_host_shell' || (isShellToolName(event.toolName) && permit.executionProfile === 'full_access'))
     return { kind: 'host', ownedProcess: true }
-  if (isPiShellToolName(event.toolName))
+  if (isShellToolName(event.toolName))
     return { kind: 'workspace', ownedProcess: true }
   if (event.toolName.startsWith('mcp__'))
     return { kind: 'host' }

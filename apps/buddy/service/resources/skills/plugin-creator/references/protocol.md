@@ -37,6 +37,7 @@
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
 | `agent` | API 3；指令、工具、任务动作和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
 | `settings` | API 3；声明 modules/groups/items，由宿主渲染并保存，见 [Agent 与设置](agent-settings.md) |
+| `shells` | API 4；固定本机解释器候选与原生设置映射；可选 settingsGroup 将插件自有组渲染为一行一个 Shell 的原生表格，文件选择仅限原生设置，需独立 shells 权限，见 [命令解释器](shells.md) |
 
 插件 ID 使用小写字母开头的两段名称，中间以 `.` 分隔，每段可含小写字母、数字与 `-`；贡献 ID 在插件 ID 后追加由小写字母、数字、`.`、`-` 组成的后缀。声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
 

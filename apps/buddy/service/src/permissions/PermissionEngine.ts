@@ -39,6 +39,7 @@ const BUILTIN_TOOL_ACCESS: Record<string, AccessKind> = {
   find: 'read',
   grep: 'read',
   lexora_host_shell: 'execute',
+  lexora_shell: 'execute',
   ls: 'read',
   powershell: 'execute',
   read: 'read',
@@ -177,7 +178,11 @@ export class PermissionEngine {
   }
 
   async #classifyShell(request: PermissionRequest): Promise<ToolDecision | undefined> {
-    const toolName = request.toolName === 'lexora_host_shell' ? this.#hostShellToolName : request.toolName as ShellToolName
+    if (request.shellDialect && request.shellDialect !== 'bash' && request.shellDialect !== 'powershell') {
+      readStringProperty(request.arguments, 'command')
+      return { type: 'ask', forceAsk: true, kind: 'shell', reason: 'unsupported-syntax', summary: 'Review a host command in this Shell dialect' }
+    }
+    const toolName = request.shellDialect ?? (request.toolName === 'lexora_host_shell' ? this.#hostShellToolName : request.toolName as ShellToolName)
     const policy = this.#shellPolicies[toolName]
     if (!policy)
       return undefined
@@ -379,7 +384,7 @@ function applyApprovalPolicy(
   return ask({
     kind: request.approval?.kind ?? approvalKindFor(access),
     paths: toDecisionPaths(classifications),
-    ...(['bash', 'powershell', 'lexora_host_shell'].includes(request.toolName)
+    ...(['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'].includes(request.toolName)
       && access === 'execute'
       ? { shell: { cwd: request.cwd, reason: 'manual-policy' as const, boundary: request.shellBoundary ?? 'host' as const } }
       : {}),

@@ -30,7 +30,7 @@ describe('extension package contract', () => {
   })
   it('rejects foreign contribution ownership, duplicate IDs, and unsupported API versions', () => {
     const value = manifest()
-    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 4 }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 5 }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [{ id: 'another.reader.open', title: 'Open' }] } }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [value.contributes.commands[0], value.contributes.commands[0]] } }).success).toBe(false)
   })
@@ -131,7 +131,7 @@ describe('extension package contract', () => {
     const path = join(store.root, 'installed.json')
     const index = JSON.parse(await readFile(path, 'utf8'))
     const future = structuredClone(index.installed[review.manifest.id])
-    future.current.manifest = { ...future.current.manifest, id: 'tests.future', apiVersion: 4, engines: { lexora: '*' }, contributes: { futureCapability: {} } }
+    future.current.manifest = { ...future.current.manifest, id: 'tests.future', apiVersion: 5, engines: { lexora: '*' }, contributes: { futureCapability: {} } }
     index.installed['tests.future'] = future
     await writeFile(path, JSON.stringify(index))
     const candidate = new ExtensionPackageStore(store.root, store.appVersion)
@@ -149,7 +149,7 @@ describe('extension package contract', () => {
     const path = join(store.root, 'installed.json')
     const index = JSON.parse(await readFile(path, 'utf8'))
     const record = index.installed[review.manifest.id]
-    const pending = { ...structuredClone(record.current), manifest: { ...record.current.manifest, apiVersion: 4, version: '2.0.0', engines: { lexora: '*' }, contributes: { futureCapability: {} } } }
+    const pending = { ...structuredClone(record.current), manifest: { ...record.current.manifest, apiVersion: 5, version: '2.0.0', engines: { lexora: '*' }, contributes: { futureCapability: {} } } }
     record.pending = pending
     await writeFile(path, JSON.stringify(index))
     const candidate = new ExtensionPackageStore(store.root, store.appVersion)

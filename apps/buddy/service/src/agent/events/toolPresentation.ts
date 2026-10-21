@@ -29,7 +29,7 @@ import { createPetToolPresentation } from '../../pet/petToolContract'
 import { createSystemToolPresentation } from '../../system/systemToolContract'
 import { createWebToolPresentation } from '../../web/webToolPresentation'
 import { TOOL_SEARCH_NAME } from '../extensions/discovery/toolDiscoveryContract'
-import { isPiShellToolName } from '../extensions/piBuiltinTools'
+import { isShellToolName } from '../extensions/piBuiltinTools'
 
 export type { CreateBuddyToolPresentationInput } from '../../events/toolPresentationSupport'
 
@@ -67,7 +67,7 @@ function createPiToolPresentation(
   const preview = boundedToolPreview(output)
   const description = readOptionalString(arguments_, 'description')
 
-  if (isPiShellToolName(input.toolName) || input.toolName === 'lexora_host_shell') {
+  if (isShellToolName(input.toolName) || input.toolName === 'lexora_host_shell') {
     return {
       card: 'terminal',
       command: redactShellCommand(readString(arguments_, 'command')),

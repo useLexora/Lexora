@@ -1,3 +1,4 @@
+import type { ShellDialect } from '../../shared/shell/shellProgram'
 import { userInfo } from 'node:os'
 import { delimiter, join, win32 } from 'node:path'
 import process from 'node:process'
@@ -6,7 +7,7 @@ import { createToolchainEnvironment } from './toolchainEnvironment'
 
 export const SANDBOX_LOOPBACK_NO_PROXY = 'localhost,127.0.0.1,::1'
 
-export function createWindowsSandboxEnvironment(source: NodeJS.ProcessEnv, options: { shell: string, systemRoot: string, privateRoot: string, path: string, proxyUrl?: string }): Record<string, string> {
+export function createWindowsSandboxEnvironment(source: NodeJS.ProcessEnv, options: { shell: string, dialect?: ShellDialect, systemRoot: string, privateRoot: string, path: string, proxyUrl?: string }): Record<string, string> {
   return {
     ...createSandboxEnvironment(source, options.privateRoot, OPERATING_SYSTEM.Windows),
     SystemRoot: options.systemRoot,
@@ -14,8 +15,7 @@ export function createWindowsSandboxEnvironment(source: NodeJS.ProcessEnv, optio
     ComSpec: win32.join(options.systemRoot, 'System32', 'cmd.exe'),
     PATHEXT: '.COM;.EXE;.BAT;.CMD',
     PATH: options.path,
-    PSModulePath: win32.join(win32.dirname(options.shell), 'Modules'),
-    POWERSHELL_TELEMETRY_OPTOUT: '1',
+    ...(!options.dialect || options.dialect === 'powershell' ? { PSModulePath: win32.join(win32.dirname(options.shell), 'Modules'), POWERSHELL_TELEMETRY_OPTOUT: '1' } : {}),
     ...(options.proxyUrl ? { HTTP_PROXY: options.proxyUrl, HTTPS_PROXY: options.proxyUrl, ALL_PROXY: options.proxyUrl, NO_PROXY: SANDBOX_LOOPBACK_NO_PROXY, NODE_USE_ENV_PROXY: '1' } : {}),
   }
 }

@@ -82,6 +82,7 @@ export interface PermissionRequest {
   forceAsk?: boolean
   requireApproval?: boolean
   shellBoundary?: 'sandbox'
+  shellDialect?: import('../../../shared/shell/shellProgram').ShellDialect
   grants: readonly PermissionGrant[]
   sandboxDirectories?: readonly SandboxDirectoryGrant[]
   owner: GrantOwner

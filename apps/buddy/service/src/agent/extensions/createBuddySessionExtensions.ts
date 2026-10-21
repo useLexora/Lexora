@@ -16,6 +16,7 @@ import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
+import type { ExtensionShellRegistry } from '../../sandbox/ShellSelection'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
 import type { ExecutionDelegationService } from '../execution/ExecutionDelegationService'
 import type { BuddyCapability, BuddyCapabilityFactory, BuddyCapabilityResourceRevision } from './BuddyCapability'
@@ -60,6 +61,7 @@ export interface BuddySessionExtensionServices {
   recordPermissions?: ApplicationDiagnosticReporter
   resolveToolExposure?: BuddyToolExposureResolver
   shellSandbox?: Pick<ShellSandboxClient, 'exec'>
+  shells?: Pick<ExtensionShellRegistry, 'snapshot'>
 }
 
 export interface CreateBuddySessionExtensionsOptions {
@@ -190,7 +192,9 @@ export async function createBuddySessionExtensions(
       sessionMode: options.sessionMode,
       signal: lifetime.signal,
     }))
+    const shells = await services.shells?.snapshot(lifetime.signal)
     capabilities.push(createShellCapability({
+      shells,
       cwd: options.canonicalRoot,
       execution: resolveShellExecution(getExecutionProfile()),
       getExecution: () => resolveShellExecution(getExecutionProfile()),

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { SandboxManager } from '@anthropic-ai/sandbox-runtime'
 import { SANDBOX_LOOPBACK_NO_PROXY } from '../../../../../platform/process/sandboxEnvironment'
+import { buildShellInvocation } from '../../../../../platform/process/shellPrograms'
 import { runSupervisedShellProcess } from '../../../../../platform/process/supervisedShellProcess'
 import { createSandboxPolicy } from './createPolicy'
 
@@ -39,8 +40,9 @@ export async function runSrtSandbox(input: SrtSandboxInput, options: SandboxExec
     const { config, path } = await createSandboxPolicy(input, options.signal)
     const noProxy = process.platform === 'linux' ? SANDBOX_LOOPBACK_NO_PROXY : ''
     await SandboxManager.initialize(config, ({ host, port }) => options.approveNetwork({ host, port: port ?? 443 }), false)
+    const invocation = buildShellInvocation(input.shell ?? { dialect: 'bash', executable: '/bin/bash' }, input.command)
     const launch = await SandboxManager.wrapWithSandboxArgv(
-      `export TMPDIR=${quote(process.env.TMPDIR!)} NO_PROXY=${quote(noProxy)} no_proxy=${quote(noProxy)}; exec /bin/bash --noprofile --norc -c ${quote(input.command)}`,
+      `export TMPDIR=${quote(process.env.TMPDIR!)} NO_PROXY=${quote(noProxy)} no_proxy=${quote(noProxy)}; exec ${[invocation.shell, ...invocation.args, invocation.command].map(quote).join(' ')}`,
       '/bin/bash',
       undefined,
       options.signal,

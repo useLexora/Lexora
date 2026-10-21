@@ -67,6 +67,8 @@ export class ExtensionScheduler {
     clearTimeout(this.#timer)
   }
 
+  async drain(): Promise<void> { await this.#tail }
+
   async resume(): Promise<void> {
     this.#suspended = false
     const now = this.#now()

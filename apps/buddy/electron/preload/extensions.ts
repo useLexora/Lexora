@@ -10,6 +10,8 @@ export function createExtensionApi(): ExtensionApi {
     invokeTaskAction: input => request({ action: 'invokeTaskAction', input }),
     list: () => request({ action: 'list' }),
     unavailable: () => request({ action: 'unavailable' }),
+    detectShells: id => request({ action: 'detectShells', id }),
+    selectShellExecutable: (id, candidate) => request({ action: 'selectShellExecutable', id, candidate }),
     configuration: id => request({ action: 'configuration', id }),
     configurationSnapshot: id => request({ action: 'configurationSnapshot', id }),
     settingConditions: (id, items, form) => request({ action: 'settingConditions', id, items, form }),

@@ -37,11 +37,12 @@ export function registerExtensionIpc(options: {
   notificationsEnabled?: () => boolean
   taskActions: () => Promise<ExtensionTaskAction[]>
   invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
+  shellsChanged?: () => void
   agentChanged?: (catalog: ExtensionAgentCatalog) => void
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { shells: { list: ExtensionService['shellContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
@@ -64,6 +65,7 @@ export function registerExtensionIpc(options: {
       event.preventDefault()
   }
   const service = new ExtensionService(store, {
+    shellsChanged: options.shellsChanged,
     themes: options.themes,
     createHost: (pkg, broker, failed) => {
       const host = new SandboxedExtensionHost(pkg, protocol, broker, failed)
@@ -95,6 +97,19 @@ export function registerExtensionIpc(options: {
         })
         signal.throwIfAborted()
         return result.canceled ? [] : result.filePaths
+      }
+      finally { resourcePickerOpen = false }
+    },
+    selectShellExecutable: async (name) => {
+      const owner = window()
+      if (!owner || owner.isDestroyed() || !owner.isVisible() || owner.isMinimized() || resourcePickerOpen)
+        throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
+      resourcePickerOpen = true
+      try {
+        const result = await dialog.showOpenDialog(owner, { title: name, properties: ['openFile'] })
+        if (owner.isDestroyed() || window() !== owner)
+          throw new Error('EXTENSION_WINDOW_UNAVAILABLE')
+        return result.canceled ? null : result.filePaths[0] ?? null
       }
       finally { resourcePickerOpen = false }
     },
@@ -230,6 +245,8 @@ export function registerExtensionIpc(options: {
         case 'invokeTaskAction': return await options.invokeTaskAction(input.input)
         case 'list': return await service.list()
         case 'unavailable': return store.unavailable
+        case 'detectShells': return await service.detectShells(input.id)
+        case 'selectShellExecutable': return await service.selectShellExecutable(input.id, input.candidate)
         case 'configuration': return await service.configuration(input.id)
         case 'configurationSnapshot': return await service.configurationSnapshot(input.id)
         case 'settingConditions': return await service.conditions.settings(input.id, input.items, input.form)
@@ -318,7 +335,12 @@ export function registerExtensionIpc(options: {
       owner.webContents.send(EXTENSION_IPC.conditionsChanged, event)
   }))
   return {
+    shells: { list: async () => {
+      await prepared
+      return service.shellContributions()
+    } },
     themesReady,
+    withStoppedStorage: operation => prepared.then(() => service.withStoppedStorage(operation)),
     conditions: service.conditions,
     dispose,
     agent: {

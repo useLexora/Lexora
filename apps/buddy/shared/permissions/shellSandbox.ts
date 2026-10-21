@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { SHELL_SANDBOX_BACKEND } from '../platform/identifiers'
+import { shellProgramSchema } from '../shell/shellProgram'
 
 const pathSchema = z.string().min(1).max(4_096).refine(path => /^(?:\/|[a-z]:\\)/i.test(path) && !path.includes('\0'))
 
@@ -41,6 +42,7 @@ export type SandboxDirectoryGrant = z.infer<typeof sandboxDirectoryGrantSchema>
 
 export const sandboxCommandSchema = z.object({
   command: z.string().min(1).max(1024 * 1024),
+  shell: shellProgramSchema.optional(),
   cwd: pathSchema,
   readOnly: z.boolean(),
   roots: z.array(pathSchema).min(1).max(128),

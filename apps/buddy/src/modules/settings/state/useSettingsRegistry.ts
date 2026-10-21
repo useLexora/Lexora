@@ -24,13 +24,13 @@ export function useSettingsRegistry(installed: Readonly<Ref<ExtensionStatus[]>>)
       }
     }
     for (const plugin of active) {
-      const { id, contributes: { settings } } = plugin.manifest
-      const fingerprint = JSON.stringify([plugin.revision, settings])
+      const { id, contributes: { settings, shells } } = plugin.manifest
+      const fingerprint = JSON.stringify([plugin.revision, settings, shells])
       if (registrations.get(id)?.fingerprint === fingerprint)
         continue
       const dispose = registry.register(id, {
         modules: settings.modules.map(module => ({ ...module, section: 'plugins', requiresRuntime: false })),
-        groups: settings.groups,
+        groups: settings.groups.map(group => ({ ...group, ...(shells?.settingsGroup === group.id ? { shells: { extensionId: id, revision: plugin.revision, candidates: shells.candidates } } : {}) })),
         items: settings.items.map(item => ({ id: item.id, group: item.group, order: item.order, kind: 'plugin', field: { extensionId: id, revision: plugin.revision, item } })),
       })
       registrations.set(id, { fingerprint, dispose })

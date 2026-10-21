@@ -118,6 +118,7 @@ bridge.subscribe(async ({ id, method, params }) => {
           agentActions.set(id, callback)
           return disposable(() => agentActions.delete(id))
         } },
+        shells: Object.freeze({ detect: () => request('shells.detect') }),
         network: createExtensionNetworkClient(request),
         notifications: { show: notification => request('notifications.show', notification) },
         schedules: {

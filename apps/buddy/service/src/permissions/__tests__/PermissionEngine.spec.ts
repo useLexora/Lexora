@@ -17,6 +17,29 @@ afterEach(async () => {
 })
 
 describe('permissionEngine', () => {
+  it('uses trusted selected dialect metadata and never applies Bash safety rules to CMD or Zsh host execution', async () => {
+    const fixture = await createFixture()
+    const engine = createEngine(fixture.home)
+    for (const shellDialect of ['cmd', 'zsh', 'sh'] as const) {
+      const input = request(fixture, {
+        toolName: 'lexora_shell',
+        arguments: { command: 'echo harmless' },
+        profile: 'full_access',
+        shellDialect,
+      })
+      await expect(engine.decide(input)).resolves.toMatchObject({ type: 'ask', shell: { reason: 'unsupported-syntax' } })
+      await expect(engine.decide({ ...input, profile: 'workspace_write', shellBoundary: 'sandbox' })).resolves.toEqual({ type: 'allow' })
+      await expect(engine.decide({ ...input, approvalAvailable: false })).resolves.toMatchObject({ type: 'deny', code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' })
+    }
+    await expect(engine.decide(request(fixture, {
+      toolName: 'lexora_shell',
+      arguments: { command: 'Write-Output hello' },
+      profile: 'full_access',
+      shellDialect: 'powershell',
+      approvalPolicy: 'manual',
+    }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'manual-policy', boundary: 'host' } })
+  })
+
   it('allows verified Git queries across profiles and backgrounds, while preserving manual approval', async () => {
     const fixture = await createGitFixture()
     const engine = createEngine(fixture.home)

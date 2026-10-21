@@ -28,6 +28,7 @@ import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/
 import { executionsChanged } from '../../shared/executions/executionPresentationApi'
 import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
+import { extensionShellRpc } from '../../shared/extensions/extensionShell'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
 import { webSettingsChanged } from '../../shared/network/webApi'
@@ -148,13 +149,14 @@ import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
-
 import { registerRunRpc } from './runs/registerRunRpc'
+
 import { RunContinuityService } from './runs/RunContinuityService'
 import { RunLifecycleService } from './runs/RunLifecycleService'
 import { RunRecoveryService } from './runs/RunRecoveryService'
 import { observeSandboxClient } from './sandbox/observeSandboxClient'
 import { ShellSandboxClient } from './sandbox/ShellSandboxClient'
+import { ExtensionShellRegistry } from './sandbox/ShellSelection'
 import { observeSkillDiagnostics, observeSkillNotifications } from './skills/observeSkillEvents'
 import {
   registerSkillServiceRpc,
@@ -613,6 +615,8 @@ export async function startBuddyService(
         }
       })
       defer(options.rpc.onNotification((method) => {
+        if (method === extensionShellRpc.changed)
+          void sessions.invalidateAll().catch(() => record({ event: 'shells.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
         if (method === extensionAgentRpc.changed)
           void sessions.invalidateMode('interactive').catch(() => record({ event: 'plugins.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
       }))
@@ -872,6 +876,7 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
+      shells: new ExtensionShellRegistry(options.rpc),
       networkPermissions: new NetworkPermissionsClient(options.rpc),
       fileResources,
       delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
@@ -1021,7 +1026,7 @@ export async function startBuddyService(
     })
     delegation = new ExecutionDelegationService({
       readResult: runId => readExecutionResult(options.eventLog, runId),
-      readToolOptions: signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal),
+      readToolOptions: signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal, sessionExtensionServices.shells),
       actorTargets: (rootRunId) => {
         const run = runs.findById(rootRunId)
         const content = run ? buddyUserMessageContentV1Schema.safeParse(conversationHistory.repository.findMessageById(run.triggeringMessageId)?.content) : null
@@ -1513,7 +1518,7 @@ export async function startBuddyService(
           service: contextUsageService,
         }),
       )
-      register(registerBuddiesRpc(options.rpc, buddies, signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal)))
+      register(registerBuddiesRpc(options.rpc, buddies, signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal, sessionExtensionServices.shells)))
       register(registerTaskMarkRpc(options.rpc, taskMarks, taskAttention))
       register(registerConversationTreeRpc({
         database: options.database,

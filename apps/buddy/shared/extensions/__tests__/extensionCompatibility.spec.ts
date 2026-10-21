@@ -6,7 +6,8 @@ it.each([
   ['>=0.11.0 <1.0.0', 3, 1, 'app-too-old', true],
   ['<0.10.0', 3, 1, 'app-too-new', false],
   ['<0.10.0 || >=0.11.0', 3, 1, 'app-version-unsupported', false],
-  ['*', 4, 1, 'api-unsupported', true],
+  ['*', 5, 1, 'api-unsupported', true],
+  ['*', 4, 1, null, false],
   ['*', 3, 2, 'format-unsupported', true],
   ['*', 3, 1, null, false],
 ] as const)('classifies range %s, API %i and format %i without suggesting an upgrade for other causes', (range, apiVersion, schemaVersion, reason, upgrade) => {

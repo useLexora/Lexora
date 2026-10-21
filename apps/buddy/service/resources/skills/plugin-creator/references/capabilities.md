@@ -4,6 +4,7 @@
 
 | 用户需要 | 清单与入口 | 状态和边界 |
 | --- | --- | --- |
+| 检测并选择已有本机命令解释器 | API 4；contributes.shells、permissions.shells、原生 settings，见 [命令解释器](shells.md) | 用户启用后供模型选择；宿主执行，插件只能 detect()，不能运行命令或写解释器路径 |
 | 由主模型主动调用插件、请求模型或修改任务标题 | API 3；contributes.agent 和 agent/models/tasks 权限，见 [Agent 与设置](agent-settings.md) | 工具入口绑定原任务与本轮模型，不导出凭据，不覆盖手动标题 |
 | 输入提交、对话成功完成或任务菜单点击后执行 | API 3；contributes.agent.actions，见 [任务动作事件](events.md#任务动作事件) 与 [Agent 与设置](agent-settings.md) | 独立调用绑定原任务；正文需要 taskMessages 权限，标题更新由宿主保护并发修改 |
 | 在原生设置页追加模块、分组或单项 | API 3；contributes.settings，见 [Agent 与设置](agent-settings.md) | 宿主保存配置并渲染控件；插件读取 configuration，不另存设置 |

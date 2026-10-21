@@ -4,11 +4,14 @@ import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/provi
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NButton, NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
 import { shallowRef, watch } from 'vue'
+import DesktopSettingCell from '../shared/DesktopSettingCell.vue'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopPluginModelSetting from './DesktopPluginModelSetting.vue'
 
 const props = defineProps<{
   item: ExtensionSettingItem
+  compact?: boolean
+  error?: string | null
   value: ExtensionSettingValue
   disabled: boolean
   saving?: boolean
@@ -36,7 +39,7 @@ function commit(value: ExtensionSettingValue) {
 </script>
 
 <template>
-  <DesktopSettingRow class="plugin-setting-field" :label="item.title" :description="item.description" :toggle="item.type === 'boolean'" :data-setting-id="item.id">
+  <component :is="compact ? DesktopSettingCell : DesktopSettingRow" class="plugin-setting-field" :label="item.title" :description="item.description" :error="error" :toggle="item.type === 'boolean'" :data-setting-id="item.id">
     <template #hint>
       <small v-if="invalid" class="text-[0.7rem] text-warning leading-[1.5]" role="status">
         {{ language === 'zh-CN' ? '原值已保留，但不符合当前版本的要求。请修改此项或恢复默认值。' : 'The saved value is preserved but is incompatible with this version. Change this field or restore its default.' }}
@@ -52,11 +55,13 @@ function commit(value: ExtensionSettingValue) {
       </small>
     </template>
     <template #default="{ labelId, controlAttrs }">
-      <NSwitch v-if="item.type === 'boolean'" :value="value === true" :round="false" :disabled="disabled" :aria-disabled="disabled" v-bind="controlAttrs" @update:value="emit('change', $event)" />
-      <DesktopPluginModelSetting v-else-if="item.type === 'model'" :value="value && typeof value === 'object' ? value : null" :models="models" :providers="providers" :language="language" :disabled="disabled" :label-id="labelId" :description-id="controlAttrs['aria-describedby']" @change="emit('change', $event)" />
-      <NSelect v-else-if="item.type === 'select'" :value="typeof value === 'string' ? value : null" :options="item.options" :disabled="disabled" v-bind="controlAttrs" @update:value="emit('change', $event)" />
-      <NInputNumber v-else-if="item.type === 'number'" :value="typeof draft === 'number' ? draft : null" :update-value-on-input="false" :min="item.min" :max="item.max" :disabled="disabled" v-bind="controlAttrs" @update:value="$event !== null && commit($event)" />
-      <NInput v-else :value="String(draft ?? '')" :maxlength="8192" :disabled="disabled" v-bind="controlAttrs" @update:value="draft = $event; emit('draft', $event)" @change="commit" @keydown.enter="!$event.isComposing && commit(String(draft ?? ''))" />
+      <slot name="control" :value="value" :disabled="disabled" :control-attrs="controlAttrs">
+        <NSwitch v-if="item.type === 'boolean'" :value="value === true" :round="false" :disabled="disabled" :aria-disabled="disabled" v-bind="controlAttrs" @update:value="emit('change', $event)" />
+        <DesktopPluginModelSetting v-else-if="item.type === 'model'" :value="value && typeof value === 'object' ? value : null" :models="models" :providers="providers" :language="language" :disabled="disabled" :label-id="labelId" :description-id="controlAttrs['aria-describedby']" @change="emit('change', $event)" />
+        <NSelect v-else-if="item.type === 'select'" :value="typeof value === 'string' ? value : null" :options="item.options" :disabled="disabled" v-bind="controlAttrs" @update:value="emit('change', $event)" />
+        <NInputNumber v-else-if="item.type === 'number'" :value="typeof draft === 'number' ? draft : null" :update-value-on-input="false" :min="item.min" :max="item.max" :disabled="disabled" v-bind="controlAttrs" @update:value="$event !== null && commit($event)" />
+        <NInput v-else :value="String(draft ?? '')" :maxlength="8192" :disabled="disabled" v-bind="controlAttrs" @update:value="draft = $event; emit('draft', $event)" @change="commit" @keydown.enter="!$event.isComposing && commit(String(draft ?? ''))" />
+      </slot>
     </template>
-  </DesktopSettingRow>
+  </component>
 </template>

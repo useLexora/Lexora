@@ -15,7 +15,7 @@ import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../../shared/conversation/b
 import { resolveShellExecution } from '../../sandbox/shellExecution'
 import { ExecutionAdmissionError, executionFence, hashChildAdmissionRequest } from '../../storage/executionRepository'
 import { getRoleToolDenial } from '../extensions/discovery/SessionToolScope'
-import { isPiShellToolName } from '../extensions/piBuiltinTools'
+import { isPiShellToolName, isShellToolName } from '../extensions/piBuiltinTools'
 import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
 import { readExecutionMailboxEntries } from './executionMailboxEntries'
 
@@ -205,8 +205,10 @@ export class ExecutionDelegationService {
       const readOnly = permissions.executionProfile === 'read_only' || source.fileAccessCeiling === 'read_only'
         || source.run.actorSnapshot?.settings.limits.fileAccess === 'read_only' || buddy.settings.limits.fileAccess === 'read_only'
       const executionProfile = readOnly ? 'read_only' : permissions.executionProfile
-      const tools = toolOptions.filter(tool => !getRoleToolDenial(tool.name, tool, selected, readOnly ? 'read_only' : 'inherit')
-        && (currentPlatform.hostShellSupervision || !isPiShellToolName(tool.name)))
+      const roleTools = toolOptions.filter(tool => !getRoleToolDenial(tool.name, tool, selected, readOnly ? 'read_only' : 'inherit')
+        && (currentPlatform.hostShellSupervision || !isShellToolName(tool.name)))
+      const unifiedShell = roleTools.some(tool => tool.name === 'lexora_shell')
+      const tools = unifiedShell ? roleTools.filter(tool => !isPiShellToolName(tool.name)) : roleTools
       const shell = resolveShellExecution(executionProfile)
       return {
         ...target,
@@ -214,7 +216,7 @@ export class ExecutionDelegationService {
         tools: tools.map(tool => tool.name),
         unavailableToolIds: [...selected ?? []].filter(id => !toolOptions.some(tool => tool.id === id)),
         executionProfile,
-        shell: tools.some(tool => tool.name === shell.dialect) ? { tool: shell.dialect, boundary: shell.boundary, readOnly: shell.readOnly } : null,
+        shell: unifiedShell || tools.some(tool => tool.name === shell.dialect) ? { tool: unifiedShell ? 'lexora_shell' : shell.dialect, boundary: shell.boundary, readOnly: shell.readOnly } : null,
       }
     }
     return { actors: catalog.actors.map(describe), npcs: catalog.npcs.map(describe) }

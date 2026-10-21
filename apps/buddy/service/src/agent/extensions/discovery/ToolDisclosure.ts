@@ -8,6 +8,7 @@ import { getCurrentSystemMessage } from '@earendil-works/pi-ai'
 import MiniSearch from 'minisearch'
 import { Emitter } from '../../../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../../../shared/events/eventSnapshot'
+import { isPiShellToolName } from '../piBuiltinTools'
 import { createToolCatalog } from './toolCatalog'
 import { isToolSearchResult, TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
@@ -82,7 +83,8 @@ export class ToolDisclosure {
 
   constructor(tools: readonly ToolInfo[], baseline: readonly string[], policies: readonly BuddyToolDisclosurePolicy[], resolveExposure?: BuddyToolExposureResolver, scope?: SessionToolScope) {
     scope?.assertRegistered(tools.map(tool => tool.name))
-    this.#tools = new Map([...createToolCatalog(tools, baseline, policies)].filter(([name]) => !scope?.denial(name)))
+    const unifiedShell = tools.some(tool => tool.name === 'lexora_shell') && !scope?.denial('lexora_shell')
+    this.#tools = new Map([...createToolCatalog(tools, baseline, policies)].filter(([name]) => !scope?.denial(name) && !(unifiedShell && isPiShellToolName(name))))
     this.#resolveExposure = resolveExposure
     this.#index = new MiniSearch({
       idField: 'name',

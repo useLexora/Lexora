@@ -13,7 +13,7 @@ interface ConfigurationSession {
   loading: boolean
 }
 
-export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, api: Pick<ExtensionApi, 'configurationSnapshot' | 'configure' | 'settingConditions' | 'onConditionsChanged'>) {
+export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, api: Pick<ExtensionApi, 'configurationSnapshot' | 'configure' | 'settingConditions' | 'onConditionsChanged' | 'detectShells' | 'selectShellExecutable'>) {
   const snapshots = shallowRef<Record<string, ExtensionConfigurationSnapshot>>({})
   const configurations = computed<Record<string, ExtensionConfiguration>>(() => Object.fromEntries(Object.entries(snapshots.value).map(([id, snapshot]) => [id, snapshot.values])))
   const conditions = usePluginSettingConditions(api, configurations)
@@ -120,6 +120,6 @@ export function usePluginSettings(installed: Readonly<Ref<ExtensionStatus[]>>, a
       syncPending()
     }
   }
-  return { conditions, configurations, invalidKeys, errors, pending, loading, save, reload }
+  return { conditions, configurations, invalidKeys, errors, pending, loading, save, reload, detectShells: api.detectShells, selectShellExecutable: api.selectShellExecutable }
 }
 export type PluginSettings = ReturnType<typeof usePluginSettings>

@@ -120,13 +120,29 @@ fn execute(request: &Request, cancelled: &AtomicBool, job: &Job) -> io::Result<i
     if matches!(request.command_transport, Transport::Argv) {
         arguments.push(&request.command);
     }
-    let mut command = wide(
-        &arguments
+    let command_line = if std::path::Path::new(&request.shell)
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("cmd.exe"))
+    {
+        if !matches!(request.command_transport, Transport::Argv)
+            || request.args != ["/d", "/s", "/c"]
+            || request.command.contains(['\0', '\r', '\n'])
+        {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        format!(
+            "{} /d /s /c \"{}\"",
+            quote_argument(&request.shell),
+            request.command
+        )
+    } else {
+        arguments
             .into_iter()
             .map(quote_argument)
             .collect::<Vec<_>>()
-            .join(" "),
-    );
+            .join(" ")
+    };
+    let mut command = wide(&command_line);
     if command.len() > 32767 {
         return Err(io::ErrorKind::InvalidInput.into());
     }

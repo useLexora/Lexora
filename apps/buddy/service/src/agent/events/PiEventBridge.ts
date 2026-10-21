@@ -7,7 +7,7 @@ import type { BuddySessionEventSource } from '../sessions/ReusableBuddySession'
 import type { BuddyProjectedEvent } from './projectPiEvent'
 import { safeDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { RunEventLogUnavailableError } from '../../events/RunEventFailure'
-import { isPiShellToolName } from '../extensions/piBuiltinTools'
+import { isShellToolName } from '../extensions/piBuiltinTools'
 import { BufferedRunEventWriter } from './BufferedRunEventWriter'
 import { PiApplicationObserver } from './PiApplicationObserver'
 import {
@@ -390,7 +390,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
 function isTerminalToolExecutionUpdate(
   event: AgentSessionEvent,
 ): event is PiToolExecutionUpdateEvent {
-  return event.type === 'tool_execution_update' && (isPiShellToolName(event.toolName) || event.toolName === 'lexora_host_shell')
+  return event.type === 'tool_execution_update' && (isShellToolName(event.toolName) || event.toolName === 'lexora_host_shell')
 }
 
 async function settledError(promise: Promise<unknown>): Promise<unknown> {

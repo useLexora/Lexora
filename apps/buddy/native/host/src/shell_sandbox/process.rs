@@ -30,6 +30,7 @@ use super::{
     filesystem::{Access, Grant, Grants, inspect},
     security::{at, boolean, current_process, owned, require_host, wide},
     setup,
+    shell_program::Dialect,
 };
 
 #[derive(Deserialize)]
@@ -38,6 +39,8 @@ struct Request {
     command: String,
     cwd: String,
     shell: String,
+    #[serde(default)]
+    dialect: Dialect,
     private_root: String,
     environment: BTreeMap<String, String>,
     grants: Vec<Grant>,
@@ -113,25 +116,23 @@ pub(super) fn run() -> io::Result<i32> {
             ),
         )?;
         cancellation.check()?;
-        let script = Path::new(&request.private_root).join("command.ps1");
-        let mut script_file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&script)?;
-        script_file.write_all(
-        b"\xef\xbb\xbftry { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n",
-    )?;
-        script_file.write_all(request.command.as_bytes())?;
-        script_file.write_all(
-            b"\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 } }\n",
-        )?;
-        drop(script_file);
+        let script = Path::new(&request.private_root)
+            .join(format!("command.{}", request.dialect.extension()));
+        if request.dialect != Dialect::Cmd {
+            let mut script_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&script)?;
+            script_file.write_all(&request.dialect.script(&request.command))?;
+        }
         cancellation.check()?;
         launch_sealed = false;
         let (lease, child) = at(
             "launch",
             Lease::connect(LaunchRequest {
                 shell: request.shell,
+                dialect: request.dialect,
+                command: (request.dialect == Dialect::Cmd).then_some(request.command),
                 script: script.to_string_lossy().into_owned(),
                 cwd: request.cwd,
                 environment: request.environment,
@@ -267,13 +268,8 @@ fn validate(request: &Request) -> io::Result<()> {
             return Err(io::ErrorKind::InvalidInput.into());
         }
     }
-    let shell = Path::new(&request.shell)
-        .file_name()
-        .ok_or(io::ErrorKind::InvalidInput)?
-        .to_string_lossy();
-    if !["powershell.exe", "pwsh.exe"]
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case(&shell))
+    request.dialect.validate(&request.shell)?;
+    if (request.dialect == Dialect::Cmd && request.command.contains(['\r', '\n']))
         || request.command.is_empty()
         || request.command.len() > 1024 * 1024
         || request.command.contains('\0')
@@ -419,6 +415,10 @@ impl Drop for Child {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct LaunchRequest {
     pub(super) shell: String,
+    #[serde(default)]
+    pub(super) dialect: Dialect,
+    #[serde(default)]
+    pub(super) command: Option<String>,
     pub(super) script: String,
     pub(super) cwd: String,
     pub(super) environment: BTreeMap<String, String>,
@@ -477,6 +477,15 @@ pub(super) fn launch(
     {
         return Err(io::ErrorKind::InvalidInput.into());
     }
+    request.dialect.validate(&request.shell)?;
+    let command_line = request.dialect.command_line(
+        &request.shell,
+        &request.script,
+        request.command.as_deref(),
+    )?;
+    if command_line.encode_utf16().count() >= 32767 {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
     let base = launch_phase("account_logon", account.logon())?;
     let owner = crate::windows_security::process_user_sid(client)?;
     let token = launch_phase(
@@ -527,10 +536,7 @@ pub(super) fn launch(
     startup.StartupInfo.hStdOutput = output.as_raw_handle();
     startup.StartupInfo.hStdError = output.as_raw_handle();
     startup.lpAttributeList = attribute_list.pointer();
-    let mut command = wide(&format!(
-        "\"{}\" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\"",
-        request.shell, request.script
-    ));
+    let mut command = wide(&command_line);
     let mut environment: Vec<u16> = request
         .environment
         .iter()
