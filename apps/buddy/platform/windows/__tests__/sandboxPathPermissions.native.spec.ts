@@ -34,6 +34,12 @@ async function withDeniedPath(run: (fixture: { root: string, denied: string, inp
       $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
       if([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'An ordinary user token is required'}
       $paths=@('denied','denied\\child','denied\\System32')
+      foreach($relative in $paths){
+        $path=Join-Path $root $relative
+        $acl=Get-Acl -LiteralPath $path
+        $acl.SetSecurityDescriptorSddlForm($acl.Sddl,[Security.AccessControl.AccessControlSections]::Access)
+        Set-Acl -LiteralPath $path -AclObject $acl
+      }
       $saved=@($paths|ForEach-Object {@{relative=$_;sddl=(Get-Acl -LiteralPath (Join-Path $root $_)).Sddl}})
       ConvertTo-Json -InputObject $saved|Set-Content -LiteralPath (Join-Path $root 'acl.json') -Encoding utf8
       $path=Join-Path $root 'denied'
