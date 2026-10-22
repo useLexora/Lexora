@@ -9,6 +9,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runSupervisedShellProcess } from '../../../../../platform/process/supervisedShellProcess'
+import { createCapturedFileWriter } from '../../../changes/CapturedFileWriter'
 import { ChangeCaptureService } from '../../../changes/ChangeCaptureService'
 import { createChangeSetRepository } from '../../../changes/changeSetRepository'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
@@ -28,6 +29,83 @@ afterEach(async () => {
 })
 
 describe('authorized mutation execution', () => {
+  it('preserves tool effects and process settlement when capture fails', async () => {
+    const fixture = await setup({ afterCapture: () => {
+      throw new Error('CAPTURE_STORAGE_FAILED')
+    } })
+    const writer = fixture.actor('run-1', (path, content) => writeFile(path, content), 'write')
+    await writer.execute({ path: fixture.path, content: 'SAVED' })
+    await fixture.changes.finalizeRun('run-1')
+    expect(await readFile(fixture.path, 'utf8')).toBe('SAVED')
+    expect((await fixture.changes.getForRuns(['run-1'])).coverage).toBe('partial')
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+    expect(fixture.mutations.getHazards()).toEqual([])
+  })
+
+  it('admits a shell with trusted read-only classification alongside a writer while keeping process ownership', async () => {
+    const fixture = await setup()
+    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'writer', lifetime: 'runtime', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
+    try {
+      const reader = fixture.actor('run-2', async () => {
+        expect(fixture.mutations.getRunState('run-1').active).toBe(1)
+        expect(fixture.mutationRepository.listUnreleased()).toMatchObject([{ claims: expect.any(Array) }, { claims: [] }])
+        expect(await readFile(fixture.path, 'utf8')).toBe('A')
+      }, 'bash', { readOnly: true })
+      await reader.execute({ path: fixture.path, content: '' })
+      expect(fixture.repository.listCaptures('run-2')).toEqual([])
+      expect((await fixture.changes.getForRuns(['run-2'])).coverage).toBe('complete')
+      expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
+    }
+    finally { active.release() }
+  })
+
+  it('splits exact changes at an untracked writer even when the file content returns to the same value', async () => {
+    const fixture = await setup()
+    const writer = fixture.actor('run-1', (path, content) => writeFile(path, content), 'write')
+    await writer.execute({ path: fixture.path, content: 'B' })
+    const shell = fixture.actor('run-1', async (path) => {
+      await writeFile(path, 'UNTRACKED')
+      await writeFile(path, 'B')
+    }, 'bash')
+    await shell.execute({ path: fixture.path, content: '' })
+    await writer.execute({ path: fixture.path, content: 'C' })
+    const result = await fixture.changes.getForRuns(['run-1'])
+    expect(result.files.map(file => [file.beforeText, file.afterText])).toEqual([['A', 'B'], ['B', 'C']])
+    expect(result).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'] })
+  })
+
+  it('acquires image output locks only at publication and captures writes completed before an error', async () => {
+    const fixture = await setup()
+    const actor = fixture.actor('run-1', async () => {}, 'lexora_image_generate')
+    const input = { path: fixture.path, content: '' }
+    await actor.authorize(input)
+    const write = actor.createWriter(input)
+    const other = fixture.actor('run-2', (path, content) => writeFile(path, content), 'write')
+    await other.execute({ path: fixture.path, content: 'B' })
+    expect(fixture.mutations.getRunState('run-1').active).toBe(0)
+    const second = join(fixture.root, 'second.png')
+    await expect(write([fixture.path, second], async () => {
+      await writeFile(fixture.path, 'C')
+      throw new Error('SECOND_IMAGE_FAILED')
+    })).rejects.toThrow('SECOND_IMAGE_FAILED')
+    const result = await fixture.changes.getForRuns(['run-1'])
+    expect(result.files.map(file => [file.beforeText, file.afterText])).toEqual([['B', 'C']])
+    expect(fixture.repository.listCaptures('run-1')).toHaveLength(2)
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+  })
+
+  it('rejects image publication after its original authorization is revoked', async () => {
+    const fixture = await setup()
+    const actor = fixture.actor('run-1', async () => {}, 'lexora_image_generate')
+    const input = { path: fixture.path, content: '' }
+    await actor.authorize(input)
+    const write = actor.createWriter(input)
+    actor.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
+    await expect(write([fixture.path], () => writeFile(fixture.path, 'MUST_NOT_WRITE'))).rejects.toThrow('TOOL_AUTHORIZATION_UNAVAILABLE')
+    expect(await readFile(fixture.path, 'utf8')).toBe('A')
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+  })
+
   it.skipIf(process.platform !== 'linux')('imports a lost native release receipt in the background without replaying the old command', async () => {
     const fixture = await setup()
     const recovery = new MutationRecoveryService({ mutations: fixture.mutations, receiptDirectory: join(fixture.root, 'receipts') })
@@ -251,7 +329,7 @@ async function setup(options: { afterCapture?: () => void } = {}) {
   const mutations = new MutationCoordinator({ repository: mutationRepository })
   cleanups.push(() => mutations.dispose())
   const grants = [{ canonicalRoot: root, root, grantId: 'workspace', kind: 'workspace' as const }]
-  function actor(runId: string, mutate: (path: string, content: string) => Promise<void>, toolName = 'mutate', toolOptions: { signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
+  function actor(runId: string, mutate: (path: string, content: string) => Promise<void>, toolName = 'mutate', toolOptions: { readOnly?: boolean, signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
     const cwd = join(root, runId)
     const run: BuddyExtensionRunContext = { runId, signal: toolOptions.signal ?? new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
     const executionPermissions = new ToolExecutionPermissions()
@@ -259,7 +337,7 @@ async function setup(options: { afterCapture?: () => void } = {}) {
     const authorization = new ToolAuthorizationService({ approvalService: { request: async () => {
       throw new Error('UNEXPECTED_APPROVAL')
     } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => grants, executionPermissions })
-    const classify = (input: { path: string }) => ({ access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }], validateBeforeExecution: toolOptions.validateBeforeExecution })
+    const classify = (input: { path: string }) => ({ shellReadOnly: toolOptions.readOnly, access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }], validateBeforeExecution: toolOptions.validateBeforeExecution })
     const tool = defineTool({ name: toolName, label: 'Mutate', description: 'Write controlled files', executionMode: 'parallel', parameters: Type.Object({ path: Type.String(), content: Type.String() }), async execute(_id, input) {
       await mutate(input.path, input.content)
       return { content: [{ type: 'text', text: 'updated' }], details: {} }
@@ -286,6 +364,7 @@ async function setup(options: { afterCapture?: () => void } = {}) {
     })(tool)
     return {
       authorization,
+      createWriter: (input: { path: string, content: string }) => createCapturedFileWriter({ conversationId: 'conversation', cwd, run, event: { type: 'tool_call', toolCallId: 'same-provider-id', toolName, input }, authorization, mutations, changes, getGrants: () => grants }),
       authorize: (input: { path: string, content: string }) => authorization.authorize({ input, toolCallId: 'same-provider-id', toolName: tool.name }, run, classify(input)),
       execute: (input: { path: string, content: string }) => wrapped.execute('same-provider-id', input, run.signal, undefined, {} as Parameters<ToolDefinition['execute']>[4]),
     }

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
 import { SandboxDirectoryPermissions } from '../SandboxDirectoryPermissions'
 import { createShellCapability } from '../shellCapability'
-import { resolveShellExecution } from '../shellExecution'
+import { resolveShellCallExecution, resolveShellExecution } from '../shellExecution'
 import { ShellSelection } from '../ShellSelection'
 
 function descriptor(): ExtensionShellDescriptor {
@@ -24,6 +24,14 @@ function descriptor(): ExtensionShellDescriptor {
 }
 
 describe('shell selection snapshots', () => {
+  it('narrows sandbox writes per command and never widens a read-only profile or promises host isolation', () => {
+    expect(resolveShellCallExecution(resolveShellExecution('workspace_write'), { readOnly: true })).toMatchObject({ boundary: 'sandbox', readOnly: true })
+    expect(resolveShellCallExecution(resolveShellExecution('read_only'), { readOnly: false })).toMatchObject({ boundary: 'sandbox', readOnly: true })
+    expect(() => resolveShellCallExecution(resolveShellExecution('full_access'), { readOnly: true })).toThrow('SHELL_READ_ONLY_REQUIRES_SANDBOX')
+    expect(() => resolveShellCallExecution(resolveShellExecution('workspace_write'), { readOnly: true }, true)).toThrow('SHELL_READ_ONLY_REQUIRES_SANDBOX')
+    expect(() => resolveShellCallExecution(resolveShellExecution('workspace_write'), { readOnly: 'true' })).toThrow('VALIDATION_FAILED')
+  })
+
   it('preserves the platform default until preferences opt in and rejects explicit missing or arbitrary paths', () => {
     const entry = descriptor()
     const snapshot = new ShellSelection([entry], async () => [entry])
@@ -67,7 +75,7 @@ describe('shell selection snapshots', () => {
     const run = { runId: 'test-run', signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
     const descriptors = [descriptor()]
     const shells = new ShellSelection(descriptors, async () => descriptors)
-    const submitted: Pick<SandboxCommand, 'command' | 'shell'>[] = []
+    const submitted: Pick<SandboxCommand, 'command' | 'shell' | 'readOnly'>[] = []
     const authorization = new ToolAuthorizationService({
       approvalAvailable: true,
       approvalPolicy: 'policy',
@@ -108,8 +116,14 @@ describe('shell selection snapshots', () => {
     expect(submitted[1]?.shell).toBeUndefined()
     await expect(tool.execute('invalid', { ...parameters, shell: '/tmp/unknown' }, controller.signal, undefined, {} as never)).rejects.toThrow('SHELL_CANDIDATE_NOT_ENABLED')
     expect(submitted).toHaveLength(2)
+    const query = { ...parameters, readOnly: true }
+    expect(await capability.classify({ ...event, input: query }, controller.signal)).toMatchObject({ shellReadOnly: true, shellBoundary: 'sandbox' })
+    expect(await capability.classify({ ...event, toolName: 'bash', input: query }, controller.signal)).toMatchObject({ shellReadOnly: true, shellBoundary: 'sandbox' })
+    await tool.execute('read-only', query, controller.signal, undefined, {} as never)
+    await tools.find(tool => tool.name === 'bash')!.execute('legacy-read-only', query, controller.signal, undefined, {} as never)
+    expect(submitted.slice(-2).map(input => input.readOnly)).toEqual([true, true])
     descriptors.length = 0
     await expect(tool.execute('revoked', parameters, controller.signal, undefined, {} as never)).rejects.toThrow('SHELL_CONTRIBUTION_REVOKED')
-    expect(submitted).toHaveLength(2)
+    expect(submitted).toHaveLength(4)
   })
 })

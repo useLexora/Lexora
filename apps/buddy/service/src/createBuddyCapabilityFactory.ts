@@ -144,7 +144,7 @@ function createImageCapability(context: BuddyCapabilityContext, services: BuddyC
   })
   const diagnostics = services.record ? observeImageDiagnostics(service, services.record) : null
   return {
-    ...createImageGenerationCapability({ getRunId: context.getRunId, getExecutionGrants: context.getExecutionGrants, service }),
+    ...createImageGenerationCapability({ createFileWriter: context.createFileWriter, getRunId: context.getRunId, getExecutionGrants: context.getExecutionGrants, service }),
     async dispose() {
       await service.dispose()
       diagnostics?.dispose()

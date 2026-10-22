@@ -49,6 +49,7 @@ const browserOperations = {
 
 const builtins: Readonly<Record<string, ChatToolRegistration>> = {
   bash: cards.terminal,
+  lexora_shell: cards.terminal,
   lexora_host_shell: cards.terminal,
   lexora_authorize_directory: cards['directory-authorization'],
   powershell: cards.terminal,

@@ -1,5 +1,6 @@
 import type { AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
 import type { ApplicationDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
+import type { ToolExecutionPhaseChange, ToolExecutionTiming } from '../../../../shared/runs/toolExecutionPhase'
 import type { RunEventWriter } from '../../events/RunEventPorts'
 import type { BuddyUsagePurpose } from '../../usage/recordPiUsage'
 import type { UsageService } from '../../usage/UsageService'
@@ -63,6 +64,7 @@ interface PiEventChannel {
 }
 
 export interface PiTurnEventChannel extends PiEventChannel {
+  projectToolExecutionPhase: (event: ToolExecutionPhaseChange) => void
   readonly outcome: PiTurnEventOutcome
   projectToolExecutionAuthorized: (
     event: PiToolExecutionAuthorizedEvent,
@@ -133,6 +135,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   readonly #session: BuddySessionEventSource
   readonly #timestamp: () => string
   readonly #usage: PiUsageService
+  readonly #toolPhases = new Map<string, ToolExecutionTiming & { since: number }>()
   #eventTail = Promise.resolve()
   #failureCode: string | undefined
   #failureMessage: string | undefined
@@ -172,6 +175,19 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     await this.#eventWriter.drain()
   }
 
+  projectToolExecutionPhase(event: ToolExecutionPhaseChange): void {
+    const now = performance.now()
+    const previous = event.phase === 'authorizing' ? undefined : this.#toolPhases.get(event.toolCallId)
+    if (previous?.phase === event.phase || previous?.phase === 'finished')
+      return
+    const durations = { ...previous?.durations }
+    if (previous)
+      durations[previous.phase] = (durations[previous.phase] ?? 0) + Math.max(0, now - previous.since)
+    const timing: ToolExecutionTiming = { phase: event.phase, durations, executionBasis: event.executionBasis ?? previous?.executionBasis }
+    this.#toolPhases.set(event.toolCallId, { ...timing, since: now })
+    this.#eventWriter.append({ type: 'tool.phase', payload: { toolCallId: event.toolCallId, toolName: event.toolName, timing } })
+  }
+
   async projectToolExecutionAuthorized(
     event: PiToolExecutionAuthorizedEvent,
   ): Promise<void> {
@@ -180,6 +196,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     this.#appendProjectedEvents(projected.events)
     await this.#eventWriter.drain()
     this.#observer.authorized(event.toolCallId)
+    this.projectToolExecutionPhase({ ...event, phase: 'preparing' })
   }
 
   async projectToolExecutionDenied(
@@ -189,6 +206,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     this.#eventWriter.appendBatch(projectToolExecutionDenied(event).events)
     await this.#eventWriter.drain()
     this.#observer.denied(event.toolCallId, event.denialCode)
+    this.projectToolExecutionPhase({ ...event, phase: 'finished' })
   }
 
   async recordCompactionResult(result: CompactionResult): Promise<void> {
@@ -263,7 +281,11 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
         this.#failureMessage = undefined
       }
     }
+    if (event.type === 'tool_execution_end')
+      this.projectToolExecutionPhase({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'finished' })
     this.#appendProjectedEvents(projected.events)
+    if (event.type === 'tool_execution_start')
+      this.projectToolExecutionPhase({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'authorizing' })
     if (this.#recordEventUsage)
       await this.#recordUsageFromEvent(event, projected.sourceMessageId)
   }

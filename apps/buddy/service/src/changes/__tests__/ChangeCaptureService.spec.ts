@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ChangeCaptureEvent, ChangeInvocationHandle, ChangeInvocationInput } from '../ChangeCaptureService'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, open, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -75,7 +75,7 @@ describe('changeCaptureService', () => {
     await writeFile(path, 'after')
     expect(await service.finishInvocation(handle, { isError: true })).toEqual({ complete: true })
     await expect(service.finishInvocation({ ...handle, runId: 'another-run' }, { isError: false })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    await service.beginInvocation({ ...input, invocationId: 'interrupted', grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'workspace', kind: 'workspace' }], scope: { kind: 'workspace' } })
+    await service.beginInvocation({ ...input, invocationId: 'interrupted', grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'workspace', kind: 'workspace' }], scope: { kind: 'untracked' } })
     await service.dispose()
     const recovered = new ChangeCaptureService({ paths: new BuddyDataPaths(root), repository })
     await recovered.markInterrupted('run-1')
@@ -160,116 +160,33 @@ describe('changeCaptureService', () => {
     await expect(beginWorkspace(service, input)).rejects.toThrow('CHANGE_CAPTURE_STOPPED')
   })
 
-  it('finishes the original capture scope after temporary permissions are revoked', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'buddy-expired-change-'))
+  it('records untracked effects without attributing workspace changes to a command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buddy-untracked-change-'))
     directories.push(root)
-    const workspace = join(root, 'workspace')
-    await mkdir(workspace)
-    await writeFile(join(workspace, 'untouched.txt'), 'preserved')
-    await writeFile(join(workspace, 'changed.txt'), 'before')
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
     seedRun(database)
     const service = new ChangeCaptureService({ paths: new BuddyDataPaths(root), repository: createChangeSetRepository(database) })
-    const input = { cwd: workspace, conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'shell-expired', grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'temporary', kind: 'granted' as const }] }
+    const input = { cwd: root, conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'shell', grants: [{ root, canonicalRoot: root, grantId: 'workspace', kind: 'workspace' as const }] }
     await beginWorkspace(service, input)
-    await writeFile(join(workspace, 'changed.txt'), 'after')
-    await finishWorkspace(service, { ...input, grants: [], isError: true, toolName: 'bash' })
-    await service.finalizeRun(input.runId)
-    expect(await service.getVisibleDetail(input.runId)).toMatchObject({
-      fileCount: 1,
-      files: [{ changeType: 'modified', path: 'changed.txt', beforeText: 'before', afterText: 'after' }],
-    })
-  })
-
-  it('does not report a skipped oversized file as deleted after a partial scan', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'buddy-partial-change-'))
-    directories.push(root)
-    const workspace = join(root, 'workspace')
-    await mkdir(workspace)
-    const path = join(workspace, 'growing.txt')
-    await writeFile(path, 'before')
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    databases.push(database)
-    seedRun(database)
-    const service = new ChangeCaptureService({ paths: new BuddyDataPaths(root), repository: createChangeSetRepository(database) })
-    const input = { cwd: workspace, conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'shell-partial', grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'workspace', kind: 'workspace' as const }] }
-    await beginWorkspace(service, input)
-    const file = await open(path, 'r+')
-    try {
-      await file.truncate(33 * 1024 * 1024)
-    }
-    finally {
-      await file.close()
-    }
+    await writeFile(join(root, 'external.txt'), 'unattributed')
     expect(await finishWorkspace(service, { ...input, isError: false, toolName: 'bash' })).toEqual({ complete: false })
-    await service.markPartial(input)
     await service.finalizeRun(input.runId)
-    expect(await service.getVisibleDetail(input.runId)).toMatchObject({ coverage: 'partial', files: [], fileCount: 0 })
+    expect(await service.getVisibleDetail(input.runId)).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'], files: [], fileCount: 0 })
   })
 
-  it('discovers nested shell changes and retains unambiguous moves', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'lexora-buddy-changes-shell-'))
+  it('does not report untracked effects for an invocation cancelled before execution', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buddy-unstarted-change-'))
     directories.push(root)
-    const workspace = join(root, 'workspace')
-    await mkdir(workspace)
-    const grants = [{ canonicalRoot: workspace, grantId: 'directory-1', kind: 'workspace' as const, root: workspace }]
-    const changedPath = join(workspace, 'change.txt')
-    const removedPath = join(workspace, 'remove.txt')
-    const movedFromPath = join(workspace, 'old-name.txt')
-    const movedToPath = join(workspace, 'renamed.txt')
-    const createdPath = join(workspace, 'site', 'src', 'index.html')
-    await writeFile(changedPath, 'before change')
-    await writeFile(removedPath, 'remove me')
-    await writeFile(movedFromPath, 'unique move content')
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
     seedRun(database)
-    const service = new ChangeCaptureService({
-      paths: new BuddyDataPaths(root),
-      repository: createChangeSetRepository(database),
-    })
-
-    await beginWorkspace(service, {
-      conversationId: 'conversation-1',
-      cwd: workspace,
-      grants,
-      runId: 'run-1',
-      toolCallId: 'tool-shell',
-    })
-    await mkdir(join(workspace, 'site', 'src'), { recursive: true })
-    await writeFile(createdPath, '<h1>Hello</h1>')
-    await writeFile(changedPath, 'after change')
-    await unlink(removedPath)
-    await rename(movedFromPath, movedToPath)
-
-    await expect(finishWorkspace(service, {
-      conversationId: 'conversation-1',
-      cwd: workspace,
-      grants,
-      isError: false,
-      runId: 'run-1',
-      toolCallId: 'tool-shell',
-      toolName: 'bash',
-    })).resolves.toEqual({
-      complete: true,
-    })
+    const repository = createChangeSetRepository(database)
+    const service = new ChangeCaptureService({ paths: new BuddyDataPaths(root), repository })
+    const handle = await service.beginInvocation({ cwd: root, conversationId: 'conversation-1', runId: 'run-1', toolCallId: 'shell', toolName: 'bash', grants: [], invocationId: 'cancelled', segmentId: 'segment', scope: { kind: 'untracked' } })
+    await service.finishInvocation(handle, { isError: true, started: false })
     await service.finalizeRun('run-1')
-
-    expect(service.listSummariesForRuns(['run-1'])).toMatchObject([{
-      coverage: 'complete',
-      fileCount: 5,
-      status: 'completed',
-    }])
-    await expect(service.getVisibleDetail('run-1')).resolves.toMatchObject({
-      files: expect.arrayContaining([
-        expect.objectContaining({ changeType: 'modified', path: 'change.txt' }),
-        expect.objectContaining({ changeType: 'deleted', path: 'old-name.txt' }),
-        expect.objectContaining({ changeType: 'deleted', path: 'remove.txt' }),
-        expect.objectContaining({ changeType: 'created', path: 'renamed.txt' }),
-        expect.objectContaining({ changeType: 'created', path: 'site/src/index.html' }),
-      ]),
-    })
+    expect(repository.findSetById('run-1')).toMatchObject({ coverage: 'complete', coverageReasons: [], fileCount: 0 })
   })
 
   it('aggregates repeated writes into one run-scoped before and after diff', async () => {
@@ -332,6 +249,7 @@ describe('changeCaptureService', () => {
       changeSetId: 'run-1',
       conversationId: 'conversation-1',
       coverage: 'complete',
+      coverageReasons: [],
       fileCount: 1,
       runId: 'run-1',
       status: 'completed',
@@ -459,7 +377,7 @@ async function beginFile(service: ChangeCaptureService, input: CaptureInput & { 
   return beginCapture(service, input, { kind: 'files', paths: [input.arguments.path] })
 }
 async function beginWorkspace(service: ChangeCaptureService, input: CaptureInput) {
-  return beginCapture(service, input, { kind: 'workspace' })
+  return beginCapture(service, input, { kind: 'untracked' })
 }
 async function beginCapture(service: ChangeCaptureService, input: CaptureInput, scope: ChangeInvocationInput['scope']) {
   const handle = await service.beginInvocation({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, runId: input.runId, toolCallId: input.toolCallId, toolName: input.toolName ?? 'bash', scope, invocationId: randomUUID(), segmentId: `${input.runId}-segment` })

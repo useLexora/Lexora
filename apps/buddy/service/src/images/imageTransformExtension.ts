@@ -1,6 +1,7 @@
 import type { Static, TSchema } from 'typebox'
 import type { BuddyCapability } from '../agent/extensions/BuddyCapability'
 import type { BuddyInProcessExtension } from '../agent/extensions/BuddyInProcessExtension'
+import type { CapturedFileWriterFactory } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageTransformService } from './ImageTransformService'
 import type { ImageTransformToolDetails } from './imageTransformToolContract'
@@ -20,7 +21,7 @@ export function createImageTransformCapability(options: CreateImageTransformExte
   return {
     extension: createImageTransformExtension(options),
     classify: classifyImageTransformTool,
-    workspaceMutationTools: [IMAGE_TRANSFORM_TOOL_NAME],
+    mutationEffect: event => event.toolName === IMAGE_TRANSFORM_TOOL_NAME ? { kind: 'none' } : null,
     disclosure: [{
       source: { kind: 'builtin', id: 'image_transform', title: 'Image transformation' },
       exposure: 'on_demand',
@@ -31,6 +32,7 @@ export function createImageTransformCapability(options: CreateImageTransformExte
 }
 
 export interface CreateImageTransformExtensionOptions {
+  createFileWriter?: CapturedFileWriterFactory
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]
   conversationId: string
   cwd: string
@@ -68,7 +70,7 @@ export function createImageTransformExtension(
               softness: input.softness ?? 80,
               sourceArtifactId: input.sourceArtifactId,
               tolerance: input.tolerance ?? 60,
-            }, signal)
+            }, signal, options.createFileWriter?.({ type: 'tool_call', toolCallId, toolName: IMAGE_TRANSFORM_TOOL_NAME, input: parameters as Record<string, unknown>, signal }))
             return {
               content: [{
                 text: JSON.stringify({ artifactIds: [artifact.id], transformedCount: 1 }),

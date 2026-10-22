@@ -3,6 +3,7 @@ import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../../shared/co
 import type { ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../../../../shared/executions/executionApi'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalCacheWarmingStatus } from '../../../../shared/runs/conversationStatusApi'
+import type { ToolExecutionPhaseChange } from '../../../../shared/runs/toolExecutionPhase'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyContextUsageBreakdown } from '../context/contextUsageBreakdown'
@@ -56,6 +57,7 @@ export interface BuddySessionTurnContext extends BuddySessionModelSelection {
   generation: number
   deferQueuedInputs?: boolean
   flushProjectedEvents: () => Promise<void>
+  onToolExecutionPhase?: (event: ToolExecutionPhaseChange) => void
   onToolExecutionAuthorized: (event: {
     arguments: unknown
     toolCallId: string

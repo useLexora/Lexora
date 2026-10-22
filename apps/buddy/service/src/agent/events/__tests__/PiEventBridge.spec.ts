@@ -8,6 +8,38 @@ import { describe, expect, it, vi } from 'vitest'
 import { PiEventBridge } from '../PiEventBridge'
 
 describe('piEventBridge', () => {
+  it('persists nonoverlapping phase durations and ignores late lifecycle events after completion', async () => {
+    let now = 0
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const { appended, channel, emit } = createProjectionHarness()
+      const identity = { toolCallId: 'timed', toolName: 'bash' }
+      emit({ type: 'tool_execution_start', ...identity, args: { command: 'private-command' } })
+      await channel.flush()
+      now = 10
+      await channel.projectToolExecutionAuthorized({ ...identity, arguments: {} })
+      now = 20
+      channel.projectToolExecutionPhase({ ...identity, phase: 'resource' })
+      now = 50
+      channel.projectToolExecutionPhase({ ...identity, phase: 'executing', executionBasis: 'backend' })
+      now = 70
+      channel.projectToolExecutionPhase({ ...identity, phase: 'approval' })
+      now = 100
+      channel.projectToolExecutionPhase({ ...identity, phase: 'executing', executionBasis: 'backend' })
+      now = 120
+      channel.projectToolExecutionPhase({ ...identity, phase: 'cleaning' })
+      now = 125
+      emit({ type: 'tool_execution_end', ...identity, isError: false, result: { content: [], details: {} } })
+      await channel.flush()
+      channel.projectToolExecutionPhase({ ...identity, phase: 'executing', executionBasis: 'backend' })
+      await channel.flush()
+      const phases = appended.filter(event => event.type === 'tool.phase')
+      expect(phases.at(-1)?.payload).toEqual({ ...identity, timing: { phase: 'finished', executionBasis: 'backend', durations: { authorizing: 10, preparing: 10, resource: 30, executing: 40, approval: 30, cleaning: 5 } } })
+      expect(JSON.stringify(phases)).not.toContain('private-command')
+    }
+    finally { clock.mockRestore() }
+  })
+
   it('preserves cancellation reported by Pi after a continuation settles without an aborted message', async () => {
     const { appended, channel, emit } = createProjectionHarness()
     emit({ type: 'agent_start' })

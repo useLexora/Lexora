@@ -14,6 +14,7 @@ import { Buffer } from 'node:buffer'
 import process from 'node:process'
 import { createBashToolDefinition, createPowerShellToolDefinition, defineTool, getPowerShellConfig, getShellConfig } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
+import { Check } from 'typebox/value'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { buildShellInvocation, createShellProgramEnvironment } from '../../../platform/process/shellPrograms'
 import { runSupervisedShellProcess } from '../../../platform/process/supervisedShellProcess'
@@ -21,7 +22,7 @@ import { ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { ApprovalCancelledError, ApprovalExpiredError } from '../approvals/ApprovalService'
-import { WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from './shellExecution'
+import { resolveShellCallExecution, WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from './shellExecution'
 import { SHELL_COMMAND_DISCLOSURE, SHELL_COMMAND_TOOL_NAME, SYSTEM_SHELL_ID } from './ShellSelection'
 
 export const SHELL_SANDBOX_EXTENSION = 'lexora-shell-sandbox'
@@ -51,7 +52,9 @@ export function createShellCapability(options: {
   const shellName = options.execution.dialect
   const shells = options.shells?.enabled ? options.shells : undefined
   const select = (input: Record<string, unknown>) => shells?.resolve(input.shell)
+  const readOnlyParameter = Type.Optional(Type.Boolean({ description: 'Restrict this command to the sandbox read-only policy. Use for queries that can run alongside writers. Does not provide a consistent snapshot while other commands write. Host execution cannot use this option; a denied write never triggers an automatic writable retry.' }))
   const commandParameters = Type.Object({
+    readOnly: readOnlyParameter,
     command: Type.String({ minLength: 1, description: 'Noninteractive command written for the selected Shell dialect.' }),
     shell: Type.Optional(Type.Union([Type.Literal(SYSTEM_SHELL_ID), ...shells?.candidates.filter(entry => entry.candidate.available).map(entry => Type.Literal(entry.id)) ?? []], { description: 'Stable detected candidate ID. Omit to use the displayed default; never supply an executable path.' })),
     timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: 'Timeout in seconds.' })),
@@ -71,11 +74,20 @@ export function createShellCapability(options: {
     mutationEffect(event, classification) {
       if (event.toolName !== shellName && event.toolName !== SHELL_COMMAND_TOOL_NAME && event.toolName !== 'lexora_host_shell')
         return null
+      if (classification.shellBoundary === 'sandbox' && classification.shellReadOnly === true)
+        return { kind: 'workspace', ownedProcess: currentPlatform.hostShellSupervision }
       if (!currentPlatform.hostShellSupervision)
         return { kind: 'host', ownedProcess: false }
       return { kind: event.toolName === 'lexora_host_shell' || classification.shellBoundary !== 'sandbox' ? 'host' : 'workspace', ownedProcess: true }
     },
     async classify(event, signal) {
+      let execution: ShellExecution | undefined
+      if ([shellName, SHELL_COMMAND_TOOL_NAME, 'lexora_host_shell'].includes(event.toolName)) {
+        try {
+          execution = resolveShellCallExecution(options.getExecution?.() ?? options.execution, event.input, event.toolName === 'lexora_host_shell')
+        }
+        catch (error) { return { blocked: true, reason: error instanceof Error ? error.message : 'VALIDATION_FAILED' } }
+      }
       if (shells && (event.toolName === SHELL_COMMAND_TOOL_NAME || event.toolName === 'lexora_host_shell')) {
         let selected: SelectedShell | undefined
         try {
@@ -85,10 +97,11 @@ export function createShellCapability(options: {
         catch (error) {
           return { blocked: true, reason: error instanceof Error ? error.message : 'SHELL_CANDIDATE_UNAVAILABLE' }
         }
-        const boundary = event.toolName === 'lexora_host_shell' ? 'host' : (options.getExecution?.() ?? options.execution).boundary
-        const identity = [event.toolName, selected?.id ?? SYSTEM_SHELL_ID, selected?.program ?? shellName, selected?.revision ?? null, boundary, options.cwd]
+        const boundary = execution!.boundary
+        const identity = [event.toolName, selected?.id ?? SYSTEM_SHELL_ID, selected?.program ?? shellName, selected?.revision ?? null, boundary, execution!.readOnly, options.cwd]
         return {
           access: 'execute',
+          shellReadOnly: execution!.readOnly,
           shellDialect: selected?.program.dialect ?? shellName,
           shellBoundary: boundary === 'sandbox' ? 'sandbox' : undefined,
           approval: {
@@ -105,7 +118,7 @@ export function createShellCapability(options: {
         }
       }
       if (event.toolName === shellName)
-        return { access: 'execute', get shellBoundary() { return (options.getExecution?.() ?? options.execution).boundary === 'sandbox' ? 'sandbox' as const : undefined } }
+        return { access: 'execute', shellReadOnly: execution!.readOnly, shellBoundary: execution!.boundary === 'sandbox' ? 'sandbox' : undefined }
       if (event.toolName === 'lexora_host_shell')
         return { access: 'execute' }
       if (event.toolName !== 'lexora_authorize_directory')
@@ -115,7 +128,7 @@ export function createShellCapability(options: {
     extension: {
       name: SHELL_SANDBOX_EXTENSION,
       factory(pi) {
-        const createNative = (selected?: SelectedShell) => (selected?.program.dialect === 'powershell' || (!selected && shellName === 'powershell') ? createPowerShellToolDefinition : createBashToolDefinition)(options.cwd, {
+        const createNative = (selected?: SelectedShell, onDispatched?: () => void) => (selected?.program.dialect === 'powershell' || (!selected && shellName === 'powershell') ? createPowerShellToolDefinition : createBashToolDefinition)(options.cwd, {
           exposeSessionEnvironment: false,
           ...(currentPlatform.hostShellSupervision
             ? {
@@ -129,6 +142,7 @@ export function createShellCapability(options: {
                     return runSupervisedShellProcess({ ...shell, cwd, environment }, {
                       ...execOptions,
                       receiptDirectory: options.receiptDirectory,
+                      onDispatched,
                       onSettlement(settlement) {
                         if (invocation && !options.mutations!.recordOwnedProcessSettlement({ ...settlement, invocationId: invocation.invocationId }))
                           throw new Error('SHELL_INVOCATION_EXPIRED')
@@ -144,20 +158,22 @@ export function createShellCapability(options: {
           const createShell = selected?.program.dialect === 'powershell' || (!selected && shellName === 'powershell') ? createPowerShellToolDefinition : createBashToolDefinition
           return {
             ...native,
+            parameters: Type.Object({ ...native.parameters.properties, readOnly: readOnlyParameter }, { additionalProperties: false }),
             description: `${native.description}\nThe current permission mode determines the execution boundary. Read-only and workspace modes use an OS sandbox; full access runs on the host. Ordinary files are readable without directory approval. Sandbox policy permits writes only in authorized directories and denies reads of known credential and application-private paths. ${currentPlatform.id === OPERATING_SYSTEM.Windows ? `${WINDOWS_SANDBOX_FILESYSTEM_LIMITS} ` : ''}${networkBoundary} No automatic host fallback.`,
             promptGuidelines: [
+              'Set readOnly=true for queries that need no workspace writes. This narrows the actual sandbox policy and allows execution alongside writers. It does not freeze the filesystem. If a command needs writes, request its normal writable execution; never silently retry after a denied write.',
               `Use ${shellName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. Ordinary reads need no approval. If the OS denies an ordinary directory, lexora_authorize_directory can prepare read access without a prompt. Do not retry protected credential paths through another interpreter or execution boundary.`,
               'In isolated modes, user HOME, configuration paths and supported toolchain variables are preserved; only temporary files use private TMPDIR/TEMP directories. Shells do not load user profiles. Use installed shims or explicit toolchain execution (for example, mise exec) rather than assuming interactive activation. Tool installation, cache and state writes outside authorized directories still require directory authorization. Host credential variables and desktop IPC variables are not inherited. Do not access protected credential paths or write repository Git metadata. Use lexora_authorize_directory with the least access needed for additional directories; additional write authorization expires with the current run. Windows may reuse read-access preparation and ACL material across runs; this does not authorize writes or other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
             ],
             execute: (async (toolCallId, parameters, signal, onUpdate, context) => {
               const run = options.getRunContext()
-              const execution = options.getExecution?.() ?? options.execution
+              const execution = resolveShellCallExecution(options.getExecution?.() ?? options.execution, parameters)
               if (!run)
                 throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
               await shells?.assertCurrent(selected, AbortSignal.any([run.signal, ...signal ? [signal] : []]))
               await options.assertExecutionAllowed?.({ run, boundary: execution.boundary, readOnly: execution.readOnly })
               if (execution.boundary === 'host')
-                return native.execute(toolCallId, parameters, AbortSignal.any([run.signal, ...signal ? [signal] : []]), onUpdate, context)
+                return createNative(selected, () => run.onToolExecutionPhase?.({ toolCallId, toolName: selected ? SHELL_COMMAND_TOOL_NAME : shellName, phase: 'executing', executionBasis: 'dispatch' })).execute(toolCallId, parameters, AbortSignal.any([run.signal, ...signal ? [signal] : []]), onUpdate, context)
               if (!options.sandbox)
                 throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
               const lifetime = new AbortController()
@@ -203,6 +219,13 @@ export function createShellCapability(options: {
                           throw error
                         }
                       }, {
+                        onLifecycle: (event) => {
+                          const { snapshot } = event
+                          const cleaning = snapshot.phase === 'finished' || (snapshot.process && snapshot.process.phase !== 'spawned')
+                          const phase = cleaning ? 'cleaning' : snapshot.waiting > 0 ? 'approval' : snapshot.started ? 'executing' : 'preparing'
+                          if (phase)
+                            run.onToolExecutionPhase?.({ toolCallId, toolName: selected ? SHELL_COMMAND_TOOL_NAME : shellName, phase, executionBasis: 'backend' })
+                        },
                         onSettlement: (() => {
                           const invocation = options.mutations?.getCurrentInvocation()
                           if (options.mutations && !invocation)
@@ -244,6 +267,8 @@ export function createShellCapability(options: {
             ],
             async execute(toolCallId, parameters, signal, onUpdate, context) {
               const selected = select(parameters)
+              if (!Check(commandParameters, parameters))
+                throw new Error('VALIDATION_FAILED')
               const result = await controlled(selected).execute(toolCallId, parameters, signal, onUpdate, context)
               const shell = selected ? { id: selected.id, ...selected.program, version: selected.candidate.version } : { id: SYSTEM_SHELL_ID, dialect: shellName }
               const structuredContent = result.structuredContent && typeof result.structuredContent === 'object' ? result.structuredContent : {}
@@ -263,13 +288,14 @@ export function createShellCapability(options: {
             const run = options.getRunContext()
             if (!run)
               throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
+            resolveShellCallExecution(options.getExecution?.() ?? options.execution, parameters, true)
             const selected = select(parameters)
             const executionSignal = AbortSignal.any([run.signal, ...signal ? [signal] : []])
             await shells?.assertCurrent(selected, executionSignal)
             if (selected && !currentPlatform.hostShellSupervision)
               throw new Error('SHELL_SUPERVISION_UNAVAILABLE')
             await options.assertExecutionAllowed?.({ run, boundary: 'host', readOnly: false })
-            return createNative(selected).execute(toolCallId, parameters, executionSignal, onUpdate, context)
+            return createNative(selected, () => run.onToolExecutionPhase?.({ toolCallId, toolName: 'lexora_host_shell', phase: 'executing', executionBasis: 'dispatch' })).execute(toolCallId, parameters, executionSignal, onUpdate, context)
           },
         })
         pi.registerTool(defineTool({

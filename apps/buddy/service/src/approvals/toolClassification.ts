@@ -23,6 +23,7 @@ export interface BuddyToolClassification {
   forceAsk?: boolean
   requireApproval?: boolean
   shellBoundary?: 'sandbox'
+  shellReadOnly?: boolean
   shellDialect?: import('../../../shared/shell/shellProgram').ShellDialect
   paths?: readonly PermissionPath[]
   validateBeforeExecution?: () => Promise<BuddyToolClassificationFailure | null>

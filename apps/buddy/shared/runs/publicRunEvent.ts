@@ -13,6 +13,7 @@ import {
 } from './runEventPresentation'
 import { buddyRunOutputPayloadSchema } from './runOutput'
 import { buddyRunProgressSchema } from './runProgress'
+import { toolExecutionTimingSchema } from './toolExecutionPhase'
 import { isToolFailureCode } from './toolFailure'
 
 export interface RunEventLike {
@@ -135,6 +136,10 @@ function publicPayload(type: string, value: unknown): Record<string, unknown> {
       sourceToolName: source.sourceToolName,
     })
     return output.success ? output.data : {}
+  }
+  if (type === 'tool.phase') {
+    const timing = toolExecutionTimingSchema.safeParse(source.timing)
+    return timing.success ? { ...selectScalars(source, ['toolCallId', 'toolName']), timing: timing.data } : {}
   }
   if (type === 'tool.denied')
     return publicToolDenial(source)

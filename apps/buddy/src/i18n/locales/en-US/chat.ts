@@ -468,7 +468,7 @@ export default {
   'desktop.chat.time.today': 'Today',
   'desktop.chat.time.yesterday': 'Yesterday',
   'desktop.chat.turnOutputs': 'Turn outputs',
-  'desktop.chat.turnChanges': '{count} file changes',
+  'desktop.chat.turnChanges': 'Recorded {count} file changes',
   'desktop.chat.unknownError': 'Local task operation failed',
   'desktop.chat.greeting.morning': 'Good morning',
   'desktop.chat.greeting.noon': 'Good day',

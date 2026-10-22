@@ -33,6 +33,7 @@ export type BuddyProjectedEventType
     | 'message.tool_result'
     | 'output.produced'
     | 'run.progress'
+    | 'tool.phase'
     | 'tool.completed'
     | 'tool.denied'
     | 'tool.failed'

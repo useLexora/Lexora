@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createChangeSetRepository } from '../../changes/changeSetRepository'
 import { MutationCoordinator } from '../../changes/MutationCoordinator'
 import { createMutationRepository } from '../../changes/mutationRepository'
 
@@ -82,6 +83,37 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('upgrades capture coverage without rewriting historical file snapshots or invocation identities', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-capture-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 31))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    previous.exec(`
+      INSERT INTO run_change_sets (id, run_id, conversation_id, coverage, status, file_count, created_at, updated_at)
+        VALUES ('set', 'run-1', 'conversation-1', 'partial', 'completed', 1, '2026-10-01', '2026-10-01');
+      INSERT INTO run_change_invocations (id, run_id, segment_id, tool_call_id, tool_name, status, created_at, completed_at)
+        VALUES ('invocation', 'run-1', 'segment', 'call', 'bash', 'partial', '2026-10-01', '2026-10-01');
+      INSERT INTO run_file_change_captures (id, change_set_id, sequence, tool_call_id, tool_name, relative_path, before_kind, before_snapshot_path, after_kind, after_snapshot_path, status, created_at, invocation_id)
+        VALUES ('file', 'set', 1, 'call', 'write', 'file.txt', 'text', 'before.txt', 'text', 'after.txt', 'completed', '2026-10-01', 'invocation');
+    `)
+    const captures = previous.prepare('SELECT * FROM run_file_change_captures').all()
+    previous.exec('PRAGMA user_version = 31')
+    previous.close()
+    const migrated = openBuddyDatabase({ databasePath })
+    expect(createChangeSetRepository(migrated).findSetById('set')).toMatchObject({ coverage: 'partial', coverageReasons: ['legacy_partial'] })
+    expect(createChangeSetRepository(migrated).findInvocation('invocation')).toMatchObject({ captureMode: 'legacy', segmentId: 'segment' })
+    expect(migrated.prepare('SELECT * FROM run_file_change_captures').all()).toEqual(captures)
+    expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    migrated.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT * FROM run_file_change_captures').all()).toEqual(captures)
+    expect(createChangeSetRepository(reopened).findSetById('set')?.coverageReasons).toEqual(['legacy_partial'])
+  })
+
   it.each(['override', 'snapshot', 'original'])('freezes missing task models from the latest %s and preserves explicit choices on upgrade', (source) => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-task-model-migration-'))
     directories.push(directory)

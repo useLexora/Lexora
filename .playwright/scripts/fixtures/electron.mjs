@@ -74,6 +74,7 @@ export const test = base.extend({
 export { expect } from '@playwright/test'
 
 export async function useSyntheticCredentialStorage({ app, page }) {
+  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status, { timeout: 45000 }).toBe('ready')
   await app.evaluate(({ app, safeStorage }) => {
     if (app.getName() !== 'Lexora Buddy Test')
       throw new Error('Synthetic credentials require an isolated test instance')
@@ -94,5 +95,5 @@ export async function useSyntheticCredentialStorage({ app, page }) {
     })
   })
   await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
-  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
+  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status, { timeout: 45000 }).toBe('ready')
 }

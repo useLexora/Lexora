@@ -4,9 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { openMigrationFixtureDatabase } from '../../storage/__tests__/migrationFixture'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
+import { BUDDY_SCHEMA_MIGRATIONS } from '../../storage/schema'
 import { MutationCoordinator } from '../MutationCoordinator'
 import { createMutationEvidenceRepository } from '../mutationEvidenceRepository'
 import { MutationRecoveryService } from '../MutationRecoveryService'
@@ -56,19 +58,21 @@ describe('durable mutation recovery decisions', () => {
     const root = await mkdtemp(join(tmpdir(), 'mutation-recovery-'))
     cleanups.push(() => rm(root, { recursive: true, force: true }))
     const databasePath = join(root, 'buddy.sqlite3')
-    let database = openBuddyDatabase({ databasePath })
-    let f = setup(database)
+    let database = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 30))
+      database.exec(migration.sql)
+    const now = '2026-10-01T00:00:00.000Z'
     for (let index = 0; index < 6; index++) {
       const id = `legacy-${index}`
-      const lease = await f.mutations.acquire({ invocationId: id, runId: id, lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: join(root, id) }], signal })
-      f.mutations.recordOwnedProcessSettlement({ invocationId: id, processId: JSON.stringify(index === 5 ? { kind: 'sandbox-dispatch', requestId: randomUUID() } : { kind: 'native-shell', platform: 'win32', pid: index + 1, startTime: '1', nonce: randomUUID() }), settlement: 'unknown' })
-      lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+      database.prepare('INSERT INTO run_mutation_leases (invocation_id, run_id, segment_id, claims_json, lifetime, status, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, id, id, JSON.stringify([{ kind: 'tree', canonicalPath: join(root, id) }]), 'external', 'hazard', 'OWNED_PROCESS_CLEANUP_UNCONFIRMED', now, now)
+      const process = index === 5 ? { kind: 'sandbox-dispatch', requestId: randomUUID() } : { kind: 'native-shell', platform: 'win32', pid: index + 1, startTime: '1', nonce: randomUUID() }
+      database.prepare('INSERT INTO run_mutation_processes (invocation_id, process_id, settlement, updated_at) VALUES (?, ?, ?, ?)').run(id, JSON.stringify(process), 'unknown', now)
     }
-    await f.mutations.dispose()
-    database.exec('DROP TABLE run_mutation_evidence; DROP TABLE run_mutation_executions; PRAGMA user_version = 30')
+    database.exec('PRAGMA user_version = 30')
     database.close()
     database = openBuddyDatabase({ databasePath })
-    f = setup(database)
+    let f = setup(database)
     expect(f.repository.listUnreleased()).toHaveLength(6)
     for (const item of f.mutations.getHazards()) await f.mutations.waiveHazard(item.invocationId)
     expect(database.prepare('SELECT count(*) AS count FROM run_mutation_processes WHERE settlement = \'unknown\'').get()).toEqual({ count: 6 })

@@ -65,6 +65,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
       const controller = new AbortController()
       active.set(input.requestId, controller)
       let dispatched = false
+      let responded = false
       let directory: string | undefined
       let child: Electron.UtilityProcess | undefined
       let pid: number | undefined
@@ -82,8 +83,22 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
       const release = async () => {
         publish({ requestId: input.requestId, kind: 'cleanup_requested', pid })
         try {
-          child?.kill()
-          await exited
+          if (responded && childPeer && isLinux(process.platform)) {
+            try {
+              childPeer.notify('sandbox.close', {})
+            }
+            catch { child?.kill() }
+            const deadline = setTimeout(() => child?.kill(), 1000)
+            deadline.unref()
+            try {
+              await exited
+            }
+            finally { clearTimeout(deadline) }
+          }
+          else {
+            child?.kill()
+            await exited
+          }
           childPeer?.close(new Error('Sandbox command finished'))
           if (directory)
             await rm(directory, { recursive: true, force: true })
@@ -164,7 +179,7 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
           return peer.request('sandbox.network', target, 30 * 60 * 1_000)
         })
         dispatched = true
-        return await processPeer.request('sandbox.exec', {
+        const result = await processPeer.request('sandbox.exec', {
           ...input,
           home: userInfo().homedir,
           sensitiveRoots: resolveSensitivePathRoots(),
@@ -179,6 +194,8 @@ export function registerSandboxHostRpc(peer: RuntimeRpcPeerContract, options: Sa
               ? { kind: SHELL_SANDBOX_BACKEND.Linux, sandboxDirectory: options.sandboxDirectory }
               : { kind: SHELL_SANDBOX_BACKEND.MacOS },
         }, SANDBOX_RPC_TIMEOUT_MS)
+        responded = true
+        return result
       }
       catch {
         return { ok: false, code: controller.signal.aborted ? 'SANDBOX_CANCELLED' : 'SANDBOX_UNAVAILABLE', ...(!dispatched ? { notStarted: true } : {}) }

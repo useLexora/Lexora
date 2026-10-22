@@ -1,5 +1,6 @@
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { Buffer } from 'node:buffer'
+import type { CapturedFileWriter } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type {
   ArtifactRecord,
@@ -107,9 +108,9 @@ export class ArtifactService {
     return this.#batch(request.conversationId, 'presentation', request.paths.length, batch => this.#presentOutputs(request, batch))
   }
 
-  registerGeneratedImages(input: GeneratedImagesInput): Promise<ArtifactRecord[]> {
+  registerGeneratedImages(input: GeneratedImagesInput, writeFiles?: CapturedFileWriter): Promise<ArtifactRecord[]> {
     const request = { ...copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, outputPath: input.outputPath, sourceArtifactId: input.sourceArtifactId }), images: input.images.map(image => ({ bytes: Uint8Array.from(image.bytes), mimeType: image.mimeType })) }
-    return this.#batch(request.conversationId, 'generated', request.images.length, batch => this.#registerGeneratedImages(request, batch))
+    return this.#batch(request.conversationId, 'generated', request.images.length, batch => this.#registerGeneratedImages(request, batch, writeFiles))
   }
 
   recoverLegacyRecords(records: readonly ArtifactRecord[]): Promise<number> {
@@ -235,7 +236,7 @@ export class ArtifactService {
     })
   }
 
-  async #registerGeneratedImages(input: GeneratedImagesInput, batch: ArtifactBatch): Promise<ArtifactRecord[]> {
+  async #registerGeneratedImages(input: GeneratedImagesInput, batch: ArtifactBatch, writeFiles?: CapturedFileWriter): Promise<ArtifactRecord[]> {
     if (
       input.images.length === 0
       || input.images.length > BUDDY_ARTIFACT_COUNT_LIMIT
@@ -266,19 +267,25 @@ export class ArtifactService {
     if (new Set(outputPaths).size !== outputPaths.length)
       throw new ArtifactError('VALIDATION_FAILED')
 
-    for (const [index, image] of input.images.entries()) {
-      const outputPath = outputPaths[index]!
-      const location = await resolveArtifactLocation(input.grants, outputPath, 'create')
-      if (isSensitivePath(location.relativePath))
-        throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
-      batch.stage = 'file'
-      await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
-      batch.unconfirmedWrites += 1
-      await writeFile(location.canonicalPath, image.bytes, { mode: 0o600 })
-      batch.unconfirmedWrites -= 1
-      batch.written += 1
-      this.#publish(batch, 'file-written')
+    const write = async () => {
+      for (const [index, image] of input.images.entries()) {
+        const outputPath = outputPaths[index]!
+        const location = await resolveArtifactLocation(input.grants, outputPath, 'create')
+        if (isSensitivePath(location.relativePath))
+          throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
+        batch.stage = 'file'
+        await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
+        batch.unconfirmedWrites += 1
+        await writeFile(location.canonicalPath, image.bytes, { mode: 0o600 })
+        batch.unconfirmedWrites -= 1
+        batch.written += 1
+        this.#publish(batch, 'file-written')
+      }
     }
+    if (writeFiles)
+      await writeFiles(outputPaths, write)
+    else
+      await write()
     batch.stage = 'catalogue'
     return this.#presentOutputs({
       conversationId: input.conversationId,

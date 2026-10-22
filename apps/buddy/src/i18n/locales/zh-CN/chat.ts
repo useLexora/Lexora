@@ -466,7 +466,7 @@ export default {
   'desktop.chat.time.today': '今天',
   'desktop.chat.time.yesterday': '昨天',
   'desktop.chat.turnOutputs': '本轮产出',
-  'desktop.chat.turnChanges': '{count} 处文件变更',
+  'desktop.chat.turnChanges': '已记录 {count} 处文件修改',
   'desktop.chat.unknownError': '本地任务操作失败',
   'desktop.chat.greeting.morning': '早上好',
   'desktop.chat.greeting.noon': '中午好',

@@ -337,6 +337,7 @@ export function createReusableBuddySession(
         deferQueuedInputs: input.deferQueuedInputs,
         flushProjectedEvents: input.flushProjectedEvents,
         onToolExecutionAuthorized: input.onToolExecutionAuthorized,
+        onToolExecutionPhase: input.onToolExecutionPhase,
         onToolExecutionDenied: input.onToolExecutionDenied,
         runId: input.runId,
         serviceTier: input.serviceTier ?? null,

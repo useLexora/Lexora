@@ -10,7 +10,10 @@ if (!port)
 const peer = new BuddyServiceRpcServer({ port })
 const controller = new AbortController()
 let started = false
+let settled = false
 peer.onNotification((method) => {
+  if (method === 'sandbox.close' && settled)
+    process.exit(0)
   if (method === 'sandbox.cancel')
     controller.abort()
 })
@@ -33,5 +36,5 @@ peer.onRequest('sandbox.exec', async (params) => {
       const answer = z.object({ allowed: z.boolean() }).strict().parse(await peer.request('sandbox.network', { ...target, requestId: input.requestId }, 30 * 60 * 1_000))
       return answer.allowed
     },
-  })
+  }).finally(() => { settled = true })
 })

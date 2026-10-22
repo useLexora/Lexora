@@ -18,3 +18,12 @@ export function resolveShellExecution(profile: BuddyExecutionProfile, platform: 
 }
 
 export type ShellExecution = ReturnType<typeof resolveShellExecution>
+
+export function resolveShellCallExecution(execution: ShellExecution, input: Record<string, unknown>, host = false): ShellExecution {
+  if (input.readOnly !== undefined && typeof input.readOnly !== 'boolean')
+    throw new Error('VALIDATION_FAILED')
+  const boundary = host ? 'host' : execution.boundary
+  if (input.readOnly === true && boundary === 'host')
+    throw new Error('SHELL_READ_ONLY_REQUIRES_SANDBOX')
+  return { ...execution, boundary, readOnly: boundary === 'sandbox' && (execution.readOnly || input.readOnly === true) }
+}

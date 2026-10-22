@@ -39,6 +39,7 @@ export interface MutationLease extends MutationIdentity {
 }
 
 interface PendingMutation extends MutationIdentity {
+  captureBoundary: boolean
   claims: readonly MutationClaim[]
   lifetime: MutationLifetime
   signal: AbortSignal
@@ -95,7 +96,7 @@ export class MutationCoordinator {
     }
   }
 
-  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, signal: AbortSignal }): Promise<MutationLease> {
+  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, captureBoundary?: boolean, signal: AbortSignal }): Promise<MutationLease> {
     if (this.#disposed)
       return Promise.reject(new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED'))
     input.signal.throwIfAborted()
@@ -104,6 +105,7 @@ export class MutationCoordinator {
     const claims = normalizeClaims(input.claims)
     const lease = await new Promise<MutationLease>((resolve, reject) => {
       const pending: PendingMutation = {
+        captureBoundary: input.captureBoundary === true,
         runId: input.runId,
         invocationId: input.invocationId,
         claims,
@@ -130,7 +132,8 @@ export class MutationCoordinator {
       this.#drain()
     })
     try {
-      await this.#resources?.acquire(lease.invocationId, lease.claims, lease.lifetime, input.signal)
+      if (lease.claims.length)
+        await this.#resources?.acquire(lease.invocationId, lease.claims, lease.lifetime, input.signal)
       input.signal.throwIfAborted()
       return lease
     }
@@ -343,8 +346,9 @@ export class MutationCoordinator {
       }
       this.#pending.splice(index, 1)
       pending.unsubscribe()
-      const segmentId = this.#lastWriter?.runId === pending.runId ? this.#lastWriter.segmentId : randomUUID()
-      this.#lastWriter = { runId: pending.runId, segmentId }
+      const segmentId = !pending.captureBoundary && this.#lastWriter?.runId === pending.runId ? this.#lastWriter.segmentId : randomUUID()
+      if (pending.claims.length)
+        this.#lastWriter = pending.captureBoundary ? undefined : { runId: pending.runId, segmentId }
       const lease: MutationLease = {
         runId: pending.runId,
         invocationId: pending.invocationId,
@@ -413,7 +417,7 @@ export class MutationCoordinator {
       if (reason)
         this.#requestRecovery(lease.invocationId)
     }
-    if (!this.#resources) {
+    if (!this.#resources || !lease.claims.length) {
       finish(hazard)
       return
     }

@@ -69,7 +69,7 @@ export class ShellSandboxClient {
     input: Omit<SandboxCommand, 'requestId' | 'executionId' | 'dispatchId'>,
     options: ExecOptions,
     approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>,
-    supervision?: { onSettlement: (settlement: OwnedProcessSettlement) => void | Promise<void> },
+    supervision?: { onLifecycle?: (event: Readonly<SandboxLifecycleEvent>) => void, onSettlement: (settlement: OwnedProcessSettlement) => void | Promise<void> },
   ): Promise<{ exitCode: number | null }> {
     if (this.#disposed)
       throw new ShellSandboxError('SANDBOX_UNAVAILABLE')
@@ -103,6 +103,7 @@ export class ShellSandboxClient {
           backendRevision = parsed.data.revision
           const { requestId: _, ...event } = parsed.data
           publish({ kind: 'backend', event })
+          supervision?.onLifecycle?.(event)
         }
         return
       }

@@ -1,4 +1,5 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
+import type { CapturedFileWriter } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageGenerationGateway } from './ImageGenerationGateway'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -27,7 +28,7 @@ export interface ImageGenerationServiceOptions {
       images: readonly { bytes: Uint8Array, mimeType: string }[]
       outputPath: string
       sourceArtifactId: string | null
-    }) => Promise<Array<{ id: string }>>
+    }, writeFiles?: CapturedFileWriter) => Promise<Array<{ id: string }>>
   }
   attachmentService: ConversationImageSource
   conversationId: string
@@ -56,7 +57,7 @@ export class ImageGenerationService {
     return this.#options.imageGenerationGateway.supports(model)
   }
 
-  generate(input: GenerateConversationImageInput, model: Model<Api>, signal: AbortSignal, grants = this.#options.grants) {
+  generate(input: GenerateConversationImageInput, model: Model<Api>, signal: AbortSignal, grants = this.#options.grants, writeFiles?: CapturedFileWriter) {
     const request = copyEventSnapshot(input)
     const directories = copyEventSnapshot(grants)
     return this.#operations.run({ conversationId: this.#options.conversationId, kind: 'generation', signal }, async (progress) => {
@@ -85,7 +86,7 @@ export class ImageGenerationService {
         images: generated.images,
         outputPath: request.outputPath.trim(),
         sourceArtifactId: references.artifactIds.at(-1) ?? null,
-      })
+      }, writeFiles)
       const artifactIds = artifacts.map(artifact => artifact.id)
       return { value: { artifactIds, responseId: generated.responseId }, artifactIds }
     })

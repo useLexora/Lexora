@@ -37,6 +37,7 @@ export async function runSupervisedShellProcess(input: {
 }, options: OwnedProcessSupervision & {
   signal?: AbortSignal
   timeout?: number
+  onDispatched?: () => void
   onData: (data: Buffer) => void
   onProcess?: (state: { phase: 'exited' | 'closed', pid?: number, exitCode: number | null }) => void
   executable?: string
@@ -96,6 +97,7 @@ export async function runSupervisedShellProcess(input: {
           if (closed || cancelled || options.signal?.aborted || timedOut)
             return cancel()
           commandDispatched = true
+          options.onDispatched?.()
           child.stdin.write(`${JSON.stringify({ ...input, executionId, dispatchId, commandTransport: input.commandTransport ?? 'argv', environment: Object.fromEntries(Object.entries(input.environment).filter((entry): entry is [string, string] => entry[1] !== undefined)) })}\n`)
         }
         if (diagnostic.type === 'released')

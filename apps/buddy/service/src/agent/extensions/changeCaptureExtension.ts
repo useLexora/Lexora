@@ -1,5 +1,6 @@
 import type { ToolCallEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { TSchema } from 'typebox'
+import type { ToolExecutionPhase } from '../../../../shared/runs/toolExecutionPhase'
 import type { BuddyToolClassification, BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { ChangeCaptureService, ChangeInvocationHandle, ChangeInvocationInput } from '../../changes/ChangeCaptureService'
 import type { MutationClaim, MutationCoordinator, MutationLease } from '../../changes/MutationCoordinator'
@@ -7,8 +8,6 @@ import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ToolAuthorizationService, ToolExecutionPermit } from '../../permissions/ToolAuthorizationService'
 import type { BuddyExtensionRunContext } from './BuddyExtensionRunContext'
 import { randomUUID } from 'node:crypto'
-import { dirname } from 'node:path'
-import { containsCanonicalPath } from '../../../../platform/filesystem/filePaths'
 import { resolveFilePath } from '../../../../platform/filesystem/resolveFilePath'
 import { isToolClassificationFailure } from '../../approvals/toolClassification'
 import { isShellToolName } from './piBuiltinTools'
@@ -23,7 +22,7 @@ export type BuddyMutationEffect
 
 interface MutationPlan {
   claims: readonly MutationClaim[]
-  scope: ChangeInvocationInput['scope']
+  scope: ChangeInvocationInput['scope'] | null
   grants: readonly DirectoryGrant[]
   coverage: 'complete' | 'partial'
   ownedProcess: boolean
@@ -52,6 +51,7 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
         throw new Error('RUN_CONTEXT_UNAVAILABLE')
       const executionSignal = AbortSignal.any([run.signal, ...signal ? [signal] : []])
       const event: ToolCallEvent = { type: 'tool_call', toolCallId, toolName: tool.name, input: parameters as Record<string, unknown>, signal: executionSignal }
+      const phase = (phase: ToolExecutionPhase) => run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase })
       let permit = options.authorization.getExecutionPermit(event, run)
       try {
         while (true) {
@@ -68,9 +68,12 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             executionSignal.throwIfAborted()
             if (!options.authorization.isPermitCurrent(permit, run))
               continue
+            run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'executing', executionBasis: 'tool' })
             return await tool.execute(toolCallId, parameters, executionSignal, onUpdate, context)
           }
-          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', signal: executionSignal })
+          phase('resource')
+          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', captureBoundary: plan.scope?.kind === 'untracked', signal: executionSignal })
+          phase('preparing')
           let handle: ChangeInvocationHandle | undefined
           let started = false
           let isError = true
@@ -84,18 +87,22 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             if (validation)
               throw new Error(validation.reason)
             try {
-              handle = await options.changes.beginInvocation({
-                conversationId: options.conversationId,
-                cwd: options.cwd,
-                grants: plan.grants,
-                invocationId: lease.invocationId,
-                runId: run.runId,
-                segmentId: lease.segmentId,
-                toolCallId,
-                toolName: tool.name,
-                scope: plan.scope,
-                coverage: plan.coverage,
-              })
+              if (plan.scope?.kind === 'files')
+                phase('capturing')
+              handle = plan.scope
+                ? await options.changes.beginInvocation({
+                    conversationId: options.conversationId,
+                    cwd: options.cwd,
+                    grants: plan.grants,
+                    invocationId: lease.invocationId,
+                    runId: run.runId,
+                    segmentId: lease.segmentId,
+                    toolCallId,
+                    toolName: tool.name,
+                    scope: plan.scope,
+                    coverage: plan.coverage,
+                  })
+                : undefined
             }
             catch { await markPartial(options, run.runId) }
             executionSignal.throwIfAborted()
@@ -108,16 +115,20 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             }
             executionSignal.throwIfAborted()
             started = true
+            run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: plan.ownedProcess ? 'preparing' : 'executing', ...plan.ownedProcess ? {} : { executionBasis: 'tool' as const } })
             const result = await options.mutations.withInvocation(lease, () => tool.execute(toolCallId, parameters, executionSignal, onUpdate, context))
             isError = 'isError' in result && result.isError === true
             return result
           }
           finally {
+            phase('cleaning')
             const settlement = started && plan.ownedProcess && options.mutations.getInvocationSettlement(lease.invocationId) === 'unknown' ? 'unknown' : 'released'
             try {
               if (handle) {
                 try {
-                  await options.changes.finishInvocation(handle, { isError, settlement })
+                  if (plan.scope?.kind === 'files')
+                    phase('capturing')
+                  await options.changes.finishInvocation(handle, { isError, started, settlement })
                 }
                 catch { await markPartial(options, run.runId) }
               }
@@ -129,6 +140,7 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
         }
       }
       finally {
+        phase('finished')
         options.authorization.releaseExecutionPermit(event, run)
       }
     },
@@ -174,19 +186,16 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
         ownedProcess: false,
       }
     }
-    const roots = resolutions.map(path => path.isDirectory ? path.canonicalPath : dirname(path.canonicalPath))
     return {
-      claims: roots.map(canonicalPath => ({ kind: 'tree', canonicalPath })),
-      scope: { kind: 'workspace' },
-      grants: roots.flatMap((root) => {
-        const grant = grants.find(grant => containsCanonicalPath(grant.canonicalRoot, root))
-        return grant ? [{ ...grant, root, canonicalRoot: root }] : []
-      }),
-      coverage: roots.every(root => grants.some(grant => containsCanonicalPath(grant.canonicalRoot, root))) ? 'complete' : 'partial',
+      claims: resolutions.map(path => ({ kind: path.isDirectory ? 'tree' : 'file', canonicalPath: path.canonicalPath })),
+      scope: { kind: 'untracked' },
+      grants,
+      coverage: 'complete',
       ownedProcess: false,
     }
   }
-  const workspace = effect.kind === 'workspace' && permit.executionProfile === 'read_only' ? [] : options.getWorkspaceGrants(run)
+
+  const workspace = effect.kind === 'workspace' && (permit.executionProfile === 'read_only' || classification.shellReadOnly === true) ? [] : options.getWorkspaceGrants(run)
   for (const grant of workspace) {
     const current = await resolveFilePath(grant.canonicalRoot, 'existing')
     if (!current.isDirectory || current.canonicalPath !== grant.canonicalRoot)
@@ -194,9 +203,9 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
   }
   return {
     claims: effect.kind === 'host' ? [{ kind: 'host' }] : workspace.map(grant => ({ kind: 'tree', canonicalPath: grant.canonicalRoot })),
-    scope: { kind: 'workspace' },
+    scope: effect.kind === 'workspace' && !workspace.length ? null : { kind: 'untracked' },
     grants: workspace,
-    coverage: effect.kind === 'host' ? 'partial' : 'complete',
+    coverage: 'complete',
     ownedProcess: effect.ownedProcess === true,
   }
 }

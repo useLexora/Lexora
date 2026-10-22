@@ -24,6 +24,7 @@ import type { BuddyExtensionRunContext, BuddyExtensionRunContextStore } from './
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import type { BuddyToolExposureResolver } from './discovery/toolDiscoveryContract'
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
+import { createCapturedFileWriter } from '../../changes/CapturedFileWriter'
 import { SessionDirectoryGrants } from '../../directories/SessionDirectoryGrants'
 import { observeSessionPermissions } from '../../permissions/observeSessionPermissions'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
@@ -163,6 +164,12 @@ export async function createBuddySessionExtensions(
         : { id: options.conversationId, kind: 'conversation' },
     })
     capabilities.push(codemode, ...await services.createCapabilities({
+      createFileWriter: (event) => {
+        const run = runContext.current
+        if (!run)
+          throw new Error('RUN_CONTEXT_UNAVAILABLE')
+        return createCapturedFileWriter({ conversationId: options.conversationId, cwd: options.canonicalRoot, run, event, authorization, mutations: services.mutations, changes: services.changeCaptureService, getGrants: () => [...grants.snapshot, ...executionPermissions.get(run, event.toolCallId)] })
+      },
       authorizeNetwork: async (input) => {
         const run = runContext.current
         if (!run)

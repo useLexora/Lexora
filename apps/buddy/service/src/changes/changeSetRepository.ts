@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ChangeCoverageReason } from '../../../shared/changes/changeApi'
+import { changeCoverageReasonSchema } from '../../../shared/changes/changeApi'
 
 export type ChangeCoverage = 'complete' | 'partial'
 export type ChangeSetStatus = 'capturing' | 'completed'
@@ -34,6 +36,7 @@ export interface FileChangeCaptureRecord {
 }
 
 export interface ChangeInvocationRecord {
+  captureMode?: 'legacy' | 'files' | 'untracked'
   id: string
   runId: string
   segmentId: string
@@ -46,6 +49,7 @@ export interface ChangeInvocationRecord {
 }
 
 export interface ChangeSetRecord {
+  coverageReasons?: ChangeCoverageReason[]
   conversationId: string
   coverage: ChangeCoverage
   createdAt: string
@@ -81,11 +85,12 @@ export interface ChangeSetRepository {
   finalizeSet: (id: string, fileCount: number, updatedAt: string) => boolean
   listCaptures: (changeSetId: string) => FileChangeCaptureRecord[]
   listSetsForRuns: (runIds: readonly string[]) => ChangeSetRecord[]
-  markPartial: (id: string, updatedAt: string) => boolean
+  markPartial: (id: string, updatedAt: string, reason?: ChangeCoverageReason) => boolean
   updateFileCount: (id: string, fileCount: number, updatedAt: string) => boolean
 }
 
 interface ChangeSetRow {
+  coverage_reasons_json: string
   conversation_id: string
   coverage: ChangeCoverage
   created_at: string
@@ -130,6 +135,7 @@ interface FileCaptureRow {
 }
 
 interface ChangeInvocationRow {
+  capture_mode: 'legacy' | 'files' | 'untracked'
   id: string
   run_id: string
   segment_id: string
@@ -154,8 +160,8 @@ const CAPTURE_SELECT = `
 
 export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepository {
   const insertInvocation = database.prepare(`
-    INSERT INTO run_change_invocations (id, run_id, segment_id, tool_call_id, tool_name, status, created_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO run_change_invocations (id, run_id, segment_id, tool_call_id, tool_name, status, created_at, completed_at, capture_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const findInvocation = database.prepare('SELECT * FROM run_change_invocations WHERE id = ?')
   const completeInvocation = database.prepare('UPDATE run_change_invocations SET status = ?, completed_at = ? WHERE id = ? AND status = \'pending\'')
@@ -208,8 +214,8 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
   `)
   const markPartial = database.prepare(`
     UPDATE run_change_sets
-    SET coverage = 'partial', updated_at = ?
-    WHERE id = ? AND coverage <> 'partial'
+    SET coverage = 'partial', updated_at = ?, coverage_reasons_json = ?
+    WHERE id = ?
   `)
   const updateFileCount = database.prepare(`
     UPDATE run_change_sets SET file_count = ?, updated_at = ? WHERE id = ? AND file_count <> ?
@@ -239,7 +245,7 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
       return rows.map(row => ({ ...toChangeSet(row), rootRunId: row.root_run_id }))
     },
     createInvocation(record) {
-      insertInvocation.run(record.id, record.runId, record.segmentId, record.toolCallId, record.toolName, record.status, record.createdAt, record.completedAt)
+      insertInvocation.run(record.id, record.runId, record.segmentId, record.toolCallId, record.toolName, record.status, record.createdAt, record.completedAt, record.captureMode ?? 'legacy')
       return toInvocation(findInvocation.get(record.id) as unknown as ChangeInvocationRow)
     },
     findInvocation(id) {
@@ -342,8 +348,14 @@ export function createChangeSetRepository(database: DatabaseSync): ChangeSetRepo
       `).all(...runIds) as unknown as ChangeSetRow[]
       return rows.map(toChangeSet)
     },
-    markPartial(id, updatedAt) {
-      return Number(markPartial.run(updatedAt, id).changes) === 1
+    markPartial(id, updatedAt, reason = 'capture_failed') {
+      const current = findSet.get(id) as ChangeSetRow | undefined
+      if (!current)
+        return false
+      const reasons = changeCoverageReasonSchema.array().parse(JSON.parse(current.coverage_reasons_json))
+      if (current.coverage === 'partial' && reasons.includes(reason))
+        return false
+      return Number(markPartial.run(updatedAt, JSON.stringify([...new Set([...reasons, reason])]), id).changes) === 1
     },
     updateFileCount(id, fileCount, updatedAt) {
       return Number(updateFileCount.run(fileCount, updatedAt, id, fileCount).changes) === 1
@@ -362,6 +374,7 @@ function toChangeSet(row: ChangeSetRow): ChangeSetRecord {
   return {
     conversationId: row.conversation_id,
     coverage: row.coverage,
+    coverageReasons: changeCoverageReasonSchema.array().parse(JSON.parse(row.coverage_reasons_json)),
     createdAt: row.created_at,
     fileCount: row.file_count,
     id: row.id,
@@ -423,6 +436,7 @@ function toFileCapture(row: FileCaptureRow): FileChangeCaptureRecord {
 
 function toInvocation(row: ChangeInvocationRow): ChangeInvocationRecord {
   return {
+    captureMode: row.capture_mode,
     id: row.id,
     runId: row.run_id,
     segmentId: row.segment_id,

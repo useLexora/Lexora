@@ -130,6 +130,7 @@ export class PiTurnExecutor implements RunExecutionBackend {
       maxTokens: run.maxTokens,
       model: run.model,
       onToolExecutionAuthorized: event => piEvents.projectToolExecutionAuthorized(event),
+      onToolExecutionPhase: event => piEvents.projectToolExecutionPhase(event),
       onToolExecutionDenied: event => piEvents.projectToolExecutionDenied(event),
       provider: run.provider,
       runId: run.id,

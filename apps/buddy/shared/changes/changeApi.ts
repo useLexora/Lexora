@@ -3,10 +3,14 @@ import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { idSchema, timestampSchema } from '../runtime/apiValidation'
 
+export const changeCoverageReasonSchema = z.enum(['untracked', 'capture_failed', 'interrupted', 'legacy_partial'])
+export type ChangeCoverageReason = z.infer<typeof changeCoverageReasonSchema>
+
 export const changeSetSummarySchema = z.object({
   changeSetId: idSchema,
   conversationId: idSchema,
   coverage: z.enum(['complete', 'partial']),
+  coverageReasons: z.array(changeCoverageReasonSchema).optional(),
   fileCount: z.number().int().nonnegative(),
   runId: idSchema,
   status: z.enum(['capturing', 'completed']),
@@ -46,6 +50,7 @@ export type LocalFileChangeDetail = DeepReadonly<z.infer<typeof fileChangeDetail
 
 export const changeOverviewSchema = z.object({
   coverage: z.enum(['complete', 'partial']),
+  coverageReasons: z.array(changeCoverageReasonSchema).optional(),
   files: z.array(fileChangeDetailSchema),
   status: z.enum(['capturing', 'completed']),
   updatedAt: timestampSchema.nullable(),

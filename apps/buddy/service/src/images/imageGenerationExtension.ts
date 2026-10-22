@@ -2,6 +2,7 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { Static, TSchema } from 'typebox'
 import type { BuddyCapability } from '../agent/extensions/BuddyCapability'
 import type { BuddyInProcessExtension } from '../agent/extensions/BuddyInProcessExtension'
+import type { CapturedFileWriterFactory } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic } from './ImageGenerationGateway'
 import type { ImageGenerationService } from './ImageGenerationService'
@@ -14,6 +15,7 @@ import { imageGenerationParameters } from './imageGenerationToolParameters'
 import { IMAGE_TOOLS } from './imageToolGroup'
 
 export interface CreateImageGenerationExtensionOptions {
+  createFileWriter?: CapturedFileWriterFactory
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]
   getRunId: () => string | undefined
   service: Pick<ImageGenerationService, 'generate' | 'supports'>
@@ -23,7 +25,7 @@ export function createImageGenerationCapability(options: CreateImageGenerationEx
   return {
     extension: createImageGenerationExtension(options),
     classify: classifyImageGenerationTool,
-    workspaceMutationTools: [IMAGE_GENERATION_TOOL_NAME],
+    mutationEffect: event => event.toolName === IMAGE_GENERATION_TOOL_NAME ? { kind: 'none' } : null,
     disclosure: [{
       source: { kind: 'builtin', id: 'image_generation', title: 'Image generation' },
       exposure: 'on_demand',
@@ -71,7 +73,7 @@ function createImageGenerationTool(options: CreateImageGenerationExtensionOption
         return imageToolFailure('IMAGE_GENERATION_UNSUPPORTED')
       const executionSignal = signal ?? new AbortController().signal
       try {
-        const result = await options.service.generate(input, model, executionSignal, options.getExecutionGrants?.(toolCallId))
+        const result = await options.service.generate(input, model, executionSignal, options.getExecutionGrants?.(toolCallId), options.createFileWriter?.({ type: 'tool_call', toolCallId, toolName: IMAGE_GENERATION_TOOL_NAME, input: parameters as Record<string, unknown>, signal: executionSignal }))
         return {
           content: [{
             text: JSON.stringify({ artifactIds: result.artifactIds, generatedCount: result.artifactIds.length }),

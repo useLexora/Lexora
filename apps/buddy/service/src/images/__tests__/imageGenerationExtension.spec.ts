@@ -96,7 +96,7 @@ describe('imageGenerationExtension', () => {
       images: [expect.objectContaining({ mimeType: 'image/png' })],
       outputPath: 'images/像素风角色.png',
       sourceArtifactId: 'reference-1',
-    }))
+    }), undefined)
   })
 
   it('declares image generation as a first-party artifact write', () => {

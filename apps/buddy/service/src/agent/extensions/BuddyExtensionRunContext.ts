@@ -1,10 +1,12 @@
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
+import type { ToolExecutionPhaseChange } from '../../../../shared/runs/toolExecutionPhase'
 import type { ConversationModelSelection } from '../../storage/conversationRecord'
 
 export interface BuddyExtensionRunContext {
   deferQueuedInputs?: boolean
   requestModel?: Readonly<ConversationModelSelection>
   flushProjectedEvents: () => Promise<void>
+  onToolExecutionPhase?: (event: ToolExecutionPhaseChange) => void
   onToolExecutionAuthorized: (event: {
     arguments: unknown
     toolCallId: string

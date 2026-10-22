@@ -1,4 +1,5 @@
 import type { ArtifactService } from '../artifacts/ArtifactService'
+import type { CapturedFileWriter } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ArtifactRecord } from '../storage/artifactRepository'
 import type { ChromaOptions } from './runChromaTransform'
@@ -26,7 +27,7 @@ export class ImageTransformService {
     this.#artifacts = options.artifacts
   }
 
-  removeChroma(input: RemoveChromaInput, signal?: AbortSignal): Promise<ArtifactRecord> {
+  removeChroma(input: RemoveChromaInput, signal?: AbortSignal, writeFiles?: CapturedFileWriter): Promise<ArtifactRecord> {
     const request = copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, outputPath: input.outputPath, sourceArtifactId: input.sourceArtifactId, color: input.color, despill: input.despill, softness: input.softness, tolerance: input.tolerance })
     return this.#operations.run({ conversationId: request.conversationId, kind: 'transform', signal }, async (progress) => {
       signal?.throwIfAborted()
@@ -54,7 +55,7 @@ export class ImageTransformService {
         images: [{ bytes, mimeType: 'image/png' }],
         outputPath: request.outputPath,
         sourceArtifactId: request.sourceArtifactId,
-      })
+      }, writeFiles)
       if (!artifact)
         throw new ImageTransformError('IMAGE_TRANSFORM_FAILED')
       return { value: artifact, artifactIds: [artifact.id] }
