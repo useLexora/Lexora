@@ -439,6 +439,8 @@ export default {
   'desktop.chat.queueWaiting': '等待发送',
   'desktop.chat.queuePaused': '已暂停，点击发送',
   'desktop.chat.queueActionFailed': '队列操作未完成，请稍后重试',
+  'desktop.chat.queueIncompatible': '这条消息的模型、伙伴或执行配置与当前运行不同，已保留在队列中，等待当前运行结束后发送',
+  'desktop.chat.queueUnavailable': '当前运行暂时无法接收补充，消息仍保留在队列中',
   'desktop.chat.send': '发送消息',
   'desktop.chat.modelImageUnsupported': '当前模型不支持图片输入',
   'desktop.chat.modelPdfUnsupported': '当前模型未开启 PDF 附件，请切换模型或在模型管理中配置',

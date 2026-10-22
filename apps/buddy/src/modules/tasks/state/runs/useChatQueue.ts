@@ -1,5 +1,5 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
+import type { LocalChatQueueItem, LocalChatQueueSteerResult } from '@buddy-shared/conversation/chatQueueApi'
 import type { ChatSession } from '../conversations/useChatSession'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { useIntervalFn } from '@vueuse/core'
@@ -11,10 +11,11 @@ export function useChatQueue(options: {
   runtime: Pick<RuntimeSupervisorStore, 'runtimeState'>
   refreshConversation: () => Promise<void>
   onError: (error: unknown) => void
-  onUnavailable: () => void
+  onUnavailable: (reason: Exclude<LocalChatQueueSteerResult, 'accepted'> | 'cancel') => void
 }) {
   const queuedMessages = shallowRef<readonly LocalChatQueueItem[]>([])
   const pendingQueueActions = shallowRef<ReadonlySet<string>>(new Set())
+  const unavailableActions = new Map<string, string>()
   let generation = 0
   let disposed = false
   let refreshing = false
@@ -33,6 +34,10 @@ export function useChatQueue(options: {
       return
     const removed = queuedMessages.value.some(item => !items.some(next => next.id === item.id))
     queuedMessages.value = items
+    for (const id of unavailableActions.keys()) {
+      if (!items.some(item => item.id === id))
+        unavailableActions.delete(id)
+    }
     if (removed)
       await options.refreshConversation()
   }
@@ -52,6 +57,7 @@ export function useChatQueue(options: {
   watch([options.session.activeConversationId, options.session.activeBranchId, () => options.runtime.runtimeState.value.status], () => {
     generation++
     queuedMessages.value = []
+    unavailableActions.clear()
     void poll()
   }, { immediate: true })
   onScopeDispose(() => {
@@ -65,10 +71,16 @@ export function useChatQueue(options: {
       return
     pendingQueueActions.value = new Set([...pendingQueueActions.value, id])
     try {
-      const accepted = await options.api[action]({ ...target, id })
+      const result = action === 'cancelQueued'
+        ? await options.api.cancelQueued({ ...target, id }) ? 'accepted' : 'cancel'
+        : await options.api.steerQueued({ ...target, id })
       await refreshQueue()
-      if (!accepted && queuedMessages.value.some(item => item.id === id))
-        options.onUnavailable()
+      if (scope()?.conversationId !== target.conversationId || scope()?.branchId !== target.branchId || disposed)
+        return
+      if (result !== 'accepted' && queuedMessages.value.some(item => item.id === id) && unavailableActions.get(id) !== result) {
+        unavailableActions.set(id, result)
+        options.onUnavailable(result)
+      }
     }
     catch (error) {
       if (scope()?.conversationId === target.conversationId && scope()?.branchId === target.branchId)

@@ -138,9 +138,20 @@ export function createReusableBuddySession(
   const streamFunction = session.agent.streamFunction
   let latestContext: Context | null = null
   const pendingInputs = new Map<string, BuddyInputReferenceV1>()
+  const pendingSteering = new Set<string>()
+  const idleInputs: { input: BuddyInputReferenceV1, mode: 'steer' | 'followUp' }[] = []
+  const stopInputTracking = session.subscribe((event) => {
+    if (event.type !== 'message_end')
+      return
+    const input = readBuddyInputReference(event.message)
+    if (input) {
+      pendingInputs.delete(input.messageId)
+      pendingSteering.delete(input.messageId)
+    }
+  })
   const requestInputs = new WeakMap<Context['messages'], { failed: boolean, documents: Map<string, AttachmentFileInput> }>()
   function enqueueInput(mode: 'steer' | 'followUp', prepare: () => BuddyInputReferenceV1, skills: readonly SkillReference[] = []) {
-    if (!session.isStreaming || options.runContext.current?.signal.aborted)
+    if (!options.runContext.current || options.runContext.current.signal.aborted || finishingTurn)
       return false
     for (const skill of skills) {
       if (!options.skillReferences?.some(active => active.id === skill.id && active.name === skill.name && active.revision === skill.revision)) {
@@ -151,8 +162,29 @@ export function createReusableBuddySession(
     }
     const input = prepare()
     pendingInputs.set(input.messageId, input)
-    session.agent[mode](createBuddyInputReferenceMessage(input, Date.now()))
+    if (mode === 'steer')
+      pendingSteering.add(input.messageId)
+    if (session.agent.state.isStreaming)
+      session.agent[mode](createBuddyInputReferenceMessage(input, Date.now()))
+    else
+      idleInputs.push({ input, mode })
     return true
+  }
+  function prompt(text: string, promptOptions?: Parameters<ReusableBuddySession['prompt']>[1]) {
+    const { inputReference, ...piPromptOptions } = promptOptions ?? {}
+    options.inputReferences.pending = inputReference ?? null
+    return withPiSessionStorageBoundary(session, async () => {
+      try {
+        await session.prompt(text, piPromptOptions)
+      }
+      finally {
+        await session.waitForIdle()
+      }
+      options.assertCodemodeReady?.()
+    }).finally(() => {
+      if (options.inputReferences.pending === inputReference)
+        options.inputReferences.pending = null
+    })
   }
   session.agent.convertToLlm = async (messages) => {
     const request = { failed: options.inputReferences.pending !== null, documents: new Map<string, AttachmentFileInput>() }
@@ -312,9 +344,21 @@ export function createReusableBuddySession(
     },
     steer: (prepare, skills) => enqueueInput('steer', prepare, skills),
     followUp: (prepare, skills) => enqueueInput('followUp', prepare, skills),
+    hasPendingInput: () => idleInputs.length > 0 || session.agent.hasQueuedMessages(),
+    hasPendingSteering: () => pendingSteering.size > 0,
+    resumeInput: async () => {
+      requireIdleRun()
+      const steeringIndex = idleInputs.findIndex(item => item.mode === 'steer')
+      const next = idleInputs.splice(steeringIndex < 0 ? 0 : steeringIndex, 1)[0]
+      if (!next)
+        throw new BuddyAgentRunError('VALIDATION_FAILED')
+      await prompt(next.input.prompt, { expandPromptTemplates: false, inputReference: next.input, source: 'rpc' })
+    },
     abort: () => {
       applySessionSettings('off')
       pendingInputs.clear()
+      idleInputs.length = 0
+      pendingSteering.clear()
       session.agent.clearSteeringQueue()
       session.agent.clearFollowUpQueue()
       return session.abort()
@@ -374,6 +418,7 @@ export function createReusableBuddySession(
     },
     shutdown: (reason) => {
       stopRetryTracking()
+      stopInputTracking()
       return options.shutdown(reason)
     },
     compact: instructions => withPiSessionStorageBoundary(
@@ -391,25 +436,7 @@ export function createReusableBuddySession(
     getContextUsageBreakdown: totalTokens => latestContext
       ? createContextUsageBreakdown(latestContext, totalTokens)
       : null,
-    prompt: (text, promptOptions) => {
-      const { inputReference, ...piPromptOptions } = promptOptions ?? {}
-      options.inputReferences.pending = inputReference ?? null
-      return withPiSessionStorageBoundary(
-        session,
-        async () => {
-          try {
-            await session.prompt(text, piPromptOptions)
-          }
-          finally {
-            await session.waitForIdle()
-          }
-          options.assertCodemodeReady?.()
-        },
-      ).finally(() => {
-        if (options.inputReferences.pending === inputReference)
-          options.inputReferences.pending = null
-      })
-    },
+    prompt,
     readInternalMessageReceipts: messages => withPiSessionStorageBoundary(session, async () => {
       const run = requireIdleRun()
       const receipts: ExecutionMailboxReceipt[] = []
@@ -483,6 +510,8 @@ export function createReusableBuddySession(
     finishTurn: () => finishingTurn ??= withPiSessionStorageBoundary(session, async () => {
       await session.waitForIdle()
       pendingInputs.clear()
+      idleInputs.length = 0
+      pendingSteering.clear()
       session.agent.clearSteeringQueue()
       session.agent.clearFollowUpQueue()
       options.assertCodemodeReady?.()

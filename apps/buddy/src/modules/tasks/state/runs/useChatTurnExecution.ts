@@ -68,7 +68,7 @@ export interface UseChatTurnExecutionOptions {
 }
 
 export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
-  const queue = useChatQueue({ api: options.api.chat, session: options.session, runtime: options.runtimeSupervisor, refreshConversation: options.runSync.refreshActiveConversation, onError: error => options.setErrorMessage(resolveLocalChatErrorMessage(error, options.language.value)), onUnavailable: () => options.setErrorMessage(translateBuddy(options.language.value, 'desktop.chat.queueActionFailed')) })
+  const queue = useChatQueue({ api: options.api.chat, session: options.session, runtime: options.runtimeSupervisor, refreshConversation: options.runSync.refreshActiveConversation, onError: error => options.setErrorMessage(resolveLocalChatErrorMessage(error, options.language.value)), onUnavailable: reason => options.setErrorMessage(translateBuddy(options.language.value, reason === 'incompatible' ? 'desktop.chat.queueIncompatible' : reason === 'unavailable' ? 'desktop.chat.queueUnavailable' : 'desktop.chat.queueActionFailed')) })
   const isSending = shallowRef(false)
   const requestIds = createRequestIdRegistry()
   const pendingCancellationWatches = new Set<() => void>()

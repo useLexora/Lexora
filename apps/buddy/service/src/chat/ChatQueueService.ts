@@ -1,4 +1,4 @@
-import type { LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../../shared/conversation/chatQueueApi'
+import type { LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueSteerResult, LocalChatQueueTarget } from '../../../shared/conversation/chatQueueApi'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { LocalRun } from '../../../shared/runs/runApi'
@@ -171,25 +171,27 @@ export class ChatQueueService {
     return cancelled
   }
 
-  steer(target: LocalChatQueueTarget) {
+  steer(target: LocalChatQueueTarget): Promise<LocalChatQueueSteerResult> {
     const active = this.#options.queue.activeRun(target)
     return this.#serialize(target, async () => {
       if (this.#isCancelling(target))
-        return false
+        return 'unavailable'
       if (!active)
-        return this.#dispatch(target, true)
+        return await this.#dispatch(target, true) ? 'accepted' : 'unavailable'
       const pending = this.#options.queue.pending(target)
       if (!pending || this.#options.queue.activeRun(target)?.id !== active.id)
-        return false
+        return 'unavailable'
       const input = await this.#options.turns.refreshQueuedInput(pending)
       const run = this.#options.runs.findById(active.id)
-      if (!run || !this.#canFollowUp(run, input))
-        return false
+      if (!run)
+        return 'unavailable'
+      if (!this.#canFollowUp(run, input))
+        return 'incompatible'
       await this.#options.turns.validatePreparedInput(input, false)
       if (this.#disposed || this.#isCancelling(target) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input) || this.#options.queue.activeRun(target)?.id !== active.id)
-        return false
-      return this.#deliver(input, active.id, 'steer')
-    })
+        return 'unavailable'
+      return this.#deliver(input, active.id, 'steer') ? 'accepted' : 'unavailable'
+    }, 'unavailable')
   }
 
   async followUp(runId: string, signal: AbortSignal) {
@@ -219,7 +221,7 @@ export class ChatQueueService {
           return false
         }
         return this.#deliver(input, runId, 'followUp')
-      })
+      }, false)
     }
     catch {
       if (!this.#disposed)
@@ -276,7 +278,7 @@ export class ChatQueueService {
       }
       const next = this.#options.queue.list(current)[0]
       return next?.state === 'waiting' ? this.#dispatch(next) : false
-    })
+    }, false)
   }
 
   async #dispatch(target: LocalChatQueueTarget, allowPaused = false) {
@@ -321,13 +323,13 @@ export class ChatQueueService {
     this.#changes.fire(copyEventSnapshot({ kind, scope: { conversationId: scope.conversationId, branchId: scope.branchId }, ...(committed ? { committed } : {}) }))
   }
 
-  async #serialize(scope: LocalChatQueueScope, operation: () => Promise<boolean>): Promise<boolean> {
+  async #serialize<T>(scope: LocalChatQueueScope, operation: () => Promise<T>, disposed: T): Promise<T> {
     const previous = this.#operations.get(scope.conversationId)
     const { promise, resolve } = Promise.withResolvers<void>()
     this.#operations.set(scope.conversationId, promise)
     await previous
     try {
-      return this.#disposed ? false : await operation()
+      return this.#disposed ? disposed : await operation()
     }
     finally {
       if (this.#operations.get(scope.conversationId) === promise)

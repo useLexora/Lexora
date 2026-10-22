@@ -1055,6 +1055,7 @@ export async function startBuddyService(
         readResult: runId => readExecutionResult(options.eventLog, runId),
         launchChild: id => turnLauncher.launch(id),
         stopExecution: id => runner.interruptExecution(id),
+        followUp: (runId, signal) => chatQueueService?.followUp(runId, signal) ?? Promise.resolve(false),
       })
       defer(() => service.dispose())
       return service
@@ -1356,6 +1357,11 @@ export async function startBuddyService(
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
       const service = new ChatQueueService({ availability: conversationAvailability, queue: chatQueue, turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
       const actionInputs = service.onDidChange((event) => {
+        if (event.kind === 'enqueued' || event.kind === 'cancelled') {
+          const active = chatQueue.activeRun(event.scope)
+          if (active)
+            executionCoordinator.notifyQueuedInput(active.id)
+        }
         if (event.committed?.messageId && event.committed.runId)
           extensionActions.dispatch({ type: 'task:input:committed', data: { conversationId: event.scope.conversationId, branchId: event.scope.branchId, runId: event.committed.runId, messageId: event.committed.messageId, commitId: event.committed.commitId } })
       })

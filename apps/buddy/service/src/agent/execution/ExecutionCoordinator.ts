@@ -5,7 +5,7 @@ import type { RunLifecycleService } from '../../runs/RunLifecycleService'
 import type { AdmitChildExecutionInput, ExecutionRepository, ExecutionStateRecord } from '../../storage/executionRepository'
 import type { MailboxRepository } from '../../storage/mailboxRepository'
 import type { RunRecord } from '../../storage/runRecord'
-import type { ExecutionContinuationPort } from './ExecutionContinuationPort'
+import type { ExecutionContinuationPort, ExecutionInputState } from './ExecutionContinuationPort'
 import type { ExecutionLifecyclePort } from './ExecutionLifecyclePort'
 import type { RunExecutionOutcome } from './RunExecutionBackend'
 import type { BuddyTurnHandle } from './turnTypes'
@@ -37,6 +37,7 @@ export interface ExecutionCoordinatorOptions {
   onObserverError?: (error: unknown) => void
   hostShellSupervision?: boolean
   recoverQuarantinedRun?: (runId: string) => boolean
+  followUp?: (runId: string, signal: AbortSignal) => Promise<boolean>
 }
 
 class ShellSupervisionUnavailableError extends Error {
@@ -52,6 +53,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   readonly #options: ExecutionCoordinatorOptions
   readonly #tails = new Map<string, Promise<unknown>>()
   readonly #revisions = new Map<string, number>()
+  readonly #inputs = new Map<string, ExecutionInputState>()
   readonly #changes: Emitter<{ rootRunId: string }>
   readonly #preparations = new Map<string, Preparation>()
   readonly #children = new Map<string, Promise<RunRecord>>()
@@ -101,6 +103,25 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     const accepted = this.#require(runId)
     await this.#claimWorking(runId, signal)
     return {
+      bindInputs: (state) => {
+        this.#inputs.set(runId, state)
+        return () => {
+          if (this.#inputs.get(runId) === state)
+            this.#inputs.delete(runId)
+        }
+      },
+      acceptInput: (deliver) => {
+        const current = this.#require(runId)
+        if (this.#stopped || signal.aborted || current.cancelRequestedAt || current.run.generation !== accepted.run.generation
+          || !['working', 'waiting'].includes(current.phase)) {
+          return false
+        }
+        if (!deliver())
+          return false
+        this.#changed(current.run.rootRunId)
+        return true
+      },
+      followUp: () => this.#options.followUp?.(runId, signal) ?? Promise.resolve(false),
       readPending: async () => {
         signal.throwIfAborted()
         const current = this.#require(runId)
@@ -110,7 +131,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         const messages = this.#options.mailbox.listUnconsumed(runId)
         const shouldResume = messages.length > 0 && !(messages.every(isExecutionProgress)
           && this.#options.executions.listTree(current.run.rootRunId).some(child => child.run.parentRunId === runId && child.phase !== 'closed'))
-        if (shouldResume && current.phase === 'waiting')
+        if ((shouldResume || this.#inputs.get(runId)?.hasPendingInput()) && current.phase === 'waiting')
           await this.#claimWorking(runId, signal)
         return { revision: this.#revision(current.run.rootRunId), messages, shouldResume }
       },
@@ -125,6 +146,12 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       waitForChange: input => this.#wait(accepted.run.rootRunId, input.afterRevision, input.signal),
       prepareClose: input => this.#prepareClose(runId, input.outcome, input.consumedReceipts),
     }
+  }
+
+  notifyQueuedInput(runId: string): void {
+    const current = this.#options.executions.find(runId)
+    if (current && !this.#stopped)
+      this.#changed(current.run.rootRunId)
   }
 
   assertShellExecutionAllowed(runId: string): void {
@@ -243,7 +270,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
           && !isExecutionProgress(message)
           && (!targetRunIds.length || message.kind !== 'result' || targetRunIds.includes(message.sourceRunId)),
         )
-        if (pending || targetRunIds.some(id => this.#require(id).phase === 'closed'))
+        if (pending || this.#inputs.get(runId)?.hasPendingSteering() || targetRunIds.some(id => this.#require(id).phase === 'closed'))
           return 'changed'
         if (deadline.aborted)
           return 'timedout'
@@ -442,6 +469,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       record = this.#require(runId)
       const mode = record.cancelRequestedAt || outcome.status === 'cancelled' ? 'cancel' : outcome.status === 'failed' ? 'failure' : 'success'
       try {
+        if (mode === 'success' && this.#inputs.get(runId)?.hasPendingInput())
+          throw new ExecutionAdmissionError('pending')
         const root = this.#options.executions.find(record.run.rootRunId)
         if (!root)
           throw new ExecutionAdmissionError('stale')

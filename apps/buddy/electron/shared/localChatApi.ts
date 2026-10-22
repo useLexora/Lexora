@@ -6,7 +6,7 @@ import type { ChangeOverviewRequest, ChangeRecoveryListRequest, ChangeRecoveryRe
 import type { ConnectorChangeNotice, LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
 import type { LocalChatCommandRequest, LocalStartTurnRequest, LocalTurnStart } from '../../shared/conversation/chatApi'
-import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
+import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueSteerResult, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
 import type { ComposerResourcesChanged, LocalComposerDraft, LocalComposerDraftDiscard, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
 import type {
   BuddyComposerResource,
@@ -557,7 +557,7 @@ export interface LocalChatApi {
     enqueue: (input: LocalStartTurnRequest) => Promise<LocalChatQueueReceipt>
     listQueue: (input: LocalChatQueueScope) => Promise<readonly LocalChatQueueItem[]>
     cancelQueued: (input: LocalChatQueueTarget) => Promise<boolean>
-    steerQueued: (input: LocalChatQueueTarget) => Promise<boolean>
+    steerQueued: (input: LocalChatQueueTarget) => Promise<LocalChatQueueSteerResult>
     editUserMessage: (input: {
       conversationId: string
       draftId: string

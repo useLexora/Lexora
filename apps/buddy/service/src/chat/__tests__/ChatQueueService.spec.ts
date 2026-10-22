@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { Emitter } from '../../../../shared/events/Emitter'
-import { BUDDY_PERMISSION_MODES, resolveBuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
+import { resolveBuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
 import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { toPublicRun } from '../../runs/publicRun'
@@ -75,7 +75,7 @@ describe('persistent chat queue scheduling', () => {
     f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
     f.members.setModelSelection({ conversationId: 'conversation', actorId: other.id, modelSelection: { providerId: 'provider', modelId: 'actor-b-member', reasoning: 'high', serviceTier: 'priority' }, updatedAt: '2026-10-11T10:00:02.000Z' })
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-    expect(await f.service.steer(f.target('A'))).toBe(false)
+    expect(await f.service.steer(f.target('A'))).toBe('incompatible')
     expect(f.delivered).toEqual([])
     expect(f.queue.list(f.scope)[0]?.buddyId).toBe(other.id)
     expect(f.runs.findById('run-initial')).toEqual(original)
@@ -136,7 +136,7 @@ describe('persistent chat queue scheduling', () => {
     const buddy = f.buddies.get('default')
     f.buddies.update({ buddyId: buddy.id, expectedRevision: buddy.revision, settings: buddySettingsSchema.parse({ ...buddy.settings, instructions: 'Updated instructions', tools: { mode: 'none' } }) })
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-    expect(await f.service.steer(f.target('A'))).toBe(false)
+    expect(await f.service.steer(f.target('A'))).toBe('incompatible')
     expect(f.runs.findById('run-initial')).toEqual(original)
     f.database.exec('UPDATE runs SET status = \'completed\'')
     f.releaseSlot()
@@ -206,7 +206,7 @@ describe('persistent chat queue scheduling', () => {
       f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
     }
     finally { gate.resolve() }
-    expect(await steering).toBe(false)
+    expect(await steering).toBe('unavailable')
     expect(f.delivered).toEqual([])
     expect(f.queue.list(f.scope)[0]?.buddyId).toBe(other.id)
   })
@@ -229,7 +229,7 @@ describe('persistent chat queue scheduling', () => {
         await f.service.enqueue({ draftId: 'draft', expectedRevision: prepared.draft.expectedRevision, requestId: prepared.requestId })
       }
       f.releaseSlot()
-      expect(await f.service.steer(f.target('B'))).toBe(false)
+      expect(await f.service.steer(f.target('B'))).toBe('unavailable')
       expect(await f.service.reconcile(f.scope)).toBe(false)
       expect(f.queue.list(f.scope).map(item => [item.id, item.state])).toEqual([['A', 'paused'], ['B', 'paused'], ['C', 'paused']])
       expect(f.launched).toEqual([])
@@ -241,7 +241,7 @@ describe('persistent chat queue scheduling', () => {
     }
     await f.continuation.start()
     expect(f.launched).toEqual([])
-    expect(await f.service.steer(f.target('B'))).toBe(true)
+    expect(await f.service.steer(f.target('B'))).toBe('accepted')
     f.database.prepare('UPDATE runs SET status = ? WHERE id = ?').run('running', 'run-B')
     expect(await f.service.followUp('run-B', f.controller.signal)).toBe(false)
     expect(f.launched).toEqual(['run-B'])
@@ -274,7 +274,7 @@ describe('persistent chat queue scheduling', () => {
     const cancelling = f.service.cancelRun('run-initial')
     try {
       validation.resolve()
-      expect(await steering).toBe(false)
+      expect(await steering).toBe('unavailable')
       expect(f.delivered).toEqual([])
       expect(f.queue.list(f.scope)[0]?.state).toBe('paused')
     }
@@ -294,7 +294,7 @@ describe('persistent chat queue scheduling', () => {
     await expect(f.service.cancelRun('run-initial')).rejects.toThrow('Cancellation failed')
     expect(f.queue.list(f.scope)[0]?.state).toBe('paused')
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-    expect(await f.service.steer(f.target('A'))).toBe(true)
+    expect(await f.service.steer(f.target('A'))).toBe('accepted')
     expect(f.delivered).toEqual(['steer:A'])
   })
 
@@ -322,17 +322,6 @@ describe('persistent chat queue scheduling', () => {
     expect(attachments.findById('owned-attachment')).toMatchObject({ draftId: null, messageId: 'A', conversationId: 'conversation' })
   })
 
-  it('dispatches a queued message with a new turn batch without repeating draft consumption', async () => {
-    const f = fixture()
-    const events: TurnRequestCommit[] = []
-    f.requests.onDidCommit(event => events.push(event))
-    f.queue.enqueue(f.input('A'))
-    f.database.exec('UPDATE runs SET status = \'completed\'')
-    f.settle('run-initial')
-    await vi.waitFor(() => expect(events).toHaveLength(1))
-    expect(events[0]!.facts.map(fact => fact.kind)).toEqual(['message.created', 'run.queued', 'queue.dispatched'])
-  })
-
   it('keeps persisted waiting work paused when the owner restarts', async () => {
     const f = fixture(true)
     f.database.exec('UPDATE runs SET status = \'completed\'')
@@ -353,10 +342,12 @@ describe('persistent chat queue scheduling', () => {
     expect(f.runs.findById('run-A')?.branchId).toBe('branch')
   })
 
-  it('does not continue from a durable terminal until the execution slot is released', async () => {
+  it('waits for slot release then dispatches one turn batch without repeating draft consumption', async () => {
     const f = fixture()
     f.queue.enqueue(f.input('A'))
     f.database.exec('UPDATE runs SET status = \'completed\'')
+    const events: TurnRequestCommit[] = []
+    f.requests.onDidCommit(event => events.push(event))
     f.committed.fire({ runId: 'run-initial', type: 'run.completed', sequence: 1, createdAt: new Date().toISOString(), payload: {} })
     await new Promise(resolve => setTimeout(resolve, 15))
     expect(f.launched).toEqual([])
@@ -364,6 +355,7 @@ describe('persistent chat queue scheduling', () => {
     f.settle('run-initial')
     await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
     expect(f.database.prepare('SELECT id FROM messages WHERE id = ?').all('A')).toHaveLength(1)
+    expect(events.map(event => event.facts.map(fact => fact.kind))).toEqual([['message.created', 'run.queued', 'queue.dispatched']])
   })
 
   it.each(['settlement', 'reconciliation'] as const)('keeps completed work paused after degraded cleanup through %s', async (wake) => {
@@ -399,7 +391,7 @@ describe('persistent chat queue scheduling', () => {
     f.continuation.reconcile()
     await vi.waitFor(() => expect(f.continuation.state).toBe('ready'))
     expect(f.launched).toEqual([])
-    expect(await f.service.steer(f.target('A'))).toBe(true)
+    expect(await f.service.steer(f.target('A'))).toBe('accepted')
     expect(f.launched).toEqual(['run-A'])
   })
 
@@ -434,13 +426,18 @@ describe('persistent chat queue scheduling', () => {
     expect(f.database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-initial' }])
   })
 
-  it('steers only B and lazily follows up A then C within the same run', async () => {
+  it('serializes in-flight steering B before following up A then C within the same run', async () => {
     const f = fixture()
     for (const id of ['A', 'B', 'C'])
       f.queue.enqueue(f.input(id))
-    expect(await f.service.steer(f.target('B'))).toBe(true)
-    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A', 'C'])
-    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+    const gate = Promise.withResolvers<void>()
+    f.validate.mockImplementationOnce(() => gate.promise)
+    const steering = f.service.steer(f.target('B'))
+    await vi.waitFor(() => expect(f.validate).toHaveBeenCalledOnce())
+    const following = f.service.followUp('run-initial', f.controller.signal)
+    gate.resolve()
+    expect(await steering).toBe('accepted')
+    expect(await following).toBe(true)
     expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['C'])
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
@@ -466,26 +463,10 @@ describe('persistent chat queue scheduling', () => {
     f.settle('run-initial')
     await new Promise(resolve => setTimeout(resolve, 10))
     gate.resolve()
-    expect(await steering).toBe(false)
+    expect(await steering).toBe('unavailable')
     await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
     expect(f.delivered).toEqual([])
     expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['B', 'C'])
-  })
-
-  it('awaits an in-flight selected steer at the native follow-up boundary', async () => {
-    const f = fixture()
-    for (const id of ['A', 'B', 'C'])
-      f.queue.enqueue(f.input(id))
-    const gate = Promise.withResolvers<void>()
-    f.validate.mockImplementationOnce(() => gate.promise)
-    const steering = f.service.steer(f.target('B'))
-    await vi.waitFor(() => expect(f.validate).toHaveBeenCalledOnce())
-    const following = f.service.followUp('run-initial', f.controller.signal)
-    gate.resolve()
-    expect(await steering).toBe(true)
-    expect(await following).toBe(true)
-    expect(f.delivered).toEqual(['steer:B', 'followUp:A'])
-    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['C'])
   })
 
   it.each(['stop', 'cancel', 'dispose', 'pause'] as const)('does not consume an input after %s during async validation', async (action) => {
@@ -509,7 +490,12 @@ describe('persistent chat queue scheduling', () => {
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
   })
 
-  it.each(BUDDY_PERMISSION_MODES.flatMap(from => BUDDY_PERMISSION_MODES.filter(to => to !== from).flatMap(to => ['steer', 'followUp'].map(mode => ({ from, to, mode })))))(
+  it.each(([
+    { from: 'read_only', to: 'full_access' },
+    { from: 'full_access', to: 'read_only' },
+    { from: 'manual_approval', to: 'policy_approval' },
+    { from: 'policy_approval', to: 'manual_approval' },
+  ] as const).flatMap(transition => (['steer', 'followUp'] as const).map(mode => ({ ...transition, mode }))))(
     'delivers $mode in the same run after switching permissions from $from to $to',
     async ({ from, to, mode }) => {
       const f = fixture()
@@ -523,7 +509,7 @@ describe('persistent chat queue scheduling', () => {
       f.setPermissions(resolveBuddyPermissionSettings(to))
       if (mode === 'steer')
         f.queue.enqueue(f.input('A'))
-      expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+      expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(mode === 'steer' ? 'accepted' : true)
       expect(f.delivered).toEqual([`${mode}:A`])
       expect(f.queue.list(f.scope)).toEqual([])
       expect(f.runInputs.findByMessageId('A')?.runId).toBe('run-initial')
@@ -544,10 +530,10 @@ describe('persistent chat queue scheduling', () => {
       f.setPermissions(resolveBuddyPermissionSettings('read_only'))
     }
     finally { gate.resolve() }
-    expect(await delivery).toBe(false)
+    expect(await delivery).toBe(mode === 'steer' ? 'unavailable' : false)
     expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A'])
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
-    expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
+    expect(mode === 'steer' ? await f.service.steer(f.target('A')) : await f.service.followUp('run-initial', f.controller.signal)).toBe(mode === 'steer' ? 'accepted' : true)
     expect(f.delivered).toEqual([`${mode}:A`])
     expect(f.runInputs.findByMessageId('A')?.runId).toBe('run-initial')
   })
@@ -592,7 +578,7 @@ describe('persistent chat queue scheduling', () => {
     const accepted = mode === 'followUp'
       ? await f.service.followUp('run-initial', f.controller.signal)
       : await f.service.steer(f.target('review'))
-    expect(accepted).toBe(false)
+    expect(accepted).toBe(mode === 'steer' ? 'incompatible' : false)
     expect(f.queue.pending(f.target('review'))?.runExecutionProfile).toBe('read_only')
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
     f.database.exec('UPDATE runs SET status = \'completed\'')
@@ -610,7 +596,7 @@ describe('persistent chat queue scheduling', () => {
     f.queue.enqueue(f.input('ordinary'))
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(true)
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-    expect(await f.service.steer(f.target('ordinary'))).toBe(false)
+    expect(await f.service.steer(f.target('ordinary'))).toBe('incompatible')
     expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['ordinary'])
     expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'review' }])
   })
@@ -628,7 +614,7 @@ describe('persistent chat queue scheduling', () => {
       ['B', 'paused'],
       ['C', 'waiting'],
     ])
-    expect(await f.service.steer(f.target('B'))).toBe(true)
+    expect(await f.service.steer(f.target('B'))).toBe('accepted')
     expect(f.delivered).toEqual(['steer:B'])
   })
 

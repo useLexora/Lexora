@@ -35,6 +35,9 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
   getInputContext?: () => { messages: AgentSession['messages'] }
   steer?: (prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]) => boolean
   followUp?: (prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]) => boolean
+  hasPendingInput: () => boolean
+  hasPendingSteering: () => boolean
+  resumeInput: () => Promise<void>
   abort: () => Promise<void>
   abortCompaction: () => void
   activateTurn: (input: BuddySessionTurnContext) => Promise<() => void>

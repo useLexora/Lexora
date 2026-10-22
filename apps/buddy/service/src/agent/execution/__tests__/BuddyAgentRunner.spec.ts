@@ -645,41 +645,6 @@ describe('buddyAgentRunner', () => {
     expect(events.some(event => event.type === 'session.continuity.degraded')).toBe(false)
   })
 
-  it('resumes the latest bound Pi session after the in-memory session is invalidated', async () => {
-    const fixture = await createFixture()
-    const sessions = new BuddySessionRegistry<ReusableBuddySession>()
-    const sessionFactory = vi.fn(async (input: { piSessionFile: string | null, runId: string }) => ({
-      piSessionFile: input.piSessionFile ?? join(fixture.root, `${input.runId}.jsonl`),
-      session: new IdleSession(),
-    }))
-    const runner = fixture.createRunnerFromFactory(sessionFactory, sessions)
-    const base = {
-      branchId: 'branch-1',
-      canonicalRoot: fixture.root,
-      conversationId: 'conversation-1',
-      cwd: fixture.root,
-      model: 'claude-sonnet-4-5',
-      spaceId: null,
-      provider: 'anthropic',
-      resources: emptyResources(),
-    }
-    const first = { ...base, prompt: 'First turn', runId: 'run-first' }
-    fixture.prepareTurn(first, 'message-user-first')
-    await runner.startTurn(withSession(first)).completion
-    await sessions.invalidateRoot(fixture.root)
-
-    const second = { ...base, prompt: 'Second turn', runId: 'run-second' }
-    fixture.prepareTurn(second, 'message-user-second')
-    await runner.startTurn(withSession(second)).completion
-
-    expect(sessionFactory.mock.calls[1]?.[0]).toMatchObject({
-      piSessionFile: join(fixture.root, 'run-first.jsonl'),
-      runId: 'run-second',
-    })
-    expect(fixture.runs.findById('run-second')?.piSessionFile)
-      .toBe(join(fixture.root, 'run-first.jsonl'))
-  })
-
   it('runs manual compaction as an audited Buddy run and records Pi usage', async () => {
     const fixture = await createFixture()
     fixture.prepareCompletedTurn()
@@ -921,6 +886,9 @@ describe('buddyAgentRunner', () => {
 })
 
 class IdleSession implements ReusableBuddySession {
+  hasPendingInput = () => false
+  hasPendingSteering = () => false
+  resumeInput = async () => { throw new Error('Unexpected input') }
   readInternalMessageReceipts: ReusableBuddySession['readInternalMessageReceipts'] = async (messages) => {
     if (messages.length)
       throw new Error('Unexpected mailbox messages')

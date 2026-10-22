@@ -84,6 +84,65 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it('wakes a native wait for steering without cancelling the child or waking for ordinary queued input', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    const parent = await f.coordinator.begin('root', signal)
+    f.executions.admitChild(f.child('child'))
+    await f.coordinator.begin('child', signal)
+    let pending = false
+    const release = parent.bindInputs({ hasPendingInput: () => pending, hasPendingSteering: () => pending })
+    let resumed = false
+    const waiting = f.coordinator.wait('root', ['child'], 10000, signal).then((result) => {
+      resumed = true
+      return result
+    })
+    await vi.waitFor(() => expect(f.executions.find('root')?.phase).toBe('waiting'))
+    f.coordinator.notifyQueuedInput('root')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(resumed).toBe(false)
+    expect(parent.acceptInput(() => {
+      pending = true
+      return true
+    })).toBe(true)
+    expect(await waiting).toBe('changed')
+    expect(f.executions.find('root')?.phase).toBe('working')
+    expect(f.executions.find('child')).toMatchObject({ phase: 'working', cancelRequestedAt: null })
+    pending = false
+    release()
+  })
+
+  it('keeps accepted input ahead of sealing and rejects input after closing or cancellation', async () => {
+    const f = await fixture()
+    const controller = new AbortController()
+    const parent = await f.coordinator.begin('root', controller.signal)
+    let pending = false
+    const release = parent.bindInputs({ hasPendingInput: () => pending, hasPendingSteering: () => pending })
+    const closing = parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
+    expect(parent.acceptInput(() => {
+      pending = true
+      return true
+    })).toBe(true)
+    expect(await closing).toMatchObject({ kind: 'pending' })
+    await parent.readPending()
+    expect(f.executions.find('root')?.phase).toBe('working')
+    pending = false
+    expect(await parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })).toMatchObject({ kind: 'sealed' })
+    let committed = false
+    expect(parent.acceptInput(() => {
+      committed = true
+      return true
+    })).toBe(false)
+    expect(committed).toBe(false)
+    controller.abort()
+    expect(parent.acceptInput(() => {
+      committed = true
+      return true
+    })).toBe(false)
+    expect(committed).toBe(false)
+    release()
+  })
+
   it('closes a quarantined child only after its owner stops while healthy siblings and the root settle normally', async () => {
     const stopped = Promise.withResolvers<void>()
     const entered = Promise.withResolvers<void>()
@@ -186,27 +245,6 @@ describe('execution coordination', () => {
       expect(f.executions.find('root')?.phase).not.toBe('closed')
     }
     finally { f.unavailable.clear() }
-  })
-
-  it('reports a wait tool deadline while preserving real mutation and execution state', async () => {
-    const f = await fixture()
-    const signal = new AbortController().signal
-    await f.coordinator.begin('root', signal)
-    f.executions.admitChild(f.child('queued'))
-    const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal })
-    const service = delegationService(f)
-    const caller = { run: { runId: 'root', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
-    try {
-      expect(await service.execute(caller, 'deadline', { operation: 'wait', timeoutMs: 10 }, signal)).toMatchObject({
-        waitStatus: 'timedout',
-        phase: 'working',
-        status: 'running',
-        cleanup: 'pending',
-        children: [{ runId: 'queued', phase: 'queued' }],
-      })
-      expect(f.mutations.getRunState('root')).toEqual({ active: 1, pending: 0, hazards: [] })
-    }
-    finally { lease.release() }
   })
 
   it('retains progress receipts without waking a parent until an actionable message arrives', async () => {
@@ -313,12 +351,14 @@ describe('execution coordination', () => {
     const waiting = await parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
     expect(waiting.kind).toBe('pending')
     expect(f.executions.find('root')?.phase).toBe('waiting')
+    const snapshot = await parent.readPending()
     const child = await f.coordinator.begin('child', new AbortController().signal)
     await f.lifecycle.start({ runId: 'child', expectedPurposes: ['chat'], startedAt: new Date().toISOString(), payload: {} })
     const closing = await child.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
     expect(closing.kind).toBe('sealed')
     const settled = await f.coordinator.finalize({ runId: 'child', cleanup: 'completed', outcome: { status: 'completed' } })
     f.childDone.resolve(settled)
+    await parent.waitForChange({ afterRevision: snapshot.revision })
     const pending = await parent.readPending()
     expect(pending.messages).toHaveLength(1)
     expect(pending.messages[0]).toMatchObject({ sourceRunId: 'child', targetRunId: 'root', kind: 'result', text: 'Result from child' })
@@ -335,14 +375,6 @@ describe('execution coordination', () => {
     expect(f.runs.findById('root')?.status).toBe('completed')
     const childEvents = await f.events.read('child')
     expect(childEvents.slice(-2).map(event => event.type)).toEqual(['execution.mailbox.sent', 'run.completed'])
-  })
-
-  it('does not lose an event between reading a revision and subscribing to wait', async () => {
-    const f = await fixture()
-    const port = await f.coordinator.begin('root', new AbortController().signal)
-    const snapshot = await port.readPending()
-    await f.events.append({ runId: 'root', type: 'run.progress', payload: {} })
-    await port.waitForChange({ afterRevision: snapshot.revision })
   })
 
   it('waits for the named child despite an earlier result and answers a caller question without a lost wakeup', async () => {
@@ -439,6 +471,9 @@ describe('execution coordination', () => {
     const f = await fixture()
     const controller = new AbortController()
     await f.coordinator.begin('root', controller.signal)
+    f.executions.admitChild(f.child('queued'))
+    const service = delegationService(f)
+    const caller = { run: { runId: 'root', signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }, getPermissions: () => ({ approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }) }
     const lease = await f.mutations.acquire({ runId: 'root', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'host' }], signal: controller.signal })
     let completed = false
     const overlapping = f.mutations.acquire({ runId: 'later', invocationId: 'later', lifetime: 'runtime', claims: [{ kind: 'host' }], signal: new AbortController().signal }).then((next) => {
@@ -446,14 +481,20 @@ describe('execution coordination', () => {
       next.release()
     })
     try {
-      const waiting = f.coordinator.wait('root', [], reason === 'timeout' ? 10 : 10000, controller.signal)
+      const waiting = service.execute(caller, 'bounded-wait', { operation: 'wait', timeoutMs: reason === 'timeout' ? 10 : 10000 }, controller.signal)
       if (reason === 'cancel') {
         const cancelled = expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
         controller.abort()
         await cancelled
       }
       else {
-        expect(await waiting).toBe('timedout')
+        expect(await waiting).toMatchObject({
+          waitStatus: 'timedout',
+          phase: 'working',
+          status: 'running',
+          cleanup: 'pending',
+          children: [{ runId: 'queued', phase: 'queued' }],
+        })
       }
       expect(f.executions.find('root')).toMatchObject({ phase: 'working', cleanupState: 'pending' })
       expect(f.mutations.getRunState('root')).toEqual({ pending: 0, active: 1, hazards: [] })

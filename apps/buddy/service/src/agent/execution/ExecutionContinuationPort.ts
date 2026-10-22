@@ -14,7 +14,15 @@ export type ExecutionClosePreparation
   = | { readonly kind: 'pending', readonly revision: number }
     | { readonly kind: 'sealed', readonly closingGeneration: number }
 
+export interface ExecutionInputState {
+  hasPendingInput: () => boolean
+  hasPendingSteering: () => boolean
+}
+
 export interface ExecutionContinuationPort {
+  bindInputs: (state: ExecutionInputState) => () => void
+  acceptInput: (deliver: () => boolean) => boolean
+  followUp: () => Promise<boolean>
   readPending: () => Promise<ExecutionMailboxSnapshot>
   acceptInContext: (receipts: readonly ExecutionMailboxReceipt[]) => Promise<void>
   waitForChange: (input: { afterRevision: number, signal?: AbortSignal }) => Promise<void>

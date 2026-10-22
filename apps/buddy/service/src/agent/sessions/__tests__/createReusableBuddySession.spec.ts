@@ -18,6 +18,7 @@ describe('createReusableBuddySession', () => {
   it('accepts steering only against the active skill snapshot before committing the input', () => {
     const session = createAgentSessionDouble(SessionManager.inMemory(), async () => {})
     Object.defineProperty(session, 'isStreaming', { value: true })
+    Object.assign(session.agent, { state: { isStreaming: true } })
     const messages: unknown[] = []
     session.agent.steer = (message) => {
       messages.push(message)
@@ -28,7 +29,7 @@ describe('createReusableBuddySession', () => {
       ...inputReferenceBoundary(),
       skillReferences: [reference],
       session,
-      runContext: { current: null },
+      runContext: { current: { runId: 'run', signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} } },
       shutdown: async () => {},
     })
     let committed = 0

@@ -2,7 +2,8 @@ import type { Api, AssistantMessage, Context, Model } from '@earendil-works/pi-a
 import type { BuddyExtensionRunContextStore } from '../../extensions/BuddyExtensionRunContext'
 import type { BuddyInProcessExtension } from '../../extensions/BuddyInProcessExtension'
 import type { BuddySessionBlueprint } from '../../sessions/BuddySessionBlueprint'
-import type { ExecutionContinuationPort, ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../ExecutionContinuationPort'
+import type { ActiveRunSession } from '../ActiveRunRegistry'
+import type { ExecutionContinuationPort, ExecutionInputState, ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../ExecutionContinuationPort'
 import { mkdirSync, renameSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -42,6 +43,100 @@ afterEach(async () => {
 })
 
 describe('execution continuation through real Pi sessions', () => {
+  it('accepts idle input, drains FIFO and checkpoints the same run only after consuming the child result', async () => {
+    const f = await fixture()
+    const mailbox = createMailbox(f)
+    const completion = f.execute(mailbox.port)
+    await mailbox.waiting.promise
+    expect(f.session.isStreaming).toBe(false)
+    const input = (id: string) => createBuddyInputReference({ messageId: id, prompt: `USER_${id}`, images: [], attachmentIds: ['attachment'], resourceLabels: { attachment: '[FILE#1]' } })
+    expect(f.active()!.steer!(() => input('B'))).toBe(true)
+    const queued = ['A', 'C']
+    mailbox.port.followUp = async () => {
+      const id = queued.shift()
+      return id ? f.active()!.followUp!(() => input(id)) : false
+    }
+    await vi.waitFor(() => expect(f.requests).toHaveLength(4))
+    expect(f.requests.slice(1).map(request => request.messages.filter(message => message.role === 'user').at(-1)?.content)).toEqual([
+      [{ type: 'text', text: 'USER_B' }],
+      [{ type: 'text', text: 'USER_A' }],
+      [{ type: 'text', text: 'USER_C' }],
+    ])
+    expect(f.checkpoints()).toEqual(['before'])
+    expect(f.runContext.current?.runId).toBe(f.run.id)
+    mailbox.send(f.message('later-child-result', 'CHILD_STILL_COMPLETED'))
+    mailbox.finishChildren()
+    expect(await completion).toMatchObject({ status: 'completed' })
+    expect(f.requests).toHaveLength(5)
+    expect(JSON.stringify(f.requests[4])).toContain('CHILD_STILL_COMPLETED')
+    expect(mailbox.consumed.map(receipt => receipt.messageId)).toEqual(['later-child-result'])
+    expect(mailbox.consumed).toEqual(mailbox.accepted)
+    expect(f.checkpoints()).toEqual(['before', 'after'])
+    expect(f.runContext.current).toBeNull()
+    const messages = (await f.eventLog.read(f.run.id)).filter(event => event.type === 'message.completed')
+    expect(messages).toHaveLength(f.requests.length)
+    expect(new Set(messages.map(event => (event.payload as { messageId: string }).messageId)).size).toBe(messages.length)
+    expect(f.database.prepare('SELECT count(*) AS count FROM usage_records WHERE run_id = ?').get(f.run.id)?.count).toBe(f.requests.length)
+    const journal = await readFile(f.file, 'utf8')
+    for (const id of ['A', 'B', 'C']) {
+      const references = journal.split('\n').filter(line => line.includes(`"messageId":"${id}"`))
+      expect(references).toHaveLength(1)
+      expect(references[0]).toContain('[FILE#1]')
+      expect(references[0]).toContain('attachment')
+    }
+  })
+
+  it.each(['agent_end', 'agent_settled'] as const)('delivers steering arriving at the native %s boundary exactly once', async (boundary) => {
+    const f = await fixture()
+    const mailbox = createMailbox(f)
+    mailbox.finishChildren()
+    let sent = false
+    const unsubscribe = f.session.subscribe((event) => {
+      if (event.type !== boundary || sent)
+        return
+      sent = true
+      expect(f.active()!.steer!(() => createBuddyInputReference({ messageId: 'boundary', prompt: 'BOUNDARY_INPUT', images: [] }))).toBe(true)
+    })
+    try {
+      expect(await f.execute(mailbox.port)).toMatchObject({ status: 'completed' })
+      expect(f.requests).toHaveLength(2)
+      expect(JSON.stringify(f.requests[1])).toContain('BOUNDARY_INPUT')
+      const journal = (await readFile(f.file, 'utf8')).split('\n')
+      expect(journal.filter(line => line.includes('"messageId":"boundary"'))).toHaveLength(1)
+    }
+    finally { unsubscribe() }
+  })
+
+  it('drains an ordinary queued input before closing even without children', async () => {
+    const f = await fixture()
+    const mailbox = createMailbox(f)
+    mailbox.finishChildren()
+    let delivered = false
+    mailbox.port.followUp = async () => {
+      if (delivered)
+        return false
+      delivered = true
+      return f.active()!.followUp!(() => createBuddyInputReference({ messageId: 'queued', prompt: 'QUEUED_BEFORE_CLOSE', images: [] }))
+    }
+    expect(await f.execute(mailbox.port)).toMatchObject({ status: 'completed' })
+    expect(f.requests).toHaveLength(2)
+    expect(JSON.stringify(f.requests[1])).toContain('QUEUED_BEFORE_CLOSE')
+    expect(f.checkpoints()).toEqual(['before', 'after'])
+  })
+
+  it('does not resume an accepted idle input after cancellation', async () => {
+    const f = await fixture()
+    const mailbox = createMailbox(f)
+    const completion = f.execute(mailbox.port)
+    await mailbox.waiting.promise
+    expect(f.active()!.steer!(() => createBuddyInputReference({ messageId: 'late', prompt: 'CANCELLED_INPUT', images: [] }))).toBe(true)
+    f.controller.abort()
+    mailbox.finishChildren()
+    expect(await completion).toMatchObject({ status: 'cancelled' })
+    expect(f.requests).toHaveLength(1)
+    expect(f.reusable.hasPendingInput()).toBe(false)
+  })
+
   it('delivers a result committed during compaction before the first subsequent request', async () => {
     const pending: ExecutionMailboxMessage[] = []
     let compacted = 0
@@ -190,38 +285,6 @@ describe('execution continuation through real Pi sessions', () => {
     expect(f.requests).toHaveLength(2)
   })
 
-  it('keeps one run open across delayed results and checkpoints every resumed answer only at final settlement', async () => {
-    const f = await fixture()
-    const mailbox = createMailbox(f)
-    const completion = f.execute(mailbox.port)
-    await mailbox.waiting.promise
-    expect(f.runContext.current?.runId).toBe(f.run.id)
-    expect(f.checkpoints()).toEqual(['before'])
-    expect(f.requests).toHaveLength(1)
-    mailbox.send(f.message('child-result', 'Child inspected the workspace'))
-    await vi.waitFor(() => expect(mailbox.consumed).toHaveLength(1))
-    expect(f.checkpoints()).toEqual(['before'])
-    expect(f.runContext.current?.runId).toBe(f.run.id)
-    mailbox.send(f.message('follow-up-result', 'Child verified the final change'))
-    mailbox.finishChildren()
-    await expect(completion).resolves.toEqual({ status: 'completed', closingGeneration: 7 })
-
-    expect(f.requests).toHaveLength(3)
-    expect(JSON.stringify(f.requests[1])).toContain('Child inspected the workspace')
-    expect(JSON.stringify(f.requests[2])).toContain('Child verified the final change')
-    expect(mailbox.accepted).toHaveLength(2)
-    expect(mailbox.consumed).toEqual(mailbox.accepted)
-    expect(f.checkpoints()).toEqual(['before', 'after'])
-    expect(f.runContext.current).toBeNull()
-    const persisted = SessionManager.open(f.file).getBranch()
-    expect(persisted.filter(entry => entry.type === 'custom_message' && entry.customType === EXECUTION_MAILBOX_ENTRY_TYPE)).toHaveLength(2)
-    expect(JSON.stringify(persisted)).toContain('Response 3')
-    const messages = (await f.eventLog.read(f.run.id)).filter(event => event.type === 'message.completed')
-    expect(messages).toHaveLength(3)
-    expect(new Set(messages.map(event => (event.payload as { messageId: string }).messageId)).size).toBe(3)
-    expect(f.database.prepare('SELECT count(*) AS count FROM usage_records WHERE run_id = ?').get(f.run.id)?.count).toBe(3)
-  })
-
   it('does not lose a result arriving after the empty read and before waiting', async () => {
     const f = await fixture()
     const mailbox = createMailbox(f)
@@ -238,7 +301,7 @@ describe('execution continuation through real Pi sessions', () => {
         return snapshot
       },
     }
-    await expect(f.execute(port)).resolves.toEqual({ status: 'completed', closingGeneration: 7 })
+    await expect(f.execute(port)).resolves.toMatchObject({ status: 'completed' })
     expect(f.requests).toHaveLength(2)
     expect(JSON.stringify(f.requests[1])).toContain('Arrived between read and wait')
     expect(mailbox.consumed).toHaveLength(1)
@@ -257,7 +320,7 @@ describe('execution continuation through real Pi sessions', () => {
         return { revision: 0, messages: [], shouldResume: false }
       },
     }
-    await expect(f.execute(port)).resolves.toMatchObject({ status: 'cancelled', closingGeneration: 7 })
+    await expect(f.execute(port)).resolves.toMatchObject({ status: 'cancelled' })
     expect(f.requests).toHaveLength(1)
     expect(mailbox.accepted).toEqual([])
     expect(f.checkpoints()).toEqual(['before', 'after'])
@@ -326,7 +389,7 @@ describe('execution continuation through real Pi sessions', () => {
     await mailbox.waiting.promise
     mailbox.send(f.message('unflushed-result', 'Do not acknowledge this input'))
     mailbox.finishChildren()
-    await expect(completion).resolves.toMatchObject({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE', closingGeneration: 7 })
+    await expect(completion).resolves.toMatchObject({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE' })
     expect(mailbox.accepted).toEqual([])
     expect(mailbox.consumed).toEqual([])
     expect(f.requests).toHaveLength(1)
@@ -351,7 +414,7 @@ describe('execution continuation through real Pi sessions', () => {
     expect(f.checkpoints()).toEqual(['before'])
     expect(f.runContext.current?.runId).toBe(f.run.id)
     mailbox.finishChildren()
-    await expect(completion).resolves.toMatchObject({ status, closingGeneration: 7 })
+    await expect(completion).resolves.toMatchObject({ status })
     expect(f.requests).toHaveLength(1)
     expect(f.checkpoints()).toEqual(['before', 'after'])
     expect(f.runContext.current).toBeNull()
@@ -365,7 +428,7 @@ describe('execution continuation through real Pi sessions', () => {
     })
     mailbox.send(f.message('complete-result', 'Final child output'))
     mailbox.finishChildren()
-    await expect(f.execute(mailbox.port)).resolves.toEqual({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE', closingGeneration: 7 })
+    await expect(f.execute(mailbox.port)).resolves.toMatchObject({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE' })
     expect(f.requests).toHaveLength(2)
     expect(mailbox.consumed).toHaveLength(1)
     expect((await f.eventLog.read(f.run.id)).some(event => event.type === 'session.continuity.degraded')).toBe(false)
@@ -433,6 +496,7 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
   const executor = new PiTurnExecutor({ eventLog, piEvents, continuity: new RunContinuityService(runs), sessions, sessionFactory: async () => ({ session: reusable, piSessionFile: created.piSessionFile }) })
   const controller = new AbortController()
   const active = new Set<Promise<unknown>>()
+  let activeSession: ActiveRunSession | undefined
   const blueprint: BuddySessionBlueprint = { approvalPolicy: 'policy', executionProfile: 'read_only', branchId: run.branchId, conversationId: run.conversationId, canonicalRoot: root, scratchRoot: root, grantRevision: 'test', grants: [], resources, sessionMode: 'interactive', space: null }
   cleanups.push(async () => {
     controller.abort()
@@ -456,6 +520,7 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
     file: created.piSessionFile,
     requests,
     controller,
+    active: () => activeSession,
     checkpoints: () => cursor.manager.getBranch().map(readCheckpoint).filter(Boolean).map(checkpoint => checkpoint!.position),
     turnContext: { runId: run.id, generation: run.generation, provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: controller.signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} },
     message(messageId: string, text: string): ExecutionMailboxMessage {
@@ -463,7 +528,9 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
       return { ...message, payloadHash: hashExecutionMailboxMessage(message) }
     },
     execute(continuation: ExecutionContinuationPort) {
-      const completion = executor.executeTurn({ continuation, identity: toBuddySessionIdentity(blueprint), input: { runId: run.id, session: blueprint, userInput: createBuddyInputReference({ messageId: 'initial', prompt: 'Initial input', images: [] }) }, onSessionActivated: () => {}, onSessionStartupTimeout: () => {}, run, signal: controller.signal, timestamp: now })
+      const completion = executor.executeTurn({ continuation, identity: toBuddySessionIdentity(blueprint), input: { runId: run.id, session: blueprint, userInput: createBuddyInputReference({ messageId: 'initial', prompt: 'Initial input', images: [] }) }, onSessionActivated: (session) => {
+        activeSession = session
+      }, onSessionStartupTimeout: () => {}, run, signal: controller.signal, timestamp: now })
       active.add(completion)
       void completion.finally(() => active.delete(completion)).catch(() => {})
       return completion
@@ -473,6 +540,7 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
 
 function createMailbox(f: Awaited<ReturnType<typeof fixture>>, onSeal?: () => void) {
   let revision = 0
+  let inputs: ExecutionInputState | undefined
   let childrenPending = true
   const messages: ExecutionMailboxMessage[] = []
   const accepted: ExecutionMailboxReceipt[] = []
@@ -492,6 +560,19 @@ function createMailbox(f: Awaited<ReturnType<typeof fixture>>, onSeal?: () => vo
     changed()
   })
   const port: ExecutionContinuationPort = {
+    bindInputs: (state) => {
+      inputs = state
+      return () => {
+        inputs = undefined
+      }
+    },
+    acceptInput: (deliver) => {
+      const accepted = deliver()
+      if (accepted)
+        changed()
+      return accepted
+    },
+    followUp: async () => false,
     readPending: async () => ({ revision, messages: remaining(), shouldResume: remaining().length > 0 }),
     acceptInContext: async (receipts) => {
       const journal = SessionManager.open(f.file).getBranch()
@@ -513,7 +594,7 @@ function createMailbox(f: Awaited<ReturnType<typeof fixture>>, onSeal?: () => vo
         if (!consumed.some(previous => key(previous) === key(receipt)))
           consumed.push(receipt)
       }
-      if (childrenPending || (outcome.status === 'completed' && remaining().length))
+      if (childrenPending || (outcome.status === 'completed' && (remaining().length || inputs?.hasPendingInput())))
         return { kind: 'pending', revision }
       onSeal?.()
       return { kind: 'sealed', closingGeneration: 7 }

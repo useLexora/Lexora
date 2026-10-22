@@ -441,6 +441,8 @@ export default {
   'desktop.chat.queueWaiting': 'Queued',
   'desktop.chat.queuePaused': 'Paused — send when ready',
   'desktop.chat.queueActionFailed': 'Queue action could not complete. Please try again.',
+  'desktop.chat.queueIncompatible': 'This message uses a different model, buddy, or execution configuration. It remains queued until the current run finishes.',
+  'desktop.chat.queueUnavailable': 'The current run cannot accept this input yet. Your message remains queued.',
   'desktop.chat.send': 'Send message',
   'desktop.chat.modelImageUnsupported': 'The current model does not support image input',
   'desktop.chat.modelPdfUnsupported': 'PDF attachments are not enabled for this model. Choose another model or configure its capabilities.',

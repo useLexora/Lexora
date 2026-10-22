@@ -25,9 +25,11 @@ export type LocalChatQueueItem = DeepReadonly<z.infer<typeof chatQueueItemSchema
 export type LocalChatQueueScope = z.infer<typeof scope>
 export type LocalChatQueueTarget = z.infer<typeof target>
 export type LocalChatQueueReceipt = z.infer<typeof queueReceiptSchema>
+const queueSteerResultSchema = z.enum(['accepted', 'incompatible', 'unavailable'])
+export type LocalChatQueueSteerResult = z.infer<typeof queueSteerResultSchema>
 export const chatQueueRpc = {
   enqueue: { method: 'chat.queue.enqueue', input: buddyComposerDraftSendSchema, response: queueReceiptSchema },
   list: { method: 'chat.queue.list', input: scope, response: z.array(chatQueueItemSchema) },
   cancel: { method: 'chat.queue.cancel', input: target, response: z.boolean() },
-  steer: { method: 'chat.queue.steer', input: target, response: z.boolean() },
+  steer: { method: 'chat.queue.steer', input: target, response: queueSteerResultSchema },
 } as const satisfies Record<string, RuntimeRequestContract>

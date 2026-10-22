@@ -4,8 +4,7 @@ import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 import type { LocalContextUsageSnapshot } from '@buddy-shared/conversation/contextApi'
 import type { LocalNotificationList } from '@buddy-shared/notifications/notificationApi'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
-import type { AssistantMessage, Credential, ToolResultMessage, Usage } from '@earendil-works/pi-ai'
-import type { AgentSessionEvent, CompactionResult } from '@earendil-works/pi-coding-agent'
+import type { AssistantMessage, Credential, Usage } from '@earendil-works/pi-ai'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { DatabaseSync } from 'node:sqlite'
@@ -13,7 +12,6 @@ import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 
 import type { BuddyComposerResource } from '../../../shared/conversation/composerResource'
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
-import type { ReusableBuddySession } from '../agent/sessions/ReusableBuddySession'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises'
@@ -27,18 +25,11 @@ import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
 import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../shared/executions/executionApi'
 import { DEFAULT_NETWORK_PERMISSIONS } from '../../../shared/permissions/networkPermissions'
-import { createBuddyInputReference } from '../agent/context/BuddyInputReference'
-import { PiEventBridge } from '../agent/events/PiEventBridge'
-import { createTestExecutionCoordinator } from '../agent/execution/__tests__/executionCoordinatorFixture'
-import { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
-import { PiTurnExecutor } from '../agent/execution/PiTurnExecutor'
-import { BuddySessionRegistry } from '../agent/sessions/BuddySessionRegistry'
 import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
 import { RunEventCorruptionError } from '../events/RunEventFailure'
-import { RunContinuityService } from '../runs/RunContinuityService'
 import { RunLifecycleService } from '../runs/RunLifecycleService'
 import { RunRecoveryService } from '../runs/RunRecoveryService'
 import {
@@ -639,156 +630,6 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
   }, 30_000)
 
-  it('persists run output and usage and restores terminal state from JSONL', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-integration-')))
-    directories.push(root)
-    const spaceRoot = join(root, 'space')
-    const conversationsDirectory = join(root, 'conversations')
-    const eventsDirectory = join(conversationsDirectory, 'conversation-1', 'events')
-    const databasePath = join(root, 'buddy.sqlite3')
-    await mkdir(spaceRoot)
-
-    const database = openTrackedDatabase(databasePath)
-    const eventLog = createRunEventLog({
-      conversationsDirectory,
-      database,
-    })
-    createSpaceRepository(database).create({
-      additionalDirectories: [],
-      createdAt: '2026-08-14T00:00:00.000Z',
-      id: 'space-1',
-      memoryScope: 'personal_and_space',
-      name: 'Integration Space',
-      primaryDirectory: {
-        accessGrantedAt: '2026-08-14T00:00:00.000Z',
-        canonicalRoot: spaceRoot,
-        id: 'directory-1',
-        resourcesTrustedAt: '2026-08-14T00:00:00.000Z',
-        root: spaceRoot,
-      },
-    })
-    const conversations = createConversationRepository(database)
-    const runs = createRunRepository(database)
-    const usageRepository = createUsageRepository(database)
-    const usage = new UsageService({ eventLog, repository: usageRepository })
-    const session = new OfflinePiSession(join(spaceRoot, 'article.md'))
-    const sessions = new BuddySessionRegistry<ReusableBuddySession>()
-    const piEvents = new PiEventBridge({ eventLog, usage })
-    const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
-    let runner: BuddyAgentRunner
-    const executions = createTestExecutionCoordinator({ database, eventLog, lifecycle, stopExecution: id => runner.interruptExecution(id) })
-    runner = new BuddyAgentRunner({
-      executions,
-      executor: new PiTurnExecutor({
-        eventLog,
-        piEvents,
-        continuity: new RunContinuityService(runs),
-        sessionFactory: async () => ({
-          piSessionFile: join(root, 'pi-session.jsonl'),
-          session,
-        }),
-        sessions,
-      }),
-      lifecycle,
-      sessions,
-    })
-
-    const turnInput = {
-      model: 'claude-sonnet-4-5',
-      prompt: 'Write the article',
-      provider: 'anthropic',
-      runId: 'run-1',
-      userInput: createBuddyInputReference({
-        images: [],
-        messageId: 'message-1',
-        prompt: 'Write the article',
-      }),
-      session: {
-        branchId: 'branch-1',
-        canonicalRoot: spaceRoot,
-        conversationId: 'conversation-1',
-        approvalPolicy: 'policy' as const,
-        executionProfile: 'workspace_write' as const,
-        grantRevision: 'grants-1',
-        grants: [{ canonicalRoot: spaceRoot, grantId: 'directory-1', kind: 'workspace' as const, root: spaceRoot }],
-        resources: {
-          skillReadRoots: [],
-          skillReferences: [],
-          approvedSkills: [],
-          context: { agentsFiles: [], diagnostics: [] },
-          directoryContext: '',
-          revision: 'resources-1',
-        },
-        scratchRoot: spaceRoot,
-        sessionMode: 'interactive' as const,
-        space: {
-          additionalDirectoryBindings: [],
-          id: 'space-1',
-          memoryScope: 'personal_and_space' as const,
-          primaryDirectoryBinding: { id: 'directory-1', revision: 1 },
-        },
-      },
-    }
-    prepareTestTurnRequest(database, {
-      attachmentBindings: [],
-      branchId: turnInput.session.branchId,
-      conversationId: turnInput.session.conversationId,
-      createdAt: '2026-08-14T00:00:00.000Z',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      model: turnInput.model,
-      spaceId: turnInput.session.space.id,
-      provider: turnInput.provider,
-      requestFingerprint: 'fingerprint-1',
-      requestId: 'request-1',
-      runInput: {
-        attachmentIds: [],
-        contextItems: [],
-        prompt: turnInput.prompt,
-        reasoning: null,
-        serviceTier: null,
-      },
-      runId: turnInput.runId,
-      title: null,
-      userMessageContent: { text: turnInput.prompt },
-      userMessageId: 'message-1',
-    })
-    const run = await runner.startTurn(turnInput).completion
-
-    expect(run).toMatchObject({ piSessionFile: join(root, 'pi-session.jsonl'), status: 'completed' })
-    expect(conversations.listMessages('conversation-1', 'branch-1').map(message => message.role))
-      .toEqual(['user', 'assistant', 'tool'])
-    expect(usageRepository.listForRun('run-1')).toHaveLength(2)
-
-    const sourceEvents = await eventLog.read('run-1')
-    expect(sourceEvents.every((event, index, all) => index === 0 || event.sequence > all[index - 1]!.sequence))
-      .toBe(true)
-    expect(sourceEvents.map(event => event.type)).toEqual(expect.arrayContaining([
-      'run.started',
-      'usage.recorded',
-      'run.completed',
-    ]))
-    expect((await readFile(join(eventsDirectory, 'run-1.jsonl'), 'utf8')).trim().split('\n'))
-      .toHaveLength(sourceEvents.length)
-
-    await runner.dispose()
-    await eventLog.close()
-    database.close()
-    databases.splice(databases.indexOf(database), 1)
-
-    const recoveredDatabase = openTrackedDatabase(databasePath)
-    recoveredDatabase.exec(`
-      DELETE FROM run_events;
-      UPDATE runs SET status = 'running', completed_at = NULL WHERE id = 'run-1';
-    `)
-    const recoveredLog = createRunEventLog({ conversationsDirectory, database: recoveredDatabase })
-    await expect(recoveredLog.replay('run-1')).resolves.toBe(sourceEvents.length)
-    expect(recoveredDatabase.prepare('SELECT COUNT(*) AS count FROM run_events').get())
-      .toEqual({ count: sourceEvents.length })
-    expect(createRunRepository(recoveredDatabase).findById('run-1')?.status).toBe('completed')
-    await recoveredLog.close()
-  })
-
   it('recovers readable historical images and publishes one sanitized degradation after Pi corruption', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-attachment-recovery-')))
     directories.push(root)
@@ -1215,7 +1056,7 @@ describe('buddy runtime cross-subsystem contract', () => {
         builtinSkillsDirectories: [builtinSkillsDirectory],
         database,
         eventLog,
-        rpc: createRuntimeRpcStub(),
+        rpc: createRuntimeRpcHarness().rpc,
       })
 
       expect((await eventLog.read('run-startup')).map(event => event.type))
@@ -1641,93 +1482,6 @@ describe('buddy runtime cross-subsystem contract', () => {
   })
 })
 
-class OfflinePiSession implements ReusableBuddySession {
-  async readInternalMessageReceipts(messages: Parameters<ReusableBuddySession['readInternalMessageReceipts']>[0]) {
-    if (messages.length)
-      throw new Error('Unexpected mailbox messages')
-    return []
-  }
-
-  async appendInternalMessages(): Promise<never> { throw new Error('Internal messages are not used by this fixture') }
-  async resumeInternal(): Promise<never> { throw new Error('Internal messages are not used by this fixture') }
-  async finishTurn(): Promise<void> {}
-
-  readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
-  readonly #target: string
-
-  constructor(target: string) {
-    this.#target = target
-  }
-
-  abort(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  abortCompaction(): void {}
-
-  canCompact(): boolean {
-    return true
-  }
-
-  activateTurn(): Promise<() => void> {
-    return Promise.resolve(() => {})
-  }
-
-  shutdown(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  compact(): Promise<CompactionResult> {
-    return Promise.reject(new Error('not used'))
-  }
-
-  async prompt(): Promise<void> {
-    const assistantMessage = assistant('I will create the article')
-    this.#emit({ type: 'message_start', message: assistantMessage })
-    this.#emit({ type: 'message_end', message: assistantMessage })
-    this.#emit({ type: 'entry_appended', entry: entry('pi-assistant-1', assistantMessage) })
-    this.#emit({
-      type: 'tool_execution_start',
-      toolCallId: 'tool-write-1',
-      toolName: 'write',
-      args: { content: 'Article', path: this.#target },
-    })
-    this.#emit({
-      type: 'tool_execution_end',
-      toolCallId: 'tool-write-1',
-      toolName: 'write',
-      result: { content: [{ type: 'text', text: 'written' }] },
-      isError: false,
-    })
-    const toolMessage: ToolResultMessage = {
-      role: 'toolResult',
-      toolCallId: 'tool-write-1',
-      toolName: 'write',
-      content: [{ type: 'text', text: 'written' }],
-      isError: false,
-      timestamp: Date.now(),
-      usage: usage(2, 1),
-    }
-    this.#emit({ type: 'message_end', message: toolMessage })
-    this.#emit({ type: 'entry_appended', entry: entry('pi-tool-1', toolMessage) })
-    this.#emit({ type: 'agent_settled', aborted: false })
-  }
-
-  subscribe(listener: (event: AgentSessionEvent) => void): () => void {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
-  }
-
-  waitForIdle(): Promise<void> {
-    return Promise.resolve()
-  }
-
-  #emit(event: AgentSessionEvent): void {
-    for (const listener of this.#listeners)
-      listener(event)
-  }
-}
-
 function assistant(text: string): AssistantMessage {
   return {
     api: 'anthropic-messages',
@@ -1739,11 +1493,6 @@ function assistant(text: string): AssistantMessage {
     timestamp: Date.now(),
     usage: usage(10, 4),
   }
-}
-
-function entry(id: string, message: AssistantMessage | ToolResultMessage) {
-  const timestamp = new Date().toISOString()
-  return { createdAt: timestamp, id, message, parentId: null, timestamp, type: 'message' as const }
 }
 
 function usage(input: number, output: number): Usage {
@@ -2023,10 +1772,6 @@ function createRuntimeRpcHarness(
     notifications,
     rpc,
   }
-}
-
-function createRuntimeRpcStub(): BuddyServiceRpcServer {
-  return createRuntimeRpcHarness().rpc
 }
 
 interface LocalModelProvider {

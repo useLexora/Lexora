@@ -13,6 +13,7 @@ import type {
   BuddySessionRegistry,
 } from '../sessions/BuddySessionRegistry'
 import type { ReusableBuddySession } from '../sessions/ReusableBuddySession'
+import type { ActiveRunSession } from './ActiveRunRegistry'
 import type { ExecutionContinuationPort, ExecutionMailboxReceipt } from './ExecutionContinuationPort'
 import type { RunExecutionBackend, RunExecutionOutcome } from './RunExecutionBackend'
 import type {
@@ -46,7 +47,7 @@ interface ExecutePiTurnInput {
   continuation: ExecutionContinuationPort
   identity: BuddySessionIdentity
   input: StartBuddyTurnInput
-  onSessionActivated: (session: ReusableBuddySession) => void
+  onSessionActivated: (session: ActiveRunSession) => void
   onSessionStartupTimeout: () => void
   run: RunRecord
   signal: AbortSignal
@@ -111,7 +112,13 @@ export class PiTurnExecutor implements RunExecutionBackend {
     await this.#recordSessionRecovery(run.id, identity, binding)
     signal.throwIfAborted()
 
-    execution.onSessionActivated(binding.session)
+    let acceptingInput = false
+    execution.onSessionActivated({
+      abort: () => binding.session.abort(),
+      abortCompaction: () => binding.session.abortCompaction(),
+      steer: (prepare, skills) => acceptingInput && execution.continuation.acceptInput(() => binding.session.steer?.(prepare, skills) ?? false),
+      followUp: (prepare, skills) => acceptingInput && execution.continuation.acceptInput(() => binding.session.followUp?.(prepare, skills) ?? false),
+    })
     const piEvents = this.#piEvents.createTurn({
       conversationId: run.conversationId,
       branchId: run.branchId,
@@ -138,6 +145,8 @@ export class PiTurnExecutor implements RunExecutionBackend {
       signal,
       thinkingLevel: input.thinkingLevel,
     })
+    const releaseInputs = execution.continuation.bindInputs(binding.session)
+    acceptingInput = true
     const unsubscribe = piEvents.subscribe()
     const consumed = new Map<string, ExecutionMailboxReceipt>()
     let continuityFailure: unknown
@@ -206,6 +215,8 @@ export class PiTurnExecutor implements RunExecutionBackend {
       return outcome
     }
     finally {
+      acceptingInput = false
+      releaseInputs()
       unsubscribe()
       releaseTurn()
     }
@@ -373,6 +384,18 @@ async function continueExecution(input: {
   for (;;) {
     if (signal.aborted)
       outcome = { errorCode: null, status: 'cancelled' }
+    if (outcome.status === 'completed' && !session.hasPendingInput()) {
+      try {
+        const pending = await continuation.readPending()
+        if (!pending.shouldResume || pending.messages.every(message => consumed.has(JSON.stringify([message.sourceRunId, message.messageId]))))
+          await continuation.followUp()
+      }
+      catch (error) {
+        if (error instanceof RunEventLogUnavailableError || !signal.aborted)
+          throw error
+        outcome = { errorCode: null, status: 'cancelled' }
+      }
+    }
     const closing = await continuation.prepareClose({ outcome, consumedReceipts: [...consumed.values()] })
     if (closing.kind === 'sealed')
       return { ...outcome, closingGeneration: closing.closingGeneration }
@@ -401,6 +424,12 @@ async function continueExecution(input: {
         }
         continue
       }
+      if (session.hasPendingInput()) {
+        outcome = await input.runSegment(() => session.resumeInput())
+        continue
+      }
+      if (await continuation.followUp())
+        continue
       if (snapshot.revision !== closing.revision)
         continue
     }
