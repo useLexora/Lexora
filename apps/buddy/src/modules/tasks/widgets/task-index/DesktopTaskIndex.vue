@@ -110,6 +110,7 @@ const {
   unpinItem,
 } = useTaskIndexController({
   getUntitledLabel: () => t('desktop.tasks.untitled'),
+  markStates: () => props.marks.states.value,
   onCreateSpace: input => props.createSpace(input),
   onDeleteTask: conversationId => emit('deleteTask', conversationId),
   onDeleteSpace: spaceId => emit('deleteSpace', spaceId),

@@ -1,5 +1,6 @@
 import type { DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
+import type { LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import type { Ref } from 'vue'
@@ -18,6 +19,7 @@ import {
 import { useTaskIndexManagement } from './useTaskIndexManagement'
 
 interface UseTaskIndexControllerOptions extends TaskIndexManagementOptions {
+  markStates: () => ReadonlyMap<string, LocalTaskMarkState>
   onUpdatePinnedItems: (items: DesktopTaskPinnedItem[]) => void
   pinnedItems: Readonly<Ref<ReadonlyArray<DesktopTaskPinnedItem>>>
   sidebar: () => TaskIndex['sidebar']
@@ -42,6 +44,9 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     expandedSpaceIds: new Set(activeSpaces.value
       .filter(space => isSpaceExpanded(space.id))
       .map(space => space.id)),
+    markedTaskIds: new Set([...options.markStates().values()]
+      .filter(state => state.markId !== null)
+      .map(state => state.conversationId)),
     pinnedItems: options.pinnedItems.value,
     spaces: options.spaces.value,
     tasks: options.tasks.value,
