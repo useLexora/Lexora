@@ -1,7 +1,7 @@
 import type { ExtensionManifest } from '../../shared/extensions/extensionManifest'
 import { posix } from 'node:path'
 import ts from 'typescript'
-import { extensionPathSchema } from '../../shared/extensions/extensionManifest.ts'
+import { extensionPackageManifest, extensionPathSchema } from '../../shared/extensions/extensionManifest.ts'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles.ts'
 import { compileExtensionStyles } from './compileExtensionStyles.ts'
 
@@ -88,6 +88,6 @@ export async function compileExtensionSource(files: Map<string, Uint8Array>, man
     output.set(EXTENSION_UNO_STYLESHEET, styles)
   }
   const compiledManifest: ExtensionManifest = { ...manifest, format: 'compiled', ...(manifest.entry ? { entry: outputPath(manifest.entry) } : {}), contributes: { ...manifest.contributes, views: manifest.contributes.views.map(view => ({ ...view, entry: outputPath(view.entry) })) } }
-  output.set('extension.json', encode.encode(JSON.stringify(compiledManifest)))
+  output.set('extension.json', encode.encode(JSON.stringify(extensionPackageManifest(compiledManifest))))
   return output
 }

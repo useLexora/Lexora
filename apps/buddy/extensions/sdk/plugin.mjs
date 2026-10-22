@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { zipSync } from 'fflate'
-import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPathSchema, validateExtensionFileCounts, validateFileIconThemeFiles, validateThemeFiles } from './authoring.mjs'
+import { compileExtensionSource, extensionIconUrl, extensionManifestSchema, extensionPackageManifest, extensionPathSchema, validateExtensionFileCounts, validateFileIconThemeFiles, validateThemeFiles } from './authoring.mjs'
 
 export async function readPlugin(source) {
   const files = new Map()
@@ -46,6 +46,8 @@ export async function buildPlugin(source, destination, report = () => {}) {
   assert(source !== destination && !source.startsWith(`${destination}${path.sep}`), 'Output must not contain source')
   const { files, manifest } = await readPlugin(source)
   const result = manifest.format === 'source' ? await compileExtensionSource(files, manifest, report) : files
+  if (manifest.format !== 'source')
+    result.set('extension.json', new TextEncoder().encode(JSON.stringify(extensionPackageManifest(manifest))))
   const old = await fs.readdir(destination).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))
   if (old.length)
     assert(JSON.parse(await fs.readFile(path.join(destination, 'extension.json'), 'utf8')).id === manifest.id, 'Output belongs to another plugin')
@@ -61,8 +63,10 @@ export async function packPlugin(source, destination, { license } = {}) {
   const { files, manifest, iconUrl } = await readPlugin(source)
   if (license && !files.has('LICENSE'))
     files.set('LICENSE', license)
+  const packageManifest = extensionPackageManifest(manifest)
+  files.set('extension.json', new TextEncoder().encode(JSON.stringify(packageManifest)))
   const bytes = zipSync(Object.fromEntries(files), { level: 6, mtime: new Date('2020-01-01T00:00:00Z') })
   await fs.mkdir(path.dirname(path.resolve(destination)), { recursive: true })
   await fs.writeFile(destination, bytes)
-  return { manifest, iconUrl, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length }
+  return { manifest: packageManifest, iconUrl, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length }
 }

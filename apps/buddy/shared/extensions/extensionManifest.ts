@@ -76,7 +76,9 @@ export const extensionPermissionsSchema = z.object({
     const url = new URL(value)
     return url.protocol === 'https:' && url.origin === value && !url.username && !url.password
   }, 'Expected an HTTPS origin')).max(16).default([]),
-}).strict()
+})
+
+const extensionPermissionDefaults: Record<string, unknown> = extensionPermissionsSchema.parse({})
 export const extensionMetadataSchema = z.object({
   schemaVersion: z.number().int().positive(),
   id: extensionIdSchema,
@@ -116,8 +118,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     views: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), entry: extensionPathSchema, stateVersion: z.number().int().min(1).max(10000).default(1), resource: z.enum(['selected-file', 'none']).default('selected-file'), location: z.enum(['context', 'page', 'window-overlay']).default('context'), when: workbenchConditionSchema.optional() }).strict()).max(16).default([]),
     placements: z.array(extensionPlacementSchema).max(16).default([]),
     navigation: z.object({ title: z.string().min(1).max(40), view: contributionId, when: workbenchConditionSchema.optional() }).strict().optional(),
-  }).strict(),
-}).strict().superRefine((manifest, context) => {
+  }),
+}).superRefine((manifest, context) => {
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
@@ -228,6 +230,10 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
 })
 export type ExtensionManifest = z.infer<typeof extensionManifestSchema>
 export type ExtensionPermissions = z.infer<typeof extensionPermissionsSchema>
+
+export function extensionPackageManifest(manifest: ExtensionManifest) {
+  return { ...manifest, permissions: Object.fromEntries(Object.entries(manifest.permissions).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(extensionPermissionDefaults[key]))) }
+}
 
 export function extensionCompatible(manifest: ExtensionManifest, version: string): boolean {
   return manifest.apiVersion <= EXTENSION_API_VERSION && satisfies(version, manifest.engines.lexora, { includePrerelease: true })

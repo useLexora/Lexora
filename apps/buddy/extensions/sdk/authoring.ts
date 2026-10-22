@@ -4,7 +4,7 @@ export { validateExtensionFileCounts } from '../../platform/extensions/extension
 export { validateFileIconThemeFiles } from '../../platform/icons/fileIconThemeAssets'
 export { validateThemeFiles } from '../../platform/themes/themeAssets'
 export { createExtensionId, extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
-export { extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
+export { extensionManifestSchema, extensionPackageManifest, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 export { fileIconThemeDocumentSchema } from '../../shared/icons/fileIconTheme'
 
 export { themeDocumentSchema } from '../../shared/theme/themeDocument'

@@ -54,6 +54,16 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
 }
 const target = { spaceId: 'space', directoryId: 'directory', revision: 4, path: 'README.md' }
 
+it('ignores unsupported declarations without exposing new methods or expanding existing permissions', async () => {
+  const value = manifest()
+  const input = { ...value, permissions: { ...value.permissions, futureExecution: true, futureNetwork: ['https://example.com'] }, contributes: { ...value.contributes, futureExecution: { entry: 'future.js' } } }
+  const { service, hosts } = await fixture({}, input)
+  await service.execute(value.id, `${value.id}.open`, null)
+  await expect(hosts[0]!.broker('shell.execute', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(hosts[0]!.broker('network.get', { url: 'https://example.com' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  await expect(hosts[0]!.broker('notifications.show', { title: 'Unknown permission' })).rejects.toThrow('EXTENSION_NOTIFICATIONS_DENIED')
+})
+
 it.each([false, true])('uninstalls with clearData=%s while preserving other plugins and external files', async (clearData) => {
   const { root, store, service, hosts } = await fixture()
   const id = 'tests.reader'

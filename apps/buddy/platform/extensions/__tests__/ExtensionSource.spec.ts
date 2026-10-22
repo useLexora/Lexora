@@ -14,6 +14,14 @@ it('compiles package-local modules without executing source or build scripts', a
   expect(JSON.parse(decode(output.get('extension.json')))).toMatchObject({ id: manifest.id, format: 'compiled', entry: 'extension.js' })
 })
 
+it('emits only requested permissions while retaining runtime defaults and active grants after parsing', async () => {
+  const source = extensionManifestSchema.parse({ ...manifest, permissions: { selectedResource: 'read', notifications: true, network: ['https://example.com'], futureAccess: true, futureNetwork: ['https://unsupported.example.com'] } })
+  const output = await compileExtensionSource(encode({ 'extension.ts': 'export function activate() {}' }), source, () => {})
+  const packaged = JSON.parse(decode(output.get('extension.json')))
+  expect(packaged.permissions).toEqual({ selectedResource: 'read', notifications: true, network: ['https://example.com'] })
+  expect(extensionManifestSchema.parse(packaged)).toEqual({ ...source, format: 'compiled', entry: 'extension.js' })
+})
+
 it.each(['import "node:fs"', 'import "npm-library"', 'import "../../outside.js"', 'import(globalThis.path)'])('rejects imports outside the package: %s', async (text) => {
   await expect(compileExtensionSource(encode({ 'extension.ts': text }), manifest, () => {})).rejects.toThrow('EXTENSION_SOURCE_IMPORT_DENIED')
 })

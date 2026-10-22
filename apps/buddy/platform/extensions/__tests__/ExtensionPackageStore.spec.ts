@@ -21,6 +21,32 @@ afterEach(async () => {
 })
 
 describe('extension package contract', () => {
+  it('installs and reloads known contributions while ignoring unsupported declarations without granting them', async () => {
+    const { root, store } = await fixture()
+    const value = manifest()
+    const input = { ...value, futureMetadata: { enabled: true }, permissions: { ...value.permissions, inference: true, inferenceGpu: false, inferenceNetwork: ['https://example.com'], futureAccess: 'read', futureMetadata: { enabled: true } }, contributes: { ...value.contributes, futureProvider: { entry: 'future.js' } } }
+    const review = await reviewPackage(root, store, input)
+    expect(review.manifest.permissions).toEqual(value.permissions)
+    expect(review.manifest).toEqual(value)
+    expect(review.addedPermissions).toEqual(['selectedResource:read'])
+    await store.install(review.token)
+    const pkg = store.installed[value.id]!.current
+    expect(JSON.parse(await readFile(join(store.packageRoot(pkg), 'extension.json'), 'utf8')).permissions).toEqual(input.permissions)
+    const reloaded = new ExtensionPackageStore(store.root, '0.7.3')
+    await reloaded.load()
+    expect(reloaded.installed[value.id]!.current.manifest.permissions).toEqual(value.permissions)
+    expect(new TextDecoder().decode(await reloaded.asset(reloaded.installed[value.id]!.current, 'extension.js'))).toBe('export function activate() {}')
+  })
+  it.each([true, false, 'read', 'none', ['https://example.com'], [], 0, null, '', {}, [false]])('ignores unknown permissions regardless of their value: %j', (permission) => {
+    const value = manifest()
+    expect(extensionManifestSchema.parse({ ...value, permissions: { ...value.permissions, futureAccess: permission } })).toEqual(value)
+  })
+  it('still rejects malformed known permissions and contributions', () => {
+    const value = manifest()
+    expect(extensionManifestSchema.safeParse({ ...value, permissions: { ...value.permissions, network: false } }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, permissions: { ...value.permissions, agent: [] } }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: false } }).success).toBe(false)
+  })
   it('bounds state by UTF-8 bytes and requires permission for declared file views', () => {
     expect(extensionJsonSchema.safeParse('文'.repeat(90000)).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...manifest(), permissions: { selectedResource: 'none', network: [] } }).success).toBe(false)
