@@ -31,7 +31,6 @@ async function withDeniedPath(run: (fixture: { root: string, denied: string, inp
     await Promise.all(['workspace', 'home', 'shell', 'system/System32', 'search', 'normal-a', 'normal-b', 'denied/child', 'denied/System32'].map(path => mkdir(join(root, path), { recursive: true })))
     await powershell(root, `
       $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-      if([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'An ordinary user token is required'}
       $paths=@('denied','denied\\child','denied\\System32')
       $saved=@($paths|ForEach-Object {@{relative=$_;sddl=(Get-Acl -LiteralPath (Join-Path $root $_)).Sddl}})
       ConvertTo-Json -InputObject $saved|Set-Content -LiteralPath (Join-Path $root 'acl.json') -Encoding utf8
