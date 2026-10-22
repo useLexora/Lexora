@@ -8,6 +8,9 @@ else if (mode === 'stdout-limit' || mode === 'stderr-limit') {
   const stream = mode === 'stdout-limit' ? process.stdout : process.stderr
   stream.write('x'.repeat(2048))
 }
+else if (mode === 'ignored-input') {
+  process.stdout.write('{}')
+}
 else if (mode === 'failure') {
   process.stderr.write('SYSTEM_TARGET_CHANGED')
   process.exitCode = 1

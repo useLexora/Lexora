@@ -22,7 +22,7 @@ export function runNativeCommandSync(
     timeout: options.timeoutMs ?? 30_000,
     killSignal: 'SIGKILL',
   })
-  if (result.error) {
+  if (result.error && !isBrokenPipeAfterFailure(result.error, result.status)) {
     const systemCode = (result.error as NodeJS.ErrnoException).code
     const code = systemCode === 'ETIMEDOUT'
       ? 'NATIVE_COMMAND_TIMEOUT'
@@ -50,6 +50,7 @@ export function runNativeCommand(
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     let failure: Error | undefined
+    let inputFailure: NodeJS.ErrnoException | undefined
     let bytes = 0
     const stop = (error: Error) => {
       failure ??= error
@@ -73,11 +74,13 @@ export function runNativeCommand(
       failure ??= error
     })
     child.stdin.on('error', (error) => {
-      failure ??= error
+      inputFailure ??= error
     })
     child.once('close', (code) => {
       clearTimeout(timeout)
       options.signal?.removeEventListener('abort', abort)
+      if (inputFailure && !isBrokenPipeAfterFailure(inputFailure, code))
+        failure ??= inputFailure
       if (failure)
         reject(Object.assign(failure, { exitCode: code }))
       else
@@ -85,4 +88,8 @@ export function runNativeCommand(
     })
     child.stdin.end(JSON.stringify(input))
   })
+}
+
+function isBrokenPipeAfterFailure(error: NodeJS.ErrnoException, code: number | null): boolean {
+  return error.code === 'EPIPE' && code !== null && code !== 0
 }

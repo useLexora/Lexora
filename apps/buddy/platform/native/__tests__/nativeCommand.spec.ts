@@ -25,6 +25,16 @@ describe.each([
     await expect(async () => run(join(import.meta.dirname, 'nonexistent-command'), [], {}, { env })).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('preserves a domain failure when the child closes stdin before reading a large request', async () => {
+    const input = { payload: 'x'.repeat(4 * 1024 * 1024) }
+    expect(await run(process.execPath, [fixture, 'failure'], input, { env })).toEqual({ code: 1, stdout: Buffer.alloc(0), stderr: 'SYSTEM_TARGET_CHANGED' })
+  })
+
+  it('rejects incomplete input even when the child exits successfully', async () => {
+    const input = { payload: 'x'.repeat(4 * 1024 * 1024) }
+    await expect(async () => run(process.execPath, [fixture, 'ignored-input'], input, { env })).rejects.toMatchObject({ code: 'EPIPE' })
+  })
+
   it.each(['stdout-limit', 'stderr-limit'])('bounds %s output', async (mode) => {
     await expect(async () => run(process.execPath, [fixture, mode], {}, { env, maxBytes: 1024 })).rejects.toMatchObject({ code: 'NATIVE_COMMAND_OUTPUT_LIMIT' })
   })
