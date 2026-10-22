@@ -452,7 +452,11 @@ jobs:
         run: pnpm --filter @uselexora/lexora-buddy package:windows
 
       - name: Test platform runtime
-        run: pnpm --filter @uselexora/lexora-buddy test:platform
+        run: pnpm --filter @uselexora/lexora-buddy test:platform --exclude '**/sandboxPathPermissions.native.spec.ts'
+
+      - name: Test Windows ACL denial without administrator privileges
+        timeout-minutes: 6
+        run: ./packaging/buddy/ci/test-windows-platform.ps1 -TestFiles sandboxPathPermissions.native.spec.ts
 
       - name: Install built NSIS package
         id: install
