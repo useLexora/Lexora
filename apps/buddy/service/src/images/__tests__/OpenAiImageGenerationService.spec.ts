@@ -1,4 +1,4 @@
-import type { Model } from '@earendil-works/pi-ai'
+import type { AuthResult, AuthType, Model } from '@earendil-works/pi-ai'
 import { Buffer } from 'node:buffer'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -224,6 +224,7 @@ describe('openAiImageGenerationService', () => {
     }))
     const service = new OpenAiImageGenerationService({
       fetch: request,
+      resolveCredentialMetadata: id => id === providerId ? { type: 'api_key', revision: 1 } : null,
       resolveSourceProviderId: id => id.startsWith('builtin-') ? 'openai' : id,
       modelRuntime: {
         getAuth,
@@ -292,6 +293,7 @@ describe('openAiImageGenerationService', () => {
     }))
     const service = new OpenAiImageGenerationService({
       fetch: request,
+      resolveCredentialMetadata: id => id === providerId ? { type: 'oauth', revision: 1 } : null,
       resolveSourceProviderId: id => id === 'builtin-codex-work' ? 'openai-codex' : id,
       modelRuntime: {
         getAuth: async () => ({ auth: { apiKey: accessToken }, source: 'OAuth' }),
@@ -316,13 +318,52 @@ describe('openAiImageGenerationService', () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ stream: true })
   })
 
-  it('exposes the capability only for owned OpenAI Responses providers', () => {
-    expect(supportsOpenAiImageGeneration(openAiModel())).toBe(true)
-    expect(supportsOpenAiImageGeneration(codexModel())).toBe(true)
+  it.each(['api_key', 'oauth', null] as const)('checks %s authentication against the owned channel', (credentialType) => {
+    expect(supportsOpenAiImageGeneration(openAiModel(), credentialType)).toBe(credentialType === 'api_key')
+    expect(supportsOpenAiImageGeneration(codexModel(), credentialType)).toBe(credentialType === 'oauth')
     expect(supportsOpenAiImageGeneration({
       ...openAiModel(),
       provider: 'custom-openai-compatible',
-    })).toBe(false)
+    }, credentialType)).toBe(false)
+  })
+
+  it.each(['openai', 'builtin-openai-personal'])('rejects ChatGPT sign-in for %s before resolving credentials or sending a request', async (providerId) => {
+    const request = vi.fn()
+    const getAuth = vi.fn()
+    const service = new OpenAiImageGenerationService({
+      fetch: request,
+      resolveCredentialMetadata: id => id === providerId ? { type: 'oauth', revision: 1 } : null,
+      resolveSourceProviderId: () => 'openai',
+      modelRuntime: { getAuth },
+    })
+    const model = { ...openAiModel(), provider: providerId }
+    expect(service.supports(model)).toBe(false)
+    await expect(service.generate({ inputImages: [], model, prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
+      code: 'IMAGE_GENERATION_UNSUPPORTED',
+    })
+    expect(getAuth).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it.each(['oauth', 'api_key'] as const)('rejects late authentication after credential changes ending in %s', async (type) => {
+    let credential: { type: AuthType, revision: number } = { type: 'api_key', revision: 1 }
+    const auth = Promise.withResolvers<AuthResult | undefined>()
+    const request = vi.fn()
+    const service = new OpenAiImageGenerationService({
+      fetch: request,
+      resolveCredentialMetadata: () => credential,
+      modelRuntime: { getAuth: () => auth.promise },
+    })
+    const model = openAiModel()
+    expect(service.supports(model)).toBe(true)
+    const pending = service.generate({ inputImages: [], model, prompt: 'fixture', signal: new AbortController().signal })
+    credential = { type: 'oauth', revision: 2 }
+    if (type === 'api_key')
+      credential = { type, revision: 3 }
+    auth.resolve({ auth: { apiKey: 'fixture-subscription-token' } })
+    await expect(pending).rejects.toMatchObject({ code: 'IMAGE_GENERATION_UNSUPPORTED' })
+    expect(service.supports(model)).toBe(type === 'api_key')
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('keeps safe provider diagnostics without exposing the provider message', async () => {
@@ -337,6 +378,7 @@ describe('openAiImageGenerationService', () => {
         headers: { 'x-request-id': 'req_image_1' },
         status: 400,
       }),
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
       modelRuntime: {
         getAuth: async () => ({ auth: { apiKey: 'private-api-key' } }),
       },
@@ -361,6 +403,7 @@ describe('openAiImageGenerationService', () => {
   it('normalizes auth resolver failures', async () => {
     const service = new OpenAiImageGenerationService({
       fetch: vi.fn(),
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
       modelRuntime: {
         getAuth: async () => {
           throw new Error('private credential resolver failure')
@@ -381,6 +424,7 @@ describe('openAiImageGenerationService', () => {
     const request = vi.fn()
     const service = new OpenAiImageGenerationService({
       fetch: request,
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
       modelRuntime: { getAuth: async () => {
         abort.abort()
         return { auth: { apiKey: 'fixture-key' } }
@@ -401,6 +445,7 @@ describe('openAiImageGenerationService', () => {
         abort.abort()
         return response
       },
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
       modelRuntime: { getAuth: async () => ({ auth: { apiKey: 'fixture-key' } }) },
     })
     await expect(service.generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' })
@@ -426,6 +471,7 @@ describe('openAiImageGenerationService', () => {
     })
     const service = new OpenAiImageGenerationService({
       fetch: async () => new Response(body, { status: 200 }),
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
       modelRuntime: {
         getAuth: async () => ({ auth: { apiKey: 'private-api-key' } }),
       },
@@ -477,6 +523,7 @@ function jwt(payload: Record<string, unknown>): string {
 function streamedService(response: Response) {
   return new OpenAiImageGenerationService({
     fetch: async () => response,
+    resolveCredentialMetadata: providerId => ({ type: providerId === 'openai-codex' ? 'oauth' : 'api_key', revision: 1 }),
     modelRuntime: { getAuth: async () => ({ auth: { apiKey: jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'account-1' } }) } }) },
   })
 }

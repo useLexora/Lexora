@@ -113,6 +113,16 @@ export class ProviderService {
 
   get snapshot() { return this.#state.snapshot }
 
+  getCredentialMetadata(providerId: string): { readonly type: AuthType, readonly revision: number } | null {
+    const snapshot = this.#credentials?.snapshot
+    if (snapshot?.availability !== 'known')
+      return null
+    const credential = snapshot.providers.find(credential => credential.providerId === providerId)
+    if (credential?.presence !== 'present' || !credential.type)
+      return null
+    return { type: credential.type, revision: credential.revision }
+  }
+
   constructor(options: ProviderServiceOptions) {
     this.#loginOptions = options.loginOptions
     this.#requestHeaders = options.requestHeaders ?? new ProviderRequestHeaders(options.providers.states)

@@ -108,7 +108,9 @@ function imageToolFailure(
     : ''
   const recovery = code === 'IMAGE_GENERATION_INCOMPLETE'
     ? '. The provider result is unknown; do not automatically repeat this image request.'
-    : ''
+    : code === 'IMAGE_GENERATION_UNSUPPORTED'
+      ? '. The selected model, authentication method or channel does not support image generation. Do not automatically switch accounts or billing routes.'
+      : ''
   return {
     content: [{
       text: `Lexora Buddy image generation failed: ${code}${diagnosticText ? ` (${diagnosticText})` : ''}${recovery}`,

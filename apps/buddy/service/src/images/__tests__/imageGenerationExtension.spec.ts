@@ -111,6 +111,26 @@ describe('imageGenerationExtension', () => {
     expect(classifyImageGenerationTool({ input: {}, toolName: 'read' })).toBeNull()
   })
 
+  it('rejects unavailable authentication with a clear no-account-switch recovery message', async () => {
+    let tool: ToolDefinition | undefined
+    const generate = vi.fn()
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { generate, supports: () => false },
+    }).factory({
+      on: () => {},
+      registerTool: (registered: ToolDefinition) => tool = registered,
+    } as never)
+    const result = await tool!.execute!('tool-call-1', {
+      outputPath: 'image.png',
+      prompt: 'Create an image',
+    }, undefined, undefined, { model: openAiModel() } as never)
+    expect(result.details).toMatchObject({ code: 'IMAGE_GENERATION_UNSUPPORTED', artifactIds: [] })
+    expect(result.content).toEqual([{ type: 'text', text: expect.stringContaining('authentication method or channel does not support image generation') }])
+    expect(result.content).toEqual([{ type: 'text', text: expect.stringContaining('Do not automatically switch accounts or billing routes') }])
+    expect(generate).not.toHaveBeenCalled()
+  })
+
   it('returns safe provider diagnostics to the model', async () => {
     let tool: ToolDefinition | undefined
     createTestImageExtension({

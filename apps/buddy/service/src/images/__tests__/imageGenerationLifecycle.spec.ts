@@ -97,6 +97,7 @@ describe('image generation through the Pi session', () => {
         },
         imageGenerationGateway: new OpenAiImageGenerationService({
           modelRuntime: runtime,
+          resolveCredentialMetadata: id => id === model.provider ? { type: codex ? 'oauth' : 'api_key', revision: 1 } : null,
           fetch: async (url, init) => {
             expect(url).toBe(`${model.baseUrl}${codex ? '/codex' : ''}/responses`)
             const response = await fetch(url, init)

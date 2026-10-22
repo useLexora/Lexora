@@ -9,6 +9,7 @@ import type {
 } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { DatabaseSync } from 'node:sqlite'
+import type { HostCredentialStore } from '../HostCredentialStore'
 import type { ProviderModelDiscovery } from '../ProviderModelDiscovery'
 import type { ProviderServiceOptions } from '../ProviderService'
 import { mkdtempSync } from 'node:fs'
@@ -35,6 +36,48 @@ afterEach(async () => {
 })
 
 describe('providerService', () => {
+  it('resolves authentication types from current healthy observations without mixing provider instances', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    let snapshot: HostCredentialStore['snapshot'] = {
+      revision: 2,
+      availability: 'known',
+      providers: [
+        { providerId: 'builtin-personal', revision: 1, presence: 'present', type: 'oauth' },
+        { providerId: 'builtin-work', revision: 2, presence: 'present', type: 'api_key' },
+      ],
+    }
+    const service = createProviderServiceForTest({
+      authInteractions: new AuthInteractionService(),
+      modelRuntime: new FakeModelRuntime(),
+      providers: createProviderRepository(database),
+      credentials: {
+        get snapshot() { return snapshot },
+        onDidChange: () => ({ dispose() {} }),
+        dispose: async () => {},
+      },
+    })
+    try {
+      expect(service.getCredentialMetadata('openai')).toBeNull()
+      expect(service.getCredentialMetadata('builtin-personal')).toEqual({ type: 'oauth', revision: 1 })
+      expect(service.getCredentialMetadata('builtin-work')).toEqual({ type: 'api_key', revision: 2 })
+      snapshot = { ...snapshot, availability: 'unknown' }
+      expect(service.getCredentialMetadata('builtin-work')).toBeNull()
+      snapshot = { ...snapshot, availability: 'known', providers: [
+        { providerId: 'builtin-work', revision: 3, presence: 'present', type: 'oauth' },
+      ] }
+      expect(service.getCredentialMetadata('builtin-work')).toEqual({ type: 'oauth', revision: 3 })
+      expect(service.getCredentialMetadata('builtin-personal')).toBeNull()
+      snapshot = { ...snapshot, providers: [
+        { providerId: 'builtin-work', revision: 4, presence: 'unknown', type: null },
+      ] }
+      expect(service.getCredentialMetadata('builtin-work')).toBeNull()
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('publishes committed configuration even when catalog application fails', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const runtime = new FakeModelRuntime()

@@ -573,6 +573,7 @@ export async function startBuddyService(
     const executionModels = providerService.executionModels
     const imageGenerationGateway = new OpenAiImageGenerationService({
       modelRuntime: executionModels.getRuntime(),
+      resolveCredentialMetadata: providerId => providerService.getCredentialMetadata(providerId),
       resolveSourceProviderId: providerId => executionModels.resolveSourceProviderId(providerId),
     })
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())

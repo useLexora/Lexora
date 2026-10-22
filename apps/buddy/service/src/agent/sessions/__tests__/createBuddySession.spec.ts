@@ -1,4 +1,4 @@
-import type { AssistantMessage } from '@earendil-works/pi-ai'
+import type { AssistantMessage, AuthType } from '@earendil-works/pi-ai'
 import type { ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import { createAssistantMessageEventStream, getCurrentSystemPrompt, InMemoryCred
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createImageGenerationCapability } from '../../../images/imageGenerationExtension'
+import { OpenAiImageGenerationService } from '../../../images/OpenAiImageGenerationService'
 import { SkillService } from '../../../skills/SkillService'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
 import { openBuddyDatabase } from '../../../storage/database'
@@ -70,6 +71,75 @@ describe('createBuddySession', () => {
       expect(result.session.getActiveToolNames()).toContain('lexora_image_generate')
       await result.session.setModel(model)
       expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
+    }
+    finally {
+      await result.shutdown('quit')
+    }
+  })
+
+  it('removes discovered image tools and request declarations when OpenAI authentication changes to ChatGPT sign-in', async () => {
+    const root = await createDirectory()
+    const credentials = new InMemoryCredentialStore()
+    const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false })
+    const model = modelRuntime.getModels('openai').find(model => model.api === 'openai-responses')!
+    let credentialType: AuthType = 'api_key'
+    const gateway = new OpenAiImageGenerationService({ modelRuntime, resolveCredentialMetadata: () => ({ type: credentialType, revision: 1 }) })
+    const image = createImageGenerationCapability({
+      getRunId: () => 'run-1',
+      service: {
+        generate: async () => { throw new Error('No generation is expected') },
+        supports: model => gateway.supports(model),
+      },
+    })
+    const prompts: string[] = []
+    vi.spyOn(modelRuntime, 'streamSimple').mockImplementation((target, context) => {
+      prompts.push(getCurrentSystemPrompt(context.messages))
+      const stream = createAssistantMessageEventStream()
+      const message: AssistantMessage = {
+        role: 'assistant',
+        api: target.api,
+        model: target.id,
+        provider: target.provider,
+        timestamp: Date.now(),
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Done' }],
+        usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      }
+      queueMicrotask(() => stream.push({ type: 'done', reason: 'stop', message }))
+      return stream
+    })
+    await credentials.modify(model.provider, async () => ({ type: 'api_key', key: 'fixture-key' }))
+    const result = await createBuddySession({
+      agentDir: join(root, 'agent'),
+      branchId: 'branch-1',
+      canonicalRoot: root,
+      conversationId: 'conversation-1',
+      conversationsDirectory: join(root, 'conversations'),
+      cwd: root,
+      ...createRuntimeOptions(),
+      model,
+      modelRuntime,
+      resources: emptyResources(),
+      inProcessExtensions: [image.extension, createToolDiscoveryCapability(image.disclosure!).extension],
+    })
+    try {
+      await result.session.getToolDefinition('lexora_tool_search')!.execute(
+        'discover-image',
+        { toolNames: ['lexora_image_generate'] },
+        undefined,
+        undefined,
+        result.session.extensionRunner.createContext() as ExtensionToolContext,
+      )
+      for (const type of ['api_key', 'oauth', 'api_key'] as const) {
+        credentialType = type
+        await credentials.modify(model.provider, async () => type === 'api_key'
+          ? { type, key: 'fixture-key' }
+          : { type, access: 'fixture-subscription-token', refresh: 'fixture-refresh', expires: Date.now() + 3_600_000 })
+        await result.session.prompt('Inspect the available tools')
+        expect(result.session.getActiveToolNames().includes('lexora_image_generate')).toBe(type === 'api_key')
+        expect(prompts.at(-1)?.includes('lexora_image_generate')).toBe(type === 'api_key')
+      }
+      expect(prompts).toHaveLength(3)
     }
     finally {
       await result.shutdown('quit')

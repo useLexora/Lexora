@@ -1,6 +1,7 @@
 import type {
   Api,
   AuthResult,
+  AuthType,
   Model,
 } from '@earendil-works/pi-ai'
 import type {
@@ -18,6 +19,7 @@ const PNG_SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
 
 export interface OpenAiImageGenerationServiceOptions {
   fetch?: typeof globalThis.fetch
+  resolveCredentialMetadata: (providerId: string) => { readonly type: AuthType, readonly revision: number } | null
   resolveSourceProviderId?: (providerId: string) => string
   modelRuntime: {
     getAuth: (
@@ -29,17 +31,20 @@ export interface OpenAiImageGenerationServiceOptions {
 
 export class OpenAiImageGenerationService implements ImageGenerationGateway {
   readonly #fetch: typeof globalThis.fetch
+  readonly #resolveCredentialMetadata: OpenAiImageGenerationServiceOptions['resolveCredentialMetadata']
   readonly #resolveSourceProviderId: (providerId: string) => string
   readonly #modelRuntime: OpenAiImageGenerationServiceOptions['modelRuntime']
 
   constructor(options: OpenAiImageGenerationServiceOptions) {
     this.#fetch = options.fetch ?? globalThis.fetch
+    this.#resolveCredentialMetadata = options.resolveCredentialMetadata
     this.#resolveSourceProviderId = options.resolveSourceProviderId ?? (providerId => providerId)
     this.#modelRuntime = options.modelRuntime
   }
 
   async generate(input: ImageGenerationInput): Promise<ImageGenerationResult> {
-    if (!this.supports(input.model))
+    const credential = this.#resolveCredentialMetadata(input.model.provider)
+    if (!this.#supportsCredential(input.model, credential?.type ?? null))
       throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
     input.signal.throwIfAborted()
     let auth: AuthResult | undefined
@@ -51,6 +56,9 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
       throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED', { cause: error })
     }
     input.signal.throwIfAborted()
+    const current = this.#resolveCredentialMetadata(input.model.provider)
+    if (current?.revision !== credential?.revision || !this.#supportsCredential(input.model, current?.type ?? null))
+      throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
     const apiKey = auth?.auth.apiKey
     if (!auth || !apiKey)
       throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED')
@@ -89,17 +97,23 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
   }
 
   supports(model: Model<Api>): boolean {
-    return supportsOpenAiImageGeneration(model, this.#resolveSourceProviderId(model.provider))
+    return this.#supportsCredential(model, this.#resolveCredentialMetadata(model.provider)?.type ?? null)
+  }
+
+  #supportsCredential(model: Model<Api>, credentialType: AuthType | null): boolean {
+    return supportsOpenAiImageGeneration(model, credentialType, this.#resolveSourceProviderId(model.provider))
   }
 }
 
-export function supportsOpenAiImageGeneration(model: Model<Api>, sourceProviderId = model.provider): boolean {
+export function supportsOpenAiImageGeneration(model: Model<Api>, credentialType: AuthType | null, sourceProviderId = model.provider): boolean {
   return (
     sourceProviderId === 'openai'
     && model.api === 'openai-responses'
+    && credentialType === 'api_key'
   ) || (
     sourceProviderId === 'openai-codex'
     && model.api === 'openai-codex-responses'
+    && credentialType === 'oauth'
   )
 }
 
