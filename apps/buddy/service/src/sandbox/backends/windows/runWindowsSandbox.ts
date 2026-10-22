@@ -14,6 +14,9 @@ import { ShellSandboxError } from '../../../../../shared/permissions/shellSandbo
 import { createWindowsSandboxPolicy } from './createPolicy'
 
 export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_SANDBOX_BACKEND.Windows>, options: SandboxExecutionOptions): Promise<number | null> {
+  const environment = options.environment ?? process.env
+  const httpProxy = environment.HTTP_PROXY ?? environment.http_proxy ?? ''
+  const httpsProxy = environment.HTTPS_PROXY ?? environment.https_proxy ?? httpProxy
   const program = input.shell ?? { dialect: 'powershell' as const, executable: input.backend.shell }
   buildShellInvocation(program, input.command)
   const { grants, path } = await createWindowsSandboxPolicy(input, options.signal)
@@ -24,7 +27,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_
     filter: (port, host) => options.signal.aborted ? false : options.approveNetwork({ host, port }),
     lookupFor: port => guard.lookupFor(port),
     proxyAuthToken: token,
-    parentProxy: resolveParentProxy(),
+    parentProxy: resolveParentProxy({ http: httpProxy, https: httpsProxy, noProxy: environment.NO_PROXY ?? environment.no_proxy ?? '' }),
   })
   proxy.on('connection', (socket) => {
     connections.add(socket)
@@ -48,7 +51,7 @@ export async function runWindowsSandbox(input: SandboxBackendInput<typeof SHELL_
       grants,
       denyReadScope: input.backend.protectionScope,
       proxyPort: address.port,
-      environment: createWindowsSandboxEnvironment(process.env, {
+      environment: createWindowsSandboxEnvironment(environment, {
         ...input.backend,
         shell: program.executable,
         dialect: program.dialect,

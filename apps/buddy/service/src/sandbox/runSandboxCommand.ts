@@ -3,8 +3,6 @@ import type { SandboxNetworkTarget, SandboxProcessInput, SandboxResult } from '.
 import type { SandboxExecutionOptions } from './sandboxExecutionLifecycle'
 import { sandboxNetworkTargetSchema, ShellSandboxError } from '../../../shared/permissions/shellSandbox'
 import { SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
-import { runSrtSandbox } from './backends/srt/runSrtSandbox'
-import { runWindowsSandbox } from './backends/windows/runWindowsSandbox'
 import { SandboxExecutionLifecycle } from './sandboxExecutionLifecycle'
 
 export async function runSandboxCommand(input: SandboxProcessInput, options: Omit<SandboxExecutionOptions, 'onStarted' | 'onProcess'> & { onLifecycle?: (event: Readonly<SandboxLifecycleEvent>) => void }): Promise<SandboxResult> {
@@ -38,8 +36,8 @@ export async function runSandboxCommand(input: SandboxProcessInput, options: Omi
       },
     }
     const exitCode = input.backend.kind === SHELL_SANDBOX_BACKEND.Windows
-      ? await runWindowsSandbox({ ...input, backend: input.backend }, execution)
-      : await runSrtSandbox({ ...input, backend: input.backend }, execution)
+      ? await (await import('./backends/windows/runWindowsSandbox')).runWindowsSandbox({ ...input, backend: input.backend }, execution)
+      : await (await import('./backends/srt/runSrtSandbox')).runSrtSandbox({ ...input, backend: input.backend }, execution)
     if (lifecycle.signal.aborted)
       result = { ok: false, code: lifecycle.timedOut ? 'SANDBOX_TIMEOUT' : 'SANDBOX_CANCELLED' }
     else

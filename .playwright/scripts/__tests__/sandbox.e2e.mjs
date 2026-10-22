@@ -357,7 +357,7 @@ for (const workspaceKind of ['managed', 'bound']) {
         for (const phase of phases.filter(phase => phase.toolName === shell)) {
           expect(phase.timing.executionBasis).toBe('backend')
           expect(phase.timing.durations.capturing).toBeUndefined()
-          if (process.platform === 'linux')
+          if (process.platform === 'linux' || process.platform === 'win32')
             expect(phase.timing.durations.cleaning).toBeLessThan(1000)
         }
         measurements.push({ label, runId: turn.runId, timings: phases.map(event => event.timing), tools: completed })

@@ -7,6 +7,7 @@ import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 
 export interface SandboxExecutionOptions {
+  environment?: NodeJS.ProcessEnv
   signal: AbortSignal
   approveNetwork: (target: SandboxNetworkTarget) => Promise<boolean>
   onData: (data: Buffer) => void

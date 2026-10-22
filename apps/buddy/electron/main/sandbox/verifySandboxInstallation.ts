@@ -1,10 +1,11 @@
 import type { MessagePort } from 'node:worker_threads'
+import type { OwnedProcessSettlement } from '../../../platform/process/supervisedShellProcess'
 import type { SandboxHostOptions } from './registerSandboxHostRpc'
 import { Buffer } from 'node:buffer'
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { setTimeout } from 'node:timers/promises'
 import { MessageChannel } from 'node:worker_threads'
@@ -111,6 +112,15 @@ export async function verifySandboxInstallation(options: SandboxHostOptions, sca
       throw new Error(`Installed sandbox exceeded its first prepared command budget: ${firstCommandMs} ms`)
     if (write.exitCode !== 0 || await readFile(join(workspace, 'result'), 'utf8') !== 'ready')
       throw new Error('Installed sandbox could not write its authorized workspace')
+    const failed = await execute('exit 23')
+    if (failed.exitCode !== 23)
+      throw new Error('Installed sandbox lost the command exit code')
+    const descendant = powershell
+      ? `$child = Start-Process -FilePath ${quote(options.windowsShell!)} -ArgumentList '-NoLogo','-NoProfile','-EncodedCommand','${Buffer.from(`Start-Sleep -Seconds 2; Set-Content -LiteralPath ${quote(join(workspace, 'descendant'))} -Value changed`, 'utf16le').toString('base64')}' -NoNewWindow -PassThru; [Console]::Out.Write('DESCENDANT_PID=' + $child.Id)`
+      : '(sleep 2; touch descendant) >/dev/null 2>&1 &'
+    const descendants = await execute(descendant)
+    if (descendants.exitCode !== 0 || (powershell && !/DESCENDANT_PID=\d+/.test(descendants.output)))
+      throw new Error('Installed sandbox could not supervise a descendant')
     const secret = await execute(powershell ? 'Get-Content -LiteralPath .env -ErrorAction Stop' : 'cat .env')
     if (secret.exitCode !== 0 || !secret.output.includes('synthetic-secret'))
       throw new Error('Installed sandbox could not read ordinary workspace content')
@@ -165,7 +175,7 @@ export async function verifySandboxInstallation(options: SandboxHostOptions, sca
     }
     const cancellation = new AbortController()
     try {
-      await execute(powershell ? '[Console]::Out.Write("CANCEL_READY"); Start-Sleep -Seconds 2; Set-Content -LiteralPath cancelled -Value changed' : 'printf CANCEL_READY; (sleep 2; touch cancelled) & wait', false, false, 10, cancellation)
+      await execute(powershell ? `${descendant.replaceAll('DESCENDANT_PID=', 'CANCEL_CHILD=')}; [Console]::Out.Write("CANCEL_READY"); Start-Sleep -Seconds 2; Set-Content -LiteralPath cancelled -Value changed` : 'printf CANCEL_READY; (sleep 2; touch cancelled) & wait', false, false, 10, cancellation)
       throw new Error('Installed sandbox ignored its cancellation')
     }
     catch (error) {
@@ -175,6 +185,7 @@ export async function verifySandboxInstallation(options: SandboxHostOptions, sca
     await setTimeout(2_100)
     await absent(join(workspace, 'late'))
     await absent(join(workspace, 'cancelled'))
+    await absent(join(workspace, 'descendant'))
     if (scale) {
       for (let iteration = 0; iteration < 3; iteration++) {
         const start = performance.now()
@@ -184,6 +195,34 @@ export async function verifySandboxInstallation(options: SandboxHostOptions, sca
           throw new Error(`Installed sandbox exceeded its repeated command budget: ${elapsed} ms; ${JSON.stringify(result)}`)
         measurements.push(elapsed)
       }
+    }
+    if (powershell) {
+      let shutdown: Promise<void> | undefined
+      const output: Buffer[] = []
+      const settlements = new Map<string, OwnedProcessSettlement['settlement']>()
+      try {
+        await client.exec({ command: '[Console]::Out.WriteLine(\'PRIVATE_TEMP=\' + $env:TEMP); [Console]::Out.Write(\'DISPOSE_READY\'); Start-Sleep -Seconds 60', cwd: workspace, roots: [workspace], workspaceRoots: [workspace], resourceReadRoots: [], additionalDirectories: [], readOnly: true, timeout: 10 }, {
+          onData(data) {
+            output.push(data)
+            if (Buffer.concat(output).includes('DISPOSE_READY'))
+              shutdown ??= disposeHost.dispose()
+          },
+        }, async () => false, {
+          onSettlement(record) {
+            settlements.set(record.processId, record.settlement)
+          },
+        })
+        throw new Error('Installed sandbox ignored host disposal')
+      }
+      catch (error) {
+        if (!(error instanceof ShellSandboxError) || error.code !== 'SANDBOX_CANCELLED')
+          throw error
+      }
+      await shutdown
+      const temporary = Buffer.concat(output).toString('utf8').match(/PRIVATE_TEMP=([^\r\n]+)/)?.[1]
+      if (!shutdown || !temporary || settlements.size !== 3 || [...settlements.values()].some(state => state !== 'released'))
+        throw new Error('Installed sandbox lost native release receipts during host disposal')
+      await absent(dirname(temporary))
     }
     return { preparationMs, firstCommandMs, repeatedRpcMs: measurements }
   }
