@@ -120,7 +120,7 @@ try {
   $command = @"
 @echo off
 cd /d "$project" || exit /b 1
-"$node" "$vitest" run --maxWorkers=4 --project=platform $($TestFiles -join ' ') >> "$log" 2>&1
+"$node" "$vitest" run --maxWorkers=4 --project=platform --reporter=default $($TestFiles -join ' ') >> "$log" 2>&1
 exit /b %errorlevel%
 "@
   [IO.File]::WriteAllText((Join-Path $directory 'run.cmd'), $command, [Text.UTF8Encoding]::new($false))

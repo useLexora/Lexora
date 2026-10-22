@@ -108,6 +108,43 @@ jobs:
           pnpm exec eslint eslint.config.js .github/scripts packages/assets packaging infrastructure/scripts
           --ignore-pattern 'packaging/buddy/**'
 
+  windows-acl-checks:
+    name: Windows ACL checks (${{ matrix.target }})
+    needs: scope
+    if: github.event_name == 'pull_request' && needs.scope.outputs.workspace == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            runner: windows-2025
+          - target: win32-arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Install workspace dependencies
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
+
+      - name: Test Windows ACL denial without administrator privileges
+        timeout-minutes: 6
+        run: ./packaging/buddy/ci/test-windows-platform.ps1 -TestFiles sandboxPathPermissions.native.spec.ts
+
   workspace-checks:
     name: Workspace checks
     needs: [scope, native-test-runtime]
@@ -380,7 +417,7 @@ jobs:
 
   ci-gate:
     name: CI Gate
-    needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, native-checks]
+    needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, windows-acl-checks, native-checks]
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -389,6 +426,7 @@ jobs:
         env:
           WORKSPACE_REQUIRED: ${{ needs.scope.outputs.workspace }}
           WORKSPACE_RESULT: ${{ needs.workspace-checks.result }}
+          WINDOWS_ACL_RESULT: ${{ needs.windows-acl-checks.result }}
           RUNTIME_RESULT: ${{ needs.native-test-runtime.result }}
           RUST_REQUIRED: ${{ needs.scope.outputs.native }}
           RUST_RESULT: ${{ needs.native-checks.result }}
@@ -416,5 +454,6 @@ jobs:
           require_success "Website quality" "$WEBSITE_REQUIRED" "$WEBSITE_RESULT"
           require_success "Repository checks" "$REPOSITORY_REQUIRED" "$REPOSITORY_RESULT"
           require_success "Workspace checks" "$WORKSPACE_REQUIRED" "$WORKSPACE_RESULT"
+          require_success "Windows ACL checks" "$WORKSPACE_REQUIRED" "$WINDOWS_ACL_RESULT"
           require_success "Native test runtime" "$WORKSPACE_REQUIRED" "$RUNTIME_RESULT"
           require_success "Native checks" "$RUST_REQUIRED" "$RUST_RESULT"
