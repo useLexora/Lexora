@@ -32,7 +32,7 @@ describe.each([
 
   it('rejects incomplete input even when the child exits successfully', async () => {
     const input = { payload: 'x'.repeat(4 * 1024 * 1024) }
-    await expect(async () => run(process.execPath, [fixture, 'ignored-input'], input, { env })).rejects.toMatchObject({ code: 'EPIPE' })
+    await expect(async () => run(process.execPath, [fixture, 'ignored-input'], input, { env })).rejects.toMatchObject({ code: expect.stringMatching(/^(?:EPIPE|EOF)$/) })
   })
 
   it.each(['stdout-limit', 'stderr-limit'])('bounds %s output', async (mode) => {

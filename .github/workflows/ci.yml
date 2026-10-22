@@ -108,8 +108,8 @@ jobs:
           pnpm exec eslint eslint.config.js .github/scripts packages/assets packaging infrastructure/scripts
           --ignore-pattern 'packaging/buddy/**'
 
-  windows-acl-checks:
-    name: Windows ACL checks (${{ matrix.target }})
+  windows-platform-checks:
+    name: Windows platform checks (${{ matrix.target }})
     needs: scope
     if: github.event_name == 'pull_request' && needs.scope.outputs.workspace == 'true'
     strategy:
@@ -140,6 +140,9 @@ jobs:
         uses: ./.github/actions/install-workspace-dependencies
         with:
           packages: '@uselexora/lexora @uselexora/lexora-buddy...'
+
+      - name: Test native command transport
+        run: pnpm --filter @uselexora/lexora-buddy test:platform nativeCommand.spec.ts
 
       - name: Test Windows ACL denial without administrator privileges
         timeout-minutes: 6
@@ -417,7 +420,7 @@ jobs:
 
   ci-gate:
     name: CI Gate
-    needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, windows-acl-checks, native-checks]
+    needs: [scope, website-quality, repository-checks, native-test-runtime, workspace-checks, windows-platform-checks, native-checks]
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -426,7 +429,7 @@ jobs:
         env:
           WORKSPACE_REQUIRED: ${{ needs.scope.outputs.workspace }}
           WORKSPACE_RESULT: ${{ needs.workspace-checks.result }}
-          WINDOWS_ACL_RESULT: ${{ needs.windows-acl-checks.result }}
+          WINDOWS_PLATFORM_RESULT: ${{ needs.windows-platform-checks.result }}
           RUNTIME_RESULT: ${{ needs.native-test-runtime.result }}
           RUST_REQUIRED: ${{ needs.scope.outputs.native }}
           RUST_RESULT: ${{ needs.native-checks.result }}
@@ -454,6 +457,6 @@ jobs:
           require_success "Website quality" "$WEBSITE_REQUIRED" "$WEBSITE_RESULT"
           require_success "Repository checks" "$REPOSITORY_REQUIRED" "$REPOSITORY_RESULT"
           require_success "Workspace checks" "$WORKSPACE_REQUIRED" "$WORKSPACE_RESULT"
-          require_success "Windows ACL checks" "$WORKSPACE_REQUIRED" "$WINDOWS_ACL_RESULT"
+          require_success "Windows platform checks" "$WORKSPACE_REQUIRED" "$WINDOWS_PLATFORM_RESULT"
           require_success "Native test runtime" "$WORKSPACE_REQUIRED" "$RUNTIME_RESULT"
           require_success "Native checks" "$RUST_REQUIRED" "$RUST_RESULT"
