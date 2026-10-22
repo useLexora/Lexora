@@ -48,7 +48,7 @@ try {
     throw "Standard user NSIS installation failed: `$(`$installer.ExitCode)"
   }
   `$installed = Join-Path `$env:LOCALAPPDATA 'Programs\Lexora Buddy'
-  & (Join-Path `$PWD 'payload\node.exe') '$desktopVerifier' `$installed --require-sandbox >> 'result.log' 2>&1
+  & `$env:ComSpec /d /c ('"payload\node.exe" "$desktopVerifier" "' + `$installed + '" --require-sandbox >> "result.log" 2>&1')
   if (`$LASTEXITCODE -ne 0) { throw "Installed standard user Desktop verification failed: `$LASTEXITCODE" }
 "@
   }
