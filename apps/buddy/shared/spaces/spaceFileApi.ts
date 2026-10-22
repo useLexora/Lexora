@@ -2,6 +2,7 @@ import type { RuntimeRequestContract } from '../runtime/apiContract'
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { directoryPageSchema, fileEntrySchema, filePreviewSchema } from '../files/filePreview'
+import { mediaPreviewLocationSchema } from '../files/mediaPreview'
 import { idSchema } from '../runtime/apiValidation'
 
 export const spaceFileTargetSchema = z.object({
@@ -80,6 +81,7 @@ export const spaceFilesChanged = {
 export type SpaceFilesChange = z.infer<typeof spaceFilesChanged.params>
 
 export const spaceFilesRpc = {
+  resolveMedia: { method: 'spaceFiles.resolveMedia', input: spaceFileTargetSchema, response: mediaPreviewLocationSchema },
   mutate: { method: 'spaceFiles.mutate', input: spaceFileMutationSchema, response: spaceFileOperationSchema },
   history: { method: 'spaceFiles.history', input: spaceFileTargetSchema, response: z.array(spaceFileOperationSchema) },
   query: { method: 'spaceFiles.query', input: spaceFileOperationRequestSchema, response: spaceFileOperationSchema.nullable() },

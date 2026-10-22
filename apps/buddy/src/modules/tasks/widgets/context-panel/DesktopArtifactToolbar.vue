@@ -6,12 +6,12 @@ import { computed } from 'vue'
 import { formatFileSize } from '@/shared/lib/formatFileSize'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
-import { formatDate, isMarkdownArtifact, resolveFileType } from './artifactContextPresentation'
+import { artifactMediaKind, formatDate, isMarkdownArtifact, resolveFileType } from './artifactContextPresentation'
 
 const props = defineProps<{ artifact: LocalArtifact, language: BuddyLocale, textAvailable: boolean }>()
 const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
 const modes = computed(() => fileDocumentModes({
-  preview: (props.textAvailable && isMarkdownArtifact(props.artifact)) || props.artifact.mimeType.startsWith('image/'),
+  preview: (props.textAvailable && isMarkdownArtifact(props.artifact)) || props.artifact.mimeType.startsWith('image/') || artifactMediaKind(props.artifact) !== null,
   source: props.textAvailable,
   edit: false,
 }))

@@ -49,6 +49,7 @@ export interface TaskFilesContextTab extends ContextTabSource {
   id: string
   kind: 'files'
   target: SpaceFileTarget
+  treeTarget?: { path: string, kind: 'file' | 'directory' }
   rootName: string
 }
 

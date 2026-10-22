@@ -2,6 +2,7 @@ import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { isTextArtifactMimeType } from '@buddy-shared/artifacts/artifactApi'
+import { inferFileMimeType, mediaKindForMimeType } from '@buddy-shared/files/fileMimeTypes'
 import { isMarkdownFile } from '@/shared/ui/files/fileDocumentPresentation'
 
 export function resolveFileType(artifact: LocalArtifact): string {
@@ -23,6 +24,12 @@ export function isMarkdownArtifact(artifact: Pick<LocalArtifact, 'kind' | 'name'
     && (artifact.mimeType === 'text/markdown' || isMarkdownFile(artifact.name))
 }
 
+export function artifactMediaKind(artifact: Pick<LocalArtifact, 'kind' | 'name' | 'mimeType'>): 'audio' | 'video' | null {
+  return artifact.kind === 'file'
+    ? mediaKindForMimeType(artifact.mimeType) ?? mediaKindForMimeType(inferFileMimeType(artifact.name))
+    : null
+}
+
 export function resolveArtifactDisplayMode(
   artifact: Pick<LocalArtifact, 'kind' | 'name' | 'mimeType'>,
   viewMode: ArtifactViewMode,
@@ -31,7 +38,7 @@ export function resolveArtifactDisplayMode(
     return 'directory'
   if (isMarkdownArtifact(artifact))
     return viewMode
-  if (artifact.mimeType.startsWith('image/'))
+  if (artifact.mimeType.startsWith('image/') || artifactMediaKind(artifact))
     return 'preview'
   return isTextArtifactMimeType(artifact.mimeType) ? 'source' : 'file'
 }

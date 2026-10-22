@@ -132,7 +132,7 @@ export default {
   'desktop.chat.quoteUnavailable': '当前无法添加引用，请稍后重试。',
   'desktop.chat.quoteTargetPane': '分屏 {index} · {title}',
   'desktop.chat.quoteToTarget': '引用到「{title}」',
-  'desktop.chat.quoteToCurrent': '引用到对话',
+  'desktop.chat.quoteToCurrent': '引用',
   'desktop.chat.quoteOtherTarget': '引用到其他对话',
   'desktop.chat.quoteChooseTarget': '引用到对话',
   'desktop.chat.quoteNoTarget': '请先打开可接收引用的对话',

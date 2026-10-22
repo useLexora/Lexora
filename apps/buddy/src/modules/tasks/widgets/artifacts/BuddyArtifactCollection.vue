@@ -63,7 +63,7 @@ function findHorizontalScrollport(): HTMLElement | null {
     @wheel="handleWheel"
   >
     <NScrollbar class="buddy-artifact-collection__scrollbar" trigger="hover" x-scrollable>
-      <div class="buddy-artifact-collection__items grid gap-[0.625rem] p-[0.125rem]" :class="`is-${layout}`">
+      <div class="buddy-artifact-collection__items grid items-start gap-2 p-[0.125rem]" :class="`is-${layout}`">
         <BuddyArtifactCard
           v-for="artifact in artifacts"
           :key="artifact.artifactId"
@@ -84,7 +84,7 @@ function findHorizontalScrollport(): HTMLElement | null {
 .buddy-artifact-collection__items {
   &.is-strip {
     width: max-content;
-    grid-auto-columns: 17rem;
+    grid-auto-columns: 15rem;
     grid-auto-flow: column;
     padding-bottom: 0.5rem;
   }

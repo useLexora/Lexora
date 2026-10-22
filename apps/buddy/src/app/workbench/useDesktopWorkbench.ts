@@ -12,6 +12,7 @@ import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { CommandContext, DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { inferFileMimeType, mediaKindForMimeType } from '@buddy-shared/files/fileMimeTypes'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton, useDialog } from 'naive-ui'
@@ -384,12 +385,16 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       return previous.id
     }
     let resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target, canonicalRoot: fileOperations.root(target) } }
+    if (mediaKindForMimeType(inferFileMimeType(target.path)) && !copies.get(resource))
+      resource = { ...resource, scheme: 'file-preview' }
     const release = resourceLifetime.acquire(resource)
     try {
-      const copy = await copies.open(resource)
-      if (!copy.etag && copy.error) {
-        copies.release(resource)
-        resource = { ...resource, scheme: 'file-preview' }
+      if (resource.scheme === 'file') {
+        const copy = await copies.open(resource)
+        if (!copy.etag && copy.error) {
+          copies.release(resource)
+          resource = { ...resource, scheme: 'file-preview' }
+        }
       }
       if (!current())
         return null

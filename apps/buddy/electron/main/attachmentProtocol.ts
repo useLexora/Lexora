@@ -8,22 +8,27 @@ import { resolveBuddyFileReader } from '../../platform/native/nativeHost'
 import { artifactsRequestSchemas, artifactsResponseSchemas } from '../../shared/artifacts/artifactApi'
 import { attachmentsRequestSchemas } from '../../shared/conversation/attachmentApi'
 import { composerResourcesRpc } from '../../shared/conversation/composerApi'
+import { handleMediaRequest } from './mediaProtocol'
 
 const ATTACHMENT_PROTOCOL = 'lexora-attachment'
 const ARTIFACT_PROTOCOL = 'lexora-artifact'
+const FILE_PROTOCOL = 'lexora-file'
 
-export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL].map(scheme => ({
+export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL, FILE_PROTOCOL].map(scheme => ({
   scheme,
   privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true },
 }))
 
 export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () => void {
+  const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })
   const installPreviewProtocol = (
     scheme: string,
     idKey: 'artifactId' | 'attachmentId',
     method: 'artifacts.resolvePreview' | 'attachments.resolvePreview',
     schema: typeof artifactsRequestSchemas.artifactPreview | typeof attachmentsRequestSchemas.attachmentPreview,
   ) => protocol.handle(scheme, async (request) => {
+    if (scheme === ARTIFACT_PROTOCOL && ['media', 'preview'].includes(new URL(request.url).hostname))
+      return handleMediaRequest(request, runtime, fileReader)
     if (request.method !== 'GET')
       return new Response(null, { status: 405 })
 
@@ -83,7 +88,10 @@ export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () =
     artifactsRequestSchemas.artifactPreview,
   )
 
+  void protocol.handle(FILE_PROTOCOL, request => handleMediaRequest(request, runtime, fileReader))
+
   return () => {
+    protocol.unhandle(FILE_PROTOCOL)
     protocol.unhandle(ATTACHMENT_PROTOCOL)
     protocol.unhandle(ARTIFACT_PROTOCOL)
   }

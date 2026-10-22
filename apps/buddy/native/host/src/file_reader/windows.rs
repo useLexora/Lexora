@@ -1,6 +1,5 @@
 use std::{
-    fs::OpenOptions,
-    io::Read,
+    fs::{File, OpenOptions},
     os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
     path::Path,
 };
@@ -11,23 +10,28 @@ use windows_sys::Win32::Storage::FileSystem::{
     GetFileType,
 };
 
-use super::{ReadError, ReadRequest};
+use super::ReadError;
 
-pub fn read(request: &ReadRequest) -> Result<Vec<u8>, ReadError> {
-    if !crate::windows_path::valid(&request.root) || !crate::windows_path::valid(&request.path) {
+pub fn with_file<T>(
+    root_path: &str,
+    path: &str,
+    exact_path: bool,
+    operation: impl FnOnce(&mut File) -> Result<T, ReadError>,
+) -> Result<T, ReadError> {
+    if !crate::windows_path::valid(root_path) || !crate::windows_path::valid(path) {
         return Err(ReadError::ReadFailed);
     }
-    let _parents = windows_fs::ParentGuard::new(Path::new(&request.path))
-        .map_err(|_| ReadError::ReadFailed)?;
-    let _root_parents = windows_fs::ParentGuard::new(Path::new(&request.root))
-        .map_err(|_| ReadError::ReadFailed)?;
+    let _parents =
+        windows_fs::ParentGuard::new(Path::new(path)).map_err(|_| ReadError::ReadFailed)?;
+    let _root_parents =
+        windows_fs::ParentGuard::new(Path::new(root_path)).map_err(|_| ReadError::ReadFailed)?;
     let root =
-        windows_fs::open_directory(Path::new(&request.root)).map_err(|_| ReadError::ReadFailed)?;
-    let file = OpenOptions::new()
+        windows_fs::open_directory(Path::new(root_path)).map_err(|_| ReadError::ReadFailed)?;
+    let mut file = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
         .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(&request.path)
+        .open(path)
         .map_err(|_| ReadError::ReadFailed)?;
     // SAFETY: The live File owns this handle throughout the call.
     if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK {
@@ -44,17 +48,14 @@ pub fn read(request: &ReadRequest) -> Result<Vec<u8>, ReadError> {
     {
         return Err(ReadError::ReadFailed);
     }
-    if metadata.len() > request.max_bytes {
-        return Err(ReadError::OutputLimit);
+    if exact_path
+        && (!windows_fs::eq_ignore_case(&final_root.to_string_lossy(), root_path)
+            || !windows_fs::eq_ignore_case(&final_file.to_string_lossy(), path))
+    {
+        return Err(ReadError::ReadFailed);
     }
-    let mut bytes = Vec::new();
-    file.take(request.max_bytes + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ReadError::ReadFailed)?;
-    if bytes.len() as u64 > request.max_bytes {
-        return Err(ReadError::OutputLimit);
-    }
+    let result = operation(&mut file)?;
     // Keep the root's delete-denying handle alive until all bytes have been read.
     drop(root);
-    Ok(bytes)
+    Ok(result)
 }

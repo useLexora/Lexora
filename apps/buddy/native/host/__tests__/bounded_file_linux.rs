@@ -1,7 +1,11 @@
 #![cfg(target_os = "linux")]
 
 use lexora_buddy_host::file_reader::{ReadError, ReadRequest, read_bounded_file};
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt, symlink},
+    path::Path,
+};
 
 fn read(root: &Path, path: &Path, max_bytes: u64) -> Result<Vec<u8>, ReadError> {
     read_bounded_file(&ReadRequest {
@@ -9,6 +13,41 @@ fn read(root: &Path, path: &Path, max_bytes: u64) -> Result<Vec<u8>, ReadError> 
         path: path.to_str().unwrap().to_owned(),
         max_bytes,
     })
+}
+
+#[test]
+fn media_stream_never_follows_replaced_parent_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let parent = root.join("parent");
+    let held = root.join("held");
+    let outside = directory.path().join("outside");
+    fs::create_dir_all(&parent).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(parent.join("media"), b"allowed").unwrap();
+    fs::write(outside.join("media"), b"private").unwrap();
+    let metadata = fs::metadata(parent.join("media")).unwrap();
+    let mut input = serde_json::to_vec(&serde_json::json!({
+        "root": root, "path": parent.join("media"), "sizeBytes": 7, "start": 0, "length": 7,
+        "fileId": format!("{}:{}", metadata.dev(), metadata.ino())
+    }))
+    .unwrap();
+    input.extend_from_slice(b"\n\x01");
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for _ in 0..300 {
+                fs::rename(&parent, &held).unwrap();
+                symlink(&outside, &parent).unwrap();
+                fs::remove_file(&parent).unwrap();
+                fs::rename(&held, &parent).unwrap();
+            }
+        });
+        for _ in 0..300 {
+            let mut output = Vec::new();
+            let _ = lexora_buddy_host::file_reader::run_stream(input.as_slice(), &mut output);
+            assert!(output.is_empty() || output == [1] || output == b"\x01allowed");
+        }
+    });
 }
 
 #[test]

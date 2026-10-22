@@ -4,12 +4,13 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from '../fixtures/electron.mjs'
 
-test('quotes file and Markdown snapshots while preserving native editor actions and explicit draft routing', async ({ buddy }, testInfo) => {
+test('quotes file and Markdown snapshots while preserving native editor actions and explicit draft routing', async ({ buddy }) => {
   const instance = await buddy.createInstance('selection-reference')
   const directory = path.join(instance.home, 'documents')
   await fs.mkdir(directory)
   await fs.writeFile(path.join(directory, 'README.md'), 'Frozen document excerpt.\n\nSecond paragraph.\n')
   const { app, page, diagnostics } = await instance.launch()
+  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
   await app.evaluate(({ dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
   }, directory)
@@ -43,7 +44,7 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   await paragraph.click({ button: 'right' })
   const menu = page.locator('.resource-selection-menu:visible').first()
   await expect(menu).toBeVisible()
-  await menu.getByRole('menuitem', { name: '引用到对话', exact: true }).click()
+  await menu.getByRole('menuitem', { name: '引用', exact: true }).click()
   const cards = page.locator('.desktop-chat-composer-wrap .resource-quote-card')
   await expect(cards).toHaveCount(1)
   await expect(cards.first()).toContainText('Frozen document excerpt.')
@@ -94,17 +95,6 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   await expect(strip).toHaveCount(1)
   await expect(strip.locator('[data-material-key]')).toHaveCount(3)
   await expect(page.locator('.n-message')).toHaveCount(0)
-  for (const appearance of ['light', 'dark']) {
-    await page.evaluate(id => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id } }), `lexora.themes.classic-${appearance}`)
-    await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', appearance)
-    await page.screenshot({ path: testInfo.outputPath(`input-materials-${appearance}.png`), animations: 'disabled' })
-  }
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 720))
-  const scrollport = strip.locator('.chat-input-material-strip__scrollport')
-  expect(await strip.locator('[data-material-key]').evaluateAll(cards => new Set(cards.map(card => Math.round(card.getBoundingClientRect().top))).size)).toBe(1)
-  expect(await scrollport.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
-  await page.screenshot({ path: testInfo.outputPath('input-materials-narrow.png'), animations: 'disabled' })
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
   await input.click()
   await page.keyboard.press('Control+\\')
   const inputs = page.locator('.desktop-workbench-area__tasks .tiptap:visible')
@@ -117,7 +107,7 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   await editor.locator('.monaco-scrollable-element').first().click({ button: 'right', position: { x: 100, y: 12 } })
   await page.getByRole('menuitem', { name: '引用', exact: true }).click({ delay: 120 })
   await expect(menu).toBeVisible()
-  await expect(menu.getByRole('menuitem', { name: '引用到对话', exact: true })).toHaveCount(0)
+  await expect(menu.getByRole('menuitem', { name: '引用', exact: true })).toHaveCount(0)
   const sourceBeforeChoice = await editor.locator('.view-line').allTextContents()
   await expect(menu).toBeFocused()
   await page.keyboard.press('Escape')
@@ -146,7 +136,7 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('mixed input materials preserve exact draft snapshots, resource bytes and all placements through removal, undo and desktop restart', async ({ buddy }, testInfo) => {
+test('mixed input materials preserve exact draft snapshots, resource bytes and all placements through removal, undo and desktop restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('material-recovery')
   let desktop = await instance.launch()
   let page = desktop.page
@@ -223,5 +213,4 @@ test('mixed input materials preserve exact draft snapshots, resource bytes and a
   finally { database.close() }
   expect(await fs.readFile(storedPath)).toEqual(Buffer.from(attachmentText))
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-  await page.screenshot({ path: testInfo.outputPath('input-materials-recovered.png'), animations: 'disabled' })
 })

@@ -20,24 +20,42 @@ function own<T>(setup: () => T) {
 }
 
 describe('resource previews', () => {
-  it('releases closed preview views while retaining another task tab', async () => {
-    const first: TaskChangesContextTab = { id: 'changes:first', scope: 'task:first', conversationId: 'first', kind: 'changes', changeSet: createChanges('first'), branchId: 'branch', revision: '1' }
-    const second: TaskChangesContextTab = { ...first, id: 'changes:second', scope: 'task:second', conversationId: 'second', changeSet: createChanges('second') }
-    const tab = shallowRef<TaskChangesContextTab | null>(first)
-    const retained = shallowRef(new Set([first.id, second.id]))
-    const { state } = own(() => useContextChanges({ hasTab: id => retained.value.has(id), tab, getChangeSet: async id => createChanges(id), getOverview: async () => createChanges('all') }))
-    await nextTick()
-    const previous = state.current.value!
-    previous.treeWidth = 350
-    tab.value = second
-    await nextTick()
-    retained.value = new Set([second.id])
-    await nextTick()
-    expect(state.current.value?.source.id).toBe(second.id)
-    retained.value = new Set([first.id, second.id])
-    tab.value = first
-    await nextTick()
-    expect(state.current.value?.treeWidth).not.toBe(previous.treeWidth)
+  it('reveals repeated directory locations without selecting a file, and loads ancestors for file selection', async () => {
+    const tab = shallowRef<TaskFilesContextTab | null>(filesTab())
+    const listDirectory: WorkspaceFilesApi['listDirectory'] = async target => ({
+      entries: target.path === ''
+        ? [{ name: 'src', path: 'src', kind: 'directory', unavailable: false }]
+        : target.path === 'src'
+          ? [{ name: 'nested', path: 'src/nested', kind: 'directory', unavailable: false }]
+          : [{ name: 'report.md', path: 'src/nested/report.md', kind: 'file', unavailable: false }],
+      nextCursor: null,
+    })
+    const { state } = openFiles(tab, listDirectory)
+    await vi.waitFor(() => expect(state.current.value?.nodes).toHaveLength(1))
+    const view = state.current.value!
+    view.treeVisible = false
+    view.treeWidth = 310
+    tab.value = { ...tab.value!, target: { ...tab.value!.target, path: 'src/nested/report.md' } }
+    await vi.waitFor(() => expect(view.expandedKeys).toEqual(['src', 'src/nested']))
+    await vi.waitFor(() => expect(view.nodes[0]?.children?.[0]?.children?.[0]?.key).toBe('src/nested/report.md'))
+    view.expandedKeys = []
+    tab.value = { ...tab.value, target: { ...tab.value.target, path: '' }, treeTarget: { path: 'src/nested', kind: 'directory' } }
+    await vi.waitFor(() => expect(view.expandedKeys).toEqual(['src', 'src/nested']))
+    expect(view.treeVisible).toBe(true)
+    expect(view.treeWidth).toBe(310)
+    expect(tab.value.target.path).toBe('')
+    view.treeVisible = false
+    tab.value = { ...tab.value, treeTarget: { path: 'src/nested', kind: 'directory' } }
+    await vi.waitFor(() => expect(view.treeVisible).toBe(true))
+    expect(view.treeFailed).toBe(false)
+  })
+
+  it('reports an inaccessible explicit tree target without broadening the binding', async () => {
+    const tab = shallowRef<TaskFilesContextTab | null>({ ...filesTab(), treeTarget: { path: 'private', kind: 'directory' } })
+    const { state } = openFiles(tab, async () => ({ entries: [{ name: 'private', path: 'private', kind: 'directory', unavailable: true }], nextCursor: null }))
+    await vi.waitFor(() => expect(state.current.value?.treeFailed).toBe(true))
+    expect(state.current.value?.expandedKeys).toEqual([])
+    expect(tab.value?.target.path).toBe('')
   })
 
   it('stops directory pagination after its tab closes and discards late results', async () => {
@@ -118,27 +136,6 @@ describe('resource previews', () => {
     await state.refresh()
     expect(state.current.value?.treeFailed).toBe(false)
     expect(state.current.value?.nodes).toHaveLength(1)
-  })
-
-  it('automatically reveals and loads ancestor directories when a nested file path is selected', async () => {
-    const value = filesTab()
-    const tab = shallowRef<TaskFilesContextTab | null>(value)
-    const listDirectory = vi.fn().mockImplementation(async ({ path }: { path: string }) => {
-      if (path === '')
-        return { entries: [{ name: 'src', path: 'src', kind: 'directory', unavailable: false }], nextCursor: null }
-      if (path === 'src')
-        return { entries: [{ name: 'utils', path: 'src/utils', kind: 'directory', unavailable: false }], nextCursor: null }
-      if (path === 'src/utils')
-        return { entries: [{ name: 'math.ts', path: 'src/utils/math.ts', kind: 'file', unavailable: false }], nextCursor: null }
-      return { entries: [], nextCursor: null }
-    })
-    const { state } = openFiles(tab, listDirectory)
-    await Promise.resolve()
-    await nextTick()
-
-    tab.value = { ...value, target: { ...value.target, path: 'src/utils/math.ts' } }
-    await vi.waitFor(() => expect(state.current.value?.expandedKeys).toEqual(['src', 'src/utils']))
-    await vi.waitFor(() => expect(state.current.value?.nodes[0]?.children?.[0]?.children?.[0]?.key).toBe('src/utils/math.ts'))
   })
 
   it('publishes directory pages before completion and preserves folders expanded during pagination', async () => {

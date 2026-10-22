@@ -8,11 +8,13 @@ const idSchema = z.string().trim().min(1).max(256)
 
 export interface RegisterArtifactRpcOptions {
   rpc: RuntimeRequestRegistrar
-  service: Pick<ArtifactService, 'readText' | 'resolveBrowserEntry' | 'resolvePreview'>
+  service: Pick<ArtifactService, 'readText' | 'resolveBrowserEntry' | 'resolvePreview' | 'resolveMedia' | 'locate'>
 }
 
 export function registerArtifactRpc(options: RegisterArtifactRpcOptions): () => void {
   const disposers = [
+    registerRuntimeRequest(options.rpc, artifactsRpc.resolveMedia, input => options.service.resolveMedia(input.artifactId)),
+    registerRuntimeRequest(options.rpc, artifactsRpc.locate, input => options.service.locate(input.artifactId)),
     options.rpc.onRequest('artifacts.resolveBrowserEntry', (params) => {
       const input = parse(z.object({
         artifactId: idSchema,

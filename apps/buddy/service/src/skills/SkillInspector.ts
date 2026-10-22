@@ -6,7 +6,10 @@ import type { SpaceRepository } from '../storage/spaceRepository'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { inferFileMimeType, isImageMimeType } from '../../../shared/files/fileMimeTypes'
+import { FILE_IMAGE_PREVIEW_MAX_BYTES } from '../../../shared/files/filePreview'
 import { readFilePreview } from '../files/readFilePreview'
+import { resolveMediaPreview } from '../files/resolveMediaPreview'
 import { isWithin, readSkillDocument, requireSkillPath, SkillError } from './skillFiles'
 
 interface InspectionOptions {
@@ -84,7 +87,18 @@ export class SkillInspector {
   async readFile(input: SkillFileTarget) {
     const target = await this.#target(input.spaceId, input.id)
     const path = await this.#filePath(target, input.path)
-    const preview = await readFilePreview(target.root, path)
+    const query = new URLSearchParams({ spaceId: input.spaceId ?? '', id: input.id, path: input.path })
+    const preview = await readFilePreview(target.root, path, { image: `lexora-file://skill-preview/?${query}` })
+    this.#assertCurrent(target)
+    return preview
+  }
+
+  async resolveImage(input: SkillFileTarget) {
+    const target = await this.#target(input.spaceId, input.id)
+    const path = await this.#filePath(target, input.path)
+    if (!isImageMimeType(inferFileMimeType(path)))
+      throw new SkillError('SKILL_INVALID')
+    const preview = await resolveMediaPreview(target.root, path, { imageBytesLimit: FILE_IMAGE_PREVIEW_MAX_BYTES })
     this.#assertCurrent(target)
     return preview
   }

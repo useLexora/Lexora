@@ -12,7 +12,7 @@ import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
 import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteReveal'
 import { useResourceSelectionQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
-import { isMarkdownArtifact } from './artifactContextPresentation'
+import { artifactMediaKind, isMarkdownArtifact } from './artifactContextPresentation'
 import DesktopArtifactToolbar from './DesktopArtifactToolbar.vue'
 import { useArtifactPreview } from './useArtifactPreview'
 
@@ -26,6 +26,8 @@ const props = defineProps<{
 }>()
 const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
 const markdown = computed(() => isMarkdownArtifact(props.artifact))
+const mediaKind = computed(() => artifactMediaKind(props.artifact))
+const mediaUrl = computed(() => mediaKind.value ? `lexora-artifact://media/${encodeURIComponent(props.artifact.artifactId)}?v=${encodeURIComponent(props.artifact.updatedAt)}` : null)
 const quoteSource = computed<BuddyArtifactQuote['source']>(() => ({
   kind: 'artifact',
   artifactId: props.artifact.artifactId,
@@ -71,9 +73,10 @@ watch(textPreview, selection.close, { flush: 'sync' })
       :sources="previewSources"
     />
 
-    <div class="desktop-artifact-context-surface__viewport grid min-w-0 min-h-0 flex-1 overflow-auto bg-subtle p-4 place-items-center" :class="{ 'desktop-artifact-context-surface__viewport--document': textPreview }">
+    <div class="desktop-artifact-context-surface__viewport grid min-w-0 min-h-0 flex-1 overflow-auto bg-subtle p-4 place-items-center" :class="{ 'desktop-artifact-context-surface__viewport--document': textPreview || mediaKind }">
+      <DesktopDocumentContent v-if="mediaKind && mediaUrl" mode="preview" :name="artifact.name" :media-kind="mediaKind" :media-url="mediaUrl" :visible="visible" :language="language" :write-clipboard-text="writeClipboardText" />
       <button
-        v-if="previewUrl"
+        v-else-if="previewUrl"
         class="desktop-artifact-context-surface__preview-trigger grid max-w-full max-h-full place-items-center border-0 bg-transparent p-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[3px]"
         type="button"
         :aria-label="t('desktop.imagePreview.open', { name: artifact.name })"

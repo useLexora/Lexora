@@ -10,12 +10,14 @@ import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversa
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { useConversationStatus } from '@/modules/tasks/state/runs/useConversationStatus'
 import { useTaskContext } from '@/modules/tasks/taskContext'
+import { useProvideArtifactActions } from '@/modules/tasks/widgets/artifacts/artifactActionsContext'
 import DesktopTaskSpaceSelector from '@/modules/tasks/widgets/composer/DesktopTaskSpaceSelector.vue'
 import { useTaskMenuActions } from '@/modules/tasks/widgets/task-index/useTaskMenuActions'
 import { useProvideChatContent } from '@/modules/tasks/widgets/transcript/chatContentContext'
 import DesktopChatWorkspace from '@/modules/tasks/widgets/workspace/DesktopChatWorkspace.vue'
 import DesktopChatWorkspaceHeader from '@/modules/tasks/widgets/workspace/DesktopChatWorkspaceHeader.vue'
 import DesktopConversationStatusPanel from '@/modules/tasks/widgets/workspace/DesktopConversationStatusPanel.vue'
+import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -32,6 +34,13 @@ const {
   startTask: navigateDraft,
 } = useTaskContext()
 const { language } = useDesktopUi()
+useProvideArtifactActions({
+  task: () => tasks,
+  resources: contextActions,
+  revealFile: input => requireDesktopApi().localChat.artifacts.revealFile(input),
+  writeClipboardText: text => clipboard.writeText(text),
+  language: () => language.value,
+})
 const { t } = useBuddyI18n(language)
 const { workspace } = tasks
 const { spaces, ...indexActions } = tasks.index

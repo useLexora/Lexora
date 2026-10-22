@@ -239,6 +239,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     ensureBrowserSession,
     addBrowser: () => act(taskContext.addBrowser),
     openFiles: (spaceId: string, directoryId?: string) => act(() => taskContext.openFiles(spaceId, directoryId)),
+    locateFile: (...args: Parameters<typeof taskContext.locateFile>) => act(() => taskContext.locateFile(...args)),
     openWebLink,
     canPreviewFile,
     previewFile,

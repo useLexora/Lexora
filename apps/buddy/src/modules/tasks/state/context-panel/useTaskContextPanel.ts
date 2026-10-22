@@ -1,6 +1,7 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
+import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { ArtifactViewMode, TaskContextTab } from '../../model/context-panel/taskContextPanel'
 import type { UseTaskContextPanelOptions } from './typing'
 import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
@@ -127,8 +128,27 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     })
   }
 
+  function locateFile(target: SpaceFileTarget, kind: 'file' | 'directory', source?: ContextPanelSource) {
+    const space = fileSpaces.value.find(space => space.id === target.spaceId)
+    const directory = getActiveSpaceDirectories(space).find(directory => directory.id === target.directoryId && directory.revision === target.revision)
+    if (!directory)
+      throw new Error('FILE_DIRECTORY_UNAVAILABLE')
+    const candidates = store.tabs.value.filter(tab => tab.kind === 'files' && tab.target.spaceId === target.spaceId
+      && tab.target.directoryId === target.directoryId && tab.target.revision === target.revision)
+    const previous = candidates.find(tab => tab.id === store.activeTab.value?.id) ?? candidates[0]
+    openTab({
+      id: previous?.id ?? `files:${crypto.randomUUID()}`,
+      scope: source ? taskContextPanelScope(source.conversationId) : previous?.scope ?? store.scope.value,
+      kind: 'files',
+      rootName: directory.root.split(/[\\/]/).filter(Boolean).at(-1) ?? directory.root,
+      target: { ...target, path: kind === 'file' ? target.path : '' },
+      treeTarget: { path: target.path, kind },
+      source: source ?? previous?.source ?? currentSource(),
+    })
+  }
+
   function selectFile(tabId: string, path: string) {
-    store.update(tab => tab.id === tabId && tab.kind === 'files' ? { ...tab, target: { ...tab.target, path } } : tab)
+    store.update(tab => tab.id === tabId && tab.kind === 'files' ? { ...tab, target: { ...tab.target, path }, treeTarget: undefined } : tab)
   }
 
   function canPreviewFile(path: string) {
@@ -240,6 +260,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     openBrowser,
     openChanges,
     openFiles,
+    locateFile,
     previewFile,
     selectFile,
     setArtifactViewMode,

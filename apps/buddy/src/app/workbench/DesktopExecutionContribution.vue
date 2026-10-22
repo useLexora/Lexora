@@ -6,7 +6,7 @@ import { useElementSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
-import { useProvideChatContent, useTaskEnvironment } from '@/modules/tasks'
+import { useProvideArtifactActions, useProvideChatContent, useTaskEnvironment } from '@/modules/tasks'
 import { DesktopExecutionDetail } from '@/modules/tasks/ui'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import { useDesktopWorkbenchContext } from './desktopWorkbenchContext'
@@ -43,6 +43,13 @@ const target = computed<ExecutionTarget | null>((previous) => {
   if (!value.success)
     return null
   return previous && Object.entries(previous).every(([key, field]) => value.data[key as keyof ExecutionTarget] === field) ? previous : value.data
+})
+useProvideArtifactActions({
+  task: () => props.visible && target.value?.conversationId === workbench.activeTaskId.value ? workbench.activeTask.value : null,
+  resources,
+  revealFile: input => workbench.api.localChat.artifacts.revealFile(input),
+  writeClipboardText: clipboard.writeText,
+  language: () => workbench.language.value,
 })
 useProvideChatContent({
   openWebLink: (url) => {

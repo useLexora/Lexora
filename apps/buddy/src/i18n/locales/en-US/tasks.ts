@@ -1,6 +1,18 @@
 import type zhCN from '../zh-CN/tasks'
 
 export default {
+  'desktop.artifacts.open': 'Open artifact',
+  'desktop.artifacts.more': 'More actions',
+  'desktop.artifacts.reference': 'Reference',
+  'desktop.artifacts.locate': 'Locate in Files',
+  'desktop.artifacts.reveal': 'Open containing folder',
+  'desktop.artifacts.copyPath': 'Copy path',
+  'desktop.artifacts.referenceUnavailable': 'Open an editable composer in this artifact’s conversation to reference it',
+  'desktop.artifacts.locateUnavailable': 'This artifact is outside the current conversation’s available bound directories',
+  'desktop.artifacts.referenceFailed': 'Could not reference this artifact. Please try again.',
+  'desktop.artifacts.locateFailed': 'Could not locate this artifact in Files. Check that the directory is still accessible.',
+  'desktop.artifacts.revealFailed': 'Could not open the containing folder. Check that the artifact is still accessible.',
+  'desktop.artifacts.copyPathFailed': 'Could not copy the path. Please try again.',
   'desktop.chat.panelOpened': 'Resource panel opened',
   'desktop.chat.panelClosed': 'Resource panel closed',
   'desktop.chat.panelActorSystem': 'System',
@@ -183,6 +195,7 @@ export default {
   'desktop.context.sourceLoadFailed': 'Could not load the source viewer',
   'desktop.context.previewUnavailable': 'This file cannot be previewed here yet',
   'desktop.context.previewLoadFailed': 'Could not load this file preview',
+  'desktop.context.mediaPlaybackFailed': 'Cannot play this file. It may be unavailable, or its format or codec may not be supported.',
   'desktop.context.previewFileMissing': 'This file has been moved or deleted',
   'desktop.context.tabCount': 'Enhanced capability tabs, {count} total',
   'desktop.search.taskCount': 'Tasks ({count})',

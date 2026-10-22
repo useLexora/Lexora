@@ -1,6 +1,8 @@
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 
+export const FILE_IMAGE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024
+
 export const fileEntrySchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
@@ -15,10 +17,11 @@ export const directoryPageSchema = z.object({
 }).strict()
 
 export const filePreviewSchema = z.object({
-  kind: z.enum(['text', 'image', 'binary', 'oversized']),
+  kind: z.enum(['text', 'image', 'audio', 'video', 'binary', 'oversized']),
   sizeBytes: z.number().int().nonnegative(),
   text: z.string().max(1024 * 1024).nullable(),
-  imageUrl: z.string().max(12 * 1024 * 1024).nullable(),
+  imageUrl: z.string().max(32_768).nullable(),
+  mediaUrl: z.string().max(32_768).optional(),
 }).strict()
 
 export type FilePreview = DeepReadonly<z.infer<typeof filePreviewSchema>>

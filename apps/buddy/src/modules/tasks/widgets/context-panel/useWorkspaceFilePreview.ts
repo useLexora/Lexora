@@ -45,27 +45,46 @@ export function useWorkspaceFilePreview(tab: Readonly<Ref<TaskFilesContextTab | 
     view.tab = value
   }, { immediate: true, flush: 'sync' })
 
-  watch(() => [tab.value?.id, tab.value?.target.path], async (_, __, onCleanup) => {
+  watch([() => tab.value?.id, () => tab.value?.target.path, () => tab.value?.treeTarget], async (_, __, onCleanup) => {
     const value = tab.value
     const view = current.value
-    if (!value?.target.path || !view)
+    if (!value || !view)
+      return
+    const location = value.treeTarget
+    if (!location && !value.target.path)
       return
     let active = true
     onCleanup(() => active = false)
-    await view.requests.get('')
-    const segments = value.target.path.split('/').filter(Boolean)
+    if (location) {
+      view.treeVisible = true
+      view.treeFailed = false
+      await readNodes(value, '', view)
+    }
+    else {
+      await view.requests.get('')
+    }
+    const targetPath = location?.path ?? value.target.path
+    const segments = targetPath.split('/').filter(Boolean)
     let path = ''
-    for (const segment of segments.slice(0, -1)) {
+    for (const segment of location?.kind === 'directory' ? segments : segments.slice(0, -1)) {
       if (!active || !retained(value.id, view))
         return
       path = path ? `${path}/${segment}` : segment
       const node = findNode(view.nodes, path)
-      if (!node || node.kind !== 'directory' || node.disabled)
+      if (!node || node.kind !== 'directory' || node.disabled) {
+        if (location)
+          view.treeFailed = true
         return
+      }
       if (!view.expandedKeys.includes(path))
         view.expandedKeys = [...view.expandedKeys, path]
-      if (!node.children || view.loadingKeys.has(path))
+      if (location || !node.children || view.loadingKeys.has(path))
         await readNodes(value, path, view)
+    }
+    if (location && targetPath && active && retained(value.id, view)) {
+      const node = findNode(view.nodes, targetPath)
+      if (!node || node.disabled || node.kind !== location.kind)
+        view.treeFailed = true
     }
   }, { immediate: true })
 

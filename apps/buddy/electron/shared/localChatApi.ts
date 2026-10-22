@@ -99,6 +99,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   artifactsChanged: 'lexora:buddy:artifacts:changed',
   changesChanged: 'lexora:buddy:changes:changed',
   artifactsReadText: 'lexora:buddy:artifacts:read-text',
+  artifactsRevealFile: 'lexora:buddy:artifacts:reveal-file',
   automationChanged: 'lexora:buddy:automations:changed',
   automationsCreate: 'lexora:buddy:automations:create',
   automationsDelete: 'lexora:buddy:automations:delete',
@@ -292,6 +293,7 @@ export interface LocalChatApi {
   artifacts: {
     onChanged: (listener: (event: ArtifactChangeNotice) => void) => () => void
     readText: (artifactId: string) => Promise<LocalArtifactText>
+    revealFile: (input: { artifactId: string }) => Promise<void>
   }
   automations: {
     create: (input: LocalAutomationCreateRequest) => Promise<LocalAutomation>

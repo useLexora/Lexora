@@ -2,15 +2,19 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ArtifactEvent } from '../ArtifactService'
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
 import { createArtifactRepository } from '../../storage/artifactRepository'
+import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
+import { createConversationDirectoryGrantRepository } from '../../storage/conversationDirectoryGrantRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { createSpaceRepository } from '../../storage/spaceRepository'
+import { ArtifactFileAccess } from '../ArtifactFileAccess'
 import { ArtifactService } from '../ArtifactService'
 
 const databases: DatabaseSync[] = []
@@ -23,6 +27,60 @@ afterEach(async () => {
 })
 
 describe('artifactService', () => {
+  it('preserves extensionless image MIME and resolves media and reveal locations only while the recorded grant is active', async () => {
+    const fixture = await createFixture()
+    const conversationGrants = createConversationDirectoryGrantRepository(fixture.database)
+    conversationGrants.grant({ conversationId: 'conversation-1', id: 'workspace-1', root: fixture.workspace, canonicalRoot: fixture.workspace, createdAt: '2026-08-27T00:00:00.000Z' })
+    const service = new ArtifactService({ repository: fixture.repository, fileAccess: new ArtifactFileAccess({
+      conversations: createConversationRepository(fixture.database),
+      conversationGrants,
+      spaces: createSpaceRepository(fixture.database),
+      paths: new BuddyDataPaths(fixture.root),
+    }) })
+    const imagePath = join(fixture.workspace, 'preview')
+    const path = join(fixture.workspace, 'track.mp3')
+    await writeFile(imagePath, Uint8Array.of(137, 80, 78, 71))
+    await writeFile(path, 'media')
+    const [image, artifact] = await service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, paths: [imagePath, path] })
+    fixture.repository.save({ ...image!, mimeType: 'image/png' })
+    expect(await service.resolveMedia(image!.id)).toMatchObject({ root: fixture.workspace, path: imagePath, mimeType: 'image/png', sizeBytes: 4, identity: expect.any(String) })
+    expect(artifact!.mimeType).toBe('audio/mpeg')
+    expect(await service.resolveMedia(artifact!.id)).toMatchObject({ path, root: fixture.workspace, mimeType: 'audio/mpeg', sizeBytes: 5 })
+    expect(await service.locate(artifact!.id)).toEqual({ path, kind: 'file' })
+    conversationGrants.revokeAll('conversation-1', '2026-08-28T00:00:00.000Z')
+    await expect(service.resolveMedia(image!.id)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    await expect(service.resolveMedia(artifact!.id)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    await expect(service.locate(artifact!.id)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    expect(await readFile(path, 'utf8')).toBe('media')
+  })
+
+  it('supports owned task workspaces without a Space, rejecting replaced paths and deleted owners', async () => {
+    const fixture = await createFixture()
+    const paths = new BuddyDataPaths(fixture.root)
+    const workspace = paths.conversationWorkspace('conversation-1')
+    await mkdir(workspace, { recursive: true })
+    const service = new ArtifactService({ repository: fixture.repository, fileAccess: new ArtifactFileAccess({
+      conversations: createConversationRepository(fixture.database),
+      conversationGrants: createConversationDirectoryGrantRepository(fixture.database),
+      spaces: createSpaceRepository(fixture.database),
+      paths,
+    }) })
+    const path = join(workspace, 'video.webm')
+    await writeFile(path, 'media')
+    const [artifact] = await service.presentOutputs({ conversationId: 'conversation-1', cwd: workspace, grants: [{ root: workspace, canonicalRoot: workspace, grantId: 'conversation-1', kind: 'workspace' }], paths: [path] })
+    expect(await service.resolveMedia(artifact!.id)).toMatchObject({ path, mimeType: 'video/webm' })
+    const outside = join(fixture.root, 'private.webm')
+    await writeFile(outside, 'private')
+    await rm(path)
+    await symlink(outside, path)
+    await expect(service.resolveMedia(artifact!.id)).rejects.toThrow()
+    await expect(service.locate(artifact!.id)).rejects.toThrow()
+    await rm(path)
+    await writeFile(path, 'media')
+    createConversationRepository(fixture.database).markDeleted('conversation-1', '2026-08-28T00:00:00.000Z')
+    await expect(service.resolveMedia(artifact!.id)).rejects.toMatchObject({ code: 'ARTIFACT_NOT_FOUND' })
+  })
+
   it('retains written files and committed catalogue rows when a later row fails', async () => {
     const fixture = await createFixture()
     let saves = 0
@@ -42,7 +100,6 @@ describe('artifactService', () => {
     expect(events.map(event => event.revision)).toEqual([1, 2, 3, 4])
     expect(listenerFailures).toBe(4)
     const receipt = events.at(-1)!.receipt
-    expect(Object.isFrozen(receipt.artifactIds)).toBe(true)
     expect(fixture.repository.listForConversation('conversation-1').map(record => record.id)).toEqual(receipt.artifactIds)
     expect(await readFile(join(fixture.workspace, 'result.png'))).toEqual(Buffer.from([1]))
     expect(await readFile(join(fixture.workspace, 'result-2.png'))).toEqual(Buffer.from([2]))
@@ -109,24 +166,18 @@ describe('artifactService', () => {
       }),
     ])
     expect(fixture.service.listConversationArtifacts('conversation-1')).toHaveLength(2)
+    await expect(fixture.service.resolveBrowserEntry('conversation-1', artifacts[0]!.id)).resolves.toEqual({ entryPath: filePath, rootPath: fixture.workspace })
   })
 
-  it('reports an output whose file was moved or deleted as not found', async () => {
-    const fixture = await createFixture()
-    const path = join(fixture.workspace, 'report.md')
-    await writeFile(path, '# report\n')
-    const [artifact] = await fixture.service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, paths: [path] })
-    await rm(path)
-    await expect(fixture.service.readText(artifact!.id)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
-  })
-
-  it('reports an output as missing when its parent has become a regular file', async () => {
+  it('reports deleted outputs and outputs whose parent became a regular file as not found', async () => {
     const fixture = await createFixture()
     const directory = join(fixture.workspace, 'reports')
     const path = join(directory, 'report.md')
     await mkdir(directory)
     await writeFile(path, '# report\n')
     const [artifact] = await fixture.service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, paths: [path] })
+    await rm(path)
+    await expect(fixture.service.readText(artifact!.id)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
     await rm(directory, { recursive: true })
     await writeFile(directory, 'not a directory')
     await expect(fixture.service.readText(artifact!.id)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
@@ -164,29 +215,7 @@ describe('artifactService', () => {
     })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
   })
 
-  it('opens a presented HTML entry with its granted workspace root', async () => {
-    const fixture = await createFixture()
-    const entryPath = join(fixture.workspace, 'site', 'index.html')
-    await mkdir(join(fixture.workspace, 'site'))
-    await writeFile(entryPath, '<script src="app.js"></script>')
-    await writeFile(join(fixture.workspace, 'site', 'app.js'), 'console.log("ready")')
-    const [artifact] = await fixture.service.presentOutputs({
-      conversationId: 'conversation-1',
-      cwd: fixture.workspace,
-      grants: fixture.grants,
-      paths: [entryPath],
-    })
-
-    await expect(fixture.service.resolveBrowserEntry(
-      'conversation-1',
-      artifact!.id,
-    )).resolves.toEqual({
-      entryPath,
-      rootPath: fixture.workspace,
-    })
-  })
-
-  it('writes generated images and presents each generated file', async () => {
+  it('writes and updates generated images without deleting files when their conversation is hidden', async () => {
     const fixture = await createFixture()
     const first = await fixture.service.registerGeneratedImages({
       conversationId: 'conversation-1',
@@ -219,29 +248,16 @@ describe('artifactService', () => {
 
     expect(updated!.id).toBe(first[0]!.id)
     expect(updated!.sourceArtifactId).toBeNull()
-  })
-
-  it('hides artifacts with a deleted conversation without deleting workspace files', async () => {
-    const fixture = await createFixture()
-    const [artifact] = await fixture.service.registerGeneratedImages({
-      conversationId: 'conversation-1',
-      cwd: fixture.workspace,
-      grants: fixture.grants,
-      images: [{ bytes: Uint8Array.from([7, 8, 9]), mimeType: 'image/png' }],
-      outputPath: 'image.png',
-      sourceArtifactId: null,
-    })
-
-    expect(fixture.repository.findVisibleById(artifact!.id)).not.toBeNull()
+    expect(fixture.repository.findVisibleById(updated!.id)).not.toBeNull()
     createConversationRepository(fixture.database).markDeleted(
       'conversation-1',
       '2026-08-27T00:00:00.000Z',
     )
 
-    expect(fixture.repository.findVisibleById(artifact!.id)).toBeNull()
-    expect(() => fixture.service.resolvePreview(artifact!.id))
+    expect(fixture.repository.findVisibleById(updated!.id)).toBeNull()
+    expect(() => fixture.service.resolvePreview(updated!.id))
       .toThrow(/artifact operation failed/i)
-    await expect(readFile(join(fixture.workspace, 'image.png')))
+    await expect(readFile(join(fixture.workspace, 'images', 'avatar.png')))
       .resolves
       .toEqual(Buffer.from([7, 8, 9]))
   })

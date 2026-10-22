@@ -134,7 +134,7 @@ export default {
   'desktop.chat.quoteUnavailable': 'Cannot add a quote right now. Please try again.',
   'desktop.chat.quoteTargetPane': 'Pane {index} · {title}',
   'desktop.chat.quoteToTarget': 'Quote to “{title}”',
-  'desktop.chat.quoteToCurrent': 'Add to current conversation',
+  'desktop.chat.quoteToCurrent': 'Reference',
   'desktop.chat.quoteOtherTarget': 'Quote to another conversation',
   'desktop.chat.quoteChooseTarget': 'Quote to conversation',
   'desktop.chat.quoteNoTarget': 'Open a conversation that can receive quotes first',

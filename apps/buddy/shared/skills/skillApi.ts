@@ -2,6 +2,7 @@ import type { RuntimeRequestContract } from '../runtime/apiContract'
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { directoryPageSchema, filePreviewSchema } from '../files/filePreview'
+import { mediaPreviewLocationSchema } from '../files/mediaPreview'
 import { idSchema, validationResponseSchemas } from '../runtime/apiValidation'
 
 export const skillReferenceSchema = z.object({
@@ -118,6 +119,7 @@ export const skillsRpc = {
   get: { method: 'skills.get', input: targetSchema, response: skillsResponseSchemas.detail },
   listFiles: { method: 'skills.listFiles', input: directoryRequestSchema, response: directoryPageSchema },
   readFile: { method: 'skills.readFile', input: fileTargetSchema, response: filePreviewSchema },
+  resolveImage: { method: 'skills.resolveImage', input: fileTargetSchema, response: mediaPreviewLocationSchema },
   locateFile: { method: 'skills.locateFile', input: fileTargetSchema, response: z.object({ path: z.string() }).strict() },
   preview: { method: 'skills.preview', input: previewInputSchema, response: previewSchema },
   install: { method: 'skills.install', input: skillsRequestSchemas.install, response: skillsResponseSchemas.skills },

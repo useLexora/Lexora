@@ -6,8 +6,11 @@ import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { BoundedFileReadError } from '../../../platform/filesystem/boundedFile'
 import { Emitter } from '../../../shared/events/Emitter'
+import { FILE_IMAGE_PREVIEW_MAX_BYTES } from '../../../shared/files/filePreview'
+import { spaceFileMediaUrl } from '../../../shared/files/mediaPreview'
 import { GrantedPathError, resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { readFilePreview } from '../files/readFilePreview'
+import { resolveMediaPreview } from '../files/resolveMediaPreview'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { requireActiveSpace } from './requireActiveSpace'
@@ -57,8 +60,18 @@ export class SpaceFileService {
   async read(input: SpaceFileTarget): Promise<LocalSpaceFilePreview> {
     const target = await this.resolve(input).catch(rethrowMissingFile)
     this.requireDirectory(input)
-    const preview = await readFilePreview(target.root, target.path).catch(error => rethrowMissingFile(error, target.path))
+    const url = spaceFileMediaUrl(input)
+    const preview = await readFilePreview(target.root, target.path, { image: url, media: url }).catch(error => rethrowMissingFile(error, target.path))
     this.requireDirectory(input)
+    return preview
+  }
+
+  async resolveMedia(input: SpaceFileTarget) {
+    const target = await this.resolve(input).catch(rethrowMissingFile)
+    const preview = await resolveMediaPreview(target.root, target.path, { imageBytesLimit: FILE_IMAGE_PREVIEW_MAX_BYTES }).catch(error => rethrowMissingFile(error, target.path))
+    const current = await this.resolve(input).catch(rethrowMissingFile)
+    if (current.path !== preview.path || current.root !== preview.root)
+      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
     return preview
   }
 

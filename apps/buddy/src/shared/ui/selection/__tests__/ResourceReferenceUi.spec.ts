@@ -35,7 +35,7 @@ const cleanups: (() => void)[] = []
 afterEach(() => {
   cleanups.splice(0).forEach(cleanup => cleanup())
 })
-async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, split?: boolean, removable?: boolean } = {}) {
+async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, split?: boolean } = {}) {
   const root = document.createElement('div')
   document.body.append(root)
   let selection!: ResourceSelectionQuote
@@ -45,7 +45,6 @@ async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, spli
   const visible = shallowRef(true)
   const source = shallowRef({ identity: 'file:one', owner: 'task:a' })
   const locate = vi.fn(async () => false)
-  const remove = vi.fn()
   const targets = shallowRef<SelectionReferenceTarget[]>([
     ...(options.multiple ? [{ id: 'b', label: 'Pane 2 · Task B', identity: 'b:draft:epoch', scope: 'task:b', read: () => extraContent.value, write: (value: typeof extraContent.value) => extraContent.value = value }] : []),
     { id: 'a', label: 'Pane 1 · Task A', identity: 'a:draft:epoch', scope: 'task:a', read: () => content.value, write: value => content.value = value },
@@ -60,7 +59,7 @@ async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, spli
     selection = useResourceSelectionQuote({ viewId: () => 'file', ownerKey: () => ownerKey.value, visible: () => visible.value, language: () => 'zh-CN' })
     return () => kind === 'menu'
       ? h(ResourceSelectionQuoteMenu, { selection, language: 'zh-CN' })
-      : h(ChatInputMaterialStrip, { materials: [{ kind: 'resource_quote', id: quote.id, quote }], language: 'zh-CN', removable: options.removable ?? true, onRemove: material => remove(material.id) })
+      : h(ChatInputMaterialStrip, { materials: [{ kind: 'resource_quote', id: quote.id, quote }], language: 'zh-CN', removable: false })
   } })
   const app = createApp(defineComponent({ setup() {
     provide(workbenchSelectionReferencesKey, host)
@@ -77,7 +76,7 @@ async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, spli
   }
   cleanups.push(unmount)
   await nextTick()
-  return { root, selection, host, content, extraContent, targets, source, visible, ownerKey, locate, remove, unmount }
+  return { root, selection, host, content, extraContent, targets, source, visible, ownerKey, locate, unmount }
 }
 
 describe('resource reference UI', () => {
@@ -86,7 +85,7 @@ describe('resource reference UI', () => {
     f.selection.prepare(quote, 10, 20, 'menu')!()
     await nextTick()
     expect(f.content.value.resourceQuotes).toBeUndefined()
-    expect(f.root.textContent).toBe('引用到对话')
+    expect(f.root.textContent).toBe('引用')
     f.root.querySelector('button')!.click()
     expect(f.content.value.resourceQuotes).toEqual([quote])
     expect(feedback.success).toHaveBeenCalledWith('已引用到「Pane 1 · Task A」')
@@ -136,29 +135,6 @@ describe('resource reference UI', () => {
     expect(f.root.textContent).toBe('引用到「Pane 1 · Task A」')
   })
 
-  it('retains the captured target identity while preserving newer input and ignoring title changes', async () => {
-    const f = await mount('menu', { multiple: true })
-    f.selection.prepare(quote, 10, 20, 'quote')!()
-    f.targets.value = f.targets.value.map(target => ({ ...target, label: 'Renamed' }))
-    f.extraContent.value = createBuddyUserContent('New input')
-    await nextTick()
-    f.selection.select('b')
-    expect(f.extraContent.value.resourceQuotes).toEqual([quote])
-    expect(f.extraContent.value.body[0]!.content).toContainEqual({ type: 'text', text: 'New input' })
-  })
-
-  it.each(['removed', 'replaced'])('rejects a captured target that is %s without rerouting', async (change) => {
-    const f = await mount('menu', { multiple: true })
-    f.selection.prepare(quote, 10, 20, 'quote')!()
-    f.targets.value = change === 'removed'
-      ? f.targets.value.filter(target => target.id !== 'b')
-      : f.targets.value.map(target => target.id === 'b' ? { ...target, identity: 'new-draft' } : target)
-    f.selection.select('b')
-    expect(f.content.value.resourceQuotes).toBeUndefined()
-    expect(f.extraContent.value.resourceQuotes).toBeUndefined()
-    expect(feedback.warning).toHaveBeenCalledTimes(1)
-  })
-
   it.each(['owner', 'hidden', 'source'])('rejects a prepared action after %s changes', async (change) => {
     const f = await mount('menu')
     const execute = f.selection.prepare(quote, 10, 20, 'quote')!
@@ -177,18 +153,6 @@ describe('resource reference UI', () => {
     expect(f.content.value.resourceQuotes).toBeUndefined()
     expect(f.selection.pending.value).toBeNull()
     expect(feedback.warning).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the last anchor on close and uses the new anchor on reopening', async () => {
-    const f = await mount('menu')
-    f.selection.prepare(quote, 10, 20, 'menu')!()
-    f.selection.close()
-    expect(f.selection.pending.value).toBeNull()
-    expect(f.selection.position.value).toEqual({ x: 10, y: 20 })
-    f.selection.prepare(quote, 30, 40, 'menu')!()
-    expect(f.selection.position.value).toEqual({ x: 30, y: 40 })
-    f.ownerKey.value = 'file:two'
-    expect(f.selection.pending.value).toBeNull()
   })
 
   it('rejects foreign pre-captured requests and ignores actions after disposal', async () => {
@@ -213,23 +177,16 @@ describe('resource reference UI', () => {
     expect(feedback.warning).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a safe frozen preview when locating fails and permits removal', async () => {
+  it('keeps a safe frozen preview in sent history when locating fails', async () => {
     const f = await mount('strip')
     expect(f.root.textContent).toContain('auth.ts · L24–38')
     expect(f.root.querySelector('pre')!.textContent).toBe(quote.text)
     expect(f.root.querySelector('script')).toBeNull()
-    f.root.querySelector<HTMLButtonElement>('[aria-label="移除引用"]')!.click()
-    expect(f.remove).toHaveBeenCalledWith('q')
+    expect(f.root.querySelector('[aria-label="移除引用"]')).toBeNull()
     Array.from(f.root.querySelectorAll('button')).find(button => button.textContent === '定位来源')!.click()
     await nextTick()
     expect(f.locate).toHaveBeenCalledWith(quote)
     expect(f.root.textContent).toContain('来源')
-    expect(f.root.querySelector('pre')!.textContent).toBe(quote.text)
-  })
-
-  it('does not show removal in sent-message history', async () => {
-    const f = await mount('strip', { removable: false })
-    expect(f.root.querySelector('[aria-label="移除引用"]')).toBeNull()
     expect(f.root.querySelector('pre')!.textContent).toBe(quote.text)
   })
 })

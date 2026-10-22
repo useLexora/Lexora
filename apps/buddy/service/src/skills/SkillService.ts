@@ -212,6 +212,10 @@ export class SkillService {
     return this.#inspector.readFile(input)
   }
 
+  resolveImage(input: SkillFileTarget) {
+    return this.#inspector.resolveImage(input)
+  }
+
   locateFile(input: SkillFileTarget) {
     return this.#inspector.locateFile(input)
   }
@@ -937,6 +941,7 @@ export function registerSkillServiceRpc(rpc: RuntimeRequestRegistrar, service: S
     registerRuntimeRequest(rpc, skillsRpc.get, input => service.get(input.spaceId, input.id)),
     registerRuntimeRequest(rpc, skillsRpc.listFiles, input => service.listFiles(input)),
     registerRuntimeRequest(rpc, skillsRpc.readFile, input => service.readFile(input)),
+    registerRuntimeRequest(rpc, skillsRpc.resolveImage, input => service.resolveImage(input)),
     registerRuntimeRequest(rpc, skillsRpc.locateFile, input => service.locateFile(input)),
     registerRuntimeRequest(rpc, skillsRpc.preview, input => service.preview(input)),
     registerRuntimeRequest(rpc, skillsRpc.install, input => service.install(input)),

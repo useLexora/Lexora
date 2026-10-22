@@ -2,7 +2,7 @@
 import type { TaskFilesContextTab } from '../../model/context-panel/taskContextPanel'
 import type { WorkspaceFilesApi } from './useWorkspaceFilePreview'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { toRef } from 'vue'
+import { computed, toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { WorkspaceExplorer } from '@/modules/files/ui'
 import DesktopContextSplit from '@/shared/ui/files/DesktopContextSplit.vue'
@@ -21,6 +21,7 @@ const { t } = useBuddyI18n(() => props.language)
 const fileTab = toRef(() => props.tab)
 const filePreview = useWorkspaceFilePreview(fileTab, props.files, id => props.hasTab(id))
 const fileView = filePreview.current
+const treeTarget = computed(() => fileTab.value ? { ...fileTab.value.target, path: fileTab.value.treeTarget?.path ?? fileTab.value.target.path } : null)
 </script>
 
 <template>
@@ -44,7 +45,7 @@ const fileView = filePreview.current
             {{ t('desktop.context.retry') }}
           </button>
         </div>
-        <WorkspaceExplorer :key="`${fileTab.id}:${fileTab.target.directoryId}:${fileTab.target.revision}`" v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :loading-keys="fileView.loadingKeys" :target="fileTab.target" :language="language" :load="filePreview.load" :refresh="filePreview.refresh" :api="files" @select="emit('select', fileTab.id, $event)" />
+        <WorkspaceExplorer v-if="treeTarget" :key="`${fileTab.id}:${fileTab.target.directoryId}:${fileTab.target.revision}`" v-model:expanded-keys="fileView.expandedKeys" :nodes="fileView.nodes" :loading-keys="fileView.loadingKeys" :target="treeTarget" :language="language" :load="filePreview.load" :refresh="filePreview.refresh" :api="files" @select="emit('select', fileTab.id, $event)" />
       </template>
     </DesktopContextSplit>
   </WorkbenchPanelContent>

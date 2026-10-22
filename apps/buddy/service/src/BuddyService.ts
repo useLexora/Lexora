@@ -64,6 +64,7 @@ import { inspectCommittedPiCompaction } from './agent/sessions/recovery/inspectC
 import { BuddyConversationTree } from './agent/sessions/tree/BuddyConversationTree'
 import { ApprovalService } from './approvals/ApprovalService'
 import { registerApprovalRpc } from './approvals/registerApprovalRpc'
+import { ArtifactFileAccess } from './artifacts/ArtifactFileAccess'
 import { ArtifactService } from './artifacts/ArtifactService'
 import { reconcileLegacyArtifactOutputs } from './artifacts/LegacyArtifactRecovery'
 import { registerArtifactRpc } from './artifacts/registerArtifactRpc'
@@ -511,7 +512,7 @@ export async function startBuddyService(
     })
     const artifactsRepository = createArtifactRepository(options.database)
     const artifactService = await host.start('runtime.artifact_catalogue', ({ defer }) => {
-      const service = new ArtifactService({ repository: artifactsRepository, onListenerError: () => record({ event: 'observer.failed', component: 'runtime.artifact_catalogue', level: 'warn' }) })
+      const service = new ArtifactService({ repository: artifactsRepository, fileAccess: new ArtifactFileAccess({ conversations, conversationGrants: conversationDirectoryGrants, spaces: spacesRepository, paths }), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.artifact_catalogue', level: 'warn' }) })
       service.onDidChange(event => record({ event: `artifact.${event.receipt.cause}.${event.kind.replaceAll('-', '_')}${event.kind === 'batch-settled' ? `.${event.receipt.outcome}.${event.receipt.stage}` : ''}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.receipt.operationId, conversationId: event.receipt.conversationId, revision: event.revision, count: event.kind === 'file-written' ? event.receipt.written : event.receipt.artifactIds.length, errorCode: event.errorCode }))
       service.onDidChange((event) => {
         if (event.kind === 'catalogue-committed')

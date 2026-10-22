@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,68 @@ async function fixture() {
 }
 
 describe('space file browsing', () => {
+  it('returns refreshable image URLs, enforces 8 MiB at both metadata and byte access, and rejects revoked access', async () => {
+    const f = await fixture()
+    const path = join(f.workspace, 'preview.png')
+    await writeFile(path, Uint8Array.of(137, 80, 78, 71))
+    const input = { ...f.target, path: 'preview.png' }
+    const first = await f.files.read(input)
+    const second = await f.files.read(input)
+    expect(first).toMatchObject({ kind: 'image', sizeBytes: 4, text: null, imageUrl: expect.stringMatching(/^lexora-file:\/\/media\//) })
+    expect(JSON.stringify(first).length).toBeLessThan(1024)
+    expect(second.imageUrl).not.toBe(first.imageUrl)
+    expect(new URL(first.imageUrl!).searchParams.get('path')).toBe('preview.png')
+    expect(await f.files.resolveMedia(input)).toMatchObject({ path, mimeType: 'image/png', sizeBytes: 4 })
+    await rm(path)
+    await expect(f.files.read(input)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+    await writeFile(path, Uint8Array.of(137, 80, 78, 71))
+    expect(await f.files.read(input)).toEqual({ ...first, imageUrl: expect.stringMatching(/^lexora-file:/) })
+    await truncate(path, 8 * 1024 * 1024)
+    const large = await f.files.read(input)
+    expect(large.kind).toBe('image')
+    expect(JSON.stringify(large).length).toBeLessThan(1024)
+    expect((await f.files.resolveMedia(input)).sizeBytes).toBe(8 * 1024 * 1024)
+    await truncate(path, 8 * 1024 * 1024 + 1)
+    expect(await f.files.read(input)).toMatchObject({ kind: 'oversized', imageUrl: null, text: null })
+    await expect(f.files.resolveMedia(input)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await f.spaces.update({ spaceId: f.target.spaceId, name: 'Files', memoryScope: 'space_only', primaryDirectory: null, primaryDirectorySelectionVerified: false })
+    await expect(f.files.read(input)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.files.resolveMedia(input)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  })
+
+  it('returns a media URL without loading large bytes and rejects stale directory revisions', async () => {
+    const f = await fixture()
+    const path = join(f.workspace, 'large clip.mp4')
+    await writeFile(path, '')
+    await truncate(path, 1024 * 1024 * 1024)
+    const target = { ...f.target, path: 'large clip.mp4' }
+    const preview = await f.files.read(target)
+    expect(preview).toMatchObject({ kind: 'video', sizeBytes: 1024 * 1024 * 1024, text: null, imageUrl: null })
+    const url = new URL(preview.mediaUrl!)
+    expect(url.protocol).toBe('lexora-file:')
+    expect(url.hostname).toBe('media')
+    expect(url.searchParams.get('path')).toBe(target.path)
+    expect(url.searchParams.get('directoryId')).toBe(target.directoryId)
+    expect(await f.files.resolveMedia(target)).toMatchObject({ path, root: f.workspace, mimeType: 'video/mp4', sizeBytes: preview.sizeBytes })
+    f.database.prepare('UPDATE space_directory_bindings SET revision = revision + 1 WHERE id = ?').run(target.directoryId)
+    await expect(f.files.resolveMedia(target)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  })
+
+  it('rejects media symlink escapes, protected targets, missing files and unsupported formats', async () => {
+    const f = await fixture()
+    const outside = join(f.root, 'private.mp3')
+    await writeFile(outside, 'private')
+    await symlink(outside, join(f.workspace, 'escape.mp3'))
+    await expect(f.files.resolveMedia({ ...f.target, path: 'escape.mp3' })).rejects.toThrow()
+    await expect(f.files.resolveMedia({ ...f.target, path: 'missing.mp3' })).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+    await writeFile(join(f.workspace, 'notes.txt'), 'text')
+    await expect(f.files.resolveMedia({ ...f.target, path: 'notes.txt' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    const secret = join(f.workspace, 'protected.mp3')
+    await writeFile(secret, 'private')
+    vi.stubEnv('LEXORA_BUDDY_STORAGE_PROTECTION', JSON.stringify([secret]))
+    await expect(f.files.resolveMedia({ ...f.target, path: 'protected.mp3' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  })
+
   it('browses, edits and copies additional files, then denies stale access after removal without deleting data', async () => {
     const f = await fixture()
     const extra = join(f.root, 'extra')
@@ -125,28 +187,18 @@ describe('space file browsing', () => {
     expect(await f.files.read({ ...f.target, path: 'large.txt' })).toMatchObject({ kind: 'oversized', text: null })
   })
 
-  it.each(['note.md', 'image.png'])('reports a deleted %s and reads it again after restoration', async (name) => {
-    const f = await fixture()
-    const path = join(f.workspace, name)
-    const content = name.endsWith('.png') ? Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1kAAAAASUVORK5CYII=', 'base64') : Buffer.from('# note\n')
-    const target = { ...f.target, path: name }
-    await writeFile(path, content)
-    const original = await f.files.read(target)
-    await rm(path)
-    await expect(f.files.read(target)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
-    await writeFile(path, content)
-    expect(await f.files.read(target)).toEqual(original)
-  })
-
-  it('reports a deleted document without preventing a later read after restoration', async () => {
+  it('reports deleted text through preview and editing and reads its restored content', async () => {
     const f = await fixture()
     const path = join(f.workspace, 'note.md')
     const target = { ...f.target, path: 'note.md' }
     await writeFile(path, '# original\n')
+    const original = await f.files.read(target)
     expect(await f.files.readDocument(target)).toMatchObject({ text: '# original\n' })
     await rm(path)
+    await expect(f.files.read(target)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
     await expect(f.files.readDocument(target)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
     await writeFile(path, '# restored\n')
+    expect(await f.files.read(target)).toEqual({ ...original, text: '# restored\n' })
     expect(await f.files.readDocument(target)).toMatchObject({ text: '# restored\n' })
   })
 

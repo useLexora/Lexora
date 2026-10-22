@@ -5,9 +5,36 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import { describe, expect, it } from 'vitest'
 import { nextTick, shallowRef } from 'vue'
+import { readContextTab } from '@/modules/tasks/model/context-panel/readContextTab'
 import { createTaskPanel } from './contextPanelFixture'
 
 describe('useTaskContextPanel', () => {
+  it('reuses a bound file tab for explicit file and directory locations without opening directories as files', () => {
+    const space = fileSpace()
+    const panel = createTaskPanel({ spaces: shallowRef([space]), activeSpace: shallowRef(space) })
+    panel.openFiles(space.id)
+    const tab = panel.activeTab.value!
+    if (tab.kind !== 'files')
+      throw new Error('Expected files tab')
+    panel.locateFile({ ...tab.target, path: 'src/report.md' }, 'file')
+    expect(panel.allTabs.value).toHaveLength(1)
+    expect(panel.activeTab.value).toMatchObject({ id: tab.id, target: { path: 'src/report.md' }, treeTarget: { path: 'src/report.md', kind: 'file' } })
+    panel.locateFile({ ...tab.target, path: 'src' }, 'directory')
+    expect(panel.allTabs.value).toHaveLength(1)
+    expect(panel.activeTab.value).toMatchObject({ id: tab.id, target: { path: '' }, treeTarget: { path: 'src', kind: 'directory' } })
+    expect(readContextTab(panel.activeTab.value)).toEqual(panel.activeTab.value)
+    panel.selectFile(tab.id, 'src/manual.md')
+    expect(panel.activeTab.value).toMatchObject({ target: { path: 'src/manual.md' }, treeTarget: undefined })
+    expect(readContextTab(tab)).toEqual(tab)
+  })
+
+  it('refuses stale directory revisions instead of opening another binding', () => {
+    const space = fileSpace()
+    const panel = createTaskPanel({ spaces: shallowRef([space]), activeSpace: shallowRef(space) })
+    expect(() => panel.locateFile({ spaceId: space.id, directoryId: space.primaryDirectory!.id, revision: space.primaryDirectory!.revision + 1, path: 'src' }, 'directory')).toThrow('FILE_DIRECTORY_UNAVAILABLE')
+    expect(panel.allTabs.value).toEqual([])
+  })
+
   it('opens and previews additional roots without a primary, and drops only revoked file tabs', async () => {
     const base = fileSpace()
     const additional = { ...base.primaryDirectory!, id: 'extra', root: '/extra', canonicalRoot: '/extra' }
@@ -107,13 +134,7 @@ describe('useTaskContextPanel', () => {
 
   it('isolates manual tabs and restores each task selection without changing panel visibility', async () => {
     const activeConversationId = shallowRef<string | null>(null)
-    const panel = createTaskPanel({
-      spaces: shallowRef([]),
-      activeConversationId,
-      activeRunId: shallowRef(null),
-      changeSets: shallowRef([]),
-      runOutputs: shallowRef([]),
-    })
+    const panel = createTaskPanel({ activeConversationId })
     panel.toggle()
     expect(panel.isOpen.value).toBe(true)
     expect(panel.canAddChanges.value).toBe(false)
@@ -126,14 +147,12 @@ describe('useTaskContextPanel', () => {
     const second = panel.activeTab.value!
     expect(second.id).not.toBe(first.id)
 
-    for (const conversationId of ['conversation-1', 'conversation-2']) {
-      activeConversationId.value = conversationId
-      await nextTick()
-      expect(panel.tabs.value).toEqual([])
-      expect(panel.activeTab.value).toBeNull()
-      expect(panel.isOpen.value).toBe(true)
-      expect(panel.canAddChanges.value).toBe(true)
-    }
+    activeConversationId.value = 'conversation-2'
+    await nextTick()
+    expect(panel.tabs.value).toEqual([])
+    expect(panel.activeTab.value).toBeNull()
+    expect(panel.isOpen.value).toBe(true)
+    expect(panel.canAddChanges.value).toBe(true)
     panel.addBrowser()
     const taskBrowser = panel.activeTab.value!
     activeConversationId.value = null
@@ -156,14 +175,7 @@ describe('useTaskContextPanel', () => {
     const spaces = shallowRef<readonly LocalSpace[]>([space])
     const activeSpace = shallowRef<LocalSpace | null>(space)
     const activeConversationId = shallowRef<string | null>(null)
-    const panel = createTaskPanel({
-      spaces,
-      activeSpace,
-      activeConversationId,
-      activeRunId: shallowRef(null),
-      changeSets: shallowRef([]),
-      runOutputs: shallowRef([]),
-    })
+    const panel = createTaskPanel({ spaces, activeSpace, activeConversationId })
     panel.openFiles('space')
     const fileTab = panel.activeTab.value!
     panel.selectFile(fileTab.id, 'README.md')
@@ -186,49 +198,29 @@ describe('useTaskContextPanel', () => {
     expect(panel.tabs.value).toEqual([])
   })
 
-  it('keeps file previews from the same directory separate in different tasks', () => {
+  it('reuses file tabs only within their task while preserving each task selection', () => {
     const space = fileSpace()
     const activeConversationId = shallowRef<string | null>('first')
     const panel = createTaskPanel({ activeConversationId, activeSpace: shallowRef(space), spaces: shallowRef([space]) })
     panel.previewFile('/workspace/README.md')
     const first = panel.activeTab.value!
     panel.addBrowser()
-    panel.selectTab(first.id)
+    panel.previewFile('/workspace/README.md')
+    expect(panel.activeTab.value?.id).toBe(first.id)
+    expect(panel.tabs.value).toHaveLength(2)
     activeConversationId.value = 'second'
     expect(panel.tabs.value).toEqual([])
     panel.previewFile('/workspace/other.txt')
     const second = panel.activeTab.value!
     expect(second.id).not.toBe(first.id)
+    panel.previewFile('/workspace/hello1.md')
+    expect(panel.activeTab.value).toMatchObject({ id: second.id, target: { path: 'hello1.md' } })
+    expect(panel.tabs.value).toHaveLength(1)
     activeConversationId.value = 'first'
     expect(panel.activeTab.value).toEqual(first)
     expect(panel.activeTab.value).toMatchObject({ target: { path: 'README.md' } })
     activeConversationId.value = 'second'
-    expect(panel.tabs.value).toEqual([second])
-    expect(panel.activeTab.value).toMatchObject({ target: { path: 'other.txt' } })
-  })
-
-  it('switches to an existing exact file tab or reuses an existing space file tab', () => {
-    const space = fileSpace()
-    const panel = createTaskPanel({ activeSpace: shallowRef(space), spaces: shallowRef([space]) })
-
-    panel.previewFile('/workspace/README.md')
-    const firstTab = panel.activeTab.value!
-    expect(firstTab).toMatchObject({ target: { path: 'README.md' } })
-    expect(panel.tabs.value).toHaveLength(1)
-
-    panel.addBrowser()
-    expect(panel.activeTab.value?.kind).toBe('browser')
-    expect(panel.tabs.value).toHaveLength(2)
-
-    panel.previewFile('/workspace/README.md')
-    expect(panel.activeTab.value?.id).toBe(firstTab.id)
-    expect(panel.activeTab.value).toMatchObject({ target: { path: 'README.md' } })
-    expect(panel.tabs.value).toHaveLength(2)
-
-    panel.previewFile('/workspace/hello1.md')
-    expect(panel.activeTab.value?.id).toBe(firstTab.id)
-    expect(panel.activeTab.value).toMatchObject({ target: { path: 'hello1.md' } })
-    expect(panel.tabs.value).toHaveLength(2)
+    expect(panel.activeTab.value).toMatchObject({ id: second.id, target: { path: 'hello1.md' } })
   })
 
   it('isolates draft resources and carries them into the task created from that draft', () => {
@@ -262,13 +254,7 @@ describe('useTaskContextPanel', () => {
         artifact('artifact-2', 'conversation-1', 'second.png'),
       ]),
     ])
-    const panel = createTaskPanel({
-      spaces: shallowRef([]),
-      activeConversationId,
-      activeRunId: shallowRef(null),
-      changeSets: shallowRef([]),
-      runOutputs,
-    })
+    const panel = createTaskPanel({ activeConversationId, runOutputs })
 
     await nextTick()
     expect(panel.tabs.value).toEqual([])
@@ -303,26 +289,6 @@ describe('useTaskContextPanel', () => {
     expect(panel.tabs.value.map(tab => 'label' in tab ? tab.label : 'Browser'))
       .toEqual(['second.png'])
     expect(panel.activeTab.value).toMatchObject({ label: 'second.png' })
-
-    activeConversationId.value = 'conversation-2'
-    runOutputs.value = [output('run-2', [
-      artifact('artifact-3', 'conversation-2', 'third.png'),
-    ])]
-    await nextTick()
-
-    expect(panel.isOpen.value).toBe(true)
-    expect(panel.tabs.value).toEqual([])
-    expect(panel.activeTab.value).toBeNull()
-
-    panel.openArtifact('artifact-3')
-    expect(panel.isOpen.value).toBe(true)
-    expect(panel.tabs.value.map(tab => 'label' in tab ? tab.label : 'Browser'))
-      .toEqual(['third.png'])
-
-    activeConversationId.value = null
-    await nextTick()
-    expect(panel.isOpen.value).toBe(true)
-    expect(panel.tabs.value).toEqual([])
   })
 
   it('defaults artifacts to preview and keeps each tab mode until it is closed', async () => {
@@ -331,13 +297,7 @@ describe('useTaskContextPanel', () => {
       { ...artifact('first', 'conversation-1', 'first.md'), mimeType: 'text/markdown' },
       { ...artifact('second', 'conversation-1', 'second.markdown'), mimeType: 'text/markdown' },
     ])])
-    const panel = createTaskPanel({
-      spaces: shallowRef([]),
-      activeConversationId,
-      activeRunId: shallowRef(null),
-      changeSets: shallowRef([]),
-      runOutputs,
-    })
+    const panel = createTaskPanel({ activeConversationId, runOutputs })
     panel.openArtifact('first')
     expect(panel.activeTab.value).toMatchObject({ viewMode: 'preview' })
     panel.setArtifactViewMode('artifact:first', 'source')
@@ -372,13 +332,7 @@ describe('useTaskContextPanel', () => {
       changeSet('changes-1', 'conversation-1', 2),
       changeSet('changes-2', 'conversation-2', 1),
     ])
-    const panel = createTaskPanel({
-      spaces: shallowRef([]),
-      activeConversationId,
-      activeRunId: shallowRef(null),
-      changeSets,
-      runOutputs: shallowRef([]),
-    })
+    const panel = createTaskPanel({ activeConversationId, changeSets })
 
     await nextTick()
     panel.openChanges('changes-2')

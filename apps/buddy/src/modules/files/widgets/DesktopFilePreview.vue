@@ -21,7 +21,7 @@ const { labels, controller } = useWorkbench()
 const preview = shallowRef<LocalSpaceFilePreview | null>(null)
 const failed = shallowRef(false)
 const missing = shallowRef(false)
-const modes = computed(() => fileDocumentModes({ preview: preview.value?.kind === 'image' || (preview.value?.kind === 'text' && isMarkdownFile(props.view.title)), source: preview.value?.kind === 'text', edit: false }))
+const modes = computed(() => fileDocumentModes({ preview: ['image', 'audio', 'video'].includes(preview.value?.kind ?? '') || (preview.value?.kind === 'text' && isMarkdownFile(props.view.title)), source: preview.value?.kind === 'text', edit: false }))
 const mode = computed({ get: () => resolveFileDocumentMode(props.view.state.mode, modes.value), set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }) })
 const quoteSource = computed<BuddyFileQuote['source']>(() => ({
   kind: 'file',
@@ -93,8 +93,8 @@ function captureResource() {
     <DesktopFileLoading v-else-if="!preview" :loading="true" :label="labels.loading" />
     <DesktopDocumentContent
       v-else
-      ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"
-      :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare" @scroll.capture="selection.close"
+      ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :media-kind="preview.kind === 'audio' || preview.kind === 'video' ? preview.kind : null" :media-url="preview.mediaUrl" :visible="visible" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"
+      :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare" @preview-error="failed = true" @scroll.capture="selection.close"
     />
     <ResourceSelectionQuoteMenu v-if="selection.enabled" :selection="selection" :language="language" />
   </div>

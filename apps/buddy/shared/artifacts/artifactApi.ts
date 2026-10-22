@@ -1,6 +1,7 @@
 import type { RuntimeRequestContract } from '../runtime/apiContract'
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
+import { mediaPreviewLocationSchema } from '../files/mediaPreview'
 import { idSchema, isAbsolutePath, timestampSchema } from '../runtime/apiValidation'
 
 export const artifactSchema = z.object({
@@ -43,6 +44,8 @@ export const artifactsResponseSchemas = {
 } as const
 
 export const artifactsRpc = {
+  resolveMedia: { method: 'artifacts.resolveMedia', input: artifactsRequestSchemas.artifactPreview, response: mediaPreviewLocationSchema },
+  locate: { method: 'artifacts.locate', input: artifactsRequestSchemas.artifactPreview, response: z.object({ path: z.string().refine(isAbsolutePath), kind: z.enum(['file', 'directory']) }).strict() },
   readText: { method: 'artifacts.readText', input: artifactsRequestSchemas.artifactText, response: artifactsResponseSchemas.artifactText },
 } as const satisfies Record<string, RuntimeRequestContract>
 

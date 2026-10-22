@@ -5,7 +5,7 @@ export function fileRange(size: number, raw: string | null): { start: number, en
   const match = /^bytes=(\d*)-(\d*)$/.exec(raw)
   let start = Number.NaN
   let end = size - 1
-  if (match && (match[1] || match[2])) {
+  if (match && (match[1] || match[2]) && [match[1], match[2]].every(value => !value || Number.isSafeInteger(Number(value)))) {
     start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]))
     end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
   }

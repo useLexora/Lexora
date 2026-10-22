@@ -55,6 +55,29 @@ async function fixture() {
 }
 
 describe('skill installation lifecycle', () => {
+  it('serves image metadata by scoped URL and rechecks scope, paths and removal before byte access', async () => {
+    const f = await fixture()
+    const source = await f.source('image-guide')
+    await writeFile(join(source, 'preview.png'), Uint8Array.of(137, 80, 78, 71))
+    const skill = await f.install(source, 'space-a')
+    const target = { spaceId: 'space-a', id: skill.id, path: 'preview.png' }
+    const preview = await f.service.readFile(target)
+    expect(preview).toMatchObject({ kind: 'image', text: null, sizeBytes: 4 })
+    const url = new URL(preview.imageUrl!)
+    expect(url.protocol).toBe('lexora-file:')
+    expect(url.hostname).toBe('skill-preview')
+    expect(Object.fromEntries(url.searchParams)).toMatchObject(target)
+    expect(JSON.stringify(preview).length).toBeLessThan(1024)
+    expect((await f.service.readFile(target)).imageUrl).not.toBe(preview.imageUrl)
+    expect(await f.service.resolveImage(target)).toMatchObject({ root: dirname(skill.filePath), path: join(dirname(skill.filePath), 'preview.png'), mimeType: 'image/png', sizeBytes: 4 })
+    await expect(f.service.resolveImage({ ...target, spaceId: null })).rejects.toMatchObject({ code: 'SKILL_NOT_FOUND' })
+    for (const path of ['../preview.png', join(source, 'preview.png'), 'SKILL.md'])
+      await expect(f.service.resolveImage({ ...target, path })).rejects.toMatchObject({ code: 'SKILL_INVALID' })
+    await f.service.remove({ spaceId: 'space-a', id: skill.id, revision: skill.managementRevision! })
+    await expect(f.service.resolveImage(target)).rejects.toMatchObject({ code: 'SKILL_NOT_FOUND' })
+    expect(await readFile(join(source, 'preview.png'))).toEqual(Buffer.from([137, 80, 78, 71]))
+  })
+
   it.each([true, false])('rejects stale management after replacement when resources changed: %s', async (changeResources) => {
     const f = await fixture()
     const source = await f.source('writer')
@@ -76,7 +99,7 @@ describe('skill installation lifecycle', () => {
     await expect(stat(updated.filePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('keeps full-package revision checks for existing management clients', async () => {
+  it('rejects stale full-package revisions and update previews without discarding installed edits', async () => {
     const f = await fixture()
     const source = await f.source('writer')
     await writeFile(join(source, 'guide.md'), 'Version one')
@@ -85,6 +108,10 @@ describe('skill installation lifecycle', () => {
     await writeFile(join(dirname(installed.filePath), 'guide.md'), 'Version two')
     await expect(f.service.remove({ spaceId: null, id: installed.id, revision: installed.revision })).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
     expect(await readFile(join(dirname(installed.filePath), 'guide.md'), 'utf8')).toBe('Version two')
+    const preview = await f.service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
+    await writeFile(installed.filePath, (await readFile(installed.filePath, 'utf8')).replace('Version one', 'User edit'))
+    await expect(f.service.install({ previewId: preview.id, candidateIds: [preview.candidates[0]!.id] })).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
+    expect((await f.service.get(null, installed.id)).body).toBe('User edit')
     const refreshed = (await f.service.list(null)).skills[0]!
     await f.service.remove({ spaceId: null, id: refreshed.id, revision: refreshed.revision })
     expect(f.repository.list()).toEqual([])
@@ -302,16 +329,6 @@ describe('skill installation lifecycle', () => {
     await expect(f.service.install({ previewId: preview.id, candidateIds: [preview.candidates[0]!.id] })).rejects.toMatchObject({ code: 'SKILL_BUSY' })
     await expect(f.service.remove({ spaceId: 'space-a', id: installed.id, revision: installed.managementRevision! })).rejects.toMatchObject({ code: 'SKILL_BUSY' })
     expect((await f.service.get('space-a', installed.id)).body).toBe('Version one')
-  })
-
-  it('rejects a stale update preview after the installed resource is edited', async () => {
-    const f = await fixture()
-    const source = await f.source('writer')
-    const installed = await f.install(source)
-    const preview = await f.service.preview({ spaceId: null, source: { kind: 'directory', location: source } })
-    await writeFile(installed.filePath, (await readFile(installed.filePath, 'utf8')).replace('Version one', 'User edit'))
-    await expect(f.service.install({ previewId: preview.id, candidateIds: [preview.candidates[0]!.id] })).rejects.toMatchObject({ code: 'SKILL_CHANGED' })
-    expect((await f.service.get(null, installed.id)).body).toBe('User edit')
   })
 
   it('installs a GitHub subdirectory from its resolved commit and retains its origin', async () => {

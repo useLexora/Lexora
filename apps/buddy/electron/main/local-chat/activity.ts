@@ -1,4 +1,5 @@
 import type { LocalChatIpcContext } from './registrar'
+import { shell } from 'electron'
 import { artifactsRequestSchemas, artifactsRpc } from '../../../shared/artifacts/artifactApi'
 import { changeOverviewRequestSchema, changesRecoveryRpc, changesRequestSchemas, changesRpc } from '../../../shared/changes/changeApi'
 import { notificationsRequestSchemas, notificationsRpc } from '../../../shared/notifications/notificationApi'
@@ -16,6 +17,17 @@ export function registerActivityIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.changesRecoveryRecheck, (_event, input) => request(changesRecoveryRpc.recheck, changesRecoveryRpc.recheck.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.changesRecoveryResolve, (_event, input) => request(changesRecoveryRpc.resolve, changesRecoveryRpc.resolve.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.changesOverview, (_event, input) => request(changesRpc.overview, changeOverviewRequestSchema.parse(input)))
+
+  handle(LOCAL_CHAT_IPC_CHANNELS.artifactsRevealFile, async (_event, input) => {
+    const target = await request(artifactsRpc.locate, artifactsRpc.locate.input.parse(input))
+    if (target.kind === 'file') {
+      shell.showItemInFolder(target.path)
+      return
+    }
+    const error = await shell.openPath(target.path)
+    if (error)
+      throw new Error(error)
+  })
 
   handle(LOCAL_CHAT_IPC_CHANNELS.artifactsReadText, (_event, input) => request(artifactsRpc.readText, artifactsRequestSchemas.artifactText.parse(input)))
 

@@ -22,7 +22,9 @@ fn main() -> ExitCode {
             }
         };
     }
-    let result = if std::env::args().nth(1).as_deref() == Some("--batch") {
+    let result = if std::env::args().nth(1).as_deref() == Some("--stream") {
+        lexora_buddy_host::file_reader::run_stream(io::stdin().lock(), io::stdout().lock())
+    } else if std::env::args().nth(1).as_deref() == Some("--batch") {
         lexora_buddy_host::file_reader::run_batch(io::stdin().lock(), io::stdout().lock())
     } else {
         lexora_buddy_host::file_reader::run(io::stdin().lock(), io::stdout().lock())

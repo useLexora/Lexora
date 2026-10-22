@@ -5,11 +5,13 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { PrepareResourceQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
 import { computed, useTemplateRef } from 'vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
+import DesktopMediaPreview from '@/shared/ui/media/DesktopMediaPreview.vue'
 import { readResourceTextSelection } from '@/shared/ui/selection/resourceQuoteSelection'
 import { useQuoteHighlight } from '@/shared/ui/selection/useQuoteHighlight'
 import DesktopMonacoFile from './DesktopMonacoFile.vue'
 
-const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>(), { wrap: true })
+const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, mediaKind?: 'audio' | 'video' | null, mediaUrl?: string | null, visible?: boolean, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>(), { wrap: true, visible: true })
+defineEmits<{ previewError: [] }>()
 defineSlots<{ source?: () => unknown }>()
 const markdown = useTemplateRef<HTMLElement>('markdown')
 const monaco = useTemplateRef<InstanceType<typeof DesktopMonacoFile>>('monaco')
@@ -37,11 +39,12 @@ function quoteText(event: MouseEvent) {
 
 <template>
   <div class="desktop-document-content flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden bg-surface">
-    <article v-if="mode === 'preview' && text != null" ref="markdown" class="desktop-document-content__markdown flex-1 min-h-0 overflow-auto pt-[20px] pr-[24px] pb-[32px] pl-[24px] text-fg font-sans [overflow-wrap:anywhere]" @contextmenu="quoteText">
+    <DesktopMediaPreview v-if="mode === 'preview' && mediaKind && mediaUrl" :kind="mediaKind" :src="mediaUrl" :name="name" :language="language" :visible="visible" />
+    <article v-else-if="mode === 'preview' && text != null" ref="markdown" class="desktop-document-content__markdown flex-1 min-h-0 overflow-auto pt-[20px] pr-[24px] pb-[32px] pl-[24px] text-fg font-sans [overflow-wrap:anywhere]" @contextmenu="quoteText">
       <DesktopMarkdownContent :content="text" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
     </article>
     <div v-else-if="mode === 'preview' && imageUrl" class="desktop-document-content__image grid flex-1 min-h-0 overflow-auto p-[16px] place-items-center">
-      <img :src="imageUrl" :alt="name">
+      <img :key="imageUrl" :src="imageUrl" :alt="name" @error="$emit('previewError')">
     </div>
     <template v-else-if="(mode === 'source' || mode === 'edit') && text != null">
       <slot name="source">
