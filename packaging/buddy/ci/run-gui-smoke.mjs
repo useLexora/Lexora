@@ -77,6 +77,7 @@ export function runDesktopSmoke(executablePath, env, timeoutMs = 30_000) {
       rejectSmoke(new Error(`Desktop smoke did not exit within ${timeoutMs}ms`))
     }, timeoutMs)
 
+    child.stdout.resume()
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-8_192)
@@ -85,10 +86,8 @@ export function runDesktopSmoke(executablePath, env, timeoutMs = 30_000) {
       clearTimeout(timeout)
       rejectSmoke(error)
     })
-    child.on('exit', (code, signal) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timeout)
-      child.stdout.destroy()
-      child.stderr.destroy()
       if (code === 0) {
         resolveSmoke()
         return

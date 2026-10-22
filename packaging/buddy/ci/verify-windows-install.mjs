@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -26,8 +26,8 @@ async function main() {
   if (!existsSync(join(directory, 'Uninstall Lexora Buddy.exe')))
     throw new Error('NSIS uninstall entry is missing from the installed directory')
   const smokeRoot = await mkdtemp(join(tmpdir(), 'lexora-windows-smoke-'))
+  const lexoraHome = join(smokeRoot, '用户 Data')
   try {
-    const lexoraHome = join(smokeRoot, '用户 Data')
     const environment = {
       ...process.env,
       LEXORA_HOME: lexoraHome,
@@ -49,6 +49,12 @@ async function main() {
     }
     await runDesktopSmoke(executablePath, environment, 180_000)
     writeOutput('Installed Windows Desktop: startup, database, restart and shutdown passed')
+  }
+  catch (error) {
+    const diagnostics = await readFile(join(lexoraHome, 'logs', 'application.jsonl'), 'utf8').catch(() => '')
+    if (diagnostics)
+      writeError(`Installed Windows smoke diagnostics:\n${diagnostics.slice(-32_768)}`)
+    throw error
   }
   finally {
     await rm(smokeRoot, { force: true, recursive: true, maxRetries: 10, retryDelay: 250 })
