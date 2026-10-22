@@ -27,6 +27,7 @@ for (const firstResult of ['ready', 'cancelled']) {
       })
     })
     await page.reload()
+    await page.locator('#desktop-task-history').getByRole('button', { name: '新任务', exact: true }).click()
     await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
     await page.getByRole('button', { name: '启用 Windows 沙盒', exact: true }).click()
     const dialog = page.getByRole('dialog')

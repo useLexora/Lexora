@@ -2,8 +2,8 @@ import type { ParseOptions } from 'mermaid'
 import { desktopMermaidTheme } from '@/theme/mermaidTheme'
 
 function applyDesktopTheme(source: string): string {
-  const header = /^%%\{init: \{"theme":"(?:default|dark)","htmlLabels":false,"flowchart":\{"htmlLabels":false\}\}\}%%\n/
-  return source.replace(header, () => `%%{init: ${JSON.stringify({ ...desktopMermaidTheme.value, htmlLabels: false, flowchart: { htmlLabels: false } })}}%%\n`)
+  const header = /(^|\n)%%\{init: \{"theme":"(?:default|dark)","htmlLabels":false,"flowchart":\{"htmlLabels":false\}\}\}%%\n/
+  return source.replace(header, (_match, prefix: string) => `${prefix}%%{init: ${JSON.stringify({ ...desktopMermaidTheme.value, htmlLabels: false, flowchart: { htmlLabels: false } })}}%%\n`)
 }
 
 export async function loadDesktopMermaid() {

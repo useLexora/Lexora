@@ -11,6 +11,50 @@ function scrollport(owner) {
   return owner.locator('[data-chat-scroll-viewport]')
 }
 
+test('final markdown preserves unmatched emphasis and Mermaid frontmatter through theme changes', async ({ buddy }, testInfo) => {
+  const instance = await buddy.createInstance('markdown')
+  const desktop = await instance.launch()
+  const { page, app } = desktop
+  const text = 'Literal **unfinished\n\n```mermaid\n---\ntitle: Preserved diagram title\n---\nflowchart LR\n  A[Start] --> B[Done]\n```'
+  await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(1))
+  await app.evaluate((_electron, { databasePath, text }) => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    const db = new DatabaseSync(databasePath)
+    try {
+      const now = new Date().toISOString()
+      db.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run('markdown-task', 'Markdown rendering', 'markdown-branch', now, now)
+      db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run('markdown-branch', 'markdown-task', now)
+      db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('markdown-answer', 'markdown-task', 'markdown-branch', 'assistant', JSON.stringify({ text }), now)
+    }
+    finally { db.close() }
+  }, { databasePath: path.join(instance.home, 'buddy/buddy.sqlite3'), text })
+  await page.reload()
+  await page.locator('[data-task-id="markdown-task"] .desktop-task-sidebar__task').click()
+  const dismiss = page.getByRole('button', { name: '忽略本次', exact: true })
+  if (await dismiss.isVisible())
+    await dismiss.click()
+  const markdown = page.locator('[data-message-id="markdown-answer"] .buddy-chat-markdown')
+  const diagram = markdown.locator('svg[aria-roledescription="flowchart-v2"]')
+  await expect(markdown.locator('p').first()).toHaveText('Literal **unfinished')
+  await expect(markdown.locator('strong')).toHaveCount(0)
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(id => window.lexoraDesktop.settings.update({ desktop: { theme: { id } } }), `lexora.themes.classic-${theme}`)
+    await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', theme)
+    await expect(diagram).toBeVisible()
+    await expect(diagram).toContainText('Preserved diagram title')
+    await expect(diagram).toContainText('Start')
+    await expect(diagram).toContainText('Done')
+    await expect.poll(() => diagram.locator('.node rect').first().evaluate((element) => {
+      const style = getComputedStyle(element)
+      const color = document.createElement('span').style
+      color.color = style.getPropertyValue('--buddy-accent-solid').trim()
+      return style.stroke === color.color
+    })).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`markdown-${theme}.png`), animations: 'disabled' })
+  }
+  expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
 async function anchor(owner) {
   return scrollport(owner).evaluate((element) => {
     const top = element.getBoundingClientRect().top
@@ -63,6 +107,8 @@ test('reading retains history anchors, outline navigation and independent stream
   try {
     const desktop = await instance.launch()
     const { page, app } = desktop
+    await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
+    await expect(page.getByTestId('feature-discovery-reminder')).toHaveCount(0)
     await useSyntheticCredentialStorage(desktop)
     await page.evaluate(async (baseUrl) => {
       const api = window.lexoraDesktop.localChat.providers
@@ -136,6 +182,7 @@ test('reading retains history anchors, outline navigation and independent stream
     await expect.poll(() => anchor(first)).toEqual(remembered)
 
     await first.getByTestId('pane-layout-menu').click()
+    await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
     await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
     await page.locator('[data-task-id="b"] .desktop-task-sidebar__task').click()
     const second = pane(page, 'Reading B')
