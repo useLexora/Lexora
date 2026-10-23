@@ -155,7 +155,18 @@ export interface ShellCandidate {
   reason?: string
 }
 
+export interface WorkerOptions {
+  type?: 'classic' | 'module'
+  name?: string
+  signal?: AbortSignal
+}
+export interface WorkerApi {
+  create: (entry: string | URL, options?: WorkerOptions) => Promise<Worker>
+}
+
 export interface ExtensionContext {
+  readonly signal: AbortSignal
+  readonly workers: WorkerApi
   readonly themes: ThemeApi
   readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 | 4 }
   readonly events: EventSubscriber<ExtensionEvents>
@@ -243,6 +254,7 @@ export type ReferenceInput
   = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator }
     | { kind: 'resource', resource: { id: string } }
 export interface ViewContext {
+  readonly workers: WorkerApi
   readonly themes: ThemeApi
   readonly events: EventSubscriber<ViewEvents>
   readonly interaction: {

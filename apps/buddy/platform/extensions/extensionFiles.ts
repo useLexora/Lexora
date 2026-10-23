@@ -1,69 +1,28 @@
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readdir, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath, rm } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { Unzip, UnzipInflate } from 'fflate/browser'
 import { extensionPathSchema } from '../../shared/extensions/extensionManifest'
+import { EXTENSION_EXPANDED_LIMIT, EXTENSION_FILE_LIMIT, EXTENSION_PACKAGE_ENTRY_LIMIT, validateExtensionArchiveSize, validateExtensionFileCounts, validateExtensionFiles } from '../../shared/extensions/extensionPackageBudget.ts'
 import { fileStorage } from '../filesystem/fileStorage'
-import { EXTENSION_FILE_LIMIT, EXTENSION_PACKAGE_ENTRY_LIMIT, EXTENSION_PACKAGE_LIMIT, validateExtensionFileCounts } from './extensionLimits.ts'
 
-export { EXTENSION_FILE_LIMIT, EXTENSION_PACKAGE_LIMIT } from './extensionLimits.ts'
+import { readExtensionFile } from './extensionPackageFiles.ts'
+
+export { EXTENSION_ARCHIVE_LIMIT, EXTENSION_FILE_LIMIT, validateExtensionFiles } from '../../shared/extensions/extensionPackageBudget.ts'
+export { readExtensionDirectory, readExtensionFile } from './extensionPackageFiles.ts'
 export const sha256 = (bytes: Uint8Array | string): string => createHash('sha256').update(bytes).digest('hex')
 
-export async function readExtensionFile(path: string, limit = EXTENSION_FILE_LIMIT): Promise<Buffer> {
-  const handle = await open(path, 'r')
-  try {
-    const info = await handle.stat()
-    if (!info.isFile() || info.size > limit)
-      throw new Error('EXTENSION_FILE_LIMIT')
-    const buffer = Buffer.alloc(Math.min(info.size + 1, limit + 1))
-    let length = 0
-    while (length < buffer.length) {
-      const result = await handle.read(buffer, length, buffer.length - length, length)
-      if (!result.bytesRead)
-        break
-      length += result.bytesRead
-    }
-    if (length > limit || length !== info.size)
-      throw new Error('EXTENSION_FILE_CHANGED')
-    return buffer.subarray(0, length)
-  }
-  finally { await handle.close() }
-}
-
-export async function readExtensionDirectory(directory: string): Promise<Map<string, Uint8Array>> {
-  const root = await realpath(directory)
-  const files = new Map<string, Uint8Array>()
-  async function walk(folder: string) {
-    const entries = await readdir(folder, { withFileTypes: true })
-    for (const entry of entries) {
-      const path = join(folder, entry.name)
-      const name = relative(root, path).replaceAll('\\', '/')
-      if (entry.isSymbolicLink() || !extensionPathSchema.safeParse(name).success)
-        throw new Error('EXTENSION_UNSAFE_PATH')
-      if (entry.isDirectory()) {
-        await walk(path)
-      }
-      else if (entry.isFile()) {
-        files.set(name, await readExtensionFile(path))
-        validateExtensionFiles(files)
-      }
-      else { throw new Error('EXTENSION_UNSAFE_PATH') }
-    }
-  }
-  await walk(root)
-  return files
-}
-
 export function unpackExtension(bytes: Uint8Array): Map<string, Uint8Array> {
-  if (bytes.byteLength > EXTENSION_PACKAGE_LIMIT)
-    throw new Error('EXTENSION_PACKAGE_LIMIT')
+  validateExtensionArchiveSize(bytes.byteLength)
   const files = new Map<string, Uint8Array>()
   const names = new Set<string>()
   let failure: Error | undefined
   let total = 0
   let completed = 0
   let count = 0
+  let declaredTotal = 0
+  const paths: string[] = []
   const unzip = new Unzip((file) => {
     count++
     const name = file.name.endsWith('/') ? file.name.slice(0, -1) : file.name
@@ -74,7 +33,21 @@ export function unpackExtension(bytes: Uint8Array): Map<string, Uint8Array> {
       return
     }
     names.add(normalized)
+    declaredTotal += file.originalSize ?? 0
+    if (!file.name.endsWith('/'))
+      paths.push(name)
+    try {
+      validateExtensionFileCounts(paths)
+      if (declaredTotal > EXTENSION_EXPANDED_LIMIT)
+        throw new Error('EXTENSION_PACKAGE_LIMIT')
+    }
+    catch {
+      failure = new Error('EXTENSION_PACKAGE_LIMIT')
+      file.terminate()
+      return
+    }
     const chunks: Uint8Array[] = []
+    const output = file.originalSize === undefined ? undefined : new Uint8Array(file.originalSize)
     let size = 0
     file.ondata = (error, chunk, final) => {
       if (error)
@@ -83,16 +56,23 @@ export function unpackExtension(bytes: Uint8Array): Map<string, Uint8Array> {
         return file.terminate()
       size += chunk.byteLength
       total += chunk.byteLength
-      if (size > EXTENSION_FILE_LIMIT || total > EXTENSION_PACKAGE_LIMIT) {
+      if (size > EXTENSION_FILE_LIMIT || total > EXTENSION_EXPANDED_LIMIT || (output && size > output.byteLength)) {
         failure = new Error('EXTENSION_PACKAGE_LIMIT')
         file.terminate()
         return
       }
-      chunks.push(chunk)
+      if (output)
+        output.set(chunk, size - chunk.byteLength)
+      else
+        chunks.push(chunk)
       if (final) {
+        if (output && size !== output.byteLength) {
+          failure = new Error('EXTENSION_INVALID_ARCHIVE')
+          return
+        }
         completed++
         if (!file.name.endsWith('/'))
-          files.set(name, Buffer.concat(chunks, size))
+          files.set(name, output ?? Buffer.concat(chunks, size))
       }
     }
     file.start()
@@ -112,20 +92,6 @@ export function unpackExtension(bytes: Uint8Array): Map<string, Uint8Array> {
     throw new Error('EXTENSION_INVALID_ARCHIVE')
   validateExtensionFiles(files)
   return files
-}
-
-export function validateExtensionFiles(files: ReadonlyMap<string, Uint8Array>): void {
-  let total = 0
-  const names = new Set<string>()
-  validateExtensionFileCounts(files.keys())
-  for (const [name, bytes] of files) {
-    if (!extensionPathSchema.safeParse(name).success || names.has(name.toLowerCase()))
-      throw new Error('EXTENSION_UNSAFE_PATH')
-    names.add(name.toLowerCase())
-    total += bytes.byteLength
-    if (bytes.byteLength > EXTENSION_FILE_LIMIT || total > EXTENSION_PACKAGE_LIMIT)
-      throw new Error('EXTENSION_PACKAGE_LIMIT')
-  }
 }
 
 export async function writeExtensionJson(path: string, value: unknown, beforeCommit: () => void = () => {}): Promise<void> {

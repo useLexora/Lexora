@@ -58,9 +58,8 @@ describe('extension package contract', () => {
   it.each(['../escaped.js', 'C:/escaped.js', '__view.html'])('rejects archive traversal and reserved assets: %s', (name) => {
     expect(() => unpackExtension(zipSync({ [name]: strToU8('content') }))).toThrow(/EXTENSION_/)
   })
-  it('rejects case collisions and compressed files exceeding the expanded limit', () => {
+  it('rejects case collisions and malformed archives', () => {
     expect(() => unpackExtension(zipSync({ 'a.js': strToU8('a'), 'A.js': strToU8('b') }))).toThrow(/EXTENSION_/)
-    expect(() => unpackExtension(zipSync({ 'large.js': new Uint8Array(4 * 1024 * 1024 + 1) }))).toThrow(/EXTENSION_/)
     expect(() => unpackExtension(new Uint8Array([1, 2, 3]))).toThrow(/EXTENSION_/)
   })
   it('pins reviewed bytes and stages updates without changing the running package', async () => {
@@ -218,15 +217,6 @@ describe('extension package contract', () => {
   })
 })
 
-it('preserves pane decoration scope and requires permission', () => {
-  const input = manifest({ apiVersion: 2, permissions: { windowEffects: true }, contributes: {
-    views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none' }],
-    placements: [{ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor: 'workbench.pane' }],
-  } })
-  expect(extensionManifestSchema.parse(input).contributes.placements[0]).toEqual({ id: 'tests.reader.scope', view: 'tests.reader.effect', kind: 'decoration', anchor: 'workbench.pane' })
-  expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
-})
-
 it.each([1, 2] as const)('accepts window overlays in API %s without adding local placements', (apiVersion) => {
   const input = manifest({ apiVersion, permissions: { windowEffects: true }, contributes: {
     views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none', location: 'window-overlay' }],
@@ -250,15 +240,18 @@ it('keeps API 1 compatible and validates UI placements and permission upgrades i
         { id: 'tests.reader.top', view: 'tests.reader.ui', kind: 'view', location: 'workbench.top' },
         { id: 'tests.reader.effect', view: 'tests.reader.ui', kind: 'decoration', anchor: 'composer.input' },
         { id: 'tests.reader.reasoning', view: 'tests.reader.ui', kind: 'control', target: 'model.reasoning' },
+        { id: 'tests.reader.scope', view: 'tests.reader.ui', kind: 'decoration', anchor: 'workbench.pane' },
       ],
     },
   })
   const review = await reviewPackage(root, store, value)
   expect(review.addedPermissions).toEqual(['windowEffects', 'controls:model.reasoning'])
+  expect(review.manifest.contributes.placements[3]).toEqual({ id: 'tests.reader.scope', view: 'tests.reader.ui', kind: 'decoration', anchor: 'workbench.pane' })
   expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 1 }).success).toBe(false)
   expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [], views: [{ ...value.contributes.views[0], location: 'window-overlay' }] } }).success).toBe(false)
   expect(extensionManifestSchema.safeParse({ ...value, permissions: { windowEffects: true } }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...value, permissions: { controls: ['model.reasoning'] } }).success).toBe(false)
+  for (const placement of [value.contributes.placements[1], value.contributes.placements[3]])
+    expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, placements: [placement] }, permissions: { controls: ['model.reasoning'] } }).success).toBe(false)
   for (const placement of [
     { ...value.contributes.placements[0], view: 'tests.reader.missing' },
     { ...value.contributes.placements[0], id: 'other.plugin.top' },

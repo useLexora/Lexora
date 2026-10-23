@@ -204,6 +204,11 @@ export class DesktopRuntimeHost {
           requestId: event.requestId,
           sandboxProcess: { phase: event.kind, pid: event.pid, exitCode: event.exitCode },
         }))
+        const stopAuthoring = registerExtensionAuthoringRpc(peer, (id) => {
+          if (!this.inspectExtension)
+            throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
+          return this.inspectExtension(id)
+        }, () => this.#config?.desktop.pluginAuthor ?? '')
         const disposers = [
           registerExtensionShellRpc(peer, () => this.extensionShells),
           peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
@@ -219,11 +224,6 @@ export class DesktopRuntimeHost {
             await this.configStore.allowNetworkPermission(input.host, input.operation, () => signal?.throwIfAborted())
             return {}
           }),
-          registerExtensionAuthoringRpc(peer, (id) => {
-            if (!this.inspectExtension)
-              throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
-            return this.inspectExtension(id)
-          }, () => this.#config?.desktop.pluginAuthor ?? ''),
           peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
             const source = contextPanelSourceSchema.parse(params)
             return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
@@ -239,7 +239,11 @@ export class DesktopRuntimeHost {
         return () => {
           if (this.#prepareSandbox === prepareSandbox)
             this.#prepareSandbox = undefined
-          const cleanup = sandbox.dispose().finally(() => this.#sandboxCleanup.delete(cleanup))
+          const cleanup = Promise.allSettled([sandbox.dispose(), stopAuthoring()]).then((results) => {
+            const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+            if (failures.length)
+              throw new AggregateError(failures, 'RUNTIME_CLEANUP_FAILED')
+          }).finally(() => this.#sandboxCleanup.delete(cleanup))
           this.#sandboxCleanup.add(cleanup)
           disposers.forEach(dispose => dispose())
         }

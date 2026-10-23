@@ -1,9 +1,12 @@
 import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
+import { createExtensionWorkers } from '../../../../shared/extensions/extensionWorkers'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionReferenceReveal } from './ExtensionReferenceReveal'
 import { ExtensionViewState } from './ExtensionViewState'
 
 const token = location.hostname
+const controller = new AbortController()
+const workers = createExtensionWorkers(new URL('/__package/', location.href), controller.signal, Worker)
 const pending = new Map()
 const references = new ExtensionReferenceReveal((id, located) => parent.postMessage({ channel: 'lexora-extension', token, referenceResult: { id, located } }, '*'))
 const state = new ExtensionViewState(() => request('events.snapshot'))
@@ -71,6 +74,7 @@ addEventListener('keydown', (event) => {
     parent.postMessage({ channel: 'lexora-extension', token, dismiss: true }, '*')
 })
 addEventListener('pagehide', () => {
+  controller.abort()
   for (const item of pending.values()) {
     clearTimeout(item.timer)
     item.reject(new Error('EXTENSION_VIEW_CLOSED'))
@@ -99,9 +103,8 @@ async function initialize() {
       document.head.append(link)
     })))
     const entry = await import(`/__package/${initial.entry}`)
-    const controller = new AbortController()
-    addEventListener('pagehide', () => controller.abort(), { once: true })
     const api = Object.freeze({
+      workers,
       apiVersion: initial.apiVersion,
       events,
       themes: createThemeClient(input => request('themes.request', input), listener => events.on('view:environment:changed', listener)),
@@ -184,6 +187,7 @@ async function initialize() {
     await request('view.ready')
   }
   catch (error) {
+    controller.abort()
     document.querySelector('main').textContent = overlay ? '' : 'This plugin view could not be loaded.'
     void request('view.failed', { code: /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : 'EXTENSION_VIEW_FAILED' }).catch(() => {})
   }

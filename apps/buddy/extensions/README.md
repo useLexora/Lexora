@@ -28,11 +28,13 @@ node extensions/tools.mjs pack .output/extensions/my-plugin .output/extensions/m
 
 `icon` 可指定包内 SVG、PNG、JPEG 或 WebP 图标（最多 64 KiB），用于导航、插件卡片与安装弹窗。未提供图标时显示默认线框图标。
 
+包预算统一为单文件 64 MiB、压缩安装包 128 MiB、展开合计 256 MiB；最多 4096 个文件，其中非图片文件最多 512 个，归档条目最多 8192 个。对话构建自动按 256 KiB 分块传输，不增加普通插件消息的容量。大型预构建 JS 库请使用 `compiled` 包；源码编译仍有独立的时间与内存限制。
+
 API 3 支持一个插件提供多个完整主题、可选欢迎文字与图片，以及主题编辑器接口；见 [主题开发](../service/resources/skills/plugin-creator/references/themes.md)。主题包可仅包含 JSON 和图片。
 
 API 3 还支持原生设置模块、分组和单项，以及带权限的 Agent 指令、工具、模型请求和当前任务标题更新。先通过能力目录确认宿主支持，再声明最低应用版本；接口与示例见 [Agent 与设置](../service/resources/skills/plugin-creator/references/agent-settings.md)。
 
-`format: "source"` 支持自包含 TS/JS 源码。Lexora 使用固定编译器，不执行 npm 安装、脚本或第三方构建配置。只能导入包内相对路径；含运行时 npm 依赖的插件需要作者预先打包为 `format: "compiled"`。已编译包直接安装，源码包确认权限后编译，失败不会替换已安装版本。
+`format: "source"` 支持自包含 TS/JS 源码。Lexora 使用固定编译器，不执行 npm 安装、脚本或第三方构建配置。只能导入包内相对路径；含运行时 npm 依赖的插件需要作者预先打包为 `format: "compiled"`。已编译包直接安装，源码包确认权限后编译，失败不会替换已安装版本。`build` 和 `dev` 完整保留 `compiled` 包的目录、脚本与二进制资源，不再次打包其入口；第三方依赖应在交付 compiled 包之前完成构建。
 
 宿主入口导出 `activate(context)`，可选 `deactivate()`。通过 `context.commands.register` 注册清单中声明的命令；订阅资源使用 `context.subscriptions` 清理。`permissions.notifications` 开放系统通知，`permissions.schedules` 开放 Lexora 运行期间的定时命令。定时配置跨重启保存，休眠或退出期间错过的提醒不会补发，卸载会删除定时任务。
 

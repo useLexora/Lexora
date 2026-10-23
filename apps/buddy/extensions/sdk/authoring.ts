@@ -1,10 +1,12 @@
 export { compileExtensionSource } from '../../platform/extensions/compileExtensionSource'
 export { extensionIconUrl } from '../../platform/extensions/extensionIcon'
-export { validateExtensionFileCounts } from '../../platform/extensions/extensionLimits'
+export { buildExtensionDirectory as buildPlugin, packExtensionDirectory as packPlugin, readExtensionPackage as readPlugin } from '../../platform/extensions/extensionPackageAuthoring'
+export { readExtensionDirectory, readExtensionFile } from '../../platform/extensions/extensionPackageFiles'
 export { validateFileIconThemeFiles } from '../../platform/icons/fileIconThemeAssets'
 export { validateThemeFiles } from '../../platform/themes/themeAssets'
 export { createExtensionId, extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 export { extensionManifestSchema, extensionPackageManifest, extensionPathSchema } from '../../shared/extensions/extensionManifest'
+export { EXTENSION_ARCHIVE_LIMIT, EXTENSION_EXPANDED_LIMIT, EXTENSION_FILE_LIMIT, validateExtensionArchiveSize, validateExtensionFileCounts, validateExtensionFiles } from '../../shared/extensions/extensionPackageBudget'
 export { fileIconThemeDocumentSchema } from '../../shared/icons/fileIconTheme'
 
 export { themeDocumentSchema } from '../../shared/theme/themeDocument'

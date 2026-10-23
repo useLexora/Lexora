@@ -4,6 +4,7 @@ import { workbenchCapabilityQuerySchema } from '../workbench/workbenchUi'
 import { extensionLogSchema } from './extensionDiagnostic'
 import { extensionAuthorSchema, extensionSlugSchema } from './extensionIdentity'
 import { extensionIdSchema, extensionVersionSchema } from './extensionManifest'
+import { EXTENSION_ARCHIVE_LIMIT, EXTENSION_PACKAGE_CHUNK_BASE64_LENGTH, EXTENSION_PACKAGE_INLINE_BASE64_LENGTH } from './extensionPackageBudget'
 
 export const EXTENSION_BUILD_RPC = 'extensions.build'
 export const EXTENSION_REVIEW_REQUEST = 'extensions.reviewPackage'
@@ -41,10 +42,31 @@ export const extensionInspectionSchema = z.object({
   logs: z.array(extensionLogSchema).max(50),
 }).strict()
 export type ExtensionInspection = z.infer<typeof extensionInspectionSchema>
-export const extensionArchiveSchema = z.string().max(24 * 1024 * 1024).regex(/^[A-Z0-9+/]+={0,2}$/i)
+export const extensionArchiveSchema = z.string().max(EXTENSION_PACKAGE_INLINE_BASE64_LENGTH).regex(/^[A-Z0-9+/]+={0,2}$/i)
 export const extensionBuildRequestSchema = z.object({ archive: extensionArchiveSchema }).strict()
 export const extensionBuildResultSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), archive: extensionArchiveSchema, id: extensionIdSchema, name: z.string().min(1).max(100), author: extensionAuthorSchema, version: extensionVersionSchema, diagnostics: z.array(z.string().max(600)).max(30) }).strict(),
   z.object({ ok: z.literal(false), code: z.string(), diagnostics: z.array(z.string().max(600)).max(30) }).strict(),
 ])
 export type ExtensionBuildResult = z.infer<typeof extensionBuildResultSchema>
+
+export const EXTENSION_PACKAGE_TRANSFER_RPC = 'extensions.packageTransfer'
+const transferId = z.string().uuid()
+const archiveSize = z.number().int().positive().max(EXTENSION_ARCHIVE_LIMIT)
+const archiveHash = z.string().regex(/^[a-f0-9]{64}$/)
+export const extensionTransferDescriptorSchema = z.object({ size: archiveSize, sha256: archiveHash }).strict()
+export const extensionTransferRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('begin'), size: archiveSize, sha256: archiveHash }).strict(),
+  z.object({ action: z.literal('upload'), transferId, offset: z.number().int().nonnegative().max(EXTENSION_ARCHIVE_LIMIT), data: z.string().min(4).max(EXTENSION_PACKAGE_CHUNK_BASE64_LENGTH).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i) }).strict(),
+  z.object({ action: z.literal('build'), transferId }).strict(),
+  z.object({ action: z.literal('read'), transferId, offset: z.number().int().nonnegative().max(EXTENSION_ARCHIVE_LIMIT) }).strict(),
+  z.object({ action: z.literal('dispose'), transferId }).strict(),
+])
+export const extensionTransferSessionSchema = z.object({ transferId }).strict()
+export const extensionTransferOffsetSchema = z.object({ offset: z.number().int().nonnegative().max(EXTENSION_ARCHIVE_LIMIT) }).strict()
+export const extensionTransferChunkSchema = z.object({ offset: z.number().int().nonnegative().max(EXTENSION_ARCHIVE_LIMIT), data: z.string().max(EXTENSION_PACKAGE_CHUNK_BASE64_LENGTH) }).strict()
+export const extensionTransferredBuildResultSchema = z.discriminatedUnion('ok', [
+  extensionBuildResultSchema.options[0].omit({ archive: true }).extend({ package: extensionTransferDescriptorSchema }),
+  extensionBuildResultSchema.options[1],
+])
+export type ExtensionTransferredBuildResult = z.infer<typeof extensionTransferredBuildResultSchema>
