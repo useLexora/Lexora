@@ -14,7 +14,7 @@ import { parseWorkbenchUiSelection, workbenchUiSelectionKey, workbenchUiTargetCa
 import { nextTick, onScopeDispose, watch } from 'vue'
 import { DesktopExtensionView } from '@/modules/extensions/ui'
 
-export function useExtensionContributions(options: { controller: WorkbenchController, renderers: ViewRendererRegistry, persistence: WorkbenchPersistence, installed: Readonly<Ref<ExtensionStatus[]>>, api: ExtensionApi, views: ExtensionViews, ui: ExtensionUiContributions, ready: () => boolean }) {
+export function useExtensionContributions(options: { controller: WorkbenchController, renderers: ViewRendererRegistry, persistence: WorkbenchPersistence, installed: Readonly<Ref<ExtensionStatus[]>>, api: ExtensionApi, views: ExtensionViews, ui: ExtensionUiContributions, ready: () => boolean, receiveReference?: (event: Extract<ExtensionWorkbenchEvent, { kind: 'reference' }>, signal: AbortSignal) => Promise<boolean> }) {
   const { controller, renderers, persistence, installed, api, views, ui } = options
   onScopeDispose(renderers.register('extensions.view', DesktopExtensionView))
   const owners = new Map<string, { revision: string, dispose: () => void }>()
@@ -165,6 +165,10 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         controller.configuration.restore(configuration)
         await persistence.checkpoint()
         viewId = event.requestId
+      }
+      else if (event.kind === 'reference') {
+        if (await options.receiveReference?.(event, signal))
+          viewId = event.viewId
       }
       else if (event.kind === 'interaction') {
         if (event.title === null) {

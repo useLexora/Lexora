@@ -4,6 +4,7 @@ import type { EventMessage, EventPattern, EventSnapshot, EventSubscriber } from 
 import type { ExtensionActionCause } from '../../../../../shared/extensions/extensionAgent'
 import type { ExtensionConditionContext } from '../../../../../shared/extensions/extensionConditionContext'
 import type { ExtensionHostEvents, ExtensionViewEvents } from '../../../../../shared/extensions/extensionEvents'
+import type { ExtensionReferenceInput, ExtensionReferenceReveal } from '../../../../../shared/extensions/extensionReferences'
 import { deferred } from '@buddy-tests/deferred'
 import { expect, expectTypeOf, it } from 'vitest'
 import { ExtensionHostEvents as HostSource } from '../ExtensionHostEvents'
@@ -15,6 +16,8 @@ it('keeps the self-contained public SDK and internal event contracts equivalent'
   expectTypeOf<Sdk.TaskActionEvents>().toEqualTypeOf<TaskActionEvents>()
   expectTypeOf<Sdk.AgentActionContext['cause']>().toEqualTypeOf<ExtensionActionCause>()
   expectTypeOf<Sdk.ViewEvents>().toEqualTypeOf<ExtensionViewEvents>()
+  expectTypeOf<Sdk.ReferenceReveal>().toEqualTypeOf<ExtensionReferenceReveal>()
+  expectTypeOf<Sdk.ReferenceInput>().toEqualTypeOf<ExtensionReferenceInput>()
   expectTypeOf<Sdk.EventPattern<Sdk.ViewEvents>>().toEqualTypeOf<EventPattern<ExtensionViewEvents>>()
   expectTypeOf<Sdk.EventMessage<Sdk.ViewEvents, 'view:**' | 'control:changed'>>().toEqualTypeOf<EventMessage<ExtensionViewEvents, 'view:**' | 'control:changed'>>()
   expectTypeOf<Sdk.EventSubscriber<Sdk.ViewEvents>>().toExtend<EventSubscriber<ExtensionViewEvents>>()
@@ -75,7 +78,7 @@ it('updates snapshots before notifying, keeps frames isolated and gates restrict
     if (event.type === 'view:visibility:changed')
       expect(state.snapshot.visible).toBe(event.data.visible)
     if (event.type === 'workbench:context:changed') {
-      expect(state.snapshot.workbench).toBe(event.data.context)
+      expect(state.snapshot.workbench).toEqual(event.data.context)
       expect(Object.isFrozen(event.data.context.values)).toBe(true)
     }
   })

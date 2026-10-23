@@ -1,9 +1,11 @@
 import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
+import { ExtensionReferenceReveal } from './ExtensionReferenceReveal'
 import { ExtensionViewState } from './ExtensionViewState'
 
 const token = location.hostname
 const pending = new Map()
+const references = new ExtensionReferenceReveal((id, located) => parent.postMessage({ channel: 'lexora-extension', token, referenceResult: { id, located } }, '*'))
 const state = new ExtensionViewState(() => request('events.snapshot'))
 const events = state.events
 let overlay = false
@@ -20,7 +22,7 @@ function request(method, params = null) {
     if (pending.size >= 64)
       return reject(new Error('EXTENSION_REQUEST_LIMIT'))
     const id = crypto.randomUUID()
-    const longRunning = ['network.get', 'network.download', 'resources.importFile', 'themes.request', 'commands.execute'].includes(method)
+    const longRunning = ['network.get', 'network.download', 'resources.importFile', 'themes.request', 'commands.execute', 'references.add'].includes(method)
     const timer = longRunning
       ? undefined
       : setTimeout(() => {
@@ -37,6 +39,14 @@ addEventListener('message', (event) => {
   const data = event.data
   if (typeof data.ping === 'string') {
     parent.postMessage({ channel: 'lexora-extension', token, pong: data.ping }, '*')
+    return
+  }
+  if (data.referenceRequest) {
+    void references.reveal(data.referenceRequest.id, data.referenceRequest.input)
+    return
+  }
+  if (typeof data.referenceCancel === 'string') {
+    references.cancel(data.referenceCancel)
     return
   }
   if (data.event) {
@@ -67,6 +77,7 @@ addEventListener('pagehide', () => {
   }
   pending.clear()
   state.dispose()
+  references.dispose()
 })
 async function initialize() {
   try {
@@ -131,6 +142,10 @@ async function initialize() {
       setState: state => request('view.setState', state),
       setActive: active => request('view.setActive', { active }),
       setPresentation: presentation => request('view.setPresentation', presentation),
+      references: Object.freeze({
+        add: input => request('references.add', input.kind === 'resource' ? { ...input, resource: { id: input.resource.id } } : input),
+        onReveal: handler => references.onReveal(handler),
+      }),
       resources: {
         ...createExtensionResourceClient(request),
         pickFiles: (options = {}) => request('resources.pickFiles', options),

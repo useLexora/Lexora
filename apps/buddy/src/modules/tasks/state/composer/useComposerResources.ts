@@ -228,6 +228,12 @@ export function useComposerResources(options: UseComposerResourcesOptions): Comp
   }
 
   return {
+    async importFileSnapshot(file: File) {
+      const transfer = startImport([file], 'file', true)
+      await transfer.pending
+      const id = transfer.ids[0]
+      return id && entries.get(id)?.resource.state === 'ready' ? id : null
+    },
     dispose() {
       disposed = true
       stopChanges()

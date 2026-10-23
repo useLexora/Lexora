@@ -20,7 +20,36 @@ async function renderReader(pluginId, mode, context, container) {
   container.dataset.visible = String(context.visible)
   container.dataset.resource = JSON.stringify(context.resource)
   context.onVisibilityChange(visible => container.dataset.visible = String(visible))
-  container.innerHTML = '<p role="status">Loading</p><pre data-testid="resource-text"></pre><label>Reader note <input></label><output></output>'
+  container.innerHTML = '<p role="status">Loading</p><pre data-testid="resource-text"></pre><label>Reader note <input></label><output data-testid="reader-note"></output><button data-testid="reference-content">Reference content</button><button data-testid="reference-file">Reference file</button><output data-testid="reference-result"></output><output data-testid="reference-location"></output><select aria-label="Reveal behavior"><option value="locate">Locate</option><option value="missing">No handler</option><option value="not-found">Not found</option><option value="throw">Fail</option></select>'
+  const reference = async (input) => {
+    const result = container.querySelector('[data-testid=reference-result]')
+    result.textContent = 'Pending'
+    try {
+      result.textContent = String(await context.references.add(input))
+    }
+    catch (error) {
+      result.textContent = String(error)
+    }
+  }
+  container.querySelector('[data-testid=reference-content]').onclick = () => reference({ kind: 'content', title: container.querySelector('input').value || 'Report excerpt', text: 'Frozen report excerpt', locator: { version: 1, data: { block: 'summary' } } })
+  container.querySelector('[data-testid=reference-file]').onclick = () => context.resource && reference({ kind: 'resource', resource: context.resource })
+  let revealRegistration
+  const revealBehavior = container.querySelector('select')
+  const registerReveal = () => {
+    revealRegistration?.dispose()
+    if (revealBehavior.value === 'missing')
+      return
+    revealRegistration = context.references.onReveal((input, signal) => {
+      if (revealBehavior.value === 'throw')
+        throw new Error('Unable to locate')
+      if (signal.aborted || revealBehavior.value === 'not-found' || input.locator?.version !== 1 || input.locator.data.block !== 'summary')
+        return false
+      container.querySelector('[data-testid=reference-location]').textContent = JSON.stringify(input.locator)
+      return true
+    })
+  }
+  revealBehavior.onchange = registerReveal
+  registerReveal()
   const input = container.querySelector('input')
   input.addEventListener('input', () => container.querySelector('output').textContent = input.value)
   try {
@@ -41,7 +70,7 @@ async function prepare(directory, extensions = ['.md'], requestDefault, shared =
     apiVersion: 4,
     engines: { lexora: '*' },
     entry: 'host.js',
-    permissions: { selectedResource: 'read' },
+    permissions: { selectedResource: 'read', references: true },
     contributes: {
       views: [{ id: `${id}.view`, title, entry: 'view.js', resource: 'optional-file' }, { id: `${id}.preview`, title: 'File preview', entry: 'preview.js', resource: 'selected-file' }],
       fileHandlers: [{ id: providerId, title, extensions, preview: { view: shared ? `${id}.view` : `${id}.preview`, requestDefault }, open: { view: `${id}.view` } }],
@@ -109,6 +138,7 @@ async function readerContents(app) {
           return {
             status: root.querySelector('[role=status]').textContent,
             text: root.querySelector('pre').textContent,
+            note: root.querySelector('input').value,
             resource: JSON.parse(root.dataset.resource),
             node: typeof process,
             desktop: typeof window.lexoraDesktop
@@ -142,6 +172,124 @@ async function togglePlugin(page, enabled) {
   await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === id)?.enabled, id)).toBe(enabled)
 }
 
+test('plugin references preserve content, transfer whole files and confirm opaque reveal requests', async ({ buddy }) => {
+  await withArtifactPreview(buddy, { label: 'plugin-references', prepare }, async ({ app, page, output, directory, requests, instance }) => {
+    await install({ app, page, directory }, ['standalone'])
+    await output('report.md').getByRole('button', { name: 'report.md', exact: true }).click()
+    let frame = await expectReader(app, page, diskText, 'report.md')
+    const requestCount = requests.length
+    const cards = page.locator('.desktop-chat-composer-wrap .chat-input-material-card')
+    const quote = cards.filter({ hasText: 'Report excerpt' })
+    await frame.getByTestId('reference-content').click()
+    const dialog = page.getByRole('dialog').filter({ hasText: '引用到对话' })
+    await expect(dialog).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(frame.getByTestId('reference-result')).toHaveText('false')
+    await expect(cards).toHaveCount(0)
+    await frame.getByTestId('reference-content').click()
+    await expect(dialog).toBeVisible()
+    await app.evaluate(() => new Promise(resolve => setTimeout(resolve, 11000)))
+    await expect(dialog).toBeVisible()
+    await expect(frame.getByTestId('reference-result')).toHaveText('Pending')
+    await dialog.getByRole('button', { name: /^分屏 1/ }).click()
+    await expect(frame.getByTestId('reference-result')).toHaveText('true')
+    await expect(cards).toHaveCount(1)
+    await expect(quote).toContainText('Frozen report excerpt')
+    await frame.getByLabel('Reader note').fill('Keep this temporary note')
+    const previousUrl = frame.url()
+    await quote.locator('.chat-reference-card__link').click()
+    const previousResource = (await readerContents(app))[0].resource.id
+    await page.getByRole('button', { name: '定位来源', exact: true }).click()
+    await expect.poll(async () => (await readerContents(app)).some(reader => reader.resource?.id === previousResource && reader.status === 'Ready')).toBe(true)
+    frame = await expectReader(app, page, diskText, 'report.md')
+    await expect(frame.getByTestId('reference-location')).toHaveText(JSON.stringify({ version: 1, data: { block: 'summary' } }))
+    expect(frame.url()).toBe(previousUrl)
+    await expect(frame.getByLabel('Reader note')).toHaveValue('Keep this temporary note')
+    await quote.locator('.chat-reference-card__link').click()
+    await expect(page.locator('.resource-quote-preview:visible')).toHaveCount(0)
+    for (const behavior of ['missing', 'not-found', 'throw']) {
+      await frame.getByLabel('Reveal behavior').selectOption(behavior)
+      await quote.locator('.chat-reference-card__link').click()
+      await page.getByRole('button', { name: '定位来源', exact: true }).click()
+      await expect(page.locator('.resource-quote-preview:visible')).toContainText('不可用')
+      await quote.locator('.chat-reference-card__link').click()
+      await expect(page.locator('.resource-quote-preview:visible')).toHaveCount(0)
+    }
+    await frame.getByLabel('Reveal behavior').selectOption('locate')
+    await frame.getByTestId('reference-file').click()
+    await dialog.getByRole('button', { name: /^分屏 1/ }).click()
+    await expect(cards).toHaveCount(2)
+    await expect(cards.filter({ hasText: 'report.md' })).toHaveCount(1)
+    await expect(frame.getByTestId('reference-result')).toHaveText('true')
+    await page.locator('.desktop-task-context-panel__tab.is-active .desktop-task-context-panel__tab-close').click()
+    await expect.poll(async () => (await readerContents(app)).length).toBe(0)
+    await quote.locator('.chat-reference-card__link').click()
+    await page.getByRole('button', { name: '定位来源', exact: true }).click()
+    frame = await expectReader(app, page, diskText, 'report.md')
+    await expect(frame.getByTestId('reference-location')).toHaveText(JSON.stringify({ version: 1, data: { block: 'summary' } }))
+    await quote.locator('.chat-reference-card__link').click()
+    await expect(page.locator('.resource-quote-preview:visible')).toHaveCount(0)
+    expect(requests).toHaveLength(requestCount)
+    expect(await fs.readFile(path.join(directory, 'report.md'), 'utf8')).toBe(diskText)
+    await togglePlugin(page, false)
+    await tasks(page)
+    await page.reload()
+    await expect(cards).toHaveCount(2)
+    await quote.locator('.chat-reference-card__link').click()
+    await page.getByRole('button', { name: '定位来源', exact: true }).click()
+    await expect(page.locator('.resource-quote-preview:visible')).toContainText('Frozen report excerpt')
+    await expect(page.locator('.resource-quote-preview:visible')).toContainText('不可用')
+    await page.screenshot({ path: path.join(instance.artifactDirectory, 'plugin-reference-materials.png'), animations: 'disabled' })
+    await quote.locator('.chat-reference-card__link').click()
+    await expect(page.locator('.resource-quote-preview:visible')).toHaveCount(0)
+    await page.locator('.desktop-workbench-area__tasks .tiptap:visible').fill('Review these materials')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect.poll(() => requests.length).toBe(requestCount + 1)
+    const input = JSON.stringify(requests.at(-1).messages.filter(message => message.role === 'user').at(-1))
+    expect(input).toContain('Frozen report excerpt')
+    expect(input).not.toContain('viewType')
+    expect(input).not.toContain('summary')
+  })
+})
+
+test('references from separate no-file plugin instances return to their own view', async ({ buddy }) => {
+  await withArtifactPreview(buddy, { label: 'plugin-reference-instances', prepare: directory => prepare(directory, ['.md'], false, true) }, async ({ app, page, directory }) => {
+    await install({ app, page, directory }, [], { inline: false, standalone: true })
+    const panel = page.getByTestId('task-context-panel')
+    if (!await panel.isVisible())
+      await page.getByTestId('context-panel-toggle').click()
+    const dialog = page.getByRole('dialog').filter({ hasText: '引用到对话' })
+    let previousView
+    for (const label of ['First instance', 'Second instance']) {
+      if (previousView) {
+        await page.getByTestId('context-add-tab').click()
+        await page.getByRole('menuitem', { name: 'Open fixture reader', exact: true }).click()
+      }
+      else {
+        await page.getByTestId(`task-context-open-${launcherId}`).click()
+      }
+      await expect.poll(async () => (await readerContents(app)).some(reader => reader.url !== previousView && reader.status === 'Ready')).toBe(true)
+      previousView = (await readerContents(app))[0].url
+      const frame = await expectReader(app, page, 'No file selected', null)
+      await frame.getByLabel('Reader note', { exact: true }).fill(label)
+      await frame.getByTestId('reference-content').click()
+      await dialog.getByRole('button', { name: /^分屏 1/ }).click()
+      await expect(frame.getByTestId('reference-result')).toHaveText('true')
+    }
+    const cards = page.locator('.desktop-chat-composer-wrap .chat-input-material-card')
+    await expect(cards).toHaveCount(2)
+    for (const label of ['First instance', 'Second instance']) {
+      await cards.filter({ hasText: label }).locator('.chat-reference-card__link').click()
+      await page.getByRole('button', { name: '定位来源', exact: true }).click()
+      await expect.poll(async () => (await readerContents(app)).map(reader => reader.note)).toEqual([label])
+      const frame = await expectReader(app, page, 'No file selected', null)
+      await expect(frame.getByLabel('Reader note', { exact: true })).toHaveValue(label)
+      await expect(frame.getByTestId('reference-location')).toHaveText(JSON.stringify({ version: 1, data: { block: 'summary' } }))
+      await page.keyboard.press('Escape')
+    }
+  })
+})
+
 test('file-opening review keeps location defaults independent and shared views can launch without a file', async ({ buddy }) => {
   await withArtifactPreview(buddy, { label: 'file-opening-defaults', prepare: directory => prepare(directory, ['.md'], false, true) }, async ({ app, page, directory }) => {
     await page.evaluate(async () => {
@@ -165,7 +313,7 @@ test('file-opening review keeps location defaults independent and shared views c
     await page.getByTestId(`task-context-open-${launcherId}`).click()
     const frame = await expectReader(app, page, 'No file selected', null)
     await frame.getByLabel('Reader note', { exact: true }).fill('Typed in the isolated reader')
-    await expect(frame.locator('output')).toHaveText('Typed in the isolated reader')
+    await expect(frame.getByTestId('reader-note')).toHaveText('Typed in the isolated reader')
   })
 })
 
@@ -190,13 +338,23 @@ test('file-opening passes unsaved inline snapshots, reads artifacts from disk an
     await expect(page.locator('.file-editor:visible')).toHaveAttribute('data-dirty', 'true')
     await expect(editor.locator('.view-lines')).toContainText('This paragraph exists only in the working copy.')
     await page.getByTestId('document-mode-preview').click()
-    await expectReader(app, page, draftText, 'report.md')
+    const draft = await expectReader(app, page, draftText, 'report.md')
+    const draftUrl = draft.url()
+    await draft.getByLabel('Reader note').fill('Draft excerpt')
+    await draft.getByTestId('reference-content').click()
+    await page.getByRole('dialog').filter({ hasText: '引用到对话' }).getByRole('button', { name: /^分屏 1/ }).click()
+    await expect(draft.getByTestId('reference-result')).toHaveText('true')
     expect(await fs.readFile(path.join(directory, 'report.md'), 'utf8')).toBe(diskText)
 
     await card.getByRole('button', { name: 'report.md', exact: true }).click()
     await expectReader(app, page, diskText, 'report.md')
-    await page.getByTestId('task-context-panel').getByRole('tab', { name: '文件', exact: true }).click()
-    await expectReader(app, page, draftText, 'report.md')
+    await page.locator('.desktop-chat-composer-wrap .chat-input-material-card').filter({ hasText: 'Draft excerpt' }).locator('.chat-reference-card__link').click()
+    await page.getByRole('button', { name: '定位来源', exact: true }).click()
+    const locatedDraft = await expectReader(app, page, draftText, 'report.md')
+    expect(locatedDraft.url()).toBe(draftUrl)
+    await expect(locatedDraft.getByLabel('Reader note')).toHaveValue('Draft excerpt')
+    await expect(locatedDraft.getByTestId('reference-location')).toHaveText(JSON.stringify({ version: 1, data: { block: 'summary' } }))
+    await page.keyboard.press('Escape')
     await togglePlugin(page, false)
     expect((await defaults(page))['.md']).toEqual(retained)
     expect((await snapshot(page)).providers.find(provider => provider.id === providerId)?.available).not.toBe(true)

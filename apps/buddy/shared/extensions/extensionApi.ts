@@ -10,18 +10,20 @@ import type { ExtensionConditionsChanged, ExtensionConditionState } from './exte
 import type { ExtensionDiagnostic } from './extensionDiagnostic'
 import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
+import type { ExtensionReferenceMaterial, ExtensionReferenceOpening } from './extensionReferences'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from './extensionSettings'
 import type { ExtensionWindowStyle } from './extensionWindowStyles'
 import { z } from 'zod'
 import { fileOpeningChoiceSchema, fileOpeningLocationSchema } from '../files/fileOpening'
-import { idSchema } from '../runtime/apiValidation'
 import { shellCandidateIdSchema } from '../shell/shellProgram'
 import { spaceFileTargetSchema } from '../spaces/spaceFileApi'
 import { themeTransportSchema } from '../theme/themeApi.ts'
 import { workbenchPanesSchema } from '../workbench/workbenchInteraction'
 import { workbenchMenuSchema } from '../workbench/workbenchUi'
 import { extensionActionRpc } from './extensionActionApi'
+import { extensionFileOpeningSourceSchema } from './extensionFileOpening'
 import { extensionIdSchema } from './extensionManifest'
+import { extensionReferenceInputSchema, extensionReferenceOpeningSchema } from './extensionReferences'
 import { extensionConfigurationSchema } from './extensionSettings'
 
 export const EXTENSION_IPC = {
@@ -37,6 +39,8 @@ export const EXTENSION_IPC = {
 } as const
 export const extensionJsonSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 262144, 'Extension data is too large')
 export function parseExtensionRequestParams(method: string, params: unknown): JsonValue {
+  if (method === 'references.add')
+    return extensionJsonSchema.parse(extensionReferenceInputSchema.parse(params))
   return (method === 'themes.request' ? themeTransportSchema : extensionJsonSchema).parse(params)
 }
 
@@ -52,10 +56,7 @@ export const extensionViewInputSchema = z.object({
   state: extensionJsonSchema,
   stateVersion: z.number().int().min(0).max(10000),
 }).strict()
-export const extensionFileOpeningSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('space'), target: spaceFileTargetSchema }).strict(),
-  z.object({ kind: z.literal('artifact'), artifactId: idSchema }).strict(),
-])
+export { extensionFileOpeningSourceSchema } from './extensionFileOpening'
 export const extensionFileOpeningInputSchema = z.object({
   providerId: z.string().min(1).max(180),
   location: fileOpeningLocationSchema,
@@ -128,6 +129,7 @@ export type ExtensionWorkbenchEvent
     | { kind: 'clear-data', requestId: string, extensionId: string }
     | { kind: 'open', requestId: string, extensionId: string, generation: string, viewType: string, resource: ExtensionResource | null, state: JsonValue, stateVersion: number }
     | { kind: 'state', requestId: string, viewId: string, generation: string, token: string, state: JsonValue, stateVersion: number }
+    | { kind: 'reference', requestId: string, viewId: string, generation: string, token: string, material: ExtensionReferenceMaterial }
     | { kind: 'interaction', requestId: string, extensionId: string, generation: string, interactionId: string, title: string | null }
     | { kind: 'message', requestId: string, extensionId: string, generation: string, message: JsonValue }
     | { kind: 'regions', requestId: string, viewId: string, generation: string, token: string, regions: WorkbenchHitRegion[] }
@@ -141,6 +143,7 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('fileOpeners') }).strict(),
   z.object({ action: z.literal('setFileOpener'), choice: fileOpeningChoiceSchema }).strict(),
   z.object({ action: z.literal('prepareFileOpening'), input: extensionFileOpeningInputSchema }).strict(),
+  z.object({ action: z.literal('prepareReferenceOpening'), input: extensionReferenceOpeningSchema }).strict(),
   z.object({ action: z.literal('unavailable') }).strict(),
   z.object({ action: z.literal('detectShells'), id: extensionIdSchema }).strict(),
   z.object({ action: z.literal('selectShellExecutable'), id: extensionIdSchema, candidate: shellCandidateIdSchema }).strict(),
@@ -177,6 +180,7 @@ export interface ExtensionApi {
   fileOpeners: () => Promise<FileOpeningSnapshot>
   setFileOpener: (choice: FileOpeningChoice) => Promise<FileOpeningSnapshot>
   prepareFileOpening: (input: ExtensionFileOpeningInput) => Promise<ExtensionPreparedFileOpening>
+  prepareReferenceOpening: (input: ExtensionReferenceOpening) => Promise<ExtensionPreparedFileOpening>
   detectShells: (id: string) => Promise<ShellCandidate[]>
   selectShellExecutable: (id: string, candidate: ShellCandidateId) => Promise<string | null>
   settingConditions: (id: string, items: string[], form?: ExtensionConfiguration) => Promise<Record<string, ExtensionConditionState>>

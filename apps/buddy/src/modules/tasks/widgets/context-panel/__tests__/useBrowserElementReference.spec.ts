@@ -18,7 +18,8 @@ function fixture(multiple = false, owner: string | null = 'task:a', split = mult
   if (multiple)
     targets.push({ ...targets[0]!, id: 'b', identity: 'draft:b:branch:0', scope: 'task:b', label: 'B' })
   let sourceIdentity = 'page:1'
-  const references = new WorkbenchSelectionReferences({ targets: () => targets, source: () => ({ identity: sourceIdentity, owner }), isSplit: () => split, locate: async () => false })
+  const references = new WorkbenchSelectionReferences({ targets: () => targets, isSplit: () => split })
+  references.registerProvider('test', { captureSource: () => ({ identity: sourceIdentity, owner }) })
   let resolve!: (result: BrowserPickResult) => void
   const api = { pickElement: vi.fn(() => new Promise<BrowserPickResult>(done => resolve = done)), cancelElementPick: vi.fn(async () => {}) } as unknown as DesktopBrowserApi
   const state = shallowRef<DesktopBrowserState>({ sessionId: 'session', pageId: 'page', documentVersion: 1, url: 'https://example.com/', status: 'ready', controller: 'human' } as DesktopBrowserState)

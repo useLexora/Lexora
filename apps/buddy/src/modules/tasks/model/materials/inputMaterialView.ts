@@ -32,7 +32,7 @@ export function inputMaterialLabel(material: Exclude<BuddyInputMaterial, { kind:
     return translateBuddy(language, material.quote.source.role === 'assistant' ? 'desktop.chat.quoteFromAssistant' : 'desktop.chat.quoteFromUser')
   const quote = material.quote
   const title = quote.source.kind === 'artifact' ? `${translateBuddy(language, 'desktop.chat.turnOutputs')} · ${quote.source.title}` : quote.source.title
-  return `${title}${!('element' in quote) && quote.range ? ` · L${quote.range.startLineNumber}–${quote.range.endLineNumber}` : ''}`
+  return `${title}${'range' in quote && quote.range ? ` · L${quote.range.startLineNumber}–${quote.range.endLineNumber}` : ''}`
 }
 
 export function inputMaterialText(material: InputMaterialView): string {

@@ -87,6 +87,7 @@ export const extensionPermissionsSchema = z.object({
   schedules: z.boolean().default(false),
   selectedResource: z.enum(['none', 'read']).default('none'),
   selectedContent: z.boolean().default(false),
+  references: z.boolean().default(false),
   localResources: z.boolean().default(false),
   resourceExport: z.boolean().default(false),
   themeManagement: z.boolean().default(false),
@@ -163,6 +164,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
+  if (manifest.apiVersion < 4 && manifest.permissions.references)
+    issue('References require API 4')
   if (manifest.apiVersion < 4 && (manifest.contributes.fileHandlers.length || manifest.contributes.launchers.length || manifest.contributes.views.some(view => view.resource === 'optional-file')))
     issue('File handlers, launchers and optional-file views require API 4')
   for (const handler of manifest.contributes.fileHandlers) {
@@ -299,6 +302,7 @@ export function addedExtensionPermissions(previous: ExtensionPermissions | undef
     ...(next.schedules && !previous?.schedules ? ['schedules'] : []),
     ...(next.selectedResource === 'read' && previous?.selectedResource !== 'read' ? ['selectedResource:read'] : []),
     ...(next.selectedContent && !previous?.selectedContent ? ['selectedContent'] : []),
+    ...(next.references && !previous?.references ? ['references'] : []),
     ...(next.localResources && !previous?.localResources ? ['localResources'] : []),
     ...(next.resourceExport && !previous?.resourceExport ? ['resourceExport'] : []),
     ...next.network.filter(origin => !previous?.network.includes(origin)).map(origin => `network:${origin}`),

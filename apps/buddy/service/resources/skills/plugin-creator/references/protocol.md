@@ -43,6 +43,33 @@
 
 插件 ID 使用小写字母开头的两段名称，中间以 `.` 分隔，每段可含小写字母、数字与 `-`；贡献 ID 在插件 ID 后追加由小写字母、数字、`.`、`-` 组成的后缀。声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
 
+## 引用到对话
+
+API 4 的交互资源视图可声明 `permissions.references: true`，通过 `context.references.add(input)` 打开宿主的对话选择器。导航页面、装饰、插槽与替换控件不支持此能力。选择并成功加入草稿返回 `true`，取消返回 `false`；授权或资源失效会抛错。等待用户选择没有固定的十秒期限；关闭视图或停用插件会取消请求。此操作不会发送消息或调用模型。
+
+```ts
+await context.references.add({
+  kind: 'content',
+  title: '汇总表',
+  text: selectedText,
+  locator: { version: 1, data: { sheet: 'Summary', cells: 'A1:B2' } },
+})
+
+context.references.onReveal(async ({ locator, text }, signal) => {
+  if (!locator || locator.version !== 1)
+    return false
+  return revealCells(locator.data, { expectedText: text, signal })
+})
+```
+
+`content` 保存当时的文字快照；`text` 必须非空，文字与序列化 locator 合计最多 32768 个字符，`title` 最多 512 字符。来源由宿主生成，插件不能自报来源或文件路径。`locator` 可省略，是插件定义的只读 JSON，含正整数 `version` 和 `data`；数据最多 16 KiB、12 层，不允许函数、循环或特殊对象。宿主只负责传回，插件负责版本兼容和验证定位结果，不能把 locator 当作文件授权。文字会进入模型上下文，locator 与内部目标不会。
+
+每个视图用 `references.onReveal(handler)` 注册一个定位处理器，返回可 `dispose()` 的注册对象。处理器收到只读的 `referenceId`、原始 `text`、`locator`（未提供时为 `null`）和取消信号；确认内容已定位后返回 `true`。无法找到、版本不支持、未注册或抛错均视为定位失败。异步处理必须遵守 `signal`，避免用户取消后继续滚动或改动界面。
+
+定位优先复用原视图并重新检查资源授权，不重载有效会话。内联预览保留当前未保存快照；原视图已关闭时，只能重新打开现有来源，插件应验证 locator 与当前内容是否匹配。插件停用或来源不可访问时，已保存的引用文字仍可查看。
+
+整份文件使用 `references.add({ kind: 'resource', resource })`，传入 `context.resource` 或本插件已有的授权句柄。Space 来源沿用文件引用，临时快照、产物和其他已授权资源按内容复制为附件；不传路径，不扩大读取权限。读取所需的 `selectedResource` / `localResources` 权限仍需分别声明。使用这些新增 API 4 能力时，`engines.lexora` 的最低版本应覆盖实际支持该能力的宿主。
+
 ## 视图类型
 
 | location | resource | 行为 |

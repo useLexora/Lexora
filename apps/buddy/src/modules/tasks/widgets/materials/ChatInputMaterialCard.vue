@@ -44,7 +44,7 @@ const sourcePath = computed(() => {
   if (material.kind !== 'resource_quote')
     return undefined
   const quote = material.quote
-  return 'element' in quote ? quote.source.url : quote.source.kind === 'file' ? quote.source.file.path : quote.source.path
+  return 'element' in quote ? quote.source.url : quote.source.kind === 'file' ? quote.source.file.path : quote.source.kind === 'artifact' ? quote.source.path : undefined
 })
 const canLocate = computed(() => props.material.kind === 'resource_quote' ? !!references : props.material.kind === 'message_quote' ? !!locateMessage : props.material.kind === 'session' && !!locateSession)
 
@@ -77,8 +77,8 @@ async function locate() {
           <img v-else-if="material.kind === 'resource' && material.previewUrl" class="flex-none rounded-micro object-cover" :src="material.previewUrl" :alt="material.resource.name" :width="compact ? 20 : 36" :height="compact ? 20 : 36" @error="emit('previewFailed', material.previewUrl)">
           <FolderIcon v-else-if="material.kind === 'resource' && material.resource.kind === 'directory'" class="flex-none w-6 h-6" />
           <FileIcon v-else-if="material.kind === 'resource'" :name="material.resource.name" :size="compact ? 'small' : 'medium'" />
-          <FileIcon v-else-if="material.kind === 'resource_quote' && !('element' in material.quote)" :name="material.quote.source.title" :size="compact ? 'small' : 'medium'" />
-          <DesktopIcon v-else :component="material.kind === 'session' ? Chat20Regular : material.kind === 'resource_quote' ? Globe20Regular : TextQuote20Regular" class="flex-none text-muted" />
+          <FileIcon v-else-if="material.kind === 'resource_quote' && (material.quote.source.kind === 'file' || material.quote.source.kind === 'artifact')" :name="material.quote.source.title" :size="compact ? 'small' : 'medium'" />
+          <DesktopIcon v-else :component="material.kind === 'session' ? Chat20Regular : material.kind === 'resource_quote' && 'element' in material.quote ? Globe20Regular : TextQuote20Regular" class="flex-none text-muted" />
           <span class="grid min-w-0 gap-[3px]">
             <span class="truncate text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">{{ label }}</span>
             <small v-if="!compact && detail" class="chat-input-material-card__detail text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[1.5]">{{ detail }}</small>

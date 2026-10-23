@@ -30,6 +30,8 @@
 | 关闭页面后仍定期执行插件动作 | `schedules: true`、宿主入口与已声明命令；`schedules.get/set/remove` | 定时任务归应用，最短一分钟；应用退出时暂停，错过的不补发。页面计时器只适合页面自身交互，不承担后台任务 |
 | 系统提示 | `notifications: true`；宿主 `notifications.show` | 通知受用户全局开关和限速约束，返回 false 不表示插件崩溃。按真实需要与命令、调度组合 |
 
+需要把选中内容或文件交给任务对话时，使用 API 4 的 `references` 权限与 `ViewContext.references`，详见 [引用到对话](protocol.md#引用到对话)。内容引用保留文字快照；可选 locator 由插件负责定位，`onReveal` 返回实际结果。整份文件使用已有资源句柄。
+
 ## 状态与模块
 
 - `activate(context)` 管理命令、私有设置、通知和定时任务；`render(context, container)` 管理自己的隔离 UI。只需要视图时不创建空宿主；需要命令时必须同时声明宿主入口和命令 ID。

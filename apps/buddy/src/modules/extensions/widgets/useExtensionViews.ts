@@ -1,4 +1,5 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionViewInput, ExtensionViewSession } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionReferenceReveal } from '@buddy-shared/extensions/extensionReferences'
 import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { WorkbenchHitRegion } from '@buddy-shared/workbench/workbenchInteraction'
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
@@ -8,6 +9,8 @@ import type { SemanticAnchor } from '@/shared/ui/contributions/workbenchUiContex
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
 import { onScopeDispose, shallowReactive, watch } from 'vue'
 import { extensionErrorCode } from '../state/useExtensionState'
+
+type ReferenceReveal = (session: ExtensionViewSession, input: ExtensionReferenceReveal, signal: AbortSignal) => Promise<boolean>
 
 export interface ExtensionControlBinding {
   snapshot: () => ControlSnapshot
@@ -51,6 +54,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   const lifecycles = new WeakMap<ExtensionSurface, SurfaceLifecycle>()
   const controlFailures = new Map<string, ControlFailure>()
   const messageListeners = new Set<(extensionId: string, generation: string, message: JsonValue) => void>()
+  let referenceReveal: ReferenceReveal | undefined
   let layout = () => {}
   const close = (session: ExtensionViewSession) => void api.closeView(session.id, session.generation, session.token).catch(() => {})
   function reset(surface: ExtensionSurface) {
@@ -202,6 +206,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   onScopeDispose(() => {
     for (const id of surfaces.keys()) hide(id)
     messageListeners.clear()
+    referenceReveal = undefined
   })
   function setRegions(id: string, generation: string, token: string, regions: WorkbenchHitRegion[]): boolean {
     const surface = surfaces.get(id)
@@ -211,14 +216,41 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     layout()
     return true
   }
-  return { setRegions, onMessage: (listener: (extensionId: string, generation: string, message: JsonValue) => void) => {
-    messageListeners.add(listener)
-    return () => messageListeners.delete(listener)
-  }, broadcast: (extensionId: string, generation: string, message: JsonValue) => {
-    for (const listener of messageListeners) listener(extensionId, generation, message)
-  }, surfaces, show, hide, fail, retryControl, proposeControl, setActive, layout: () => layout(), setLayout: (callback: () => void) => {
-    layout = callback
-  } }
+  return {
+    onReferenceReveal(listener: ReferenceReveal) {
+      referenceReveal = listener
+      return () => {
+        if (referenceReveal === listener)
+          referenceReveal = undefined
+      }
+    },
+    async revealReference(id: string, input: ExtensionReferenceReveal, signal: AbortSignal): Promise<boolean> {
+      const surface = surfaces.get(id)
+      const session = surface?.session
+      if (signal.aborted || !surface?.ready || !surface.visible || !surface.eligible || surface.error || !session)
+        return false
+      return referenceReveal?.(session, input, signal) ?? false
+    },
+    setRegions,
+    onMessage: (listener: (extensionId: string, generation: string, message: JsonValue) => void) => {
+      messageListeners.add(listener)
+      return () => messageListeners.delete(listener)
+    },
+    broadcast: (extensionId: string, generation: string, message: JsonValue) => {
+      for (const listener of messageListeners) listener(extensionId, generation, message)
+    },
+    surfaces,
+    show,
+    hide,
+    fail,
+    retryControl,
+    proposeControl,
+    setActive,
+    layout: () => layout(),
+    setLayout: (callback: () => void) => {
+      layout = callback
+    },
+  }
 }
 
 export type ExtensionViews = ReturnType<typeof useExtensionViews>

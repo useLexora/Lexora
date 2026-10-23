@@ -230,6 +230,18 @@ export interface WorkbenchContextSnapshot {
   readonly values: WorkbenchContextValues
   readonly pages: readonly { readonly id: string, readonly title: string }[]
 }
+export interface ReferenceLocator {
+  readonly version: number
+  readonly data: ReadonlyJson
+}
+export interface ReferenceReveal {
+  readonly referenceId: string
+  readonly text: string
+  readonly locator: ReferenceLocator | null
+}
+export type ReferenceInput
+  = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator }
+    | { kind: 'resource', resource: { id: string } }
 export interface ViewContext {
   readonly themes: ThemeApi
   readonly events: EventSubscriber<ViewEvents>
@@ -263,6 +275,10 @@ export interface ViewContext {
   readonly signal: AbortSignal
   onActivity: (listener: (event: { readonly type: 'composer-input', readonly caret?: { readonly x: number, readonly y: number, readonly width: number, readonly height: number } | null }) => void) => Disposable
   openExternal: (url: string) => Promise<void>
+  readonly references: {
+    add: (input: ReferenceInput) => Promise<boolean>
+    onReveal: (handler: (input: ReferenceReveal, signal: AbortSignal) => boolean | Promise<boolean>) => Disposable
+  }
   readonly resources: LocalResourceApi
   readonly network: NetworkApi
   readonly commands: { execute: (command: string, args?: Json) => Promise<Json> }

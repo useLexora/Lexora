@@ -44,17 +44,16 @@ async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, spli
   const ownerKey = shallowRef('file:one')
   const visible = shallowRef(true)
   const source = shallowRef({ identity: 'file:one', owner: 'task:a' })
-  const locate = vi.fn(async () => false)
+  const locate = vi.fn<(quote: BuddyResourceQuote) => Promise<boolean>>(async () => false)
   const targets = shallowRef<SelectionReferenceTarget[]>([
     ...(options.multiple ? [{ id: 'b', label: 'Pane 2 · Task B', identity: 'b:draft:epoch', scope: 'task:b', read: () => extraContent.value, write: (value: typeof extraContent.value) => extraContent.value = value }] : []),
     { id: 'a', label: 'Pane 1 · Task A', identity: 'a:draft:epoch', scope: 'task:a', read: () => content.value, write: value => content.value = value },
   ])
   const host = new WorkbenchSelectionReferences({
     targets: () => targets.value,
-    source: () => source.value,
-    locate,
     isSplit: () => options.split ?? !!options.multiple,
   })
+  host.registerProvider('test', { captureSource: () => source.value, resolveLocate: quote => () => locate(quote) })
   const surface = defineComponent({ setup() {
     selection = useResourceSelectionQuote({ viewId: () => 'file', ownerKey: () => ownerKey.value, visible: () => visible.value, language: () => 'zh-CN' })
     return () => kind === 'menu'

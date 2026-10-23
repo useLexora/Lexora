@@ -150,7 +150,7 @@ export function registerExtensionIpc(options: {
           current.webContents.send(EXTENSION_IPC.workbench, { kind: 'cancel', requestId: event.requestId } satisfies ExtensionWorkbenchEvent)
         finish(null)
       }
-      const timer = setTimeout(cancel, 10000)
+      const timer = event.kind === 'reference' ? undefined : setTimeout(cancel, 10000)
       function finish(value: string | null) {
         if (settled)
           return
@@ -249,6 +249,7 @@ export function registerExtensionIpc(options: {
         case 'fileOpeners': return await service.fileOpeners()
         case 'setFileOpener': return await service.setFileOpener(input.choice)
         case 'prepareFileOpening': return await service.prepareFileOpening(input.input)
+        case 'prepareReferenceOpening': return await service.prepareReferenceOpening(input.input)
         case 'unavailable': return store.unavailable
         case 'detectShells': return await service.detectShells(input.id)
         case 'selectShellExecutable': return await service.selectShellExecutable(input.id, input.candidate)

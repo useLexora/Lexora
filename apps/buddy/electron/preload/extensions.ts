@@ -12,6 +12,7 @@ export function createExtensionApi(): ExtensionApi {
     fileOpeners: () => request({ action: 'fileOpeners' }),
     setFileOpener: choice => request({ action: 'setFileOpener', choice }),
     prepareFileOpening: input => request({ action: 'prepareFileOpening', input }),
+    prepareReferenceOpening: input => request({ action: 'prepareReferenceOpening', input }),
     unavailable: () => request({ action: 'unavailable' }),
     detectShells: id => request({ action: 'detectShells', id }),
     selectShellExecutable: (id, candidate) => request({ action: 'selectShellExecutable', id, candidate }),

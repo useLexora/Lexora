@@ -30,7 +30,7 @@ it('does not expose quote actions when artifact text loading fails', async () =>
       writeClipboardText: async () => {},
     }),
   })
-  app.provide(workbenchSelectionReferencesKey, new WorkbenchSelectionReferences({ targets: () => [], source: () => null, locate: async () => false }))
+  app.provide(workbenchSelectionReferencesKey, new WorkbenchSelectionReferences({ targets: () => [] }))
   try {
     app.mount(root)
     await vi.waitFor(() => expect(root.textContent).toContain('无法读取该文件预览'))

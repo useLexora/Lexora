@@ -612,6 +612,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       importPastedText: (text: string) => !isClosing.value && lifecycle.hasCompletedInitialLoad.value ? composerResources.importText(text) : Promise.resolve(null),
       readResourceText: composerResources.readText,
       selectSource: composerResources.selectSource,
+      importFileSnapshot: (file: File) => !isClosing.value && lifecycle.hasCompletedInitialLoad.value ? composerResources.importFileSnapshot(file) : Promise.resolve(null),
       retryResource: composerResources.retry,
       canUpdatePermissionSettings: readonly(canUpdatePermissionSettings),
       isUpdatingPermissionSettings: permissionSettingsState.isUpdating,

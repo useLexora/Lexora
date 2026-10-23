@@ -4,14 +4,15 @@ import { idSchema, timestampSchema } from '../runtime/apiValidation'
 import { skillReferenceSchema } from '../skills/skillApi'
 import { spaceFileTargetSchema } from '../spaces/spaceFileApi'
 import { buddyLocalResourceSchema } from './localResource'
+import { referenceLocatorSchema, referenceViewSourceSchema, sameReferenceJson } from './referenceMaterial'
 
 export const buddyResourceIdSchema = z.string().regex(/^[A-Z0-9][\w-]{0,127}$/i)
 
 export const BUDDY_QUOTE_COUNT_LIMIT = 16
 export const BUDDY_QUOTE_TEXT_LIMIT = 32_768
 export const BUDDY_QUOTE_TOTAL_TEXT_LIMIT = 131_072
-export function buddyQuoteSnapshotLength(quote: { text: string, element?: unknown }): number {
-  return quote.text.length + (quote.element ? JSON.stringify(quote.element).length : 0)
+export function buddyQuoteSnapshotLength(quote: { text: string, element?: unknown, locator?: unknown }): number {
+  return quote.text.length + (quote.element ? JSON.stringify(quote.element).length : 0) + (quote.locator ? JSON.stringify(quote.locator).length : 0)
 }
 export const BUDDY_SESSION_REFERENCE_TITLE_LIMIT = 80
 export const buddySessionReferenceSchema = z.object({
@@ -89,7 +90,17 @@ export const buddyBrowserQuoteSchema = z.object({
   source: browserSelectionSourceSchema,
   element: browserElementSnapshotSchema,
 }).strict().refine(quote => buddyQuoteSnapshotLength(quote) <= BUDDY_QUOTE_TEXT_LIMIT, 'Element snapshot exceeds quote limit').readonly()
-export const buddyResourceQuoteSchema = z.union([buddyTextQuoteSchema, buddyBrowserQuoteSchema])
+export const buddyViewQuoteSchema = z.object({
+  id: buddyResourceIdSchema,
+  text: z.string().min(1).max(BUDDY_QUOTE_TEXT_LIMIT).refine(text => text.trim().length > 0),
+  source: referenceViewSourceSchema,
+  locator: referenceLocatorSchema.optional(),
+}).strict().refine(quote => buddyQuoteSnapshotLength(quote) <= BUDDY_QUOTE_TEXT_LIMIT, 'Reference snapshot exceeds quote limit').readonly()
+export type BuddyViewQuote = z.infer<typeof buddyViewQuoteSchema>
+export const buddyResourceQuoteSchema = z.union([buddyTextQuoteSchema, buddyBrowserQuoteSchema, buddyViewQuoteSchema])
+export function isBuddyViewQuote(quote: BuddyResourceQuote): quote is BuddyViewQuote {
+  return quote.source.kind === 'view'
+}
 export type BuddyFileQuote = z.infer<typeof buddyFileQuoteSchema>
 export type BuddyArtifactQuote = z.infer<typeof buddyArtifactQuoteSchema>
 export type BuddyTextQuote = z.infer<typeof buddyTextQuoteSchema>
@@ -293,6 +304,11 @@ function sameResourceQuote(a: BuddyResourceQuote, b: BuddyResourceQuote): boolea
   }
   if ('element' in a || 'element' in b)
     return false
+  if (isBuddyViewQuote(a) || isBuddyViewQuote(b)) {
+    return isBuddyViewQuote(a) && isBuddyViewQuote(b) && a.source.provider === b.source.provider
+      && sameReferenceJson(a.source.target, b.source.target)
+      && sameReferenceJson(a.locator, b.locator) && a.text === b.text
+  }
   const sameSource = a.source.kind === 'artifact' && b.source.kind === 'artifact'
     ? a.source.artifactId === b.source.artifactId && a.source.conversationId === b.source.conversationId
     && a.source.runId === b.source.runId && a.source.updatedAt === b.source.updatedAt && a.source.path === b.source.path

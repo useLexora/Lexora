@@ -83,6 +83,7 @@ function createOwner(name: string) {
       permissionMode: shallowRef('manual_approval' as const),
       beginImport: () => [],
       importPastedText: async () => null,
+      importFileSnapshot: async () => null,
       readResourceText: async () => '',
       dismissInteraction: () => {},
       listContextOptions: async () => ({ files: [], skills: [] }),

@@ -29,6 +29,7 @@ import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
+import { useReferenceTargetPicker } from '@/shared/ui/selection/useReferenceTargetPicker'
 import { workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { useDesktopTypography } from '@/theme/desktopTypography'
 import { ThemeMaterialController } from '@/theme/ThemeMaterialController'
@@ -45,6 +46,7 @@ import { registerResourceContributions } from '../workbench/registerResourceCont
 import { useDesktopKeybindings } from '../workbench/useDesktopKeybindings'
 import { useDesktopWorkbench } from '../workbench/useDesktopWorkbench'
 import { useExtensionContributions } from '../workbench/useExtensionContributions'
+import { useExtensionReferences } from '../workbench/useExtensionReferences'
 import { useTaskResourceSpaces } from '../workbench/useTaskResourceSpaces'
 import { createDesktopCapabilities } from './desktopCapabilities'
 import { useDesktopAppState } from './useDesktopAppState'
@@ -127,7 +129,8 @@ onScopeDispose(() => {
 })
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
-useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized })
+const extensionReferences = useExtensionReferences({ references: workbench.selectionReferences, controller: workbench.controller, persistence: workbench.persistence, pool: workbench.pool, api: api.extensions, views: extensionViews, installed: extensions.installed, chooseTarget: useReferenceTargetPicker(() => stores.applicationSettings.language.value) })
+useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized, receiveReference: extensionReferences.receive })
 useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocation, authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, themeColors: desktopTheme.extensionColors, themeRevision: desktopTheme.revision, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: desktopTheme.isDark, startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)
 } })
