@@ -23,7 +23,7 @@ type 支持 boolean、string（最长 8192 字符）、number（可声明 min/ma
 声明 `permissions.agent: true`、宿主 entry，并添加 `contributes.agent`：
 
 - enabledWhen：可选，引用本插件 boolean 设置，或使用[条件函数](conditions.md)引用；函数按原调用任务在执行前求值。
-- instructions：可选使用指引，最长 8000 字符；`{{<plugin-id>.tool}}` 替换为实际工具名，不硬编码运行时名称。
+- instructions：可选使用指引，最长 8000 字符；`{{<plugin-id>.tool}}` 替换为实际工具名，不硬编码运行时名称。 保留简短的工具使用约束；可复用工作流程与较长参考资料放入独立的 [插件 Skills](skills.md)，不会自动拼入此字段。
 - tools：`[{id,title,description,parameters}]`，最多 16 个，必须在 activate 中全部注册。
 - actions：`[{id,title,triggers,enabledWhen?,execution?}]`，最多 16 个，必须在 activate 中全部注册。只提供动作时可以省略 tools；tools 与 actions 至少提供一项。
 

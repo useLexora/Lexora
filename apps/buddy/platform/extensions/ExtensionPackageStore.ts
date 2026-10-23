@@ -26,6 +26,7 @@ import { validateThemeFiles } from '../themes/themeAssets'
 import { EXTENSION_ARCHIVE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
+import { validateExtensionSkillFiles } from './extensionSkillAssets'
 import { extensionPackageSchema as packageSchema, storedIndexSchema } from './extensionState'
 
 const grantSchema = z.union([
@@ -157,6 +158,7 @@ export class ExtensionPackageStore {
       throw new Error('EXTENSION_STYLES_MISSING')
     validateThemeFiles(files, manifest.contributes.themes)
     validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
+    validateExtensionSkillFiles(files, manifest.contributes.skills)
     const current = this.installed[manifest.id]
     const unavailable = this.#unavailable.get(manifest.id) ?? this.#unavailablePending.get(manifest.id)
     if (unavailable)

@@ -27,9 +27,16 @@ export const skillSchema = z.object({
   description: z.string(),
   enabled: z.boolean(),
   name: z.string().min(1),
+  invocationName: z.string().min(1).optional(),
   source: z.enum(['directory', 'global', 'space']),
   spaceId: idSchema.nullable(),
-  managedBy: z.enum(['application', 'user', 'external', 'directory']),
+  managedBy: z.enum(['application', 'user', 'external', 'directory', 'plugin']),
+  plugin: z.object({
+    extensionId: z.string().min(1),
+    extensionName: z.string().min(1),
+    contributionId: z.string().min(1),
+    revision: z.string().min(1),
+  }).strict().optional(),
   status: z.enum(['available', 'manual_only', 'disabled', 'shadowed', 'invalid']),
   shadowedBy: idSchema.nullable(),
   revision: z.string(),
@@ -139,4 +146,8 @@ export type SkillChangeNotice = Readonly<z.infer<typeof skillChangedSchema>>
 
 export function isSkillAvailable(skill: Pick<LocalSkill, 'status'>): boolean {
   return skill.status === 'available' || skill.status === 'manual_only'
+}
+
+export function skillInvocationName(skill: Pick<LocalSkill, 'name' | 'invocationName'>): string {
+  return skill.invocationName ?? skill.name
 }

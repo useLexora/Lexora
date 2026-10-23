@@ -1,6 +1,6 @@
 # Lexora 插件协议
 
-一个包包含根 `extension.json` 和包内文件。源码包支持自包含 `.ts`、`.mts`、`.js`、`.mjs`，以及静态 CSS、图片等资源；原始 HTML、Vue 单文件组件、npm 裸导入不属于当前编译协议。第三方库需作者预先打包。不要生成 `package.json`、锁文件、构建脚本、`node_modules` 或远程 CDN 依赖。
+一个包包含根 `extension.json` 和包内文件。源码包支持自包含 `.ts`、`.mts`、`.js`、`.mjs`，以及静态 CSS、图片和声明的 Skill 目录等资源；原始 HTML、Vue 单文件组件、npm 裸导入不属于当前编译协议。第三方库需作者预先打包。不要生成 `package.json`、锁文件、构建脚本、`node_modules` 或远程 CDN 依赖。
 
 ## 清单
 
@@ -37,6 +37,7 @@
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
 | `fileHandlers` | API 4；数组，每项必填 `id`、`title`、`extensions`；`preview`、`open` 至少提供一个，各含 `view` 和可选 `requestDefault`（默认 `true`）；见下文 |
 | `launchers` | API 4；数组，每项必填 `id`、`title`、`view`，提供无需文件的独立入口 |
+| `skills` | API 4；数组，每项为 `{id,path}`，path 指向包内 `SKILL.md`；可独立提供，无需 entry 或额外权限，见 [插件 Skills](skills.md) |
 | `agent` | API 3；指令、工具、任务动作和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
 | `settings` | API 3；声明 modules/groups/items，由宿主渲染并保存，见 [Agent 与设置](agent-settings.md) |
 | `shells` | API 4；固定本机解释器候选与原生设置映射；可选 settingsGroup 将插件自有组渲染为一行一个 Shell 的原生表格，文件选择仅限原生设置，需独立 shells 权限，见 [命令解释器](shells.md) |

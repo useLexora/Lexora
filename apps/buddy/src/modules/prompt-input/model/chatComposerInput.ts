@@ -38,6 +38,7 @@ export interface ChatPromptContextOption extends Omit<LocalPromptContextItem, 'k
   path: string | null
   source?: BuddyComposerSource
   skillScope?: 'directory' | 'space' | 'global'
+  skillPlugin?: { extensionId: string, extensionName: string }
 }
 
 export interface ChatComposerContextOptions {

@@ -8,6 +8,7 @@ import type { ExtensionReferenceInput, ExtensionReferenceMaterial, ExtensionRefe
 import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { ExtensionShellDescriptor } from '../../shared/extensions/extensionShell'
+import type { ExtensionSkillDescriptor } from '../../shared/extensions/extensionSkills'
 import type { FileOpeningChoice, FileOpeningSnapshot } from '../../shared/files/fileOpening'
 import type { ShellCandidate, ShellCandidateId } from '../../shared/shell/shellProgram'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
@@ -39,6 +40,7 @@ import { extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensi
 import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
 import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, validateExtensionSetting } from '../../shared/extensions/extensionSettings'
+import { extensionSkillRoots } from '../../shared/extensions/extensionSkills'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { windowStyleIdSchema, windowStyleSchema } from '../../shared/extensions/extensionWindowStyles'
 import { fileOpeningExtension } from '../../shared/files/fileOpening'
@@ -75,6 +77,7 @@ export interface ExtensionServicePorts {
   changed?: () => void
   agentChanged?: () => void
   shellsChanged?: () => void
+  skillsChanged?: () => void
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
   notify?: (id: string, notification: { title: string, body: string }) => boolean
@@ -167,6 +170,8 @@ export class ExtensionService {
       workbench: () => this.#panes.map(({ id, active, visible }) => ({ id, active, visible })),
     })
     this.onDidChange((change) => {
+      if (change.kind === 'package' || change.kind === 'enabled')
+        ports.skillsChanged?.()
       if (change.kind === 'package' || change.kind === 'enabled' || (change.kind === 'configuration' && change.application.status === 'committed'))
         this.#refreshShellFingerprint()
       if (change.kind === 'resources-revoked') {
@@ -349,6 +354,34 @@ export class ExtensionService {
     await this.#mutating
     await this.#refreshAgentContributions()
     return structuredClone(this.#agentDescriptors)
+  }
+
+  async skillContributions(): Promise<ExtensionSkillDescriptor[]> {
+    await this.initialize()
+    await this.#mutating
+    if (this.#disposed)
+      return []
+    return Object.entries(this.store.installed).flatMap(([extensionId, record]) => {
+      const { manifest, revision, hashes } = record.current
+      const skills = manifest.contributes.skills
+      if (!skills.length)
+        return []
+      let enabled = record.enabled
+      try {
+        this.#order(extensionId)
+      }
+      catch { enabled = false }
+      const roots = extensionSkillRoots(skills)
+      return [{
+        extensionId,
+        extensionName: manifest.name,
+        revision,
+        root: this.store.packageRoot(record.current),
+        enabled,
+        skills: structuredClone(skills),
+        hashes: Object.fromEntries(Object.entries(hashes).filter(([path]) => roots.some(root => path.startsWith(root)))),
+      }]
+    })
   }
 
   async #readAgentContributions(): Promise<ExtensionAgentDescriptor[]> {

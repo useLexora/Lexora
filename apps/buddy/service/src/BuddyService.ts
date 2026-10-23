@@ -26,10 +26,12 @@ import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-p
 import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../shared/conversation/buddyUserContent'
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
+import { Emitter } from '../../shared/events/Emitter'
 import { executionsChanged } from '../../shared/executions/executionPresentationApi'
 import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
 import { extensionShellRpc } from '../../shared/extensions/extensionShell'
+import { extensionSkillDescriptorSchema, extensionSkillsRpc } from '../../shared/extensions/extensionSkills'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
 import { webSettingsChanged } from '../../shared/network/webApi'
@@ -699,12 +701,22 @@ export async function startBuddyService(
       return service
     })
     const { skillService, sessionResources } = await host.start('runtime.skills', async ({ defer }) => {
+      const pluginSkillsChanged = new Emitter<void>(() => record({ event: 'skills.plugins.observer_failed', level: 'warn', errorCode: 'SKILL_OBSERVER_FAILED' }))
+      defer(() => pluginSkillsChanged.dispose())
+      defer(options.rpc.onNotification((method) => {
+        if (method === extensionSkillsRpc.changed)
+          pluginSkillsChanged.fire()
+      }))
       const skillService = new SkillService({
         agentDirectory,
         builtinSkillsDirectories: options.builtinSkillsDirectories,
         spaces: spacesRepository,
         repository: createSkillRepository(options.database),
         paths,
+        pluginSkills: {
+          list: async () => extensionSkillDescriptorSchema.array().parse(await options.rpc.request(extensionSkillsRpc.list, {})),
+          onDidChange: pluginSkillsChanged.event,
+        },
         onListenerError: () => record({ event: 'skills.observer.failed', level: 'warn', errorCode: 'SKILL_OBSERVER_FAILED' }),
       })
       const sessionResources = new SessionResourceReconciler({

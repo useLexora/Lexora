@@ -135,11 +135,15 @@ export function useSkillsManager(context: SkillsManagerOptions, scope: Readonly<
   }
 
   function setEnabled(skill: LocalSkill, enabled: boolean) {
+    if (skill.managedBy === 'plugin')
+      return
     const spaceId = scope.value
     return mutate(() => context.api.setEnabled({ spaceId, id: skill.id, revision: skill.managementRevision ?? skill.revision, enabled }), result => catalog.value = result)
   }
 
   function remove(skill: LocalSkill) {
+    if (skill.managedBy === 'plugin')
+      return
     const spaceId = scope.value
     return mutate(() => context.api.remove({ spaceId, id: skill.id, revision: skill.managementRevision ?? skill.revision }), (result) => {
       catalog.value = result

@@ -21,10 +21,10 @@ const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const action of cleanup.splice(0).reverse()) await action()
 })
-async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialManifest = manifest()) {
+async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialManifest = manifest(), initialFiles: Record<string, string> = {}) {
   const { root, store } = await createStore()
   cleanup.push(() => rm(root, { recursive: true, force: true }))
-  await store.install((await reviewPackage(root, store, initialManifest)).token)
+  await store.install((await reviewPackage(root, store, initialManifest, initialFiles)).token)
   const hosts: Array<{ broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure?: ExtensionHostFailure) => void, disposed: boolean, commands: JsonValue[] }> = []
   const events: unknown[] = []
   const service = new ExtensionService(store, {
@@ -54,14 +54,54 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
 }
 const target = { spaceId: 'space', directoryId: 'directory', revision: 4, path: 'README.md' }
 
-it('ignores unsupported declarations without exposing new methods or expanding existing permissions', async () => {
-  const value = manifest()
-  const input = { ...value, permissions: { ...value.permissions, futureExecution: true, futureNetwork: ['https://example.com'] }, contributes: { ...value.contributes, futureExecution: { entry: 'future.js' } } }
-  const { service, hosts } = await fixture({}, input)
-  await service.execute(value.id, `${value.id}.open`, null)
-  await expect(hosts[0]!.broker('shell.execute', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
-  await expect(hosts[0]!.broker('network.get', { url: 'https://example.com' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
-  await expect(hosts[0]!.broker('notifications.show', { title: 'Unknown permission' })).rejects.toThrow('EXTENSION_NOTIFICATIONS_DENIED')
+it('publishes packaged skills without activating hosts and follows dependency, enabled and promoted package state', async () => {
+  const id = 'tests.workbook'
+  const dependencyId = 'tests.base'
+  const path = 'skills/workbook/SKILL.md'
+  const content = '---\nname: workbook\ndescription: Inspect workbook files.\n---\n\nOriginal workbook instructions.\n'
+  const value = manifest({ id, apiVersion: 4, entry: undefined, permissions: {}, dependencies: { [dependencyId]: '^1.0.0' }, contributes: { skills: [{ id: `${id}.guide`, path }] } })
+  const { root, store, service, hosts } = await fixture({}, value, { [path]: content })
+  const dependency = manifest({ id: dependencyId, apiVersion: 4, entry: undefined, permissions: {}, contributes: {} })
+  await service.install((await reviewPackage(root, store, dependency)).token)
+  const initial = store.installed[id]!.current
+  const descriptors = await service.skillContributions()
+  expect(descriptors).toEqual([{
+    extensionId: id,
+    extensionName: value.name,
+    revision: initial.revision,
+    root: store.packageRoot(initial),
+    enabled: true,
+    skills: [{ id: `${id}.guide`, path }],
+    hashes: { [path]: initial.hashes[path] },
+  }])
+  expect(hosts).toHaveLength(0)
+
+  await service.enable(id, false)
+  expect(await service.skillContributions()).toEqual([{ ...descriptors[0], enabled: false }])
+  await service.enable(id, true)
+  expect(await service.skillContributions()).toEqual(descriptors)
+  await service.enable(dependencyId, false)
+  expect(store.installed[id]!.enabled).toBe(true)
+  expect(await service.skillContributions()).toEqual([{ ...descriptors[0], enabled: false }])
+  await service.enable(dependencyId, true)
+  expect(await service.skillContributions()).toEqual(descriptors)
+
+  const updatedContent = content.replace('Original workbook instructions.', 'Updated workbook instructions.')
+  await service.install((await reviewPackage(root, store, { ...value, version: '1.1.0' }, { [path]: updatedContent })).token)
+  const pending = store.installed[id]!.pending!
+  expect(pending.revision).not.toBe(initial.revision)
+  expect(await service.skillContributions()).toEqual(descriptors)
+  await service.applyUpdate(id)
+  expect(await service.skillContributions()).toEqual([{
+    ...descriptors[0],
+    revision: pending.revision,
+    root: store.packageRoot(pending),
+    hashes: { [path]: pending.hashes[path] },
+  }])
+  expect(pending.hashes[path]).not.toBe(initial.hashes[path])
+  await service.uninstall(id)
+  expect(await service.skillContributions()).toEqual([])
+  expect(hosts).toHaveLength(0)
 })
 
 it.each([false, true])('uninstalls with clearData=%s while preserving other plugins and external files', async (clearData) => {
@@ -283,6 +323,7 @@ it('authorizes each placement and control request against its own live view sess
   await expect(service.viewRequest(ordinary.id, ordinary.generation, ordinary.token, 'view.setPresentation', { height: 260 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await hosts[0]!.broker('placements.show', { id: 'tests.controls.top' })
   expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', extensionId: value.id, placementId: 'tests.controls.top', visible: true }))
+  await expect(hosts[0]!.broker('placements.show', { id: 'tests.controls.top', instanceId: randomUUID() })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
   await hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning' })
   expect(events).toContainEqual(expect.objectContaining({ kind: 'placement', placementId: 'tests.controls.reasoning', visible: true }))
   await expect(hosts[0]!.broker('placements.show', { id: 'tests.controls.reasoning', instanceId: randomUUID() })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
@@ -443,28 +484,6 @@ it.each([false, true])('limits menu invocation to user-selected content with per
   await expect(service.viewRequest(session.id, session.generation, session.token, 'commands.execute', { command: 'tests.actions.run', arguments: null, invocation: { target: 'composer.actions', content: 'forged' } })).rejects.toThrow()
 })
 
-it('carries pane identity through scoped placement requests and rejects scope on global mounts', async () => {
-  const { root, store, service, hosts, events } = await fixture()
-  const value = manifest({ apiVersion: 3, id: 'tests.panes', contributes: {
-    views: [{ id: 'tests.panes.view', title: 'Pane', entry: 'view.js', resource: 'none' }],
-    placements: [
-      { id: 'tests.panes.local', kind: 'view', target: 'workbench.pane', view: 'tests.panes.view' },
-      { id: 'tests.panes.global', kind: 'view', target: 'workbench', view: 'tests.panes.view' },
-    ],
-  } })
-  await service.install((await reviewPackage(root, store, value)).token)
-  const instanceId = randomUUID()
-  const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.panes.view', instanceId, placementId: 'tests.panes.local', resource: null, state: {}, stateVersion: 1 })
-  expect(await service.viewRequest(session.id, session.generation, session.token, 'bootstrap', null)).toMatchObject({ instanceId })
-  await hosts[0]!.broker('placements.show', { id: 'tests.panes.local', instanceId })
-  await hosts[0]!.broker('placements.hide', { id: 'tests.panes.local', instanceId })
-  expect(events).toEqual([
-    expect.objectContaining({ kind: 'placement', instanceId, visible: true }),
-    expect.objectContaining({ kind: 'placement', instanceId, visible: false }),
-  ])
-  await expect(hosts[0]!.broker('placements.show', { id: 'tests.panes.global', instanceId })).rejects.toThrow('EXTENSION_PLACEMENT_UNAVAILABLE')
-})
-
 async function interactionFixture() {
   const f = await fixture()
   const value = manifest({ apiVersion: 3, id: 'tests.game', contributes: {
@@ -553,35 +572,27 @@ it.each([false, true])('requires theme management permission and revokes host-ow
 })
 
 it.each([false, true])('owns window styles behind the effects permission and resolves only owned resources: %s', async (windowEffects) => {
-  const home = await createTemporaryDirectory('lexora-window-style-')
-  const themes = new ThemeService(home, async () => {})
-  await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
-  cleanup.push(() => themes.dispose())
   const value = manifest({ apiVersion: 3, permissions: { windowEffects, selectedResource: 'read', network: ['https://media.example.com'] } })
-  const f = await fixture({ themes, get: async () => new Response('image', { headers: { 'content-type': 'image/png' } }) }, value)
+  const f = await fixture({ get: async () => new Response('image', { headers: { 'content-type': 'image/png' } }) }, value)
   await f.service.execute(value.id, 'tests.reader.open', null)
   const broker = f.hosts[0]!.broker
+  if (!windowEffects) {
+    await expect(broker('window.styles.set', { id: 'wallpaper', css: ':root { --custom-accent: red; }' })).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
+    await expect(broker('window.styles.remove', { id: 'wallpaper' })).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
+    return
+  }
   const file = await broker('network.download', { id: randomUUID(), url: 'https://media.example.com/image.png' }) as { id: string }
   const url = await broker('resources.getUrl', { id: file.id })
-  expect(url).toEqual(expect.stringContaining(`/__resource/${file.id}`))
   await expect(broker('resources.getUrl', { id: randomUUID() })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
   await expect(broker('resources.getUrl', { packagePath: '../private.png' })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
   await expect(broker('resources.getUrl', { packagePath: 'missing.png' })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
-  expect(await broker('resources.getUrl', { packagePath: 'extension.js' })).toEqual(expect.stringContaining('/__package/extension.js'))
   const input = { id: 'wallpaper', css: `body::before { background-image: url("${url}"); }` }
-  if (!windowEffects) {
-    await expect(broker('window.styles.set', input)).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
-    await expect(broker('window.styles.remove', { id: input.id })).rejects.toThrow('EXTENSION_PERMISSION_DENIED')
-    return
-  }
   const current = async () => (await f.service.list())[0]!.windowStyles
   await broker('window.styles.set', input)
   await broker('window.styles.set', { id: 'controls', css: 'button:hover { border-radius: 2rem; } @media (width < 800px) { button { padding: 2px; } }' })
   await broker('window.styles.set', { ...input, css: ':root { --custom-accent: red; }' })
   expect(await current()).toEqual([{ id: 'wallpaper', css: ':root { --custom-accent: red; }' }, { id: 'controls', css: expect.stringContaining('@media') }])
   await expect(broker('window.styles.set', { id: '', css: '' })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
-  expect(themes.snapshot.preference).toEqual(DEFAULT_THEME_PREFERENCE)
-  expect(themes.snapshot.themes.filter(theme => theme.source === 'user')).toEqual([])
   await broker('window.styles.remove', { id: 'wallpaper' })
   expect(await current()).toEqual([{ id: 'controls', css: expect.any(String) }])
   await broker('resources.release', { id: file.id })

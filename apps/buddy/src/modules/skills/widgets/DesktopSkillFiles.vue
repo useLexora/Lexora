@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
+import { skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { NSpin } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -26,7 +27,7 @@ defineExpose({ open })
 <template>
   <div class="skill-files flex flex-1 min-w-0 min-h-0 flex-col">
     <div class="flex flex-none h-10 border-b-1 border-b-solid border-b-border">
-      <DesktopFileToolbar :path="path" :root-name="skill.name" :language="language" :wrap="wrap" :tree-visible="treeVisible" @toggle-wrap="wrap = !wrap" @toggle-tree="treeVisible = !treeVisible" />
+      <DesktopFileToolbar :path="path" :root-name="skillInvocationName(skill)" :language="language" :wrap="wrap" :tree-visible="treeVisible" @toggle-wrap="wrap = !wrap" @toggle-tree="treeVisible = !treeVisible" />
     </div>
     <DesktopContextSplit v-model:width="treeWidth" :tree-visible="treeVisible">
       <div v-if="loading" class="skill-files__state grid flex-1 min-h-0 p-4 text-[0.8rem] text-muted">

@@ -1,7 +1,7 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { Ref } from 'vue'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatPromptContextOption } from '@/modules/prompt-input'
-import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
+import { isSkillAvailable, skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { onScopeDispose, watch } from 'vue'
 import { createActorContextOptions } from '../../model/composer/actorContextOptions'
 
@@ -70,15 +70,16 @@ export function useComposerContextOptions(options: ComposerContextOptions) {
       skills: (catalog?.skills ?? [])
         .filter(isSkillAvailable)
         .map(skill => ({
-          description: skill.description,
+          description: skill.plugin ? `${skill.plugin.extensionName} · ${skill.plugin.extensionId}\n${skill.description}` : skill.description,
           kind: 'skill' as const,
-          label: skill.name,
+          label: skillInvocationName(skill),
           path: null,
-          value: skill.name,
+          value: skillInvocationName(skill),
           skillScope: skill.source,
+          skillPlugin: skill.plugin,
           skill: {
             id: skill.id,
-            name: skill.name,
+            name: skillInvocationName(skill),
             revision: skill.referenceRevision ?? skill.revision,
           },
         })),

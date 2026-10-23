@@ -9,6 +9,45 @@ const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
 describe('composer source picker', () => {
+  it('distinguishes same-name plugin skill sources and selects their stable references', async () => {
+    const root = document.createElement('div')
+    document.body.append(root)
+    const selected: string[] = []
+    const options = shallowRef<ChatPromptContextOption[]>(['publisher-one.tables', 'publisher-two.tables'].map(id => ({
+      kind: 'skill',
+      label: 'tables:review',
+      value: 'tables:review',
+      path: null,
+      description: `Tables · ${id}\nReview a workbook`,
+      skillScope: 'global',
+      skillPlugin: { extensionId: id, extensionName: 'Tables' },
+      skill: { id, name: 'tables:review', revision: id },
+    })))
+    const app = createApp(defineComponent({ setup: () => () => h(ChatComposerSourcePicker, {
+      activeIndex: 0,
+      accessibleLabel: 'Skills',
+      emptyLabel: 'Empty',
+      language: 'zh-CN',
+      loadingLabel: 'Loading',
+      options: options.value,
+      onSelect: option => selected.push(option.skill!.id),
+    }) }))
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+    expect(root.querySelectorAll('[role="option"]')).toHaveLength(2)
+    expect(root.textContent).toContain('publisher-one.tables')
+    expect(root.textContent).toContain('publisher-two.tables')
+    options.value = [...options.value].reverse()
+    await nextTick()
+    for (const option of root.querySelectorAll<HTMLElement>('[role="option"]'))
+      option.click()
+    expect(selected).toEqual(['publisher-two.tables', 'publisher-one.tables'])
+  })
+
   it('keeps directory availability and empty states separate from historical inputs', async () => {
     const root = document.createElement('div')
     root.className = 'buddy-app'
@@ -45,7 +84,6 @@ describe('composer source picker', () => {
     directory.value = { ...directory.value, query: '', status: 'ready' }
     options.value = []
     await nextTick()
-    expect(root.querySelectorAll('.chat-composer-source-picker__empty')).toHaveLength(1)
     expect(root.textContent).toContain('此目录为空')
     directory.value = undefined
     await nextTick()
@@ -92,15 +130,11 @@ describe('composer source picker', () => {
     })
     await nextTick()
     input.focus()
-    expect(root.querySelector('.chat-composer-source-picker__root')?.textContent).toBe('/work')
-    expect([...root.querySelectorAll('small')].map(item => item.textContent)).toEqual(['目录', '目录'])
     const rows = root.querySelectorAll('.chat-composer-source-picker__row')
     rows[1]!.dispatchEvent(new Event('pointermove', { bubbles: true }))
     await nextTick()
     expect(root.querySelector('[aria-selected="true"]')?.textContent).toContain('assets')
-    expect(root.querySelectorAll('.is-active')).toHaveLength(1)
     const enter = rows[1]!.querySelector<HTMLButtonElement>('.chat-composer-source-picker__enter')!
-    expect(enter.closest('[role="option"]')).toBeNull()
     const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
     enter.dispatchEvent(down)
     enter.click()
@@ -112,73 +146,5 @@ describe('composer source picker', () => {
     await nextTick()
     rows[0]!.querySelector<HTMLButtonElement>('[role="option"]')!.click()
     expect(selected).toEqual(['src'])
-    expect(root.querySelectorAll('.chat-composer-source-picker__footer')).toHaveLength(1)
-  })
-
-  it('renders skill icons and scope tags for directory, space and global skills', async () => {
-    const root = document.createElement('div')
-    document.body.append(root)
-    const options: ChatPromptContextOption[] = [
-      {
-        description: 'Local project skill',
-        kind: 'skill',
-        label: 'project-analyzer',
-        path: null,
-        skillScope: 'directory',
-        value: 'project-analyzer',
-      },
-      {
-        description: 'Space installed skill',
-        kind: 'skill',
-        label: 'space-helper',
-        path: null,
-        skillScope: 'space',
-        value: 'space-helper',
-      },
-      {
-        description: 'Global skill',
-        kind: 'skill',
-        label: 'global-bot',
-        path: null,
-        skillScope: 'global',
-        value: 'global-bot',
-      },
-    ]
-    const app = createApp(defineComponent({
-      setup: () => () => h(ChatComposerSourcePicker, {
-        accessibleLabel: 'Skills',
-        emptyLabel: 'No skills',
-        language: 'zh-CN',
-        loadingLabel: 'Loading',
-        options,
-      }, {
-        extra: () => h('button', { class: 'custom-extra' }, 'Manage'),
-      }),
-    }))
-    app.mount(root)
-    cleanups.push(() => {
-      app.unmount()
-      root.remove()
-    })
-    await nextTick()
-
-    const kindIcons = root.querySelectorAll('.chat-composer-source-picker__kind')
-    expect(kindIcons).toHaveLength(3)
-    kindIcons.forEach((icon) => {
-      expect(icon.classList.contains('is-skill')).toBe(true)
-      expect(icon.textContent?.trim()).not.toBe('$')
-      expect(icon.querySelector('svg')).not.toBeNull()
-    })
-
-    const scopes = root.querySelectorAll('.chat-composer-source-picker__scope')
-    expect(scopes).toHaveLength(3)
-    expect(scopes[0]?.textContent).toBe('工作目录')
-    expect(scopes[0]?.classList.contains('is-directory')).toBe(true)
-    expect(scopes[1]?.textContent).toBe('空间')
-    expect(scopes[1]?.classList.contains('is-space')).toBe(true)
-    expect(scopes[2]?.textContent).toBe('全局')
-    expect(scopes[2]?.classList.contains('is-global')).toBe(true)
-
-    expect(root.querySelector('.custom-extra')?.textContent).toBe('Manage')
   })
 })

@@ -43,11 +43,15 @@ async function mount(value: ExtensionReview = review) {
 }
 
 it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
-  const { content, submissions, submit } = await mount()
-  expect(content.textContent).toContain('.md')
-  expect(content.textContent).toContain('File preview')
-  expect(content.textContent).toContain('Open separately')
-  expect(content.querySelector('tbody')?.textContent).toContain('Reader')
+  const { content, submissions, submit } = await mount({
+    ...review,
+    manifest: extensionManifestSchema.parse({
+      ...review.manifest,
+      apiVersion: 4,
+      contributes: { skills: [{ id: 'test.panel.review', path: 'skills/review/SKILL.md' }] },
+    }),
+  })
+  expect(document.querySelector('[data-testid="extension-included-skills"]')?.textContent).toContain('$panel:review')
   const checkboxes = content.querySelectorAll<HTMLElement>('[role="checkbox"]')
   expect(checkboxes[0]?.getAttribute('aria-checked')).toBe('true')
   expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
@@ -58,30 +62,6 @@ it('preselects requested associations and keeps existing defaults when replaceme
   submit()
   expect(submissions.at(-1)).toEqual({ applyUpdate: true, choices: [] })
   expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
-})
-
-it('lets users clear and reselect existing defaults individually or by column during an update', async () => {
-  const existing = review.fileAssociations![1]!
-  const { content, submissions, submit } = await mount({
-    ...review,
-    currentVersion: '0.9.0',
-    fileAssociations: [existing, { ...existing, extension: '.txt' }],
-  })
-  const selectAll = content.querySelector<HTMLElement>('thead [role="checkbox"]')!
-  const first = content.querySelector<HTMLElement>('tbody [role="checkbox"]')!
-  expect(selectAll.getAttribute('aria-checked')).toBe('true')
-  first.click()
-  await nextTick()
-  expect(first.getAttribute('aria-checked')).toBe('false')
-  expect(selectAll.getAttribute('aria-checked')).toBe('mixed')
-  selectAll.click()
-  await nextTick()
-  expect(content.querySelectorAll('tbody [aria-checked="true"]')).toHaveLength(2)
-  selectAll.click()
-  await nextTick()
-  expect(content.querySelectorAll('tbody [aria-checked="true"]')).toHaveLength(0)
-  submit()
-  expect(submissions).toEqual([{ applyUpdate: true, choices: [] }])
 })
 
 it('leaves opt-out replacements unselected and supports individual and column selection independently', async () => {

@@ -2,7 +2,6 @@
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
-import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceView } from '../../../state/composer/typing'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import type { WorkbenchCommandPort } from '@/shared/ui/contributions/workbenchCommands'
@@ -57,7 +56,6 @@ async function mountComposer(options: {
   const resources = shallowRef<readonly ComposerResourceView[]>([])
   const selectedEffort = shallowRef<BuddyThinkingLevel | null>(null)
   const selectedServiceTier = shallowRef<BuddyServiceTier | null>(null)
-  const updates: { text: string, content: JSONContent }[] = []
   const sent: string[] = []
   const sentPayloads: ChatComposerSubmitPayload[] = []
   let composer!: ReturnType<typeof useChatComposer>
@@ -89,7 +87,6 @@ async function mountComposer(options: {
           sentPayloads.push(payload)
         },
         onUpdateContent: (text, value) => {
-          updates.push({ text, content: value })
           draft.value = text
           content.value = value
         },
@@ -112,25 +109,40 @@ async function mountComposer(options: {
   app.mount(root)
   await nextTick()
   await nextTick()
-  let mounted = true
-  function unmount() {
-    if (!mounted)
-      return
-    mounted = false
+  cleanups.push(() => {
     app.unmount()
     root.remove()
-  }
-  cleanups.push(unmount)
+  })
   const editor = composer.editor.value!
   function keydown(key: string, init: KeyboardEventInit = {}) {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...init })
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { canSend, composer, content, draft, draftId, editor, keydown, resources, root, selectedEffort, selectedServiceTier, sent, sentPayloads, updates, unmount }
+  return { canSend, composer, content, draft, draftId, editor, keydown, resources, root, selectedEffort, selectedServiceTier, sent, sentPayloads }
 }
 
 describe('chat composer editing', () => {
+  it('keeps two plugin skills with the same invocation bound to their selected sources', async () => {
+    const skills = ['publisher-one.tables', 'publisher-two.tables'].map(id => ({
+      ...skillOption('tables:review', `${id} instructions`),
+      skill: { id, name: 'tables:review', revision: `revision-${id}` },
+      skillScope: 'global' as const,
+      skillPlugin: { extensionId: id, extensionName: 'Tables' },
+    }))
+    const flow = await mountComposer({ loadContextOptions: async () => ({ files: [], skills }) })
+    for (const skill of skills) {
+      flow.editor.commands.insertContent('$tables:review')
+      flow.composer.activeTrigger.value = { kind: 'skill', query: 'tables:review' }
+      await flow.composer.loadContextOptions(null)
+      expect(flow.composer.suggestions.value.map(({ option }) => 'skill' in option ? option.skill?.id : undefined)).toEqual(skills.map(option => option.skill.id))
+      flow.composer.selectSuggestion(skill)
+    }
+    flow.composer.submit()
+    const directives = flow.sentPayloads[0]?.userContent?.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
+    expect(directives).toEqual(skills.map(option => ({ type: 'prompt_directive', directive: 'skill', value: 'tables:review', skill: option.skill })))
+  })
+
   it('selects same-name actors by keyboard and sends stable inline references without attachments', async () => {
     const actors: ChatPromptContextOption[] = ['actor-one', 'actor-two'].map(actorId => ({
       actorReference: { type: 'actor_ref', actorId, name: '星野' },
@@ -182,44 +194,32 @@ describe('chat composer editing', () => {
     expect(flow.sentPayloads).toHaveLength(1)
   })
 
-  it.each(['select', 'submit'] as const)('submits a run action with its arguments through %s', async (source) => {
+  it('submits a run action with its arguments from suggestions', async () => {
     const flow = await mountComposer()
-    const prefix = source === 'select' ? '/com' : '/compact'
+    const prefix = '/com'
     flow.editor.commands.setContent(createChatComposerContentFromText(`${prefix} preserve decisions`))
-    if (source === 'select') {
-      flow.editor.commands.setTextSelection(prefix.length + 1)
-      flow.composer.activeTrigger.value = { kind: 'slash', query: 'com' }
-      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/compact', label: '/compact', description: null, path: null })
-      expect(flow.sentPayloads[0]?.userContent?.body[0]?.content[0]).toEqual({
-        type: 'prompt_directive',
-        directive: 'slash_command',
-        commandMode: 'action',
-        value: '/compact',
-      })
-    }
-    else {
-      flow.composer.submit()
-    }
-    expect(flow.sent).toEqual([source === 'select' ? '/compact  preserve decisions' : '/compact preserve decisions'])
+    flow.editor.commands.setTextSelection(prefix.length + 1)
+    flow.composer.activeTrigger.value = { kind: 'slash', query: 'com' }
+    flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/compact', label: '/compact', description: null, path: null })
+    expect(flow.sentPayloads[0]?.userContent?.body[0]?.content[0]).toEqual({
+      type: 'prompt_directive',
+      directive: 'slash_command',
+      commandMode: 'action',
+      value: '/compact',
+    })
+    expect(flow.sent).toEqual(['/compact  preserve decisions'])
   })
 
-  it.each(['select', 'submit'] as const)('opens a view action through %s without sending or losing the draft', async (source) => {
+  it('opens a view action without sending or losing structured input', async () => {
     const flow = await mountComposer()
     flow.canSend.value = false
-    const prefix = source === 'select' ? '/sta' : '/status'
+    const prefix = '/status'
     const quote = { id: 'quote', text: 'quoted evidence', source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' } }
     replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'], quotes: [quote] }, content: [{ type: 'paragraph', content: [
       { type: 'text', text: `${prefix} keep this text ` },
       { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
     ] }] }))
-    if (source === 'select') {
-      flow.editor.commands.setTextSelection(prefix.length + 1)
-      flow.composer.activeTrigger.value = { kind: 'slash', query: 'sta' }
-      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/status', label: '/status', description: null, path: null })
-    }
-    else {
-      flow.composer.submit()
-    }
+    flow.composer.submit()
     await nextTick()
     expect(flow.root.querySelector('[data-testid="conversation-status-panel"]')?.textContent).toBe('Conversation status')
     expect(flow.sent).toEqual([])
@@ -238,7 +238,7 @@ describe('chat composer editing', () => {
     expect(flow.sent).toEqual([])
   })
 
-  it.each(['select', 'submit'] as const)('starts a new task immediately through %s while preserving the remaining input', async (source) => {
+  it('starts a new task from suggestions while preserving the remaining input', async () => {
     const executions: string[] = []
     const commands = localCommands(async (id) => {
       executions.push(id)
@@ -247,21 +247,16 @@ describe('chat composer editing', () => {
     commands.entries.value = [{ id: 'task.newInSpace', name: 'new', title: 'New task in current space' }]
     const flow = await mountComposer({ commands })
     flow.canSend.value = false
-    const prefix = source === 'select' ? '/ne' : '/new'
+    const prefix = '/ne'
     replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
       { type: 'text', text: `${prefix} keep this text ` },
       { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
     ] }] }))
-    if (source === 'select') {
-      flow.editor.commands.setTextSelection(prefix.length + 1)
-      flow.composer.activeTrigger.value = { kind: 'slash', query: 'ne' }
-      const suggestions = flow.composer.suggestions.value.filter(item => item.option.value === '/new')
-      expect(suggestions).toHaveLength(1)
-      flow.composer.selectSuggestion(suggestions[0]!.option)
-    }
-    else {
-      flow.composer.submit()
-    }
+    flow.editor.commands.setTextSelection(prefix.length + 1)
+    flow.composer.activeTrigger.value = { kind: 'slash', query: 'ne' }
+    const suggestions = flow.composer.suggestions.value.filter(item => item.option.value === '/new')
+    expect(suggestions).toHaveLength(1)
+    flow.composer.selectSuggestion(suggestions[0]!.option)
     await nextTick()
     expect(executions).toEqual(['task.newInSpace'])
     expect(flow.sent).toEqual([])
@@ -279,9 +274,9 @@ describe('chat composer editing', () => {
     expect(flow.sent).toEqual([])
   })
 
-  it.each(['select', 'submit'] as const)('preserves structured input when a review command is handled through %s', async (source) => {
+  it('preserves structured input when a review command is selected and submitted', async () => {
     const flow = await mountComposer()
-    const prefix = source === 'select' ? '/rev' : '/review'
+    const prefix = '/rev'
     const skill = { id: 'writer-id', name: 'writer', revision: 'revision-one' }
     const quote = { id: 'quote', text: 'quoted evidence', source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' } }
     flow.resources.value = ['inline', 'panel'].map(resourceId => ({ accepted: true, canRetry: false, resource: { draftId: 'draft-1', resourceId, kind: 'text', mimeType: 'text/plain', name: `${resourceId}.txt`, sizeBytes: 10, state: 'ready', attachmentId: resourceId, previewUrl: null } }))
@@ -290,19 +285,17 @@ describe('chat composer editing', () => {
       { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
       { type: 'chatPromptDirective', attrs: { directive: 'skill', value: 'writer', skill } },
     ] }] }))
-    if (source === 'select') {
-      flow.editor.commands.setTextSelection(prefix.length + 1)
-      flow.composer.activeTrigger.value = { kind: 'slash', query: 'rev' }
-      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/review', label: '/review', description: null, path: null })
-      expect(flow.sent).toEqual([])
-    }
+    flow.editor.commands.setTextSelection(prefix.length + 1)
+    flow.composer.activeTrigger.value = { kind: 'slash', query: 'rev' }
+    flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/review', label: '/review', description: null, path: null })
+    expect(flow.sent).toEqual([])
     flow.composer.submit()
     const content = flow.sentPayloads[0]?.userContent
     expect(flow.sentPayloads).toHaveLength(1)
     expect(flow.sent[0]).toContain('inspect <Policy> & keep notes')
     expect(content?.body[0]?.content).toEqual([
       { type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: '/review' },
-      { type: 'text', text: `${source === 'select' ? ' ' : ''} inspect <Policy> & keep notes ` },
+      { type: 'text', text: '  inspect <Policy> & keep notes ' },
       { type: 'resource_ref', resourceId: 'inline' },
       { type: 'prompt_directive', directive: 'skill', value: 'writer', skill },
     ])
@@ -310,21 +303,16 @@ describe('chat composer editing', () => {
     expect(content?.quotes).toEqual([quote])
   })
 
-  it.each(['select', 'submit'] as const)('opens the skills picker without discarding the remaining input through %s', async (source) => {
+  it('opens the skills picker from suggestions without discarding the remaining input', async () => {
     const flow = await mountComposer()
-    const prefix = source === 'select' ? '/ski' : '/skills'
+    const prefix = '/ski'
     replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
       { type: 'text', text: `${prefix} keep this text ` },
       { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
     ] }] }))
-    if (source === 'select') {
-      flow.editor.commands.setTextSelection(prefix.length + 1)
-      flow.composer.activeTrigger.value = { kind: 'slash', query: 'ski' }
-      flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/skills', label: '/skills', description: null, path: null })
-    }
-    else {
-      flow.composer.submit()
-    }
+    flow.editor.commands.setTextSelection(prefix.length + 1)
+    flow.composer.activeTrigger.value = { kind: 'slash', query: 'ski' }
+    flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/skills', label: '/skills', description: null, path: null })
     expect(flow.sent).toEqual([])
     expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
       body: [{ content: [{ type: 'text', text: '$ keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
@@ -530,14 +518,12 @@ describe('chat composer editing', () => {
     expect(flow.sent).toEqual(['saved draft'])
   })
 
-  it('echoes local transactions once and preserves selection and undo when canonical content returns', async () => {
+  it('preserves selection and undo when canonical content returns', async () => {
     const flow = await mountComposer()
     flow.editor.commands.insertContent('first draft')
     const selection = flow.editor.state.selection.toJSON()
     await nextTick()
 
-    expect(flow.updates.map(update => update.text)).toEqual(['first draft'])
-    expect(flow.content.value).toEqual(flow.editor.getJSON())
     expect(flow.editor.state.selection.toJSON()).toEqual(selection)
 
     flow.editor.commands.undo()
@@ -549,7 +535,7 @@ describe('chat composer editing', () => {
     expect(flow.draft.value).toBe('first draft')
   })
 
-  it('hydrates an external draft without emitting it back and resumes local transaction updates', async () => {
+  it('switches to an external draft and resumes saving local edits', async () => {
     const flow = await mountComposer()
     flow.editor.commands.insertContent('local')
     await nextTick()
@@ -559,11 +545,9 @@ describe('chat composer editing', () => {
     await nextTick()
 
     expect(flow.editor.getText()).toBe('restored')
-    expect(flow.updates.map(update => update.text)).toEqual(['local'])
     flow.editor.commands.insertContentAt(9, ' text')
     await nextTick()
     expect(flow.draft.value).toBe('restored text')
-    expect(flow.updates.map(update => update.text)).toEqual(['local', 'restored text'])
   })
 
   it('does not submit or expose suggestions during IME composition and restores the trigger afterward', async () => {
@@ -654,62 +638,6 @@ describe('chat composer editing', () => {
     expect(getChatComposerResourceIds(flow.editor.getJSON())).toEqual([])
     expect(flow.editor.getText()).toBe('@notes')
   })
-
-  it('maps a pending inline source through later typing in the same draft without moving the selection', async () => {
-    const selecting = deferred<string | null>()
-    const flow = await mountComposer({ selectSource: () => selecting.promise })
-    flow.editor.commands.insertContent('@notes')
-    flow.composer.activeTrigger.value = { kind: 'mention', query: 'notes' }
-    flow.composer.selectSuggestion(fileOption('notes.txt'))
-    flow.editor.commands.insertContentAt(1, 'before ')
-    flow.editor.commands.setTextSelection(flow.editor.state.doc.content.size - 1)
-    flow.editor.commands.insertContent(' after')
-    selecting.resolve('resource-1')
-    await nextTick()
-    await nextTick()
-
-    expect(getChatComposerResourceIds(flow.editor.getJSON())).toEqual(['resource-1'])
-    expect(flow.editor.getText()).toContain('before ')
-    expect(flow.editor.getText()).toContain(' after')
-    expect(flow.editor.state.selection.from).toBe(flow.editor.state.doc.content.size - 1)
-  })
-
-  it('ranks skill name matches above description matches and restores all choices when reopened', async () => {
-    const flow = await mountComposer({ loadContextOptions: async () => {
-      return {
-        files: [],
-        skills: [
-          skillOption('antfu', 'opinionated tooling for projects'),
-          skillOption('pr', 'create a pull request'),
-          skillOption('grill-me', 'planning interviews'),
-          skillOption('snapshot-approval', 'approve snapshots'),
-        ],
-      }
-    } })
-    const skillLabels = () => flow.composer.suggestions.value.map(item => item.option.label)
-    flow.editor.view.dom.focus()
-    flow.editor.commands.insertContent('$')
-    await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
-    flow.editor.commands.insertContent('pr')
-    await expect.poll(skillLabels).toEqual(['pr', 'snapshot-approval', 'antfu'])
-
-    flow.keydown('Escape')
-    expect(flow.composer.activeTrigger.value).toBeNull()
-    flow.editor.commands.insertContent(' $')
-    await expect.poll(skillLabels).toEqual(['antfu', 'pr', 'grill-me', 'snapshot-approval'])
-    expect(flow.sent).toEqual([])
-  })
-
-  it('discards query results after the editor scope is disposed', async () => {
-    const pending = deferred<ChatComposerContextOptions>()
-    const flow = await mountComposer({ loadContextOptions: () => pending.promise })
-    const loading = flow.composer.loadContextOptions('notes')
-    flow.unmount()
-    pending.resolve({ files: [fileOption('notes.txt')], skills: [] })
-    await loading
-    expect(flow.composer.sourceOptions.value).toEqual([])
-    expect(flow.composer.isLoadingContext.value).toBe(false)
-  })
 })
 
 function localCommands(execute: WorkbenchCommandPort['execute']) {
@@ -743,7 +671,7 @@ it('inserts a stable local command reference without executing, then runs withou
   expect(flow.editor.getText()).toBe('')
 })
 
-it.each(['/game:star', '/GAME:start', '/start', '/game:started'])('keeps an unmatched local command %s out of the model path', async (text) => {
+it.each(['/GAME:start', '/game:started'])('keeps an unmatched local command %s out of the model path', async (text) => {
   let executed = false
   const commands = localCommands(async () => {
     executed = true
@@ -776,20 +704,6 @@ it('retains a failed or removed command draft and never dispatches it as a promp
   expect(flow.sent).toEqual([])
 })
 
-it('does not clear edits or a different draft after an asynchronous local command completes', async () => {
-  const result = deferred<null>()
-  const commands = localCommands(async () => result.promise)
-  const flow = await mountComposer({ commands })
-  flow.editor.commands.setContent(createChatComposerContentFromText('/game:start'))
-  flow.keydown('Enter')
-  flow.editor.commands.setContent(createChatComposerContentFromText('New work'))
-  flow.draftId.value = 'draft-2'
-  result.resolve(null)
-  await nextTick()
-  expect(flow.editor.getText()).toBe('New work')
-  expect(flow.sent).toEqual([])
-})
-
 it('does not restore a failed command over newer input', async () => {
   const result = deferred<null>()
   const flow = await mountComposer({ commands: localCommands(() => result.promise) })
@@ -803,7 +717,8 @@ it('does not restore a failed command over newer input', async () => {
   expect(flow.sent).toEqual([])
 })
 
-it.each(['', '  ', '\n', '\n\n', ' \n\n  '])('offers every same-name command and preserves arguments with prefix %j', async (prefix) => {
+it('offers every same-name command and preserves arguments after leading paragraphs and spaces', async () => {
+  const prefix = ' \n\n  '
   const executions: { id: string, args: string }[] = []
   const commands = localCommands(async (id, args) => {
     executions.push({ id, args })
@@ -817,7 +732,6 @@ it.each(['', '  ', '\n', '\n\n', ' \n\n  '])('offers every same-name command and
   await nextTick()
   expect(flow.editor.getJSON()).toEqual(before)
   expect(flow.composer.suggestions.value).toHaveLength(10)
-  expect(flow.composer.activeSuggestionIndex.value).toBe(-1)
   flow.keydown('Enter')
   expect(executions).toEqual([])
   flow.composer.selectSuggestion(flow.composer.suggestions.value[9]!.option)

@@ -14,6 +14,7 @@ import {
   SettingsManager as PiSettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import { DEFAULT_MODEL_RETRY_LIMIT } from '../../../../shared/runtime/runtimePreferences'
+import { skillInvocationName } from '../../../../shared/skills/skillApi'
 import { SHELL_SANDBOX_EXTENSION } from '../../sandbox/shellCapability'
 import { CODEMODE_EXTENSION, CODEMODE_TOOL_NAME } from '../extensions/codemodeExtension'
 import { FILE_MUTATION_EXTENSION } from '../extensions/fileMutationExtension'
@@ -85,7 +86,7 @@ export async function createBuddyResourceLoader(
     noSkills: true,
     skillsOverride: () => ({
       skills: options.approvedSkills.map(skill => ({
-        name: skill.name,
+        name: skillInvocationName(skill),
         description: skill.description,
         filePath: skill.filePath,
         baseDir: dirname(skill.filePath),

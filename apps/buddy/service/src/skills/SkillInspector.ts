@@ -3,6 +3,7 @@ import type { LocalSkill, LocalSkillCatalog, SkillDetail, SkillDirectoryRequest,
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { SkillRepository } from '../storage/skillRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
+import type { PluginSkillSource } from './PluginSkillSource'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
@@ -18,6 +19,7 @@ interface InspectionOptions {
   paths: BuddyDataPaths
   repository: SkillRepository
   spaces: SpaceRepository
+  plugins: PluginSkillSource
   refresh: (spaceId: string | null) => Promise<LocalSkillCatalog>
 }
 
@@ -45,7 +47,7 @@ export class SkillInspector {
   async get(spaceId: string | null, id: string): Promise<SkillDetail> {
     const target = await this.#target(spaceId, id)
     const document = await readSkillDocument(target.filePath, target.root)
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return copyEventSnapshot({
       skill: { ...target.skill, name: document.name, description: document.description },
       content: document.content,
@@ -80,7 +82,7 @@ export class SkillInspector {
       }
       return { path, name: entry.name, kind, unavailable }
     }))
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return { entries: files, nextCursor: offset + page.length < entries.length ? page.at(-1)?.name ?? null : null }
   }
 
@@ -89,7 +91,7 @@ export class SkillInspector {
     const path = await this.#filePath(target, input.path)
     const query = new URLSearchParams({ spaceId: input.spaceId ?? '', id: input.id, path: input.path })
     const preview = await readFilePreview(target.root, path, { image: `lexora-file://skill-preview/?${query}` })
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return preview
   }
 
@@ -99,14 +101,14 @@ export class SkillInspector {
     if (!isImageMimeType(inferFileMimeType(path)))
       throw new SkillError('SKILL_INVALID')
     const preview = await resolveMediaPreview(target.root, path, { imageBytesLimit: FILE_IMAGE_PREVIEW_MAX_BYTES })
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return preview
   }
 
   async locateFile(input: SkillFileTarget) {
     const target = await this.#target(input.spaceId, input.id)
     const path = await this.#filePath(target, input.path)
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return { path }
   }
 
@@ -134,7 +136,10 @@ export class SkillInspector {
     let skill = entry
     let allowedRoot: string | undefined
     let installationPath: string | null = null
-    if (entry.managedBy === 'directory') {
+    if (entry.managedBy === 'plugin') {
+      allowedRoot = (await this.#options.plugins.assertCurrent(entry, false)).root
+    }
+    else if (entry.managedBy === 'directory') {
       const directory = spaceId ? this.#options.spaces.findById(spaceId)?.primaryDirectory : null
       if (!directory?.resourcesTrustedAt || directory.revokedAt)
         throw new SkillError('SKILL_NOT_FOUND')
@@ -166,7 +171,7 @@ export class SkillInspector {
     const root = await requireSkillPath(allowedRoot, dirname(skill.filePath))
     const filePath = await requireSkillPath(root, skill.filePath)
     const target = { skill, spaceId, scopeKey, filePath, root, installationPath }
-    this.#assertCurrent(target)
+    await this.#assertCurrent(target)
     return target
   }
 
@@ -177,10 +182,13 @@ export class SkillInspector {
     return JSON.stringify(space?.primaryDirectory ?? null)
   }
 
-  #assertCurrent(target: InspectionTarget) {
+  async #assertCurrent(target: InspectionTarget) {
     if (this.#scopeKey(target.spaceId) !== target.scopeKey)
       throw new SkillError('SKILL_CHANGED')
-    if (target.skill.managedBy !== 'directory') {
+    if (target.skill.managedBy === 'plugin') {
+      await this.#options.plugins.assertCurrent(target.skill, false)
+    }
+    else if (target.skill.managedBy !== 'directory') {
       const record = this.#options.repository.list().find(record => record.id === target.skill.id)
       if ((record?.path ?? null) !== target.installationPath)
         throw new SkillError('SKILL_CHANGED')

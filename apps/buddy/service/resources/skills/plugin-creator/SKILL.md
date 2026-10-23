@@ -1,6 +1,6 @@
 ---
 name: plugin-creator
-description: 创建、修改并验证可安装的 Lexora 桌面插件，包括多主题配色包、工作台装饰、导航与面板、文件阅读工具、控件样式、网络查询、通知和定时命令。也响应 $plugin-creator。普通任务执行、使用现有插件、其他产品的插件开发不属于此技能。
+description: 创建、修改并验证可安装的 Lexora 桌面插件，包括配套 Skills、多主题配色包、工作台装饰、导航与面板、文件阅读工具、控件样式、网络查询、通知和定时命令。也响应 $plugin-creator。普通任务执行、使用现有插件、其他产品的插件开发不属于此技能。
 ---
 
 # 创建 Lexora 插件
@@ -19,7 +19,7 @@ description: 创建、修改并验证可安装的 Lexora 桌面插件，包括�
 
 ## 按需求组合能力
 
-读取 [能力选择与组合](references/capabilities.md)，将需求对应到输入来源、呈现方式、运行入口与状态归属，再确定最小清单。一个插件可以组合多种正式扩展点，也可以只提供命令或一个文件视图；现有示例不是插件类别或必须复制的模板。
+读取 [能力选择与组合](references/capabilities.md)，将需求对应到输入来源、呈现方式、运行入口与状态归属，再确定最小清单。一个插件可以组合多种正式扩展点，也可以只提供 Skills、命令或一个文件视图；现有示例不是插件类别或必须复制的模板。
 
 查询宿主扩展能力时，通过 `lexora_tool_search` 查找 `lexora_plugin_capabilities`。先无参数查询当前宿主的简短目录，再按 `kind` 或 `target` 获取所需能力的契约；不要把完整目录提前塞进提示词。内容区的共同规则见 [内容插槽](references/slots.md)。没有匹配位置时说明能力缺口，不借助 CSS 选择器或相近区域模拟替换。
 
@@ -32,6 +32,8 @@ description: 创建、修改并验证可安装的 Lexora 桌面插件，包括�
 主题配色、欢迎文字／插画或主题编辑器需求，先读 [主题](references/themes.md)。纯主题包只需清单、JSON 与图片，无需创建脚本入口。
 
 文件或目录图标需求，读取 [文件图标主题](references/file-icon-themes.md)，通过独立的 `contributes.iconThemes` 提供图片与名称映射。
+
+需要随插件提供可搜索、按需读取的工作方法或资源时，读取 [插件 Skills](references/skills.md)。使用标准 `SKILL.md` 与 `contributes.skills`，纯 Skills 包不需要脚本入口；工具仍通过 Agent 能力单独声明。
 
 1. 读取 [协议与清单](references/protocol.md) 和 [完整 API 类型](references/api.d.ts)。这些文件与当前 Lexora 一起分发；不要根据其他产品的插件格式猜测接口。
    需要实时配置、表单依赖或运行状态判断时，读取 [条件函数](references/conditions.md)，声明数据输入与作用域，不将函数序列化进清单。需要 Agent 指令、后台任务动作、模型调用、任务标题或原生设置时，追加读取 [Agent 与设置](references/agent-settings.md)，并确认当前宿主能力目录支持。事件驱动动作与订阅按 [事件与触发列表](references/events.md) 选择精确入口和载荷，不把普通事件监听器当作任务能力调用。

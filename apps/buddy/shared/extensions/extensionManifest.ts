@@ -12,6 +12,7 @@ import { extensionAuthorSchema } from './extensionIdentity.ts'
 import { extensionPathSchema } from './extensionPath.ts'
 import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings.ts'
 import { extensionShellContributionSchema } from './extensionShell.ts'
+import { extensionSkillContributionSchema, extensionSkillRoots } from './extensionSkills.ts'
 
 export const EXTENSION_API_VERSION = 4
 export const EXTENSION_PROTOCOL = 'lexora-extension'
@@ -126,6 +127,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
   permissions: extensionPermissionsSchema.prefault({}),
   contributes: z.object({
+    skills: z.array(extensionSkillContributionSchema).max(32).default([]),
     iconThemes: z.array(fileIconThemeContributionSchema).max(32).default([]),
     themes: z.array(themeContributionSchema).max(64).default([]),
     conditions: z.array(extensionConditionDefinitionSchema).max(32).default([]),
@@ -154,12 +156,19 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
-  for (const contribution of [...manifest.contributes.iconThemes, ...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...manifest.contributes.fileHandlers, ...manifest.contributes.launchers, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
+  for (const contribution of [...manifest.contributes.skills, ...manifest.contributes.iconThemes, ...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...manifest.contributes.fileHandlers, ...manifest.contributes.launchers, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
   }
   const issue = (message: string) => context.addIssue({ code: 'custom', message })
+  const skillRoots = extensionSkillRoots(manifest.contributes.skills)
+  if (skillRoots.length && manifest.apiVersion < 4)
+    issue('Skill contributions require API 4')
+  if (skillRoots.some((root, index) => skillRoots.some((other, otherIndex) => index !== otherIndex && root.startsWith(other))))
+    issue('Skill directories must be distinct and must not contain one another')
+  if ([manifest.entry, ...manifest.contributes.views.map(view => view.entry)].some(entry => entry && skillRoots.some(root => entry.startsWith(root))))
+    issue('Extension entries must not be inside skill directories')
   if (manifest.apiVersion < 3 && (manifest.contributes.iconThemes.length || manifest.contributes.themes.length || manifest.permissions.themeManagement))
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))

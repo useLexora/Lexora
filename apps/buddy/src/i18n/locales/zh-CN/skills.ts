@@ -1,4 +1,9 @@
 export default {
+  'desktop.skills.pluginSource': '插件：{name}',
+  'desktop.skills.pluginIdentity': '插件标识',
+  'desktop.skills.invocation': '调用名称',
+  'desktop.skills.management': '管理方式',
+  'desktop.skills.pluginManaged': '随所属插件启用、停用、更新和卸载。',
   'desktop.skills.refresh': '刷新技能',
   'desktop.settings.category.skills': 'Skills',
   'desktop.skills.description': '为任务安装可复用的工作方法与资源。',

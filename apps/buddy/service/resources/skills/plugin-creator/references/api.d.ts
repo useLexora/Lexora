@@ -43,6 +43,8 @@ export interface FileOpenerContribution {
   requestDefault?: boolean
 }
 export interface LauncherContribution { id: string, title: string, view: string }
+/** API 4: contributes.skills; path points to a packaged Skill directory's SKILL.md. */
+export interface SkillContribution { id: string, path: string }
 export interface Resource { readonly id: string, readonly name: string }
 export interface ResourceTransferOptions { name?: string, signal?: AbortSignal }
 export interface ResourceApi {

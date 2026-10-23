@@ -25,8 +25,8 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
   <div class="flex flex-none items-center gap-1 text-muted">
     <DesktopContextAction v-if="showSource" :icon="source ? Eye20Regular : Code20Regular" :label="t(source ? 'desktop.skills.detail.rendered' : 'desktop.skills.detail.source')" :active="source" @click="source = !source" />
     <DesktopContextAction :icon="FolderOpen20Regular" :label="t('desktop.skills.reveal')" :disabled="busy" @click="$emit('reveal')" />
-    <DesktopContextAction v-if="spaceId && !skill.spaceId" :icon="Globe20Regular" :label="t('desktop.skills.manageGlobal')" @click="$emit('global')" />
-    <NTooltip v-if="skill.canUpdate" :delay="350">
+    <DesktopContextAction v-if="spaceId && !skill.spaceId && skill.managedBy !== 'plugin'" :icon="Globe20Regular" :label="t('desktop.skills.manageGlobal')" @click="$emit('global')" />
+    <NTooltip v-if="skill.canUpdate && skill.managedBy !== 'plugin'" :delay="350">
       <template #trigger>
         <span class="skill-detail__action inline-flex">
           <NButton class="buddy-icon-button" quaternary :disabled="mutationDisabled" :aria-label="t('desktop.skills.update')" @click="$emit('update')">
@@ -38,7 +38,7 @@ const mutationDisabled = computed(() => props.busy || props.skill.busy)
       </template>
       {{ t(skill.busy ? 'desktop.skills.busyHint' : 'desktop.skills.update') }}
     </NTooltip>
-    <NTooltip v-if="skill.canRemove" :delay="350">
+    <NTooltip v-if="skill.canRemove && skill.managedBy !== 'plugin'" :delay="350">
       <template #trigger>
         <span class="skill-detail__action inline-flex">
           <NPopconfirm :disabled="mutationDisabled" @positive-click="$emit('remove')">

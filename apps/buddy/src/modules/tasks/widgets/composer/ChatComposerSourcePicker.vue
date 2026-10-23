@@ -163,7 +163,7 @@ function highlight(index: number) {
         </span>
         <div
           v-for="{ option, index, description } in group.rows"
-          :key="option.commandId ?? `${option.value}:${option.path ?? ''}`"
+          :key="option.commandId ?? option.skill?.id ?? `${option.value}:${option.path ?? ''}`"
           class="chat-composer-source-picker__row flex items-center rounded-[0.35rem] cursor-pointer"
           :class="{
             'is-active': index === activeIndex,
@@ -208,7 +208,7 @@ function highlight(index: number) {
                   class="chat-composer-source-picker__scope flex-none inline-flex items-center py-[0.04rem] px-[0.28rem] rounded-micro leading-[1.3] border-1 border-solid border-border"
                   :class="`is-${option.skillScope}`"
                 >
-                  {{ skillScopeLabel(option.skillScope) }}
+                  {{ option.skillPlugin ? t('desktop.skills.pluginSource', { name: option.skillPlugin.extensionName }) : skillScopeLabel(option.skillScope) }}
                 </span>
               </span>
               <small v-if="description">{{ description }}</small>

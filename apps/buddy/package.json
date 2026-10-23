@@ -72,6 +72,7 @@
     "typebox": "^1.3.36",
     "undici": "8.12.3",
     "unpdf": "^1.8.1",
+    "yaml": "2.9.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {

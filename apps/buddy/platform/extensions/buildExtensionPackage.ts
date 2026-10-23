@@ -10,6 +10,7 @@ import { validateFileIconThemeFiles } from '../icons/fileIconThemeAssets'
 import { validateThemeFiles } from '../themes/themeAssets'
 import { unpackExtension, validateExtensionFiles } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
+import { validateExtensionSkillFiles } from './extensionSkillAssets'
 
 export type ExtensionArchiveBuildResult = Omit<Extract<ExtensionBuildResult, { ok: true }>, 'archive'> & { archive: Uint8Array } | Extract<ExtensionBuildResult, { ok: false }>
 
@@ -52,12 +53,14 @@ export async function buildExtensionArchive(archive: Uint8Array, compile: Extens
     }
     validateThemeFiles(files, manifest.contributes.themes)
     validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
+    validateExtensionSkillFiles(files, manifest.contributes.skills)
     extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
     const compiled = manifest.format === 'source' ? await compile(files, manifest, signal, report) : files
     signal.throwIfAborted()
     validateExtensionFiles(compiled)
     validateThemeFiles(compiled, manifest.contributes.themes)
     validateFileIconThemeFiles(compiled, manifest.contributes.iconThemes)
+    validateExtensionSkillFiles(compiled, manifest.contributes.skills)
     const bytes = zipSync(Object.fromEntries(compiled), { level: 6 })
     validateExtensionArchiveSize(bytes.byteLength)
     return { ok: true, id: manifest.id, name: manifest.name, author: manifest.author ?? '', version: manifest.version, archive: bytes, diagnostics }

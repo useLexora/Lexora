@@ -1,6 +1,7 @@
 import type { BuddyToolOption } from '@buddy-shared/buddies/buddyApi'
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
+import { skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
@@ -55,7 +56,7 @@ export function useBuddySettingsOptions() {
     const scopes = { global: labels.scopeGlobal, directory: labels.scopeDirectory, space: labels.scopeSpace }
     return skillCatalog.value.map(skill => ({
       value: skill.id,
-      label: `${skill.name} · ${scopes[skill.source]}${skill.status === 'available' ? '' : ` · ${labels.unavailableChoice}`}`,
+      label: `${skillInvocationName(skill)} · ${skill.plugin ? `${skill.plugin.extensionName} · ${skill.plugin.extensionId}` : scopes[skill.source]}${skill.status === 'available' ? '' : ` · ${labels.unavailableChoice}`}`,
       disabled: skill.status !== 'available',
     }))
   })

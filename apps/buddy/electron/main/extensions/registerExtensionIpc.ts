@@ -39,11 +39,12 @@ export function registerExtensionIpc(options: {
   taskActions: () => Promise<ExtensionTaskAction[]>
   invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
   shellsChanged?: () => void
+  skillsChanged?: () => void
   agentChanged?: (catalog: ExtensionAgentCatalog) => void
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { shells: { list: ExtensionService['shellContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
@@ -67,6 +68,7 @@ export function registerExtensionIpc(options: {
   }
   const service = new ExtensionService(store, {
     shellsChanged: options.shellsChanged,
+    skillsChanged: options.skillsChanged,
     themes: options.themes,
     createHost: (pkg, broker, failed) => {
       const host = new SandboxedExtensionHost(pkg, protocol, broker, failed)
@@ -341,6 +343,10 @@ export function registerExtensionIpc(options: {
       owner.webContents.send(EXTENSION_IPC.conditionsChanged, event)
   }))
   return {
+    skills: { list: async () => {
+      await prepared
+      return service.skillContributions()
+    } },
     shells: { list: async () => {
       await prepared
       return service.shellContributions()

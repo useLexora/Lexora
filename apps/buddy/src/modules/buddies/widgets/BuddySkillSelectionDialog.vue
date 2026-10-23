@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
+import { skillInvocationName } from '@buddy-shared/skills/skillApi'
 import {
   Flash20Filled,
   Flash20Regular,
@@ -51,7 +52,7 @@ const filteredSkills = computed(() => {
   if (!query)
     return props.skillCatalog
   return props.skillCatalog.filter(skill =>
-    skill.name.toLowerCase().includes(query) || (skill.description && skill.description.toLowerCase().includes(query)),
+    [skillInvocationName(skill), skill.description, skill.plugin?.extensionName, skill.plugin?.extensionId].some(value => value?.toLowerCase().includes(query)),
   )
 })
 
@@ -161,14 +162,17 @@ function scopeLabel(source: LocalSkill['source']) {
                 />
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2">
-                    <span class="truncate text-[13px] font-600 text-fg">{{ skill.name }}</span>
+                    <span class="truncate text-[13px] font-600 text-fg">{{ skillInvocationName(skill) }}</span>
                     <NTag size="tiny" :bordered="false" class="shrink-0">
-                      {{ scopeLabel(skill.source) }}
+                      {{ skill.plugin?.extensionName ?? scopeLabel(skill.source) }}
                     </NTag>
                     <span v-if="skill.status !== 'available'" class="text-[11px] text-muted">
                       {{ labels.unavailableChoice }}
                     </span>
                   </div>
+                  <p v-if="skill.plugin" class="m-0 mt-1 text-[11px] text-muted [overflow-wrap:anywhere]">
+                    {{ skill.plugin.extensionId }}
+                  </p>
                   <p v-if="skill.description" class="m-0 mt-1 text-[12px] text-muted line-clamp-2 leading-relaxed">
                     {{ skill.description }}
                   </p>

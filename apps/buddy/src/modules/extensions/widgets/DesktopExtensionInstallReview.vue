@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import type { FileOpeningChoice, FileOpeningReviewChoice } from '@buddy-shared/files/fileOpening'
+import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCommands'
 import { Alert20Regular, Clock20Regular, Document20Regular, Globe20Regular, Warning20Regular } from '@vicons/fluent'
 import { NButton, NCheckbox, NEllipsis, NModal, NTag } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
@@ -13,6 +14,10 @@ const props = defineProps<{ review: ExtensionReview, language: string, busy: boo
 const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean, choices: FileOpeningChoice[]] }>()
 const applyUpdate = shallowRef(true)
 const associations = computed(() => props.review.fileAssociations ?? [])
+const skills = computed(() => props.review.manifest.contributes.skills.map(skill => ({
+  id: skill.id,
+  invocation: `$${extensionCommandNamespace(props.review.manifest.id)}:${skill.path.split('/').at(-2)}`,
+})))
 const selectedAssociations = shallowRef(initialAssociations())
 function initialAssociations(): FileOpeningChoice[] {
   const selected = new Map<string, FileOpeningReviewChoice>()
@@ -97,6 +102,17 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
     <p v-if="review.manifest.description" class="mt-3 mb-0 text-muted text-[13px] leading-[1.7] [overflow-wrap:anywhere]">
       {{ review.manifest.description }}
     </p>
+    <section v-if="skills.length" class="mt-5" data-testid="extension-included-skills">
+      <h3>{{ english ? 'Included skills' : '附带技能' }}</h3>
+      <ul class="m-0 p-3 grid gap-1.5 list-none bg-subtle rounded-[8px]">
+        <li v-for="skill in skills" :key="skill.id" class="text-fg text-[12px] [overflow-wrap:anywhere]">
+          {{ skill.invocation }}
+        </li>
+      </ul>
+      <p class="mt-2 mb-0 text-[12px] text-muted leading-[1.6]">
+        {{ english ? 'Select these skills in a conversation after installation. They follow the plugin’s enabled state.' : '安装后可在对话中选择使用；随插件启停。' }}
+      </p>
+    </section>
     <section class="mt-5">
       <h3>{{ labels.permissions }}</h3>
       <ul v-if="permissions.length" class="m-0 p-3 grid gap-3 list-none bg-subtle rounded-[8px]">

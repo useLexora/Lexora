@@ -3,6 +3,7 @@ import { posix } from 'node:path'
 import ts from 'typescript'
 import { extensionPackageManifest, extensionPathSchema } from '../../shared/extensions/extensionManifest.ts'
 import { validateExtensionFiles } from '../../shared/extensions/extensionPackageBudget.ts'
+import { extensionSkillRoots } from '../../shared/extensions/extensionSkills.ts'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles.ts'
 import { compileExtensionStyles } from './compileExtensionStyles.ts'
 
@@ -15,10 +16,12 @@ export async function compileExtensionSource(files: Map<string, Uint8Array>, man
   const text = new TextDecoder('utf-8', { fatal: true })
   const encode = new TextEncoder()
   const names = new Set<string>()
+  const skillRoots = extensionSkillRoots(manifest.contributes.skills)
+  const isSkillResource = (name: string) => skillRoots.some(root => name.startsWith(root))
   for (const name of files.keys()) {
-    if (/\.d\.[cm]?ts$/.test(name))
+    if (!isSkillResource(name) && /\.d\.[cm]?ts$/.test(name))
       continue
-    const destination = outputPath(name)
+    const destination = isSkillResource(name) ? name : outputPath(name)
     if (names.has(destination.toLowerCase()))
       throw new Error('EXTENSION_SOURCE_OUTPUT_COLLISION')
     names.add(destination.toLowerCase())
@@ -32,10 +35,16 @@ export async function compileExtensionSource(files: Map<string, Uint8Array>, man
     const target = [path, `${path}.ts`, `${path}.js`, `${path}/index.ts`, `${path}/index.js`, path.replace(/\.js$/, '.ts')].find(next => files.has(next) && /\.(?:[cm]?js|[cm]?ts)$/.test(next) && !/\.d\.[cm]?ts$/.test(next))
     if (!target)
       throw new Error('EXTENSION_SOURCE_IMPORT_MISSING')
+    if (isSkillResource(target))
+      throw new Error('EXTENSION_SOURCE_IMPORT_DENIED')
     const relative = posix.relative(posix.dirname(outputPath(importer)), outputPath(target))
     return relative.startsWith('.') ? relative : `./${relative}`
   }
   for (const [name, bytes] of files) {
+    if (isSkillResource(name)) {
+      output.set(name, bytes)
+      continue
+    }
     if (/\.d\.[cm]?ts$/.test(name) || name === 'extension.json')
       continue
     if (!/\.(?:js|mjs|ts|mts)$/.test(name)) {

@@ -19,6 +19,7 @@ import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
 import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
 import { extensionAgentInvocationSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
+import { extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
 import { networkPermissionGrantSchema, networkPermissionsRpc } from '../../../shared/permissions/networkPermissionsRpc'
 import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
@@ -47,6 +48,7 @@ export class DesktopRuntimeHost {
   inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
   extensionAgent: ReturnType<typeof registerExtensionIpc>['agent'] | null = null
   extensionShells: ReturnType<typeof registerExtensionIpc>['shells'] | null = null
+  extensionSkills: ReturnType<typeof registerExtensionIpc>['skills'] | null = null
   extensionStorage: Pick<ReturnType<typeof registerExtensionIpc>, 'withStoppedStorage'> | null = null
   readonly contextPanel: ContextPanelHost
   readonly configStore: LexoraConfigStore
@@ -212,6 +214,7 @@ export class DesktopRuntimeHost {
         const disposers = [
           registerExtensionShellRpc(peer, () => this.extensionShells),
           peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
+          peer.onRequest(extensionSkillsRpc.list, () => this.extensionSkills?.list() ?? []),
           peer.onRequest(extensionAgentRpc.invoke, (input, signal) => {
             if (!this.extensionAgent)
               throw new Error('EXTENSION_AGENT_UNAVAILABLE')

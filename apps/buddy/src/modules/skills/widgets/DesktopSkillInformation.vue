@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SkillDetail } from '@buddy-shared/skills/skillApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { NDescriptions, NDescriptionsItem } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -10,6 +11,8 @@ const { t } = useBuddyI18n(() => props.language)
 const skill = computed(() => props.detail.skill)
 const metadata = computed(() => props.detail.metadata.filter(field => field.name !== 'name' && field.name !== 'description' && field.value.trim()))
 const source = computed(() => {
+  if (skill.value.plugin)
+    return t('desktop.skills.pluginSource', { name: skill.value.plugin.extensionName })
   const label = skill.value.source === 'global' && !props.spaceId ? t('skill.source.global') : t(`desktop.skills.group.${skill.value.source}`)
   return skill.value.managedBy === 'application' ? `${label} · ${t('desktop.skills.application')}` : label
 })
@@ -22,6 +25,15 @@ const source = computed(() => {
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('desktop.skills.source')">
       {{ source }}
+    </NDescriptionsItem>
+    <NDescriptionsItem v-if="skill.plugin" :label="t('desktop.skills.pluginIdentity')">
+      {{ skill.plugin.extensionId }}
+    </NDescriptionsItem>
+    <NDescriptionsItem v-if="skill.plugin" :label="t('desktop.skills.invocation')">
+      ${{ skillInvocationName(skill) }}
+    </NDescriptionsItem>
+    <NDescriptionsItem v-if="skill.plugin" :label="t('desktop.skills.management')">
+      {{ t('desktop.skills.pluginManaged') }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('desktop.skills.path')">
       {{ skill.filePath }}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
+import { skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { NAlert, NSpin, useMessage } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -45,7 +46,7 @@ watch(scope, (id) => {
     lastSpace.value = id
 }, { immediate: true })
 const filtered = computed(() => !!search.value.trim())
-const visibleSkills = computed(() => (catalog.value?.skills ?? []).filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(search.value.trim().toLowerCase())))
+const visibleSkills = computed(() => (catalog.value?.skills ?? []).filter(skill => `${skillInvocationName(skill)} ${skill.plugin?.extensionName ?? ''} ${skill.plugin?.extensionId ?? ''} ${skill.description}`.toLowerCase().includes(search.value.trim().toLowerCase())))
 const related = computed(() => (catalog.value?.skills ?? []).filter(skill => selectedSkill.value?.shadowedBy ? skill.id === selectedSkill.value.shadowedBy : skill.shadowedBy === selectedSkill.value?.id))
 const diagnostics = computed(() => catalog.value?.diagnostics.filter(item => item.code !== 'SKILL_NAME_COLLISION') ?? [])
 watch([scope, category], () => {
@@ -63,6 +64,8 @@ function changeCategory(value: 'global' | 'space') {
 }
 
 function openImport(skill: LocalSkill | null = null) {
+  if (skill?.managedBy === 'plugin')
+    return
   closePreview()
   updating.value = skill
   error.value = null

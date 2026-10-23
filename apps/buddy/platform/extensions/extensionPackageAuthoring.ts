@@ -10,6 +10,7 @@ import { validateThemeFiles } from '../themes/themeAssets.ts'
 import { compileExtensionSource } from './compileExtensionSource.ts'
 import { extensionIconUrl } from './extensionIcon.ts'
 import { readExtensionDirectory } from './extensionPackageFiles.ts'
+import { validateExtensionSkillFiles } from './extensionSkillAssets.ts'
 
 export async function readExtensionPackage(source: string) {
   const files = await readExtensionDirectory(source)
@@ -18,6 +19,7 @@ export async function readExtensionPackage(source: string) {
     assert(files.has(entry), `Missing entry: ${entry}`)
   validateThemeFiles(files, manifest.contributes.themes)
   validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
+  validateExtensionSkillFiles(files, manifest.contributes.skills)
   const iconUrl = extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
   return { manifest, files, iconUrl }
 }

@@ -1,4 +1,9 @@
 export default {
+  'desktop.skills.pluginSource': 'Plugin: {name}',
+  'desktop.skills.pluginIdentity': 'Plugin ID',
+  'desktop.skills.invocation': 'Invocation',
+  'desktop.skills.management': 'Management',
+  'desktop.skills.pluginManaged': 'Enabled, disabled, updated and removed with its plugin.',
   'desktop.skills.refresh': 'Refresh skills',
   'desktop.settings.category.skills': 'Skills',
   'desktop.skills.description': 'Install reusable instructions and resources for your tasks.',

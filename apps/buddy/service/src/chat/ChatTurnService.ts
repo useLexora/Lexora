@@ -5,6 +5,7 @@ import type {
 } from '../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
 import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import type { SkillReference } from '../../../shared/skills/skillApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type {
@@ -22,7 +23,7 @@ import type {
   InteractiveModelSelection,
   RuntimeModelProvider,
 } from '../providers/resolveInteractiveModelSelection'
-import type { SkillService } from '../skills/SkillService'
+import type { BuddyMaterializedSkill, SkillService } from '../skills/SkillService'
 import type { QueuedTurnRequestInput } from '../storage/chatQueueRepository'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
@@ -745,8 +746,7 @@ export class ChatTurnService {
   async #validateSkillItems(spaceId: string | null, items: readonly RunInputRecord['contextItems'][number][]) {
     const selections = items.filter(item => item.kind === 'skill').map(item => item.skill ?? item.value)
     const loaded = await this.#options.skills.materializeForSpace(spaceId, selections)
-    const references = new Map(loaded.map(skill => [skill.name, skill.reference]))
-    return items.map(item => item.kind === 'skill' ? { ...item, skill: references.get(item.value)! } : item)
+    return items.map(item => item.kind === 'skill' ? { ...item, skill: resolveMaterializedSkill(loaded, item.skill ?? item.value).reference } : item)
   }
 
   #resolveConversationSpace(conversation: ConversationRecord): SpaceRecord | null {
@@ -808,17 +808,13 @@ async function materializeComposerDirectives(
   const reviewsAsText = textCommand?.name === 'review' && !hasReviewDirective
   const selections = directives.flatMap(node => node.directive === 'skill' ? [node.skill ?? node.value] : [])
   const loaded = await skills.materializeForSpace(space?.id ?? null, selections)
-  const selected = new Map(loaded.map(skill => [skill.name, formatBuddySkillPrompt(skill)]))
   return {
     reviewRequested: hasReviewDirective || reviewsAsText,
     contextSuffix: reviewsAsText ? BUDDY_REVIEW_PROMPT : '',
     contextItems: loaded.map(skill => ({ kind: 'skill' as const, value: skill.name, skill: skill.reference })),
     resolveDirective(directive: BuddyPromptDirective): string {
       if (directive.directive === 'skill') {
-        const value = selected.get(directive.value)
-        if (value === undefined)
-          throw new SkillError('SKILL_NOT_FOUND')
-        return value
+        return formatBuddySkillPrompt(resolveMaterializedSkill(loaded, directive.skill ?? directive.value))
       }
       if (isRetiredBuddyPromptCommand(directive.value))
         return directive.value
@@ -908,13 +904,10 @@ async function materializeContextItems(
     space?.id ?? null,
     items.filter(item => item.kind === 'skill').map(item => item.skill ?? item.value),
   )
-  const skillsByName = new Map(selectedSkills.map(skill => [skill.name, skill]))
   const sections: string[] = []
   for (const item of items) {
     if (item.kind === 'skill') {
-      const skill = skillsByName.get(item.value)
-      if (!skill)
-        throw new BuddyServiceError('VALIDATION_FAILED')
+      const skill = resolveMaterializedSkill(selectedSkills, item.skill ?? item.value)
       sections.push(formatBuddySkillPrompt(skill))
       continue
     }
@@ -948,8 +941,17 @@ async function materializeContextItems(
   }
   return {
     prompt: sections.join(PROMPT_SECTION_SEPARATOR),
-    contextItems: items.map(item => item.kind === 'skill' ? { ...item, skill: skillsByName.get(item.value)!.reference } : item),
+    contextItems: items.map(item => item.kind === 'skill' ? { ...item, skill: resolveMaterializedSkill(selectedSkills, item.skill ?? item.value).reference } : item),
   }
+}
+
+function resolveMaterializedSkill(skills: readonly BuddyMaterializedSkill[], selection: string | SkillReference): BuddyMaterializedSkill {
+  const matches = skills.filter(skill => typeof selection === 'string' ? skill.name === selection : skill.reference.id === selection.id)
+  if (matches.length > 1)
+    throw new SkillError('SKILL_NAME_COLLISION')
+  if (!matches[0])
+    throw new SkillError('SKILL_NOT_FOUND')
+  return matches[0]
 }
 
 function normalizeThinkingLevel(value: string | null | undefined): BuddyThinkingLevel | undefined {

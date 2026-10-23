@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocalSkill } from '@buddy-shared/skills/skillApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
+import { isSkillAvailable, skillInvocationName } from '@buddy-shared/skills/skillApi'
 import { ErrorCircle16Regular } from '@vicons/fluent'
 import { NSwitch, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
@@ -29,9 +29,12 @@ const toggleDisabled = computed(() => props.busy || (props.inSpace && !props.ski
         <span class="skill-row__icon grid flex-none w-9 h-9 place-items-center border-1 border-solid border-accent-border rounded-[0.55rem] bg-accent-subtle text-accent-text"><DesktopIcon :component="SkillIcon" :size="22" /></span>
         <span class="grid min-w-0 gap-[0.3rem]">
           <span class="skill-row__heading flex flex-wrap items-center">
-            <span class="skill-row__name text-[0.86rem] font-650 [overflow-wrap:anywhere]">{{ skill.name }}</span>
+            <span class="skill-row__name text-[0.86rem] font-650 [overflow-wrap:anywhere]">{{ skillInvocationName(skill) }}</span>
             <NTag v-if="skill.managedBy === 'application'" class="skill-row__builtin" size="small" :bordered="false">
               {{ t('desktop.skills.application') }}
+            </NTag>
+            <NTag v-if="skill.plugin" class="skill-row__builtin" size="small" :bordered="false" :title="skill.plugin.extensionId">
+              {{ t('desktop.skills.pluginSource', { name: skill.plugin.extensionName }) }}
             </NTag>
           </span>
           <span class="skill-row__description overflow-hidden text-muted text-[0.78rem] leading-[1.6]">{{ skill.description }}</span>
@@ -42,7 +45,7 @@ const toggleDisabled = computed(() => props.busy || (props.inSpace && !props.ski
       <NTag v-if="skill.status === 'manual_only' || skill.status === 'invalid'" size="small" :bordered="false" :type="skill.status === 'invalid' ? 'warning' : 'default'">
         {{ t(`desktop.skills.status.${skill.status}`) }}
       </NTag>
-      <NSwitch v-if="skill.managedBy !== 'directory'" :round="false" size="small" :value="skill.enabled" :disabled="toggleDisabled" :aria-disabled="toggleDisabled" :aria-label="t('desktop.skills.toggle', { name: skill.name })" @update:value="$emit('enable', skill, $event)" />
+      <NSwitch v-if="skill.managedBy !== 'directory' && skill.managedBy !== 'plugin'" :round="false" size="small" :value="skill.enabled" :disabled="toggleDisabled" :aria-disabled="toggleDisabled" :aria-label="t('desktop.skills.toggle', { name: skill.name })" @update:value="$emit('enable', skill, $event)" />
       <NTooltip v-if="overriddenBy">
         <template #trigger>
           <button class="skill-row__override grid w-6 h-6 place-items-center p-0 border-0 rounded-[3px] bg-transparent text-muted cursor-pointer focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[2px] hover:text-accent-text" type="button" :aria-label="overrideHint" @click="$emit('locate', overriddenBy)">
