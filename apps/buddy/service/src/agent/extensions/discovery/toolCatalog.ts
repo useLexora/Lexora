@@ -56,7 +56,7 @@ export function createToolCatalog(tools: readonly ToolInfo[], baseline: readonly
   return new Map([...catalog].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
 }
 
-function parameterFields(value: unknown, depth = 0): string[] {
+export function parameterFields(value: unknown, depth = 0): string[] {
   if (!value || typeof value !== 'object' || depth > 12)
     return []
   if (Array.isArray(value))

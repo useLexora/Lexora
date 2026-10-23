@@ -1,8 +1,10 @@
 import type { Api, Message, Model } from '@earendil-works/pi-ai'
 import type { ToolInfo } from '@earendil-works/pi-coding-agent'
 import type { BuddyToolDisclosurePolicy } from '../toolDiscoveryContract'
+import process from 'node:process'
 import { Type } from 'typebox'
 import { describe, expect, it } from 'vitest'
+import { getPiShellToolName } from '../../piBuiltinTools'
 import { SessionToolScope } from '../SessionToolScope'
 import { ToolDisclosure } from '../ToolDisclosure'
 import { TOOL_SEARCH_NAME } from '../toolDiscoveryContract'
@@ -20,15 +22,36 @@ function create() {
 }
 
 describe('toolDisclosure', () => {
+  it('refreshes descriptions and parameter search fields without changing discovery, identities or role scope', () => {
+    const name = 'lexora_browser_open'
+    const definition = { ...tools[0]!, name, description: 'Sandbox execution', parameters: Type.Object({ sandboxonlyfield: Type.String() }) }
+    const disclosure = new ToolDisclosure([definition], [], [{ source: { kind: 'builtin', id: 'browser', title: 'Browser' }, exposure: 'on_demand', keywords: '', tools: [{ name }] }])
+    expect(disclosure.search({ query: 'sandboxonlyfield' }, { model }).tools).toMatchObject([{ name, description: 'Sandbox execution' }])
+    const discovered = disclosure.persistedState
+    const snapshot = disclosure.snapshot
+    disclosure.refreshDefinitions([
+      { ...definition, description: 'Host execution', parameters: Type.Object({ hostonlyfield: Type.String() }) },
+      { ...definition, name: 'unregistered', exposure: 'direct' },
+    ])
+    expect(disclosure.persistedState).toEqual(discovered)
+    expect(disclosure.snapshot).toEqual(snapshot)
+    expect(disclosure.active({ model })).toEqual([name])
+    expect(disclosure.search({ toolNames: [name] }, { model }).tools).toMatchObject([{ name, description: 'Host execution', alreadyDisclosed: true }])
+    expect(disclosure.search({ query: 'sandboxonlyfield' }, { model }).tools).toEqual([])
+    expect(disclosure.search({ query: 'hostonlyfield' }, { model }).tools).toMatchObject([{ name }])
+    expect(disclosure.search({ toolNames: ['unregistered'] }, { model })).toMatchObject({ tools: [], notFound: ['unregistered'] })
+  })
+
   it('exposes only the unified command tool while retaining roles pinned to legacy shell identities', () => {
-    const shellTools = ['bash', 'lexora_shell'].map(name => ({ ...tools[0]!, name }))
+    const legacy = getPiShellToolName(process.platform)
+    const shellTools = [legacy, 'lexora_shell'].map(name => ({ ...tools[0]!, name }))
     const policies: BuddyToolDisclosurePolicy[] = [{ source: { kind: 'builtin', id: 'shell', title: 'Shell' }, exposure: 'direct', keywords: '', tools: [{ name: 'lexora_shell' }] }]
-    const all = new ToolDisclosure(shellTools, ['bash'], policies)
+    const all = new ToolDisclosure(shellTools, [legacy], policies)
     expect(all.active({ model })).toEqual(['lexora_shell'])
-    expect(all.search({ toolNames: ['bash'] }, { model }).notFound).toEqual(['bash'])
-    const role = new SessionToolScope(policies, { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', 'bash'])] })
-    expect(new ToolDisclosure(shellTools, ['bash'], policies, undefined, role).active({ model })).toEqual(['bash'])
-    expect(new ToolDisclosure([shellTools[0]!], ['bash'], []).active({ model })).toEqual(['bash'])
+    expect(all.search({ toolNames: [legacy] }, { model }).notFound).toEqual([legacy])
+    const role = new SessionToolScope(policies, { mode: 'selected', ids: [JSON.stringify(['builtin', 'core', legacy])] })
+    expect(new ToolDisclosure(shellTools, [legacy], policies, undefined, role).active({ model })).toEqual([legacy])
+    expect(new ToolDisclosure([shellTools[0]!], [legacy], []).active({ model })).toEqual([legacy])
   })
 
   it('resolves historical MCP names without granting hidden or script-only tools direct exposure', () => {

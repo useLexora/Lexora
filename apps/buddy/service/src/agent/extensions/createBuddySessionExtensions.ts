@@ -200,7 +200,7 @@ export async function createBuddySessionExtensions(
       signal: lifetime.signal,
     }))
     const shells = await services.shells?.snapshot(lifetime.signal)
-    capabilities.push(createShellCapability({
+    const shellCapability = createShellCapability({
       shells,
       cwd: options.canonicalRoot,
       execution: resolveShellExecution(getExecutionProfile()),
@@ -214,7 +214,8 @@ export async function createBuddySessionExtensions(
       mutations: services.mutations,
       receiptDirectory: services.receiptDirectory,
       assertExecutionAllowed: ({ run }) => services.delegation?.assertShellExecutionAllowed(run.runId),
-    }))
+    })
+    capabilities.push(shellCapability)
     if (services.delegation) {
       capabilities.push(createDelegationCapability({
         service: services.delegation,
@@ -291,6 +292,7 @@ export async function createBuddySessionExtensions(
           sandboxDirectories.clear(runContext.current)
         }
         authorization.updatePermissionSettings(settings)
+        shellCapability.refreshExecution()
       },
       setCodemodeEnabled: enabled => codemodeEnabled = enabled,
       assertCodemodeReady: codemode.assertReady,

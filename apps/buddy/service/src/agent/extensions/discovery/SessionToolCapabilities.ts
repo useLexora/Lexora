@@ -64,6 +64,11 @@ export class SessionToolCapabilities {
     this.#publish('catalog-accepted', 'initial')
   }
 
+  refreshDefinitions(tools: readonly ToolInfo[]): void {
+    this.#assertCurrent()
+    this.#disclosure?.refreshDefinitions(tools)
+  }
+
   search(input: ToolSearchInput, context: BuddyToolExposureContext) {
     this.#assertCurrent()
     if (!this.#disclosure)

@@ -7,13 +7,15 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { createAssistantMessageEventStream, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MutationCoordinator } from '../../../../changes/MutationCoordinator'
+import { ShellSelection } from '../../../../sandbox/ShellSelection'
 import { createIsolatedBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
 import { createBuddySessionExtensions } from '../../createBuddySessionExtensions'
+import { getPiShellToolName } from '../../piBuiltinTools'
 
 const allowedMcp = 'mcp__scope__read'
 const deniedMcp = 'mcp__scope__mutate'
@@ -28,6 +30,47 @@ afterEach(async () => {
 })
 
 describe('role tool scope in real Pi sessions', () => {
+  it.each([false, true])('updates shell schemas and guidelines between requests and after recovery, codemode=%s', async (codemode) => {
+    const f = await fixture({ executionProfile: 'workspace_write', codemode, shells: true })
+    const search = { name: 'lexora_tool_search', arguments: { toolNames: ['lexora_host_shell', 'lexora_shell'] } }
+    const call = codemode ? scriptCall(search.name, search.arguments) : search
+    await f.turn(call, () => f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' }))
+    expect(f.requests[0]!.prompt).toContain('Use readOnly=true only')
+    expect(f.requests.at(-1)!.prompt).not.toContain('Use readOnly=true only')
+    expect(f.requests.at(-1)!.prompt).toContain('omit readOnly')
+    expect(f.requests.at(-1)!.prompt).toContain('The user explicitly enabled full access')
+    await f.turn(call)
+    expect(f.lastResult()).toContain('Current mode: full access')
+    expect(f.lastResult()).not.toContain('Current mode: workspace-write')
+    if (!codemode) {
+      const initial = JSON.parse(f.requests[0]!.tools).find((tool: { name: string }) => tool.name === 'lexora_shell')
+      const current = JSON.parse(f.requests.at(-1)!.tools).find((tool: { name: string }) => tool.name === 'lexora_shell')
+      expect(initial.parameters.properties).toHaveProperty('readOnly')
+      expect(current.parameters.properties).not.toHaveProperty('readOnly')
+    }
+    else {
+      await f.turn({ name: 'codemode', arguments: { code: 'text(await describeTool("lexora_shell")); text(await describeTool("lexora_host_shell"));' } })
+      expect(f.lastResult()).not.toMatch(/readOnly\??:/)
+      expect(f.lastResult()).toContain('Current mode: full access')
+    }
+    await f.shutdown()
+    const resumed = await fixture({ root: f.root, piSessionFile: f.sessionFile, executionProfile: 'full_access', codemode, shells: true })
+    await resumed.turn(call, () => resumed.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' }))
+    expect(resumed.requests[0]!.prompt).toContain('omit readOnly')
+    expect(resumed.requests.at(-1)!.prompt).toContain('Use readOnly=true only')
+    await resumed.turn(call)
+    expect(resumed.lastResult()).toContain('Current mode: workspace-write')
+    expect(resumed.lastResult()).not.toContain('Current mode: full access')
+    if (codemode) {
+      await resumed.turn({ name: 'codemode', arguments: { code: 'text(await describeTool("lexora_shell"));' } })
+      expect(resumed.lastResult()).toMatch(/readOnly\??:/)
+    }
+    else {
+      const current = JSON.parse(resumed.requests.at(-1)!.tools).find((tool: { name: string }) => tool.name === 'lexora_shell')
+      expect(current.parameters.properties).toHaveProperty('readOnly')
+    }
+  })
+
   it.skipIf(process.platform !== 'linux')('keeps discovered host commands authorized across full-access turns and session recovery', async () => {
     const f = await fixture({ executionProfile: 'workspace_write' })
     const command = { command: 'printf host-command-output' }
@@ -111,7 +154,7 @@ describe('role tool scope in real Pi sessions', () => {
     const f = await fixture({ fileAccessLimit: 'read_only', executionProfile: 'full_access' })
     f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
     f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
-    await f.turn({ name: 'codemode', arguments: { code: `text(await tools.read({ path: "document.txt" })); text(ALL_TOOLS); text({ shell: "bash" in tools, host: "lexora_host_shell" in tools, external: ${JSON.stringify(allowedMcp)} in tools, plugin: ${JSON.stringify(pluginTool)} in tools });` } })
+    await f.turn({ name: 'codemode', arguments: { code: `text(await tools.read({ path: "document.txt" })); text(ALL_TOOLS); text({ shell: ${JSON.stringify(getPiShellToolName(process.platform))} in tools, host: "lexora_host_shell" in tools, external: ${JSON.stringify(allowedMcp)} in tools, plugin: ${JSON.stringify(pluginTool)} in tools });` } })
     expect(f.lastResult()).toContain('original document')
     expect(f.lastResult()).not.toContain(marker)
     expect(f.lastResult()).not.toContain(allowedMcp)
@@ -135,7 +178,7 @@ describe('role tool scope in real Pi sessions', () => {
   })
 })
 
-async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string } = {}) {
+async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string, codemode?: boolean, shells?: boolean } = {}) {
   const root = options.root ?? await realpath(await mkdtemp(join(tmpdir(), 'buddy-tool-scope-')))
   if (!options.root)
     cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -147,6 +190,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   const model = runtime.getModels().find(model => model.provider === 'anthropic')!
   await runtime.setRuntimeApiKey(model.provider, 'offline-test-only')
   const approved: string[] = []
+  let afterToolResult: (() => void) | undefined
   const custom: BuddyCapability = {
     classify: event => event.toolName === editTool
       ? { access: 'write', paths: [{ path: document, mode: 'existing' }] }
@@ -159,6 +203,11 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
       { source: { kind: 'plugin', id: 'scope-plugin', title: 'Scope plugin' }, exposure: 'on_demand', keywords: marker, tools: [{ name: pluginTool }] },
     ],
     extension: { name: 'lexora-scope-fixture', factory(pi) {
+      pi.on('tool_result', () => {
+        const callback = afterToolResult
+        afterToolResult = undefined
+        callback?.()
+      })
       const remote = [allowedMcp, deniedMcp, pluginTool].map(name => defineTool({
         name,
         label: name,
@@ -191,7 +240,9 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
       }))
     } },
   }
+  const descriptors = [{ extensionId: 'fixture.shells', revision: '1', configurationRevision: '1', preferred: [], candidates: [] }]
   const services: BuddySessionExtensionServices = {
+    shells: options.shells ? { snapshot: async () => new ShellSelection(descriptors, async () => descriptors) } : undefined,
     approvalService: { request: async (input) => {
       approved.push(input.toolName)
       return { approvalId: `approval-${approved.length}`, decision: 'approved_once' }
@@ -205,7 +256,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   }
   const extensions = await createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'scope-conversation', approvalPolicy: 'policy', executionProfile, grants: [{ canonicalRoot: root, root, grantId: 'scope-workspace', kind: 'workspace' }], services, sessionMode: 'interactive', signal: new AbortController().signal, spaceId: null, toolScope: options.tools, fileAccessLimit: options.fileAccessLimit })
   cleanups.push(() => extensions.dispose())
-  extensions.setCodemodeEnabled(true)
+  extensions.setCodemodeEnabled(options.codemode ?? true)
   const created = await createIsolatedBuddySession({
     canonicalRoot: root,
     cwd: root,
@@ -224,12 +275,12 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   })
   const shutdown = () => created.shutdown('quit')
   cleanups.push(shutdown)
-  const requests: { names: string[], tools: string }[] = []
+  const requests: { names: string[], tools: string, prompt: string }[] = []
   let nextCall: Pick<ToolCall, 'name' | 'arguments'> | undefined
   let turn = 0
   vi.spyOn(runtime, 'streamSimple').mockImplementation((target, context) => {
     const tools = getCurrentTools(context.messages)
-    requests.push({ names: tools.map(tool => tool.name), tools: JSON.stringify(tools) })
+    requests.push({ names: tools.map(tool => tool.name), tools: JSON.stringify(tools), prompt: getCurrentSystemPrompt(context.messages) })
     const call = nextCall
     nextCall = undefined
     return response(target, call, turn)
@@ -243,7 +294,8 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
     shutdown,
     sessionFile: created.piSessionFile,
     lastResult: () => created.session.messages.filter(message => message.role === 'toolResult').at(-1)?.content.filter(block => block.type === 'text').map(block => block.text).join('\n') ?? '',
-    async turn(call: Pick<ToolCall, 'name' | 'arguments'>) {
+    async turn(call: Pick<ToolCall, 'name' | 'arguments'>, onToolResult?: () => void) {
+      afterToolResult = onToolResult
       nextCall = call
       extensions.runContext.current = { runId: `scope-run-${++turn}`, signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
       await created.session.prompt('Run the operation')

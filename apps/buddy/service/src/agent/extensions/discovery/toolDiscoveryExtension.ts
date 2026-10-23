@@ -38,6 +38,7 @@ export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclo
               || (input.offset !== undefined && (input.query !== undefined || input.toolNames !== undefined))) {
               throw new Error('Supply query OR toolNames to load tools; omit both to browse. offset is only for browsing; limit cannot be used with toolNames')
             }
+            state.refreshDefinitions(pi.getAllTools())
             const result = state.search(input, { model: context.model })
             persist(context)
             sync(context, 'discovery')
@@ -49,6 +50,7 @@ export function createToolDiscoveryCapability(policies: readonly BuddyToolDisclo
             pi.appendEntry(TOOL_DISCOVERY_STATE, state.persistedState)
         }
         function sync(context: ExtensionContext, reason: ActiveToolReason) {
+          state.refreshDefinitions(pi.getAllTools())
           const resolution = state.resolve({ model: context.model })
           const next = describeToolSearch(resolution.catalog)
           if (description !== next) {

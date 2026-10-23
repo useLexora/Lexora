@@ -9,7 +9,7 @@ import MiniSearch from 'minisearch'
 import { Emitter } from '../../../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../../../shared/events/eventSnapshot'
 import { isPiShellToolName } from '../piBuiltinTools'
-import { createToolCatalog } from './toolCatalog'
+import { createToolCatalog, parameterFields } from './toolCatalog'
 import { isToolSearchResult, TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
@@ -40,6 +40,10 @@ function sourceId(tool: BuddyCatalogTool): string {
 
 function groupSource(tool: BuddyCatalogTool): string {
   return tool.source.kind === 'builtin' ? 'builtin' : sourceId(tool)
+}
+
+function searchDocument(tool: BuddyCatalogTool) {
+  return { ...tool, namespace: tool.namespace ? `${tool.namespace.name} ${tool.namespace.description ?? ''}` : '', fields: tool.fields.join(' '), source: `${tool.source.id} ${tool.source.title}` }
 }
 
 function candidate(tool: BuddyCatalogTool): BuddyToolSearchCandidate {
@@ -76,7 +80,7 @@ export class ToolDisclosure {
   readonly onDidChange = this.#changes.event
   #revision = 0
   #disposed = false
-  readonly #tools: ReadonlyMap<string, BuddyCatalogTool>
+  readonly #tools: Map<string, BuddyCatalogTool>
   readonly #index: MiniSearch
   readonly #resolveExposure: BuddyToolExposureResolver | undefined
   #discovered = new Set<string>()
@@ -92,7 +96,21 @@ export class ToolDisclosure {
       tokenize: text => [...segmenter.segment(text.replaceAll('_', ' '))].filter(part => part.isWordLike).map(part => part.segment),
       searchOptions: { boost: { name: 5, title: 5, keywords: 3, source: 2 }, prefix: true },
     })
-    this.#index.addAll([...this.#tools.values()].map(tool => ({ ...tool, namespace: tool.namespace ? `${tool.namespace.name} ${tool.namespace.description ?? ''}` : '', fields: tool.fields.join(' '), source: `${tool.source.id} ${tool.source.title}` })))
+    this.#index.addAll([...this.#tools.values()].map(searchDocument))
+  }
+
+  refreshDefinitions(definitions: readonly ToolInfo[]): void {
+    for (const definition of definitions) {
+      const previous = this.#tools.get(definition.name)
+      if (!previous)
+        continue
+      const fields = parameterFields(definition.parameters)
+      if (previous.description === definition.description && JSON.stringify(previous.fields) === JSON.stringify(fields) && JSON.stringify(previous.namespace) === JSON.stringify(definition.namespace))
+        continue
+      const updated = copyEventSnapshot({ ...previous, description: definition.description, fields, namespace: definition.namespace })
+      this.#tools.set(definition.name, updated)
+      this.#index.replace(searchDocument(updated))
+    }
   }
 
   get snapshot() { return Object.freeze({ revision: this.#revision, discovered: Object.freeze([...this.#discovered]) }) }
