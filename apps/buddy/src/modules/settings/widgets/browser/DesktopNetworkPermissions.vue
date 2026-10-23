@@ -1,18 +1,26 @@
 <script setup lang="ts">
 import type { NetworkOperation, NetworkPermissionDecision, NetworkPermissionRule, NetworkPermissions } from '@buddy-shared/permissions/networkPermissions'
-import type { GlobalThemeOverrides } from 'naive-ui'
+import type { DataTableColumns, GlobalThemeOverrides } from 'naive-ui'
 import type { DeepReadonly } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NETWORK_OPERATIONS, networkPermissionsSchema } from '@buddy-shared/permissions/networkPermissions'
-import { Delete20Regular, Info20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
-import { NButton, NDropdown, NPopover, NTable, NTooltip } from 'naive-ui'
-import { computed, shallowRef, useId } from 'vue'
+import { Info20Regular } from '@vicons/fluent'
+import { NButton, NDataTable, NEllipsis, NPopover } from 'naive-ui'
+import { computed, h, shallowRef, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopNetworkPermissionPreview from './DesktopNetworkPermissionPreview.vue'
 import DesktopNetworkPermissionSelect from './DesktopNetworkPermissionSelect.vue'
+import DesktopNetworkRuleActions from './DesktopNetworkRuleActions.vue'
 import DesktopNetworkRuleDialog from './DesktopNetworkRuleDialog.vue'
+
+interface NetworkPermissionRow {
+  key: string
+  rule: NetworkPermissionRule | null
+  label: string
+  decisions: NetworkPermissions['defaults']
+}
 
 const props = defineProps<{
   value: DeepReadonly<NetworkPermissions>
@@ -22,11 +30,12 @@ const props = defineProps<{
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const tableId = useId()
-const tableTheme: GlobalThemeOverrides['Table'] = {
+const tableTheme: GlobalThemeOverrides['DataTable'] = {
   borderColor: 'var(--buddy-border-subtle)',
   borderRadius: '0',
   thColor: 'transparent',
   tdColor: 'transparent',
+  tdColorHover: 'transparent',
   thTextColor: 'var(--buddy-text-secondary)',
   thFontWeight: '500',
   fontSizeSmall: '0.8rem',
@@ -39,10 +48,62 @@ const saving = shallowRef(false)
 const busy = computed(() => props.pending || saving.value)
 const editor = shallowRef<{ rule?: NetworkPermissionRule } | null>(null)
 const showPreview = shallowRef(false)
-const rows = computed(() => [
+const rows = computed<NetworkPermissionRow[]>(() => [
   { key: 'defaults', rule: null, label: t('desktop.browser.defaultPermissions'), decisions: settings.value.defaults },
   ...settings.value.rules.map(rule => ({ key: `rule-${rule.id}`, rule, label: rule.pattern, decisions: rule })),
 ])
+const columnWidths = computed(() => ({ pattern: 184, permission: props.language === 'en-US' ? 208 : 144, actions: 88 }))
+const scrollWidth = computed(() => columnWidths.value.pattern + columnWidths.value.permission * NETWORK_OPERATIONS.length + columnWidths.value.actions)
+const columns = computed<DataTableColumns<NetworkPermissionRow>>(() => [
+  {
+    key: 'label',
+    title: t('desktop.browser.domainPattern'),
+    width: columnWidths.value.pattern,
+    minWidth: columnWidths.value.pattern,
+    cellProps: (_row, index) => ({ id: `${tableId}-row-${index}` }),
+    render: row => [
+      h(NEllipsis, { class: 'max-w-full align-middle' }, () => row.label),
+      row.rule && row.rule.match !== 'exact'
+        ? h('span', { class: 'mt-1 block text-[0.7rem] text-muted' }, t(`desktop.browser.match.${row.rule.match}`))
+        : null,
+    ],
+  },
+  ...NETWORK_OPERATIONS.map(operation => ({
+    key: operation,
+    title: () => h('span', { id: `${tableId}-${operation}` }, t(`desktop.browser.operation.${operation}`)),
+    width: columnWidths.value.permission,
+    minWidth: columnWidths.value.permission,
+    render: (row: NetworkPermissionRow, index: number) => h(DesktopNetworkPermissionSelect, {
+      language: props.language,
+      labelledBy: `${tableId}-row-${index} ${tableId}-${operation}`,
+      value: row.decisions[operation],
+      disabled: busy.value,
+      onChange: value => updatePermission(row.rule, operation, value),
+    }),
+  })),
+  {
+    key: 'actions',
+    title: () => h('span', { class: 'sr-only' }, t('desktop.browser.ruleActions')),
+    width: columnWidths.value.actions,
+    minWidth: columnWidths.value.actions,
+    render: (row) => {
+      const rule = row.rule
+      return rule
+        ? h(DesktopNetworkRuleActions, {
+            language: props.language,
+            disabled: busy.value,
+            options: ruleActions(rule.id),
+            onAction: action => actOnRule(rule.id, action),
+            onRemove: () => remove(rule.id),
+          })
+        : null
+    },
+  },
+])
+
+function rowKey(row: NetworkPermissionRow) {
+  return row.key
+}
 
 async function save(value: NetworkPermissions): Promise<boolean> {
   if (busy.value)
@@ -109,7 +170,7 @@ function remove(id: string) {
 </script>
 
 <template>
-  <section class="grid min-w-0 gap-3" data-testid="network-permissions">
+  <section class="grid min-w-0 gap-3" :aria-labelledby="`${tableId}-heading`" data-testid="network-permissions">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-1">
         <h2 :id="`${tableId}-heading`" class="m-0 text-[0.92rem]">
@@ -147,56 +208,17 @@ function remove(id: string) {
       {{ t('desktop.browser.permissionScope') }}
     </p>
     <DesktopSettingsGroup>
-      <div class="min-w-0 overflow-x-auto">
-        <NTable size="small" :bordered="false" :bottom-bordered="false" :theme-overrides="tableTheme" :aria-labelledby="`${tableId}-heading`" class="min-w-[50rem] table-fixed">
-          <colgroup>
-            <col>
-            <col v-for="operation in NETWORK_OPERATIONS" :key="operation" class="w-[11rem]">
-            <col class="w-[5.5rem]">
-          </colgroup>
-          <thead>
-            <tr>
-              <th scope="col">
-                {{ t('desktop.browser.domainPattern') }}
-              </th>
-              <th v-for="operation in NETWORK_OPERATIONS" :id="`${tableId}-${operation}`" :key="operation" scope="col">
-                {{ t(`desktop.browser.operation.${operation}`) }}
-              </th>
-              <th scope="col">
-                <span class="sr-only">{{ t('desktop.browser.ruleActions') }}</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, index) in rows" :key="row.key">
-              <td :id="`${tableId}-row-${index}`">
-                <span class="break-all">{{ row.label }}</span>
-                <span v-if="row.rule && row.rule.match !== 'exact'" class="mt-1 block text-[0.7rem] text-muted">{{ t(`desktop.browser.match.${row.rule.match}`) }}</span>
-              </td>
-              <td v-for="operation in NETWORK_OPERATIONS" :key="operation">
-                <DesktopNetworkPermissionSelect :language="language" :labelled-by="`${tableId}-row-${index} ${tableId}-${operation}`" :value="row.decisions[operation]" :disabled="busy" @change="updatePermission(row.rule, operation, $event)" />
-              </td>
-              <td>
-                <div v-if="row.rule" class="flex justify-end gap-1">
-                  <NDropdown trigger="click" :options="ruleActions(row.rule.id)" @select="actOnRule(row.rule.id, $event)">
-                    <NButton quaternary size="small" class="buddy-icon-button" :disabled="busy" :aria-label="t('desktop.browser.ruleActions')">
-                      <DesktopIcon :component="MoreHorizontal20Regular" :size="18" />
-                    </NButton>
-                  </NDropdown>
-                  <NTooltip>
-                    <template #trigger>
-                      <NButton quaternary size="small" class="buddy-icon-button" :disabled="busy" :aria-label="t('desktop.browser.deleteRule')" @click="remove(row.rule.id)">
-                        <DesktopIcon :component="Delete20Regular" :size="18" />
-                      </NButton>
-                    </template>
-                    {{ t('desktop.browser.deleteRule') }}
-                  </NTooltip>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </NTable>
-      </div>
+      <NDataTable
+        size="small"
+        table-layout="fixed"
+        :columns="columns"
+        :data="rows"
+        :row-key="rowKey"
+        :scroll-x="scrollWidth"
+        :bordered="false"
+        :bottom-bordered="false"
+        :theme-overrides="tableTheme"
+      />
     </DesktopSettingsGroup>
     <p v-if="failed && !editor" class="m-0 text-[0.75rem] text-danger" role="alert">
       {{ t('desktop.browser.permissionSaveFailed') }}
