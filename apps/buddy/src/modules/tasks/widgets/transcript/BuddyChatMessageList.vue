@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DesktopChatOutlinePosition } from '@buddy-electron/shared/desktopApi'
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
@@ -50,7 +51,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   activateBranch: [branchId: string]
   editUserMessage: [messageId: string]
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
   prepareOutline: []
   readerLayoutIntent: []

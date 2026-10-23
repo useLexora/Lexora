@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
 import type { WorkbenchView } from '@/workbench/common/workbench'
 import { executionTargetSchema } from '@buddy-shared/executions/executionPresentationApi'
@@ -6,7 +7,8 @@ import { useElementSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
-import { useProvideArtifactActions, useProvideChatContent, useTaskEnvironment } from '@/modules/tasks'
+import { useFileOpening } from '@/modules/files'
+import { createFileLinkMenu, useProvideArtifactActions, useProvideChatContent, useTaskEnvironment } from '@/modules/tasks'
 import { DesktopExecutionDetail } from '@/modules/tasks/ui'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import { useDesktopWorkbenchContext } from './desktopWorkbenchContext'
@@ -44,13 +46,14 @@ const target = computed<ExecutionTarget | null>((previous) => {
     return null
   return previous && Object.entries(previous).every(([key, field]) => value.data[key as keyof ExecutionTarget] === field) ? previous : value.data
 })
-useProvideArtifactActions({
+const artifactActions = useProvideArtifactActions({
   task: () => props.visible && target.value?.conversationId === workbench.activeTaskId.value ? workbench.activeTask.value : null,
   resources,
   revealFile: input => workbench.api.localChat.artifacts.revealFile(input),
   writeClipboardText: clipboard.writeText,
   language: () => workbench.language.value,
 })
+const fileLinkMenu = createFileLinkMenu({ resources, task: () => props.visible && target.value?.conversationId === workbench.activeTaskId.value ? workbench.activeTask.value : null, artifacts: artifactActions, files: workbench.api.localChat.taskFiles, opening: useFileOpening()!, language: () => workbench.language.value, writeClipboardText: clipboard.writeText })
 useProvideChatContent({
   openWebLink: (url) => {
     if (target.value)
@@ -58,10 +61,12 @@ useProvideChatContent({
   },
   writeClipboardText: clipboard.writeText,
   canPreviewFile: path => target.value?.conversationId === workbench.activeTaskId.value && resources.canPreviewFile(path),
-  previewFile: (path) => {
+  previewFile: (path, source) => {
     if (target.value?.conversationId === workbench.activeTaskId.value)
-      resources.previewFile(path, { conversationId: target.value.conversationId, runId: target.value.runId })
+      void resources.previewFile(path, source ?? { conversationId: target.value.conversationId, runId: target.value.runId })
   },
+  fileLinkMenu: (href, source) => target.value ? fileLinkMenu(href, source ?? { conversationId: target.value.conversationId, runId: target.value.runId }) : Promise.resolve([]),
+  onLinkError: resources.onFileError,
 })
 async function returnToTask() {
   const input = target.value
@@ -76,20 +81,11 @@ async function returnToTask() {
   }
 }
 
-async function openArtifact(id: string) {
-  const input = target.value
-  if (!input)
-    return
-  try {
-    const detail = await workbench.api.localChat.executions.detail(input)
-    const artifact = detail.artifacts.find(item => item.artifactId === id)
-    if (artifact && props.visible && target.value?.runId === input.runId)
-      await resources.openArtifact(artifact)
-  }
-  catch {
-    message.error(translateBuddy(workbench.language.value, 'desktop.command.failed'))
-  }
+async function openArtifact(artifact: LocalArtifact) {
+  if (props.visible && target.value?.runId === artifact.runId && target.value.conversationId === artifact.conversationId)
+    await resources.openArtifact(artifact)
 }
+
 async function openChanges() {
   const input = target.value
   if (!input)

@@ -1,3 +1,4 @@
+import type { TaskFileTarget } from '../files/taskFileApi'
 import type { BrowserClearDataInput, BrowserClearDataResult, BrowserDataSummary } from './browserData'
 import type { BrowserLocateElementInput, BrowserPickResult } from './browserSelection'
 import type { BrowserFailureReason } from './primitives'
@@ -121,6 +122,7 @@ export interface DesktopBrowserApi {
   onGuestsChanged: (listener: () => void) => () => void
   onStateChanged: (listener: (state: DesktopBrowserState) => void) => () => void
   openArtifact: (sessionId: string, artifactId: string) => Promise<DesktopBrowserState>
+  openFile: (sessionId: string, target: TaskFileTarget) => Promise<DesktopBrowserState>
   openExternal: (sessionId: string) => Promise<boolean>
   reload: (sessionId: string) => Promise<void>
   setProfileMode: (

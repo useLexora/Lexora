@@ -1,3 +1,4 @@
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { InjectionKey, Ref } from 'vue'
 import type { ConversationCanvasDirection, ConversationCanvasNode } from '../../model/canvas/conversationCanvasLayout'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -21,6 +22,6 @@ export const conversationCanvasActions: InjectionKey<{
   edit: (id: string) => void
   followup: (id: string) => void
   retry: (id: string) => void
-  openArtifact: (id: string) => void
+  openArtifact: (artifact: LocalArtifact) => void
   openQuote: (messageId: string, quoteId: string) => void
 }> = Symbol('conversationCanvasActions')

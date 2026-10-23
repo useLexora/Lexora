@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveMediaPreview } from '../../../service/src/files/resolveMediaPreview'
+import { taskFileMediaUrl } from '../../../shared/files/mediaPreview'
+import { taskFilesRpc } from '../../../shared/files/taskFileApi'
 import { createMediaResponse, handleMediaRequest } from '../mediaProtocol'
 
 const directories: string[] = []
@@ -26,6 +28,41 @@ async function fixture(bytes = Buffer.from('0123456789'), name = 'clip.mp4') {
 }
 
 describe('controlled media protocol', () => {
+  it('streams task media with raw encoded paths and rechecks authorization before returning bytes', async () => {
+    const f = await fixture(Buffer.from('0123456789'), '动画 #1 %20.mp4')
+    const target = { conversationId: 'task', path: f.path }
+    const url = taskFileMediaUrl(target)
+    let revoked = false
+    let resolutions = 0
+    const runtime = {
+      request: async (method: string, input: unknown) => {
+        expect(method).toBe(taskFilesRpc.resolveMedia.method)
+        expect(input).toEqual(target)
+        if (revoked && ++resolutions === 2)
+          throw new Error('DIRECTORY_NOT_AUTHORIZED')
+        return f.resolve()
+      },
+    }
+    const response = await handleMediaRequest(new Request(url, { headers: { range: 'bytes=2-5' } }), runtime)
+    expect(response.status).toBe(206)
+    expect(await response.text()).toBe('2345')
+    revoked = true
+    const denied = await handleMediaRequest(new Request(url), runtime)
+    expect(denied.status).toBe(404)
+    expect(denied.body).toBeNull()
+  })
+
+  it.each([
+    'lexora-file://task-media/?conversationId=task&path=/tmp/clip.mp4&path=/other.mp4',
+    'lexora-file://task-media/clip.mp4?conversationId=task',
+    'lexora-file://task-media/?conversationId=task&path=/tmp/clip.mp4&root=/tmp',
+  ])('rejects ambiguous task media targets: %s', async (url) => {
+    const f = await fixture()
+    const response = await handleMediaRequest(new Request(url), { request: f.resolve })
+    expect(response.status).toBe(400)
+    expect(response.body).toBeNull()
+  })
+
   it('streams SVG images with sandbox headers on the existing image endpoint', async () => {
     const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="48"/>')
     const f = await fixture(bytes, 'preview.svg')

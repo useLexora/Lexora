@@ -96,10 +96,8 @@ async function openNode(id: string) {
   }
 }
 
-function openArtifact(id: string) {
-  const artifact = nodes.value.flatMap(node => node.artifacts).find(artifact => artifact.artifactId === id)
-  if (artifact)
-    emit('openNodeArtifact', artifact)
+function openArtifact(artifact: LocalArtifact) {
+  emit('openNodeArtifact', artifact)
 }
 
 async function editNode(id: string) {

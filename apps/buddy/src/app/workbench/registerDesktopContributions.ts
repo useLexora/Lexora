@@ -23,7 +23,7 @@ export function registerDesktopContributions(controller: WorkbenchController, re
     for (const provider of builtinFileOpeningProviders)
       scope.fileOpener(provider)
     scope.cleanup(renderers.register('files.view', DesktopFileContribution))
-    scope.view({ id: 'files.preview', renderer: 'files.view', label: 'Preview', locations: ['context'], supports: resource => resource.scheme === 'file-preview', multiple: true })
+    scope.view({ id: 'files.preview', renderer: 'files.view', label: 'Preview', locations: ['context'], supports: resource => ['file-preview', 'task-file'].includes(resource.scheme), multiple: true })
     scope.view({ id: 'files.editor', renderer: 'files.view', label: 'Text editor', locations: ['context'], supports: resource => resource.scheme === 'file', multiple: true, priority: 10 })
     scope.command({ id: 'file.save', label: () => labels().save, keybinding: 'Mod+S', shortcutScope: 'context', enabled: context => !!context.view && copies.dirty(context.view.resource), execute: context => copies.save(context.view!.resource) })
   })

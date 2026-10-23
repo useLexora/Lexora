@@ -1,4 +1,6 @@
 export default {
+  'desktop.fileLink.open': '打开',
+  'desktop.fileLink.openWith': '打开方式',
   'desktop.artifacts.open': '打开产物',
   'desktop.artifacts.more': '更多操作',
   'desktop.artifacts.reference': '引用',

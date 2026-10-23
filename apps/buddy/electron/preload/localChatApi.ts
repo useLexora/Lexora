@@ -11,6 +11,7 @@ import { createProvidersApi } from './local-chat/providers'
 import { createRuntimeApi } from './local-chat/runtime'
 import { createSkillsApi } from './local-chat/skills'
 import { createSpacesApi } from './local-chat/spaces'
+import { createTaskFilesApi } from './local-chat/taskFiles'
 import { createTaskMarksApi } from './local-chat/taskMarks'
 import { createWebApi } from './local-chat/web'
 
@@ -27,6 +28,7 @@ export function createLocalChatApi(): LocalChatApi {
     ...createSkillsApi(),
     ...createConnectorsApi(),
     ...createConversationApi(),
+    ...createTaskFilesApi(),
     ...createTaskMarksApi(),
     ...createWebApi(),
     ...createComposerApi(),

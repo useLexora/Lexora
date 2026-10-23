@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
@@ -39,7 +40,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   activateBranch: [branchId: string]
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
   regenerate: []
   startEdit: []

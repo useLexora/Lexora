@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalConversationTreeNode } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyChatMessageListHandle } from '../transcript/chatMessageViewport'
 import type { ChatWorkspaceEmits, ChatWorkspaceProps } from './typing'
@@ -171,12 +172,9 @@ function editDetail() {
     void editNode(node)
 }
 
-function openDetailArtifact(id: string) {
-  const artifact = nodeDetail.data.value?.outputs.flatMap(output => output.artifacts).find(artifact => artifact.artifactId === id)
+function openDetailArtifact(artifact: LocalArtifact) {
   nodeDetail.close()
-  if (artifact)
-    emit('openNodeArtifact', artifact)
-  else emit('openArtifact', id)
+  emit('openNodeArtifact', artifact)
 }
 
 function openDetailChanges(id: string) {

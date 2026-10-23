@@ -1,5 +1,6 @@
 import type { DesktopBrowserAttachGuestInput, DesktopBrowserEnsureSessionInput, DesktopBrowserGuestDescriptor, DesktopBrowserNavigateInput, DesktopBrowserOpenArtifactInput, DesktopBrowserSecurityState, DesktopBrowserSessionInput, DesktopBrowserSetProfileModeInput, DesktopBrowserSetSurfaceInput, DesktopBrowserState } from './browserDesktopApi'
 import { z } from 'zod'
+import { taskFileTargetSchema } from '../files/taskFileApi'
 import { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from './browserDesktopApi'
 import { browserZoomFactorSchema } from './browserPreferences'
 import { BROWSER_FAILURE_REASONS } from './primitives'
@@ -50,6 +51,11 @@ export const browserOpenArtifactInputSchema: z.ZodType<DesktopBrowserOpenArtifac
     artifactId: z.string().trim().min(1).max(256),
     sessionId: browserSessionIdSchema,
   }).strict()
+
+export const browserOpenFileInputSchema = z.object({
+  sessionId: browserSessionIdSchema,
+  target: taskFileTargetSchema,
+}).strict()
 
 export const browserAttachGuestInputSchema: z.ZodType<DesktopBrowserAttachGuestInput>
   = z.object({

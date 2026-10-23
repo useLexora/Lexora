@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationBranch, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRun, LocalRunOutput } from '@buddy-shared/runs/runApi'
@@ -43,7 +44,7 @@ const emit = defineEmits<{
   activateBranch: [branchId: string]
   contentResize: [metrics: ChatMessageScrollMetrics]
   editUserMessage: [messageId: string]
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
   readerLayoutIntent: []
   regenerateAssistant: [sourceRunId: string]

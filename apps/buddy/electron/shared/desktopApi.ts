@@ -71,6 +71,7 @@ export const DESKTOP_IPC_CHANNELS = {
   browserListGuests: 'lexora:browser:list-guests',
   browserNavigate: 'lexora:browser:navigate',
   browserOpenArtifact: 'lexora:browser:open-artifact',
+  browserOpenFile: 'lexora:browser:open-file',
   browserOpenExternal: 'lexora:browser:open-external',
   browserReload: 'lexora:browser:reload',
   browserSetProfileMode: 'lexora:browser:set-profile-mode',

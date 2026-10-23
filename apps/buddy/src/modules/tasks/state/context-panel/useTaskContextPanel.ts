@@ -9,7 +9,6 @@ import { computed, readonly, watch } from 'vue'
 import { useContextPanelControl } from '@/platform/desktop/useContextPanelControl'
 import { readContextSelection, readContextTab } from '../../model/context-panel/readContextTab'
 import { artifactTabId, browserTabId, contextTabSource, spaceTaskBrowserTab, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
-import { resolveChatToolFileTarget } from '../../model/transcript/chatToolFileTarget'
 import { useContextPanelTabs } from './useContextPanelTabs'
 
 export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
@@ -65,7 +64,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     return conversationId && runId ? { conversationId, runId } : undefined
   }
 
-  function openArtifact(target: string | LocalArtifact) {
+  function openArtifact(target: string | LocalArtifact, providerId?: string) {
     const artifact = typeof target === 'string'
       ? options.runOutputs.value.flatMap(output => output.artifacts).find(item => item.artifactId === target)
       : target
@@ -73,7 +72,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
       return
     const id = artifactTabId(artifact.artifactId)
     const previous = store.resources.value.find(tab => tab.id === id)
-    openTab({ artifact, id, scope: taskContextPanelScope(artifact.conversationId), kind: 'artifact', label: artifact.name, viewMode: previous?.kind === 'artifact' ? previous.viewMode : 'preview' })
+    openTab({ artifact, id, scope: taskContextPanelScope(artifact.conversationId), kind: 'artifact', label: artifact.name, providerId, viewMode: previous?.kind === 'artifact' && previous.providerId === providerId ? previous.viewMode : 'preview' })
   }
 
   function setArtifactViewMode(tabId: string, viewMode: ArtifactViewMode) {
@@ -151,57 +150,6 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     store.update(tab => tab.id === tabId && tab.kind === 'files' ? { ...tab, target: { ...tab.target, path }, treeTarget: undefined } : tab)
   }
 
-  function canPreviewFile(path: string) {
-    return Boolean(resolveChatToolFileTarget(options.activeSpace?.value ?? null, path))
-  }
-
-  function previewFile(path: string, source?: ContextPanelSource) {
-    const space = options.activeSpace?.value ?? null
-    const target = resolveChatToolFileTarget(space, path)
-    const directory = getActiveSpaceDirectories(space).find(directory => directory.id === target?.directoryId)
-    if (!target || !directory)
-      return
-
-    const exactTab = store.tabs.value.find(tab =>
-      tab.kind === 'files'
-      && tab.target.spaceId === target.spaceId
-      && tab.target.directoryId === target.directoryId
-      && tab.target.path === target.path
-      && (!source || tab.source?.runId === source.runId),
-    )
-    if (exactTab) {
-      store.select(exactTab.id)
-      void control.open()
-      return
-    }
-
-    const active = store.activeTab.value
-    const spaceTab = (active?.kind === 'files' && active.target.spaceId === target.spaceId && active.target.directoryId === target.directoryId && (!source || active.source?.runId === source.runId))
-      ? active
-      : store.tabs.value.find(tab =>
-          tab.kind === 'files'
-          && tab.target.spaceId === target.spaceId
-          && tab.target.directoryId === target.directoryId
-          && (!source || tab.source?.runId === source.runId),
-        )
-
-    if (spaceTab) {
-      selectFile(spaceTab.id, target.path)
-      store.select(spaceTab.id)
-      void control.open()
-      return
-    }
-
-    openTab({
-      id: `files:${source ? taskContextPanelScope(source.conversationId) : store.scope.value}:${target.spaceId}:${target.directoryId}:${source?.runId ?? 'preview'}`,
-      scope: source ? taskContextPanelScope(source.conversationId) : store.scope.value,
-      kind: 'files',
-      rootName: directory.root.split(/[\\/]/).filter(Boolean).at(-1) ?? directory.root,
-      target,
-      source: source ?? currentSource(),
-    })
-  }
-
   function isAvailable(tab: TaskContextTab): boolean {
     if (tab.kind !== 'files')
       return true
@@ -252,7 +200,6 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     adoptDraft: store.adoptDraft,
     discardDraft: store.discardDraft,
     addBrowser,
-    canPreviewFile,
     closeTab: store.close,
     discardConversation: (id: string) => store.discard(taskContextPanelScope(id)),
     hasTab,
@@ -261,7 +208,6 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     openChanges,
     openFiles,
     locateFile,
-    previewFile,
     selectFile,
     setArtifactViewMode,
     restoreTab,

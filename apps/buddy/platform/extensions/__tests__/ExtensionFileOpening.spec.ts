@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { deferred } from '@buddy-tests/deferred'
 import { afterEach, expect, it } from 'vitest'
 import { extensionFileOpeningInputSchema } from '../../../shared/extensions/extensionApi'
 import { extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
@@ -26,6 +27,7 @@ function fileManifest(id = 'tests.reader', version = '1.0.0') {
 }
 const choice = { extension: '.md', location: 'inline' as const, providerId: 'tests.reader.files' }
 const target = { spaceId: 'space', directoryId: 'directory', revision: 4, path: 'document.md' }
+const taskTarget = { conversationId: 'task', path: '/tasks/document #1%.custom' }
 async function fixture() {
   const f = await createStore()
   cleanups.push(() => rm(f.root, { recursive: true, force: true }))
@@ -36,7 +38,7 @@ function contentResponse(text: string, request = new Request('https://resource.i
   const range = fileRange(bytes.length, request.headers.get('range'))
   return new Response(request.method === 'HEAD' || range.status === 416 ? null : bytes.subarray(range.start, range.end + 1), { status: range.status, headers: { ...range.headers, 'content-type': 'text/markdown' } })
 }
-async function serviceFixture(value = fileManifest()) {
+async function serviceFixture(value = fileManifest(), overrides: Partial<ExtensionServicePorts> = {}) {
   const f = await fixture()
   await f.store.install((await reviewPackage(f.root, f.store, value)).token)
   let authorized = true
@@ -67,7 +69,13 @@ async function serviceFixture(value = fileManifest()) {
         throw new Error('EXTENSION_RESOURCE_DENIED')
       return { name: 'output.md', response: contentResponse('artifact text', request) }
     },
+    readTaskFileResource: async (target, _signal, request) => {
+      if (!authorized || target.conversationId !== taskTarget.conversationId || target.path !== taskTarget.path)
+        throw new Error('EXTENSION_RESOURCE_DENIED')
+      return { name: 'document #1%.custom', response: contentResponse('task file text', request) }
+    },
     get: async () => new Response(''),
+    ...overrides,
   })
   cleanups.push(() => service.dispose())
   return { ...f, service, readers, revoke: () => {
@@ -228,22 +236,91 @@ it('validates the selected opener independently of more specific suffixes regist
   expect(await call(service, await open(service, standalone), 'resources.readText', { id: standalone.resource!.id })).toBe('saved')
 })
 
-it('binds artifact handles and resource URLs to the original artifact, current permission and owning view', async () => {
+it.each([
+  { source: { kind: 'artifact' as const, artifactId: 'artifact' }, content: 'artifact text' },
+  { source: { kind: 'task' as const, target: taskTarget }, content: 'task file text' },
+])('binds $source.kind handles and resource URLs to the original source, current permission and owning view', async ({ source, content }) => {
   const { service, readers, revoke } = await serviceFixture()
-  const prepared = await service.prepareFileOpening({ providerId: choice.providerId, location: 'standalone', source: { kind: 'artifact', artifactId: 'artifact' } })
+  const prepared = await service.prepareFileOpening({ providerId: choice.providerId, location: 'standalone', source })
   const view = await open(service, prepared)
   const id = prepared.resource!.id
-  expect(await call(service, view, 'resources.readText', { id })).toBe('artifact text')
+  expect(await call(service, view, 'resources.readText', { id })).toBe(content)
+  expect(await call(service, view, 'resources.readBytes', { id, offset: 1, length: 4 })).toEqual({ base64: Buffer.from(content.slice(1, 5)).toString('base64'), size: content.length, eof: false })
   const url = await call(service, view, 'resources.getUrl', { id }) as string
   expect(url).toBe(`lexora-extension://${view.token}/__selected/${id}`)
   const reader = readers.get(view.token)!
-  expect(await (await reader(id, new Request(url), new AbortController().signal)).text()).toBe('artifact text')
+  expect(await (await reader(id, new Request(url), new AbortController().signal)).text()).toBe(content)
   const other = await open(service, { extensionId: 'tests.reader', viewType: 'tests.reader.view', resource: null })
   await expect(call(service, other, 'resources.readText', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   await expect(readers.get(other.token)!(id, new Request(url), new AbortController().signal)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   revoke()
+  await expect(call(service, view, 'resources.readText', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  await expect(call(service, view, 'resources.getUrl', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   await expect(call(service, view, 'resources.readBytes', { id, offset: 0, length: 4 })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   await expect(reader(id, new Request(url), new AbortController().signal)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+})
+
+it('requires a prepared task handle and preserves source identity alongside legacy persisted grants', async () => {
+  const { store, service } = await serviceFixture()
+  const input = { providerId: choice.providerId, location: 'standalone' as const, source: { kind: 'task' as const, target: taskTarget } }
+  await expect(open(service, { extensionId: 'tests.reader', viewType: 'tests.reader.view', resource: { id: randomUUID(), name: 'document #1%.custom' } })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  for (const target of [{ ...taskTarget, conversationId: 'other-task' }, { ...taskTarget, path: '/tasks/missing.custom' }])
+    await expect(service.prepareFileOpening({ ...input, source: { kind: 'task', target } })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  expect(extensionFileOpeningInputSchema.safeParse({ ...input, source: { kind: 'task', target: { ...taskTarget, path: 'document.custom' } } }).success).toBe(false)
+  const legacy = await store.grant('tests.reader', target)
+  const legacyPath = join(store.root, 'data/tests.reader/resources', `${legacy.id}.json`)
+  const legacyContent = await readFile(legacyPath, 'utf8')
+  const prepared = await service.prepareFileOpening(input)
+  expect(prepared.resource).toEqual({ id: expect.any(String), name: 'document #1%.custom' })
+  const reloaded = new ExtensionPackageStore(store.root, store.appVersion)
+  await reloaded.load()
+  expect(await reloaded.resolveFileOpeningGrant('tests.reader', prepared.resource!.id)).toEqual(input.source)
+  expect(await reloaded.resolveFileOpeningGrant('tests.reader', legacy.id)).toEqual({ kind: 'space', target })
+  expect(await readFile(legacyPath, 'utf8')).toBe(legacyContent)
+  await expect(reloaded.resolveFileOpeningGrant('tests.other', prepared.resource!.id)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  const view = await open(service, prepared)
+  await store.revokeFileOpeningGrants('tests.reader')
+  await expect(call(service, view, 'resources.readText', { id: prepared.resource!.id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+})
+
+it('rejects task sources without a reader and enforces the selected provider suffix', async () => {
+  const input = { providerId: choice.providerId, location: 'inline' as const, source: { kind: 'task' as const, target: taskTarget } }
+  const unavailable = await serviceFixture(fileManifest(), { readTaskFileResource: undefined })
+  await expect(unavailable.service.prepareFileOpening(input)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  const unsupported = await serviceFixture(fileManifest(), { readTaskFileResource: async () => ({ name: 'document.txt', response: contentResponse('text') }) })
+  await expect(unsupported.service.prepareFileOpening(input)).rejects.toThrow('EXTENSION_FILE_ASSOCIATION_DENIED')
+})
+
+it.each(['prepare', 'read'] as const)('rejects a late task %s when the owning plugin version changes', async (operation) => {
+  const pending = deferred<{ name: string, response: Response }>()
+  const started = deferred<void>()
+  let wait = false
+  const { root, store, service, readers } = await serviceFixture(fileManifest(), { readTaskFileResource: async (_target, _signal, request) => {
+    if (!wait)
+      return { name: 'document.custom', response: contentResponse('task file text', request) }
+    started.resolve()
+    return pending.promise
+  } })
+  const input = { providerId: choice.providerId, location: 'standalone' as const, source: { kind: 'task' as const, target: taskTarget } }
+  const prepared = await service.prepareFileOpening(input)
+  const view = await open(service, prepared)
+  const reader = readers.get(view.token)!
+  const update = await reviewPackage(root, store, fileManifest('tests.reader', '1.1.0'))
+  await service.install(update.token)
+  wait = true
+  const reading = operation === 'prepare'
+    ? service.prepareFileOpening(input)
+    : call(service, view, 'resources.readText', { id: prepared.resource!.id })
+  const rejected = expect(reading).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  await started.promise
+  await service.applyUpdate('tests.reader')
+  pending.resolve({ name: 'document.custom', response: contentResponse('late task file text') })
+  await rejected
+  await expect(reader(prepared.resource!.id, new Request('https://resource.invalid/'), new AbortController().signal)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  await expect(call(service, view, 'resources.readText', { id: prepared.resource!.id })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  wait = false
+  const current = await open(service, await service.prepareFileOpening(input))
+  expect(current.generation).not.toBe(view.generation)
 })
 
 it('revokes persisted and transient selected handles without changing defaults or original files', async () => {

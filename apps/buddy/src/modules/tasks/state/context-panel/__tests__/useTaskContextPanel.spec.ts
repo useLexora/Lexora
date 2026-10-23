@@ -35,7 +35,7 @@ describe('useTaskContextPanel', () => {
     expect(panel.allTabs.value).toEqual([])
   })
 
-  it('opens and previews additional roots without a primary, and drops only revoked file tabs', async () => {
+  it('opens and locates files in additional roots without a primary, and drops only revoked file tabs', async () => {
     const base = fileSpace()
     const additional = { ...base.primaryDirectory!, id: 'extra', root: '/extra', canonicalRoot: '/extra' }
     const space: LocalSpace = { ...base, additionalDirectories: [additional] }
@@ -46,9 +46,8 @@ describe('useTaskContextPanel', () => {
     const primaryTab = panel.activeTab.value!
     panel.openFiles(space.id, additional.id)
     expect(panel.activeTab.value).toMatchObject({ kind: 'files', rootName: 'extra', target: { directoryId: 'extra', path: '' } })
-    panel.previewFile('/extra/note.txt')
+    panel.locateFile({ spaceId: space.id, directoryId: additional.id, revision: additional.revision, path: 'note.txt' }, 'file')
     expect(panel.activeTab.value).toMatchObject({ target: { directoryId: 'extra', path: 'note.txt' } })
-    expect(panel.canPreviewFile('/extra-escape/note.txt')).toBe(false)
     spaces.value = [base]
     activeSpace.value = base
     await nextTick()
@@ -58,8 +57,7 @@ describe('useTaskContextPanel', () => {
     activeSpace.value = extraOnly
     await nextTick()
     expect(panel.fileEntry.value).toEqual({ kind: 'directory', spaceId: space.id })
-    expect(panel.canPreviewFile('note.txt')).toBe(false)
-    panel.previewFile('/extra/note.txt')
+    panel.locateFile({ spaceId: space.id, directoryId: additional.id, revision: additional.revision, path: 'note.txt' }, 'file')
     expect(panel.activeTab.value).toMatchObject({ target: { directoryId: 'extra', path: 'note.txt' } })
   })
 
@@ -202,18 +200,19 @@ describe('useTaskContextPanel', () => {
     const space = fileSpace()
     const activeConversationId = shallowRef<string | null>('first')
     const panel = createTaskPanel({ activeConversationId, activeSpace: shallowRef(space), spaces: shallowRef([space]) })
-    panel.previewFile('/workspace/README.md')
+    const locate = (path: string) => panel.locateFile({ spaceId: space.id, directoryId: space.primaryDirectory!.id, revision: space.primaryDirectory!.revision, path }, 'file')
+    locate('README.md')
     const first = panel.activeTab.value!
     panel.addBrowser()
-    panel.previewFile('/workspace/README.md')
+    locate('README.md')
     expect(panel.activeTab.value?.id).toBe(first.id)
     expect(panel.tabs.value).toHaveLength(2)
     activeConversationId.value = 'second'
     expect(panel.tabs.value).toEqual([])
-    panel.previewFile('/workspace/other.txt')
+    locate('other.txt')
     const second = panel.activeTab.value!
     expect(second.id).not.toBe(first.id)
-    panel.previewFile('/workspace/hello1.md')
+    locate('hello1.md')
     expect(panel.activeTab.value).toMatchObject({ id: second.id, target: { path: 'hello1.md' } })
     expect(panel.tabs.value).toHaveLength(1)
     activeConversationId.value = 'first'

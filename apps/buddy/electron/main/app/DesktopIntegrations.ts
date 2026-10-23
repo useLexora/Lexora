@@ -22,6 +22,7 @@ import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAu
 import { extensionConditionSnapshotRpc } from '../../../shared/extensions/extensionConditionContext'
 import { extensionShellRpc } from '../../../shared/extensions/extensionShell'
 import { extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
+import { taskFilesRpc } from '../../../shared/files/taskFileApi'
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { runNotifications } from '../../../shared/runs/runApi'
 import { spaceFilesRpc, spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
@@ -139,6 +140,15 @@ export class DesktopIntegrations {
       skillsChanged: () => service.notify(extensionSkillsRpc.changed, {}),
       agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: null })),
       readResource: (target, signal, request) => readSpaceFileResource(target, signal, async input => spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, input, { signal })), request),
+      readTaskFileResource: async (target, signal, request) => {
+        let name = ''
+        const response = await readAuthorizedFileResource(target, signal, async (input) => {
+          const location = taskFilesRpc.locate.response.parse(await service.request(taskFilesRpc.locate.method, input, { signal }))
+          name = basename(location.path)
+          return location
+        }, request)
+        return { name, response }
+      },
       readArtifactResource: async (artifactId, signal, request) => {
         let name = ''
         const response = await readAuthorizedFileResource(artifactId, signal, async (id) => {
@@ -254,6 +264,7 @@ export class DesktopIntegrations {
       getHost: () => this.#browser.host,
       getWindow: () => windows.window,
       resolveArtifactEntry: async input => browserArtifactEntrySchema.parse(await service.request('artifacts.resolveBrowserEntry', input)),
+      resolveFileEntry: async input => taskFilesRpc.resolveBrowser.response.parse(await service.request(taskFilesRpc.resolveBrowser.method, input)),
     }))
     this.#subscriptions.push(registerLocalChatIpc({
       recordDiagnostic: this.#environment.events.scope({ component: 'desktop.gateway' }).publish,

@@ -32,7 +32,7 @@ describe('file opening resolution', () => {
 
   it('retains the missing preference after uninstalling the only provider of a suffix', () => {
     const state = { providers: [...builtinFileOpeningProviders], defaults: { '.custom': { standalone: plugin.id } } }
-    expect(resolveFileOpening(state, 'data.custom', 'standalone')).toEqual({ extension: '.custom', preferredId: plugin.id, provider: null, unavailable: true })
+    expect(resolveFileOpening(state, 'data.custom', 'standalone')).toEqual({ extension: '.custom', preferredId: plugin.id, candidates: [], provider: null, unavailable: true })
   })
 
   it('rejects a preference with incompatible suffix or location and prefers the longest exact suffix', () => {

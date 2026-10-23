@@ -18,7 +18,7 @@ const props = defineProps<{
   compact?: boolean
 }>()
 const emit = defineEmits<{
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const actions = useArtifactActions()
@@ -154,7 +154,7 @@ function handleKeydown(event: KeyboardEvent) {
       type="button"
       class="buddy-artifact-collection__trigger absolute inset-0 z-1 border-0 rounded-micro bg-transparent p-0 cursor-pointer focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-[-2px]"
       :aria-labelledby="nameId"
-      @click.stop="emit('openArtifact', artifact.artifactId)"
+      @click.stop="emit('openArtifact', artifact)"
     />
     <div
       class="buddy-artifact-collection__preview pointer-events-none grid items-center overflow-hidden text-muted"
@@ -184,7 +184,7 @@ function handleKeydown(event: KeyboardEvent) {
         class="buddy-icon-button buddy-artifact-collection__open focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus"
         quaternary size="tiny"
         :aria-label="t('desktop.artifacts.open')"
-        @click.stop="emit('openArtifact', artifact.artifactId)"
+        @click.stop="emit('openArtifact', artifact)"
         @pointerdown.stop
       >
         <DesktopIcon :component="Open20Regular" :size="14" />

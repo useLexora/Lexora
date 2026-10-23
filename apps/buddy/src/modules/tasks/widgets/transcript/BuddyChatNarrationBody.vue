@@ -11,8 +11,7 @@ defineProps<{
 const actions = useChatContent()
 
 function handleMarkdownLink(href: string) {
-  if (actions.canPreviewFile(href))
-    actions.previewFile(href)
+  actions.previewFile(href)
 }
 </script>
 
@@ -23,6 +22,8 @@ function handleMarkdownLink(href: string) {
     :language="language"
     :write-clipboard-text="actions.writeClipboardText"
     :open-web-link="actions.openWebLink"
+    :file-link-menu="actions.fileLinkMenu"
+    :on-link-error="actions.onLinkError"
     @open-link="handleMarkdownLink"
   />
 </template>

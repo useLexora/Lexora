@@ -25,6 +25,7 @@ import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInp
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
 import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
+import type { TaskFile, TaskFileLink, TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
 import type { LocalNotificationList, NotificationsChanged } from '../../shared/notifications/notificationApi'
 import type { LocalApproval } from '../../shared/permissions/approvalApi'
@@ -84,6 +85,9 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   spaceFilesAcknowledge: 'lexora:buddy:space-files:acknowledge',
   spaceFilesCancel: 'lexora:buddy:space-files:cancel',
   spaceFilesChanged: 'lexora:buddy:space-files:changed',
+  taskFilesResolve: 'lexora:buddy:task-files:resolve',
+  taskFilesRead: 'lexora:buddy:task-files:read',
+  taskFilesReveal: 'lexora:buddy:task-files:reveal',
   spaceFilesList: 'lexora:buddy:space-files:list',
   spaceFilesRead: 'lexora:buddy:space-files:read',
   spaceFilesReveal: 'lexora:buddy:space-files:reveal',
@@ -383,6 +387,11 @@ export interface LocalChatApi {
     list: () => Promise<LocalNotificationList>
     markAllSeen: () => Promise<LocalNotificationList>
     markSeen: (notificationId: string, revision: string) => Promise<LocalNotificationList>
+  }
+  taskFiles: {
+    resolve: (link: TaskFileLink) => Promise<TaskFile>
+    read: (target: TaskFileTarget) => Promise<FilePreview>
+    revealFile: (target: TaskFileTarget) => Promise<void>
   }
   spaces: {
     onChanged: (listener: (event: SpaceChangeNotice) => void) => () => void

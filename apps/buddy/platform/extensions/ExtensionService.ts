@@ -10,6 +10,7 @@ import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../
 import type { ExtensionShellDescriptor } from '../../shared/extensions/extensionShell'
 import type { ExtensionSkillDescriptor } from '../../shared/extensions/extensionSkills'
 import type { FileOpeningChoice, FileOpeningSnapshot } from '../../shared/files/fileOpening'
+import type { TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { ShellCandidate, ShellCandidateId } from '../../shared/shell/shellProgram'
 import type { SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
 import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInteraction'
@@ -73,6 +74,7 @@ export interface ExtensionServicePorts {
   openExternal?: (url: string) => Promise<void>
   readResource?: (target: SpaceFileTarget, signal: AbortSignal, request?: Request) => Promise<Response>
   readArtifactResource?: (artifactId: string, signal: AbortSignal, request?: Request) => Promise<{ name: string, response: Response }>
+  readTaskFileResource?: (target: TaskFileTarget, signal: AbortSignal, request?: Request) => Promise<{ name: string, response: Response }>
   get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   changed?: () => void
   agentChanged?: () => void
@@ -1865,6 +1867,11 @@ export class ExtensionService {
       if (!this.#ports.readArtifactResource)
         throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
       return this.#ports.readArtifactResource(source.artifactId, signal, request)
+    }
+    if (source.kind === 'task') {
+      if (!this.#ports.readTaskFileResource)
+        throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+      return this.#ports.readTaskFileResource(source.target, signal, request)
     }
     const response = this.#ports.readResource
       ? await this.#ports.readResource(source.target, signal, request)

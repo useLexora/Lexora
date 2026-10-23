@@ -18,7 +18,7 @@ export interface ChatWorkspaceEmits {
   showCanvas: []
   openNodeArtifact: [artifact: LocalArtifact]
   openNodeChanges: [changes: LocalChangeSetSummary]
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
   openSettings: [category: DesktopSettingsCategory]
 }

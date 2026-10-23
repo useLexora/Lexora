@@ -1,6 +1,8 @@
 import type zhCN from '../zh-CN/tasks'
 
 export default {
+  'desktop.fileLink.open': 'Open',
+  'desktop.fileLink.openWith': 'Open with',
   'desktop.artifacts.open': 'Open artifact',
   'desktop.artifacts.more': 'More actions',
   'desktop.artifacts.reference': 'Reference',

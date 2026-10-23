@@ -4,6 +4,7 @@ import type { BuddyFileQuote } from '@buddy-shared/conversation/buddyUserContent
 import type { LocalSpaceFilePreview } from '@buddy-shared/spaces/spaceFileApi'
 import type { WorkbenchView } from '@/workbench/common/workbench'
 import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
+import { taskFileTargetSchema } from '@buddy-shared/files/taskFileApi'
 import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { computed, shallowRef, useTemplateRef, watch } from 'vue'
@@ -21,31 +22,39 @@ import { fileOpeningHandler } from '../model/fileOpeningHandlers'
 import { useFileOpening } from '../state/fileOpeningContext'
 import { filePreviewRenderer } from './filePreviewRenderers'
 
-const props = withDefaults(defineProps<{ view: WorkbenchView, files: LocalChatApi['spaces'], language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
+const props = withDefaults(defineProps<{ view: WorkbenchView, files: LocalChatApi['spaces'], taskFiles?: LocalChatApi['taskFiles'], language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
 const { labels, controller } = useWorkbench()
 const preview = shallowRef<LocalSpaceFilePreview | null>(null)
 const failed = shallowRef(false)
 const missing = shallowRef(false)
 const opening = useFileOpening()
-const target = computed(() => spaceFileTargetSchema.strip().parse(props.view.resource.data))
-const provider = computed(() => (opening?.resolve(props.view.title, 'inline') ?? resolveBuiltinFileOpening(props.view.title, 'inline')).provider)
+const taskTarget = computed(() => props.view.resource.scheme === 'task-file' ? taskFileTargetSchema.parse({ conversationId: props.view.resource.data.conversationId, path: props.view.resource.data.path }) : null)
+const target = computed(() => taskTarget.value ? null : spaceFileTargetSchema.strip().parse(props.view.resource.data))
+const directory = computed(() => taskTarget.value !== null && props.view.resource.data.kind === 'directory')
+const provider = computed(() => {
+  const location = taskTarget.value ? 'standalone' : 'inline'
+  const resolved = opening?.resolve(props.view.title, location) ?? resolveBuiltinFileOpening(props.view.title, location)
+  return (taskTarget.value && typeof props.view.state.fileOpeningProvider === 'string' ? resolved.candidates.find(provider => provider.id === props.view.state.fileOpeningProvider) : null) ?? resolved.provider
+})
 const previewRenderer = computed(() => filePreviewRenderer({ provider: provider.value, ownerId: props.view.id, target: target.value, source: 'file', resourceReady: true, text: preview.value?.text ?? undefined, name: props.view.title, visible: props.visible, language: props.language }))
 const modes = computed(() => fileDocumentModes({ preview: !!fileOpeningHandler(provider.value)?.preview, source: preview.value?.kind === 'text', edit: false }))
 const mode = computed({ get: () => resolveFileDocumentMode(props.view.state.mode, modes.value), set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }) })
-const quoteSource = computed<BuddyFileQuote['source']>(() => ({
-  kind: 'file',
-  title: props.view.title,
-  file: spaceFileTargetSchema.strip().parse(props.view.resource.data),
-  format: mode.value === 'preview' ? 'markdown' : 'source',
-}))
+const quoteSource = computed<BuddyFileQuote['source'] | undefined>(() => target.value
+  ? ({
+      kind: 'file',
+      title: props.view.title,
+      file: target.value,
+      format: mode.value === 'preview' ? 'markdown' : 'source',
+    })
+  : undefined)
 const identity = computed(() => {
   const { scheme, id, data } = props.view.resource
-  return JSON.stringify([scheme, id, data.spaceId, data.directoryId, data.revision, data.path])
+  return JSON.stringify([scheme, id, data.conversationId, data.spaceId, data.directoryId, data.revision, data.path])
 })
 const selection = useResourceSelectionQuote({
   viewId: () => props.view.id,
   ownerKey: () => JSON.stringify([props.view.id, identity.value, mode.value]),
-  visible: () => props.visible,
+  visible: () => props.visible && target.value !== null,
   language: () => props.language,
 })
 const attempt = shallowRef(0)
@@ -55,8 +64,12 @@ watch([identity, attempt], async (_, __, onCleanup) => {
   preview.value = null
   failed.value = false
   missing.value = false
+  if (directory.value)
+    return
   try {
-    const value = await props.files.readFile(spaceFileTargetSchema.strip().parse(props.view.resource.data))
+    const value = taskTarget.value && props.taskFiles
+      ? await props.taskFiles.read(taskTarget.value)
+      : await props.files.readFile(spaceFileTargetSchema.strip().parse(props.view.resource.data))
     if (active)
       preview.value = value
   }
@@ -89,11 +102,15 @@ function captureResource() {
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
       <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
         <template #actions>
-          <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
+          <WorkbenchMenu v-if="target" target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
         </template>
       </DesktopDocumentToolbar>
     </Teleport>
-    <div v-if="failed" class="flex items-center gap-[8px] p-[12px] text-muted text-[12px]" role="alert">
+    <div v-if="directory" class="grid gap-2 p-4 text-muted">
+      <strong>{{ view.title }}</strong>
+      <span>{{ view.resource.data.path }}</span>
+    </div>
+    <div v-else-if="failed" class="flex items-center gap-[8px] p-[12px] text-muted text-[12px]" role="alert">
       <span>{{ missing ? labels.fileMissing : labels.failed }}</span>
       <button type="button" class="file-preview__retry border-0 bg-transparent p-0 text-accent cursor-pointer underline text-[12px] hover:opacity-85" @click="loadPreview">
         {{ labels.retry }}

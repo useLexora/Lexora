@@ -1,8 +1,6 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { BrowserHost } from '../BrowserHost'
 import type { RegisterBrowserDesktopIpcOptions } from '../registerBrowserDesktopIpc'
-import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DESKTOP_IPC_CHANNELS } from '../../../shared/desktopApi'
 import { registerBrowserDesktopIpc } from '../registerBrowserDesktopIpc'
@@ -11,9 +9,6 @@ const electron = vi.hoisted(() => ({
   fromId: vi.fn(),
   fromPartition: vi.fn(),
   handlers: new Map<string, (event: IpcMainInvokeEvent, input: unknown) => unknown>(),
-  openExternal: vi.fn(),
-  openPath: vi.fn(),
-  showItemInFolder: vi.fn(),
 }))
 vi.mock('electron', () => ({
   app: { getVersion: () => '0.1.0' },
@@ -23,7 +18,6 @@ vi.mock('electron', () => ({
     removeHandler: vi.fn((channel: string) => electron.handlers.delete(channel)),
   },
   session: { fromPartition: electron.fromPartition },
-  shell: { openExternal: electron.openExternal, openPath: electron.openPath, showItemInFolder: electron.showItemInFolder },
   webContents: { fromId: electron.fromId },
 }))
 
@@ -56,6 +50,7 @@ function fixture(
   resolveArtifactEntry: RegisterBrowserDesktopIpcOptions['resolveArtifactEntry'] = async () => {
     throw new Error('unused')
   },
+  resolveFileEntry: RegisterBrowserDesktopIpcOptions['resolveFileEntry'] = async () => { throw new Error('unused') },
 ) {
   const webContents = { mainFrame: {} }
   registerBrowserDesktopIpc({
@@ -64,40 +59,31 @@ function fixture(
     getHost: () => Object.assign({ takeControl: vi.fn() }, host) as unknown as BrowserHost,
     getWindow: () => ({ webContents }) as unknown as BrowserWindow,
     resolveArtifactEntry,
+    resolveFileEntry,
   })
   return { webContents, event: { sender: webContents, senderFrame: webContents.mainFrame } as unknown as IpcMainInvokeEvent }
 }
 
 describe('registerBrowserDesktopIpc', () => {
-  it('rejects unsafe URLs, malformed requests and untrusted senders before host side effects', async () => {
+  it('rejects unsafe URLs, malformed commands and untrusted senders before host side effects', async () => {
     const host = {
       close: vi.fn(),
-      getState: () => state,
-      navigate: vi.fn(async () => ({ ...state, url: 'https://example.com/' })),
+      navigate: vi.fn(),
+      pickElement: vi.fn(),
       reload: vi.fn(),
     }
-    const { event } = fixture(host)
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserNavigate, event, { sessionId, url: 'https://example.com' })).resolves.toMatchObject({ url: 'https://example.com/' })
-    await invoke(DESKTOP_IPC_CHANNELS.browserReload, event, { sessionId })
-    await invoke(DESKTOP_IPC_CHANNELS.browserClose, event, { sessionId })
-
+    const { webContents, event } = fixture(host)
     await expect(invoke(DESKTOP_IPC_CHANNELS.browserNavigate, event, { sessionId, url: 'javascript:alert(1)' })).rejects.toThrow()
     await expect(invoke(DESKTOP_IPC_CHANNELS.browserReload, event, { sessionId, extra: true })).rejects.toThrow()
+    const input = { sessionId, requestId: '00000000-0000-4000-8000-000000000001' }
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, event, { ...input, script: 'alert(1)' })).rejects.toThrow()
     const untrusted = { sender: {}, senderFrame: {} } as unknown as IpcMainInvokeEvent
     await expect(invoke(DESKTOP_IPC_CHANNELS.browserClose, untrusted, { sessionId })).rejects.toThrow('Untrusted Desktop IPC sender')
-    expect(host.navigate).toHaveBeenCalledOnce()
-    expect(host.close).toHaveBeenCalledOnce()
-    expect(host.reload).toHaveBeenCalledOnce()
-  })
-
-  it('restricts element picking to fixed validated commands from the trusted main frame', async () => {
-    const host = { pickElement: vi.fn(async () => ({ status: 'cancelled' })) }
-    const { webContents, event } = fixture(host)
-    const input = { sessionId, requestId: '00000000-0000-4000-8000-000000000001' }
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, event, input)).resolves.toEqual({ status: 'cancelled' })
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, event, { ...input, script: 'alert(1)' })).rejects.toThrow()
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, { sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent, input)).rejects.toThrow()
-    expect(host.pickElement).toHaveBeenCalledOnce()
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserPickElement, { sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent, input)).rejects.toThrow('Untrusted Desktop IPC sender')
+    expect(host.navigate).not.toHaveBeenCalled()
+    expect(host.close).not.toHaveBeenCalled()
+    expect(host.reload).not.toHaveBeenCalled()
+    expect(host.pickElement).not.toHaveBeenCalled()
   })
 
   it('binds only a webview guest owned by the trusted renderer and requested session', async () => {
@@ -130,21 +116,25 @@ describe('registerBrowserDesktopIpc', () => {
     expect(navigationControllers).toEqual(['human'])
   })
 
-  it('opens local files and remote pages through the appropriate OS boundary, revealing only files', async () => {
-    const filePath = resolve('/picked/space/site/index.html')
-    let url = pathToFileURL(filePath).href
-    const { event } = fixture({ getState: () => ({ ...state, url }) })
-    electron.openPath.mockResolvedValue('')
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserOpenExternal, event, { sessionId })).resolves.toBe(true)
-    expect(electron.openPath).toHaveBeenCalledExactlyOnceWith(filePath)
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserShowFileInFolder, event, { sessionId })).resolves.toBe(true)
-    expect(electron.showItemInFolder).toHaveBeenCalledExactlyOnceWith(filePath)
-
-    url = 'https://example.com/'
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserOpenExternal, event, { sessionId })).resolves.toBe(true)
-    expect(electron.openExternal).toHaveBeenCalledExactlyOnceWith(url)
-    await expect(invoke(DESKTOP_IPC_CHANNELS.browserShowFileInFolder, event, { sessionId })).resolves.toBe(false)
-    expect(electron.showItemInFolder).toHaveBeenCalledOnce()
+  it('opens a resolved file only in its owning conversation browser', async () => {
+    let opened: unknown = null
+    const target = { conversationId: 'conversation-1', path: '/workspace/page.html' }
+    const entry = { rootPath: '/workspace', entryPath: target.path }
+    const { event } = fixture({
+      getState: () => state,
+      openLocalFile: async (_id: string, value: unknown) => {
+        opened = value
+        return state
+      },
+    }, undefined, async (input) => {
+      if (input.path !== target.path)
+        throw new Error('DIRECTORY_NOT_AUTHORIZED')
+      return entry
+    })
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserOpenFile, event, { sessionId, target: { ...target, conversationId: 'other' } })).rejects.toThrow('owning conversation')
+    expect(opened).toBeNull()
+    await invoke(DESKTOP_IPC_CHANNELS.browserOpenFile, event, { sessionId, target })
+    expect(opened).toEqual(entry)
   })
 
   it('resolves an artifact using the owning conversation and authorized local resource root', async () => {

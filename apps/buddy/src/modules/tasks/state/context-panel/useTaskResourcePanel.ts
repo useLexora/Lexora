@@ -2,28 +2,41 @@ import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/sha
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BrowserPreferences } from '@buddy-shared/browser/browserPreferences'
 import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
+import type { ExtensionFileOpeningSource } from '@buddy-shared/extensions/extensionFileOpening'
 import type { FileOpeningProvider } from '@buddy-shared/files/fileOpening'
+import type { TaskFile, TaskFileLink } from '@buddy-shared/files/taskFileApi'
 import type { Ref } from 'vue'
 import type { UseTaskContextPanelOptions } from './typing'
+import { localFileLinkPath } from '@buddy-shared/files/fileLink'
 import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
 import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
-import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
+import { computed, onScopeDispose, readonly, shallowRef, watch, watchEffect } from 'vue'
 import { fileOpeningHandler } from '@/modules/files'
 import { browserTabId, contextTabSource } from '../../model/context-panel/taskContextPanel'
 import { resolveChatArtifactTarget } from '../../model/transcript/chatToolFileTarget'
 import { useTaskContextPanel } from './useTaskContextPanel'
 
+export interface FileOpeningResource {
+  name: string
+  kind: 'file' | 'directory'
+  source: ExtensionFileOpeningSource
+  context?: ContextPanelSource
+}
+
 interface TaskResourcePanelOptions extends UseTaskContextPanelOptions {
   fileOpening?: {
     ensureReady: () => Promise<void>
-    resolve: (name: string, location: 'standalone') => { provider: FileOpeningProvider | null }
-    open: (artifact: LocalArtifact, provider: FileOpeningProvider, current: () => boolean) => Promise<void>
+    resolve: (name: string, location: 'standalone') => { provider: FileOpeningProvider | null, candidates?: FileOpeningProvider[] }
+    open: (resource: FileOpeningResource, provider: FileOpeningProvider, current: () => boolean, signal: AbortSignal) => Promise<void>
   }
+  files: { resolve: (input: TaskFileLink) => Promise<TaskFile> }
+  openFile: (file: TaskFile, source: ContextPanelSource | undefined, provider: FileOpeningProvider | null, current: () => boolean, signal: AbortSignal) => Promise<void>
+  onError: (error?: unknown) => void
   autoCollapse: Readonly<Ref<boolean>>
   linkOpening: Readonly<Ref<BrowserPreferences['linkOpening']>>
   closeView?: (id: string) => Promise<boolean>
   closeFiles?: (tabId: string) => Promise<boolean>
-  browser: Pick<DesktopBrowserApi, 'ensureSession' | 'close' | 'openArtifact' | 'onStateChanged' | 'navigate'>
+  browser: Pick<DesktopBrowserApi, 'ensureSession' | 'close' | 'openArtifact' | 'openFile' | 'onStateChanged' | 'navigate'>
 }
 
 export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
@@ -57,27 +70,31 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     if (entry)
       browserStates.value = { ...browserStates.value, [entry[0]]: state }
   })
-  let operation = 0
+  const operation = shallowRef(0)
   let interaction = 0
   let disposed = false
   watch(() => taskContext.activeTab.value?.id, (_, previous) => {
-    operation += 1
+    operation.value += 1
     if (!previous || !closingTabs.has(previous) || taskContext.hasTab(previous))
       interaction += 1
   }, { flush: 'sync' })
+  watch([options.activeConversationId, options.activeBranchId, options.activeDraftId], () => {
+    operation.value += 1
+    interaction += 1
+  }, { flush: 'sync' })
   watch(taskContext.selectionScope, () => {
-    operation += 1
+    operation.value += 1
     interaction += 1
   }, { flush: 'sync' })
   watch(taskContext.isOpen, (open) => {
     interaction += 1
     if (!open)
-      operation += 1
+      operation.value += 1
   }, { flush: 'sync' })
   onScopeDispose(() => {
     stopBrowserState()
     disposed = true
-    operation += 1
+    operation.value += 1
     interaction += 1
     for (const [id, state] of Object.entries(browserStates.value)) {
       if (id !== browserTabId(state.conversationId) && !closingTabs.has(id))
@@ -112,16 +129,16 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     return request
   }
 
-  function act(action: () => void) {
-    operation += 1
+  function act<T>(action: () => T): T {
+    operation.value += 1
     interaction += 1
-    action()
+    return action()
   }
 
   function currentOperation() {
-    const version = operation
+    const version = operation.value
     const activeTabId = taskContext.activeTab.value?.id
-    return () => !disposed && version === operation
+    return () => !disposed && version === operation.value
       && taskContext.activeTab.value?.id === activeTabId
   }
 
@@ -142,7 +159,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     const closingScope = taskContext.selectionScope.value
     const closingSource = contextTabSource(tab) ?? taskContext.getSource()
     const wasVisible = taskContext.tabs.value.some(item => item.id === tabId)
-    operation += 1
+    operation.value += 1
     const version = ++interaction
     if (tab.kind === 'files' && options.closeFiles && !await options.closeFiles(tab.id))
       return false
@@ -171,7 +188,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     const current = taskContext.allTabs.value.find(item => item.id === tabId)
     if (current && current !== tab)
       return true
-    operation += 1
+    operation.value += 1
     taskContext.closeTab(tabId)
     if (options.autoCollapse.value && wasVisible && !disposed && interaction === version
       && taskContext.selectionScope.value === closingScope && !taskContext.tabs.value.length) {
@@ -185,65 +202,73 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     return tab?.kind === 'artifact' ? tab.artifact : options.runOutputs.value.flatMap(output => output.artifacts).find(item => item.artifactId === id)
   }
 
-  async function openArtifact(target: string | LocalArtifact): Promise<void> {
+  async function openArtifact(target: string | LocalArtifact, providerId?: string): Promise<void> {
     const artifact = typeof target === 'string'
       ? findArtifact(target)
       : target
-    if (!artifact)
+    if (!artifact) {
+      options.onError()
       return
-    operation += 1
-    const requestCurrent = currentOperation()
-    if (options.fileOpening) {
-      try {
-        await options.fileOpening.ensureReady()
-      }
-      catch {
-        if (requestCurrent())
-          options.onError()
-        return
-      }
     }
-    if (!requestCurrent())
-      return
-    const provider = artifact.kind === 'file'
-      ? (options.fileOpening?.resolve(artifact.name, 'standalone') ?? resolveBuiltinFileOpening(artifact.name, 'standalone')).provider
-      : null
-    const document = () => act(() => taskContext.openArtifact(artifact))
-    try {
-      const handler = fileOpeningHandler(provider)
-      if (handler) {
-        await handler.open({
-          document,
-          browser: () => openBrowserArtifact(artifact),
-          extension: async () => {
-            if (!provider || !options.fileOpening)
-              throw new Error('FILE_OPENER_UNAVAILABLE')
-            await options.fileOpening.open(artifact, provider, requestCurrent)
-          },
-        })
-      }
-      else {
-        document()
-      }
-    }
-    catch {
-      if (requestCurrent())
-        options.onError()
-    }
+    await openResource({ name: artifact.name, kind: artifact.kind, source: { kind: 'artifact', artifactId: artifact.artifactId }, context: { conversationId: artifact.conversationId, runId: artifact.runId } }, provider => act(() => taskContext.openArtifact(artifact, provider?.id)), providerId)
   }
 
-  async function openBrowserArtifact(artifact: LocalArtifact) {
-    const conversationId = artifact.conversationId
-    act(() => taskContext.openBrowser({ conversationId, runId: artifact.runId }))
-    const isCurrent = currentOperation()
+  async function openResource(resource: FileOpeningResource, document: (provider: FileOpeningProvider | null, current: () => boolean, signal: AbortSignal) => void | Promise<void>, providerId?: string) {
+    operation.value += 1
+    let isCurrent = currentOperation()
+    const cancellation = new AbortController()
+    const stop = watchEffect(() => {
+      if (!isCurrent())
+        cancellation.abort()
+    }, { flush: 'sync' })
     try {
-      const state = await ensureBrowserSession(conversationId)
-      if (isCurrent())
-        await options.browser.openArtifact(state.sessionId, artifact.artifactId)
+      await options.fileOpening?.ensureReady()
+      if (!isCurrent())
+        return
+      const opening = options.fileOpening?.resolve(resource.name, 'standalone') ?? resolveBuiltinFileOpening(resource.name, 'standalone')
+      const provider = resource.kind === 'directory'
+        ? null
+        : providerId
+          ? opening.candidates?.find(candidate => candidate.id === providerId) ?? null
+          : opening.provider
+      if (providerId && !provider)
+        throw new Error('FILE_OPENER_UNAVAILABLE')
+      const handler = fileOpeningHandler(provider)
+      const actions = {
+        document: () => document(provider, isCurrent, cancellation.signal),
+        browser: async () => {
+          const conversationId = resource.source.kind === 'task' ? resource.source.target.conversationId : resource.context?.conversationId
+          if (!conversationId)
+            throw new Error('FILE_OPENER_UNAVAILABLE')
+          act(() => taskContext.openBrowser(resource.context))
+          isCurrent = currentOperation()
+          const state = await ensureBrowserSession(conversationId)
+          retainBrowserSession(state)
+          if (!isCurrent())
+            return
+          const next = resource.source.kind === 'artifact'
+            ? await options.browser.openArtifact(state.sessionId, resource.source.artifactId)
+            : resource.source.kind === 'task' ? await options.browser.openFile(state.sessionId, resource.source.target) : null
+          if (next && isCurrent())
+            updateBrowserState(next)
+        },
+        extension: async () => {
+          if (!provider || !options.fileOpening)
+            throw new Error('FILE_OPENER_UNAVAILABLE')
+          await options.fileOpening.open(resource, provider, isCurrent, cancellation.signal)
+        },
+      }
+      if (handler)
+        await handler.open(actions)
+      else
+        await actions.document()
     }
-    catch {
+    catch (error) {
       if (isCurrent())
-        taskContext.openArtifact(artifact)
+        options.onError(error)
+    }
+    finally {
+      stop()
     }
   }
 
@@ -278,15 +303,33 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
   }
 
   function canPreviewFile(path: string) {
-    return Boolean(fileArtifact(path)) || taskContext.canPreviewFile(path)
+    return Boolean(options.activeConversationId.value && localFileLinkPath(path))
   }
 
-  async function previewFile(path: string, source?: ContextPanelSource) {
+  async function previewFile(path: string, source?: ContextPanelSource, providerId?: string) {
     const artifact = fileArtifact(path, source)
-    if (artifact)
-      await openArtifact(artifact)
-    else
-      act(() => taskContext.previewFile(path, source))
+    if (artifact) {
+      await openArtifact(artifact, providerId)
+      return
+    }
+    const conversationId = source?.conversationId ?? options.activeConversationId.value
+    if (!conversationId) {
+      options.onError()
+      return
+    }
+    const context = source ?? (options.activeRunId.value ? { conversationId, runId: options.activeRunId.value } : undefined)
+    operation.value += 1
+    const isCurrent = currentOperation()
+    try {
+      const file = await options.files.resolve({ conversationId, href: path })
+      if (isCurrent()) {
+        await openResource({ name: file.name, kind: file.kind, source: { kind: 'task', target: file.target }, context }, (provider, current, signal) => options.openFile(file, context, provider, current, signal), providerId)
+      }
+    }
+    catch (error) {
+      if (isCurrent())
+        options.onError(error)
+    }
   }
 
   return {
@@ -308,7 +351,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     previewFile,
     closeTab,
     discardDraft: (id: string) => {
-      operation += 1
+      operation.value += 1
       interaction += 1
       const removedIds = new Set(taskContext.discardDraft(id).map(tab => tab.id))
       const sessions = Object.entries(browserStates.value).filter(([tabId]) => removedIds.has(tabId))
@@ -328,6 +371,8 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
       }))
     }),
     findArtifact,
+    fileArtifact,
+    onFileError: options.onError,
     openArtifact,
     openBrowser: () => act(taskContext.openBrowser),
     openChanges: (...args: Parameters<typeof taskContext.openChanges>) => act(() => taskContext.openChanges(...args)),

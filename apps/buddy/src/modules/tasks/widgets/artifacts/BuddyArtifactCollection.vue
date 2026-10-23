@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<{
   layout: 'strip',
 })
 const emit = defineEmits<{
-  openArtifact: [artifactId: string]
+  openArtifact: [artifact: LocalArtifact]
 }>()
 
 const scrollRoot = useTemplateRef<HTMLElement>('scrollRoot')

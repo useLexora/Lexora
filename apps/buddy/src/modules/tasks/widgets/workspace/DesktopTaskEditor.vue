@@ -5,7 +5,9 @@ import { NButton, NPopover } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { useFileOpening } from '@/modules/files'
 import { DesktopMcpDialog } from '@/modules/settings/ui'
+import { createFileLinkMenu } from '@/modules/tasks/state/artifacts/createFileLinkMenu'
 import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
 import { useConversationStatus } from '@/modules/tasks/state/runs/useConversationStatus'
@@ -34,7 +36,7 @@ const {
   startTask: navigateDraft,
 } = useTaskContext()
 const { language } = useDesktopUi()
-useProvideArtifactActions({
+const artifactActions = useProvideArtifactActions({
   task: () => tasks,
   resources: contextActions,
   revealFile: input => requireDesktopApi().localChat.artifacts.revealFile(input),
@@ -86,6 +88,8 @@ useProvideChatContent({
   openWebLink: contextActions.openWebLink,
   canPreviewFile: contextActions.canPreviewFile,
   previewFile: contextActions.previewFile,
+  fileLinkMenu: createFileLinkMenu({ resources: contextActions, task: () => tasks, artifacts: artifactActions, files: requireDesktopApi().localChat.taskFiles, opening: useFileOpening()!, language: () => language.value, writeClipboardText: clipboard.writeText }),
+  onLinkError: contextActions.onFileError,
   writeClipboardText: text => clipboard.writeText(text),
 })
 </script>

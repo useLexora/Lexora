@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '@buddy-shared/conversation/buddyMessageContent'
@@ -21,7 +22,7 @@ import BuddyExecutionStatus from './BuddyExecutionStatus.vue'
 import { executionLabels } from './executionLabels'
 
 const props = defineProps<{ target: ExecutionTarget, visible: boolean, language: BuddyLocale }>()
-const emit = defineEmits<{ openArtifact: [id: string], openChanges: [id: string], returnToTask: [], titleChange: [title: string] }>()
+const emit = defineEmits<{ openArtifact: [artifact: LocalArtifact], openChanges: [id: string], returnToTask: [], titleChange: [title: string] }>()
 const target = computed(() => props.target)
 const state = useExecutionDetail(target, computed(() => props.visible))
 const detail = state.detail

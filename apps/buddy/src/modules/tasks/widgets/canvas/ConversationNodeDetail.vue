@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { ConversationNodeDetailRequest } from '@buddy-shared/conversation/conversationTree'
 import type { ChatTranscriptRow } from '../../model/transcript/chatTranscriptProjection'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -23,7 +24,7 @@ const props = defineProps<{
   canEdit: boolean
   editing: boolean
 }>()
-const emit = defineEmits<{ close: [], reload: [], edit: [], openArtifact: [id: string], openChanges: [id: string] }>()
+const emit = defineEmits<{ close: [], reload: [], edit: [], openArtifact: [artifact: LocalArtifact], openChanges: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const { writeClipboardText } = useChatContent()
 </script>

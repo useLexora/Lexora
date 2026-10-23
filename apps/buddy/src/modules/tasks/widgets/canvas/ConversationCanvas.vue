@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { ConversationCanvasDirection, ConversationCanvasNode } from '../../model/canvas/conversationCanvasLayout'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed, provide, shallowRef, useTemplateRef } from 'vue'
@@ -23,7 +24,7 @@ const emit = defineEmits<{
   retry: [id: string]
   open: [id: string]
   edit: [id: string]
-  openArtifact: [id: string]
+  openArtifact: [artifact: LocalArtifact]
   openQuote: [messageId: string, quoteId: string]
   refresh: []
 }>()
@@ -58,7 +59,7 @@ provide(conversationCanvasActions, {
   edit: id => emit('edit', id),
   retry: id => emit('retry', id),
   followup: id => emit('followup', id),
-  openArtifact: id => emit('openArtifact', id),
+  openArtifact: artifact => emit('openArtifact', artifact),
   openQuote: (messageId, quoteId) => emit('openQuote', messageId, quoteId),
 })
 

@@ -25,6 +25,7 @@ import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { createRendererDiagnostics } from '@/platform/runtime/RendererDiagnostics'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
+import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiContext'
@@ -152,14 +153,26 @@ const resources = useTaskResourcePanel({
   taskVisible: computed(() => pages.current.value === 'lexora.tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
   control: api.contextPanel,
   browser: api.browser,
+  files: api.localChat.taskFiles,
+  openFile: async (file, source, provider, current, signal) => {
+    if (!current())
+      return
+    const state = { mode: provider?.renderer === 'text' ? 'source' : 'preview', fileOpeningProvider: provider?.id ?? null, ...(source ? { contextSource: { ...source } } : {}) }
+    const id = await workbench.controller.open({ scheme: 'task-file', id: JSON.stringify([file.target.conversationId, file.target.path]), data: { ...file.target, kind: file.kind } }, file.name, { location: 'context', state, signal })
+    if (!id)
+      throw new Error('FILE_OPENER_UNAVAILABLE')
+    const view = workbench.controller.layout.views[id]
+    if (view)
+      workbench.controller.updateView(id, { state: { ...view.state, ...state } })
+  },
   fileOpening: {
     ensureReady: fileOpening.ensureReady,
     resolve: fileOpening.resolve,
-    open: async (artifact, provider, current) => {
-      const prepared = await api.extensions.prepareFileOpening({ providerId: provider.id, location: 'standalone', source: { kind: 'artifact', artifactId: artifact.artifactId } })
+    open: async (resource, provider, current, signal) => {
+      const prepared = await api.extensions.prepareFileOpening({ providerId: provider.id, location: 'standalone', source: resource.source })
       if (!current())
         return
-      const id = await workbench.controller.open({ scheme: 'extension', id: `artifact:${artifact.artifactId}:${provider.id}`, data: { extensionId: prepared.extensionId, viewType: prepared.viewType, resource: prepared.resource } }, artifact.name, { viewType: prepared.viewType, location: 'context', state: { version: 0, value: {}, contextSource: { conversationId: artifact.conversationId, runId: artifact.runId } } })
+      const id = await workbench.controller.open({ scheme: 'extension', id: JSON.stringify([resource.source, provider.id]), data: { extensionId: prepared.extensionId, viewType: prepared.viewType, resource: prepared.resource } }, resource.name, { viewType: prepared.viewType, location: 'context', signal, state: { version: 0, value: {}, ...(resource.context ? { contextSource: { ...resource.context } } : {}) } })
       if (!id)
         throw new Error('FILE_OPENER_UNAVAILABLE')
     },
@@ -168,7 +181,7 @@ const resources = useTaskResourcePanel({
   closeFiles: workbench.closeContextFiles,
   changeSets: computed(() => selectedTask.value?.workspace.transcript.changeSets.value ?? []),
   runOutputs: computed(() => selectedTask.value?.workspace.transcript.runOutputs.value ?? []),
-  onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.context.controlFailed')),
+  onError: error => message.error(error ? resolveLocalChatErrorMessage(error, stores.applicationSettings.language.value) : translateBuddy(stores.applicationSettings.language.value, 'desktop.context.controlFailed')),
 })
 onScopeDispose(registerResourceContributions(workbench.controller.registry, () => resources, () => stores.applicationSettings.language.value))
 provideExecutionEnvironment({

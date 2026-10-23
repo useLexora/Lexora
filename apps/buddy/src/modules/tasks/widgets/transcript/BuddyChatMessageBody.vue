@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { ChatTranscriptTurnOutputs } from '../../model/transcript/chatTranscriptProjection'
@@ -19,7 +20,7 @@ const props = defineProps<{
   turnChanges?: LocalChangeSetSummary | null
   writeClipboardText: (text: string) => Promise<void>
 }>()
-const emit = defineEmits<{ openArtifact: [id: string], openChanges: [id: string] }>()
+const emit = defineEmits<{ openArtifact: [artifact: LocalArtifact], openChanges: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const interruptionLabel = computed(() => {
   const interruption = getChatMessageInterruption(props.message)

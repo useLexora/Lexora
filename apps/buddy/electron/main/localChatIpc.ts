@@ -13,6 +13,7 @@ import { createLocalChatIpcContext } from './local-chat/registrar'
 import { registerRuntimeIpc } from './local-chat/runtime'
 import { registerSkillsIpc } from './local-chat/skills'
 import { registerSpacesIpc } from './local-chat/spaces'
+import { registerTaskFilesIpc } from './local-chat/taskFiles'
 import { registerTaskMarksIpc } from './local-chat/taskMarks'
 import { registerWebIpc } from './local-chat/web'
 
@@ -31,6 +32,7 @@ export function registerLocalChatIpc(options: RegisterLocalChatIpcOptions): () =
   registerSkillsIpc(context)
   registerConnectorsIpc(context)
   registerConversationIpc(context)
+  registerTaskFilesIpc(context)
   registerTaskMarksIpc(context)
   registerWebIpc(context)
   registerComposerIpc(context)

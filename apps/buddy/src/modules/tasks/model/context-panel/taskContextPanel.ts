@@ -27,6 +27,7 @@ export interface TaskArtifactContextTab extends ContextTabSource {
   kind: 'artifact'
   label: string
   viewMode: ArtifactViewMode
+  providerId?: string
 }
 
 export interface TaskChangesContextTab extends ContextTabSource {
@@ -94,14 +95,6 @@ export function spaceTaskArtifactTabs(
 
 export function artifactTabId(artifactId: string): string {
   return `artifact:${artifactId}`
-}
-
-export function isBrowserArtifact(
-  artifact: Pick<LocalArtifact, 'kind' | 'mimeType' | 'name'>,
-): boolean {
-  return artifact.kind === 'file'
-    && artifact.mimeType === 'text/html'
-    && /\.html?$/i.test(artifact.name)
 }
 
 export function spaceTaskBrowserTab(

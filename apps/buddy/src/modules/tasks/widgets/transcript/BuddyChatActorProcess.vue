@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { ChatAgentTurnNode } from '../../model/transcript/chatAgentTurn'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronDown16Regular, ChevronRight16Regular } from '@vicons/fluent'
@@ -15,7 +16,7 @@ import BuddyChatTurnChanges from './BuddyChatTurnChanges.vue'
 import BuddyChatTurnOutputs from './BuddyChatTurnOutputs.vue'
 
 const props = defineProps<{ runId: string, language: BuddyLocale }>()
-const emit = defineEmits<{ openArtifact: [id: string], openChanges: [id: string] }>()
+const emit = defineEmits<{ openArtifact: [artifact: LocalArtifact], openChanges: [id: string] }>()
 const expanded = shallowRef(false)
 const tree = useExecutionTree()
 const target = computed(() => {

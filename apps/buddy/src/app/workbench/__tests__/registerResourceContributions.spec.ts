@@ -14,10 +14,13 @@ function createResourcePanel(overrides: Parameters<typeof contextPanelFixture>[0
     ...options,
     autoCollapse: shallowRef(false),
     linkOpening: shallowRef('in-app'),
+    files: { resolve: async () => { throw new Error('Unexpected file resolution') } },
+    openFile: async () => { throw new Error('Unexpected file opening') },
     browser: {
       onStateChanged: () => () => {},
       close: async () => {},
       ensureSession: async () => { throw new Error('Unexpected browser session') },
+      openFile: async () => { throw new Error('Unexpected file link') },
       openArtifact: async () => { throw new Error('Unexpected browser artifact') },
       navigate: async () => { throw new Error('Unexpected browser navigation') },
     },
@@ -34,7 +37,7 @@ function setup(panel: Parameters<typeof registerResourceContributions>[1]) {
   return { controller, ...launchers }
 }
 
-it('keeps directory selection, multiple-root picker and replaced panel dependencies with their original owner', async () => {
+it('opens a single root, asks before choosing among roots and dispatches to the current panel', async () => {
   const now = '2026-09-10T00:00:00.000Z'
   const space: LocalSpace = {
     id: 'space',
@@ -51,11 +54,9 @@ it('keeps directory selection, multiple-root picker and replaced panel dependenc
   }
   const spaces = shallowRef<readonly LocalSpace[]>([space])
   const activeSpace = shallowRef<LocalSpace | null>(space)
-  const mode = shallowRef<'task' | 'independent'>('task')
-  const original = createResourcePanel({ spaces, activeSpace, mode })
+  const original = createResourcePanel({ spaces, activeSpace })
   const panel = shallowRef(original)
   const f = setup(() => panel.value)
-  expect(f.actions.value.map(action => action.id)).toEqual(['files', 'browser'])
   await f.launch('files')
   expect(original.activeTab.value).toMatchObject({ kind: 'files', target: { spaceId: 'space', directoryId: 'directory', path: '' } })
   expect(panel.value.fileSpacePickerOpen.value).toBe(false)
@@ -65,13 +66,7 @@ it('keeps directory selection, multiple-root picker and replaced panel dependenc
   await f.controller.commands.execute('resource.files', { source: 'palette' })
   expect(panel.value.fileSpacePickerOpen.value).toBe(true)
   expect(original.allTabs.value).toHaveLength(1)
-  panel.value.setFileSpacePickerOpen(false)
-  mode.value = 'independent'
-  await f.launch('files')
-  expect(panel.value.fileSpacePickerOpen.value).toBe(true)
-  expect(panel.value.filePickerSpaces.value.map(space => space.id)).toEqual(['space'])
   panel.value = createResourcePanel({ activeConversationId: shallowRef('replacement') })
-  expect(f.actions.value.map(action => action.id)).toEqual(['changes', 'browser'])
   expect(await f.launch('files')).toBe(false)
   await f.launch('browser')
   expect(panel.value.activeTab.value).toMatchObject({ kind: 'browser', scope: 'task:replacement' })

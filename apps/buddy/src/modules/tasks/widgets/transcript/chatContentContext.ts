@@ -1,9 +1,13 @@
+import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
+import type { FileLinkMenuProvider } from '@/shared/ui/markdown/fileLinkMenu'
 import { createInjectionState } from '@vueuse/core'
 
 interface ChatContentContext {
   openWebLink: (url: string) => void
   canPreviewFile: (path: string) => boolean
-  previewFile: (path: string) => void
+  previewFile: (path: string, source?: ContextPanelSource) => void
+  fileLinkMenu?: (href: string, source?: ContextPanelSource) => ReturnType<FileLinkMenuProvider>
+  onLinkError?: (error: unknown) => void
   writeClipboardText: (text: string) => Promise<void>
 }
 

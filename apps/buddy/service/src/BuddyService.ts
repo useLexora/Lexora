@@ -132,6 +132,9 @@ import { observeRunDiagnostics } from './events/observeRunDiagnostics'
 import { RunEventCorruptionError } from './events/RunEventFailure'
 import { FileResourceCoordinator } from './files/FileResourceCoordinator'
 import { NativeFileEngine } from './files/NativeFileEngine'
+import { registerTaskFileRpc } from './files/registerTaskFileRpc'
+import { TaskFileAccess } from './files/TaskFileAccess'
+import { TaskFileService } from './files/TaskFileService'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
 import { ImageTransformService } from './images/ImageTransformService'
 import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationService'
@@ -512,6 +515,7 @@ export async function startBuddyService(
       defer(() => service.dispose())
       return service
     })
+    const taskFileService = new TaskFileService(new TaskFileAccess({ conversations, conversationGrants: conversationDirectoryGrants, spaces: spacesRepository, paths }))
     const artifactsRepository = createArtifactRepository(options.database)
     const artifactService = await host.start('runtime.artifact_catalogue', ({ defer }) => {
       const service = new ArtifactService({ repository: artifactsRepository, fileAccess: new ArtifactFileAccess({ conversations, conversationGrants: conversationDirectoryGrants, spaces: spacesRepository, paths }), onListenerError: () => record({ event: 'observer.failed', component: 'runtime.artifact_catalogue', level: 'warn' }) })
@@ -1633,6 +1637,7 @@ export async function startBuddyService(
         }),
       )
       register(registerSpaceFileRpc(options.rpc, spaceFiles))
+      register(registerTaskFileRpc(options.rpc, taskFileService))
       register(
         registerProviderRpc({
           rpc: options.rpc,

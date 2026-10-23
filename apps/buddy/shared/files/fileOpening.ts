@@ -64,7 +64,7 @@ export function resolveFileOpening(snapshot: FileOpeningSnapshot, name: string, 
   }).sort((left, right) => right.extension.length - left.extension.length || Number(Boolean(right.provider.recommended)) - Number(Boolean(left.provider.recommended)) || left.provider.id.localeCompare(right.provider.id)).map(candidate => candidate.provider)
   const preferred = candidates.find(provider => provider.id === preferredId && extension !== null && fileOpeningExtension(extension, [provider]) !== null)
   const builtin = candidates.find(provider => provider.builtin)
-  return { extension, preferredId, provider: preferred ?? builtin ?? null, unavailable: preferredId !== null && !preferred }
+  return { extension, preferredId, candidates, provider: preferred ?? builtin ?? null, unavailable: preferredId !== null && !preferred }
 }
 
 export function resolveBuiltinFileOpening(name: string, location: FileOpeningLocation) {

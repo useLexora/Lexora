@@ -6,6 +6,7 @@ import { openNativeFileStream } from '../../platform/filesystem/nativeFileStream
 import { artifactsRpc } from '../../shared/artifacts/artifactApi'
 import { isImageMimeType } from '../../shared/files/fileMimeTypes'
 import { mediaPreviewLocationSchema } from '../../shared/files/mediaPreview'
+import { taskFilesRpc } from '../../shared/files/taskFileApi'
 import { skillsRpc } from '../../shared/skills/skillApi'
 import { spaceFilesRpc } from '../../shared/spaces/spaceFileApi'
 
@@ -40,6 +41,15 @@ export async function handleMediaRequest(request: Request, runtime: Pick<BuddySe
         path: url.searchParams.get('path'),
       })
       return await createMediaResponse(request, () => runtime.request(skillsRpc.resolveImage.method, input, { signal: request.signal }), executable)
+    }
+    if (url.protocol === 'lexora-file:' && url.hostname === 'task-media') {
+      if (url.pathname !== '/' || [...url.searchParams.keys()].some(key => !['conversationId', 'path', 'v'].includes(key)))
+        return new Response(null, { status: 400 })
+      const input = taskFilesRpc.resolveMedia.input.parse({
+        conversationId: url.searchParams.get('conversationId'),
+        path: url.searchParams.get('path'),
+      })
+      return await createMediaResponse(request, () => runtime.request(taskFilesRpc.resolveMedia.method, input, { signal: request.signal }), executable)
     }
     if (url.protocol === 'lexora-file:' && url.hostname === 'media') {
       if (url.pathname !== '/' || [...url.searchParams.keys()].some(key => !['spaceId', 'directoryId', 'revision', 'path', 'v'].includes(key)))

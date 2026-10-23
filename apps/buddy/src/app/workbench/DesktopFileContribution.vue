@@ -16,7 +16,7 @@ const toolbarTarget = computed(() => typeof props.view.state.contextTabId === 's
 
 <template>
   <template v-if="visible || retainsPreview || typeof view.state.contextTabId !== 'string'">
-    <DesktopFilePreview v-if="view.type === 'files.preview'" :view="view" :files="workbench.api.localChat.spaces" :language="workbench.language.value" :write-clipboard-text="clipboard.writeText" :toolbar-target="toolbarTarget" :visible="visible" />
+    <DesktopFilePreview v-if="view.type === 'files.preview'" :view="view" :files="workbench.api.localChat.spaces" :task-files="workbench.api.localChat.taskFiles" :language="workbench.language.value" :write-clipboard-text="clipboard.writeText" :toolbar-target="toolbarTarget" :visible="visible" />
     <DesktopFileEditor v-else :view="view" :models="workbench.models" :language="workbench.language.value" :write-clipboard-text="clipboard.writeText" :toolbar-target="toolbarTarget" :visible="visible" />
   </template>
 </template>

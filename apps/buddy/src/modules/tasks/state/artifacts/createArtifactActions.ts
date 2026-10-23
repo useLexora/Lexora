@@ -1,5 +1,6 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
+import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { TaskCapability, TaskResourcePanel } from '../../contracts'
 import { artifactFileTarget } from '../../model/artifacts/artifactFileTarget'
 
@@ -13,10 +14,10 @@ export interface ArtifactActionsOptions {
 export type ArtifactAction = 'reference' | 'locate' | 'reveal' | 'copyPath'
 
 export function createArtifactActions(options: ArtifactActionsOptions) {
-  function referenceTask(artifact: LocalArtifact) {
+  function referenceTask(conversationId: string) {
     const task = options.task()
     const workspace = task?.workspace
-    return workspace && workspace.session.activeConversationId.value === artifact.conversationId
+    return workspace && workspace.session.activeConversationId.value === conversationId
       && workspace.session.activeBranchId.value
       && workspace.restoration.state.value === 'ready' && !workspace.status.isClosing.value
       && !workspace.execution.isSending.value && !workspace.execution.isMutatingBranch.value
@@ -29,8 +30,29 @@ export function createArtifactActions(options: ArtifactActionsOptions) {
       ? artifactFileTarget(task.workspace.session.activeSpace.value, artifact.path)
       : null
   }
+  async function reference(conversationId: string, source: BuddyComposerSource) {
+    const task = referenceTask(conversationId)
+    if (!task)
+      throw new Error('ARTIFACT_REFERENCE_UNAVAILABLE')
+    const { composer, session } = task.workspace
+    const draftId = composer.draftId.value
+    const editorKey = composer.editorKey.value
+    const branchId = session.activeBranchId.value!
+    const resourceId = await composer.selectSource(source, draftId)
+    if (!resourceId || options.task() !== task || referenceTask(conversationId) !== task
+      || composer.draftId.value !== draftId || composer.editorKey.value !== editorKey || session.activeBranchId.value !== branchId) {
+      return
+    }
+    const content = composer.composerContent.value
+    composer.updateComposerContent(composer.draft.value, {
+      ...content,
+      attrs: { ...content.attrs, panelResourceIds: [...new Set([...content.attrs?.panelResourceIds ?? [], resourceId])] },
+    })
+  }
   return {
-    canReference: (artifact: LocalArtifact) => !!referenceTask(artifact),
+    canReference: (artifact: LocalArtifact) => !!referenceTask(artifact.conversationId),
+    canReferenceFile: (conversationId: string) => !!referenceTask(conversationId),
+    referenceFile: (conversationId: string, path: string) => reference(conversationId, { localPath: path }),
     canLocate: (artifact: LocalArtifact) => !!fileTarget(artifact),
     async execute(action: ArtifactAction, artifact: LocalArtifact): Promise<void> {
       if (action === 'copyPath')
@@ -46,23 +68,10 @@ export function createArtifactActions(options: ArtifactActionsOptions) {
         options.resources.locateFile(target, artifact.kind, { conversationId: artifact.conversationId, runId: artifact.runId })
         return
       }
-      const task = referenceTask(artifact)
+      const task = referenceTask(artifact.conversationId)
       if (!task)
         throw new Error('ARTIFACT_REFERENCE_UNAVAILABLE')
-      const { composer, session } = task.workspace
-      const draftId = composer.draftId.value
-      const editorKey = composer.editorKey.value
-      const branchId = session.activeBranchId.value!
-      const resourceId = await composer.selectSource({ artifactId: artifact.artifactId, conversationId: artifact.conversationId, branchId }, draftId)
-      if (!resourceId || options.task() !== task || referenceTask(artifact) !== task
-        || composer.draftId.value !== draftId || composer.editorKey.value !== editorKey || session.activeBranchId.value !== branchId) {
-        return
-      }
-      const content = composer.composerContent.value
-      composer.updateComposerContent(composer.draft.value, {
-        ...content,
-        attrs: { ...content.attrs, panelResourceIds: [...new Set([...content.attrs?.panelResourceIds ?? [], resourceId])] },
-      })
+      await reference(artifact.conversationId, { artifactId: artifact.artifactId, conversationId: artifact.conversationId, branchId: task.workspace.session.activeBranchId.value! })
     },
   }
 }
