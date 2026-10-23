@@ -1,5 +1,6 @@
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
+import { contextPanelSourceSchema } from '@buddy-shared/context-panel/contextPanel'
 import { executionTargetSchema } from '@buddy-shared/executions/executionPresentationApi'
 
 export class ContextTabProjection {
@@ -24,11 +25,12 @@ export class ContextTabProjection {
         resources.removeView(tab.id)
     }
     for (const view of Object.values(this.controller.layout.views)) {
-      if (view.location !== 'context' || typeof view.state.contextTabId === 'string')
+      if (view.location !== 'context' || typeof view.state.contextTabId === 'string' || typeof view.state.inlineOwner === 'string')
         continue
       if (!resources.hasTab(view.id)) {
         const target = view.resource.scheme === 'execution' ? executionTargetSchema.safeParse(view.resource.data) : null
-        resources.openView(view.id, view.title, target?.success ? { conversationId: target.data.conversationId, runId: target.data.runId } : undefined)
+        const source = contextPanelSourceSchema.safeParse(view.state.contextSource)
+        resources.openView(view.id, view.title, target?.success ? { conversationId: target.data.conversationId, runId: target.data.runId } : source.success ? source.data : undefined)
       }
       else if (resources.allTabs.value.some(tab => tab.id === view.id && tab.kind === 'view' && tab.label !== view.title)) {
         resources.updateView(view.id, view.title)
@@ -43,7 +45,7 @@ export class ContextTabProjection {
     if (!this.ready())
       return
     const view = this.controller.context.view
-    if (view?.location === 'context')
+    if (view?.location === 'context' && typeof view.state.inlineOwner !== 'string')
       this.resources().selectTab(typeof view.state.contextTabId === 'string' ? view.state.contextTabId : view.id)
   }
 }

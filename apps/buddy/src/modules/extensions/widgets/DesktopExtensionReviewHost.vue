@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
+import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { useMessage } from 'naive-ui'
 import { onScopeDispose, shallowRef } from 'vue'
 import { useExtensionContext } from '../extensionContext'
@@ -26,13 +27,13 @@ onScopeDispose(state.api.onReview((next) => {
   review.value = 'token' in next ? next : null
 }))
 onScopeDispose(cancel)
-async function install(applyUpdate: boolean) {
+async function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
   if (!review.value || busy.value)
     return
   busy.value = true
   const current = review.value
   try {
-    await state.install(current, applyUpdate)
+    await state.install(current, applyUpdate, choices)
     if (review.value === current)
       review.value = null
     await state.refresh()

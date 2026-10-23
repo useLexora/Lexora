@@ -70,7 +70,7 @@ onScopeDispose(props.controller.subscribe(refresh))
 onScopeDispose(props.copies.onDidChangeDirty(refresh).dispose)
 const commands = computed(() => {
   void revision.value
-  return [...props.controller.registry.commands.values()].map(command => ({ ...command, label: commandLabel(command) })).filter(command => command.label.toLowerCase().includes(query.value.toLowerCase()) && (!command.enabled || command.enabled(props.controller.context)))
+  return [...props.controller.registry.commands.values()].filter(command => !command.hidden && props.controller.commands.isEnabled(command.id, { source: 'palette' })).map(command => ({ ...command, label: commandLabel(command) })).filter(command => command.label.toLowerCase().includes(query.value.toLowerCase()))
 })
 const dropPosition = shallowRef<{ paneId: string, position: DropPosition } | null>(null)
 function viewVisible(id: string): boolean {

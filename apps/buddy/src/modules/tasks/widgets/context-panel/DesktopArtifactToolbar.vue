@@ -2,16 +2,18 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
+import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
 import { computed } from 'vue'
+import { fileOpeningHandler } from '@/modules/files'
 import { formatFileSize } from '@/shared/lib/formatFileSize'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
 import { fileDocumentModes, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
-import { artifactMediaKind, formatDate, isMarkdownArtifact, resolveFileType } from './artifactContextPresentation'
+import { formatDate, resolveFileType } from './artifactContextPresentation'
 
-const props = defineProps<{ artifact: LocalArtifact, language: BuddyLocale, textAvailable: boolean }>()
+const props = defineProps<{ artifact: LocalArtifact, language: BuddyLocale, textAvailable: boolean, previewAvailable?: boolean }>()
 const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
 const modes = computed(() => fileDocumentModes({
-  preview: (props.textAvailable && isMarkdownArtifact(props.artifact)) || props.artifact.mimeType.startsWith('image/') || artifactMediaKind(props.artifact) !== null,
+  preview: props.previewAvailable ?? !!fileOpeningHandler(resolveBuiltinFileOpening(props.artifact.name, 'standalone').provider)?.preview,
   source: props.textAvailable,
   edit: false,
 }))

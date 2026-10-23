@@ -20,6 +20,7 @@ export type ExtensionServiceFact
     | { readonly kind: 'view', readonly extensionId: string, readonly generation: string, readonly viewId: string, readonly status: 'opened' | 'ready' | 'failed' | 'closed' | 'cleanup-failed', readonly errorCode?: string }
     | { readonly kind: 'contributions', readonly initial: boolean, readonly descriptors: EventSnapshot<ExtensionAgentDescriptor[]> }
     | { readonly kind: 'installation-progress' }
+    | { readonly kind: 'file-associations' }
     | { readonly kind: 'diagnostic', readonly extensionId: string, readonly event: string, readonly errorCode?: string, readonly durationMs?: number, readonly diagnostic?: ExtensionDiagnostic }
 
 export type ExtensionServiceChange = ExtensionServiceFact & { readonly revision: number }

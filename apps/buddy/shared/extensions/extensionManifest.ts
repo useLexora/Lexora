@@ -1,5 +1,6 @@
 import { satisfies, valid, validRange } from 'semver'
 import { z } from 'zod'
+import { fileOpeningExtensionSchema, fileOpeningLocationSchema } from '../files/fileOpening.ts'
 import { fileIconThemeContributionSchema } from '../icons/fileIconTheme.ts'
 import { themeContributionSchema } from '../theme/themeDocument.ts'
 import { workbenchSlashSchema } from '../workbench/workbenchCommand.ts'
@@ -21,6 +22,23 @@ export const extensionVersionSchema = z.string().max(80).refine(value => valid(v
 export { extensionPathSchema } from './extensionPath.ts'
 
 const contributionId = z.string().min(1).max(180).regex(/^[a-z][a-z0-9.-]+$/)
+const fileHandlerBase = {
+  id: contributionId,
+  title: z.string().min(1).max(100),
+  extensions: z.array(fileOpeningExtensionSchema).min(1).max(64).refine(values => new Set(values).size === values.length),
+}
+const fileHandlerViewSchema = z.object({ view: contributionId, requestDefault: z.boolean().default(true) }).strict()
+const fileHandlerSchema = z.object({
+  ...fileHandlerBase,
+  preview: fileHandlerViewSchema.optional(),
+  open: fileHandlerViewSchema.optional(),
+}).strict().refine(handler => handler.preview || handler.open, 'File handlers require preview or open')
+const legacyFileOpenerSchema = z.object({
+  ...fileHandlerBase,
+  view: contributionId,
+  locations: z.array(fileOpeningLocationSchema).min(1).max(2).refine(values => new Set(values).size === values.length),
+  requestDefault: z.boolean().default(true),
+}).strict()
 const placementBase = { id: contributionId, view: contributionId, when: workbenchConditionSchema.optional() }
 export const extensionPlacementSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -115,15 +133,27 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     settings: extensionSettingsSchema.prefault({}),
     commands: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), hidden: z.boolean().default(false), slash: workbenchSlashSchema.optional(), when: workbenchConditionSchema.optional() }).strict()).max(64).default([]),
     menus: z.array(z.object({ id: contributionId, command: contributionId, target: workbenchMenuSchema, order: z.number().int().min(-1000).max(1000).default(0), when: workbenchConditionSchema.optional() }).strict()).max(32).default([]),
-    views: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), entry: extensionPathSchema, stateVersion: z.number().int().min(1).max(10000).default(1), resource: z.enum(['selected-file', 'none']).default('selected-file'), location: z.enum(['context', 'page', 'window-overlay']).default('context'), when: workbenchConditionSchema.optional() }).strict()).max(16).default([]),
+    views: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), entry: extensionPathSchema, stateVersion: z.number().int().min(1).max(10000).default(1), resource: z.enum(['selected-file', 'optional-file', 'none']).default('selected-file'), location: z.enum(['context', 'page', 'window-overlay']).default('context'), when: workbenchConditionSchema.optional() }).strict()).max(16).default([]),
+    fileHandlers: z.array(fileHandlerSchema).max(32).default([]),
+    fileOpeners: z.array(legacyFileOpenerSchema).max(32).default([]),
+    launchers: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), view: contributionId }).strict()).max(16).default([]),
     placements: z.array(extensionPlacementSchema).max(16).default([]),
     navigation: z.object({ title: z.string().min(1).max(40), view: contributionId, when: workbenchConditionSchema.optional() }).strict().optional(),
-  }),
+  }).transform(({ fileOpeners, ...contributes }) => ({
+    ...contributes,
+    fileHandlers: [...contributes.fileHandlers, ...fileOpeners.map(({ id, title, extensions, view, locations, requestDefault }) => ({
+      id,
+      title,
+      extensions,
+      ...(locations.includes('inline') ? { preview: { view, requestDefault } } : {}),
+      ...(locations.includes('standalone') ? { open: { view, requestDefault } } : {}),
+    }))],
+  })).refine(contributes => contributes.fileHandlers.length <= 32, 'Too many file handlers'),
 }).superRefine((manifest, context) => {
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
-  for (const contribution of [...manifest.contributes.iconThemes, ...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
+  for (const contribution of [...manifest.contributes.iconThemes, ...manifest.contributes.themes, ...manifest.contributes.conditions, ...manifest.contributes.commands, ...manifest.contributes.views, ...manifest.contributes.placements, ...manifest.contributes.menus, ...manifest.contributes.fileHandlers, ...manifest.contributes.launchers, ...settings.modules, ...settings.groups, ...settings.items, ...agent?.tools ?? [], ...agent?.actions ?? []]) {
     if (!contribution.id.startsWith(`${manifest.id}.`) || ids.has(contribution.id))
       context.addIssue({ code: 'custom', message: 'Contribution IDs must be unique and owned by the extension' })
     ids.add(contribution.id)
@@ -133,6 +163,22 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
+  if (manifest.apiVersion < 4 && (manifest.contributes.fileHandlers.length || manifest.contributes.launchers.length || manifest.contributes.views.some(view => view.resource === 'optional-file')))
+    issue('File handlers, launchers and optional-file views require API 4')
+  for (const handler of manifest.contributes.fileHandlers) {
+    for (const target of [handler.preview, handler.open]) {
+      if (!target)
+        continue
+      const view = manifest.contributes.views.find(view => view.id === target.view)
+      if (!view || view.location !== 'context' || view.resource === 'none')
+        issue('File handlers require an owned context file view')
+    }
+  }
+  for (const launcher of manifest.contributes.launchers) {
+    const view = manifest.contributes.views.find(view => view.id === launcher.view)
+    if (!view || view.location !== 'context' || view.resource === 'selected-file')
+      issue('Launchers require an owned context view accepting no resource')
+  }
   const shells = manifest.contributes.shells
   if ((shells || manifest.permissions.shells) && (manifest.apiVersion < 4 || !shells || !manifest.permissions.shells))
     issue('Shell contributions require API 4 and shells permission')
@@ -186,7 +232,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     context.addIssue({ code: 'custom', message: 'Commands require an extension entry' })
   if (manifest.id in manifest.dependencies)
     context.addIssue({ code: 'custom', message: 'An extension cannot depend on itself' })
-  if (manifest.contributes.views.some(view => view.resource === 'selected-file') && manifest.permissions.selectedResource !== 'read')
+  if (manifest.contributes.views.some(view => view.resource !== 'none') && manifest.permissions.selectedResource !== 'read')
     context.addIssue({ code: 'custom', message: 'File views require selected-resource permission' })
   if (manifest.contributes.views.some(view => view.location !== 'context' && view.resource !== 'none'))
     context.addIssue({ code: 'custom', message: 'Page views cannot require a selected resource' })

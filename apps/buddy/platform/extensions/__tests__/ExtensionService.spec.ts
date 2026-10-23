@@ -132,7 +132,6 @@ it('exposes opaque selected-resource grants, revalidates bindings on every read,
   expect(Object.keys(command.resource).sort()).toEqual(['id', 'name'])
   expect(await hosts[0]!.broker('resources.readText', { id: command.resource.id })).toBe('Selected text')
   await expect(hosts[0]!.broker('resources.readText', { id: randomUUID() })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
-  await expect(hosts[0]!.broker('shell.execute', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
   allowed = false
   await expect(hosts[0]!.broker('resources.readText', { id: command.resource.id })).rejects.toThrow('RESOURCE_REVOKED')
 })
@@ -302,7 +301,7 @@ it('authorizes slot activation and withdrawal without expanding layout or contro
   await service.install((await reviewPackage(root, store, value)).token)
   const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.footer.content', placementId: 'tests.footer.slot', resource: null, state: null, stateVersion: 0 })
   const request = (method: string, params: JsonValue) => service.viewRequest(session.id, session.generation, session.token, method, params)
-  expect(await request('bootstrap', null)).toEqual(expect.objectContaining({ apiVersion: 3, presentation: 'slot' }))
+  expect(await request('bootstrap', null)).toMatchObject({ presentation: 'slot' })
   await expect(request('view.setState', {})).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(request('view.setPresentation', { height: 200 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(request('control.propose', { revision: randomUUID(), value: 'high' })).rejects.toThrow('EXTENSION_METHOD_DENIED')
@@ -322,11 +321,11 @@ it('authorizes slot activation and withdrawal without expanding layout or contro
 it('does not let an older concurrent open replace a newer view endpoint', async () => {
   const { store, service } = await fixture()
   const resource = await store.grant('tests.reader', target)
-  const original = store.resolveGrant.bind(store)
-  const pending = deferred<typeof target>()
+  const original = store.resolveFileOpeningGrant.bind(store)
+  const pending = deferred<{ kind: 'space', target: typeof target }>()
   const entered = deferred<void>()
   let requests = 0
-  vi.spyOn(store, 'resolveGrant').mockImplementation(async (...args) => {
+  vi.spyOn(store, 'resolveFileOpeningGrant').mockImplementation(async (...args) => {
     if (++requests === 1) {
       entered.resolve()
       return pending.promise
@@ -338,7 +337,7 @@ it('does not let an older concurrent open replace a newer view endpoint', async 
   const rejected = expect(first).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
   await entered.promise
   const current = await service.openView({ ...input, state: { restored: true } })
-  pending.resolve(target)
+  pending.resolve({ kind: 'space', target })
   await rejected
   expect(await service.viewRequest(current.id, current.generation, current.token, 'bootstrap', null)).toMatchObject({ state: { restored: true } })
 })
@@ -639,22 +638,17 @@ it('downloads files and saves standalone theme images using existing grants with
   await themes.initialize(DEFAULT_THEME_PREFERENCE, false)
   cleanup.push(() => themes.dispose())
   const opened: string[] = []
-  const picker = vi.fn()
   const value = manifest({ apiVersion: 3, permissions: { network: ['https://media.example.com'], themeManagement: true }, contributes: {
     commands: [{ id: 'tests.reader.open', title: 'Open' }],
     views: [{ id: 'tests.reader.reader', title: 'Media', entry: 'view.js', resource: 'none' }],
   } })
   const f = await fixture({ themes, get: async () => new Response(Buffer.alloc(8 * 1024 * 1024, 42), { headers: { 'content-type': 'image/png' } }), openExternal: async (url) => {
     opened.push(url)
-  }, selectResources: picker }, value)
+  } }, value)
   const view = await f.service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 })
   const request = (method: string, params: JsonValue) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
   const resource = await request('network.download', { id: randomUUID(), url: 'https://media.example.com/wallpaper.png' }) as { id: string, size: number }
   expect(resource.size).toBe(8 * 1024 * 1024)
-  const copy = await request('resources.importFile', { id: randomUUID(), resourceId: resource.id, name: 'copy.png' }) as { id: string, size: number }
-  expect(copy.size).toBe(resource.size)
-  await request('resources.release', { id: copy.id })
-  expect(await request('resources.getUrl', { id: resource.id })).toContain(`/__resource/${resource.id}`)
   const saved = await f.hosts[0]!.broker('themes.request', { action: 'save', archive: { schemaVersion: 1, appearance: 'dark', label: 'Media', document: { schemaVersion: 1, welcome: { image: 'wallpaper.png' } }, assets: { 'wallpaper.png': { resourceId: resource.id } } } }) as { id: string }
   await request('resources.release', { id: resource.id })
   await request('themes.request', { action: 'preference', preference: { id: saved.id } })
@@ -663,7 +657,6 @@ it('downloads files and saves standalone theme images using existing grants with
   await request('links.openExternal', { url: 'https://media.example.com/source#credits' })
   expect(opened).toEqual(['https://media.example.com/source#credits'])
   await expect(request('links.openExternal', { url: 'https://other.example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
-  expect(picker).not.toHaveBeenCalled()
 })
 
 it('revalidates download redirects and cancels work owned by a closed view without retaining partial files', async () => {

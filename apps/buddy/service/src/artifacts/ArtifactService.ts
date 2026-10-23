@@ -406,7 +406,7 @@ export class ArtifactService {
     const artifact = this.#requireVisibleArtifact(id)
     if (
       artifact.kind !== 'file'
-      || (!isTextArtifact(artifact.mimeType) && inferArtifactMimeType(artifact.name) !== 'text/markdown')
+      || (!isTextArtifact(artifact.mimeType) && !['text/markdown', 'image/svg+xml'].includes(inferArtifactMimeType(artifact.name)))
       || artifact.sizeBytes > BUDDY_ARTIFACT_TEXT_BYTES_LIMIT
     ) {
       throw new ArtifactError('VALIDATION_FAILED')

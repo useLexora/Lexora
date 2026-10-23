@@ -13,7 +13,7 @@ export function useDesktopKeybindings(registry: ContributionRegistry, settings: 
   })
   const entries = computed(() => {
     void revision.value
-    return [...registry.commands.values()].map(command => ({
+    return [...registry.commands.values()].filter(command => !command.hidden).map(command => ({
       id: command.id,
       label: commandLabel(command),
       binding: bindings.value[command.id]?.[0] ?? '',

@@ -1,8 +1,10 @@
+import type { ExtensionFileOpeningSource } from '../../shared/extensions/extensionApi'
 import type { ExtensionManifest } from '../../shared/extensions/extensionManifest'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
+import type { FileOpeningChoice, FileOpeningReviewChoice, FileOpeningSnapshot } from '../../shared/files/fileOpening'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
-import type { ExtensionPackage, extensionIndexSchema as indexSchema, InstalledExtension, extensionSourceSchema as sourceSchema, storedPackageSchema, storedRecordSchema } from './extensionState'
+import type { ExtensionPackage, extensionIndexSchema as indexSchema, InstalledExtension, ReviewedFileOpening, extensionSourceSchema as sourceSchema, storedPackageSchema, storedRecordSchema } from './extensionState'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
@@ -10,11 +12,13 @@ import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { gt, satisfies } from 'semver'
 import { z } from 'zod'
-import { extensionResourceSchema } from '../../shared/extensions/extensionApi'
+import { extensionFileOpeningSourceSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
+import { extensionFileHandlerBindings, extensionFileOpeningProviders } from '../../shared/extensions/extensionFileOpening'
 import { addedExtensionPermissions, extensionIdSchema, extensionManifestSchema, extensionMetadataSchema } from '../../shared/extensions/extensionManifest'
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
+import { builtinFileOpeningProviders, fileOpeningChoiceSchema, fileOpeningExtension, resolveFileOpening } from '../../shared/files/fileOpening'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
 import { validateFileIconThemeFiles } from '../icons/fileIconThemeAssets'
 import { validateThemeFiles } from '../themes/themeAssets'
@@ -23,9 +27,12 @@ import { extensionIconUrl } from './extensionIcon'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
 import { extensionPackageSchema as packageSchema, storedIndexSchema } from './extensionState'
 
-const grantSchema = z.object({ resource: extensionResourceSchema, target: spaceFileTargetSchema }).strict()
+const grantSchema = z.union([
+  z.object({ resource: extensionResourceSchema, target: spaceFileTargetSchema }).strict().transform(value => ({ resource: value.resource, source: { kind: 'space' as const, target: value.target } })),
+  z.object({ resource: extensionResourceSchema, source: extensionFileOpeningSourceSchema }).strict(),
+])
 export type { ExtensionPackage, InstalledExtension } from './extensionState'
-export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number }
+export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number, fileAssociations: ReviewedFileOpening[] }
 
 async function verifyExistingPackage(root: string, pkg: ExtensionPackage, renameError: unknown): Promise<void> {
   const files = await readExtensionDirectory(root).catch((error) => {
@@ -44,7 +51,7 @@ export class ExtensionPackageStore {
   readonly resources: ExtensionResourceStore
   readonly #candidates = new Map<string, ExtensionCandidate>()
   readonly #icons = new Map<string, { revision: string, url: Promise<string | undefined> }>()
-  #index: z.infer<typeof indexSchema> = { version: 1, installed: {} }
+  #index: z.infer<typeof indexSchema> = { version: 1, installed: {}, fileOpeningDefaults: {}, fileOpeningRevisions: {} }
   readonly #unavailable = new Map<string, { record: z.infer<typeof storedRecordSchema>, error: ExtensionCompatibilityError }>()
   readonly #unavailablePending = new Map<string, { package: z.infer<typeof storedPackageSchema>, error: ExtensionCompatibilityError }>()
   #tail = Promise.resolve()
@@ -86,7 +93,7 @@ export class ExtensionPackageStore {
         }
         installed[id] = { ...record, current: current.data, pending: pending?.success ? pending.data : null }
       }
-      this.#index = { version: 1, installed }
+      this.#index = { ...stored, installed }
     }
     catch (error) {
       this.#unavailable.clear()
@@ -158,8 +165,14 @@ export class ExtensionPackageStore {
     const revision = sha256(JSON.stringify(hashes))
     const iconUrl = extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
     const token = randomUUID()
-    this.#candidates.set(token, { token, files, development, expires: Date.now() + 600000, package: { manifest, hashes, revision, source } })
-    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, addedPermissions: addedExtensionPermissions(current?.current.manifest.permissions, manifest.permissions) }
+    const snapshot = this.fileOpeners()
+    const fileAssociations: FileOpeningReviewChoice[] = manifest.contributes.fileHandlers.flatMap(provider => provider.extensions.flatMap(extension => extensionFileHandlerBindings(provider).map(({ location, requestDefault }) => {
+      const resolved = resolveFileOpening(snapshot, `file${extension}`, location)
+      const currentProviderId = resolved.preferredId ?? resolved.provider?.id ?? null
+      return { extension, location, providerId: provider.id, title: provider.title, currentProviderId, requestDefault }
+    })))
+    this.#candidates.set(token, { token, files, development, expires: Date.now() + 600000, package: { manifest, hashes, revision, source }, fileAssociations: fileAssociations.map(({ extension, location, providerId }) => ({ choice: { extension, location, providerId }, revision: this.#index.fileOpeningRevisions[extension]?.[location] ?? 0 })) })
+    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, addedPermissions: addedExtensionPermissions(current?.current.manifest.permissions, manifest.permissions), fileAssociations }
   }
 
   cancelReview(token: string): void {
@@ -197,12 +210,22 @@ export class ExtensionPackageStore {
     return true
   }
 
-  async install(token: string, signal?: AbortSignal): Promise<string> {
+  async install(token: string, signal?: AbortSignal, choices: FileOpeningChoice[] = []): Promise<string> {
     const candidate = this.#candidates.get(token)
     this.#candidates.delete(token)
     if (!candidate || candidate.expires < Date.now())
       throw new Error('EXTENSION_REVIEW_EXPIRED')
     const { package: pkg } = candidate
+    const selected = new Set<string>()
+    const reviewed = choices.map((raw) => {
+      const choice = fileOpeningChoiceSchema.parse(raw)
+      const key = `${choice.extension}/${choice.location}`
+      const match = candidate.fileAssociations.find(item => item.choice.extension === choice.extension && item.choice.location === choice.location && item.choice.providerId === choice.providerId)
+      if (!match || selected.has(key))
+        throw new Error('EXTENSION_FILE_ASSOCIATION_DENIED')
+      selected.add(key)
+      return match
+    })
     signal?.throwIfAborted()
     if (pkg.manifest.format !== 'compiled')
       throw new Error('EXTENSION_COMPILATION_REQUIRED')
@@ -235,8 +258,10 @@ export class ExtensionPackageStore {
         if (old && !candidate.development && !gt(pkg.manifest.version, old.current.manifest.version))
           throw new Error('EXTENSION_VERSION_NOT_NEWER')
         index.installed[pkg.manifest.id] = old
-          ? { ...old, pending: pkg, development: candidate.development }
-          : { current: pkg, pending: null, enabled: true, development: candidate.development }
+          ? { ...old, pending: pkg, pendingFileOpeners: reviewed, development: candidate.development }
+          : { current: pkg, pending: null, pendingFileOpeners: [], enabled: true, development: candidate.development }
+        if (!old)
+          this.#applyFileOpeners(index, reviewed)
       }, () => signal?.throwIfAborted())
       committed = true
       return pkg.manifest.id
@@ -245,6 +270,51 @@ export class ExtensionPackageStore {
       await rm(temporary, { recursive: true, force: true })
       if (created && !committed)
         await rm(target, { recursive: true, force: true })
+    }
+  }
+
+  fileOpeners(): FileOpeningSnapshot {
+    const providers = [...builtinFileOpeningProviders]
+    for (const [id, record] of Object.entries(this.installed)) {
+      let available = !extensionCompatibilityIssue(record.current.manifest, this.appVersion)
+      try {
+        for (const dependency of extensionActivationOrder(this.installed, id)) {
+          if (extensionCompatibilityIssue(this.installed[dependency]!.current.manifest, this.appVersion))
+            available = false
+        }
+      }
+      catch { available = false }
+      providers.push(...extensionFileOpeningProviders(record.current.manifest, available))
+    }
+    return structuredClone({ providers, defaults: this.#index.fileOpeningDefaults })
+  }
+
+  async setFileOpener(raw: FileOpeningChoice): Promise<void> {
+    const choice = fileOpeningChoiceSchema.parse(raw)
+    await this.#update((index) => {
+      const providers = this.fileOpeners().providers
+      if (choice.providerId !== null && (!providers.some(provider => provider.extensions.includes(choice.extension)) || !providers.some(provider => provider.id === choice.providerId && provider.available && provider.locations.includes(choice.location) && fileOpeningExtension(choice.extension, [provider]) !== null)))
+        throw new Error('EXTENSION_FILE_ASSOCIATION_DENIED')
+      this.#writeFileOpener(index, choice)
+    })
+  }
+
+  #writeFileOpener(index: z.infer<typeof indexSchema>, choice: FileOpeningChoice): void {
+    const defaults = index.fileOpeningDefaults[choice.extension] ??= {}
+    if (choice.providerId === null)
+      delete defaults[choice.location]
+    else
+      defaults[choice.location] = choice.providerId
+    if (!Object.keys(defaults).length)
+      delete index.fileOpeningDefaults[choice.extension]
+    const revisions = index.fileOpeningRevisions[choice.extension] ??= {}
+    revisions[choice.location] = (revisions[choice.location] ?? 0) + 1
+  }
+
+  #applyFileOpeners(index: z.infer<typeof indexSchema>, choices: ReviewedFileOpening[]): void {
+    for (const { choice, revision } of choices) {
+      if ((index.fileOpeningRevisions[choice.extension]?.[choice.location] ?? 0) === revision)
+        this.#writeFileOpener(index, choice)
     }
   }
 
@@ -271,6 +341,8 @@ export class ExtensionPackageStore {
           throw new ExtensionCompatibilityError(record.pending.manifest, issue)
         record.current = record.pending
         record.pending = null
+        this.#applyFileOpeners(index, record.pendingFileOpeners)
+        record.pendingFileOpeners = []
       }
     })
   }
@@ -328,10 +400,32 @@ export class ExtensionPackageStore {
     })
   }
 
+  revokeFileOpeningGrants(id: string): Promise<void> {
+    return this.#writeData(id, () => rm(join(this.root, 'data', extensionIdSchema.parse(id), 'resources'), { recursive: true, force: true }))
+  }
+
+  grantFileOpening(id: string, source: ExtensionFileOpeningSource, name: string, assertCurrent: () => void) {
+    if (source.kind === 'space')
+      return this.grant(id, source.target, assertCurrent)
+    return this.#writeData(id, async () => {
+      assertCurrent()
+      const resource = { id: randomUUID(), name }
+      await writeExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'resources', `${resource.id}.json`), { resource, source }, assertCurrent)
+      return resource
+    })
+  }
+
   async resolveGrant(id: string, resourceId: string) {
+    const source = await this.resolveFileOpeningGrant(id, resourceId)
+    if (source.kind !== 'space')
+      throw new Error('EXTENSION_RESOURCE_DENIED')
+    return source.target
+  }
+
+  async resolveFileOpeningGrant(id: string, resourceId: string): Promise<ExtensionFileOpeningSource> {
     const uuid = z.string().uuid().parse(resourceId)
     try {
-      return grantSchema.parse(await readExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'resources', `${uuid}.json`))).target
+      return grantSchema.parse(await readExtensionJson(join(this.root, 'data', extensionIdSchema.parse(id), 'resources', `${uuid}.json`))).source
     }
     catch {
       throw new Error('EXTENSION_RESOURCE_DENIED')
@@ -408,6 +502,7 @@ export class ExtensionPackageStore {
       const next = structuredClone(this.#index)
       change(next)
       const stored = {
+        ...next,
         version: 1,
         installed: {
           ...Object.fromEntries([...this.#unavailable].map(([id, item]) => [id, item.record])),

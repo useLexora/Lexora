@@ -32,9 +32,11 @@
 | --- | --- |
 | `commands` | 数组，每项必填 `id`、`title`；`hidden` 可选，默认 false；API 3 可声明 `slash: {name, description?}`，规则见 [注册命令](commands.md)。存在命令时必须设置清单顶层的宿主 `entry` |
 | `menus` | API 3；数组，每项必填 `id`、`command`、`target`，可选 `order`（-1000 至 1000，默认 0）、`when`；引用自己的已声明命令 |
-| `views` | 数组，每项必填 `id`、`title`、`entry`；`resource` 为 `selected-file`（默认）或 `none`；`location` 默认 `context`；`stateVersion` 为正整数，默认 1 |
+| `views` | 数组，每项必填 `id`、`title`、`entry`；`resource` 为 `selected-file`（默认）、`none`，或 API 4 的 `optional-file`；`location` 默认 `context`；`stateVersion` 为正整数，默认 1 |
 | `placements` | 数组，每项必填 `id`、`view`、`kind`，并按 kind 添加后文规定的 `anchor`、`target` 或 `presentation`；不要把它们写入视图定义 |
 | `navigation` | 单个对象，必填 `title`、`view`，引用自己的无资源视图 |
+| `fileHandlers` | API 4；数组，每项必填 `id`、`title`、`extensions`；`preview`、`open` 至少提供一个，各含 `view` 和可选 `requestDefault`（默认 `true`）；见下文 |
+| `launchers` | API 4；数组，每项必填 `id`、`title`、`view`，提供无需文件的独立入口 |
 | `agent` | API 3；指令、工具、任务动作和可选的 enabledWhen，见 [Agent 与设置](agent-settings.md) |
 | `settings` | API 3；声明 modules/groups/items，由宿主渲染并保存，见 [Agent 与设置](agent-settings.md) |
 | `shells` | API 4；固定本机解释器候选与原生设置映射；可选 settingsGroup 将插件自有组渲染为一行一个 Shell 的原生表格，文件选择仅限原生设置，需独立 shells 权限，见 [命令解释器](shells.md) |
@@ -46,7 +48,7 @@
 | location | resource | 行为 |
 | --- | --- | --- |
 | `page` | `none` | 独立页面，可作为导航入口 |
-| `context` | `selected-file` 或 `none` | 工作区资源页签，由用户打开 |
+| `context` | `selected-file`、`none` 或 API 4 的 `optional-file` | 工作区资源页签，由用户打开 |
 | `window-overlay` | `none` | 启用后自动挂载的透明窗口效果，每插件最多一个；无法点击或聚焦 |
 
 页面与小视图由插件绘制，均使用 `render(context, container)`，共用隔离和通信 API。API 2 起将视图内容与挂载位置分开，通过 `contributes.placements` 选择正式扩展点；`page` 和 `window-overlay` 继续可用。插件不能查询或修改宿主 DOM。
@@ -56,6 +58,54 @@
 导航入口位于自动化下方，声明 `contributes.navigation: { "title": "插件名称", "view": "<plugin-id>.settings" }`，引用一个 `resource: "none"` 的视图（API 1 仍需 `location: "page"`）。不需要设置页的效果插件可以没有导航。
 
 导航页面、装饰、内容插槽和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
+
+## 文件关联与独立入口
+
+使用下列新增声明时，`apiVersion` 保持 `4`，`engines.lexora` 必须以首次提供这些能力的应用版本为下限；不能仅凭旧宿主也支持 API 4 就声明兼容。应用版本和 API 版本分别约束能力可用性与协议兼容性。
+
+`contributes.fileHandlers` 声明文件处理器，每项具有稳定的 `id`、显示名称 `title` 和精确的小写带点后缀 `extensions`，例如 `[".md", ".markdown"]`。不接受通配符、MIME 推断或没有点的后缀；每项最多 64 个后缀、共 32 项。两种打开方式分别保存用户默认；多个已注册复合后缀匹配时采用最长者。
+
+- `preview: { view, requestDefault? }`：在文件页内预览。
+- `open: { view, requestDefault? }`：在独立工作台视图中打开文件。
+
+至少声明一种方式；省略的方式不注册，也不借用另一种方式的视图。两者可引用同一个视图或不同视图；视图必须属于本插件、`location` 为 `context`，资源模式为 `selected-file` 或 `optional-file`，并声明 `selectedResource: "read"`。宿主传递文件资源与管理视图生命周期，插件自行决定界面内容。
+
+每种方式的 `requestDefault` 缺省为 `true`，安装确认页预勾选对应关联；设置为 `false` 时不预选，用户仍可主动勾选。该字段不影响文件权限或撤销已有默认。确认安装应用最终选择，更新的关联在新版本生效时应用。相同后缀和方式有多个处理器时，优先保留本插件中已经作为默认的处理器，否则按声明顺序预选第一个申请者。停用、失败、卸载时保留偏好，只回退内置处理器，不自动选择其他第三方。
+
+`contributes.launchers` 提供“+”启动入口（最多16项），引用本插件的 `context` 视图，资源模式为 `none` 或 `optional-file`。启动时 `context.resource` 为 `null`；文件打开则传入文件资源。两个入口独立引用视图，文件打开无需注册或调用 launcher。
+
+共用同一视图时，让视图接受可选文件并处理有文件、无文件两种状态：
+
+```json
+{
+  "apiVersion": 4,
+  "permissions": { "selectedResource": "read" },
+  "contributes": {
+    "views": [{ "id": "<plugin-id>.reader", "title": "阅读器", "entry": "view.ts", "resource": "optional-file" }],
+    "fileHandlers": [{ "id": "<plugin-id>.files", "title": "阅读器", "extensions": [".md"], "preview": { "view": "<plugin-id>.reader" }, "open": { "view": "<plugin-id>.reader" } }],
+    "launchers": [{ "id": "<plugin-id>.start", "title": "阅读器", "view": "<plugin-id>.reader" }]
+  }
+}
+```
+
+分别呈现时，新增 `selected-file` 视图，并让 `preview` 引用它；原视图仍用于启动和独立打开：
+
+```json
+{
+  "views": [
+    { "id": "<plugin-id>.preview", "title": "文件预览", "entry": "preview.ts", "resource": "selected-file" },
+    { "id": "<plugin-id>.reader", "title": "阅读器", "entry": "view.ts", "resource": "optional-file" }
+  ],
+  "fileHandlers": [{ "id": "<plugin-id>.files", "title": "阅读器", "extensions": [".md"], "preview": { "view": "<plugin-id>.preview", "requestDefault": false }, "open": { "view": "<plugin-id>.reader" } }],
+  "launchers": [{ "id": "<plugin-id>.start", "title": "阅读器", "view": "<plugin-id>.reader" }]
+}
+```
+
+只提供文件处理时，省略 `launchers` 即可；文件视图可使用 `selected-file`。只做预览则再省略处理器的 `open`。
+
+旧 `fileOpeners` 声明仍受支持：其 `locations` 中的 `inline`、`standalone` 分别对应新结构的 `preview`、`open`，使用原 `view` 和 `requestDefault`。更新为新声明时保留处理器 ID，即可延续用户默认关联；同一 ID 不能同时声明在新旧数组中。
+
+关联不增加目录、路径或写入权限。句柄来自用户已授权的 Space 文件或任务产物，每次读取重新核对原授权；只能由分配到该资源的视图读取。视图可使用 `resources.readText/readBytes/getUrl(context.resource)`，受控 URL 支持 HEAD、Range，关闭后失效。内联预览可能获得未保存文本的只读内存快照（最多 2 MiB UTF-8），宿主不会写回或持久保存快照，原 Space 授权撤回后即不能继续读取；不可保存此临时句柄供重启后复用。编辑或导出仍须沿显式另存为能力。
 
 ## 权限
 
@@ -232,7 +282,7 @@ export function activate(context: ExtensionContext) {
 
 该命令须出现在 `contributes.commands` 中，例如 `{ "id":"<plugin-id>.read-settings", "title":"读取设置", "hidden":true }`。视图通过 `context.commands.execute(command, arguments)` 调用自身命令，返回 JSON。私有数据使用 JSON；更改结构时递增 `dataVersion` 并导出 `migrate(previous, from, to)`。
 
-文件工具需要一个可见命令作为打开入口。用户先在文件面板打开文件，再从命令面板执行它；宿主将收到的资源句柄传入视图：
+文件工具仍可通过可见命令提供打开入口；支持新关联声明的 API 4 宿主也可使用上述文件关联。命令方式中，用户先在文件面板打开文件，再从命令面板执行它；宿主将收到的资源句柄传入视图：
 
 ```ts
 context.subscriptions.add(context.commands.register(`${context.extension.id}.open`, async ({ resource }) => {

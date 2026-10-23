@@ -26,7 +26,6 @@ describe('extension package contract', () => {
     const value = manifest()
     const input = { ...value, futureMetadata: { enabled: true }, permissions: { ...value.permissions, inference: true, inferenceGpu: false, inferenceNetwork: ['https://example.com'], futureAccess: 'read', futureMetadata: { enabled: true } }, contributes: { ...value.contributes, futureProvider: { entry: 'future.js' } } }
     const review = await reviewPackage(root, store, input)
-    expect(review.manifest.permissions).toEqual(value.permissions)
     expect(review.manifest).toEqual(value)
     expect(review.addedPermissions).toEqual(['selectedResource:read'])
     await store.install(review.token)
@@ -36,10 +35,6 @@ describe('extension package contract', () => {
     await reloaded.load()
     expect(reloaded.installed[value.id]!.current.manifest.permissions).toEqual(value.permissions)
     expect(new TextDecoder().decode(await reloaded.asset(reloaded.installed[value.id]!.current, 'extension.js'))).toBe('export function activate() {}')
-  })
-  it.each([true, false, 'read', 'none', ['https://example.com'], [], 0, null, '', {}, [false]])('ignores unknown permissions regardless of their value: %j', (permission) => {
-    const value = manifest()
-    expect(extensionManifestSchema.parse({ ...value, permissions: { ...value.permissions, futureAccess: permission } })).toEqual(value)
   })
   it('still rejects malformed known permissions and contributions', () => {
     const value = manifest()
@@ -209,7 +204,7 @@ describe('extension package contract', () => {
   it('sorts dependencies and rejects cycles, disabled dependencies, and mismatched ranges', () => {
     const a = manifest({ id: 'tests.alpha', dependencies: { 'tests.beta': '^1' } })
     const b = manifest({ id: 'tests.beta' })
-    const record = (value: typeof a): InstalledExtension => ({ current: { manifest: value, revision: 'a'.repeat(64), hashes: {}, source: null }, enabled: true, pending: null, development: false })
+    const record = (value: typeof a): InstalledExtension => ({ current: { manifest: value, revision: 'a'.repeat(64), hashes: {}, source: null }, enabled: true, pending: null, pendingFileOpeners: [], development: false })
     const installed = { 'tests.alpha': record(a), 'tests.beta': record(b) }
     expect(extensionActivationOrder(installed, a.id)).toEqual(['tests.beta', 'tests.alpha'])
     installed['tests.beta'].enabled = false

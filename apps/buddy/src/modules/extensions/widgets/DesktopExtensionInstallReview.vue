@@ -1,15 +1,33 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
-import { Alert20Regular, Clock20Regular, Document20Regular, Globe20Regular } from '@vicons/fluent'
-import { NButton, NCheckbox, NEllipsis, NModal } from 'naive-ui'
+import type { FileOpeningChoice, FileOpeningReviewChoice } from '@buddy-shared/files/fileOpening'
+import { Alert20Regular, Clock20Regular, Document20Regular, Globe20Regular, Warning20Regular } from '@vicons/fluent'
+import { NButton, NCheckbox, NEllipsis, NModal, NTag } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
+import DesktopExtensionFileAssociations from './DesktopExtensionFileAssociations.vue'
 
 const props = defineProps<{ review: ExtensionReview, language: string, busy: boolean }>()
-const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean] }>()
+const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean, choices: FileOpeningChoice[]] }>()
 const applyUpdate = shallowRef(true)
+const associations = computed(() => props.review.fileAssociations ?? [])
+const selectedAssociations = shallowRef(initialAssociations())
+function initialAssociations(): FileOpeningChoice[] {
+  const selected = new Map<string, FileOpeningReviewChoice>()
+  for (const choice of associations.value) {
+    const key = `${choice.extension}:${choice.location}`
+    if (choice.providerId === choice.currentProviderId || (choice.requestDefault && !selected.has(key)))
+      selected.set(key, choice)
+  }
+  return [...selected.values()]
+    .map(({ extension, location, providerId }) => ({ extension, location, providerId }))
+}
+function install() {
+  const changes = selectedAssociations.value.filter(selected => associations.value.some(choice => choice.extension === selected.extension && choice.location === selected.location && choice.providerId === selected.providerId && choice.currentProviderId !== selected.providerId))
+  emit('install', applyUpdate.value, changes)
+}
 const labels = computed(() => extensionLabels(props.language))
 const english = computed(() => props.language === 'en-US')
 const permissions = computed(() => {
@@ -47,64 +65,74 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
     preset="card"
     :title="english ? (review.currentVersion ? 'Update plugin' : 'Install plugin') : (review.currentVersion ? '更新插件' : '安装插件')"
     class="extension-install-review"
+    content-class="min-h-0 overflow-y-auto overscroll-contain"
     :mask-closable="!busy"
     :closable="!busy"
     :close-on-esc="!busy"
     data-testid="extension-install-review"
     @update:show="value => { if (!value) emit('cancel') }"
   >
-    <div class="flex items-center gap-[14px]">
-      <span class="extension-install-review__icon grid w-[44px] h-[44px] place-items-center rounded-[10px] text-nav-foreground bg-nav-selected" aria-hidden="true">
+    <div class="flex items-center gap-3">
+      <span class="grid shrink-0 w-[44px] h-[44px] place-items-center rounded-[10px] text-nav-foreground bg-nav-selected" aria-hidden="true">
         <DesktopPluginIcon :src="review.iconUrl" :size="28" />
       </span>
-      <div class="extension-install-review__heading min-w-0">
-        <h2>{{ review.manifest.name }}</h2>
-        <p class="flex flex-wrap items-center gap-[8px] mt-[5px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
-          <span class="extension-install-review__version py-0 px-[6px] border-1 border-solid border-border rounded-[4px]">
+      <div class="min-w-0">
+        <h2 class="m-0 text-fg text-[18px] font-semibold leading-[1.45] [overflow-wrap:anywhere]">
+          {{ review.manifest.name }}
+        </h2>
+        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
+          <NEllipsis class="max-w-[220px]">
+            {{ review.manifest.author || (english ? 'Author not provided' : '未提供作者') }}
+          </NEllipsis>
+          <span class="[font-variant-numeric:tabular-nums]">
             <template v-if="review.currentVersion">{{ review.currentVersion }} → </template>{{ review.manifest.version }}
           </span>
-          <NEllipsis>{{ review.manifest.author || (english ? 'Unsigned' : '未署名') }}</NEllipsis>
-        </p>
-        <p class="flex flex-wrap items-center gap-[8px] mt-[5px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
-          {{ source }}
-        </p>
+          <NTag size="small" :bordered="false">
+            {{ source }}
+          </NTag>
+        </div>
       </div>
     </div>
-    <p v-if="review.manifest.description" class="mt-[16px] mr-0 mb-0 ml-0 text-muted text-[13px] leading-[1.7] [overflow-wrap:anywhere]">
+    <p v-if="review.manifest.description" class="mt-3 mb-0 text-muted text-[13px] leading-[1.7] [overflow-wrap:anywhere]">
       {{ review.manifest.description }}
     </p>
-    <section class="extension-install-review__permissions mt-[24px]">
+    <section class="mt-5">
       <h3>{{ labels.permissions }}</h3>
-      <ul v-if="permissions.length">
-        <li v-for="permission in permissions" :key="permission.key">
-          <DesktopIcon class="extension-install-review__permission-icon" :component="permission.icon" :size="18" aria-hidden="true" />
+      <ul v-if="permissions.length" class="m-0 p-3 grid gap-3 list-none bg-subtle rounded-[8px]">
+        <li v-for="permission in permissions" :key="permission.key" class="grid grid-cols-[18px_minmax(0,1fr)] items-start gap-2">
+          <DesktopIcon class="mt-0.5 text-muted" :component="permission.icon" :size="18" aria-hidden="true" />
           <div>
             <div class="flex flex-wrap items-center gap-[8px] text-fg text-[13px] leading-[1.6] [overflow-wrap:anywhere]">
               <span>{{ permission.title }}</span>
               <span v-if="review.currentVersion && isNewPermission(permission.key)" class="py-0 px-[5px] rounded-[4px] text-nav-foreground bg-nav-selected text-[11px]">{{ english ? 'New' : '新增' }}</span>
             </div>
-            <p>{{ permission.description }}</p>
+            <p class="mt-0.5 mb-0 text-[12px] text-muted leading-[1.6]">
+              {{ permission.description }}
+            </p>
           </div>
         </li>
       </ul>
-      <p v-else class="extension-install-review__muted">
+      <p v-else class="m-0 text-[12px] text-muted leading-[1.6]">
         {{ labels.none }}
       </p>
-      <p v-if="review.currentVersion && !review.addedPermissions.length" class="extension-install-review__muted extension-install-review__unchanged">
+      <p v-if="review.currentVersion && !review.addedPermissions.length" class="mt-3 mb-0 text-[12px] text-muted leading-[1.6]">
         {{ labels.noAdded }}
       </p>
     </section>
-    <section v-if="Object.keys(review.manifest.dependencies).length" class="extension-install-review__dependencies mt-[24px]">
+    <DesktopExtensionFileAssociations
+      v-if="associations.length"
+      v-model="selectedAssociations"
+      class="mt-5"
+      :associations="associations" :language="language" :busy="busy"
+    />
+    <section v-if="Object.keys(review.manifest.dependencies).length" class="mt-5">
       <h3>{{ labels.dependencies }}</h3>
-      <p v-for="(range, id) in review.manifest.dependencies" :key="id">
-        {{ id }} <span>{{ range }}</span>
+      <p v-for="(range, id) in review.manifest.dependencies" :key="id" class="mt-1 mb-0 text-fg text-[12px] [overflow-wrap:anywhere]">
+        {{ id }} <span class="text-muted">{{ range }}</span>
       </p>
     </section>
-    <p class="mt-[24px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.6]">
-      {{ english ? 'Only install plugins from sources you trust.' : '请确认你信任此插件的来源。' }}
-      <template v-if="sharesContent">
-        {{ english ? 'This plugin can send authorized content to the listed websites.' : '此插件可以向上述网站发送已授权读取的内容。' }}
-      </template>
+    <p v-if="sharesContent" class="mt-4 mb-0 text-muted text-[12px] leading-[1.6]">
+      {{ english ? 'This plugin can send authorized content to the listed websites.' : '此插件可以向上述网站发送已授权读取的内容。' }}
     </p>
     <div v-if="review.currentVersion" class="mt-5 border-t border-t-solid border-t-border pt-4">
       <NCheckbox v-model:checked="applyUpdate" :disabled="busy">
@@ -115,11 +143,15 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
       </p>
     </div>
     <template #footer>
-      <div class="flex justify-end gap-[8px]">
+      <div class="flex flex-wrap items-center justify-end gap-3">
+        <p class="m-0 mr-auto flex items-center gap-1.5 text-[12px] font-medium text-warning leading-[1.6]">
+          <DesktopIcon class="shrink-0" :component="Warning20Regular" :size="16" aria-hidden="true" />
+          {{ english ? 'Only install plugins from sources you trust.' : '请确认你信任此插件的来源。' }}
+        </p>
         <NButton :disabled="busy" @click="emit('cancel')">
           {{ labels.cancel }}
         </NButton>
-        <NButton type="primary" :loading="busy" data-testid="extension-confirm-install" @click="emit('install', applyUpdate)">
+        <NButton type="primary" :loading="busy" data-testid="extension-confirm-install" @click="install">
           {{ review.currentVersion ? (applyUpdate ? labels.updateAndApply : labels.update) : labels.confirm }}
         </NButton>
       </div>
@@ -129,29 +161,38 @@ const sharesContent = computed(() => (props.review.manifest.permissions.selected
 
 <style scoped lang="scss">
 :global(.extension-install-review) {
-  width: min(500px, calc(100vw - 32px));
+  width: min(660px, calc(100vw - 32px));
   max-height: calc(100dvh - 48px);
   border-radius: 12px;
 }
+
 .extension-install-review {
-  :deep(.n-card-header) { padding: 20px 24px 0; }
-  :deep(.n-card-header__main) { font-size: 16px; font-weight: 600; }
-  :deep(.n-card__content) { overflow-y: auto; padding: 24px; }
-  :deep(.n-card__footer) { padding: 16px 24px; border-top: 1px solid var(--buddy-border-subtle); }
+  :deep(.n-card-header) {
+    flex-shrink: 0;
+    padding: 20px 24px 16px;
+  }
+
+  :deep(.n-card-header__main) {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  :deep(.n-card-content) {
+    padding: 4px 24px 20px;
+  }
+
+  :deep(.n-card__footer) {
+    flex-shrink: 0;
+    padding: 16px 24px;
+    border-top: 1px solid var(--buddy-border-subtle);
+  }
+
+  h3 {
+    margin: 0 0 10px;
+    color: var(--buddy-text-strong);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
 }
-
-.extension-install-review__icon { flex: 0 0 44px; }
-.extension-install-review__heading h2 { margin: 0; color: var(--buddy-text-strong); font-size: 18px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
-.extension-install-review__version { font-variant-numeric: tabular-nums; }
-.extension-install-review h3 { margin: 0 0 12px; color: var(--buddy-text-strong); font-size: 13px; font-weight: 600; line-height: 1.5; }
-.extension-install-review__permissions ul { display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }
-.extension-install-review__permissions li { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; }
-.extension-install-review__permission-icon { margin-top: 2px; color: var(--buddy-text-secondary); }
-
-.extension-install-review__permissions li p { margin: 2px 0 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
-
-.extension-install-review__muted { margin: 0; color: var(--buddy-text-secondary); font-size: 12px; line-height: 1.6; }
-.extension-install-review__unchanged { margin-top: 12px; }
-.extension-install-review__dependencies p { margin: 4px 0 0; color: var(--buddy-text-primary); font-size: 12px; overflow-wrap: anywhere; }
-.extension-install-review__dependencies span { color: var(--buddy-text-secondary); }
 </style>

@@ -6,6 +6,7 @@ import type { ViewLocation } from '@/workbench/common/workbench'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCommands'
+import { extensionFileOpeningProviders } from '@buddy-shared/extensions/extensionFileOpening'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { qualifyWorkbenchCommand } from '@buddy-shared/workbench/workbenchCommand'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
@@ -33,6 +34,40 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
         for (const view of item.manifest.contributes.views.filter(view => view.location === 'context')) {
           const locations: [ViewLocation, ...ViewLocation[]] = ['context', ...new Set(item.manifest.contributes.placements.flatMap(placement => placement.kind === 'view' && placement.view === view.id ? ['mount' as const] : []))]
           scope.view({ id: view.id, label: view.title, renderer: 'extensions.view', multiple: true, locations, when: view.when, supports: resource => resource.scheme === 'extension' && resource.data.extensionId === id && resource.data.viewType === view.id })
+        }
+        for (const provider of extensionFileOpeningProviders(item.manifest, true))
+          scope.fileOpener(provider)
+        for (const launcher of item.manifest.contributes.launchers) {
+          const view = item.manifest.contributes.views.find(view => view.id === launcher.view)
+          if (!view)
+            continue
+          scope.launcher({
+            id: launcher.id,
+            label: launcher.title,
+            icon: item.iconUrl ? { url: item.iconUrl } : 'extension',
+            when: values => matchesWorkbenchContext(view.when, values),
+            command: launcher.id,
+          })
+          scope.command({
+            id: launcher.id,
+            label: launcher.title,
+            hidden: true,
+            enabled: context => options.ready() && matchesWorkbenchContext(view.when, context.values),
+            execute: async () => {
+              try {
+                const prepared = await api.prepareFileOpening({ providerId: launcher.id, location: 'standalone', source: null })
+                if (scope.signal.aborted || !options.ready() || !matchesWorkbenchContext(view.when, controller.contextKeys.snapshot()))
+                  return
+                const viewId = await controller.open({ scheme: 'extension', id: `${prepared.extensionId}:${prepared.viewType}:${crypto.randomUUID()}`, data: { extensionId: prepared.extensionId, viewType: prepared.viewType, resource: prepared.resource } }, launcher.title, { signal: scope.signal, viewType: prepared.viewType, duplicate: true, state: { version: view.stateVersion, value: {} } })
+                if (viewId)
+                  await persistence.flush()
+              }
+              catch (error) {
+                if (!scope.signal.aborted)
+                  throw error
+              }
+            },
+          })
         }
         for (const placement of item.manifest.contributes.placements) {
           if (placement.kind === 'view')

@@ -6,17 +6,19 @@ import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { Ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DesktopStores } from '../bootstrap/useDesktopAppState'
+import type { useProvideFileOpening } from '@/modules/files'
 import type { TaskIndexController } from '@/modules/tasks'
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { CommandContext, DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
-import { inferFileMimeType, mediaKindForMimeType } from '@buddy-shared/files/fileMimeTypes'
+import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { NButton, useDialog } from 'naive-ui'
 import { computed, h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
+import { fileOpeningHandler } from '@/modules/files'
 import { userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
 import { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
@@ -37,7 +39,7 @@ import { useTaskInputLifecycle } from './useTaskInputLifecycle'
 import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
 import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
 
-export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
+export function useDesktopWorkbench(options: { fileOpening?: ReturnType<typeof useProvideFileOpening>, buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
   const dialog = useDialog()
   const language = stores.applicationSettings.language
@@ -385,7 +387,11 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       return previous.id
     }
     let resource: ResourceRef = { scheme: 'file', id: JSON.stringify([target.directoryId, target.revision, target.path]), data: { ...target, canonicalRoot: fileOperations.root(target) } }
-    if (mediaKindForMimeType(inferFileMimeType(target.path)) && !copies.get(resource))
+    await options.fileOpening?.ensureReady()
+    if (!current())
+      return null
+    const provider = (options.fileOpening?.resolve(target.path, 'inline') ?? resolveBuiltinFileOpening(target.path, 'inline')).provider
+    if (fileOpeningHandler(provider)?.input === 'resource' && !copies.get(resource))
       resource = { ...resource, scheme: 'file-preview' }
     const release = resourceLifetime.acquire(resource)
     try {
@@ -439,15 +445,6 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       const tab = options.resources().activeTab.value
       if (tab)
         return options.resources().closeTab(tab.id)
-    } })
-    scope.command({ id: 'resource.browser', label: () => labels().browser, execute: () => options.resources().addBrowser() })
-    scope.command({ id: 'resource.changes', label: () => labels().output, execute: () => options.resources().openChanges() })
-    scope.command({ id: 'resource.files', label: () => labels().files, execute: (context) => {
-      const pane = context.pane ?? controller.pane(controller.layout.activePane)
-      const view = pane?.view ? controller.layout.views[pane.view] : undefined
-      const spaceId = view ? pool.peek(view.resource)?.session.spaceId.value : undefined
-      if (spaceId)
-        options.resources().openFiles(spaceId)
     } })
   })
 
@@ -509,7 +506,14 @@ export function useDesktopWorkbench(options: { buddyCatalog?: Readonly<Ref<Buddy
       }
     }
     try {
-      return ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await beforeFileClose(view, closing)
+      const decision = ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await beforeFileClose(view, closing)
+      if (!decision)
+        return false
+      const children = Object.values(controller.layout.views).filter(child => child.state.inlineOwner === view.id).map(child => child.id)
+      if (!children.length)
+        return decision
+      const plan = typeof decision === 'object' ? decision : {}
+      return { ...plan, views: [...plan.views ?? [], ...children] }
     }
     catch (error) {
       options.onError(error)

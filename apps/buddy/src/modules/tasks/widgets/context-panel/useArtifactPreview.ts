@@ -5,6 +5,8 @@ import { isMarkdownArtifact, isTextMimeType } from './artifactContextPresentatio
 
 interface ArtifactPreviewOptions {
   artifact: () => LocalArtifact
+  textEnabled?: () => boolean
+  imageEnabled?: () => boolean
   readText: () => (artifactId: string) => Promise<LocalArtifactText>
 }
 
@@ -19,7 +21,7 @@ export function useArtifactPreview(options: ArtifactPreviewOptions) {
   const textPreviewLoading = shallowRef(false)
   const imageUrl = computed(() => {
     const artifact = options.artifact()
-    return artifact.kind === 'file' && artifact.mimeType.startsWith('image/')
+    return artifact.kind === 'file' && (options.imageEnabled?.() ?? artifact.mimeType.startsWith('image/'))
       ? `lexora-artifact://preview/${encodeURIComponent(artifact.artifactId)}?v=${encodeURIComponent(artifact.updatedAt)}`
       : null
   })
@@ -33,6 +35,7 @@ export function useArtifactPreview(options: ArtifactPreviewOptions) {
     () => options.artifact().mimeType,
     options.readText,
     revision,
+    () => options.textEnabled?.(),
   ], async ([artifactId, , kind, mimeType, readText], _previous, onCleanup) => {
     let active = true
     onCleanup(() => {
@@ -44,7 +47,7 @@ export function useArtifactPreview(options: ArtifactPreviewOptions) {
     textPreview.value = null
     textPreviewFailed.value = false
     textPreviewMissing.value = false
-    textPreviewLoading.value = kind === 'file' && (isTextMimeType(mimeType) || isMarkdownArtifact(options.artifact()))
+    textPreviewLoading.value = kind === 'file' && (options.textEnabled?.() ?? (isTextMimeType(mimeType) || isMarkdownArtifact(options.artifact())))
     if (!textPreviewLoading.value)
       return
     try {
@@ -76,6 +79,7 @@ export function useArtifactPreview(options: ArtifactPreviewOptions) {
 
   return {
     refreshText: () => revision.value++,
+    previewFailed: readonly(previewFailed),
     failImage,
     openPreview,
     previewIndex,

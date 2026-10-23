@@ -19,6 +19,30 @@ export interface EventSubscriber<Events> {
   on: <const Pattern extends EventPattern<Events>>(patterns: Pattern | readonly Pattern[], listener: (event: EventMessage<Events, Pattern>) => unknown, options?: EventSubscriptionOptions) => EventSubscription
 }
 export type EventSnapshot<Value> = Value extends object ? { readonly [Key in keyof Value]: EventSnapshot<Value[Key]> } : Value
+export type FileOpeningLocation = 'inline' | 'standalone'
+export type FileViewResource = 'selected-file' | 'optional-file' | 'none'
+export interface FileHandlerView {
+  view: string
+  /** Preselect this mode in the installation dialog. Defaults to true. */
+  requestDefault?: boolean
+}
+export interface FileHandlerContribution {
+  id: string
+  title: string
+  extensions: string[]
+  preview?: FileHandlerView
+  open?: FileHandlerView
+}
+/** Legacy declaration. New plugins should use FileHandlerContribution. */
+export interface FileOpenerContribution {
+  id: string
+  title: string
+  view: string
+  extensions: string[]
+  locations: FileOpeningLocation[]
+  requestDefault?: boolean
+}
+export interface LauncherContribution { id: string, title: string, view: string }
 export interface Resource { readonly id: string, readonly name: string }
 export interface ResourceTransferOptions { name?: string, signal?: AbortSignal }
 export interface ResourceApi {

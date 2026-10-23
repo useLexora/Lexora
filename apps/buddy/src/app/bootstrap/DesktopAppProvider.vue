@@ -11,6 +11,7 @@ import { useProvideAutomationContext } from '@/modules/automations'
 import { useProvideBuddiesContext } from '@/modules/buddies'
 import { ExtensionWindowStyleController, useExtensionState, useExtensionUiContributions, useExtensionViews, useProvideExtensionContext } from '@/modules/extensions'
 import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMenu, DesktopExtensionOverlays, DesktopExtensionReviewHost, DesktopExtensionSlot } from '@/modules/extensions/ui'
+import { useProvideFileOpening } from '@/modules/files'
 import { fileOperationsKey } from '@/modules/files/ui'
 import { useDesktopOnboarding, useFeatureDiscovery } from '@/modules/onboarding'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
@@ -40,6 +41,7 @@ import { useDesktopPages } from '../router/useDesktopPages'
 import { useDesktopShellState } from '../shell/useDesktopShellState'
 import { resolveUserProfile } from '../shell/userProfile'
 import { desktopWorkbenchKey } from '../workbench/desktopWorkbenchContext'
+import { registerResourceContributions } from '../workbench/registerResourceContributions'
 import { useDesktopKeybindings } from '../workbench/useDesktopKeybindings'
 import { useDesktopWorkbench } from '../workbench/useDesktopWorkbench'
 import { useExtensionContributions } from '../workbench/useExtensionContributions'
@@ -74,11 +76,13 @@ const taskIndex = useTaskIndex({
   onSpaceCreated,
 })
 const diagnostics = createRendererDiagnostics(api.app.logs)
-const workbench = useDesktopWorkbench({ buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
+const fileOpening = useProvideFileOpening(api.extensions)
+const workbench = useDesktopWorkbench({ fileOpening, buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
 
 onScopeDispose(() => {
   void workbench.dispose().finally(() => diagnostics.dispose()).catch(() => {})
 })
+fileOpening.bindRegistry(workbench.controller.registry)
 provide(desktopWorkbenchKey, workbench)
 provide(fileOperationsKey, workbench.fileOperations)
 provide(sessionReferenceNavigationKey, id => workbench.openTask(id, { direction: 'right' }))
@@ -145,12 +149,25 @@ const resources = useTaskResourcePanel({
   taskVisible: computed(() => pages.current.value === 'lexora.tasks' || !!stores.applicationSettings.config.value?.desktop.contextPanelGlobal),
   control: api.contextPanel,
   browser: api.browser,
+  fileOpening: {
+    ensureReady: fileOpening.ensureReady,
+    resolve: fileOpening.resolve,
+    open: async (artifact, provider, current) => {
+      const prepared = await api.extensions.prepareFileOpening({ providerId: provider.id, location: 'standalone', source: { kind: 'artifact', artifactId: artifact.artifactId } })
+      if (!current())
+        return
+      const id = await workbench.controller.open({ scheme: 'extension', id: `artifact:${artifact.artifactId}:${provider.id}`, data: { extensionId: prepared.extensionId, viewType: prepared.viewType, resource: prepared.resource } }, artifact.name, { viewType: prepared.viewType, location: 'context', state: { version: 0, value: {}, contextSource: { conversationId: artifact.conversationId, runId: artifact.runId } } })
+      if (!id)
+        throw new Error('FILE_OPENER_UNAVAILABLE')
+    },
+  },
   closeView: async id => (await workbench.controller.close(id)).status === 'closed',
   closeFiles: workbench.closeContextFiles,
   changeSets: computed(() => selectedTask.value?.workspace.transcript.changeSets.value ?? []),
   runOutputs: computed(() => selectedTask.value?.workspace.transcript.runOutputs.value ?? []),
   onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.context.controlFailed')),
 })
+onScopeDispose(registerResourceContributions(workbench.controller.registry, () => resources, () => stores.applicationSettings.language.value))
 provideExecutionEnvironment({
   api: api.localChat.executions,
   ready: computed(() => stores.runtimeSupervisor.runtimeState.value.status === 'ready'),

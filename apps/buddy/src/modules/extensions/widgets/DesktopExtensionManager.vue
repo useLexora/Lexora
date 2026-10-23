@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ExtensionReview, ExtensionReviewResult, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
+import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
 import { NAlert, NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
@@ -88,12 +89,12 @@ function cancel() {
   if (current)
     void state.api.cancelInstall(current.token).catch(() => {})
 }
-function install(applyUpdate: boolean) {
+function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
   const current = review.value
   if (current) {
     void run(async () => {
       review.value = null
-      await state.install(current, applyUpdate)
+      await state.install(current, applyUpdate, choices)
       section.value = 'installed'
       if (current.currentVersion)
         message.success(applyUpdate ? labels.value.updateApplied : labels.value.updateDeferred)

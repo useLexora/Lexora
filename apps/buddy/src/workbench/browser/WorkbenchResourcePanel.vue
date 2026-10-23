@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="Tab extends { id: string, title: string }">
-import type { Component } from 'vue'
+import type { WorkbenchLauncherAction } from './useWorkbenchLaunchers'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Add20Regular, Dismiss16Regular } from '@vicons/fluent'
 import { useResizeObserver } from '@vueuse/core'
@@ -7,10 +7,11 @@ import { NPopover } from 'naive-ui'
 import { nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import WorkbenchLauncherIcon from './WorkbenchLauncherIcon.vue'
 
 const props = defineProps<{
   activeTabId: string | null
-  actions: readonly { id: string, label: string, icon: Component }[]
+  actions: readonly WorkbenchLauncherAction[]
   language: BuddyLocale
   tabs: readonly Tab[]
 }>()
@@ -24,9 +25,11 @@ const { t } = useBuddyI18n(() => props.language)
 const panelId = `context-${useId()}`
 const menuOpen = shallowRef(false)
 const tabsScrollRoot = useTemplateRef<HTMLElement>('tabsScrollRoot')
-function open(kind: string) {
+function open(id: string) {
+  if (!props.actions.some(action => action.id === id && !action.disabled))
+    return
   menuOpen.value = false
-  emit('add', kind)
+  emit('add', id)
 }
 async function navigateTab(event: KeyboardEvent, index: number) {
   if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey)
@@ -77,15 +80,15 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
           </div>
         </div>
       </div>
-      <NPopover v-if="tabs.length" v-model:show="menuOpen" trigger="click" placement="bottom-start" :show-arrow="false" :theme-overrides="{ padding: '4px' }">
+      <NPopover v-if="tabs.length && actions.length" v-model:show="menuOpen" trigger="click" placement="bottom-start" :show-arrow="false" :theme-overrides="{ padding: '4px' }">
         <template #trigger>
           <button class="desktop-task-context-panel__add grid w-8 h-8 flex-none self-center place-items-center border-0 rounded-icon bg-transparent text-muted cursor-pointer" :class="{ 'is-open': menuOpen }" type="button" data-testid="context-add-tab" :aria-label="t('desktop.context.addTab')" :aria-expanded="menuOpen" aria-haspopup="menu">
             <DesktopIcon :component="Add20Regular" />
           </button>
         </template>
         <div class="desktop-task-context-panel__menu grid min-w-40" role="menu">
-          <button v-for="entry in actions" :key="entry.id" type="button" role="menuitem" @click="open(entry.id)">
-            <DesktopIcon :component="entry.icon" /><span>{{ entry.label }}</span>
+          <button v-for="entry in actions" :key="entry.id" type="button" role="menuitem" :disabled="entry.disabled" @click="open(entry.id)">
+            <WorkbenchLauncherIcon :icon="entry.icon" /><span>{{ entry.label }}</span>
           </button>
         </div>
       </NPopover>
@@ -101,8 +104,8 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
     </div>
     <div v-if="!activeTabId" class="grid min-w-0 min-h-0 flex-1 place-items-center">
       <div class="desktop-task-context-panel__launchers grid w-[min(70%,_26rem)] gap-[0.375rem]">
-        <button v-for="entry in actions" :key="entry.id" type="button" :data-testid="`task-context-open-${entry.id}`" @click="open(entry.id)">
-          <DesktopIcon :component="entry.icon" /><span>{{ entry.label }}</span>
+        <button v-for="entry in actions" :key="entry.id" type="button" :disabled="entry.disabled" :data-testid="`task-context-open-${entry.id}`" @click="open(entry.id)">
+          <WorkbenchLauncherIcon :icon="entry.icon" /><span>{{ entry.label }}</span>
         </button>
       </div>
     </div>
@@ -148,7 +151,14 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
 .desktop-task-context-panel__add :deep(.n-icon) { transition: transform 150ms var(--buddy-motion-state-easing); }
 .desktop-task-context-panel__add.is-open :deep(.n-icon) { transform: rotate(45deg); }
 .desktop-task-context-panel__launchers button, .desktop-task-context-panel__menu button { display: flex; align-items: center; gap: 0.75rem; border: 0; border-radius: var(--buddy-icon-button-radius); background: transparent; color: var(--buddy-text-primary); cursor: pointer; padding: 0.75rem; font: inherit; text-align: left; }
-.desktop-task-context-panel__launchers button:hover, .desktop-task-context-panel__menu button:hover { background: var(--buddy-state-hover); }
+.desktop-task-context-panel__launchers button:hover:not(:disabled), .desktop-task-context-panel__menu button:hover:not(:disabled) {
+  background: var(--buddy-state-hover);
+}
+.desktop-task-context-panel__launchers button:disabled, .desktop-task-context-panel__menu button:disabled {
+  color: var(--buddy-text-secondary);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 .desktop-task-context-panel__launchers :deep(.n-icon) { color: var(--buddy-text-secondary); }
 .desktop-task-context-panel__menu button { min-height: 1.875rem; gap: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.75rem; line-height: 1.125rem; }
 .desktop-task-context-panel__add:focus-visible, .desktop-task-context-panel__launchers button:focus-visible, .desktop-task-context-panel__menu button:focus-visible { outline: 2px solid var(--buddy-focus-ring); outline-offset: -2px; }

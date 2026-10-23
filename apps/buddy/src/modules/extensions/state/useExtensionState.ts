@@ -1,6 +1,7 @@
 import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
 import type { ExtensionApi, ExtensionReview, ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
+import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 
 export function useExtensionState(api: ExtensionApi) {
@@ -59,8 +60,8 @@ export function useExtensionState(api: ExtensionApi) {
     disposed = true
     revision++
   })
-  async function install(review: ExtensionReview, applyUpdate: boolean) {
-    await api.install(review.token)
+  async function install(review: ExtensionReview, applyUpdate: boolean, choices: FileOpeningChoice[] = []) {
+    await api.install(review.token, choices)
     if (review.currentVersion && applyUpdate)
       await api.applyUpdate(review.manifest.id)
   }

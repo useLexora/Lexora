@@ -1,5 +1,5 @@
 import type { ShortcutScope } from '@buddy-shared/shortcuts/keybinding'
-import type { WorkbenchCondition } from '@buddy-shared/workbench/workbenchContext'
+import type { WorkbenchCondition, WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { ReadonlyJsonObject, ReadonlyJsonValue } from '@buddy-shared/workbench/workbenchState'
 import type { WorkbenchMountTarget, WorkbenchPresentation } from '@buddy-shared/workbench/workbenchUi'
 
@@ -57,6 +57,16 @@ export interface ViewPlacement {
   interaction?: 'regions' | 'exclusive'
   presentation: WorkbenchPresentation
 }
+export type WorkbenchLauncherIcon = 'changes' | 'folder' | 'browser' | 'extension' | { readonly url: string }
+export interface WorkbenchLauncher {
+  id: string
+  owner: string
+  label: string | (() => string)
+  icon?: WorkbenchLauncherIcon
+  order?: number
+  when?: (values: WorkbenchContextValues) => boolean
+  command: string
+}
 export interface CommandContext {
   source?: 'palette' | 'slash' | 'shortcut' | 'menu'
   arguments?: string
@@ -67,6 +77,7 @@ export interface CommandContext {
 export interface WorkbenchCommand {
   id: string
   label: string | (() => string)
+  hidden?: boolean
   slash?: { name: string, description?: string, origin?: import('@buddy-shared/workbench/workbenchCommand').WorkbenchCommandOrigin }
   keybinding?: string | (() => string | undefined)
   alternateKeybindings?: readonly string[]

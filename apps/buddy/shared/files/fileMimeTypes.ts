@@ -27,6 +27,7 @@ const FILE_MIME_TYPES: ReadonlyMap<string, string> = new Map([
   ['.json', 'application/json'],
   ['.md', 'text/markdown'],
   ['.markdown', 'text/markdown'],
+  ['.mdown', 'text/markdown'],
   ['.pdf', 'application/pdf'],
   ['.png', 'image/png'],
   ['.py', 'text/x-python'],

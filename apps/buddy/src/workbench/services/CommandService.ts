@@ -38,14 +38,26 @@ export class CommandService {
     this.onDidExecute = this.#changes.event
   }
 
-  async execute(id: string, input: CommandInvocation = {}): Promise<CommandResult> {
+  #resolve(id: string, input: CommandInvocation) {
     const command = this.registry.commands.get(id)
     const current = this.context(input)
     if (this.#stopping || !command || !current || (input.source === 'slash' && !command.slash))
-      return { status: 'unavailable' }
+      return null
     const context = copyEventSnapshot(current)
     if (command.enabled && !command.enabled(context))
+      return null
+    return { command, context }
+  }
+
+  isEnabled(id: string, input: CommandInvocation = {}): boolean {
+    return this.#resolve(id, input) !== null
+  }
+
+  async execute(id: string, input: CommandInvocation = {}): Promise<CommandResult> {
+    const resolved = this.#resolve(id, input)
+    if (!resolved)
       return { status: 'unavailable' }
+    const { command, context } = resolved
     const identity = { commandId: id, source: input.source, operationId: crypto.randomUUID(), viewId: context.view?.id, paneId: context.pane?.id }
     const startedAt = performance.now()
     this.#active++

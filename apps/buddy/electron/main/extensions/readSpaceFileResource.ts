@@ -5,7 +5,11 @@ import { extname } from 'node:path'
 import { fileResponse } from '../../../platform/filesystem/fileResponse'
 import { extensionResourceMimeType } from '../../../shared/extensions/extensionResources'
 
-export async function readSpaceFileResource(target: SpaceFileTarget, signal: AbortSignal, locate: (target: SpaceFileTarget) => Promise<{ path: string, kind: 'file' | 'directory' }>): Promise<Response> {
+export function readSpaceFileResource(target: SpaceFileTarget, signal: AbortSignal, locate: (target: SpaceFileTarget) => Promise<{ path: string, kind: 'file' | 'directory' }>, request?: Request): Promise<Response> {
+  return readAuthorizedFileResource(target, signal, locate, request)
+}
+
+export async function readAuthorizedFileResource<T>(target: T, signal: AbortSignal, locate: (target: T) => Promise<{ path: string, kind: 'file' | 'directory' }>, request = new Request('https://resource.invalid/')): Promise<Response> {
   const location = await locate(target)
   signal.throwIfAborted()
   if (location.kind !== 'file')
@@ -15,7 +19,9 @@ export async function readSpaceFileResource(target: SpaceFileTarget, signal: Abo
     const before = await handle.stat({ bigint: true })
     if (!before.isFile() || !Number.isSafeInteger(Number(before.size)))
       throw new Error('EXTENSION_RESOURCE_UNSUPPORTED')
-    const response = await fileResponse(handle, Number(before.size), extensionResourceMimeType(extname(location.path).slice(1)), new Request('https://resource.invalid/'), signal)
+    const response = await fileResponse(handle, Number(before.size), extensionResourceMimeType(extname(location.path).slice(1)), request, signal)
+    if (!response.body)
+      return response
     const body = (response.body ?? new ReadableStream<Uint8Array>({ start(controller) {
       controller.close()
     } })).pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -28,7 +34,7 @@ export async function readSpaceFileResource(target: SpaceFileTarget, signal: Abo
           throw new Error('EXTENSION_RESOURCE_CHANGED')
       },
     }))
-    return new Response(body, { headers: response.headers })
+    return new Response(body, { status: response.status, headers: response.headers })
   }
   catch (error) {
     await handle.close().catch(() => {})

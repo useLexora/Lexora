@@ -40,8 +40,104 @@ function setup() {
   const show = (): Extract<ExtensionWorkbenchEvent, { kind: 'placement' }> => ({ kind: 'placement', requestId: crypto.randomUUID(), extensionId: status.manifest.id, generation: status.generation!, placementId: 'tests.music.dock', visible: true })
   return { setBeforeClose: (value: () => Promise<ViewCloseDecision>) => {
     beforeClose = value
-  }, installed, ready, controller, status, contributions, views, replies, show, checkpoints, receive: (event: ExtensionWorkbenchEvent) => receive(event) }
+  }, installed, ready, controller, status, api, contributions, views, replies, show, checkpoints, receive: (event: ExtensionWorkbenchEvent) => receive(event) }
 }
+function withLauncher(f: ReturnType<typeof setup>, resource: 'none' | 'optional-file' = 'none') {
+  f.installed.value = [{ ...f.status, revision: 'launcher', manifest: extensionManifestSchema.parse({
+    ...f.status.manifest,
+    apiVersion: 4,
+    permissions: { ...f.status.manifest.permissions, selectedResource: resource === 'optional-file' ? 'read' : 'none' },
+    contributes: {
+      ...f.status.manifest.contributes,
+      views: [{ ...f.status.manifest.contributes.views[0]!, resource }],
+      placements: [],
+      launchers: [{ id: 'tests.music.launch', title: 'Launch player', view: 'tests.music.player' }],
+    },
+  }) }]
+}
+
+it('opens an optional-file launcher only through host preparation without introducing a file or task scope', async () => {
+  const f = setup()
+  const requests: unknown[] = []
+  f.api.prepareFileOpening = async (input) => {
+    requests.push(input)
+    return { extensionId: 'tests.music', viewType: 'tests.music.player', resource: null }
+  }
+  withLauncher(f, 'optional-file')
+  f.ready.value = true
+  const root = f.controller.layout.root
+  const launcher = f.controller.registry.launchers.get('tests.music.launch')!
+  await f.controller.commands.execute(launcher.command)
+  const [view] = Object.values(f.controller.layout.views)
+  expect(view).toMatchObject({ type: 'tests.music.player', title: 'Launch player', location: 'context', resource: { scheme: 'extension', data: { extensionId: 'tests.music', viewType: 'tests.music.player', resource: null } }, state: { version: 1, value: {} } })
+  expect(f.controller.layout.root).toBe(root)
+  expect(requests).toEqual([{ providerId: 'tests.music.launch', location: 'standalone', source: null }])
+  f.installed.value = [{ ...f.installed.value[0]!, enabled: false }]
+  expect(f.controller.registry.launchers.size).toBe(0)
+  expect(f.controller.layout.views[view!.id]).toBe(view)
+})
+
+it.each(['disable', 'update', 'remove'] as const)('does not open a launcher prepared after owner %s and preserves replacement registrations', async (operation) => {
+  const f = setup()
+  const prepared = deferred<{ extensionId: string, viewType: string, resource: null }>()
+  f.api.prepareFileOpening = () => prepared.promise
+  withLauncher(f)
+  f.ready.value = true
+  const opening = f.controller.commands.execute(f.controller.registry.launchers.get('tests.music.launch')!.command)
+  const status = f.installed.value[0]!
+  f.installed.value = operation === 'remove' ? [] : [{ ...status, enabled: operation !== 'disable', revision: operation === 'update' ? 'updated' : status.revision }]
+  prepared.resolve({ extensionId: 'tests.music', viewType: 'tests.music.player', resource: null })
+  await opening
+  expect(f.controller.layout.views).toEqual({})
+  expect(f.controller.registry.launchers.has('tests.music.launch')).toBe(operation === 'update')
+})
+
+it('treats a preparation rejected after owner withdrawal as cancellation', async () => {
+  const f = setup()
+  const prepared = deferred<never>()
+  f.api.prepareFileOpening = () => prepared.promise
+  withLauncher(f)
+  f.ready.value = true
+  const opening = f.controller.commands.execute(f.controller.registry.launchers.get('tests.music.launch')!.command)
+  f.installed.value = []
+  prepared.reject(new Error('EXTENSION_UNAVAILABLE'))
+  await expect(opening).resolves.toMatchObject({ status: 'completed' })
+  expect(f.controller.layout.views).toEqual({})
+})
+
+it('rechecks view context after launcher preparation without introducing an obsolete view', async () => {
+  const f = setup()
+  const prepared = deferred<{ extensionId: string, viewType: string, resource: null }>()
+  f.api.prepareFileOpening = () => prepared.promise
+  withLauncher(f)
+  const status = f.installed.value[0]!
+  f.installed.value = [{ ...status, revision: 'conditional', manifest: extensionManifestSchema.parse({
+    ...status.manifest,
+    contributes: { ...status.manifest.contributes, views: status.manifest.contributes.views.map(view => ({ ...view, when: { 'page.id': 'tasks' } })) },
+  }) }]
+  f.ready.value = true
+  const page = f.controller.contextKeys.bind({ 'page.id': 'tasks' })
+  const launcher = f.controller.registry.launchers.get('tests.music.launch')!
+  expect(launcher.when?.(f.controller.contextKeys.snapshot())).toBe(true)
+  const opening = f.controller.commands.execute(launcher.command)
+  page.update({ 'page.id': 'settings' })
+  expect(launcher.when?.(f.controller.contextKeys.snapshot())).toBe(false)
+  prepared.resolve({ extensionId: 'tests.music', viewType: 'tests.music.player', resource: null })
+  await opening
+  expect(f.controller.layout.views).toEqual({})
+})
+
+it('does not fabricate a view or resource when launcher preparation fails', async () => {
+  const f = setup()
+  f.api.prepareFileOpening = async () => {
+    throw new Error('EXTENSION_VIEW_UNAVAILABLE')
+  }
+  withLauncher(f)
+  f.ready.value = true
+  await expect(f.controller.commands.execute(f.controller.registry.launchers.get('tests.music.launch')!.command)).rejects.toThrow('EXTENSION_VIEW_UNAVAILABLE')
+  expect(f.controller.layout.views).toEqual({})
+})
+
 async function settle() {
   for (let index = 0; index < 8; index++) await nextTick()
 }
@@ -194,21 +290,6 @@ it('migrates a pane placement to global scope without retaining the old pane lif
   expect(restoreWorkbenchLayout(JSON.parse(JSON.stringify(f.controller.layout))).views[id]).toMatchObject({ id, state })
 })
 
-it('rejects an obsolete token when a view is reopened in the same host', async () => {
-  const fixture = setup()
-  fixture.ready.value = true
-  const event = fixture.show()
-  fixture.receive(event)
-  await settle()
-  const id = fixture.replies.get(event.requestId)!
-  fixture.views.surfaces.set(id, { session: { generation: fixture.status.generation, token: crypto.randomUUID() } } as never)
-  const state: ExtensionWorkbenchEvent = { kind: 'state', requestId: crypto.randomUUID(), viewId: id, generation: fixture.status.generation!, token: crypto.randomUUID(), stateVersion: 1, state: { volume: 1 } }
-  fixture.receive(state)
-  await settle()
-  expect(fixture.replies.get(state.requestId)).toBeNull()
-  expect(fixture.controller.layout.views[id]?.state.value).toEqual({})
-})
-
 it('persists presentation separately from plugin state and ignores expired sessions', async () => {
   const f = setup()
   f.ready.value = true
@@ -223,9 +304,14 @@ it('persists presentation separately from plugin state and ignores expired sessi
   await settle()
   expect(f.controller.layout.views[id]).toMatchObject({ state: { version: 1, value: {} }, presentation: { height: 280 } })
   expect(f.replies.get(event.requestId)).toBe(id)
-  f.receive({ ...event, requestId: crypto.randomUUID(), token: crypto.randomUUID(), presentation: { height: 100 } })
+  const expired = [
+    { ...event, requestId: crypto.randomUUID(), token: crypto.randomUUID(), presentation: { height: 100 } },
+    { kind: 'state' as const, requestId: crypto.randomUUID(), viewId: id, generation: f.status.generation!, token: crypto.randomUUID(), stateVersion: 1, state: { volume: 1 } },
+  ]
+  for (const request of expired) f.receive(request)
   await settle()
-  expect(f.controller.layout.views[id]?.presentation?.height).toBe(280)
+  for (const request of expired) expect(f.replies.get(request.requestId)).toBeNull()
+  expect(f.controller.layout.views[id]).toMatchObject({ state: { version: 1, value: {} }, presentation: { height: 280 } })
 })
 
 it('keeps pane placements independent across focus, close and restore', async () => {

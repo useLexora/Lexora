@@ -23,6 +23,13 @@ it('copies an authorized Space image without text decoding or another selection 
   const response = await readSpaceFileResource(target, signal, locate)
   const resource = await store.import('tests.images', 'wallpaper.png', 'image/png', response, signal, () => {})
   expect(await store.readBytes('tests.images', resource.id, 0, 4, signal, false)).toMatchObject({ base64: bytes.toString('base64'), eof: true })
+  const part = await readSpaceFileResource(target, signal, locate, new Request('https://resource.invalid/', { headers: { range: 'bytes=1-2' } }))
+  expect(part.status).toBe(206)
+  expect(Buffer.from(await part.arrayBuffer())).toEqual(bytes.subarray(1, 3))
+  const head = await readSpaceFileResource(target, signal, locate, new Request('https://resource.invalid/', { method: 'HEAD' }))
+  expect(head.headers.get('content-length')).toBe('4')
+  expect(head.body).toBeNull()
+  expect((await readSpaceFileResource(target, signal, locate, new Request('https://resource.invalid/', { headers: { range: 'bytes=99-' } }))).status).toBe(416)
   const revoked = await readSpaceFileResource(target, signal, locate)
   allowed = false
   await expect(store.import('tests.images', 'revoked.png', 'image/png', revoked, signal, () => {})).rejects.toThrow('FILE_PERMISSION_REVOKED')

@@ -12,11 +12,18 @@ export async function restoreExtensionBackup(incoming: string, candidate: string
     for (const [id, record] of Object.entries(restored.installed)) {
       record.enabled = false
       record.pending = null
+      record.pendingFileOpeners = []
       await rm(join(candidate, 'data', id, 'resources'), { recursive: true, force: true })
       for (const file of ['local-resources.json', 'local-directories.json', 'state.previous.json'])
         await rm(join(candidate, 'data', id, file), { force: true })
     }
-    await writeStorageJson(join(candidate, 'installed.json'), { version: 1, installed: { ...current?.installed, ...restored.installed } })
+    const fileOpeningRevisions = structuredClone(current?.fileOpeningRevisions ?? {})
+    for (const extension of Object.keys(restored.fileOpeningDefaults)) {
+      const revisions = fileOpeningRevisions[extension] ??= {}
+      for (const location of ['inline', 'standalone'] as const)
+        revisions[location] = Math.max(revisions[location] ?? 0, restored.fileOpeningRevisions[extension]?.[location] ?? 0) + 1
+    }
+    await writeStorageJson(join(candidate, 'installed.json'), { version: 1, installed: { ...current?.installed, ...restored.installed }, fileOpeningDefaults: { ...current?.fileOpeningDefaults, ...restored.fileOpeningDefaults }, fileOpeningRevisions })
   }
   const importedSchedules = await readStorageJson(join(incoming, 'schedules.json'))
   if (importedSchedules) {

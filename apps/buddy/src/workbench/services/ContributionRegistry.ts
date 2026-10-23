@@ -1,7 +1,8 @@
 import type { ListenerErrorHandler } from '@buddy-shared/events/Emitter'
 import type { EventSnapshot } from '@buddy-shared/events/eventTypes'
+import type { FileOpeningProvider } from '@buddy-shared/files/fileOpening'
 import type { Cleanup } from '@buddy-shared/lifecycle/DisposableScope'
-import type { ResourceRef, ViewDescriptor, ViewPlacement, WorkbenchCommand } from '../common/workbench'
+import type { ResourceRef, ViewDescriptor, ViewPlacement, WorkbenchCommand, WorkbenchLauncher } from '../common/workbench'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
 import { ReadonlyMapView } from '@buddy-shared/events/ReadonlyMapView'
@@ -17,7 +18,7 @@ export interface ContributionChange {
   readonly revision: number
   readonly owner: string
   readonly kind: 'registered' | 'removed'
-  readonly ids: Readonly<Record<'views' | 'placements' | 'commands' | 'configurations', readonly string[]>>
+  readonly ids: Readonly<Record<'views' | 'placements' | 'launchers' | 'fileOpeners' | 'commands' | 'configurations', readonly string[]>>
 }
 
 interface Registration {
@@ -30,10 +31,14 @@ interface Registration {
 export class ContributionRegistry {
   readonly #views = new Map<string, EventSnapshot<ViewDescriptor>>()
   readonly #placements = new Map<string, EventSnapshot<ViewPlacement>>()
+  readonly #launchers = new Map<string, EventSnapshot<WorkbenchLauncher>>()
+  readonly #fileOpeners = new Map<string, EventSnapshot<FileOpeningProvider>>()
   readonly #commands = new Map<string, EventSnapshot<WorkbenchCommand>>()
   readonly #configurations = new Map<string, EventSnapshot<WorkbenchConfiguration>>()
   readonly views = new ReadonlyMapView(this.#views)
   readonly placements = new ReadonlyMapView(this.#placements)
+  readonly launchers = new ReadonlyMapView(this.#launchers)
+  readonly fileOpeners = new ReadonlyMapView(this.#fileOpeners)
   readonly commands = new ReadonlyMapView(this.#commands)
   readonly configurations = new ReadonlyMapView(this.#configurations)
   readonly #owners = new Map<string, Registration>()
@@ -56,6 +61,8 @@ export class ContributionRegistry {
   register(owner: string, activate: (scope: {
     view: (descriptor: Omit<ViewDescriptor, 'owner'>) => void
     placement: (placement: ViewPlacement) => void
+    launcher: (launcher: Omit<WorkbenchLauncher, 'owner'>) => void
+    fileOpener: (provider: FileOpeningProvider) => void
     command: (command: WorkbenchCommand) => void
     configuration: (configuration: WorkbenchConfiguration) => void
     cleanup: (cleanup: Cleanup) => void
@@ -67,7 +74,7 @@ export class ContributionRegistry {
       throw new Error(`Contribution already registered: ${owner}`)
     const scope = new DisposableScope()
     const staged = new Map<Map<string, unknown>, Map<string, unknown>>()
-    const ids = { views: [] as string[], placements: [] as string[], commands: [] as string[], configurations: [] as string[] }
+    const ids = { views: [] as string[], placements: [] as string[], launchers: [] as string[], fileOpeners: [] as string[], commands: [] as string[], configurations: [] as string[] }
     const registration: Registration = { scope, entries: staged, ids, committed: false }
     const add = <T>(kind: keyof typeof ids, map: Map<string, EventSnapshot<T>>, id: string, value: T) => {
       if (scope.signal.aborted || registration.committed)
@@ -84,6 +91,8 @@ export class ContributionRegistry {
       activate({
         view: descriptor => add('views', this.#views, descriptor.id, { ...descriptor, owner }),
         placement: placement => add('placements', this.#placements, placement.id, placement),
+        launcher: launcher => add('launchers', this.#launchers, launcher.id, { ...launcher, owner }),
+        fileOpener: provider => add('fileOpeners', this.#fileOpeners, provider.id, provider),
         command: command => add('commands', this.#commands, command.id, command),
         configuration: configuration => add('configurations', this.#configurations, configuration.id, configuration),
         cleanup: cleanup => scope.add(cleanup),

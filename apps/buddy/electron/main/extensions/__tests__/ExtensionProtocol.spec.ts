@@ -13,7 +13,13 @@ it('serves verified package media with range semantics and invalidates disposed 
   roots.push(root)
   await store.install((await reviewPackage(root, store, manifest(), { 'clip.mp3': '0123456789' })).token)
   const protocol = new ExtensionProtocol(store)
-  const endpoint = protocol.register(store.installed['tests.reader']!.current, 'view')
+  const selected = 'selected-file'
+  let authorized = true
+  const endpoint = protocol.register(store.installed['tests.reader']!.current, 'view', async (id) => {
+    if (id !== selected || !authorized)
+      throw new Error('EXTENSION_RESOURCE_DENIED')
+    return new Response('selected content')
+  })
   let respond!: (request: Request) => Promise<Response>
   protocol.install({ protocol: { handle: (_scheme: string, handler: typeof respond) => {
     respond = handler
@@ -38,6 +44,14 @@ it('serves verified package media with range semantics and invalidates disposed 
   expect((await respond(new Request(new URL(`/__resource/${other.id}`, endpoint.url)))).status).toBe(403)
   await store.resources.release('tests.reader', file.id, () => {})
   expect((await respond(new Request(resourceUrl))).status).toBe(403)
+  const selectedUrl = new URL(`/__selected/${selected}`, endpoint.url)
+  expect(await (await respond(new Request(selectedUrl))).text()).toBe('selected content')
+  const otherEndpoint = protocol.register(store.installed['tests.reader']!.current, 'view')
+  expect((await respond(new Request(new URL(`/__selected/${selected}`, otherEndpoint.url)))).status).toBe(403)
+  authorized = false
+  expect((await respond(new Request(selectedUrl))).status).toBe(403)
+  authorized = true
   endpoint.dispose()
+  expect((await respond(new Request(selectedUrl))).status).toBe(403)
   expect((await respond(new Request(url))).status).toBe(403)
 })

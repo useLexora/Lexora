@@ -6,12 +6,14 @@ import type { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import type { DesktopWindowHost } from './DesktopWindowHost'
 import type { DesktopEnvironment } from './typing'
 import { homedir } from 'node:os'
+import { basename } from 'node:path'
 import process from 'node:process'
 import { app, nativeTheme, Notification, shell } from 'electron'
 import { z } from 'zod'
 import buddyVersion from '../../../buddy.version.json'
 import { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
 import { ThemeService } from '../../../platform/themes/ThemeService'
+import { artifactsRpc } from '../../../shared/artifacts/artifactApi'
 import { CONVERSATION_CHANGED, conversationSchema } from '../../../shared/conversation/conversationApi'
 import { extensionActionRpc } from '../../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
@@ -28,7 +30,7 @@ import { registerContextPanelIpc } from '../context-panel/registerContextPanelIp
 import { createDesktopCommandExecutor } from '../desktopCommands'
 import { DesktopNotificationService } from '../DesktopNotificationService'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
-import { readSpaceFileResource } from '../extensions/readSpaceFileResource'
+import { readAuthorizedFileResource, readSpaceFileResource } from '../extensions/readSpaceFileResource'
 import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
@@ -134,7 +136,16 @@ export class DesktopIntegrations {
       agentChanged: catalog => service.notify(extensionAgentRpc.changed, catalog),
       shellsChanged: () => service.notify(extensionShellRpc.changed, {}),
       agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: null })),
-      readResource: (target, signal) => readSpaceFileResource(target, signal, async input => spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, input, { signal }))),
+      readResource: (target, signal, request) => readSpaceFileResource(target, signal, async input => spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, input, { signal })), request),
+      readArtifactResource: async (artifactId, signal, request) => {
+        let name = ''
+        const response = await readAuthorizedFileResource(artifactId, signal, async (id) => {
+          const location = artifactsRpc.locate.response.parse(await service.request(artifactsRpc.locate.method, { artifactId: id }, { signal }))
+          name = basename(location.path)
+          return location
+        }, request)
+        return { name, response }
+      },
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
     this.#subscriptions.push(extensions.dispose)

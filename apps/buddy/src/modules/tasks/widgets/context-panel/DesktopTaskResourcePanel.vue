@@ -4,10 +4,12 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskChatWorkspace } from '@/modules/tasks/contracts'
 import type { ContextPanelTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import type { TaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
-import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
-import { computed, shallowRef } from 'vue'
+import { useMessage } from 'naive-ui'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useTaskEnvironment } from '@/modules/tasks/taskContext'
+import { useWorkbenchLaunchers } from '@/workbench/browser/useWorkbenchLaunchers'
+import { useWorkbench } from '@/workbench/browser/workbenchContext'
 import DesktopArtifactContextSurface from './DesktopArtifactContextSurface.vue'
 import DesktopBrowserContextSurface from './DesktopBrowserContextSurface.vue'
 import DesktopChangesContextSurface from './DesktopChangesContextSurface.vue'
@@ -22,11 +24,9 @@ const props = defineProps<{
   visible: boolean
 }>()
 const { t } = useBuddyI18n(() => props.language)
-const fileSpacePickerOpen = shallowRef(false)
-const filePickerSpaces = computed(() => {
-  const entry = props.panel.fileEntry.value
-  return entry?.kind === 'directory' ? props.panel.fileSpaces.value.filter(space => space.id === entry.spaceId) : props.panel.fileSpaces.value
-})
+const { controller } = useWorkbench()
+const message = useMessage()
+const { actions, launch } = useWorkbenchLaunchers(controller)
 const { browser, browserGuests, clipboard } = useTaskEnvironment()
 const browserApi: DesktopBrowserApi = { ...browser, ensureSession: (conversationId, key) => props.panel.ensureBrowserSession(conversationId, key) }
 const activeTab = computed(() => props.panel.activeTab.value)
@@ -45,31 +45,19 @@ const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) 
     : state.title.trim() || t('desktop.context.browser')
   return { id: tab.id, title, icon: 'browser' }
 }))
-function add(kind: 'changes' | 'files' | 'browser') {
-  if (kind === 'files') {
-    const entry = props.panel.fileEntry.value
-    if (entry?.kind === 'space-picker') {
-      fileSpacePickerOpen.value = true
-    }
-    else if (entry?.kind === 'directory') {
-      if (getActiveSpaceDirectories(filePickerSpaces.value[0]).length > 1)
-        fileSpacePickerOpen.value = true
-      else
-        props.panel.openFiles(entry.spaceId)
-    }
+async function add(id: string) {
+  try {
+    await launch(id)
   }
-  else if (kind === 'changes') {
-    props.panel.openChanges()
-  }
-  else {
-    props.panel.addBrowser()
+  catch {
+    message.error(t('desktop.context.controlFailed'))
   }
 }
 </script>
 
 <template>
-  <DesktopFileSpacePicker v-model:show="fileSpacePickerOpen" :spaces="filePickerSpaces" :language="language" @select="panel.openFiles" />
-  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :can-add-changes="panel.canAddChanges.value" :can-add-files="Boolean(panel.fileEntry.value)" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
+  <DesktopFileSpacePicker :show="panel.fileSpacePickerOpen.value" :spaces="panel.filePickerSpaces.value" :language="language" @update:show="panel.setFileSpacePickerOpen" @select="panel.openFiles" />
+  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :actions="actions" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
     <template v-if="$slots['header-actions']" #header-actions>
       <slot name="header-actions" />
     </template>
