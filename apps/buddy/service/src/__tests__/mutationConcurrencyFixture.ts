@@ -77,6 +77,7 @@ function rpcHarness(shells: readonly ExtensionShellDescriptor[]) {
     async request(method: string) {
       switch (method) {
         case 'extensions.agent.list': return []
+        case 'extensions.skills.list': return []
         case 'host.extensions.shells.list': return shells
         case 'host.images.preferences': return {}
         case 'host.networkPermissions.get': return { defaults: { access: 'ask', download: 'ask', upload: 'ask' }, rules: [] }

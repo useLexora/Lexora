@@ -1686,7 +1686,7 @@ function createRuntimeRpcHarness(
         url?: string
         value?: unknown
       }
-      if (method === 'extensions.agent.list' || method === 'host.extensions.shells.list')
+      if (method === 'extensions.agent.list' || method === 'extensions.skills.list' || method === 'host.extensions.shells.list')
         return Promise.resolve([])
       if (method === 'host.networkPermissions.get')
         return Promise.resolve(structuredClone(DEFAULT_NETWORK_PERMISSIONS))
