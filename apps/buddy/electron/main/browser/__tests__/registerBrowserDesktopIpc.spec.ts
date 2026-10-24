@@ -86,6 +86,19 @@ describe('registerBrowserDesktopIpc', () => {
     expect(host.pickElement).not.toHaveBeenCalled()
   })
 
+  it('propagates an asynchronous retry failure through the reload request', async () => {
+    const { event } = fixture({
+      getState: () => state,
+      reload: async () => {
+        await Promise.resolve()
+        throw new Error('Navigation preparation failed')
+      },
+    })
+    await expect(invoke(DESKTOP_IPC_CHANNELS.browserReload, event, { sessionId }))
+      .rejects
+      .toThrow('Navigation preparation failed')
+  })
+
   it('binds only a webview guest owned by the trusted renderer and requested session', async () => {
     const attachGuest = vi.fn()
     const partition = `buddy-browser:${sessionId}`

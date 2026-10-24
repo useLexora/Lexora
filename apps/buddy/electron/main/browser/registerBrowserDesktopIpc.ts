@@ -153,10 +153,10 @@ export function registerBrowserDesktopIpc(
     await shell.openExternal(url)
     return true
   })
-  handle(DESKTOP_IPC_CHANNELS.browserReload, (host, input) => {
+  handle(DESKTOP_IPC_CHANNELS.browserReload, async (host, input) => {
     const { sessionId } = browserSessionInputSchema.parse(input)
     takeHumanControl(host, sessionId)
-    host.reload(sessionId)
+    await host.reload(sessionId)
   })
   handle(DESKTOP_IPC_CHANNELS.browserSetProfileMode, async (host, input) => {
     const { profileMode, sessionId } = browserSetProfileModeInputSchema.parse(input)

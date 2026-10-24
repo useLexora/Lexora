@@ -14,11 +14,11 @@ function browserState(url = 'https://example.com/'): DesktopBrowserState {
   return { zoomFactor: 1, canGoBack: false, canGoForward: false, controller: 'human', controlEpoch: 0, conversationId: 'conversation', error: null, pageId: 'page', profileMode: 'default', security: { kind: 'blank', origin: null }, sessionId: 'session', status: 'ready', title: '', url, visible: true }
 }
 
-function mountBrowser() {
+function mountBrowser(ensureSession = async () => browserState()) {
   const state = shallowRef<DesktopBrowserState | null>(null)
   let hook!: ReturnType<typeof useBrowserContextSurface>
   const api = {
-    ensureSession: vi.fn().mockResolvedValue(browserState()),
+    ensureSession: vi.fn(ensureSession),
     navigate: vi.fn(),
     takeControl: vi.fn(),
     setProfileMode: vi.fn(),
@@ -56,6 +56,26 @@ function mountBrowser() {
 }
 
 describe('browser context ownership', () => {
+  it('shows initialization work, exposes failure and can retry without replacing the tab', async () => {
+    const initial = deferred<DesktopBrowserState>()
+    const { api, hook } = mountBrowser(() => initial.promise)
+    expect(hook.isLoading.value).toBe(true)
+    initial.reject(new Error('session unavailable'))
+    await nextTick()
+    expect(hook.isLoading.value).toBe(false)
+    expect(hook.failed.value).toBe(true)
+    const retry = deferred<DesktopBrowserState>()
+    api.ensureSession.mockReturnValueOnce(retry.promise)
+    const retrying = hook.retry()
+    expect(hook.isLoading.value).toBe(true)
+    expect(hook.failed.value).toBe(false)
+    retry.resolve(browserState())
+    await retrying
+    expect(hook.state.value?.sessionId).toBe('session')
+    expect(hook.isLoading.value).toBe(false)
+    expect(hook.failed.value).toBe(false)
+  })
+
   it('accepts a profile replacement adopted by the resource owner', async () => {
     const { api, hook } = mountBrowser()
     await nextTick()

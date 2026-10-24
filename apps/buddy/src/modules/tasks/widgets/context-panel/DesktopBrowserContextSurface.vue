@@ -13,6 +13,8 @@ import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQ
 import { useResourceSelectionQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
 import { useSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
 import WorkbenchPanelContent from '@/workbench/browser/WorkbenchPanelContent.vue'
+import DesktopBrowserErrorPage from './DesktopBrowserErrorPage.vue'
+import DesktopBrowserLoadingBar from './DesktopBrowserLoadingBar.vue'
 import DesktopBrowserToolbar from './DesktopBrowserToolbar.vue'
 import { useBrowserAddress } from './useBrowserAddress'
 import { useBrowserContextSurface } from './useBrowserContextSurface'
@@ -46,6 +48,7 @@ const browserView = useBrowserContextSurface({
 })
 const { address, openAddress, updateAddress } = useBrowserAddress(browserView.state, browserView.navigate)
 const browserState = browserView.state
+const browserFailed = computed(() => browserView.failed.value || browserState.value?.status === 'error')
 const selectionReferences = useSelectionReferences()
 const browserViewId = computed(() => `browser:${browserTab.value?.id ?? ''}`)
 const pickerOwner = computed(() => JSON.stringify([browserTab.value?.scope, browserState.value?.sessionId, browserState.value?.pageId, browserState.value?.documentVersion, browserState.value?.url]))
@@ -79,7 +82,7 @@ const picker = useBrowserElementReference({
   },
 })
 watch(() => selectionReferences?.captureScope(browserViewId.value)?.sourceIdentity, () => picker.cancel(), { flush: 'sync' })
-const browserBlank = computed(() => browserState.value?.url === 'about:blank' && browserState.value.status !== 'loading')
+const browserBlank = computed(() => browserState.value?.url === 'about:blank' && browserState.value.status === 'idle' && !browserView.isLoading.value)
 const controlAnnouncement = shallowRef('')
 watch(() => browserState.value?.controller, (controller, previous) => {
   if (controller === 'agent')
@@ -122,13 +125,13 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 <template>
   <WorkbenchPanelContent v-if="browserTab">
     <template #toolbar>
-      <DesktopBrowserToolbar :picking="picker.picking.value" :pick-label="t('desktop.context.browserPickElement')" :pick-disabled="!selectionReferences || browserState?.status !== 'ready' || browserState?.controller === 'agent' || busyAction !== null" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" @pick="picker.toggle" />
+      <div class="relative min-w-0 flex-1">
+        <DesktopBrowserToolbar :picking="picker.picking.value" :pick-label="t('desktop.context.browserPickElement')" :pick-disabled="!selectionReferences || browserState?.status !== 'ready' || browserState?.controller === 'agent' || busyAction !== null" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" @pick="picker.toggle" />
+        <DesktopBrowserLoadingBar :key="browserTab.id" :loading="browserView.isLoading.value" :failed="browserFailed" :language="language" />
+      </div>
     </template>
     <ResourceSelectionQuoteMenu :selection="selection" :language="language" />
-    <div v-if="browserView.failed.value" class="context-resource-state grid flex-1 min-w-0 min-h-0 p-[20px] text-[12px] text-muted" role="alert">
-      {{ t('desktop.context.browserLoadFailed') }}
-    </div>
-    <section v-else class="desktop-browser-context-surface flex min-w-0 min-h-0 flex-1 flex-col bg-surface" data-testid="browser-context-surface">
+    <section class="desktop-browser-context-surface flex min-w-0 min-h-0 flex-1 flex-col bg-surface" data-testid="browser-context-surface">
       <div
         v-if="browserState?.controller === 'agent'"
         class="relative z-2 flex min-w-0 min-h-[2.375rem] flex-none items-center justify-between gap-3 border-b-1 border-b-solid border-b-accent-border bg-accent-subtle text-accent-on-surface pt-1 pr-2 pb-1 pl-3"
@@ -167,13 +170,15 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
         {{ controlAnnouncement }}
       </span>
       <div
-        ref="surfaceElement"
         class="relative min-w-0 min-h-0 flex-1 bg-surface"
         data-testid="browser-guest-surface"
         role="group"
         :aria-label="t('desktop.context.browserViewport')"
+        :aria-busy="browserView.isLoading.value"
       >
-        <div v-if="browserBlank" class="desktop-browser-context-surface__empty absolute z-2 inset-0 grid place-items-center bg-surface text-muted p-[24px] pointer-events-none text-[13px] text-center">
+        <DesktopBrowserErrorPage v-if="browserFailed" :state="browserState" :initialization-failed="browserView.failed.value" :language="language" @retry="browserView.retry" />
+        <div v-else ref="surfaceElement" class="absolute inset-0" />
+        <div v-if="browserBlank && !browserFailed" class="desktop-browser-context-surface__empty absolute z-2 inset-0 grid place-items-center bg-surface text-muted p-[24px] pointer-events-none text-[13px] text-center">
           <p>{{ t('desktop.context.browserStartBrowsing') }}</p>
         </div>
       </div>
@@ -182,8 +187,6 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 </template>
 
 <style scoped lang="scss">
-.context-resource-state { place-content: center; }
-
 .desktop-browser-context-surface__take-control:not(:disabled):hover {
   background: var(--buddy-accent-solid-hover);
 }

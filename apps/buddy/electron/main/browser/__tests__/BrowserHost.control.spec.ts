@@ -209,7 +209,7 @@ describe('browserHost control and semantic actions', () => {
       const result = await respond(method, params)
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') {
         setTimeout(() => {
-          fixture.webContents.emit('did-start-loading')
+          fixture.webContents.emit('did-start-navigation', {}, destination, false, true)
           fixture.webContents.currentUrl = destination
           fixture.webContents.emit('did-navigate', {}, destination)
           fixture.webContents.emit('did-stop-loading')

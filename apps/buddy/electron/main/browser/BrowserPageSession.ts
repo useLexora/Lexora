@@ -331,7 +331,17 @@ export class BrowserPageSession {
         }
       },
     )
-    this.#listen(page, 'did-start-loading', () => {
+    this.#listen(page, 'did-start-navigation', (_event, _url: string, isInPlace: boolean, isMainFrame: boolean) => {
+      if (!isMainFrame || isInPlace)
+        return
+      if (
+        this.shouldClearBootstrapHistory
+        && page.getURL() === 'about:blank'
+        && this.activeNavigationSequence === null
+        && (this.stoppedNavigationSequence === this.navigationSequence || this.state.status === 'error')
+      ) {
+        return
+      }
       this.invalidateElementReferences()
       const isIndependentNavigation = this.activeNavigationSequence === null
       if (isIndependentNavigation) {

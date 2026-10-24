@@ -14,6 +14,7 @@ import type {
   BrowserWaitSpec,
 } from '../../../shared/browser'
 import type {
+  DesktopBrowserError,
   DesktopBrowserGuestDescriptor,
   DesktopBrowserProfileMode,
   DesktopBrowserSetSurfaceInput,
@@ -98,6 +99,7 @@ export class BrowserHost {
   readonly #createId: () => string
   readonly #createPage: ((descriptor: DesktopBrowserGuestDescriptor) => BrowserPage) | null
   readonly #evictedConversationIds = new Set<string>()
+  readonly #failedNavigationTargets = new WeakMap<BrowserPageSession, string>()
   readonly #requestGuestAttachment: () => void
   readonly #revokeSession: (sessionId: string) => void
   readonly #sessions: BrowserSessionRegistry<BrowserPageSession>
@@ -467,7 +469,7 @@ export class BrowserHost {
           break
         case 'reload':
           semanticDriver.assertObservation(reference)
-          this.reload(input.sessionId)
+          await this.reload(input.sessionId)
           break
         case 'stop':
           semanticDriver.assertObservation(reference)
@@ -565,30 +567,34 @@ export class BrowserHost {
     this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
     const startedAt = performance.now()
-    await this.#waitForPage(session)
-    this.#recordTiming(session, 'guest_ready', startedAt)
-    this.#operations.assertCanMutate()
     const navigationSequence = this.#beginPageAction(session)
-    const authorizationStartedAt = performance.now()
     let url: string
     try {
+      await this.#waitForPage(session)
+      this.#requireSession(sessionId)
+      if (!this.#shouldContinuePageAction(session, navigationSequence))
+        return snapshot(session.state)
+      this.#recordTiming(session, 'guest_ready', startedAt)
+      this.#operations.assertCanMutate()
+      const authorizationStartedAt = performance.now()
       url = await session.securityPolicy?.authorizeNavigation(rawUrl) ?? ''
       this.#recordTiming(session, 'authorized', authorizationStartedAt)
     }
     catch (error) {
-      if (!(error instanceof BrowserSecurityPolicyError))
-        throw error
+      this.#requireSession(sessionId)
       if (!this.#shouldContinuePageAction(session, navigationSequence))
         return snapshot(session.state)
-      session.state.error = {
-        code: error.code,
-        message: error.message,
-        reason: error.reason,
-      }
+      this.#failedNavigationTargets.set(session, rawUrl)
+      const failure: DesktopBrowserError = error instanceof BrowserSecurityPolicyError
+        ? { code: error.code, message: error.message, reason: error.reason }
+        : { code: 'BROWSER_PAGE_FAILED', message: browserLoadErrorMessage(error) }
+      session.state.error = failure
       session.state.status = 'error'
       this.#finishPageAction(session, navigationSequence)
       this.#publish(session)
-      throw new BrowserHostError(error.code, error.message, error.reason)
+      throw error instanceof BrowserHostError
+        ? error
+        : new BrowserHostError(failure.code, failure.message, failure.reason)
     }
     if (!this.#shouldContinuePageAction(session, navigationSequence))
       return snapshot(session.state)
@@ -638,6 +644,8 @@ export class BrowserHost {
     this.#publish(session)
     try {
       const page = await this.#waitForPage(session)
+      if (!this.#shouldContinuePageAction(session, navigationSequence))
+        return snapshot(session.state)
       await page.loadURL(url)
       this.#recordTiming(session, 'load_complete', startedAt)
       if (!this.#sessions.get(sessionId))
@@ -780,9 +788,14 @@ export class BrowserHost {
     history.goForward()
   }
 
-  reload(sessionId: string): void {
+  async reload(sessionId: string): Promise<void> {
     this.#operations.assertCanMutate()
     const session = this.#requireSession(sessionId)
+    const failedTarget = this.#failedNavigationTargets.get(session)
+    if (session.state.status === 'error' && failedTarget !== undefined) {
+      await this.navigate(sessionId, failedTarget)
+      return
+    }
     if (session.state.url === 'about:blank')
       return
     this.#beginPageAction(session)
@@ -795,7 +808,8 @@ export class BrowserHost {
       return
     session.stoppedNavigationSequence = session.navigationSequence
     this.#finishPageAction(session, session.navigationSequence)
-    session.requirePage().stop()
+    if (session.page && !session.page.isDestroyed())
+      session.page.stop()
     session.refreshPageState()
     session.state.error = null
     session.state.status = session.state.url === 'about:blank' ? 'idle' : 'ready'
@@ -1134,6 +1148,7 @@ export class BrowserHost {
       this.#publish(session)
     }
     session.state.visible = false
+    this.#failedNavigationTargets.delete(session)
     this.#revokeSession(session.state.sessionId)
     const page = session.page
     session.releasePage()
@@ -1154,6 +1169,7 @@ export class BrowserHost {
   }
 
   #beginPageAction(session: BrowserPageSession): number {
+    this.#failedNavigationTargets.delete(session)
     this.#sessions.touch(session.state.sessionId)
     session.navigationSequence += 1
     session.activeNavigationSequence = session.navigationSequence

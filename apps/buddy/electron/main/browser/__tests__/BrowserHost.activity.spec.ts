@@ -57,7 +57,7 @@ describe('browser page activity', () => {
     const fixture = setup()
     const state = fixture.host.ensureSession('conversation')
     const page = fixture.webContentsInstances[0]!
-    page.emit('did-start-loading')
+    page.emit('did-start-navigation', {}, 'https://example.com/', false, true)
     await vi.advanceTimersByTimeAsync(FREEZE_DELAY_MS)
     expect(page.lifecycleState).toBe('active')
     page.audible = true

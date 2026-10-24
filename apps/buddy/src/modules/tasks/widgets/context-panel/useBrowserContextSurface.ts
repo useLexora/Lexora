@@ -26,7 +26,8 @@ interface UseBrowserContextSurfaceOptions {
 export function useBrowserContextSurface(options: UseBrowserContextSurfaceOptions) {
   const state = options.state
   const failed = shallowRef(false)
-  const isLoading = computed(() => state.value?.status === 'loading')
+  const initializing = shallowRef(false)
+  const isLoading = computed(() => initializing.value || state.value?.status === 'loading')
   const isCapturingScreenshot = shallowRef(false)
   const isSettingZoom = shallowRef(false)
   const isOpeningExternal = shallowRef(false)
@@ -72,9 +73,12 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
   }, { flush: 'sync' })
 
   async function ensureSession(currentLifecycle: number): Promise<void> {
-    if (options.enabled?.value === false)
+    if (options.enabled?.value === false) {
+      initializing.value = false
       return
+    }
     failed.value = false
+    initializing.value = true
     const version = stateVersion
     const tabId = options.tabId?.value
     try {
@@ -89,6 +93,17 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
       if (mounted && lifecycle === currentLifecycle)
         failed.value = true
     }
+    finally {
+      if (mounted && lifecycle === currentLifecycle)
+        initializing.value = false
+    }
+  }
+
+  async function retry(): Promise<void> {
+    if (failed.value)
+      await ensureSession(lifecycle)
+    else
+      await reload()
   }
 
   async function navigate(rawAddress: string): Promise<boolean> {
@@ -285,6 +300,7 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     navigate,
     openExternal,
     reload,
+    retry,
     setProfileMode,
     setZoomFactor,
     showFileInFolder,

@@ -2,9 +2,253 @@ import { pathToFileURL } from 'node:url'
 import { deferred as createDeferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserHostError } from '../BrowserHost'
+import { BrowserSecurityPolicy } from '../BrowserSecurityPolicy'
 import { configureSemanticObservation, createFixture, createLocalSite } from './browserHostFixture'
 
 describe('browserHost sessions and navigation', () => {
+  it('keeps a completed main document ready during subframe loads and starts a new main navigation independently', async () => {
+    const fixture = createFixture()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      await fixture.host.navigate(session.sessionId, 'https://example.com/')
+      const ready = fixture.host.getState(session.sessionId)
+      fixture.webContents.emit('did-start-loading')
+      fixture.webContents.emit('did-start-navigation', {}, 'https://frame.example/', false, false)
+      fixture.webContents.emit('did-frame-navigate', {}, 'https://frame.example/', 200, 'OK', false)
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({
+        status: 'ready',
+        documentVersion: ready.documentVersion,
+        error: null,
+      })
+      fixture.webContents.emit('did-stop-loading')
+      fixture.webContents.emit('did-start-navigation', {}, 'https://example.com/#section', true, true)
+      expect(fixture.host.getState(session.sessionId).status).toBe('ready')
+
+      fixture.webContents.emit('did-start-loading')
+      fixture.webContents.emit('did-start-navigation', {}, 'https://frame.example/again', false, false)
+      fixture.webContents.emit('did-start-navigation', {}, 'https://example.com/next', false, true)
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({
+        status: 'loading',
+        documentVersion: (ready.documentVersion ?? 0) + 1,
+      })
+      fixture.webContents.currentUrl = 'https://example.com/next'
+      fixture.webContents.emit('did-navigate', {}, fixture.webContents.currentUrl)
+      fixture.webContents.emit('did-stop-loading')
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'ready', url: 'https://example.com/next' })
+    }
+    finally {
+      fixture.host.dispose()
+    }
+  })
+
+  it('publishes loading before guest attachment and keeps it through bootstrap and authorization', async () => {
+    const fixture = createFixture()
+    fixture.createPage.mockReturnValueOnce(undefined as never)
+    const session = fixture.host.ensureSession('conversation-1')
+    const navigation = fixture.host.navigate(session.sessionId, 'https://example.com/docs')
+
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'loading', error: null })
+    expect(fixture.onStateChanged).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'loading' }))
+
+    const page = fixture.createPage(fixture.host.getGuestDescriptor(session.sessionId))
+    const guard = createDeferred<unknown>()
+    page.debugger.sendCommand.mockImplementationOnce(() => guard.promise)
+    fixture.host.attachGuest(session.sessionId, page as never)
+    page.emit('did-start-navigation', {}, 'about:blank', false, true)
+    page.emit('did-stop-loading')
+    expect(fixture.host.getState(session.sessionId).status).toBe('loading')
+    await vi.waitFor(() => expect(page.debugger.sendCommand).toHaveBeenCalled())
+    expect(page.loadURL).not.toHaveBeenCalled()
+
+    guard.resolve({})
+    await expect(navigation).resolves.toMatchObject({ status: 'ready', url: 'https://example.com/docs' })
+    fixture.host.dispose()
+  })
+
+  it('publishes attachment timeout errors and allows retry after a late guest attachment', async () => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    try {
+      fixture.createPage.mockReturnValueOnce(undefined as never)
+      const session = fixture.host.ensureSession('conversation-1')
+      const failure = expect(fixture.host.navigate(session.sessionId, 'https://example.com/docs'))
+        .rejects
+        .toMatchObject({ code: 'BROWSER_PAGE_FAILED' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await failure
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({
+        status: 'error',
+        error: { code: 'BROWSER_PAGE_FAILED', message: 'Browser guest did not attach to the Desktop renderer' },
+      })
+
+      const page = fixture.createPage(fixture.host.getGuestDescriptor(session.sessionId))
+      fixture.host.attachGuest(session.sessionId, page as never)
+      page.emit('did-start-navigation', {}, 'about:blank', false, true)
+      page.emit('did-stop-loading')
+      expect(fixture.host.getState(session.sessionId).status).toBe('error')
+      await fixture.host.reload(session.sessionId)
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({
+        status: 'ready',
+        error: null,
+        url: 'https://example.com/docs',
+      })
+      expect(page.loadURL.mock.calls).toEqual([['https://example.com/docs']])
+      expect(page.reload).not.toHaveBeenCalled()
+    }
+    finally {
+      fixture.host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not navigate when stopped before the guest attaches', async () => {
+    const fixture = createFixture()
+    fixture.createPage.mockReturnValueOnce(undefined as never)
+    const session = fixture.host.ensureSession('conversation-1')
+    const navigation = fixture.host.navigate(session.sessionId, 'https://example.com/cancelled')
+    fixture.host.stop(session.sessionId)
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'idle', error: null })
+
+    const page = fixture.createPage(fixture.host.getGuestDescriptor(session.sessionId))
+    fixture.host.attachGuest(session.sessionId, page as never)
+    page.emit('did-start-navigation', {}, 'about:blank', false, true)
+    page.emit('did-stop-loading')
+    await expect(navigation).resolves.toMatchObject({ status: 'idle', url: 'about:blank', error: null })
+    expect(page.loadURL).not.toHaveBeenCalled()
+    fixture.host.dispose()
+  })
+
+  it('does not replace a stopped preparation with a late attachment timeout', async () => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    try {
+      fixture.createPage.mockReturnValueOnce(undefined as never)
+      const session = fixture.host.ensureSession('conversation-1')
+      const navigation = fixture.host.navigate(session.sessionId, 'https://example.com/cancelled')
+      fixture.host.stop(session.sessionId)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(navigation).resolves.toMatchObject({ status: 'idle', error: null })
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'idle', error: null })
+    }
+    finally {
+      fixture.host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])('loads only the newest request awaiting the guest (stopped: %s)', async (stopped) => {
+    const fixture = createFixture()
+    fixture.createPage.mockReturnValueOnce(undefined as never)
+    const session = fixture.host.ensureSession('conversation-1')
+    const first = fixture.host.navigate(session.sessionId, 'https://example.com/old')
+    if (stopped)
+      fixture.host.stop(session.sessionId)
+    const latest = fixture.host.navigate(session.sessionId, 'https://example.com/latest')
+
+    const page = fixture.createPage(fixture.host.getGuestDescriptor(session.sessionId))
+    fixture.host.attachGuest(session.sessionId, page as never)
+    await first
+    await expect(latest).resolves.toMatchObject({ status: 'ready', url: 'https://example.com/latest' })
+    expect(page.loadURL.mock.calls).toEqual([['https://example.com/latest']])
+    fixture.host.dispose()
+  })
+
+  it('does not let an obsolete attachment timeout replace a newer loading request', async () => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    try {
+      fixture.createPage.mockReturnValueOnce(undefined as never)
+      const session = fixture.host.ensureSession('conversation-1')
+      const first = fixture.host.navigate(session.sessionId, 'https://example.com/old')
+      await vi.advanceTimersByTimeAsync(5_000)
+      const latest = fixture.host.navigate(session.sessionId, 'https://example.com/latest')
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(first).resolves.toMatchObject({ status: 'loading', error: null })
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'loading', error: null })
+
+      const page = fixture.createPage(fixture.host.getGuestDescriptor(session.sessionId))
+      fixture.host.attachGuest(session.sessionId, page as never)
+      await expect(latest).resolves.toMatchObject({ status: 'ready', url: 'https://example.com/latest' })
+      expect(page.loadURL.mock.calls).toEqual([['https://example.com/latest']])
+    }
+    finally {
+      fixture.host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a preparation failure at its requested URL instead of reloading the old document', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation-1')
+    await fixture.host.navigate(session.sessionId, 'https://example.com/old')
+    vi.spyOn(BrowserSecurityPolicy.prototype, 'authorizeNavigation')
+      .mockRejectedValueOnce(new Error('Navigation preparation failed'))
+
+    await expect(fixture.host.navigate(session.sessionId, 'https://example.com/new'))
+      .rejects
+      .toMatchObject({ code: 'BROWSER_PAGE_FAILED' })
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({
+      status: 'error',
+      url: 'https://example.com/old',
+      error: { code: 'BROWSER_PAGE_FAILED', message: 'Navigation preparation failed' },
+    })
+    await fixture.host.reload(session.sessionId)
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({
+      status: 'ready',
+      error: null,
+      url: 'https://example.com/new',
+    })
+    expect(fixture.webContents.loadURL.mock.calls).toEqual([
+      ['https://example.com/old'],
+      ['https://example.com/new'],
+    ])
+    await fixture.host.reload(session.sessionId)
+    expect(fixture.webContents.reload).toHaveBeenCalledOnce()
+    fixture.host.dispose()
+  })
+
+  it('revalidates a rejected target on retry and forgets it when a new navigation succeeds', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation-1')
+    await fixture.host.navigate(session.sessionId, 'https://example.com/old')
+    await expect(fixture.host.navigate(session.sessionId, 'javascript:alert(1)'))
+      .rejects
+      .toMatchObject({ code: 'BROWSER_NAVIGATION_BLOCKED' })
+    await expect(fixture.host.reload(session.sessionId))
+      .rejects
+      .toMatchObject({ code: 'BROWSER_NAVIGATION_BLOCKED' })
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({
+      status: 'error',
+      error: { code: 'BROWSER_NAVIGATION_BLOCKED' },
+    })
+    expect(fixture.webContents.loadURL.mock.calls).toEqual([['https://example.com/old']])
+    expect(fixture.webContents.reload).not.toHaveBeenCalled()
+
+    await fixture.host.navigate(session.sessionId, 'https://example.com/new')
+    await fixture.host.reload(session.sessionId)
+    expect(fixture.webContents.reload).toHaveBeenCalledOnce()
+    expect(fixture.webContents.loadURL.mock.calls).toEqual([
+      ['https://example.com/old'],
+      ['https://example.com/new'],
+    ])
+    fixture.host.dispose()
+  })
+
+  it('does not publish a late preparation failure after its session closes', async () => {
+    const fixture = createFixture()
+    fixture.createPage.mockReturnValueOnce(undefined as never)
+    const session = fixture.host.ensureSession('conversation-1')
+    const failure = expect(fixture.host.navigate(session.sessionId, 'https://example.com/docs'))
+      .rejects
+      .toMatchObject({ code: 'BROWSER_SESSION_NOT_FOUND' })
+    fixture.host.close(session.sessionId)
+    fixture.onStateChanged.mockClear()
+    await failure
+    expect(fixture.host.snapshot.sessions).toEqual([])
+    expect(fixture.onStateChanged).not.toHaveBeenCalled()
+    fixture.host.dispose()
+  })
+
   it('returns a committed main document before trailing resources load and still tracks completion', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
@@ -371,7 +615,7 @@ describe('browserHost sessions and navigation', () => {
     })
     expect(fixture.webContents.stop).toHaveBeenCalledOnce()
 
-    fixture.host.reload(session.sessionId)
+    await fixture.host.reload(session.sessionId)
 
     expect(fixture.webContents.reload).toHaveBeenCalledOnce()
     expect(fixture.host.getState(session.sessionId).status).toBe('loading')
@@ -420,7 +664,7 @@ describe('browserHost sessions and navigation', () => {
     const redirectedUrl = 'https://example.com/city/'
     fixture.webContents.loadURL.mockImplementationOnce((url) => {
       fixture.webContents.currentUrl = url
-      fixture.webContents.emit('did-start-loading')
+      fixture.webContents.emit('did-start-navigation', {}, url, false, true)
       return deferred.promise
     })
 
@@ -437,7 +681,7 @@ describe('browserHost sessions and navigation', () => {
     )
     deferred.reject(new Error(`ERR_FAILED (-2) loading '${initialUrl}'`))
     await Promise.resolve()
-    fixture.webContents.emit('did-start-loading')
+    fixture.webContents.emit('did-start-navigation', {}, redirectedUrl, false, true)
     await new Promise(resolve => setTimeout(resolve, 75))
     fixture.webContents.currentUrl = redirectedUrl
     fixture.webContents.emit('did-navigate', {}, redirectedUrl)
@@ -456,7 +700,7 @@ describe('browserHost sessions and navigation', () => {
     const url = 'https://example.com/'
     fixture.webContents.loadURL.mockImplementationOnce(async (target) => {
       fixture.webContents.currentUrl = target
-      fixture.webContents.emit('did-start-loading')
+      fixture.webContents.emit('did-start-navigation', {}, target, false, true)
       fixture.webContents.emit('did-fail-load', {}, -7, 'ERR_TIMED_OUT', target, true)
       fixture.webContents.emit('did-start-loading')
       fixture.webContents.emit('did-stop-loading')
